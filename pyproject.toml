@@ -48,6 +48,6 @@ bq_sql_tools = ["static/*.html", "static/*.css", "static/*.js"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
-    "slow: scans the full external workbook CSV fixture",
+    "slow: scans the full SQL workbook fixture",
 ]
 addopts = "-m 'not slow'"

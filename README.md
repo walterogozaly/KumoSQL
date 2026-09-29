@@ -84,21 +84,21 @@ FROM (SELECT id FROM ${ref("customers")}) AS c''')
 assert result.success
 ```
 
-## Test the supplied SQL workbook CSV
+## Test the supplied SQL workbook fixture
 
-The repository includes a sanitized, generic copy at `tests/fixtures/generic_sql_workbooks.csv`. It preserves the eight-column schema, all 621 rows, SQL statement structure, and repeated references while removing project-specific identifiers and metadata. The full fixture test uses:
+The repository includes a generic copy at `tests/fixtures/generic_sql_workbooks.json`. Each of its 533 entries contains only an `id` and `sql_text`; each distinct token pattern appears once. The full fixture test uses:
 
 ```powershell
 pytest -m slow tests/test_workbook_fixture.py
 ```
 
-Override its path with `BQ_SQL_TOOLS_TEST_CSV` to test another CSV, including the original private export. To regenerate the checked-in fixture from the private source:
+Override its path with `BQ_SQL_TOOLS_TEST_FIXTURE` to test another CSV or JSON fixture. To regenerate the checked-in JSON fixture from the source export:
 
 ```powershell
-python tools/sanitize_fixture.py private.csv tests/fixtures/generic_sql_workbooks.csv
+python tools/sanitize_fixture.py private.csv tests/fixtures/generic_sql_workbooks.json
 ```
 
-The test reads large CSV fields, checks all 621 workbook rows, and fails unless every row has zero remaining relational subqueries and no fatal diagnostics. A separate unit test checks the generic fixture for source metadata leaks and schema drift.
+The test checks all 533 SQL entries and fails unless every row has zero remaining relational subqueries and no fatal diagnostics. A separate unit test checks the SQL text and verifies the minimal fixture shape.
 
 The normal unit suite is:
 

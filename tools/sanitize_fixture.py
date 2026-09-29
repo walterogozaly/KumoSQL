@@ -1,14 +1,14 @@
-"""Create a deterministic, generic copy of the private workbook CSV fixture.
+"""Create a deterministic, generic JSON fixture from the private workbook CSV.
 
-The sanitizer preserves the CSV schema, row count, SQL statement structure, and
-repeated-reference consistency without retaining project, dataset, table,
-column, author, URL, or business-text values from the source.
+The sanitizer preserves row count, SQL statement structure, and repeated-reference
+consistency without retaining project-specific identifiers or business text.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 from pathlib import Path
 
@@ -16,17 +16,6 @@ from sqlglot.dialects.bigquery import BigQuery
 from sqlglot import exp
 from sqlglot.tokens import TokenType
 
-
-OUTPUT_FIELDS = (
-    "record_id",
-    "record_name",
-    "sql_text",
-    "created_by",
-    "schedule",
-    "disabled",
-    "folder_path",
-    "normalized_sql",
-)
 
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
 _SQLX_STRUCTURAL_STRINGS = {
@@ -294,8 +283,13 @@ def _sanitize_sql(text: str, names: GenericNames, *, sqlx_expression: bool = Fal
     return "".join(output)
 
 
-def _stripped_text(sql: str) -> str:
-    return re.sub(r"\s+", " ", sql).strip().lower()
+def _token_pattern(sql: str) -> tuple[tuple[str, str], ...]:
+    ignored_values = {"VAR", "IDENTIFIER", "STRING", "NUMBER", "BIT_STRING", "BYTE_STRING"}
+    tokens = BigQuery.Tokenizer().tokenize(sql)
+    return tuple(
+        (token.token_type.name, "" if token.token_type.name in ignored_values else token.text)
+        for token in tokens
+    )
 
 
 def sanitize_csv(source: Path, destination: Path) -> tuple[int, int]:
@@ -303,31 +297,24 @@ def sanitize_csv(source: Path, destination: Path) -> tuple[int, int]:
     names = GenericNames()
     destination.parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with source.open(encoding="utf-8-sig", newline="") as input_file, destination.open(
-        "w", encoding="utf-8", newline=""
-    ) as output_file:
+    source_index = 0
+    seen_patterns: set[tuple[tuple[str, str], ...]] = set()
+    rows: list[dict[str, str]] = []
+    with source.open(encoding="utf-8-sig", newline="") as input_file:
         reader = csv.DictReader(input_file)
-        if len(reader.fieldnames or ()) != len(OUTPUT_FIELDS):
-            raise ValueError("expected an eight-column source CSV")
-        writer = csv.DictWriter(
-            output_file, fieldnames=OUTPUT_FIELDS, lineterminator="\r\n"
-        )
-        writer.writeheader()
-        for count, row in enumerate(reader, start=1):
-            source_values = list(row.values())
-            sql = _sanitize_sql(source_values[2] or "", names)
-            writer.writerow(
-                {
-                    "record_id": str(100000 + count),
-                    "record_name": f"Generic SQL Workbook {count:03d}",
-                    "sql_text": sql,
-                    "created_by": f"analyst_{count:03d}@example.com",
-                    "schedule": f"0 {count % 60} {(count * 3) % 24} * * ?",
-                    "disabled": "False" if count % 11 else "True",
-                    "folder_path": "/Generic Operations",
-                    "normalized_sql": _stripped_text(sql),
-                }
-            )
+        if not reader.fieldnames or "sql_text" not in reader.fieldnames:
+            raise ValueError("expected a source CSV with a sql_text column")
+        for source_index, row in enumerate(reader, start=1):
+            sql = _sanitize_sql(row["sql_text"] or "", names)
+            pattern = _token_pattern(sql)
+            if pattern in seen_patterns:
+                continue
+            seen_patterns.add(pattern)
+            count += 1
+            rows.append({"id": str(100000 + source_index), "sql_text": sql})
+    destination.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return count, len(names.identifiers) + len(names.paths) + len(names.strings)
 
 
