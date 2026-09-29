@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from bq_sql_tools.ui import UIHandler
+from kumosql.ui import UIHandler
 
 
 @pytest.fixture

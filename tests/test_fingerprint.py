@@ -12,7 +12,7 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
-from bq_sql_tools import (
+from kumosql import (
     Location,
     Target,
     compare_snapshots,
@@ -23,7 +23,7 @@ from bq_sql_tools import (
     summarize_comparison,
     table_fingerprint_sql,
 )
-from bq_sql_tools.cli import compare_outputs_main
+from kumosql.cli import compare_outputs_main
 
 duckdb = pytest.importorskip("duckdb")
 

@@ -5,15 +5,15 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
-from bq_sql_tools import (
+from kumosql import (
     VerificationStatus,
     apply_rule,
     apply_rules,
     available_rules,
     prove_equivalent,
 )
-from bq_sql_tools.cleanup import simplify_predicate
-from bq_sql_tools.equivalence import _normalize_predicate
+from kumosql.cleanup import simplify_predicate
+from kumosql.equivalence import _normalize_predicate
 
 
 PROVEN = VerificationStatus.PROVEN

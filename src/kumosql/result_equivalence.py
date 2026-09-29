@@ -1,6 +1,6 @@
 """Execution-based equivalence checks for BigQuery SQL rewrites.
 
-This module complements the static prover in :mod:`bq_sql_tools.equivalence`.
+This module complements the static prover in :mod:`kumosql.equivalence`.
 Instead of comparing ASTs, it runs the original and the rewritten SQL against
 the same deterministic synthetic tables in a local DuckDB engine and compares
 the result sets. Agreement on synthetic data is evidence, not a proof; a
@@ -356,7 +356,7 @@ def _connect():
         import duckdb
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise ExecutionError(
-            "duckdb is required for result equivalence; install bigquery-sql-tools[execution]"
+            "duckdb is required for result equivalence; install kumosql[execution]"
         ) from exc
     return duckdb.connect(database=":memory:")
 

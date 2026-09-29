@@ -5,7 +5,7 @@ Run with:
     pytest -m slow tests/test_workbook_fixture.py
 
 The checked-in JSON is a sanitized generic copy of the private workbook
-export. Set BQ_SQL_TOOLS_TEST_FIXTURE to run the same check against another
+export. Set KUMOSQL_TEST_FIXTURE to run the same check against another
 CSV or JSON fixture.
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from bq_sql_tools import lift_subqueries
+from kumosql import lift_subqueries
 
 
 DEFAULT_FIXTURE = Path(__file__).parent / "fixtures" / "generic_sql_workbooks.json"
@@ -26,12 +26,7 @@ DEFAULT_FIXTURE = Path(__file__).parent / "fixtures" / "generic_sql_workbooks.js
 
 @pytest.mark.slow
 def test_every_workbook_lifts_all_relational_subqueries():
-    fixture_path = Path(
-        os.environ.get(
-            "BQ_SQL_TOOLS_TEST_FIXTURE",
-            os.environ.get("BQ_SQL_TOOLS_TEST_CSV", DEFAULT_FIXTURE),
-        )
-    )
+    fixture_path = Path(os.environ.get("KUMOSQL_TEST_FIXTURE", DEFAULT_FIXTURE))
     if not fixture_path.exists():
         pytest.skip(f"External fixture not found: {fixture_path}")
 

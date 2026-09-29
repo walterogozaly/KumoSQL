@@ -214,7 +214,7 @@ class Pipeline:
     ) -> list["NearDuplicateCluster"]:
         """Clusters of similar, not identical, SELECTs, with their differences.
 
-        See :mod:`bq_sql_tools.near_duplicates`.
+        See :mod:`kumosql.near_duplicates`.
         """
 
         from .near_duplicates import find_near_duplicates

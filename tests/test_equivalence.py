@@ -1,6 +1,6 @@
 import sqlglot
 
-from bq_sql_tools import (
+from kumosql import (
     EquivalenceStatus,
     build_bag_verifier_sql,
     prove_equivalent,

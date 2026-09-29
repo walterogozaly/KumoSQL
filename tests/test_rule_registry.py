@@ -1,7 +1,7 @@
 import pytest
 from sqlglot import exp
 
-from bq_sql_tools import (
+from kumosql import (
     RewriteRule,
     VerificationStatus,
     apply_rule,

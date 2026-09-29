@@ -6,7 +6,7 @@ and interpolation masking, strict parsing with a visible recovery fallback,
 per-statement error isolation, output formatting, byte-for-byte no-ops,
 re-parsing the output, and CTE dependency checks.
 
-Semantic verification lives one layer up in ``bq_sql_tools.rewrite`` so the
+Semantic verification lives one layer up in ``kumosql.rewrite`` so the
 equivalence prover can itself use rules without an import cycle.
 """
 

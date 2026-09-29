@@ -1,4 +1,4 @@
-from bq_sql_tools import VerificationStatus, verify_rewrite
+from kumosql import VerificationStatus, verify_rewrite
 
 
 def test_changed_create_target_is_unproven():

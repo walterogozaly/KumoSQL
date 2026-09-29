@@ -11,8 +11,8 @@ import pytest
 
 pytest.importorskip("duckdb")
 
-from bq_sql_tools import lift_subqueries, prove_equivalent
-from bq_sql_tools.result_equivalence import (
+from kumosql import lift_subqueries, prove_equivalent
+from kumosql.result_equivalence import (
     ExecutionError,
     ResultEquivalenceStatus,
     assert_result_equivalent,

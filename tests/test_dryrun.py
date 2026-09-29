@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from bq_sql_tools import check_rewrite, dry_run, fetch_table_schemas
-from bq_sql_tools.dryrun import Field, schema_differences
+from kumosql import check_rewrite, dry_run, fetch_table_schemas
+from kumosql.dryrun import Field, schema_differences
 
 
 class FakeBigQuery:

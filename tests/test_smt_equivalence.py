@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("z3")
 
-from bq_sql_tools.smt_equivalence import SmtStatus, main, prove_equivalent_smt
+from kumosql.smt_equivalence import SmtStatus, main, prove_equivalent_smt
 
 
 def _status(left, right, **kwargs):

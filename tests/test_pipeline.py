@@ -1,7 +1,7 @@
 import json
 
-from bq_sql_tools import ColumnRef, load_compiled_graph, load_sqlx_project
-from bq_sql_tools.cli import pipeline_main
+from kumosql import ColumnRef, load_compiled_graph, load_sqlx_project
+from kumosql.cli import pipeline_main
 
 
 RAW_ORDERS = {

@@ -11,8 +11,8 @@ import pytest
 
 pytest.importorskip("duckdb")
 
-from bq_sql_tools import VerificationStatus, apply_rules
-from bq_sql_tools.result_equivalence import assert_result_equivalent
+from kumosql import VerificationStatus, apply_rules
+from kumosql.result_equivalence import assert_result_equivalent
 
 
 SCHEMA = {

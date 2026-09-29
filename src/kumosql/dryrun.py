@@ -13,7 +13,7 @@ Authentication, in order of preference:
 3. a service account key in ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` (the key
    file's contents) or ``GOOGLE_APPLICATION_CREDENTIALS`` (a path), which
    needs the optional ``google-auth`` dependency (``pip install
-   bigquery-sql-tools[bigquery]``).
+   kumosql[bigquery]``).
 
 Tests pass a fake ``transport`` so nothing here needs network access.
 """
@@ -119,7 +119,7 @@ def access_token() -> str:
         from google.oauth2 import service_account
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise RuntimeError(
-            "service account credentials need google-auth: pip install 'bigquery-sql-tools[bigquery]'"
+            "service account credentials need google-auth: pip install 'kumosql[bigquery]'"
         ) from exc
     if raw_key:
         credentials = service_account.Credentials.from_service_account_info(

@@ -1,4 +1,4 @@
-from bq_sql_tools import VerificationStatus, apply_rule, get_rule
+from kumosql import VerificationStatus, apply_rule, get_rule
 
 
 RULE = "inline_single_use_ctes"

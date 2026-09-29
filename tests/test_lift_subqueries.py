@@ -1,4 +1,4 @@
-from bq_sql_tools import count_inline_subqueries, lift_subqueries
+from kumosql import count_inline_subqueries, lift_subqueries
 
 
 def test_lifts_from_subquery_and_preserves_source_alias():

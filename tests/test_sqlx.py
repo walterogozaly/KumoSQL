@@ -1,4 +1,4 @@
-from bq_sql_tools import count_inline_subqueries, lift_subqueries
+from kumosql import count_inline_subqueries, lift_subqueries
 
 
 def test_lifts_sqlx_query_while_preserving_config_and_ref_interpolations():

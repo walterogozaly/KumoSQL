@@ -2,8 +2,8 @@ import json
 
 import sqlglot
 
-from bq_sql_tools import find_near_duplicates, load_compiled_graph
-from bq_sql_tools.cli import pipeline_main
+from kumosql import find_near_duplicates, load_compiled_graph
+from kumosql.cli import pipeline_main
 
 
 BASE = (

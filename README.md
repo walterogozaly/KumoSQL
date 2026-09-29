@@ -1,4 +1,4 @@
-# BigQuery SQL Tools
+# KumoSQL
 
 Small, deterministic transformations for BigQuery SQL that are trusted by tests rather than by an LLM at runtime.
 
@@ -9,14 +9,14 @@ New here? See the [Getting Started guide](docs/getting-started.md) for installat
 On Windows, install into a user-owned virtual environment, then start the local editor:
 
 ```powershell
-py -3.11 -m venv "$env:LOCALAPPDATA\bq-sql-tools"
-& "$env:LOCALAPPDATA\bq-sql-tools\Scripts\python.exe" -m pip install .
-& "$env:LOCALAPPDATA\bq-sql-tools\Scripts\bq-sql-tools-ui.exe"
+py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
+& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m pip install .
+& "$env:LOCALAPPDATA\kumosql\Scripts\kumosql-ui.exe"
 ```
 
 Open the URL printed by the command if your browser does not open automatically. Paste BigQuery SQL or Dataform SQLX on the left, choose one or more transformations, and review the proposed SQL and verification report on the right. The editor updates after a short pause while typing or when you change a selected rule. You can also use **Transform SQL** or Ctrl+Enter. Rules run in the order displayed, and output that cannot be verified remains visible with a review warning.
 
-The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `bq-sql-tools-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
 
 ## Rewrite rules
 
@@ -34,7 +34,7 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. The result's `verification.status` is `unchanged`, `proven`, or `unproven`; an unproven output is still returned, with the reasons in `verification.details`, and `result.success` is false.
 
 ```python
-from bq_sql_tools import apply_rules
+from kumosql import apply_rules
 
 result = apply_rules(["inline_single_use_ctes"], sql_text)
 if not result.success:
@@ -58,7 +58,7 @@ rewrite-sql input.sqlx --rule inline_single_use_ctes --output output.sqlx
 
 ## First goal: subquery lifting
 
-`bq_sql_tools.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
+`kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
 Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
@@ -67,7 +67,7 @@ Existing CTE dependencies are respected: a lift from inside an existing CTE is p
 For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
 
 ```python
-from bq_sql_tools import lift_subqueries
+from kumosql import lift_subqueries
 
 result = lift_subqueries(sql_text)
 if not result.success:
@@ -92,7 +92,7 @@ The repository includes a generic copy at `tests/fixtures/generic_sql_workbooks.
 pytest -m slow tests/test_workbook_fixture.py
 ```
 
-Override its path with `BQ_SQL_TOOLS_TEST_FIXTURE` to test another CSV or JSON fixture. To regenerate the checked-in JSON fixture from the source export:
+Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. To regenerate the checked-in JSON fixture from the source export:
 
 ```powershell
 python tools/sanitize_fixture.py private.csv tests/fixtures/generic_sql_workbooks.json
@@ -108,7 +108,7 @@ pytest
 
 ## Conservative SQL equivalence
 
-`bq_sql_tools.prove_equivalent(left_sql, right_sql)` returns `proven_equivalent` only when both inputs are strict, single-query BigQuery statements whose normalized ASTs match after relational subquery lifting. By default it compares result bags, so unspecified row order is ignored.
+`kumosql.prove_equivalent(left_sql, right_sql)` returns `proven_equivalent` only when both inputs are strict, single-query BigQuery statements whose normalized ASTs match after relational subquery lifting. By default it compares result bags, so unspecified row order is ignored.
 
 Root CTEs are renamed by position after being put in a canonical dependency order, so CTE order alone does not block a proof; reordering is skipped for recursive WITH, forward references, or names that differ only in case.
 
@@ -119,7 +119,7 @@ It refuses to prove queries containing volatile values, windows, tie-sensitive a
 For audit or optional execution, `result.verifier_sql` contains a BigQuery query that counts JSON-encoded result rows on each side and compares their multiplicities with a full outer join. The verifier is an execution artifact and does not override the static safety checks.
 
 ```python
-from bq_sql_tools import prove_equivalent
+from kumosql import prove_equivalent
 
 result = prove_equivalent(
     "SELECT id FROM (SELECT id FROM `p.d.customers`) AS c",
@@ -136,7 +136,7 @@ prove-sql-equivalent left.sql right.sql --verifier-sql verify.sql
 
 ## Result equivalence on synthetic data
 
-The static prover only accepts rewrites whose normalized ASTs match. To test rewrites it cannot prove, `bq_sql_tools.check_result_equivalence(left_sql, right_sql, schema)` runs both sides against the same deterministic synthetic tables in a local DuckDB engine (BigQuery SQL is translated with `sqlglot`) and compares the results as multisets, including column names.
+The static prover only accepts rewrites whose normalized ASTs match. To test rewrites it cannot prove, `kumosql.check_result_equivalence(left_sql, right_sql, schema)` runs both sides against the same deterministic synthetic tables in a local DuckDB engine (BigQuery SQL is translated with `sqlglot`) and compares the results as multisets, including column names.
 
 - Seed 0 is always empty tables; other seeds include NULLs and duplicate rows, drawn from small value domains so joins and groups collide.
 - Every run gets a fresh in-memory connection. Tables written by a script (`CREATE TABLE ... AS`, `INSERT`) are renamed to run-unique local names, and the final written table is compared when the script does not end in a query.
@@ -144,7 +144,7 @@ The static prover only accepts rewrites whose normalized ASTs match. To test rew
 - A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof.
 
 ```python
-from bq_sql_tools import assert_result_equivalent, lift_subqueries
+from kumosql import assert_result_equivalent, lift_subqueries
 
 schema = {"p.d.orders": {"customer_id": "INT64", "amount": "FLOAT64"}}
 original = "SELECT * FROM (SELECT customer_id, SUM(amount) AS total FROM `p.d.orders` GROUP BY 1) AS t"
@@ -155,7 +155,7 @@ Install the engine with `pip install -e ".[execution]"` (it is included in `.[de
 
 ## SMT equivalence prover
 
-`bq_sql_tools.prove_equivalent_smt(left_sql, right_sql)` proves semantic equivalence with Z3 instead of comparing syntax, so it accepts rewrites such as filter pushdown into a CTE, join reordering, `DISTINCT` to `GROUP BY`, `CASE` to `IF`, redundant predicates, and self-join elimination under `DISTINCT`. Install it with the optional extra: `pip install -e ".[smt]"`.
+`kumosql.prove_equivalent_smt(left_sql, right_sql)` proves semantic equivalence with Z3 instead of comparing syntax, so it accepts rewrites such as filter pushdown into a CTE, join reordering, `DISTINCT` to `GROUP BY`, `CASE` to `IF`, redundant predicates, and self-join elimination under `DISTINCT`. Install it with the optional extra: `pip install -e ".[smt]"`.
 
 It models inner and cross joins, `WHERE`, derived tables and CTEs, `GROUP BY`/`HAVING` with `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, `COUNTIF`, `LOGICAL_AND`/`LOGICAL_OR`, `UNION ALL`/`UNION DISTINCT`, `SELECT DISTINCT`, and NULLs with three-valued logic. Other deterministic functions are uninterpreted: equal inputs give equal outputs. Anything else (outer joins, windows, `LIMIT`, predicate subqueries, nondeterministic functions) returns `not_proven`.
 
@@ -166,7 +166,7 @@ The result is one of:
 - `not_proven`: outside the subset, or no proof was found.
 
 ```python
-from bq_sql_tools import prove_equivalent_smt
+from kumosql import prove_equivalent_smt
 
 result = prove_equivalent_smt(
     "SELECT id FROM (SELECT id, a FROM t WHERE a = 1) AS s WHERE id > 0",
@@ -198,7 +198,7 @@ The result is a `Pipeline` that qualifies every model in dependency order, so ea
 Source table columns come from `source_schema={"project.dataset.table": {"col": "TYPE"}}`. `fetch_table_schemas()` fills it from BigQuery with free dry runs.
 
 ```powershell
-bq-pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
+kumosql-pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
 
 ## Comparing pipeline outputs before and after a refactor
@@ -216,10 +216,10 @@ Models are matched by target, and when `after` is a different pipeline only the 
 `table_fingerprint_sql`, `compare_tables_sql` and `diff_rows_sql` do the same for any pair of tables.
 
 ```powershell
-bq-compare-outputs compare path/to/dataform --source-schema sources.json --after-dataset-suffix _dev > compare.sql
+kumosql-compare-outputs compare path/to/dataform --source-schema sources.json --after-dataset-suffix _dev > compare.sql
 bq query --use_legacy_sql=false --format=json < compare.sql > results.json
-bq-compare-outputs summarize results.json
-bq-compare-outputs drilldown path/to/dataform --after-dataset-suffix _dev --model proj.analytics.orders --keys order_id
+kumosql-compare-outputs summarize results.json
+kumosql-compare-outputs drilldown path/to/dataform --after-dataset-suffix _dev --model proj.analytics.orders --keys order_id
 ```
 
 ## BigQuery dry-run check
@@ -229,7 +229,7 @@ bq-compare-outputs drilldown path/to/dataform --after-dataset-suffix _dev --mode
 Credentials come from `BQ_ACCESS_TOKEN`, or a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path) with `pip install '.[bigquery]'`. Read-only roles are enough: BigQuery Job User plus Data Viewer.
 
 ```powershell
-bq-dry-run original.sql --rewritten rewritten.sql --project my-project
+kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
 ```
 
 ## CLI

@@ -1,6 +1,6 @@
 """Near-duplicate SELECT logic across a pipeline.
 
-:func:`bq_sql_tools.pipeline.Pipeline.duplicate_selects` finds SELECT subtrees
+:func:`kumosql.pipeline.Pipeline.duplicate_selects` finds SELECT subtrees
 that are exactly the same after normalization. Copied logic usually drifts,
 though: one copy gains a filter, another an extra column, a third a different
 status literal. This module finds those near-duplicates:
@@ -32,7 +32,7 @@ status literal. This module finds those near-duplicates:
    suggested SQL.
 
 Suggestions are candidates, not proven rewrites: check them with
-:func:`bq_sql_tools.prove_equivalent` or :func:`bq_sql_tools.check_rewrite`.
+:func:`kumosql.prove_equivalent` or :func:`kumosql.check_rewrite`.
 """
 
 from __future__ import annotations

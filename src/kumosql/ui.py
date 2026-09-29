@@ -92,7 +92,7 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
             return
         filename, content_type = asset
-        body = files("bq_sql_tools").joinpath("static", filename).read_bytes()
+        body = files("kumosql").joinpath("static", filename).read_bytes()
         self._send(200, body, content_type)
 
     def do_POST(self) -> None:
@@ -122,7 +122,7 @@ class UIHandler(BaseHTTPRequestHandler):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Open the local BigQuery SQL Tools browser UI")
+    parser = argparse.ArgumentParser(description="Open the local KumoSQL browser UI")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         parser.error(f"could not start local server: {exc}")
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"BigQuery SQL Tools UI: {url}", flush=True)
+    print(f"KumoSQL UI: {url}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     if not args.no_browser:
         threading.Timer(0.3, lambda: webbrowser.open(url)).start()

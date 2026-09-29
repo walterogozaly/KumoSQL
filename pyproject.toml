@@ -1,5 +1,5 @@
 [project]
-name = "bigquery-sql-tools"
+name = "kumosql"
 version = "0.1.0"
 description = "Deterministic, test-verified transformations for BigQuery SQL"
 readme = "README.md"
@@ -25,14 +25,14 @@ smt = [
 ]
 
 [project.scripts]
-lift-subqueries = "bq_sql_tools.cli:main"
-prove-sql-equivalent = "bq_sql_tools.cli:prove_main"
-rewrite-sql = "bq_sql_tools.cli:rewrite_main"
-bq-pipeline-report = "bq_sql_tools.cli:pipeline_main"
-bq-dry-run = "bq_sql_tools.cli:dry_run_main"
-prove-sql-smt = "bq_sql_tools.smt_equivalence:main"
-bq-compare-outputs = "bq_sql_tools.cli:compare_outputs_main"
-bq-sql-tools-ui = "bq_sql_tools.ui:main"
+lift-subqueries = "kumosql.cli:main"
+prove-sql-equivalent = "kumosql.cli:prove_main"
+rewrite-sql = "kumosql.cli:rewrite_main"
+kumosql-pipeline-report = "kumosql.cli:pipeline_main"
+kumosql-dry-run = "kumosql.cli:dry_run_main"
+prove-sql-smt = "kumosql.smt_equivalence:main"
+kumosql-compare-outputs = "kumosql.cli:compare_outputs_main"
+kumosql-ui = "kumosql.ui:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -42,7 +42,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-bq_sql_tools = ["static/*.html", "static/*.css", "static/*.js"]
+kumosql = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

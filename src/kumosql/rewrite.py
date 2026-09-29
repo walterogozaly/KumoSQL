@@ -1,7 +1,7 @@
 """Apply registered rewrite rules and check each output for equivalence.
 
 Every changed output is compared with its input by the conservative prover in
-``bq_sql_tools.equivalence``. The result is ``proven`` only when every changed
+``kumosql.equivalence``. The result is ``proven`` only when every changed
 statement is proven equivalent; anything else is returned but flagged
 ``unproven`` with the reason, so callers can decide whether to accept it.
 

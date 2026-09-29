@@ -26,7 +26,7 @@ the two queries return different rows; if it finds one the result is
 reported when every function in both queries is modeled exactly, so it never
 rests on an uninterpreted function.
 
-``z3-solver`` is an optional dependency: install ``bigquery-sql-tools[smt]``.
+``z3-solver`` is an optional dependency: install ``kumosql[smt]``.
 """
 
 from __future__ import annotations
@@ -1441,7 +1441,7 @@ def prove_equivalent_smt(
     assumptions = BASE_ASSUMPTIONS + ((EXACT_ARITHMETIC_ASSUMPTION,) if exact_arithmetic else ())
     if z3 is None:
         return SmtEquivalenceResult(
-            SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install bigquery-sql-tools[smt])"
+            SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install kumosql[smt])"
         )
     compiler = _Compiler(schema, exact_arithmetic)
     try:

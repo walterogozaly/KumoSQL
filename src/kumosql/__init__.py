@@ -1,4 +1,4 @@
-"""BigQuery SQL Tools."""
+"""KumoSQL."""
 
 from .lift_subqueries import (
     LiftDiagnostic,
