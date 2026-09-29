@@ -2,6 +2,8 @@
 
 Small, deterministic transformations for BigQuery SQL that are trusted by tests rather than by an LLM at runtime.
 
+New here? See the [Getting Started guide](docs/getting-started.md) for installation, a Python example, and the browser UI.
+
 ## Local browser UI
 
 On Windows, install into a user-owned virtual environment, then start the local editor:
