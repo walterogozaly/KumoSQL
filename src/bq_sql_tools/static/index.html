@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>BigQuery SQL Tools</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">{ }</span><span>BigQuery SQL Tools</span></div>
+      <span class="local-badge"><span class="local-dot"></span>Running locally</span>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">SQL WORKSPACE</p>
+        <h1 id="page-title">Make a change. See what it does.</h1>
+        <p>Paste BigQuery SQL or Dataform SQLX, choose transformations, and review the proposed result.</p>
+      </section>
+
+      <section class="rules-panel" aria-labelledby="rules-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="rules-title">Transformations</h2>
+            <p>Applied in the order shown below.</p>
+          </div>
+          <span id="rule-count" class="count-label">Loading rules…</span>
+        </div>
+        <div id="rules" class="rules-grid" role="group" aria-label="Transformations"></div>
+      </section>
+
+      <section class="workspace" aria-label="SQL editor">
+        <div class="pane input-pane">
+          <div class="pane-heading">
+            <div><span class="pane-number">01</span><h2>Original SQL</h2></div>
+            <button id="example-button" class="text-button" type="button">Load example</button>
+          </div>
+          <label class="sr-only" for="sql-input">Original SQL or SQLX</label>
+          <textarea id="sql-input" class="code-editor" spellcheck="false" wrap="off" placeholder="Paste SQL or SQLX here…"></textarea>
+          <div class="pane-footer">
+            <span id="input-count">0 characters</span>
+            <span>Ctrl+Enter to transform</span>
+          </div>
+        </div>
+
+        <div class="pane output-pane">
+          <div class="pane-heading">
+            <div><span class="pane-number">02</span><h2>Proposed SQL</h2></div>
+            <button id="copy-button" class="text-button" type="button" disabled>Copy SQL</button>
+          </div>
+          <label class="sr-only" for="sql-output">Proposed SQL</label>
+          <textarea id="sql-output" class="code-editor" spellcheck="false" wrap="off" placeholder="Your transformed SQL will appear here…" readonly></textarea>
+          <div class="pane-footer">
+            <span id="output-count">0 characters</span>
+            <span>Review before using</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="action-row">
+        <div id="status" class="status status-idle" role="status" aria-live="polite">Ready when you are</div>
+        <button id="transform-button" class="primary-button" type="button" disabled>Transform SQL <span aria-hidden="true">→</span></button>
+      </div>
+
+      <section id="report" class="report" aria-labelledby="report-title" hidden>
+        <div class="section-heading">
+          <div><h2 id="report-title">Verification report</h2><p id="verification-reason"></p></div>
+        </div>
+        <ul id="verification-details" class="detail-list"></ul>
+        <div id="steps" class="steps"></div>
+      </section>
+    </main>
+
+    <footer>Processed on this computer. Transformations do not contact BigQuery.</footer>
+  </div>
+</body>
+</html>

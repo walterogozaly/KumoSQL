@@ -2,6 +2,20 @@
 
 Small, deterministic transformations for BigQuery SQL that are trusted by tests rather than by an LLM at runtime.
 
+## Local browser UI
+
+On Windows, install into a user-owned virtual environment, then start the local editor:
+
+```powershell
+py -3.11 -m venv "$env:LOCALAPPDATA\bq-sql-tools"
+& "$env:LOCALAPPDATA\bq-sql-tools\Scripts\python.exe" -m pip install .
+& "$env:LOCALAPPDATA\bq-sql-tools\Scripts\bq-sql-tools-ui.exe"
+```
+
+Open the URL printed by the command if your browser does not open automatically. Paste BigQuery SQL or Dataform SQLX on the left, choose one or more transformations, and review the proposed SQL and verification report on the right. The editor updates after a short pause while typing or when you change a selected rule. You can also use **Transform SQL** or Ctrl+Enter. Rules run in the order displayed, and output that cannot be verified remains visible with a review warning.
+
+The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `bq-sql-tools-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+
 ## Rewrite rules
 
 Each transformation is a rule in a registry. A rule only says how to rewrite one parsed statement; a shared driver handles SQLX blocks and `${...}` interpolations, strict parsing with a visible recovery fallback, formatting, byte-for-byte no-ops, and CTE dependency checks.

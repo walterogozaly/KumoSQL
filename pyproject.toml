@@ -32,6 +32,7 @@ bq-pipeline-report = "bq_sql_tools.cli:pipeline_main"
 bq-dry-run = "bq_sql_tools.cli:dry_run_main"
 prove-sql-smt = "bq_sql_tools.smt_equivalence:main"
 bq-compare-outputs = "bq_sql_tools.cli:compare_outputs_main"
+bq-sql-tools-ui = "bq_sql_tools.ui:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -39,6 +40,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+bq_sql_tools = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
