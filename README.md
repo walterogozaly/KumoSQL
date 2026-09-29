@@ -14,7 +14,7 @@ py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
 & "$env:LOCALAPPDATA\kumosql\Scripts\kumosql-ui.exe"
 ```
 
-Open the URL printed by the command if your browser does not open automatically. Paste BigQuery SQL or Dataform SQLX on the left, choose one or more transformations, and review the proposed SQL and verification report on the right. The editor updates after a short pause while typing or when you change a selected rule. You can also use **Transform SQL** or Ctrl+Enter. Rules run in the order displayed, and output that cannot be verified remains visible with a review warning.
+Open the URL printed by the command if your browser does not open automatically. Turn on transformations in the **Pipeline** sidebar, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
 
 The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
 

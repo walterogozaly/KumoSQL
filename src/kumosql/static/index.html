@@ -3,79 +3,169 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <title>KumoSQL</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/style.css">
   <script defer src="/assets/app.js"></script>
 </head>
 <body>
-  <div class="app-shell">
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-equal" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></symbol>
+  </svg>
+
+  <div class="app">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">{ }</span><span>KumoSQL</span></div>
-      <span class="local-badge"><span class="local-dot"></span>Running locally</span>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">{ }</span>
+        <span class="brand-text"><strong>KumoSQL</strong><span>SQL workspace</span></span>
+      </div>
+      <div class="topbar-actions">
+        <div class="menu-wrap">
+          <button id="examples-button" class="toolbar-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="examples-menu">
+            <svg class="icon"><use href="#i-spark"/></svg><span>Examples</span><svg class="icon icon-sm"><use href="#i-chevron"/></svg>
+          </button>
+          <div id="examples-menu" class="menu" role="menu" aria-label="Examples" hidden></div>
+        </div>
+        <button id="theme-button" class="icon-button" type="button" aria-label="Theme: match system" title="Theme: match system">
+          <svg class="icon"><use id="theme-icon" href="#i-monitor"/></svg>
+        </button>
+        <span class="local-badge" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
+      </div>
     </header>
 
-    <main>
-      <section class="intro" aria-labelledby="page-title">
-        <p class="eyebrow">SQL WORKSPACE</p>
-        <h1 id="page-title">Make a change. See what it does.</h1>
-        <p>Paste BigQuery SQL or Dataform SQLX, choose transformations, and review the proposed result.</p>
-      </section>
-
-      <section class="rules-panel" aria-labelledby="rules-title">
-        <div class="section-heading">
-          <div>
-            <h2 id="rules-title">Transformations</h2>
-            <p>Applied in the order shown below.</p>
+    <div class="layout">
+      <aside class="sidebar" aria-labelledby="pipeline-title">
+        <div class="sidebar-section">
+          <div class="sidebar-heading">
+            <h2 id="pipeline-title">Pipeline</h2>
+            <span id="rule-count" class="count-label">Loading…</span>
           </div>
-          <span id="rule-count" class="count-label">Loading rules…</span>
-        </div>
-        <div id="rules" class="rules-grid" role="group" aria-label="Transformations"></div>
-      </section>
-
-      <section class="workspace" aria-label="SQL editor">
-        <div class="pane input-pane">
-          <div class="pane-heading">
-            <div><span class="pane-number">01</span><h2>Original SQL</h2></div>
-            <button id="example-button" class="text-button" type="button">Load example</button>
+          <p class="sidebar-hint">Rules run top to bottom. Drag or use the arrows to reorder.</p>
+          <div class="sidebar-tools">
+            <button id="select-all-button" class="link-button" type="button" disabled>Select all</button>
+            <button id="clear-button" class="link-button" type="button" disabled>Clear</button>
+            <button id="reset-button" class="link-button" type="button" disabled>Reset order</button>
           </div>
-          <label class="sr-only" for="sql-input">Original SQL or SQLX</label>
-          <textarea id="sql-input" class="code-editor" spellcheck="false" wrap="off" placeholder="Paste SQL or SQLX here…"></textarea>
-          <div class="pane-footer">
-            <span id="input-count">0 characters</span>
-            <span>Ctrl+Enter to transform</span>
-          </div>
+          <ol id="rules" class="rule-list" aria-label="Transformations"></ol>
         </div>
 
-        <div class="pane output-pane">
-          <div class="pane-heading">
-            <div><span class="pane-number">02</span><h2>Proposed SQL</h2></div>
-            <button id="copy-button" class="text-button" type="button" disabled>Copy SQL</button>
-          </div>
-          <label class="sr-only" for="sql-output">Proposed SQL</label>
-          <textarea id="sql-output" class="code-editor" spellcheck="false" wrap="off" placeholder="Your transformed SQL will appear here…" readonly></textarea>
-          <div class="pane-footer">
-            <span id="output-count">0 characters</span>
-            <span>Review before using</span>
-          </div>
+        <div class="sidebar-footer">
+          <label class="switch">
+            <input id="auto-run" type="checkbox" checked>
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>Transform as I type</span>
+          </label>
+          <button id="transform-button" class="primary-button" type="button" disabled>
+            <svg class="icon button-icon"><use href="#i-play"/></svg>
+            <span class="button-label">Transform SQL</span>
+            <span class="button-kbd" aria-hidden="true">Ctrl ↵</span>
+          </button>
         </div>
-      </section>
+      </aside>
 
-      <div class="action-row">
-        <div id="status" class="status status-idle" role="status" aria-live="polite">Ready when you are</div>
-        <button id="transform-button" class="primary-button" type="button" disabled>Transform SQL <span aria-hidden="true">→</span></button>
-      </div>
+      <main class="main">
+        <section id="verdict" class="verdict verdict-idle" aria-live="polite">
+          <div class="verdict-icon" aria-hidden="true"><svg class="icon"><use id="verdict-icon" href="#i-file"/></svg></div>
+          <div class="verdict-text">
+            <strong id="status" role="status">Paste SQL to get started</strong>
+            <span id="verdict-detail">Or pick one of the examples to see each transformation in action.</span>
+          </div>
+          <dl id="stats" class="stats" hidden>
+            <div><dt>Lines</dt><dd id="stat-lines">–</dd></div>
+            <div><dt>CTEs</dt><dd id="stat-ctes">–</dd></div>
+            <div><dt>Diff</dt><dd id="stat-diff">–</dd></div>
+            <div><dt>Time</dt><dd id="stat-time">–</dd></div>
+          </dl>
+          <button id="details-button" class="toolbar-button" type="button" hidden>Details<svg class="icon icon-sm"><use href="#i-chevron"/></svg></button>
+        </section>
 
-      <section id="report" class="report" aria-labelledby="report-title" hidden>
-        <div class="section-heading">
-          <div><h2 id="report-title">Verification report</h2><p id="verification-reason"></p></div>
-        </div>
-        <ul id="verification-details" class="detail-list"></ul>
-        <div id="steps" class="steps"></div>
-      </section>
-    </main>
+        <section class="workspace" aria-label="SQL editor">
+          <div id="input-pane" class="pane input-pane">
+            <div class="pane-heading">
+              <div class="pane-title"><span class="pane-number">01</span><h2>Original SQL</h2></div>
+              <div class="pane-actions">
+                <input id="file-input" class="sr-only" type="file" accept=".sql,.sqlx,.txt,text/plain" tabindex="-1">
+                <button id="open-button" class="toolbar-button" type="button" title="Open a .sql or .sqlx file"><svg class="icon"><use href="#i-file"/></svg><span>Open</span></button>
+                <button id="clear-input-button" class="icon-button" type="button" aria-label="Clear input" title="Clear input" disabled><svg class="icon"><use href="#i-x"/></svg></button>
+              </div>
+            </div>
+            <div class="editor" id="input-editor">
+              <div class="gutter" aria-hidden="true"><div id="input-gutter" class="gutter-inner"></div></div>
+              <div class="editor-body">
+                <pre class="code-layer" aria-hidden="true"><code id="input-highlight"></code></pre>
+                <label class="sr-only" for="sql-input">Original SQL or SQLX</label>
+                <textarea id="sql-input" class="code-input" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" placeholder="Paste BigQuery SQL or Dataform SQLX, or drop a file here…"></textarea>
+              </div>
+              <div class="drop-overlay" aria-hidden="true"><svg class="icon"><use href="#i-file"/></svg><span>Drop to open</span></div>
+            </div>
+            <div class="pane-footer">
+              <span id="input-count">0 lines · 0 characters</span>
+              <span id="cursor-position" class="footer-muted"></span>
+            </div>
+          </div>
 
-    <footer>Processed on this computer. Transformations do not contact BigQuery.</footer>
+          <div class="pane output-pane">
+            <div class="pane-heading">
+              <div class="pane-title">
+                <span class="pane-number">02</span><h2>Proposed SQL</h2>
+                <span id="stale-badge" class="stale-badge" hidden>Out of date</span>
+              </div>
+              <div class="pane-actions">
+                <div class="tabs" role="tablist" aria-label="Output view">
+                  <button id="tab-result" class="tab" type="button" role="tab" aria-selected="true" aria-controls="result-view">Result</button>
+                  <button id="tab-diff" class="tab" type="button" role="tab" aria-selected="false" aria-controls="diff-view" tabindex="-1">Diff <span id="diff-badge" class="tab-badge" hidden></span></button>
+                </div>
+                <button id="use-output-button" class="icon-button" type="button" aria-label="Use as input" title="Use as input (keep iterating)" disabled><svg class="icon"><use href="#i-undo"/></svg></button>
+                <button id="download-button" class="icon-button" type="button" aria-label="Download SQL" title="Download SQL" disabled><svg class="icon"><use href="#i-download"/></svg></button>
+                <button id="copy-button" class="toolbar-button" type="button" disabled><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
+              </div>
+            </div>
+            <div class="viewer">
+              <div id="result-view" class="code-view" role="tabpanel" aria-labelledby="tab-result" tabindex="0">
+                <div id="output-empty" class="empty-state">
+                  <svg class="icon"><use href="#i-spark"/></svg>
+                  <strong>Your transformed SQL appears here</strong>
+                  <span>Choose rules on the left and paste some SQL.</span>
+                </div>
+                <div id="output-lines" class="code-lines"></div>
+              </div>
+              <div id="diff-view" class="code-view diff-view" role="tabpanel" aria-labelledby="tab-diff" tabindex="0" hidden></div>
+            </div>
+            <div class="pane-footer">
+              <span id="output-count">0 lines · 0 characters</span>
+              <span class="footer-muted">Review before using</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="report" class="report" aria-labelledby="report-title" hidden>
+          <div class="report-heading">
+            <h2 id="report-title">Verification</h2>
+            <p id="verification-reason"></p>
+          </div>
+          <ol id="steps" class="timeline"></ol>
+          <ul id="verification-details" class="detail-list"></ul>
+        </section>
+      </main>
+    </div>
   </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

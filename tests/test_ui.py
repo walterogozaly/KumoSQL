@@ -39,6 +39,7 @@ def test_ui_serves_assets_and_registered_rules(ui_server):
         ("/", b"Original SQL"),
         ("/assets/style.css", b".workspace"),
         ("/assets/app.js", b"/api/transform"),
+        ("/favicon.svg", b"<svg"),
     ):
         with urlopen(ui_server + path) as response:
             assert marker in response.read()
