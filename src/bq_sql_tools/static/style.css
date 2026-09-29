@@ -1,0 +1,86 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1c2a2b;
+  background: #f5f7f4;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .48; }
+
+.app-shell { max-width: 1560px; min-height: 100vh; margin: 0 auto; padding: 0 38px; }
+.topbar { height: 72px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dce3df; }
+.brand { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 750; letter-spacing: -.02em; }
+.brand-mark { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 9px; background: #18443b; color: #d4f4d3; font: 700 15px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.local-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid #d5e2d8; border-radius: 30px; color: #38654f; background: #eef6ee; font-size: 12px; font-weight: 650; }
+.local-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ba974; }
+
+main { padding: 42px 0 58px; }
+.intro { margin-bottom: 34px; }
+.eyebrow { margin: 0 0 12px; color: #29705c; font-size: 11px; font-weight: 800; letter-spacing: .17em; }
+h1 { margin: 0; font-size: clamp(29px, 3.2vw, 43px); line-height: 1.16; letter-spacing: -.045em; font-weight: 730; }
+.intro > p:last-child { margin: 12px 0 0; color: #63716d; font-size: 15px; }
+h2 { margin: 0; font-size: 15px; letter-spacing: -.015em; }
+.section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.section-heading p { margin: 5px 0 0; color: #788580; font-size: 12px; }
+.rules-panel, .report { border: 1px solid #dfe5df; border-radius: 14px; background: #fff; box-shadow: 0 3px 12px rgba(20, 45, 35, .025); }
+.rules-panel { padding: 22px 24px 24px; margin-bottom: 20px; }
+.count-label { font-size: 12px; font-weight: 650; color: #60736b; white-space: nowrap; }
+.rules-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+.rule { display: flex; gap: 10px; align-items: flex-start; min-height: 72px; padding: 13px 14px; border: 1px solid #e0e6e1; border-radius: 10px; background: #fbfcfa; transition: border-color .15s, background .15s; cursor: pointer; }
+.rule:hover { border-color: #9bbbab; }
+.rule:has(input:checked) { border-color: #64a888; background: #f1f9f2; }
+.rule input { accent-color: #287e5c; margin: 3px 0 0; flex: none; }
+.rule strong { display: block; font-size: 12px; line-height: 1.35; }
+.rule small { display: block; margin-top: 4px; color: #6e7e77; font-size: 11px; line-height: 1.4; }
+
+.workspace { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid #dfe5df; border-radius: 14px; background: #fff; box-shadow: 0 3px 12px rgba(20, 45, 35, .025); }
+.pane-heading { height: 59px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 19px; }
+.pane-heading > div { display: flex; align-items: center; gap: 11px; }
+.pane-number { color: #99a8a0; font: 700 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.text-button { border: 0; padding: 8px 2px; background: transparent; color: #2c775d; font-size: 12px; font-weight: 700; }
+.text-button:not(:disabled):hover { color: #155039; text-decoration: underline; }
+.code-editor { display: block; width: 100%; min-height: 400px; resize: vertical; padding: 20px 22px; border: 0; border-top: 1px solid #e9ede8; border-bottom: 1px solid #e9ede8; outline: none; background: #fbfcfa; color: #21372f; font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; tab-size: 4; }
+.code-editor::placeholder { color: #a0aba4; }
+.code-editor:focus { background: #fff; box-shadow: inset 0 0 0 2px #b7d8c2; }
+.output-pane .code-editor { background: #f7faf7; }
+.pane-footer { display: flex; justify-content: space-between; gap: 12px; padding: 11px 19px; color: #8b9790; font-size: 11px; }
+.action-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 20px; }
+.status { display: inline-flex; align-items: center; min-height: 36px; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; }
+.status-idle { color: #63716d; background: #e9ede8; }
+.status-proven { color: #226843; background: #e0f2e4; }
+.status-unchanged { color: #486c5a; background: #e7f0e8; }
+.status-unproven { color: #865a18; background: #fff0d3; }
+.status-failed { color: #9b3832; background: #fbe7e4; }
+.primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 16px; min-height: 43px; padding: 0 18px; border: 0; border-radius: 8px; background: #205a45; color: #fff; font-size: 12px; font-weight: 750; box-shadow: 0 4px 9px rgba(26, 78, 55, .13); }
+.primary-button:not(:disabled):hover { background: #174c39; }
+.report { margin-top: 25px; padding: 22px 24px; }
+.report[hidden] { display: none; }
+.detail-list { margin: 13px 0 0; padding-left: 20px; color: #805523; font-size: 12px; line-height: 1.55; }
+.detail-list:empty { display: none; }
+.steps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.step { padding: 8px 11px; border-radius: 7px; background: #f1f5f1; color: #52675b; font-size: 11px; }
+.step strong { color: #283d30; }
+footer { padding: 22px 0 30px; border-top: 1px solid #dce3df; color: #8b9790; font-size: 11px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 900px) {
+  .app-shell { padding: 0 20px; }
+  .rules-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace { grid-template-columns: 1fr; }
+  .code-editor { min-height: 320px; }
+}
+@media (max-width: 570px) {
+  .app-shell { padding: 0 14px; }
+  main { padding-top: 30px; }
+  .rules-panel { padding: 18px 16px; }
+  .rules-grid { grid-template-columns: 1fr; }
+  .rule { min-height: auto; }
+  .action-row { align-items: stretch; flex-direction: column-reverse; }
+  .local-badge { font-size: 0; gap: 0; padding: 8px; }
+  .local-dot { width: 8px; height: 8px; }
+}

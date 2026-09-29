@@ -1,0 +1,702 @@
+"""Conservative equivalence proofs for BigQuery query statements.
+
+This module intentionally proves only a narrow class of equivalences. It
+normalizes relational shape after CTE lifting and compares query ASTs under
+bag semantics (row order ignored). It refuses to prove queries with value
+nondeterminism or row-selection nondeterminism. A false negative is therefore
+preferred to a false positive.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+import hashlib
+import re
+
+import sqlglot
+from sqlglot import exp
+
+from .ast_utils import (
+    ambiguous_unnest_names,
+    is_cte_reference_candidate,
+    nearest_root_cte,
+    set_with_clause,
+    with_clause as _with_clause,
+)
+from .lift_subqueries import lift_subqueries
+
+
+class EquivalenceStatus(str, Enum):
+    """Possible outcomes of the conservative prover."""
+
+    PROVEN_EQUIVALENT = "proven_equivalent"
+    NOT_PROVEN = "not_proven"
+
+
+@dataclass(frozen=True)
+class EquivalenceResult:
+    """A proof result and the evidence needed to audit it."""
+
+    status: EquivalenceStatus
+    reason: str
+    left_fingerprint: str | None = None
+    right_fingerprint: str | None = None
+    normalized_left: str | None = None
+    normalized_right: str | None = None
+    verifier_sql: str | None = None
+    diagnostics: tuple[str, ...] = ()
+
+    @property
+    def proven(self) -> bool:
+        return self.status is EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+_VALUE_NONDETERMINISTIC_TYPES = {
+    "AnyValue",
+    "ApproxDistinct",
+    "ApproxQuantile",
+    "ArrayAgg",
+    "CurrentDate",
+    "CurrentTime",
+    "CurrentTimestamp",
+    "GroupConcat",
+    "MaxBy",
+    "MinBy",
+    "Rand",
+    "TableSample",
+    "Uuid",
+}
+
+_VALUE_NONDETERMINISTIC_NAMES = {
+    "ANY_VALUE",
+    "APPROX_COUNT_DISTINCT",
+    "APPROX_QUANTILES",
+    "CURRENT_DATE",
+    "CURRENT_DATETIME",
+    "CURRENT_TIME",
+    "CURRENT_TIMESTAMP",
+    "GENERATE_UUID",
+    "RAND",
+    "SESSION_USER",
+}
+
+
+def _parse_single_query(sql: str) -> exp.Expression:
+    statements = sqlglot.parse(sql, read="bigquery")
+    statements = [statement for statement in statements if statement is not None]
+    if len(statements) != 1:
+        raise ValueError(f"expected exactly one SQL statement, found {len(statements)}")
+    statement = statements[0]
+    if not isinstance(statement, (exp.Select, exp.Union)):
+        raise ValueError(
+            f"only SELECT/UNION query statements are supported, got {type(statement).__name__}"
+        )
+    return statement
+
+
+def _cte_alias(cte: exp.CTE) -> str | None:
+    alias = cte.args.get("alias")
+    if alias is None:
+        return None
+    return getattr(alias, "name", None) or getattr(alias, "this", None)
+
+
+def _root_with(query: exp.Expression) -> exp.With | None:
+    return _with_clause(query)
+
+
+def _canonicalize_cte_names(query: exp.Expression) -> None:
+    """Alpha-rename root CTEs while preserving physical table references."""
+
+    with_clause = _root_with(query)
+    if not with_clause:
+        return
+    if any(
+        isinstance(node, exp.With) and node is not with_clause
+        for node in query.walk()
+    ):
+        raise ValueError("nested WITH scopes are not canonicalized conservatively")
+
+    _canonicalize_cte_order(query, with_clause)
+
+    mapping: dict[str, str] = {}
+    for index, cte in enumerate(with_clause.expressions, start=1):
+        old = _cte_alias(cte)
+        if old:
+            mapping[old] = f"__canonical_cte_{index:03d}"
+
+    for cte in with_clause.expressions:
+        old = _cte_alias(cte)
+        if old in mapping:
+            alias = cte.args.get("alias")
+            alias.set("this", exp.to_identifier(mapping[old]))
+
+    for table in query.find_all(exp.Table):
+        old = table.name
+        # A one-part table reference can be a CTE reference. Qualified tables
+        # are physical objects and must never be renamed by this pass.
+        if old in mapping and is_cte_reference_candidate(table):
+            # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable
+            # name so column qualifiers still match after renaming.
+            if not table.alias:
+                table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
+            table.set("this", exp.to_identifier(mapping[old]))
+
+
+def _canonicalize_cte_order(query: exp.Expression, with_clause: exp.With) -> None:
+    """Order root CTEs by first use, dependencies first.
+
+    Non-recursive CTE order has no meaning beyond "defined before use", so two
+    queries that differ only in CTE order (for example, after a rule moves a
+    lifted CTE) should normalize identically. The pass refuses to reorder when
+    references are ambiguous: recursive WITH, duplicate names, references that
+    differ from a CTE name only in case, or references to a CTE that is not
+    defined earlier (those could resolve to a physical table).
+    """
+
+    if with_clause.args.get("recursive"):
+        return
+    ctes = list(with_clause.expressions)
+    names = [_cte_alias(cte) for cte in ctes]
+    if any(name is None for name in names):
+        return
+    if len({name.lower() for name in names}) != len(names):
+        return
+    position = {name: index for index, name in enumerate(names)}
+    lowered = {name.lower() for name in names}
+
+    references: dict[int | None, list[str]] = {None: []}
+    references.update({index: [] for index in range(len(ctes))})
+    for table in query.find_all(exp.Table):
+        if not is_cte_reference_candidate(table) or table.name.lower() not in lowered:
+            continue
+        if table.name not in position:
+            return
+        owner = nearest_root_cte(table, ctes)
+        owner_index = None
+        if owner is not None:
+            owner_index = next(i for i, cte in enumerate(ctes) if cte is owner)
+            if position[table.name] >= owner_index:
+                return
+        references[owner_index].append(table.name)
+
+    ordered: list[int] = []
+    seen: set[int] = set()
+
+    def visit(index: int) -> None:
+        if index in seen:
+            return
+        seen.add(index)
+        for name in references[index]:
+            visit(position[name])
+        ordered.append(index)
+
+    for name in references[None]:
+        visit(position[name])
+    for index in range(len(ctes)):
+        visit(index)
+    with_clause.set("expressions", [ctes[index] for index in ordered])
+
+
+def _merge_duplicate_ctes(query: exp.Expression) -> bool:
+    """Merge root CTEs with identical bodies and drop unreferenced CTEs.
+
+    Runs after ``_canonicalize_cte_names``, so every CTE reference in a body
+    already uses a canonical name and two bodies with the same text read the
+    same relations. A non-recursive BigQuery CTE is evaluated per reference,
+    so two deterministic CTEs with the same body produce the same rows, and a
+    CTE nobody references cannot affect the result. Nondeterministic queries
+    are refused later, so merging never hides a RAND() difference.
+
+    Returns whether anything changed, so the caller can re-canonicalize.
+    """
+
+    clause = _root_with(query)
+    if not clause or clause.args.get("recursive"):
+        return False
+    ctes = list(clause.expressions)
+    names = [_cte_alias(cte) for cte in ctes]
+    if any(name is None or not name.startswith("__canonical_cte_") for name in names):
+        return False
+
+    changed = False
+    while True:
+        tables = [
+            table
+            for table in query.find_all(exp.Table)
+            if is_cte_reference_candidate(table)
+        ]
+        by_body: dict[str, exp.CTE] = {}
+        merged = False
+        for cte in list(clause.expressions):
+            body = _canonical_sql(cte.this)
+            first = by_body.get(body)
+            if first is None:
+                by_body[body] = cte
+                continue
+            old, new = _cte_alias(cte), _cte_alias(first)
+            for table in tables:
+                if table.name == old:
+                    table.set("this", exp.to_identifier(new))
+            cte.pop()
+            merged = changed = True
+            break
+        if merged:
+            continue
+
+        referenced = {table.name for table in tables}
+        unused = [cte for cte in clause.expressions if _cte_alias(cte) not in referenced]
+        if not unused:
+            break
+        for cte in unused:
+            cte.pop()
+        changed = True
+
+    if not clause.expressions:
+        set_with_clause(query, None)
+    return changed
+
+
+def _cte_references_are_unambiguous(query: exp.Expression) -> bool:
+    """Whether every root CTE reference resolves exactly and in order.
+
+    CTE merging and unused-CTE removal depend on knowing every reference. A
+    reference that differs from a CTE name only in case, or names a CTE that
+    is defined later (so it may be a physical table), makes that unsafe.
+    """
+
+    clause = _root_with(query)
+    if not clause:
+        return True
+    ctes = list(clause.expressions)
+    names = [_cte_alias(cte) for cte in ctes]
+    if any(name is None for name in names):
+        return False
+    if len({name.lower() for name in names}) != len(names):
+        return False
+    position = {name: index for index, name in enumerate(names)}
+    lowered = {name.lower() for name in names}
+    for table in query.find_all(exp.Table):
+        if not is_cte_reference_candidate(table) or table.name.lower() not in lowered:
+            continue
+        if table.name not in position:
+            return False
+        owner = nearest_root_cte(table, ctes)
+        if owner is not None:
+            owner_index = next(i for i, cte in enumerate(ctes) if cte is owner)
+            if position[table.name] >= owner_index:
+                return False
+    return True
+
+
+def _paren_is_semantic(paren: exp.Paren) -> bool:
+    """Parentheses that carry meaning beyond grouping.
+
+    BigQuery derives an output column name from an unaliased projection, so
+    ``SELECT (a)`` is kept as written. Parentheses around a query are part of
+    the query syntax, not an expression grouping.
+    """
+
+    if isinstance(paren.this, (exp.Query, exp.Subquery)):
+        return True
+    parent = paren.parent
+    # ``(a).b`` reads field b of a; ``a.b`` reads column b of table a.
+    if isinstance(parent, (exp.Dot, exp.Bracket)):
+        return True
+    return isinstance(parent, (exp.Select, exp.Union)) and paren.arg_key == "expressions"
+
+
+def _strip_grouping_parens(query: exp.Expression) -> None:
+    """Remove expression-grouping parentheses; the AST already encodes grouping."""
+
+    for paren in list(query.find_all(exp.Paren)):
+        if paren.parent is None and paren is not query:
+            continue  # already detached by an enclosing replacement
+        if _paren_is_semantic(paren):
+            continue
+        paren.replace(paren.this)
+
+
+def _flatten_connectors(query: exp.Expression) -> None:
+    """Rebuild AND/OR chains left-deep so associativity does not matter.
+
+    AND and OR are associative in BigQuery's three-valued logic, and BigQuery
+    does not promise an evaluation order, so ``a AND (b AND c)`` and
+    ``(a AND b) AND c`` are the same predicate.
+    """
+
+    for kind in (exp.And, exp.Or):
+        for node in list(query.find_all(kind)):
+            if node.parent is None and node is not query:
+                continue
+            if isinstance(node.parent, kind):
+                continue  # rebuilt as part of the enclosing chain
+            operands = list(node.flatten())
+            if len(operands) <= 2:
+                continue
+            rebuilt = operands[0]
+            for operand in operands[1:]:
+                rebuilt = kind(this=rebuilt, expression=operand)
+            node.replace(rebuilt)
+
+
+_INT64_MAX = 2**63 - 1
+
+
+def _literal_compare(node, left, right) -> bool | None:
+    """Compare two numeric literals the way BigQuery would, when certain.
+
+    Two INT64 literals compare exactly. Any other pair (a FLOAT64 or NUMERIC
+    literal) is only decided when the texts are identical, because BigQuery
+    may coerce INT64 to FLOAT64 and lose precision.
+    """
+
+    if not (
+        isinstance(left, exp.Literal)
+        and isinstance(right, exp.Literal)
+        and not left.is_string
+        and not right.is_string
+    ):
+        return None
+    texts = (left.this, right.this)
+    if all(re.fullmatch(r"[0-9]+", text) for text in texts):
+        a, b = (int(text) for text in texts)
+        if max(a, b) > _INT64_MAX:
+            return None
+    elif texts[0] == texts[1]:
+        a = b = 0
+    else:
+        return None
+    return {
+        exp.EQ: a == b,
+        exp.NEQ: a != b,
+        exp.GT: a > b,
+        exp.GTE: a >= b,
+        exp.LT: a < b,
+        exp.LTE: a <= b,
+    }[type(node)]
+
+
+def _constant_truth(node: exp.Expression) -> bool | None:
+    """The truth value of a predicate made only of literals, if known."""
+
+    if isinstance(node, exp.Boolean):
+        return bool(node.this)
+    if isinstance(node, exp.Not):
+        inner = _constant_truth(node.this)
+        return None if inner is None else not inner
+    if not isinstance(node, (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)):
+        return None
+    left, right = node.this, node.expression
+    folded = _literal_compare(node, left, right)
+    if folded is not None:
+        return folded
+    # Strings: only identical text without escapes is known to be equal.
+    if (
+        isinstance(node, (exp.EQ, exp.NEQ))
+        and isinstance(left, exp.Literal)
+        and isinstance(right, exp.Literal)
+        and left.is_string
+        and right.is_string
+        and left.this == right.this
+        and "\\" not in left.this
+    ):
+        return isinstance(node, exp.EQ)
+    return None
+
+
+def _normalize_predicate(node: exp.Expression) -> exp.Expression:
+    """Apply three-valued-logic identities to a predicate tree.
+
+    Only identities that hold for TRUE, FALSE and NULL are used:
+    ``p AND TRUE = p`` and ``p OR FALSE = p``. Literal-only comparisons are
+    evaluated. Annihilators such as ``p AND FALSE`` are deliberately not used,
+    because they discard ``p`` (and any error it would raise). The walk stays
+    in boolean context: it descends only through AND, OR and NOT.
+    """
+
+    if isinstance(node, (exp.And, exp.Or)):
+        identity = isinstance(node, exp.And)
+        left = _normalize_predicate(node.this)
+        right = _normalize_predicate(node.expression)
+        if _constant_truth(left) is identity:
+            return right
+        if _constant_truth(right) is identity:
+            return left
+        node.set("this", left)
+        node.set("expression", right)
+        return node
+    if isinstance(node, exp.Not):
+        node.set("this", _normalize_predicate(node.this))
+    truth = _constant_truth(node)
+    if truth is not None:
+        return exp.Boolean(this=truth)
+    return node
+
+
+def _normalize_predicates(query: exp.Expression) -> None:
+    """Normalize WHERE, HAVING, QUALIFY and JOIN ... ON conditions.
+
+    ``WHERE TRUE`` and ``QUALIFY TRUE`` filter nothing and are dropped.
+    ``HAVING TRUE`` is dropped only when there is a GROUP BY, because a HAVING
+    clause can otherwise turn the query into an aggregate.
+    """
+
+    for clause_type in (exp.Where, exp.Having, exp.Qualify):
+        for clause in list(query.find_all(clause_type)):
+            clause.set("this", _normalize_predicate(clause.this))
+            if _constant_truth(clause.this) is not True:
+                continue
+            owner = clause.parent
+            if clause_type is exp.Having and not (
+                owner is not None and owner.args.get("group")
+            ):
+                continue
+            clause.pop()
+    for join in list(query.find_all(exp.Join)):
+        on = join.args.get("on")
+        if on is not None:
+            join.set("on", _normalize_predicate(on))
+
+
+_OPERATOR_TYPES = (exp.Binary, exp.Unary, exp.Between, exp.In)
+
+
+def _parenthesize_operators(query: exp.Expression) -> exp.Expression:
+    """Return a copy with every operator expression in parentheses.
+
+    Grouping parentheses were stripped during normalization, so the rendered
+    text alone could make ``(a OR b) AND c`` and ``a OR (b AND c)`` look the
+    same. Fully parenthesizing operator operands makes the rendering encode
+    the tree unambiguously before it is fingerprinted.
+    """
+
+    copy = query.copy()
+    for node in list(copy.walk()):
+        if not isinstance(node, _OPERATOR_TYPES) or isinstance(node, exp.Paren):
+            continue
+        # Wrap every operator, not just operator operands: some non-operator
+        # nodes (INTERVAL, ORDER BY items) also render a child inline.
+        if node.parent is not None and not isinstance(node.parent, exp.Paren):
+            wrapper = exp.Paren()
+            node.replace(wrapper)
+            wrapper.set("this", node)
+    return copy
+
+
+def _remove_comments(query: exp.Expression) -> None:
+    for node in query.walk():
+        if node.args.get("comments") is not None:
+            node.set("comments", None)
+
+
+def _remove_unordered_result_order(query: exp.Expression) -> None:
+    """Ignore root result ordering when it cannot affect row membership."""
+
+    if query.args.get("limit") is None and query.args.get("offset") is None:
+        query.set("order", None)
+
+
+def _nondeterminism_reasons(query: exp.Expression) -> list[str]:
+    reasons: list[str] = []
+    for name in sorted(ambiguous_unnest_names(query)):
+        reasons.append(f"ambiguous relation reference: UNNEST({name}) may be a misparsed join")
+    for node in query.walk():
+        node_type = type(node).__name__
+        if node_type in _VALUE_NONDETERMINISTIC_TYPES:
+            reasons.append(f"value nondeterminism: {node.sql(dialect='bigquery')}")
+            continue
+        if node_type in {"ArgMax", "ArgMin"}:
+            reasons.append(f"tie-sensitive aggregate: {node.sql(dialect='bigquery')}")
+            continue
+        if isinstance(node, exp.Window):
+            reasons.append(f"window function not proven tie-stable: {node.sql(dialect='bigquery')}")
+            continue
+        if isinstance(node, exp.Anonymous):
+            name = (node.name or "").upper()
+            if name in _VALUE_NONDETERMINISTIC_NAMES or name.startswith("APPROX_"):
+                reasons.append(f"value nondeterminism: {node.sql(dialect='bigquery')}")
+    return list(dict.fromkeys(reasons))
+
+
+def _has_row_selection_nondeterminism(query: exp.Expression) -> bool:
+    # Without a provably unique ORDER BY key, LIMIT/OFFSET can select a
+    # different subset on separate executions. Proving key uniqueness requires
+    # schema and constraint metadata, which this offline tool intentionally does
+    # not assume.
+    return any(
+        type(node).__name__ in {"Limit", "Offset"}
+        for node in query.walk()
+    )
+
+
+def _canonical_sql(query: exp.Expression) -> str:
+    return _parenthesize_operators(query).sql(
+        dialect="bigquery",
+        pretty=False,
+        normalize_functions="upper",
+        identify=False,
+    )
+
+
+def _fingerprint(sql: str) -> str:
+    return hashlib.sha256(sql.encode("utf-8")).hexdigest()
+
+
+def build_bag_verifier_sql(left_sql: str, right_sql: str) -> str:
+    """Build BigQuery SQL that compares two query outputs as multisets.
+
+    The generated SQL is an execution artifact, not a static proof. It counts
+    each JSON-encoded result row on both sides and compares multiplicities, so
+    output ordering does not affect the result. Callers must still reject
+    value-level nondeterminism before treating a result as a proof.
+    """
+
+    left = left_sql.strip().rstrip(";").strip()
+    right = right_sql.strip().rstrip(";").strip()
+    return f"""WITH
+left_counts AS (
+  SELECT
+    TO_JSON_STRING(left_row) AS row_signature,
+    COUNT(*) AS row_count
+  FROM (
+    {left}
+  ) AS left_row
+  GROUP BY row_signature
+),
+right_counts AS (
+  SELECT
+    TO_JSON_STRING(right_row) AS row_signature,
+    COUNT(*) AS row_count
+  FROM (
+    {right}
+  ) AS right_row
+  GROUP BY row_signature
+),
+joined_counts AS (
+  SELECT
+    COALESCE(left_counts.row_signature, right_counts.row_signature) AS row_signature,
+    COALESCE(left_counts.row_count, 0) AS left_count,
+    COALESCE(right_counts.row_count, 0) AS right_count
+  FROM left_counts
+  FULL OUTER JOIN right_counts
+    USING (row_signature)
+)
+SELECT COUNTIF(left_count != right_count) = 0 AS equivalent
+FROM joined_counts"""
+
+
+def _prepare_query(sql: str, *, ignore_row_order: bool) -> tuple[exp.Expression, str, tuple[str, ...]]:
+    # Require strict parsing before invoking the lifting transformer. Recovery
+    # mode is useful for formatting, but a proof must not be based on a
+    # partially recovered AST.
+    _parse_single_query(sql)
+    lifted = lift_subqueries(sql)
+    if lifted.diagnostics:
+        details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)
+        raise ValueError(f"query could not be normalized without diagnostics: {details}")
+    query = _parse_single_query(lifted.sql)
+    if ignore_row_order:
+        _remove_unordered_result_order(query)
+    _strip_grouping_parens(query)
+    _flatten_connectors(query)
+    _normalize_predicates(query)
+    unambiguous = _cte_references_are_unambiguous(query)
+    _canonicalize_cte_names(query)
+    if unambiguous and _merge_duplicate_ctes(query):
+        _canonicalize_cte_names(query)
+    _remove_comments(query)
+    canonical = _canonical_sql(query)
+    return query, canonical, tuple(_nondeterminism_reasons(query))
+
+
+def prove_equivalent(
+    left_sql: str,
+    right_sql: str,
+    *,
+    ignore_row_order: bool = True,
+) -> EquivalenceResult:
+    """Prove a conservative subset of BigQuery query equivalences.
+
+    A positive result means the normalized ASTs are identical, all supported
+    nondeterminism checks are clear, and (by default) only bag semantics are
+    being compared. All other cases return ``NOT_PROVEN``; they are not called
+    inequivalent because a structural mismatch alone is not a counterexample.
+    """
+
+    verifier_sql: str | None = None
+    try:
+        left_query, left_canonical, left_nondeterminism = _prepare_query(
+            left_sql, ignore_row_order=ignore_row_order
+        )
+        right_query, right_canonical, right_nondeterminism = _prepare_query(
+            right_sql, ignore_row_order=ignore_row_order
+        )
+        verifier_sql = build_bag_verifier_sql(left_sql, right_sql)
+    except Exception as exc:
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="input could not be normalized conservatively",
+            diagnostics=(str(exc),),
+        )
+
+    diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))
+    if diagnostics:
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="nondeterministic value or window behavior was not proven stable",
+            left_fingerprint=_fingerprint(left_canonical),
+            right_fingerprint=_fingerprint(right_canonical),
+            normalized_left=left_canonical,
+            normalized_right=right_canonical,
+            verifier_sql=verifier_sql,
+            diagnostics=diagnostics,
+        )
+
+    if _has_row_selection_nondeterminism(left_query) or _has_row_selection_nondeterminism(right_query):
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="LIMIT/OFFSET can select different rows without schema constraints",
+            left_fingerprint=_fingerprint(left_canonical),
+            right_fingerprint=_fingerprint(right_canonical),
+            normalized_left=left_canonical,
+            normalized_right=right_canonical,
+            verifier_sql=verifier_sql,
+            diagnostics=("row-selection nondeterminism",),
+        )
+
+    left_fingerprint = _fingerprint(left_canonical)
+    right_fingerprint = _fingerprint(right_canonical)
+    if left_fingerprint != right_fingerprint:
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="normalized query structures differ",
+            left_fingerprint=left_fingerprint,
+            right_fingerprint=right_fingerprint,
+            normalized_left=left_canonical,
+            normalized_right=right_canonical,
+            verifier_sql=verifier_sql,
+        )
+
+    if not ignore_row_order:
+        if left_query.args.get("order") is None or right_query.args.get("order") is None:
+            return EquivalenceResult(
+                status=EquivalenceStatus.NOT_PROVEN,
+                reason="exact sequence comparison requires explicit ordering on both queries",
+                left_fingerprint=left_fingerprint,
+                right_fingerprint=right_fingerprint,
+                normalized_left=left_canonical,
+                normalized_right=right_canonical,
+                verifier_sql=verifier_sql,
+            )
+
+    return EquivalenceResult(
+        status=EquivalenceStatus.PROVEN_EQUIVALENT,
+        reason="canonical query structures match under the selected result-order semantics",
+        left_fingerprint=left_fingerprint,
+        right_fingerprint=right_fingerprint,
+        normalized_left=left_canonical,
+        normalized_right=right_canonical,
+        verifier_sql=verifier_sql,
+    )

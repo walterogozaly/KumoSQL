@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+
+# Local copies of large/private workbook fixtures.
+data/
+*.csv
+!tests/fixtures/
+!tests/fixtures/*.csv
+*.parquet
