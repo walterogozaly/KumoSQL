@@ -1,0 +1,49 @@
+[project]
+name = "bigquery-sql-tools"
+version = "0.1.0"
+description = "Deterministic, test-verified transformations for BigQuery SQL"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlglot>=26.0",
+]
+
+[project.optional-dependencies]
+execution = [
+    "duckdb>=1.0",
+]
+dev = [
+    "pytest>=8.0",
+    "duckdb>=1.0",
+]
+bigquery = [
+    "google-auth>=2.0",
+    "requests>=2.0",
+]
+smt = [
+    "z3-solver>=4.12",
+]
+
+[project.scripts]
+lift-subqueries = "bq_sql_tools.cli:main"
+prove-sql-equivalent = "bq_sql_tools.cli:prove_main"
+rewrite-sql = "bq_sql_tools.cli:rewrite_main"
+bq-pipeline-report = "bq_sql_tools.cli:pipeline_main"
+bq-dry-run = "bq_sql_tools.cli:dry_run_main"
+prove-sql-smt = "bq_sql_tools.smt_equivalence:main"
+bq-compare-outputs = "bq_sql_tools.cli:compare_outputs_main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "slow: scans the full external workbook CSV fixture",
+]
+addopts = "-m 'not slow'"
