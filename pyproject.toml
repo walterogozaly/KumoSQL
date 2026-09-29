@@ -42,7 +42,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kumosql = ["static/*.html", "static/*.css", "static/*.js"]
+kumosql = ["static/*.html", "static/*.css", "static/*.js", "static/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

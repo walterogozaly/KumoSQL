@@ -52,6 +52,6 @@ The command starts a local server at `http://127.0.0.1:8765/` and opens it in yo
 & "$env:LOCALAPPDATA\kumosql\Scripts\kumosql-ui.exe"
 ```
 
-Paste BigQuery SQL or Dataform SQLX into **Original SQL**, choose the transformations to apply, and inspect **Proposed SQL** and the verification report. Transformations run in the order shown. The editor updates after you type or change a selection; you can also use **Transform SQL** or Ctrl+Enter. Use **Copy SQL** to copy the result. Review any verification warning before using the proposed SQL.
+Paste BigQuery SQL or Dataform SQLX into **Original SQL** (or use **Open**, or drop a file onto the editor), turn on transformations in the **Pipeline** sidebar, and inspect **Proposed SQL** and the verification report. Transformations run top to bottom; drag them or use the arrows to reorder. The result updates after you pause typing or change the pipeline; turn off **Transform as I type** to run only with **Transform SQL** or Ctrl+Enter. The **Diff** tab shows which lines changed, ignoring indentation. Use **Copy** or the download button to take the result, or the undo-arrow button to make it the new input. **Examples** loads a sample for each transformation. Review any verification warning before using the proposed SQL.
 
 The UI listens only on your computer (`127.0.0.1`) and processes SQL locally; it does not contact BigQuery. Stop the server with Ctrl+C. To suppress automatic browser opening, run `kumosql-ui --no-browser`; to use a different port, run `kumosql-ui --port 8766` and open `http://127.0.0.1:8766/`.
