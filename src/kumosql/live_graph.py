@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 from typing import Iterable
+import os
+import shutil
 import tempfile
 import threading
 
@@ -77,7 +79,12 @@ def load_files(files: object, label: str) -> Pipeline:
     if not isinstance(label, str) or not label.strip():
         label = "uploaded project"
     total = 0
-    with tempfile.TemporaryDirectory(prefix="kumosql-project-") as directory:
+    created = tempfile.mkdtemp(prefix="kumosql-project-")
+    directory = created
+    if os.name == "nt":
+        # Extended-length prefix: repository paths can exceed Windows' 260-character limit.
+        directory = "\\\\?\\" + str(Path(created).resolve())
+    try:
         for path, text in files.items():
             relative = _safe_path(path)
             if not isinstance(text, str):
@@ -93,6 +100,8 @@ def load_files(files: object, label: str) -> Pipeline:
             pipeline.completeness()  # analyse now: the folder is deleted on exit
         except Exception as exc:  # loader errors are user-facing
             raise ProjectError(str(exc) or "project could not be loaded") from exc
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
     set_project(pipeline, label.strip()[:200])
     return pipeline
 
