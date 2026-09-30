@@ -118,6 +118,16 @@ def test_load_into_graph(remote):
     live_graph.clear_project()
 
 
+def commit_without_tree(work: Path, files: dict, message: str):
+    """Commit through the index only, so the test works where the path is too long to check out."""
+    for name, text in files.items():
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=work, input=text.encode(),
+                              capture_output=True, check=True).stdout.decode().strip()
+        run("update-index", "--add", "--cacheinfo", f"100644,{blob},{name}", cwd=work)
+    run("commit", "-m", message, cwd=work)
+    run("push", "origin", "HEAD", cwd=work)
+
+
 def test_very_long_paths_load_without_a_working_tree(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
     bare, work = tmp_path / "r.git", tmp_path / "w"
@@ -126,20 +136,29 @@ def test_very_long_paths_load_without_a_working_tree(tmp_path, monkeypatch):
     run("checkout", "-b", "main", cwd=work)
     deep = "definitions/" + "/".join(["very_long_directory_name_" + "x" * 40] * 5) + "/" + "m" * 120 + ".sqlx"
     assert len(deep) > 300
-    commit(work, {"workflow_settings.yaml": FILES["workflow_settings.yaml"], deep: "SELECT 1 AS id"}, "long")
+    commit_without_tree(work, {"workflow_settings.yaml": FILES["workflow_settings.yaml"], deep: "SELECT 1 AS id"}, "long")
     fetched = git_repo.fetch_project(str(bare))
     assert deep in fetched["files"]
     cached = next((tmp_path / "cache").iterdir())
     assert not (cached / "definitions").exists()  # nothing was checked out
+    # The temporary folder the graph loader writes is cleaned up even for long paths.
+    assert git_repo.load_into_graph(str(bare))["loaded"]
+    live_graph.clear_project()
 
 
-def test_non_ascii_paths_and_symlinks(tmp_path, monkeypatch):
+def test_symlinks_and_non_ascii_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
     bare, work = tmp_path / "r.git", tmp_path / "w"
     run("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
     run("clone", str(bare), str(work), cwd=tmp_path)
     run("checkout", "-b", "main", cwd=work)
-    (work / "definitions").mkdir()
-    (work / "definitions" / "link.sqlx").symlink_to("/etc/passwd")
-    commit(work, {"definitions/café.sqlx": "SELECT 1 AS id"}, "x")
-    assert set(git_repo.fetch_project(str(bare))["files"]) == {"definitions/café.sqlx"}
+    link = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=work, input=b"/etc/passwd",
+                          capture_output=True, check=True).stdout.decode().strip()
+    run("update-index", "--add", "--cacheinfo", f"120000,{link},definitions/link.sqlx", cwd=work)
+    commit_without_tree(work, {"definitions/caf\u00e9.sqlx": "SELECT 1 AS id"}, "x")
+    assert set(git_repo.fetch_project(str(bare))["files"]) == {"definitions/caf\u00e9.sqlx"}
+
+
+@pytest.mark.parametrize("value", ["C:\\repos\\r.git", "c:/repos/r.git", "\\\\server\\share\\r.git"])
+def test_windows_paths_are_accepted(value):
+    assert git_repo.parse_remote(value) == value

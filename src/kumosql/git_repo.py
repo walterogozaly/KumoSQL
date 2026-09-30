@@ -23,7 +23,7 @@ from .state import data_dir
 
 _TIMEOUT_SECONDS = 180
 _ALLOWED_PROTOCOLS = "https:http:ssh:git:file"
-_REMOTE = re.compile(r"^(?:https?://|ssh://|git://|file://|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:|/)")
+_REMOTE = re.compile(r"^(?:https?://|ssh://|git://|file://|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:|/|[A-Za-z]:[\\/]|\\\\)")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _CONFIG_FILES = ("workflow_settings.yaml", "workflow_settings.yml", "dataform.json")
 _SUFFIXES = (".sqlx", ".sql")
