@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import os
 import tempfile
 import threading
@@ -20,6 +21,10 @@ _API = "https://bigquery.googleapis.com/bigquery/v2"
 
 class CatalogError(RuntimeError):
     """A BigQuery catalog request failed with a user-facing message."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 # Catalog listings and schemas are metadata calls: free, but each is a network
@@ -134,7 +139,7 @@ def _get(path: str, params: dict[str, str] | None = None) -> dict:
             payload = {}
         error = payload.get("error", {})
         message = error.get("message") or f"BigQuery returned HTTP {exc.code}"
-        raise CatalogError(message) from exc
+        raise CatalogError(message, exc.code) from exc
     except URLError as exc:
         raise CatalogError(f"Could not connect to BigQuery: {exc.reason}") from exc
 
@@ -151,15 +156,38 @@ def _list(path: str, key: str, params: dict[str, str] | None = None) -> list[dic
         query["pageToken"] = token
 
 
+def _can_browse(project: str) -> bool:
+    """Whether the credentials may list datasets in ``project``.
+
+    Only a definite denial (403 or 404, which includes BigQuery being disabled
+    there) hides a project; a network or server error keeps it.
+    """
+    try:
+        _get(f"projects/{quote(project, safe='')}/datasets", {"maxResults": "1", "all": "true"})
+    except CatalogError as exc:
+        return exc.status not in (403, 404)
+    return True
+
+
 def list_projects() -> list[dict[str, str]]:
-    """List projects visible to the active Google credentials."""
-    return [
+    """List projects the active Google credentials can actually browse.
+
+    ``projects.list`` also returns projects the identity holds some unrelated
+    role on, so each is probed with a one-row dataset listing and dropped if
+    BigQuery denies it.
+    """
+    projects = [
         {
             "id": item.get("id", ""),
             "name": item.get("friendlyName") or item.get("name") or item.get("id", ""),
         }
         for item in _list("projects", "projects")
     ]
+    if not projects:
+        return projects
+    with ThreadPoolExecutor(max_workers=min(8, len(projects))) as pool:
+        allowed = list(pool.map(lambda item: _can_browse(item["id"]), projects))
+    return [item for item, ok in zip(projects, allowed) if ok]
 
 
 def list_datasets(project: str) -> list[dict[str, str]]:

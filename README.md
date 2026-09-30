@@ -29,7 +29,7 @@ python -m pip install '.[bigquery]'
 gcloud auth application-default login
 ```
 
-The browser uses the active ADC identity and read-only BigQuery scope. It lists projects that identity can see; BigQuery permissions still control which datasets, tables, and schemas appear. `gcloud auth login` alone does not configure Application Default Credentials.
+The browser uses the active ADC identity and read-only BigQuery scope. It lists only projects that identity can browse: each project from BigQuery's project list is probed with a one-row dataset listing and hidden if BigQuery denies it (projects where you hold only an unrelated role, or where BigQuery is disabled, do not appear). The probe is a free metadata call and the result is cached like the rest of the catalog; BigQuery permissions still control which datasets, tables, and schemas appear. `gcloud auth login` alone does not configure Application Default Credentials.
 
 **Saved state.** UI preferences (theme, enabled rules and their order), named SQLFluff formatting configurations, and scopes are saved by the local server in one JSON file in the standard per-user data directory (`%APPDATA%\kumosql\state.json` on Windows, `~/Library/Application Support/kumosql/state.json` on macOS, `$XDG_DATA_HOME/kumosql/state.json` or `~/.local/share/kumosql/state.json` on Linux). Set `KUMOSQL_HOME` to use another directory. The CLI and Python API read the same file, so a scope saved in the UI works with `--scope`.
 

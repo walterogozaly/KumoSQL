@@ -270,7 +270,7 @@ class UIHandler(BaseHTTPRequestHandler):
         try:
             if route == "/api/catalog/projects":
                 result = bigquery_catalog.cached(
-                    "projects", bigquery_catalog.list_projects, refresh)
+                    "projects\x1fbrowsable", bigquery_catalog.list_projects, refresh)
             elif route == "/api/catalog/datasets":
                 project = _required(query, "project")
                 result = bigquery_catalog.cached(
