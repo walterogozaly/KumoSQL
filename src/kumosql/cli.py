@@ -14,7 +14,7 @@ from .sqlx import looks_like_sqlx
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
 from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
-from .coverage import sample_impact_reports, score_verdicts
+from .coverage import Thresholds, sample_impact_reports, score_verdicts
 from .pipeline import load_compiled_graph, load_sqlx_project
 from .resilience import PipelineLoadError, parse_json_or_raise
 
@@ -245,6 +245,22 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         type=float,
         help="Exit 3 if assets analyzed or statements matched fall below this ratio (0-1), or analysis is incomplete",
     )
+    for flag, what in (
+        ("min-columns-traced", "output columns traced"),
+        ("min-accuracy", "sampled impact accuracy"),
+        ("min-precision", "sampled precision"),
+        ("min-recall", "sampled recall"),
+    ):
+        parser.add_argument(f"--{flag}", type=float, help=f"Release gate: minimum ratio (0-1) of {what}; exit 3 below it")
+    parser.add_argument("--min-sample-size", type=int, help="Release gate: minimum number of reviewed impact reports")
+    parser.add_argument(
+        "--require-complete", action="store_true", help="Release gate: fail while any blocking gap exists"
+    )
+    parser.add_argument(
+        "--thresholds",
+        type=Path,
+        help='JSON of release thresholds, e.g. {"min_columns_traced": 0.95, "require_complete": true}; flags override it',
+    )
     parser.add_argument("-o", "--output", type=Path, help="Write the JSON report here; stdout if omitted")
     args = parser.parse_args(argv)
     if args.assess and not args.target:
@@ -283,8 +299,11 @@ def pipeline_main(argv: list[str] | None = None) -> int:
             score_verdicts(verdicts)
         except (OSError, ValueError, AttributeError, TypeError) as exc:
             parser.error(f"unreadable verdicts file: {exc}")
+    thresholds = _cli_thresholds(parser, args)
     try:
-        data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope, verdicts=verdicts)
+        data = pipeline.report(
+            min_nodes=args.min_nodes, similarity=args.similarity, scope=scope, verdicts=verdicts, thresholds=thresholds
+        )
     except ValueError as exc:
         parser.error(str(exc))
     if args.sample_impact is not None:
@@ -309,13 +328,44 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         args.output.write_text(report + "\n", encoding="utf-8")
     else:
         print(report)
-    coverage = data.get("coverage")
-    if args.min_coverage is not None:
-        ratios = [coverage and coverage.get("assets_analyzed_ratio"), coverage and coverage.get("statements_matched_ratio")]
-        if not coverage or not coverage["complete"] or any(r is not None and r < args.min_coverage for r in ratios):
-            print("error: graph coverage is below the requested gate", file=sys.stderr)
+    if thresholds is not None:
+        gate = (data.get("coverage") or {}).get("gate")
+        if gate is None or not gate["passed"]:
+            failed = ", ".join(gate["failed"]) if gate else "coverage could not be computed"
+            print(f"error: release gate failed ({failed})", file=sys.stderr)
             return 3
     return 0
+
+
+def _cli_thresholds(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Thresholds | None:
+    """Thresholds from ``--thresholds`` and the gate flags; ``None`` when no gate was asked for.
+
+    ``--min-coverage R`` is shorthand for minimum assets analyzed and
+    statements matched of R, plus a complete analysis.
+    """
+
+    values: dict = {}
+    if args.thresholds:
+        try:
+            loaded = Thresholds.from_json(json.loads(args.thresholds.read_text(encoding="utf-8")))
+        except (OSError, ValueError) as exc:
+            parser.error(f"unreadable thresholds file: {exc}")
+        values = {k: v for k, v in loaded.to_json().items() if v is not None and v is not False}
+    if args.min_coverage is not None:
+        values.update(
+            min_assets_analyzed=args.min_coverage, min_statements_matched=args.min_coverage, require_complete=True
+        )
+    for flag in ("min_columns_traced", "min_accuracy", "min_precision", "min_recall", "min_sample_size"):
+        if getattr(args, flag) is not None:
+            values[flag] = getattr(args, flag)
+    if args.require_complete:
+        values["require_complete"] = True
+    if not values:
+        return None
+    try:
+        return Thresholds.from_json(values)
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 def scopes_main(argv: list[str] | None = None) -> int:

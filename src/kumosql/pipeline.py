@@ -54,6 +54,7 @@ from .sqlx import (
 )
 
 if TYPE_CHECKING:
+    from .coverage import Thresholds
     from .scopes import Scope as SavedScope
     from .near_duplicates import NearDuplicateCluster
 
@@ -470,6 +471,7 @@ class Pipeline:
         observed_scope: "SavedScope | None" = None,
         verdicts: "Mapping[str, Mapping[str, int]] | None" = None,
         window: "Mapping[str, str | None] | None" = None,
+        thresholds: "Thresholds | None" = None,
     ) -> dict:
         """A JSON-serialisable summary of the whole-pipeline analysis.
 
@@ -478,7 +480,9 @@ class Pipeline:
         field raises ``ValueError``); project-level diagnostics are kept; a
         duplicate group is kept if any of its occurrences is in scope. Optional
         ``observed_reads`` are canonical job-history records; ``observed_scope``
-        filters them before graph aggregation.
+        filters them before graph aggregation. ``coverage`` is computed within
+        the scope (``coverage["scoped"]``); ``thresholds`` adds a pass/fail
+        ``coverage["gate"]``.
         """
 
         report = self._full_report(min_nodes=min_nodes, similarity=similarity)
@@ -498,18 +502,31 @@ class Pipeline:
         report["completeness"] = build_completeness(report["diagnostics"], observed_gaps)
         if graph is not None:
             graph["completeness"] = report["completeness"]
-        report["coverage"] = guarded(None, lambda: self._coverage_of(report, verdicts, window))[0]
-        return report if scope is None else self._scoped(report, scope)
+        result = report if scope is None else self._scoped(report, scope)
+        keep = None if scope is None else self.scope_keys(scope)
+        result["coverage"] = guarded(None, lambda: self._coverage_of(result, verdicts, window, thresholds, keep))[0]
+        return result
 
-    def _coverage_of(self, report: dict, verdicts, window) -> dict:
+    def _coverage_of(self, report: dict, verdicts, window, thresholds=None, keep: set[str] | None = None) -> dict:
         from .coverage import build_coverage
 
         analysis = self._analyse()
+        if keep is None:
+            statements = (analysis.statements_total, analysis.statements_matched)
+        else:
+            per_model = [analysis.statements_by_model.get(key, (0, 0)) for key in keep]
+            statements = (sum(t for t, _ in per_model), sum(m for _, m in per_model))
+            report = {
+                **report,
+                "column_lineage": [row for row in report["column_lineage"] if row["node"] in keep],
+            }
         return build_coverage(
             report,
-            statements=(analysis.statements_total, analysis.statements_matched),
+            statements=statements,
             verdicts=verdicts,
             window=window,
+            thresholds=thresholds,
+            scoped=keep is not None,
         )
 
     def coverage(
@@ -518,10 +535,15 @@ class Pipeline:
         observed_reads: Iterable[object] = (),
         verdicts: "Mapping[str, Mapping[str, int]] | None" = None,
         window: "Mapping[str, str | None] | None" = None,
+        scope: "SavedScope | None" = None,
+        thresholds: "Thresholds | None" = None,
     ) -> dict:
-        """Anonymized aggregate coverage; see :mod:`kumosql.coverage`."""
+        """Anonymized aggregate coverage, optionally within a saved ``scope``
+        and gated by ``thresholds``; see :mod:`kumosql.coverage`."""
 
-        return self.report(observed_reads=observed_reads, verdicts=verdicts, window=window)["coverage"]
+        return self.report(
+            observed_reads=observed_reads, verdicts=verdicts, window=window, scope=scope, thresholds=thresholds
+        )["coverage"]
 
     @staticmethod
     def _observed_gaps(graph: dict | None) -> list[dict]:
@@ -1151,6 +1173,8 @@ class _Analysis:
     # Query statements seen in query models, and how many were analysed.
     statements_total: int = 0
     statements_matched: int = 0
+    # Per model: (statements seen, statements analysed), for scoped coverage.
+    statements_by_model: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1170,6 +1194,7 @@ class _Analysis:
         ambiguous_tables: dict[str, set[str]] = {}
         blind_models: list[str] = []
         statements_total = statements_matched = 0
+        statements_by_model: dict[str, tuple[int, int]] = {}
 
         for key, model in pipeline.models.items():
             parents = {
@@ -1182,6 +1207,7 @@ class _Analysis:
                     query, skipped = _parse_script(model.sql)
                     statements_total += skipped + 1
                     statements_matched += 1 if query is not None else 0
+                    statements_by_model[key] = (skipped + 1, 1 if query is not None else 0)
                     if skipped:
                         diagnostics.append(
                             PipelineDiagnostic(
@@ -1194,6 +1220,7 @@ class _Analysis:
                 except Exception as exc:  # sqlglot raises several error types
                     query = None
                     statements_total += 1
+                    statements_by_model[key] = (1, 0)
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
                 if query is not None:
                     parsed[key] = query
@@ -1385,6 +1412,7 @@ class _Analysis:
             diagnostics=diagnostics,
             statements_total=statements_total,
             statements_matched=statements_matched,
+            statements_by_model=statements_by_model,
         )
 
 
