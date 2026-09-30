@@ -29,6 +29,7 @@ from .formatting import (
     format_sql,
 )
 from .scopes import Scope, get_scope, list_scopes, save_scope
+from .evidence_summary import EvidenceSummary, summarize_evidence
 from .rewrite import (
     PipelineResult,
     RewriteResult,
@@ -38,6 +39,7 @@ from .rewrite import (
     apply_rule,
     apply_rules,
     attach_planner_check,
+    canonical_rule_order,
     verify_rewrite,
 )
 from .equivalence import (
@@ -60,7 +62,9 @@ from .result_equivalence import (
     generate_synthetic_dataset,
 )
 from .pipeline import (
+    ColumnLineage,
     ColumnRef,
+    ColumnTrace,
     Pipeline,
     Target,
     load_compiled_graph,
@@ -104,6 +108,8 @@ from .fingerprint import (
 )
 
 __all__ = [
+    "EvidenceSummary",
+    "summarize_evidence",
     "RepeatedWork",
     "find_repeated_work",
     "repeated_work_report",
@@ -150,10 +156,13 @@ __all__ = [
     "apply_rules",
     "attach_planner_check",
     "available_rules",
+    "canonical_rule_order",
     "get_rule",
     "register_rule",
     "verify_rewrite",
+    "ColumnLineage",
     "ColumnRef",
+    "ColumnTrace",
     "IdentityResolution",
     "NodeIdentity",
     "Pipeline",

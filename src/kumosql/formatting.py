@@ -128,6 +128,9 @@ def _config(prefs: FormatPreferences):
     })
 
 
+_MAX_FORMAT_PASSES = 5
+
+
 def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     """Format BigQuery SQL with sqlfluff. Unparseable SQL raises ``ValueError``."""
 
@@ -140,6 +143,13 @@ def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     if any(v.rule_code() == "PRS" for v in parsed.violations):
         raise ValueError("sqlfluff could not parse this SQL")
     formatted = linter.lint_string(sql, fix=True).fix_string()[0]
+    # One sqlfluff pass is not always a fixed point (a fix can enable another),
+    # which would make a second run change the output. Repeat until stable.
+    for _ in range(_MAX_FORMAT_PASSES):
+        again = linter.lint_string(formatted, fix=True).fix_string()[0]
+        if again == formatted:
+            break
+        formatted = again
     # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.
     if not sql.endswith("\n"):
         formatted = formatted.rstrip("\n")

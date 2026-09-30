@@ -719,6 +719,22 @@ def attach_planner_check(
     )
 
 
+def canonical_rule_order() -> tuple[str, ...]:
+    """The rules that can run together, in an order whose output is a fixed point.
+
+    ``lift_subqueries`` and ``inline_single_use_ctes`` are inverses, so a
+    pipeline holding both undoes and redoes its own work on every run; the
+    canonical order keeps ``inline_single_use_ctes`` and leaves the lifter to
+    be run on its own. Rules that re-render a statement discard the layout
+    ``format_sql`` produced, so ``format_sql`` goes last.
+    """
+
+    names = [n for n in available_rules() if n not in ("lift_subqueries", "format_sql")]
+    if "format_sql" in available_rules():
+        names.append("format_sql")
+    return tuple(names)
+
+
 __all__ = [
     "PipelineResult",
     "RewriteResult",
@@ -729,5 +745,6 @@ __all__ = [
     "apply_rules",
     "attach_planner_check",
     "available_rules",
+    "canonical_rule_order",
     "verify_rewrite",
 ]
