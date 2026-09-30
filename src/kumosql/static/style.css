@@ -468,3 +468,26 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 @media (prefers-reduced-transparency: reduce) {
   :root { --panel: var(--surface); --panel-blur: none; }
 }
+
+/* Pipeline as a horizontal strip above the editors (wide screens); on narrow
+   screens the stacked sidebar layout above still applies. */
+@media (min-width: 861px) {
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .sidebar { flex-direction: row; align-items: stretch; border-right: 0; border-bottom: 1px solid var(--border); max-height: 46vh; }
+  .sidebar-section { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; padding: 10px 16px 8px; }
+  .rule-list { flex: 1 0 100%; }
+  .settings-group { margin: 4px 0 0; border-top: 0; padding-top: 0; }
+  .settings-group[open] { flex: 1 0 100%; border-top: 1px solid var(--border); padding-top: 8px; }
+  .sidebar-heading { display: inline-flex; gap: 10px; padding: 0; }
+  .sidebar-heading + .sidebar-hint { display: none; }
+  .sidebar-tools { display: inline-flex; margin: 0; }
+  .rule-list { flex-direction: row; gap: 8px; margin-top: 8px; overflow-x: auto; padding: 6px 2px 8px; }
+  .rule-item { flex: 0 0 216px; }
+  .rule-label small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rule-move { flex-direction: row; }
+  .rule-move .icon { transform: rotate(-90deg); }
+  .rule-item.drop-before::before, .rule-item.drop-after::after { top: 6px; bottom: 6px; width: 2px; height: auto; left: auto; right: auto; }
+  .rule-item.drop-before::before { left: -5px; }
+  .rule-item.drop-after::after { right: -5px; }
+  .sidebar-footer { flex: none; justify-content: center; width: 220px; border-top: 0; border-left: 1px solid var(--border); background: transparent; align-self: center; }
+}

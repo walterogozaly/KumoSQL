@@ -879,7 +879,9 @@ rulesList.addEventListener("dragover", (event) => {
   const item = event.target.closest(".rule-item");
   if (!draggedRule || !item) return;
   event.preventDefault();
-  const after = event.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
+  const box = item.getBoundingClientRect();
+      const horizontal = getComputedStyle(rulesList).flexDirection === "row";
+      const after = horizontal ? event.clientX > box.left + box.width / 2 : event.clientY > box.top + box.height / 2;
   for (const other of rulesList.children) other.classList.remove("drop-before", "drop-after");
   if (item.dataset.name !== draggedRule) item.classList.add(after ? "drop-after" : "drop-before");
 });
