@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Mapping
 
 from .graph import build_query_graph
+from .overlap_report import MAX_COMPARED_MODELS, OverlapChecker, mark_retiring, unavailable_section
 from .pipeline import Model, Pipeline, load_compiled_graph, load_sqlx_project
 from .rewrite import verify_rewrite
+from .scopes import Scope, get_scope
 
 COST_BASES = ("measured", "estimate", "upper_bound")
 _PARSE_CODES = {"parse_error", "no_query", "qualify_error", "sqlx_parse_error", "unsupported_ref"}
@@ -122,18 +124,27 @@ def build_change_report(
     base_label: str = "base",
     head_label: str = "head",
     generated_at: str | None = None,
+    scope: Scope | None = None,
+    overlaps: bool = True,
 ) -> dict[str, object]:
     """Compare two pipelines and return the documented ``report`` payload.
 
     ``costs`` maps a model's ``schema.name`` to ``{basis, before?, after?}``.
     Models are matched by target key, so a rename shows as a removal plus an
     addition. Per-model failures become diagnostics, not a failed report.
+
+    Each added or modified model also carries ``overlaps``: the existing tables
+    in ``scope`` that already provide the same attributes, with match kind,
+    checks and role, plus a coverage summary (see ``overlap_report``). It is
+    advisory context; a comparison that fails is listed as unavailable inside
+    that model's entry and changes nothing else. ``overlaps=False`` omits it.
     """
 
     costs = costs or {}
     diagnostics: list[dict[str, str]] = []
     changes: list[dict[str, object]] = []
     cache: dict[str, _Consumers] = {}
+    compare: list[tuple[dict[str, object], str]] = []
 
     def consumers(side: str) -> _Consumers:
         if side not in cache:
@@ -173,9 +184,13 @@ def build_change_report(
             verification = {"label": "failed", "reason": "analysis of this model failed", "checks": []}
             readers = {"models": [], "complete": False}
             cost = {"basis": "unavailable"}
-        changes.append(
-            {"model": name, "kind": kind, "verification": verification, "cost": cost, "consumers": readers}
-        )
+        change = {"model": name, "kind": kind, "verification": verification, "cost": cost, "consumers": readers}
+        changes.append(change)
+        if kind in ("added", "modified"):
+            compare.append((change, key))
+
+    if overlaps:
+        _attach_overlaps(compare, base, head, scope)
 
     for side, pipe in (("base", base), ("head", head)):
         for d in pipe.all_diagnostics():
@@ -191,6 +206,46 @@ def build_change_report(
     }
 
 
+def _attach_overlaps(
+    compare: list[tuple[dict[str, object], str]], base: Pipeline, head: Pipeline, scope: Scope | None
+) -> None:
+    """Add the "already done elsewhere" section to each added or modified change.
+
+    Nothing here raises: a failed comparison becomes an ``unavailable`` section
+    on that change alone.
+    """
+
+    if not compare:
+        return
+    try:
+        changed = {key: str(change["kind"]) for change, key in compare}
+        removed = set(base.models) - set(head.models)
+        checker = OverlapChecker(head, scope=scope, name_of=lambda k: _display(head.models[k]) if k in head.models else k)
+        base_checker = None
+        if removed:
+            base_checker = OverlapChecker(
+                base, scope=scope, name_of=lambda k: _display(base.models[k]) if k in base.models else k
+            )
+    except Exception as exc:  # noqa: BLE001
+        for change, _ in compare:
+            change["overlaps"] = unavailable_section(f"compare_error: {type(exc).__name__}")
+        return
+    for index, (change, key) in enumerate(compare):
+        if index >= MAX_COMPARED_MODELS:
+            change["overlaps"] = unavailable_section(
+                f"limit_exceeded: only the first {MAX_COMPARED_MODELS} changed models are compared"
+            )
+            continue
+        section = checker.section(key, changed=changed)
+        if base_checker is not None and section.get("status") == "ok":
+            try:
+                extra = base_checker.retired_matches(head.models[key].sql, removed)
+                section = mark_retiring(section, extra, "retired in this change")
+            except Exception:  # noqa: BLE001
+                pass
+        change["overlaps"] = section
+
+
 def change_report_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Report behavior, cost and consumer changes between two project snapshots"
@@ -201,6 +256,8 @@ def change_report_main(argv: list[str] | None = None) -> int:
         "--cost", type=Path,
         help='JSON mapping "schema.name" to {"basis", "before", "after"}; omitted means unknown',
     )
+    parser.add_argument("--scope", metavar="NAME", help="Saved scope that limits which existing tables are compared")
+    parser.add_argument("--no-overlaps", action="store_true", help="Skip the already-done-elsewhere section")
     parser.add_argument("--title", default="Change report")
     parser.add_argument("-o", "--output", type=Path, help="Write JSON here; stdout if omitted")
     args = parser.parse_args(argv)
@@ -208,6 +265,11 @@ def change_report_main(argv: list[str] | None = None) -> int:
         costs = json.loads(args.cost.read_text(encoding="utf-8")) if args.cost else {}
         for entry in costs.values():
             normalize_cost(entry)
+        scope = None
+        if args.scope:
+            scope = get_scope(args.scope)
+            if scope is None:
+                raise ValueError(f"no saved scope named {args.scope!r}")
         base, base_root = load_snapshot(args.base)
         head, head_root = load_snapshot(args.head)
     except (OSError, ValueError, AttributeError) as exc:
@@ -215,6 +277,7 @@ def change_report_main(argv: list[str] | None = None) -> int:
     report = build_change_report(
         base, head, base_root=base_root, head_root=head_root, costs=costs,
         title=args.title, base_label=str(args.base), head_label=str(args.head),
+        scope=scope, overlaps=not args.no_overlaps,
     )
     text = json.dumps({"report": report}, indent=2)
     if args.output:

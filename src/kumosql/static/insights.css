@@ -196,3 +196,8 @@
 .project-source { font-weight: 650; flex-basis: 100%; }
 .project-form .field { flex: 1 1 260px; min-width: 0; }
 .project-status { color: var(--muted, inherit); }
+
+.overlap-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.overlap-check { display: inline-flex; }
+.overlap-item .ev-checks { display: flex; flex-wrap: wrap; gap: 4px; }
+.overlap-change + .overlap-change { margin-top: 16px; }

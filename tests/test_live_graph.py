@@ -187,3 +187,28 @@ def test_impact_endpoint_uses_the_loaded_project_and_its_job_history(server):
     assert [(o["model"], o["depth"]) for o in result["observed"]] == [("proj.rep.board", 1)]
     graph = get(server, "/api/graph")
     assert any(e["source"] == "observed" for e in graph["edges"])
+
+
+def test_overlaps_endpoint_serves_labeled_sample_and_validates(server):
+    sample = get(server, "/api/overlaps?node=marts.daily_revenue")
+    assert sample["source"]["kind"] == "sample" and sample["preview"] is True
+    assert [m["kind"] for m in sample["matches"]] == ["same_meaning", "partial"]
+    assert "compared" in sample["summary"] and "skipped" in sample["summary"]
+    assert "No match" in get(server, "/api/overlaps?node=raw.orders")["summary"]
+    with pytest.raises(HTTPError) as error:
+        get(server, "/api/overlaps")
+    assert error.value.code == 400
+
+
+def test_overlaps_endpoint_compares_the_loaded_project(server):
+    from test_overlap_report import BY_REGION, RENAMED, build
+
+    live_graph.set_project(build({"state_totals": BY_REGION, "revenue": RENAMED}), "demo")
+    result = get(server, "/api/overlaps?node=proj.core.revenue")
+    assert result["source"] == {"kind": "project", "label": "demo"} and result["status"] == "ok"
+    assert [(m["key"], m["kind"]) for m in result["matches"]] == [("proj.core.state_totals", "same_meaning")]
+    assert "compared 1 of 1 tables" in result["summary"]
+    for path in ("/api/overlaps?node=proj.raw.orders", "/api/overlaps?node=proj.core.revenue&scope=missing"):
+        with pytest.raises(HTTPError) as error:
+            get(server, path)
+        assert error.value.code == 400

@@ -305,6 +305,12 @@ def changes() -> dict:
     for proposal in payload["proposals"]:
         # #42: ready only when every affected consumer has a verification result.
         proposal["ready"] = all(item["label"] in ("proven", "unchanged") for item in proposal["consumers"])
+    for change in payload["report"]["changes"]:
+        if change["kind"] == "modified":  # #83: advisory "already done elsewhere" per changed table
+            section = overlaps(change["model"])
+            for key in ("preview", "node", "scope", "source"):
+                section.pop(key)
+            change["overlaps"] = section
     return payload
 
 
@@ -391,4 +397,59 @@ def impact(node, column, kind):
         "safe_to_delete": "unknown",
         "safe_to_delete_note": "Not claimed. Readers outside the analysed pipeline are not visible.",
         "source": {"kind": "sample", "label": "Sample data"},
+    }
+
+
+_OVERLAP_SAMPLE = {
+    "marts.customer_ltv": [
+        {"table": "marts.dim_customers", "kind": "contains", "confidence": "medium",
+         "reason": "same attributes and grain; the table has a wider row scope that the target can filter",
+         "role": ("dimension", "medium"),
+         "checks": [("lineage", "matched", "2 of 2 attributes have the same meaning"),
+                    ("grain", "matched", "grain keys have the same meaning"),
+                    ("row_scope", "differs", "the table's filters are a subset of the target's")]},
+    ],
+    "marts.daily_revenue": [
+        {"table": "reporting.revenue_by_day", "kind": "same_meaning", "confidence": "high",
+         "reason": "same attributes, grain and row scope", "role": ("fact", "medium"),
+         "checks": [("lineage", "matched", "3 of 3 attributes have the same meaning"),
+                    ("grain", "matched", "grain keys have the same meaning"),
+                    ("row_scope", "matched", "same filters")]},
+        {"table": "marts.orders_by_day", "kind": "partial", "confidence": "low",
+         "reason": "same attributes and grain; row scope differs or cannot be compared", "role": ("fact", "low"),
+         "checks": [("lineage", "matched", "3 of 3 attributes have the same meaning"),
+                    ("grain", "matched", "grain keys have the same meaning"),
+                    ("row_scope", "unknown", "the table's row scope cannot be compared")]},
+    ],
+}
+
+
+def overlaps(node: str) -> dict:
+    """Sample "already done elsewhere" result, in the shape of ``OverlapChecker.section``.
+
+    Only ``marts.daily_revenue`` has sample matches; every other node shows a
+    clean "no match" with the coverage line, as the real result does.
+    """
+
+    matches = []
+    for rank, item in enumerate(_OVERLAP_SAMPLE.get(node, []), start=1):
+        role, confidence = item["role"]
+        matches.append({
+            "rank": rank, "table": item["table"], "key": item["table"], "kind": item["kind"],
+            "confidence": item["confidence"], "reason": item["reason"], "attributes": [],
+            "checks": [{"kind": k, "outcome": o, "detail": d} for k, o, d in item["checks"]],
+            "role": {"role": role, "confidence": confidence,
+                     "evidence": [{"kind": "schema_shape", "points_to": role, "strength": "weak",
+                                   "detail": "measures with a date key"}]},
+            "in_this_change": False, "retiring": False,
+        })
+    compared, skipped = 5, {"outside_scope": 2}
+    tail = (f"{len(matches)} existing table{'s' if len(matches) != 1 else ''} match"
+            if matches else "No match among the compared tables")
+    return {
+        "preview": True, "status": "ok", "node": node, "scope": None,
+        "source": {"kind": "sample", "label": "Sample data"},
+        "summary": f"compared {compared} of {compared + 2} tables; 2 skipped: outside_scope 2. {tail}",
+        "compared": compared, "skipped": skipped, "candidates_in_scope": compared,
+        "matches": matches, "unknown": [], "rollups": [],
     }

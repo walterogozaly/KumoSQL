@@ -260,6 +260,56 @@ const UNKNOWN_REASONS = {
   column_use_not_traced: "Column use could not be traced",
 };
 
+async function fetchOverlaps(node) {
+  const response = await fetch(`/api/overlaps?${new URLSearchParams({ node })}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not compare this table");
+  return data;
+}
+
+const MATCH_KINDS = {
+  same_meaning: ["Same meaning", "ok", "Every attribute, the grain and the row scope match"],
+  contains: ["Contains", "info", "Same attributes and grain; the table has more rows and can be filtered"],
+  partial: ["Partial", "warn", "Some attributes match, or the row scope differs"],
+};
+const CHECK_TONE = { matched: "ok", differs: "warn", unknown: "idle" };
+
+/** The "already done elsewhere" list (#83): ranked matches with their checks and role, then coverage. */
+function overlapList(section, name) {
+  const matches = section.matches || [];
+  const unknown = section.unknown || [];
+  const skipped = Object.entries(section.skipped || {});
+  return h("div", { class: "overlap" },
+    h("p", { class: "coverage-headline", "data-testid": "overlap-summary", text: section.summary }),
+    section.status === "unavailable"
+      ? h("p", { class: "callout callout-warn", text: "The comparison could not be completed, so this is not a “no match”. The rest of the page is unaffected." }) : null,
+    matches.length ? h("ol", { class: "plain-list overlap-list" }, matches.map((match) => {
+      const [label, tone, title] = MATCH_KINDS[match.kind] || [match.kind, "idle", ""];
+      return h("li", { class: "reader overlap-item" },
+        h("div", { class: "overlap-head" }, h("span", { class: "muted small", text: `#${match.rank}` }), name(match.table, match.key),
+          tag(label, tone, title), tag(`${match.confidence} confidence`, CONFIDENCE_TONE[match.confidence] || "idle"),
+          match.retiring ? tag("Retired in this change", "info", "This table is removed by the same change, so a replacement is expected") : null,
+          match.in_this_change ? tag("Also in this change", "info", "This table is new or edited in the same change; neither side is settled") : null),
+        h("div", { class: "ev-checks" }, (match.checks || []).map((check) =>
+          h("span", { class: "overlap-check", title: check.detail || "" }, tag(`${check.kind.replace("_", " ")}: ${check.outcome}`, CHECK_TONE[check.outcome] || "idle")))),
+        match.reason ? h("p", { class: "muted small", text: match.reason }) : null,
+        match.role ? h("p", { class: "muted small", text: `Role: ${match.role.role} (${match.role.confidence} confidence)` +
+          (match.role.evidence?.length ? `. Evidence: ${match.role.evidence.map((e) => e.detail).join("; ")}` : "") }) : null);
+    })) : h("p", { class: "muted small", text: section.status === "unavailable" ? "Nothing was compared." : "No existing table in the compared set provides the same attributes." }),
+    unknown.length ? h("div", {},
+      h("h3", { text: `Could not be compared (${unknown.length})` }),
+      h("ul", { class: "plain-list" }, unknown.map((item) => h("li", { class: "reader" }, name(item.table, item.key),
+        h("span", { class: "edge-meta" }, E.pill("unknown"), h("span", { class: "muted small", text: (item.reason || "").split(":").slice(1).join(":").trim() || item.reason }))))))
+      : null,
+    skipped.length ? h("p", { class: "muted small", text: "Skipped: " + skipped.map(([reason, count]) => `${count} ${reason.replaceAll("_", " ")}`).join(", ") + ". A skipped table was not checked; it is not a “no match”." }) : null,
+    (section.rollups || []).length ? h("div", {},
+      h("h3", { text: `Held at a finer grain (${section.rollups.length})` }),
+      h("ul", { class: "plain-list" }, section.rollups.map((item) => h("li", { class: "reader" }, name(item.table, item.key),
+        h("span", { class: "edge-meta" }, tag(item.derivability.replaceAll("_", " "), item.derivability === "derivable_exact" ? "ok" : item.derivability === "unknown" ? "idle" : "info"),
+          item.attribute ? h("span", { class: "muted small", text: item.attribute }) : null)))))
+      : null);
+}
+
 async function fetchImpact(node, column, change) {
   const query = new URLSearchParams({ node, column, change });
   const response = await fetch(`/api/impact?${query}`);
@@ -295,7 +345,7 @@ function renderGraph(data, root) {
   const state = {
     node: initialNode,
     column: params.get("column") || (initialColumns.includes("amount_usd") ? "amount_usd" : initialColumns[0] || null),
-    mode: ["readers", "impact", "lineage"].includes(params.get("mode")) ? params.get("mode") : "readers",
+    mode: ["readers", "impact", "lineage", "overlap"].includes(params.get("mode")) ? params.get("mode") : "readers",
     change: "drop",
   };
 
@@ -323,7 +373,7 @@ function renderGraph(data, root) {
   });
 
   const modeTabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Graph question" },
-    ...[["readers", "Find readers"], ["impact", "Assess a change"], ["lineage", "Explain lineage"]].map(([mode, label]) =>
+    ...[["readers", "Find readers"], ["impact", "Assess a change"], ["lineage", "Explain lineage"], ["overlap", "Already elsewhere"]].map(([mode, label]) =>
       h("button", { class: "tab", type: "button", role: "tab", "data-mode": mode, onclick: () => { state.mode = mode; update(); } }, label)));
 
   const canvas = h("div", { class: "graph-canvas", tabindex: "0", "aria-label": "Graph of assets and dependencies" });
@@ -382,8 +432,23 @@ function renderGraph(data, root) {
     return null;
   }
 
+  const overlapCache = new Map();
+  /** The server's overlap result for the selected node, or null while it loads or failed. */
+  function overlapFor() {
+    const cached = overlapCache.get(state.node);
+    if (cached) return cached.result || null;
+    const node = state.node;
+    overlapCache.set(node, { pending: true });
+    fetchOverlaps(node)
+      .then((result) => overlapCache.set(node, { result }))
+      .catch((error) => overlapCache.set(node, { error: error.message }))
+      .finally(update);
+    return null;
+  }
+
   function highlightSet() {
     const set = new Set([state.node]);
+    if (state.mode === "overlap") for (const match of overlapFor()?.matches || []) set.add(match.key);
     if (state.mode === "readers") for (const reader of readersOf(graph, state.node)) set.add(reader.id);
     if (state.mode === "impact" && state.column) {
       const impact = impactFor();
@@ -523,6 +588,15 @@ function renderGraph(data, root) {
           impact.complete ? null : h("p", { class: "callout", text: "This result may miss readers: " + impact.incomplete_reasons.join(", ").replaceAll("_", " ") + "." }),
           h("p", { class: "callout", text: "“Safe to delete” is not offered until graph coverage is complete." }));
       }
+    } else if (state.mode === "overlap") {
+      const section = overlapFor();
+      const entry = overlapCache.get(node.id);
+      const link = (label, id) => (graph.nodes.has(id) ? nodeLink(id) : h("span", { class: "mono", text: label }));
+      body = h("div", {},
+        h("h3", { text: "Tables that already provide the same attributes" }),
+        section ? overlapList(section, link)
+          : h("p", { class: "muted small", text: entry?.error || "Comparing…" }),
+        h("p", { class: "muted small", text: "Match kind comes from what each table computes, never from names. This is advisory; it never blocks a change." }));
     } else {
       const tree = state.column ? lineageOf(graph, node.id, state.column) : null;
       const renderTree = (item) => h("li", {},
@@ -701,6 +775,14 @@ function renderChanges(data, root) {
       h("thead", {}, h("tr", {}, h("th", { text: "Model" }), h("th", { text: "Behavior" }), h("th", { text: "Cost per month" }), h("th", { text: "Affected consumers" }))),
       h("tbody", {}, rows))),
     h("details", { class: "ev-legend-wrap in-card" }, h("summary", { text: "What the labels mean" }), E.legend())));
+
+  const compared = report.changes.filter((change) => change.overlaps);
+  if (compared.length) {
+    root.append(panel("Already done elsewhere", { note: "Advisory. Never blocks a change." },
+      ...compared.map((change) => h("div", { class: "overlap-change" },
+        h("h3", { class: "mono", text: change.model }),
+        overlapList(change.overlaps, (label, id) => h("a", { class: "chip mono", href: `/graph?node=${encodeURIComponent(id)}&mode=overlap`, text: label }))))));
+  }
 
   root.append(h("div", { class: "cost-layout" }, coveragePanel(data.evidence_coverage), ciPanel(data.ci, report)));
   root.append(h("div", { class: "cost-layout" }, proposalsPanel(data.proposals), sourcesPanel(data.sources)));
