@@ -473,8 +473,8 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
    screens the stacked sidebar layout above still applies. */
 @media (min-width: 861px) {
   .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .sidebar { flex-direction: row; align-items: stretch; border-right: 0; border-bottom: 1px solid var(--border); max-height: 46vh; }
-  .sidebar-section { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; padding: 10px 16px 8px; }
+  .sidebar { flex-direction: row; align-items: stretch; border-right: 0; border-bottom: 1px solid var(--border); min-height: auto; }
+  .sidebar-section { flex: 1; min-width: 0; overflow: visible; display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; padding: 10px 16px 8px; }
   .rule-list { flex: 1 0 100%; }
   .settings-group { margin: 4px 0 0; border-top: 0; padding-top: 0; }
   .settings-group[open] { flex: 1 0 100%; border-top: 1px solid var(--border); padding-top: 8px; }
@@ -489,5 +489,5 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
   .rule-item.drop-before::before, .rule-item.drop-after::after { top: 6px; bottom: 6px; width: 2px; height: auto; left: auto; right: auto; }
   .rule-item.drop-before::before { left: -5px; }
   .rule-item.drop-after::after { right: -5px; }
-  .sidebar-footer { flex: none; justify-content: center; width: 220px; border-top: 0; border-left: 1px solid var(--border); background: transparent; align-self: center; }
+  .sidebar-footer { flex: none; justify-content: center; width: 220px; border-top: 0; border-left: 1px solid var(--border); background: transparent; align-self: flex-start; }
 }
