@@ -952,10 +952,6 @@ def _subst_val(v: _Val, pairs) -> _Val:
     return _Val(_subst(v.null, pairs), _subst(v.val, pairs))
 
 
-def _subst_pred(p: _Pred, pairs) -> _Pred:
-    return _Pred(_subst(p.t, pairs), _subst(p.f, pairs))
-
-
 def _occ_pairs(src: _Occ, dst: _Occ) -> list:
     pairs = []
     for name, v in list(src.cols.items()):
