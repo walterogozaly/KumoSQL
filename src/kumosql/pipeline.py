@@ -778,6 +778,10 @@ class _Analysis:
         statements_total = statements_matched = 0
         statements_by_model: dict[str, tuple[int, int]] = {}
 
+        # Other spellings under which a model is read (a project-qualified name
+        # for a model keyed by its bare name): its columns must be known there
+        # too, or ``SELECT *`` over it cannot be expanded.
+        spellings: dict[str, set[str]] = {}
         for key, model in pipeline.models.items():
             parents = {
                 resolved
@@ -815,6 +819,9 @@ class _Analysis:
                         resolved = pipeline.resolve(table)
                         if resolved and resolved != key:
                             parents.add(resolved)
+                            spelled = _table_name_for_schema(table)
+                            if spelled != resolved:
+                                spellings.setdefault(resolved, set()).add(spelled)
                         elif resolved is None and table.name:
                             bucket = (
                                 ambiguous_tables
@@ -907,6 +914,8 @@ class _Analysis:
             if names and "*" not in names:
                 schema[key] = {name: "UNKNOWN" for name in names}
                 _add_table(sqlglot_schema, key, schema[key])
+                for spelled in sorted(spellings.get(key, ())):
+                    _add_table(sqlglot_schema, spelled, schema[key])
             # ``qualified`` is already qualified: hand lineage() its scope so it
             # neither copies nor re-qualifies the query once per output column.
             try:

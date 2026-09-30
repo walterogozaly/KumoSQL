@@ -50,6 +50,7 @@ _UNEXAMINED_HIGH = 0.2
 JOINED_AS = ("lookup_side", "driving_side", "not_joined")
 REASONS = (
     "out_of_scope",
+    "view_definition",
     "invalid_record",
     "no_query_text",
     "truncated",
@@ -59,6 +60,9 @@ REASONS = (
 _TEXT_KEYS = ("query", "query_text")
 _READER_KEYS = ("reader", "user_email", "user", "principal", "service_account")
 _TRUNCATED_KEYS = ("query_truncated", "truncated")
+# A plain view is only defined by its job, not read: no data moves, so it is no reader.
+_VIEW_DEFINITION = re.compile(r"\s*(?:CREATE\s+(?:OR\s+REPLACE\s+)?VIEW|ALTER\s+VIEW)\b", re.IGNORECASE)
+_VIEW_STATEMENT_TYPES = {"CREATE_VIEW", "ALTER_VIEW", "DROP_VIEW"}
 _SHARD = re.compile(r"(_?\d{8}|_?\*)$")
 
 
@@ -148,6 +152,9 @@ def observed_usage(
             continue
         if scope is not None and not scope.matches(scope_record):
             totals["out_of_scope"] += 1
+            continue
+        if _defines_view(fields, raw):
+            totals["view_definition"] += 1
             continue
         key = _reader_key(fields, index)
         reader = readers.setdefault(key, _Reader())
@@ -241,6 +248,20 @@ def _fields(raw: object) -> tuple[dict, dict]:
     if isinstance(raw, Mapping) and isinstance(raw.get("attributes"), Mapping):
         scope_record.update(raw["attributes"])
     return fields, scope_record
+
+
+def _defines_view(fields: dict, raw: object) -> bool:
+    """A job that only creates or alters a view (a script with other statements is not)."""
+
+    attributes = raw.attributes if isinstance(raw, ObservedRead) else (raw.get("attributes") or {}) if isinstance(raw, Mapping) else {}
+    statement = raw.get("statement_type") if isinstance(raw, Mapping) else None
+    statement = statement or (attributes.get("statement_type") if isinstance(attributes, Mapping) else None)
+    if isinstance(statement, str) and statement.upper() in _VIEW_STATEMENT_TYPES:
+        return True
+    text = fields["text"]
+    if not text or not _VIEW_DEFINITION.match(text):
+        return False
+    return ";" not in text.strip().rstrip(";")
 
 
 def _hash(*parts: object) -> str:

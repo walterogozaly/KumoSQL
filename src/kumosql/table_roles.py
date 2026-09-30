@@ -280,7 +280,7 @@ def _scan_select(pipeline: "Pipeline", facts: _Facts, model: str, select: exp.Se
             if on is not None and any(c is column for c in on.find_all(exp.Column)):
                 continue
         agg = column.find_ancestor(exp.AggFunc)
-        if agg is not None and _own(select, agg):
+        if agg is not None and _own(select, agg) and _sole_owner(agg, alias, alias_of):
             aggregated[alias].add(column.name.lower())
         else:
             taken[alias].add(column.name.lower())
@@ -308,6 +308,16 @@ def _scan_select(pipeline: "Pipeline", facts: _Facts, model: str, select: exp.Se
                 usage.range_join.add(model)
         elif joins and alias not in lookup_side and not measures:
             usage.driving.add(model)
+
+
+def _sole_owner(agg: exp.Expression, alias: str, alias_of) -> bool:
+    """Whether every column inside an aggregate belongs to ``alias``.
+
+    ``SUM(item.price - product.cost)`` measures the item, not the product: the
+    product only supplied an attribute to it.
+    """
+
+    return all(alias_of(c) == alias for c in agg.find_all(exp.Column))
 
 
 def _has_range_join(joins: list[exp.Join], alias: str, aliases: dict) -> bool:

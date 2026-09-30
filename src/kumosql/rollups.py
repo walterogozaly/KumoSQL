@@ -253,6 +253,24 @@ def _mappings(profiles: Mapping[str, TableProfile], given: Sequence[GrainMapping
     return found
 
 
+_TRUNCATE = re.compile(
+    r"expr:(?:DATE|DATETIME|TIMESTAMP)_TRUNC\((?P<inner>.+), "
+    r"(?:YEAR|ISOYEAR|QUARTER|MONTH|WEEK(?:\([A-Z]+\))?|ISOWEEK|DAY|HOUR|MINUTE)\)"
+)
+
+
+def _truncation(parent: str, child: str) -> GrainMapping | None:
+    """A calendar truncation of a held value is a many-to-one, unchanging, total mapping."""
+
+    found = _TRUNCATE.fullmatch(parent)
+    if found is None or child == parent:
+        return None
+    inner = child[len("expr:"):] if child.startswith("expr:") else child
+    if found.group("inner") != inner:
+        return None
+    return GrainMapping(child, parent, True, False, True)
+
+
 class _JoinCache:
     """Whether a model, or anything it reads, joins tables (rows may repeat)."""
 
@@ -310,6 +328,7 @@ def _compare(
     measures = [
         a for a in target.attributes
         if a.status == "known" and a.column not in target.grain.keys and _split_calls(a.meaning or "")
+        and not (a.meaning or "").startswith("window:")  # a rank or running total is not combined from finer rows
     ]  # fmt: skip
     if not measures:
         return []
@@ -321,13 +340,15 @@ def _compare(
         by_meaning.setdefault(attr.meaning or "", attr)
     same = _equivalences(target)
     raw = {same.get(m, m): a for m, a in by_meaning.items() if m.startswith("col:")}
+    held = {same.get(m, m): a for m, a in by_meaning.items() if m.startswith(("col:", "expr:"))}
     target_keys = [same.get(m, m) for m in target_keys]
     mappings = [GrainMapping(same.get(m.child, m.child), same.get(m.parent, m.parent), m.many_to_one, m.changes_over_time, m.complete) for m in mappings]
+    mappings += [m for m in (_truncation(tk, h) for tk in target_keys for h in held) if m is not None]
 
     out = [
         one
         for attr in measures
-        if (one := _one_attribute(target, attr, target_keys, candidate, key, by_meaning, raw, mappings, joins)) is not None
+        if (one := _one_attribute(target, attr, target_keys, candidate, key, by_meaning, raw, held, mappings, joins)) is not None
     ]
     if not out:
         return _unknown(key, "incomplete_lineage: the table's lineage is incomplete") if hidden else []
@@ -408,6 +429,7 @@ def _one_attribute(
     key: str,
     by_meaning: dict,
     raw: dict,
+    held: dict,
     mappings: list[GrainMapping],
     joins: _JoinCache,
 ) -> Rollup | None:
@@ -431,18 +453,18 @@ def _one_attribute(
     grain_detail: list[str] = []
     mapping_changes = False
     for column, tk in zip(target.grain.keys, target_keys):
-        if tk in raw:
+        if tk in held:
             grain_detail.append(f"{column} is held directly")
-            columns.add(raw[tk].column)
+            columns.add(held[tk].column)
             continue
-        via = next((m for m in mappings if m.parent == tk and m.child in raw), None)
+        via = next((m for m in mappings if m.parent == tk and m.child in held), None)
         if via is None:
             grain_missing.append(f"mapping from the finer table's grain to '{column}' (many-to-one)")
         elif not via.many_to_one:
             grain_missing.append(f"a many-to-one mapping to '{column}' (the known mapping is not many-to-one)")
         else:
-            columns.add(raw[via.child].column)
-            grain_detail.append(f"{column} is reached through a mapping from {raw[via.child].column}")
+            columns.add(held[via.child].column)
+            grain_detail.append(f"{column} is reached through a mapping from {held[via.child].column}")
             if via.changes_over_time is True:
                 mapping_changes = True
                 conditions.append(f"rows must be assigned to '{column}' using the mapping that applied when they occurred")
