@@ -6,27 +6,25 @@ KumoSQL helps you change BigQuery SQL and Dataform models with evidence instead 
 2. **Where is the same work being done repeatedly?** Duplicate and near-duplicate SELECT detection finds logic that could be shared.
 3. **Can a proposed change be shown to preserve behavior?** Rewrites are small, deterministic transformations, checked by static proof, SMT, synthetic-data comparison, and BigQuery dry runs. Tests decide what is trusted, not an LLM at runtime, and output that cannot be verified is flagged rather than reported as a success.
 
-New here? See the [Getting Started guide](docs/getting-started.md) for installation, a Python example, and the browser UI.
+New here? The [Getting Started guide](docs/getting-started.md) goes from install to a first verified rewrite, a pipeline impact report and the browser UI.
 
 ## Local browser UI
 
-On Windows, install into a user-owned virtual environment, then start the local editor:
+Install into a virtual environment (see [Getting Started](docs/getting-started.md#1-install) for macOS, Linux and Windows), then start the local editor:
 
-```powershell
-py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
-& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m pip install .
-& "$env:LOCALAPPDATA\kumosql\Scripts\kumosql-ui.exe"
+```shell
+kumosql-ui
 ```
 
-Open the URL printed by the command if your browser does not open automatically. Turn on transformations in the **Pipeline** sidebar, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Use **GitHub** to browse the SQLX models in a public Dataform repository and open a file in the editor. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
+Open the URL printed by the command (`http://127.0.0.1:8765/`) if your browser does not open automatically. Turn on transformations in the **Pipeline** strip across the top, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Use **GitHub** (beside **Open**) to browse the SQLX models in a public Dataform repository and open a file in the editor. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
 
-The server listens only on `127.0.0.1` and uses the existing Python package. Pasted SQL stays local. GitHub browsing contacts GitHub only when you connect a repository or open one of its files; it supports public Dataform repositories and is read-only. The **BigQuery browser** is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. Catalog answers are cached in memory and in `catalog-cache.json` in the KumoSQL data directory for an hour (set `KUMOSQL_CATALOG_TTL` in seconds to change it), so revisiting an item makes no BigQuery call; the page shows how old the copy is, serves the saved copy if BigQuery is unreachable, and **Refresh from BigQuery** re-reads everything on screen. Otherwise it contacts BigQuery only when you open that page or select an item you have not seen; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+The server listens only on `127.0.0.1` and uses the existing Python package. Pasted SQL stays local. GitHub browsing contacts GitHub only when you connect a repository or open one of its files; it supports public Dataform repositories and is read-only. The **BigQuery** page is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. Catalog answers are cached in memory and in `catalog-cache.json` in the KumoSQL data directory for an hour (set `KUMOSQL_CATALOG_TTL` in seconds to change it), so revisiting an item makes no BigQuery call; the page shows how old the copy is, serves the saved copy if BigQuery is unreachable, and **Refresh from BigQuery** re-reads everything on screen. Otherwise it contacts BigQuery only when you open that page or select an item you have not seen; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
 
 **Query graph**, **Cost** and **Change reports** are pages for the upcoming roadmap work: readers, change impact, and lineage; measured cost and savings; and semantic change reports. The **Query graph** shows your own project once one is loaded: paste a public Dataform repository URL on that page, start the server with `kumosql-ui --project DIR` (a Dataform or SQL folder), or `POST` `{"files": {path: text}}` to `/api/project`. It shows every gap the analysis found and a "Partial graph" strip whenever any asset could not be analyzed. With nothing loaded it shows sample data behind a banner. The loaded project is kept in memory only. **Cost** and **Change reports** still show labeled sample data. [docs/ui-roadmap.md](docs/ui-roadmap.md) lists the issue and data shape behind each area.
 
 To use the catalog with Google Cloud CLI credentials, install the BigQuery extra and sign in with Application Default Credentials:
 
-```powershell
+```shell
 python -m pip install '.[bigquery]'
 gcloud auth application-default login
 ```
@@ -39,7 +37,7 @@ The browser uses the active ADC identity and read-only BigQuery scope. It lists 
 
 **Scopes.** A scope is a saved, named *rule* that decides which records are "in": models, job-history rows or table profiles. A rule combines conditions on any field with AND, OR and NOT groups that nest, for example `job submitter IN [ana@co.com, bo@co.com]`, or `dataset starts with raw AND NOT project = sandbox`. Build one under *Scopes* in the sidebar (the rule builder suggests the fields found in the loaded project and job history, and accepts any field name) or from the shell:
 
-```powershell
+```shell
 kumosql-scopes add "My Team" --rule '{"field": "submitter", "op": "in", "value": ["ana@co.com", "bo@co.com"]}'
 kumosql-scopes add "Raw, not sandbox" --rule-file rule.json
 kumosql-scopes add "My Projects" --field project growth-*      # simple "field in values" shortcut
@@ -66,6 +64,7 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 | `remove_redundant_parentheses` | Removes parentheses that cannot change how an expression parses |
 | `deduplicate_ctes` | Points references to a root CTE at an earlier CTE with an identical body, then drops the duplicate |
 | `remove_unused_ctes` | Removes root CTEs that nothing references |
+| `remove_redundant_distinct` | Removes `DISTINCT` over a plain `GROUP BY` whose keys are all projected unchanged (see *Cost rules*) |
 | `format_sql` | Formats with sqlfluff using your saved formatting preferences (SQL only, not SQLX) |
 
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
@@ -103,13 +102,13 @@ The structural proof no longer refuses a query just because it contains `RAND()`
 
 To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewrite_statement(statement, index)` to edit the statement in place and return `(change_count, diagnostics)`, and decorate the class with `@register_rule`.
 
-```powershell
+```shell
 rewrite-sql input.sqlx --rule inline_single_use_ctes --output output.sqlx
 ```
 
 `rewrite-sql` exits 2 when a rule fails, 4 when `--check-idempotence` finds the rules change their own output, and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it). A rule failure prints a diagnostic and does not write its result.
 
-## First goal: subquery lifting
+## Subquery lifting
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
@@ -143,17 +142,19 @@ assert result.success
 
 The repository includes 32 hand-written sample queries at `tests/fixtures/sql_subquery_samples.json`. Each entry contains only an `id` and `sql_text`. The samples cover nested relations, joins, CTE placement, DML, DDL, and Dataform SQLX. The full fixture test uses:
 
-```powershell
+```shell
 pytest -m slow tests/test_workbook_fixture.py
 ```
 
 Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. The test fails unless every sample has zero remaining relational subqueries and no fatal diagnostics. A separate unit test verifies the small fixture shape.
 
-The normal unit suite is:
+The normal unit suite (it skips the `slow` marker and needs `pip install -e ".[dev]"`; the full run takes a few minutes) is:
 
-```powershell
-pytest
+```shell
+python -m pytest
 ```
+
+Use `python -m pytest` rather than bare `pytest` so the repository root is importable. CI (`.github/workflows/tests.yml`) runs `python -m pytest -m "not slow"` on the floor and the current `sqlglot` release.
 
 ## Conservative SQL equivalence
 
@@ -179,7 +180,7 @@ assert result.proven
 
 CLI usage:
 
-```powershell
+```shell
 prove-sql-equivalent left.sql right.sql --verifier-sql verify.sql
 ```
 
@@ -241,7 +242,7 @@ assert result.proven
 
 Pass `schema={"t": ["id", "a"]}` to enable `SELECT *` and unqualified columns in joins, and `exact_arithmetic=True` to reason about `+`, `-` and `*` exactly (right for INT64 and NUMERIC, not FLOAT64). The CLI prints JSON and exits 0 only on a proof:
 
-```powershell
+```shell
 prove-sql-smt left.sql right.sql --schema schema.json
 ```
 
@@ -266,7 +267,7 @@ The result is a `Pipeline` that qualifies every model in dependency order, so ea
 
 Source table columns come from `source_schema={"project.dataset.table": {"col": "TYPE"}}`. `fetch_table_schemas()` fills it from BigQuery with free dry runs.
 
-```powershell
+```shell
 kumosql-pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
 
@@ -369,7 +370,7 @@ Models are matched by target, and when `after` is a different pipeline only the 
 
 `table_fingerprint_sql`, `compare_tables_sql` and `diff_rows_sql` do the same for any pair of tables.
 
-```powershell
+```shell
 kumosql-compare-outputs compare path/to/dataform --source-schema sources.json --after-dataset-suffix _dev > compare.sql
 bq query --use_legacy_sql=false --format=json < compare.sql > results.json
 kumosql-compare-outputs summarize results.json
@@ -394,7 +395,7 @@ SQLX is not sent to BigQuery as source text. Supply compiled SQL for both sides 
 
 Credentials come from `BQ_ACCESS_TOKEN`, a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path), or Google Application Default Credentials. ADC supports `gcloud auth application-default login`; install `pip install '.[bigquery]'` for the Google auth library. BigQuery dry runs need BigQuery Job User plus Data Viewer. Catalog browsing uses the read-only BigQuery scope and requires permission to list projects and read the selected metadata.
 
-```powershell
+```shell
 kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
 rewrite-sql input.sql --rule remove_trivial_predicates --planner-project my-project
 ```
@@ -421,10 +422,27 @@ These pieces build on the pipeline graph. They report evidence and never claim m
 
 ## CLI
 
-```powershell
+Every command prints `--help`.
+
+| Command | Purpose |
+| --- | --- |
+| `kumosql-ui` | Local browser UI (`--project DIR`, `--port`, `--no-browser`) |
+| `rewrite-sql` | Apply rules with verification, optional idempotence, planner and synthetic checks |
+| `lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
+| `prove-sql-equivalent` | Structural equivalence proof for two queries |
+| `prove-sql-smt` | Z3 equivalence proof for two queries |
+| `kumosql-pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
+| `kumosql-scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`) |
+| `kumosql-compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |
+| `kumosql-dry-run` | BigQuery planning and schema check, no query execution |
+| `kumosql-change-report` | Report changes between two project snapshots |
+| `kumosql-ci-check` | Turn a change report into a check conclusion and comment |
+| `kumosql-evidence-summary` | Anonymized share of changed outputs that have useful evidence |
+
+```shell
 lift-subqueries input.sql --output output.sql --report
 ```
 
 ## What's next
 
-KumoSQL is moving toward a query graph that combines declared and observed dependencies with measured cost, backed by the verification engine described above. The near-term focus is making failed rewrites impossible to mistake for successful ones and making verification results easier to review.
+KumoSQL is moving toward a query graph that combines declared and observed dependencies with measured cost, backed by the verification engine described above. The graph page already shows a loaded project; the **Cost** and **Change reports** pages still use labeled sample data until job history and project snapshots can be supplied from the UI. Next up is finding proposed queries that duplicate existing tables and turning shared logic into verified refactors, with failed rewrites never mistaken for successful ones. The open work is tracked in the GitHub issues.

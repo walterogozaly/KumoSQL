@@ -1,66 +1,173 @@
 # Getting started
 
-KumoSQL provides Python functions and a local browser UI for working with BigQuery SQL and Dataform SQLX. It requires Python 3.11 or newer.
+KumoSQL helps you change BigQuery SQL and Dataform models with evidence. It gives you Python functions, command-line tools and a local browser UI. It requires Python 3.11 or newer, and it works on Windows, macOS and Linux.
 
-## Install
+This guide takes you from install to a first useful result in about ten minutes. Nothing here needs a BigQuery account; the optional BigQuery features are at the end.
 
-Install the latest version from this repository with pip:
+## 1. Install
+
+Create a virtual environment and install KumoSQL into it.
+
+macOS or Linux:
 
 ```shell
+python3.11 -m venv .venv
+source .venv/bin/activate
 python -m pip install "git+https://github.com/walterogozaly/KumoSQL.git"
 ```
 
-On Windows, `py -3.11 -m pip install "git+https://github.com/walterogozaly/KumoSQL.git"` selects Python 3.11 explicitly. To install a local checkout instead, run `python -m pip install .` from the repository root. For development, use `python -m pip install -e ".[dev]"`, which includes the DuckDB and Z3 extras the full test suite needs.
+Windows (PowerShell):
 
-The distribution is named `kumosql`; the Python import package is `kumosql`.
+```powershell
+py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
+& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m pip install "git+https://github.com/walterogozaly/KumoSQL.git"
+& "$env:LOCALAPPDATA\kumosql\Scripts\Activate.ps1"
+```
 
-## Use a Python function
+To install a local checkout instead, run `python -m pip install .` from the repository root. The distribution and the Python import package are both named `kumosql`.
 
-For example, `lift_subqueries` moves subqueries from `FROM` and `JOIN` clauses into top-level CTEs:
+Optional extras add capabilities; install them the same way, for example `python -m pip install "kumosql[smt,execution]"`:
+
+| Extra | Adds | Without it |
+| --- | --- | --- |
+| `smt` | The Z3 prover for filter, join and `DISTINCT` rewrites the structural prover cannot canonicalize | Those rewrites stay `unproven` |
+| `execution` | Local DuckDB for comparing results on synthetic data | The synthetic check reports `not_run` |
+| `bigquery` | Google auth for dry runs and the BigQuery catalog page | Those features report that credentials are unavailable |
+| `dev` | pytest, DuckDB and Z3, for working on KumoSQL itself | |
+
+## 2. Rewrite one query and see the evidence
+
+Save this as `query.sql`:
+
+```sql
+SELECT c.id FROM (SELECT id FROM `my-project.analytics.customers` WHERE 1 = 1) AS c
+```
+
+Apply two rules in order:
+
+```shell
+rewrite-sql query.sql -r remove_trivial_predicates -r lift_subqueries
+```
+
+You get the rewritten SQL and, for every rule, an evidence label:
+
+```text
+remove_trivial_predicates: changes=2 verification=proven
+lift_subqueries: changes=1 verification=proven
+verification=proven
+...
+WITH __lifted_subquery_001 AS (SELECT id FROM `my-project.analytics.customers`
+)
+SELECT
+    c.id
+FROM __lifted_subquery_001 AS c
+```
+
+`proven` means the equivalence prover established that the output returns the same rows as the input. Only `unchanged` and `proven` are trusted. Anything else (`planner_checked`, `unproven`, `failed`) is shown as such, and `rewrite-sql` exits with status 3 for untrusted output unless you pass `--allow-unproven`. Run `rewrite-sql --help` for the list of rules; the [README](../README.md#rewrite-rules) describes each one.
+
+The same thing from Python:
 
 ```python
-from kumosql import lift_subqueries
+from kumosql import apply_rules
 
-sql = """\
-SELECT c.id
-FROM (
-  SELECT id
-  FROM `my-project.analytics.customers`
-) AS c
-"""
-
-result = lift_subqueries(sql)
-if not result.success:
-    raise RuntimeError(result.diagnostics)
-
+result = apply_rules(["remove_trivial_predicates", "lift_subqueries"], open("query.sql").read())
+print(result.verification.status)  # "proven"
 print(result.sql)
 ```
 
-The returned result includes the transformed SQL, diagnostics, and a success flag. A failed transformation should be reviewed before using its SQL.
+Add `--check-idempotence` to also confirm that running the rules again on their own output changes nothing.
 
-## Start and use the browser UI
+## 3. Analyze a whole pipeline
 
-After installing the package, start the UI from a terminal:
+KumoSQL reads a Dataform project (a folder with `definitions/**/*.sqlx` and `workflow_settings.yaml`) or a plain folder of `.sql` files. To try it, create three small files:
 
-```shell
-kumosql-ui
+`demo/workflow_settings.yaml`
+
+```yaml
+defaultProject: demo
+defaultDataset: analytics
 ```
 
-The command starts a local server at `http://127.0.0.1:8765/` and opens it in your browser. If the browser does not open automatically, navigate to that address. On Windows, if you installed into the user-owned environment shown in the repository README, run:
+`demo/definitions/orders_daily.sqlx`
 
-```powershell
-& "$env:LOCALAPPDATA\kumosql\Scripts\kumosql-ui.exe"
+```sql
+config { type: "table" }
+SELECT o.customer_id, DATE(o.created_at) AS day, SUM(o.amount) AS total
+FROM `demo.raw.orders` AS o
+GROUP BY 1, 2
 ```
 
-Paste BigQuery SQL or Dataform SQLX into **Original SQL** (or use **Open**, or drop a file onto the editor), turn on transformations in the **Pipeline** sidebar, and inspect **Proposed SQL** and the verification report. Transformations run top to bottom; drag them or use the arrows to reorder. The result updates after you pause typing or change the pipeline; turn off **Transform as I type** to run only with **Transform SQL** or Ctrl+Enter. The **Diff** tab shows which lines changed, ignoring indentation. Use **Copy** or the download button to take the result, or the undo-arrow button to make it the new input. **Examples** loads a sample for each transformation. Review any verification warning before using the proposed SQL.
+`demo/definitions/customer_totals.sqlx`
 
-Choose **BigQuery browser** in the navigation to browse projects, datasets, tables, and table schemas. Catalog requests happen when the page loads, when you select an item, or when you press **Refresh projects**; nothing polls BigQuery in the background. The SQL editor continues to process pasted SQL locally.
+```sql
+config { type: "table" }
+SELECT customer_id, SUM(total) AS total
+FROM ${ref("orders_daily")}
+GROUP BY customer_id
+```
 
-To enable catalog browsing with Google Cloud CLI credentials, install the optional auth dependency and create Application Default Credentials:
+Ask what would break if you dropped `orders_daily.total`:
 
 ```shell
-python -m pip install 'kumosql[bigquery]'
+kumosql-pipeline-report demo --assess drop_column --target demo.analytics.orders_daily.total
+```
+
+The result lists `customer_totals` as `breaks` (it reads the column directly) and anything downstream of it as `indirect`. Anything KumoSQL cannot analyze is listed as `unknown`, never dropped. Without `--assess`, the same command prints the full report (model order, column lineage, dead columns, duplicate and near-duplicate logic, and what the analysis could not see) as JSON; add `-o report.json` to write it to a file.
+
+In Python, `load_sqlx_project("demo")` gives you the same `Pipeline` object, and `find_overlaps`, `find_rollups`, `profile_pipeline` and `infer_roles` answer "is this already done elsewhere?" and "what kind of table is this?" (see the README).
+
+## 4. Use the browser UI
+
+```shell
+kumosql-ui --project demo
+```
+
+This starts a local server at `http://127.0.0.1:8765/` and opens your browser. Use `--no-browser` to skip opening it, `--port 8766` to pick another port, and Ctrl+C to stop. The server listens only on `127.0.0.1`, and pasted SQL stays on your computer.
+
+- **Workspace.** Paste BigQuery SQL or Dataform SQLX into **Original SQL** (or use **Open**, or drop a file on the editor). The **Pipeline** strip across the top lists the rules; tick the ones you want and drag them (or use the arrows) to change the order. **Examples** loads a sample for each rule. The result updates as you type; press Ctrl+Enter or **Transform SQL** to run it on demand. The verdict bar shows one label for the whole result, and **Details** shows the evidence behind each step. **Diff** shows which lines changed, and the buttons beside **Copy** download the result or send it back into the editor.
+- **Query graph.** With `--project demo` this shows your own models, their readers, the impact of a change (**Assess a change**), column lineage, and tables that already provide the same thing (**Already elsewhere**). A strip warns whenever something could not be analyzed. You can also paste a public Dataform repository URL on the page.
+- **Settings** (top bar, or Ctrl/⌘ + `,`). Appearance, and SQL formatting: keyword case, indentation, line length and the full list of sqlfluff rules, with named configurations you can switch between.
+- **Scopes** (link under the Pipeline strip). Saved rules that limit which models, job rows or tables an analysis covers.
+- **Cost** and **Change reports** show labeled sample data until you supply job history or a pair of project snapshots (see below).
+
+Preferences and scopes are saved on your computer; the README's *Saved state* paragraph says where and how to change it.
+
+## 5. Compare two versions of a project
+
+```shell
+kumosql-change-report path/to/base path/to/head -o report.json
+kumosql-ci-check report.json --comment-out comment.md
+```
+
+The first command reports, for every changed model, its evidence label, downstream consumers and any existing table that already provides the same attributes. The second turns that report into a check conclusion and a markdown comment for a pull request. `docs/change-report-workflow.example.yml` shows how to run both in GitHub Actions.
+
+## 6. Optional: BigQuery
+
+Dry runs and the catalog page need Google Application Default Credentials:
+
+```shell
+python -m pip install "kumosql[bigquery]"
 gcloud auth application-default login
 ```
 
-The active ADC identity must be allowed to list projects and read the BigQuery metadata you select. `gcloud auth login` by itself does not create ADC credentials. Stop the local server with Ctrl+C. To suppress automatic browser opening, run `kumosql-ui --no-browser`; to use a different port, run `kumosql-ui --port 8766` and open `http://127.0.0.1:8766/`.
+`gcloud auth login` alone does not create these credentials. Then:
+
+- `kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project` checks that both statements plan and that their output schemas match, without running them.
+- `rewrite-sql query.sql -r remove_trivial_predicates --planner-project my-project` adds the same check to a rewrite.
+- The **BigQuery** page in the UI lists the projects, datasets, tables and schemas your credentials can see.
+
+Only these features contact BigQuery, and only when you ask.
+
+## Working on KumoSQL itself
+
+```shell
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
+
+## Where to go next
+
+- [README](../README.md): every rewrite rule, the provers, pipeline analysis, overlap and roll-up detection, scopes, cost and change reports.
+- [UI roadmap](ui-roadmap.md): which UI area reads which data.
