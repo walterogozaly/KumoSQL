@@ -48,7 +48,7 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 | UI area | Issue | Fields |
 | --- | --- | --- |
 | Measured, attributed and unattributed tiles; cost by asset | #30 | `totals {measured, attributed, unattributed}`, `nodes[] {node, measured, runs, bytes_processed}`, `currency`, `window` |
-| "Where the work repeats" | #31 | `opportunities[].repeats[] {node, where}` |
+| "Where the work repeats" | #31 | `opportunities[].repeats[] {node, where}`; built by `kumosql.repeated_work_report(pipeline)` (locations only, no cost until #30 lands); the preview data stays until the page has real input |
 | Ranked opportunities list | #32 | `opportunities[]`: `rank`, `title`, `savings {value, basis, range?}`, `measured_cost`, `frequency`, `downstream_reach` |
 | Four-part recommendation (where, who, what, how verified) | #33 | `consumers[]`, `proposed_change`, `rule`, `verification {required, plan[]}` |
 | Cost rule catalog | #34 | `rules[]`: `id`, `name`, `state`, `safe_when`, `requires`, `outcome` |
