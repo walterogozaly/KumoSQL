@@ -81,6 +81,8 @@ if not result.success:
 print(result.sql)
 ```
 
+When the structural prover cannot canonicalize a change that touches only WHERE, HAVING, QUALIFY or JOIN ON conditions (for example a redundant or subsumed conjunct), `verify_rewrite` tries the SMT prover described below. A proof is reported as `proven` with an `smt_proof` check listing its assumptions (no NaN, runtime errors not modeled, result column types not compared). A counterexample, an unsupported construct such as an outer join, or a missing `z3-solver` install leaves the result `unproven` and the reason appears in `verification.details`. Other changes never reach SMT. Pass `smt_timeout_ms` to `verify_rewrite` to change the 5000 ms solver limit.
+
 Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text.
 
 `inline_single_use_ctes` skips recursive WITH clauses, queries with nested WITH scopes, CTEs with column aliases, references that differ from the CTE name only in case, and references with anything beyond an alias (such as `FOR SYSTEM_TIME`).
