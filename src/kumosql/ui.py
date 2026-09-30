@@ -9,6 +9,7 @@ import json
 import threading
 import webbrowser
 
+from . import preview_data
 from . import scopes as scope_store
 from . import state
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
@@ -18,6 +19,13 @@ from .rewrite import apply_rules, available_rules
 MAX_REQUEST_BYTES = 5 * 1024 * 1024
 MAX_GITHUB_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
+# Roadmap views. Each returns a JSON payload; preview_data stands in until the
+# issues listed in docs/ui-roadmap.md replace these with real implementations.
+INSIGHTS = {
+    "/api/graph": preview_data.graph,
+    "/api/cost": preview_data.cost,
+    "/api/changes": preview_data.changes,
+}
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/browse": ("browse.html", "text/html; charset=utf-8"),
@@ -25,6 +33,12 @@ ASSETS = {
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+    "/assets/evidence.js": ("evidence.js", "text/javascript; charset=utf-8"),
+    "/graph": ("insights.html", "text/html; charset=utf-8"),
+    "/cost": ("insights.html", "text/html; charset=utf-8"),
+    "/changes": ("insights.html", "text/html; charset=utf-8"),
+    "/assets/insights.css": ("insights.css", "text/css; charset=utf-8"),
+    "/assets/insights.js": ("insights.js", "text/javascript; charset=utf-8"),
     "/assets/browse.css": ("browse.css", "text/css; charset=utf-8"),
     "/assets/browse.js": ("browse.js", "text/javascript; charset=utf-8"),
     "/assets/background.jpg": ("background.jpg", "image/jpeg"),
@@ -137,10 +151,14 @@ class UIHandler(BaseHTTPRequestHandler):
                 for name, rule in available_rules().items()
             ])
             return
+        route = self.path.split("?", 1)[0]
+        if route in INSIGHTS:
+            self._json(200, INSIGHTS[route]())
+            return
         if self.path.startswith("/api/catalog/"):
             self._catalog()
             return
-        asset = ASSETS.get(self.path)
+        asset = ASSETS.get(route)
         if asset is None:
             self._json(404, {"error": "not found"})
             return

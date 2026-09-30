@@ -546,6 +546,25 @@ const VERDICT_ICONS = {
   idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", planner_checked: "#i-alert", unproven: "#i-alert", failed: "#i-alert",
 };
 
+/* ---------- Evidence labels (#15, #16) ---------- */
+
+// One label per result and per step; a failed rule is always "failed".
+function evidenceLabel(item) {
+  if (item.rule_success === false) return "failed";
+  return KumoEvidence.normalize(item.verification?.status);
+}
+
+function evidenceChecks(item) {
+  return Array.isArray(item.verification?.checks) ? item.verification.checks : [];
+}
+
+function checkRow(checks) {
+  const row = document.createElement("div");
+  row.className = "ev-checks";
+  for (const check of checks) row.append(KumoEvidence.checkChip(check));
+  return row;
+}
+
 function setVerdict(kind, title, detail) {
   $("verdict").className = `verdict verdict-${kind}`;
   $("verdict-icon").setAttribute("href", VERDICT_ICONS[kind] || VERDICT_ICONS.idle);
@@ -606,10 +625,20 @@ function showReport(data) {
     const outcome = check.outcome.replaceAll("_", " ");
     addDetail(rule, `${kind}: ${outcome} — ${stripAnsi(check.detail)}`);
   };
+  // Chips show every check; failed or unproven ones also explain themselves in the detail list.
+  const explain = (rule, checks) => {
+    for (const check of checks) if (["failed", "not_proven"].includes(check.outcome) && check.detail) addCheck(rule, check);
+  };
 
-  for (const check of data.verification.checks) addCheck(null, check);
+  // The pipeline repeats each step's checks, so show one chip per kind and outcome.
+  const chain = evidenceChecks(data).filter((check, i, all) =>
+    all.findIndex((other) => other.kind === check.kind && other.outcome === check.outcome) === i);
+  const chainChecks = $("chain-checks");
+  chainChecks.replaceChildren();
+  if (chain.length) chainChecks.append(checkRow(chain));
+  explain(null, evidenceChecks(data));
   data.steps.forEach((step, index) => {
-    const outcome = step.verification.status;
+    const outcome = evidenceLabel(step);
     const item = document.createElement("li");
     item.className = `tl-step ${outcome}`;
     const dot = document.createElement("span");
@@ -622,11 +651,10 @@ function showReport(data) {
     name.textContent = labelFor(step.rule);
     const meta = document.createElement("span");
     meta.className = "tl-meta";
-    const pill = document.createElement("span");
-    pill.className = `pill pill-${outcome}`;
-    pill.textContent = outcome.replaceAll("_", " ");
-    meta.append(plural(step.changes, "change"), pill);
+    meta.append(plural(step.changes, "change"), KumoEvidence.pill(outcome));
     item.append(dot, name, meta);
+    const checks = evidenceChecks(step);
+    if (checks.length) item.append(checkRow(checks));
     steps.append(item);
     for (const diagnostic of step.diagnostics) addDetail(step.rule, `${diagnostic.code} — ${diagnostic.message}`);
   });
@@ -746,7 +774,7 @@ async function transform() {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
       setVerdict("proven", "Rewrite verified", `${plural(changes, "change")}. ${reason[0].toUpperCase()}${reason.slice(1)}.`);
     } else if (evidence === "planner_checked") {
-      setVerdict("planner_checked", "Planner checked", reason);
+      setVerdict("planner_checked", "Planner checked: not proven", `${reason}. Matching plans and schemas are not proof of equal results.`);
     } else if (evidence === "failed") {
       const broken = data.steps.find((step) => step.verification.status === "failed");
       const failedCheck = broken?.verification.checks.find((check) => check.outcome === "failed");
@@ -888,7 +916,9 @@ rulesList.addEventListener("dragover", (event) => {
   const item = event.target.closest(".rule-item");
   if (!draggedRule || !item) return;
   event.preventDefault();
-  const after = event.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
+  const box = item.getBoundingClientRect();
+      const horizontal = getComputedStyle(rulesList).flexDirection === "row";
+      const after = horizontal ? event.clientX > box.left + box.width / 2 : event.clientY > box.top + box.height / 2;
   for (const other of rulesList.children) other.classList.remove("drop-before", "drop-after");
   if (item.dataset.name !== draggedRule) item.classList.add(after ? "drop-after" : "drop-before");
 });
@@ -1439,6 +1469,7 @@ async function start() {
   renderInput();
   renderOutput();
   renderScopes();
+  $("evidence-legend").append(KumoEvidence.legend());
   loadRules();
 }
 
