@@ -35,6 +35,8 @@ prove-sql-smt = "kumosql.smt_equivalence:main"
 kumosql-compare-outputs = "kumosql.cli:compare_outputs_main"
 kumosql-ui = "kumosql.ui:main"
 kumosql-scopes = "kumosql.cli:scopes_main"
+kumosql-change-report = "kumosql.change_report:change_report_main"
+kumosql-ci-check = "kumosql.ci_check:main"
 
 [build-system]
 requires = ["setuptools>=68"]

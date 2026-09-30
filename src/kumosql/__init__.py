@@ -37,6 +37,7 @@ from .rewrite import (
     VerificationStatus,
     apply_rule,
     apply_rules,
+    attach_planner_check,
     verify_rewrite,
 )
 from .equivalence import (
@@ -74,6 +75,7 @@ from .graph import (
     build_query_graph,
     edge_confidence,
 )
+from .repeated_work import RepeatedWork, find_repeated_work, repeated_work_report
 from .near_duplicates import (
     ClauseDifference,
     NearDuplicateCluster,
@@ -102,6 +104,9 @@ from .fingerprint import (
 )
 
 __all__ = [
+    "RepeatedWork",
+    "find_repeated_work",
+    "repeated_work_report",
     "LiftDiagnostic",
     "LiftResult",
     "count_inline_subqueries",
@@ -143,6 +148,7 @@ __all__ = [
     "VerificationStatus",
     "apply_rule",
     "apply_rules",
+    "attach_planner_check",
     "available_rules",
     "get_rule",
     "register_rule",
