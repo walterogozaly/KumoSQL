@@ -440,3 +440,31 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .topnav { display: flex; gap: 20px; margin-left: auto; margin-right: 20px; }
 .topnav a { color: var(--muted, #657184); font-size: 13px; font-weight: 600; text-decoration: none; }
 .topnav a:hover { color: var(--ink, #192333); }
+
+/* Background photo. A fixed full-bleed layer sits behind the app and the main
+   surfaces turn into translucent, blurred panels (menus and dialogs stay solid).
+   Photo: Kalen Emsley on Unsplash (https://unsplash.com/photos/Bkci_8qcdvQ). */
+:root {
+  --bg-image: url("/assets/background.jpg");
+  --bg-scrim: rgba(243, 245, 242, .28);
+  --panel: rgba(255, 255, 255, .72);
+  --panel-blur: blur(18px) saturate(1.4);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-scrim: rgba(8, 13, 11, .62);
+    --panel: rgba(18, 26, 23, .74);
+  }
+}
+:root[data-theme="dark"] {
+  --bg-scrim: rgba(8, 13, 11, .62);
+  --panel: rgba(18, 26, 23, .74);
+}
+body { background: var(--bg); }
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(var(--bg-scrim), var(--bg-scrim)), var(--bg-image) center / cover no-repeat; }
+.topbar, .sidebar, .sidebar-footer, .verdict, .pane, .report { background-color: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
+.verdict-unproven { background-color: color-mix(in srgb, var(--warn-bg) 45%, var(--panel)); }
+.verdict-failed { background-color: color-mix(in srgb, var(--bad-bg) 45%, var(--panel)); }
+@media (prefers-reduced-transparency: reduce) {
+  :root { --panel: var(--surface); --panel-blur: none; }
+}
