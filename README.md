@@ -71,7 +71,7 @@ Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the 
 
 `inline_single_use_ctes` skips recursive WITH clauses, queries with nested WITH scopes, CTEs with column aliases, references that differ from the CTE name only in case, and references with anything beyond an alias (such as `FOR SYSTEM_TIME`).
 
-The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remove_trivial_predicates` drops `TRUE` from `AND` and `FALSE` from `OR` inside WHERE, HAVING, QUALIFY and JOIN conditions, but never applies `x AND FALSE` or `x OR TRUE`, which would discard `x` and any error it raises. It keeps `ON TRUE`, keeps `HAVING TRUE` without a GROUP BY, and folds numeric comparisons only between INT64 literals or identical literals. `remove_redundant_parentheses` keeps parentheses around an unaliased projection (BigQuery names the column after it), around a field access like `(a).b`, and around `AND` inside `OR`. `deduplicate_ctes` skips nondeterministic bodies, bodies with LIMIT, and merges that would repeat a relation name in one FROM clause.
+The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remove_trivial_predicates` drops `TRUE` from `AND` and `FALSE` from `OR` inside WHERE, HAVING, QUALIFY and JOIN conditions, but never applies `x AND FALSE` or `x OR TRUE`, which would discard `x` and any error it raises. It leaves UPDATE, DELETE and MERGE statements unchanged because DML rewrites cannot currently be proven. It keeps `ON TRUE`, keeps `HAVING TRUE` without a GROUP BY, and folds numeric comparisons only between INT64 literals or identical literals. `remove_redundant_parentheses` keeps parentheses around an unaliased projection (BigQuery names the column after it), around a field access like `(a).b`, and around `AND` inside `OR`. `deduplicate_ctes` skips nondeterministic bodies, bodies with LIMIT, and merges that would repeat a relation name in one FROM clause.
 
 To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewrite_statement(statement, index)` to edit the statement in place and return `(change_count, diagnostics)`, and decorate the class with `@register_rule`.
 
@@ -79,7 +79,7 @@ To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewr
 rewrite-sql input.sqlx --rule inline_single_use_ctes --output output.sqlx
 ```
 
-`rewrite-sql` exits 2 when a rule fails and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it).
+`rewrite-sql` exits 2 when a rule fails and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it). A rule failure prints a diagnostic and does not write its result.
 
 ## First goal: subquery lifting
 
@@ -88,6 +88,8 @@ rewrite-sql input.sqlx --rule inline_single_use_ctes --output output.sqlx
 Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
 Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
+
+Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
 For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
 

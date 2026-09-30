@@ -7,7 +7,9 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+from sqlglot import exp
 
+from kumosql import RewriteRule, engine
 from kumosql.ui import UIHandler
 
 
@@ -67,6 +69,96 @@ def test_ui_rejects_unknown_rules(ui_server):
         post_json(ui_server, {"sql": "SELECT 1", "rules": ["not_a_rule"]})
     assert error.value.code == 400
     assert "unknown" in json.load(error.value)["error"]
+
+
+@pytest.mark.parametrize(
+    ("sql", "diagnostic_code"),
+    [
+        ("SELECT * FROM", "parse_error"),
+        (
+            "WITH __lifted_subquery_001 AS (SELECT * FROM __lifted_subquery_002) "
+            "SELECT * FROM __lifted_subquery_001",
+            "cte_dependency_error",
+        ),
+    ],
+)
+def test_ui_withholds_rule_failure_output_and_exposes_diagnostic(
+    ui_server, sql, diagnostic_code
+):
+    result = post_json(ui_server, {"sql": sql, "rules": ["lift_subqueries"]})
+
+    assert not result["success"]
+    assert not result["rule_success"]
+    assert result["sql"] == ""
+    assert any(
+        item["code"] == diagnostic_code
+        for step in result["steps"]
+        for item in step["diagnostics"]
+    )
+
+
+class _DropWhereRule(RewriteRule):
+    name = "test_drop_where_for_ui"
+    summary = "Test that unproven output remains available for review"
+
+    def rewrite_statement(self, statement, index):
+        changed = 0
+        for select in statement.find_all(exp.Select):
+            if select.args.get("where") is not None:
+                select.set("where", None)
+                changed += 1
+        return changed, []
+
+
+class _DropSqlxWhereRule(RewriteRule):
+    name = "test_drop_sqlx_where_for_ui"
+    summary = "Test that SQLX restoration failures are diagnostics in the UI"
+
+    def rewrite_statement(self, statement, index):
+        where = statement.args.get("where")
+        if where is None:
+            return 0, []
+        statement.set("where", None)
+        return 1, []
+
+
+def test_ui_keeps_unproven_candidate_separate_from_rule_failure(ui_server, monkeypatch):
+    monkeypatch.setitem(engine._REGISTRY, _DropWhereRule.name, _DropWhereRule())
+    result = post_json(
+        ui_server,
+        {
+            "sql": "SELECT value FROM source WHERE value > 1",
+            "rules": [_DropWhereRule.name],
+        },
+    )
+
+    assert result["rule_success"]
+    assert not result["success"]
+    assert result["verification"]["status"] == "unproven"
+    assert result["sql"]
+
+
+def test_ui_withholds_sqlx_restoration_failure_and_exposes_diagnostic(ui_server, monkeypatch):
+    monkeypatch.setitem(engine._REGISTRY, _DropSqlxWhereRule.name, _DropSqlxWhereRule())
+    result = post_json(
+        ui_server,
+        {
+            "sql": (
+                'config { type: "table" }\n'
+                'SELECT id FROM source WHERE ${when(incremental(), "id > 0", "TRUE")}'
+            ),
+            "rules": [_DropSqlxWhereRule.name],
+        },
+    )
+
+    assert not result["success"]
+    assert not result["rule_success"]
+    assert result["sql"] == ""
+    assert any(
+        item["code"] == "sqlx_restore_error"
+        for step in result["steps"]
+        for item in step["diagnostics"]
+    )
 
 
 def put_json(base_url, section, payload):

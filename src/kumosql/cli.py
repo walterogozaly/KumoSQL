@@ -24,13 +24,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     result = lift_subqueries(args.input.read_text(encoding="utf-8"))
-    if args.output:
-        args.output.write_text(result.sql + ("\n" if result.sql else ""), encoding="utf-8")
-    else:
-        sys.stdout.write(result.sql)
-        if result.sql:
-            sys.stdout.write("\n")
-
     if args.report:
         print(
             f"statements={result.statements} transformed={result.transformed_statements} "
@@ -38,10 +31,21 @@ def main(argv: list[str] | None = None) -> int:
             f"diagnostics={len(result.diagnostics)}",
             file=sys.stderr,
         )
+    if args.report or not result.success:
         for diagnostic in result.diagnostics:
-            print(diagnostic, file=sys.stderr)
+            print(f"diagnostic: {diagnostic.code}: {diagnostic.message}", file=sys.stderr)
 
-    return 0 if result.success else 2
+    if not result.success:
+        return 2
+
+    if args.output:
+        args.output.write_text(result.sql + ("\n" if result.sql else ""), encoding="utf-8")
+    else:
+        sys.stdout.write(result.sql)
+        if result.sql:
+            sys.stdout.write("\n")
+
+    return 0
 
 
 def prove_main(argv: list[str] | None = None) -> int:
@@ -89,17 +93,11 @@ def rewrite_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-unproven",
         action="store_true",
-        help="Exit 0 even when equivalence could not be proven",
+        help="Exit 0 after writing output even when equivalence could not be proven",
     )
     args = parser.parse_args(argv)
 
     result = apply_rules(args.rule, args.input.read_text(encoding="utf-8"))
-    if args.output:
-        args.output.write_text(result.sql + ("\n" if result.sql else ""), encoding="utf-8")
-    else:
-        sys.stdout.write(result.sql)
-        if result.sql:
-            sys.stdout.write("\n")
 
     for step in result.steps:
         print(
@@ -108,14 +106,28 @@ def rewrite_main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         for diagnostic in step.diagnostics:
-            print(f"  {diagnostic}", file=sys.stderr)
+            print(f"  diagnostic: {diagnostic.code}: {diagnostic.message}", file=sys.stderr)
         for detail in step.verification.details:
             print(f"  unproven: {detail}", file=sys.stderr)
     print(f"verification={result.verification.status.value}", file=sys.stderr)
 
     if not all(step.rule_success for step in result.steps):
         return 2
-    if not result.verification.trusted and not args.allow_unproven:
+
+    if args.output:
+        args.output.write_text(result.sql + ("\n" if result.sql else ""), encoding="utf-8")
+    else:
+        sys.stdout.write(result.sql)
+        if result.sql:
+            sys.stdout.write("\n")
+
+    if not result.verification.trusted:
+        if args.allow_unproven:
+            print(
+                "warning: output is not proven equivalent; accepted by --allow-unproven",
+                file=sys.stderr,
+            )
+            return 0
         return 3
     return 0
 

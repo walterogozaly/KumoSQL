@@ -20,6 +20,7 @@ from sqlglot import exp
 
 from .ast_utils import cte_dependency_errors, parse_statements, render_statement
 from .sqlx import (
+    SqlxRestorationError,
     looks_like_sqlx,
     mask_sqlx_interpolations,
     restore_sqlx_interpolations,
@@ -110,6 +111,7 @@ FATAL_DIAGNOSTIC_CODES = frozenset(
     {
         "parse_error",
         "sqlx_parse_error",
+        "sqlx_restore_error",
         "transform_error",
         "cte_dependency_error",
         "inline_subqueries_remaining",
@@ -281,16 +283,18 @@ class RewriteRule:
             try:
                 masked, restorations = mask_sqlx_interpolations(section)
                 result = self._apply_sql(masked)
-                rendered.append(
-                    with_preserved_whitespace(
-                        section,
-                        restore_sqlx_interpolations(result.sql, restorations),
-                    )
-                )
+                restored = restore_sqlx_interpolations(result.sql, restorations)
+                rendered.append(with_preserved_whitespace(section, restored))
                 statements += result.statements
                 changed_statements += result.changed_statements
                 changes += result.changes
                 diagnostics.extend(result.diagnostics)
+            except SqlxRestorationError as exc:
+                diagnostics.extend(result.diagnostics)
+                diagnostics.append(RuleDiagnostic(-1, "sqlx_restore_error", str(exc)))
+                # Treat SQLX rewriting transactionally: a failed restoration
+                # must not expose output with a missing template expression.
+                return RuleOutput(sql, statements, 0, 0, 0, tuple(diagnostics))
             except Exception as exc:
                 rendered.append(section)
                 diagnostics.append(RuleDiagnostic(-1, "sqlx_parse_error", str(exc)))
