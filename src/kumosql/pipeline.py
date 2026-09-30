@@ -335,16 +335,31 @@ class Pipeline:
     def all_diagnostics(self) -> list[PipelineDiagnostic]:
         return [*self.diagnostics, *self._analyse().diagnostics]
 
-    def report(self, *, min_nodes: int = 12, similarity: float = 0.7, scope: "SavedScope | None" = None) -> dict:
+    def report(
+        self,
+        *,
+        min_nodes: int = 12,
+        similarity: float = 0.7,
+        scope: "SavedScope | None" = None,
+        observed_reads: Iterable[object] = (),
+        observed_scope: "SavedScope | None" = None,
+    ) -> dict:
         """A JSON-serialisable summary of the whole-pipeline analysis.
 
         With a ``scope`` the report is limited to models whose target matches
         it (fields ``project``, ``dataset``, ``name`` and ``table``; any other
         field raises ``ValueError``); project-level diagnostics are kept; a
-        duplicate group is kept if any of its occurrences is in scope.
+        duplicate group is kept if any of its occurrences is in scope. Optional
+        ``observed_reads`` are canonical job-history records; ``observed_scope``
+        filters them before graph aggregation.
         """
 
         report = self._full_report(min_nodes=min_nodes, similarity=similarity)
+        from .graph import build_query_graph
+
+        report["graph"] = build_query_graph(
+            self, observed_reads, scope=observed_scope
+        ).to_json()
         return report if scope is None else self._scoped(report, scope)
 
     SCOPE_FIELDS = ("project", "dataset", "name", "table")
@@ -365,6 +380,11 @@ class Pipeline:
                 "table": model.target.name,
             })
         }
+        keep_node_ids = {
+            self.models[key].identity.stable_key
+            for key in keep
+            if self.models[key].identity is not None
+        }
 
         def in_scope(occurrence: str) -> bool:
             return occurrence.rpartition(" (")[0] in keep
@@ -373,6 +393,48 @@ class Pipeline:
         for cluster in report["near_duplicates"]:
             if any(in_scope(o) for v in cluster["variants"] for o in v["occurrences"]):
                 near.append(cluster)
+        graph = dict(report["graph"])
+        graph["edges"] = [
+            edge for edge in graph["edges"] if edge["downstream_id"] in keep_node_ids
+        ]
+        graph_node_ids = set(keep_node_ids)
+        graph_node_ids.update(
+            endpoint_id
+            for edge in graph["edges"]
+            for endpoint_id in (edge["upstream_id"], edge["downstream_id"])
+        )
+        graph["nodes"] = [node for node in graph["nodes"] if node["id"] in graph_node_ids]
+        graph["unresolved_observations"] = {
+            **graph["unresolved_observations"],
+            "unscoped_count": graph["unresolved_observations"]["count"],
+            "count": None,
+            "model_scope_applied": False,
+            "samples": [
+                sample
+                for sample in graph["unresolved_observations"]["samples"]
+                if sample.get("downstream_id") in keep_node_ids
+            ],
+        }
+        graph["unattributed_observations"] = {
+            **graph["unattributed_observations"],
+            "unscoped_count": graph["unattributed_observations"]["count"],
+            "count": None,
+            "model_scope_applied": False,
+            "samples": [],
+        }
+        graph["scope_applied"] = {
+            "observations": graph["scope_applied"]["observations"],
+            "models": True,
+        }
+        graph["diagnostics"] = [
+            {
+                **diagnostic,
+                "unscoped_count": diagnostic["count"],
+                "count": None,
+                "model_scope_applied": False,
+            }
+            for diagnostic in graph["diagnostics"]
+        ]
         return {
             **report,
             "scope": scope.name,
@@ -381,6 +443,7 @@ class Pipeline:
             "node_identities": {
                 key: value for key, value in report["node_identities"].items() if key in keep
             },
+            "graph": graph,
             "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
             "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
             "duplicates": [

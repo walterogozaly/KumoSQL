@@ -66,6 +66,14 @@ from .pipeline import (
     load_sqlx_project,
 )
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
+from .graph import (
+    GraphEdge,
+    GraphNode,
+    GraphResult,
+    ObservedRead,
+    build_query_graph,
+    edge_confidence,
+)
 from .near_duplicates import (
     ClauseDifference,
     NearDuplicateCluster,
@@ -145,6 +153,12 @@ __all__ = [
     "Pipeline",
     "Target",
     "normalize_table_reference",
+    "GraphEdge",
+    "GraphNode",
+    "GraphResult",
+    "ObservedRead",
+    "build_query_graph",
+    "edge_confidence",
     "load_compiled_graph",
     "load_sqlx_project",
     "ClauseDifference",
