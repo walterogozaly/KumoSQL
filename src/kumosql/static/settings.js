@@ -352,6 +352,18 @@
     },
   };
 
+  // Apply the saved theme on every page, including ones with no page script of
+  // their own: the browser copy first so it shows at once, then the server's.
+  try {
+    applyTheme(JSON.parse(localStorage.getItem(STORAGE_KEY))?.theme);
+  } catch {
+    /* browser storage unavailable */
+  }
+  fetch("/api/settings")
+    .then((response) => (response.ok ? response.json() : null))
+    .then((settings) => { if (settings?.ui?.theme) applyTheme(settings.ui.theme); })
+    .catch(() => {});
+
   document.addEventListener("click", (event) => {
     const trigger = event.target.closest("[data-open-settings]");
     if (!trigger) return;
