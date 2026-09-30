@@ -361,3 +361,15 @@ def test_ui_lists_sqlfluff_rules_for_the_settings_panel(ui_server):
     assert "capitalisation" in by_code["CP01"]["groups"]
     # Rules for other dialects are left out; KumoSQL formats BigQuery.
     assert not any(rule["category"] in ("tsql", "postgres", "oracle") for rule in rules)
+
+
+def test_pages_ship_the_scope_picker_and_settings_section(ui_server):
+    for path in ("/graph", "/cost", "/changes"):
+        with urlopen(ui_server + path) as response:
+            page = response.read().decode()
+        assert 'id="scope-picker"' in page and "/assets/scopes.js" in page
+    with urlopen(ui_server + "/assets/scopes.js") as response:
+        script = response.read().decode()
+    assert "KumoScopes" in script and "renderManager" in script
+    with urlopen(ui_server + "/assets/settings.js") as response:
+        assert 'id: "scopes"' in response.read().decode()

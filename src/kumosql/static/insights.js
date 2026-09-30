@@ -149,6 +149,36 @@ function setupProjectForm(data) {
   $("project-clear").addEventListener("click", () => run("/api/project/clear", {}, "Clearing…"));
 }
 
+/* ---------- Active scope ---------- */
+
+/** Add the active scope (if any) to an API path so the server limits what it returns. */
+function withScope(path) {
+  const params = window.KumoScopes ? new URLSearchParams(window.KumoScopes.params()) : new URLSearchParams();
+  const text = params.toString();
+  return text ? `${path}${path.includes("?") ? "&" : "?"}${text}` : path;
+}
+
+async function setupScopePicker() {
+  if (!window.KumoScopes) {
+    $("scope-bar").hidden = true;
+    return;
+  }
+  await window.KumoScopes.mountPicker($("scope-picker"), { onChange: () => location.reload() });
+}
+
+/** Say what the active scope did to this view, including when it could not apply. */
+function showScope(scope) {
+  const note = $("scope-note");
+  note.classList.toggle("is-warn", Boolean(scope && (!scope.applied_to.length || scope.note)));
+  if (!scope) {
+    note.textContent = "";
+  } else if (!scope.applied_to.length) {
+    note.textContent = scope.note;
+  } else {
+    note.textContent = `Showing only what “${scope.name}” includes (${scope.rule}).${scope.note ? ` ${scope.note}` : ""}`;
+  }
+}
+
 async function start() {
   const name = location.pathname.replace(/^\/+|\/+$/g, "") || "graph";
   const view = VIEWS[name] || VIEWS.graph;
@@ -162,10 +192,12 @@ async function start() {
   }
   applySavedTheme();
   try {
-    const response = await fetch(view.endpoint);
+    await setupScopePicker();
+    const response = await fetch(withScope(view.endpoint));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not load this view");
     showPreview(data);
+    showScope(data.scope);
     if (name === "graph") setupProjectForm(data);
     view.render(data, $("view"));
   } catch (error) {
@@ -265,7 +297,7 @@ const UNKNOWN_REASONS = {
 };
 
 async function fetchOverlaps(node) {
-  const response = await fetch(`/api/overlaps?${new URLSearchParams({ node })}`);
+  const response = await fetch(withScope(`/api/overlaps?${new URLSearchParams({ node })}`));
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Could not compare this table");
   return data;
@@ -316,7 +348,7 @@ function overlapList(section, name) {
 
 async function fetchImpact(node, column, change) {
   const query = new URLSearchParams({ node, column, change });
-  const response = await fetch(`/api/impact?${query}`);
+  const response = await fetch(withScope(`/api/impact?${query}`));
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Could not assess this change");
   return data;

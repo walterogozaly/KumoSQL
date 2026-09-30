@@ -134,7 +134,6 @@ const state = {
   gutterLines: 0,
   currentLine: 0,
   format: null,
-  scopes: [],
   sqlfluffProfiles: [],
   activeSqlfluffProfile: "",
 };
@@ -1209,310 +1208,11 @@ document.addEventListener("keydown", (event) => {
 transformButton.addEventListener("click", () => inputsChanged({ immediate: true }));
 /* ---------- Scopes ---------- */
 
-const scopeForm = $("scope-form");
-const scopeList = $("scope-list");
-const ruleBuilder = $("rule-builder");
-let editingScope = null;
-let ruleTree = newGroup();
-let scopeFields = { fields: [], operators: [], loaded: null };
-
-const NO_VALUE_OPS = new Set(["is_null", "not_null"]);
-const LIST_OPS = new Set(["in", "not_in"]);
-const FALLBACK_OPERATORS = [
-  ["in", "is one of"], ["not_in", "is not one of"], ["eq", "equals"], ["ne", "does not equal"],
-  ["prefix", "starts with"], ["suffix", "ends with"], ["contains", "contains"], ["glob", "matches pattern"],
-  ["regex", "matches regex"], ["gt", "is greater than"], ["gte", "is at least"], ["lt", "is less than"],
-  ["lte", "is at most"], ["is_null", "is empty"], ["not_null", "is not empty"],
-].map(([op, label]) => ({ op, label }));
-
-function newGroup(mode = "all") {
-  return { type: "group", mode, negate: false, children: [newCondition()] };
+function renderScopeSummary() {
+  const count = window.KumoScopes?.list().length || 0;
+  const active = window.KumoScopes?.getActive();
+  $("scope-count").textContent = active ? `${active} (active)` : count ? String(count) : "";
 }
-
-function newCondition() {
-  return { type: "cond", field: "", op: "in", value: "" };
-}
-
-function operatorLabel(op) {
-  const found = (scopeFields.operators.length ? scopeFields.operators : FALLBACK_OPERATORS).find((item) => item.op === op);
-  return found ? found.label : op;
-}
-
-/* Rule JSON <-> builder tree */
-
-function treeToRule(node) {
-  if (node.type === "cond") {
-    const field = node.field.trim();
-    if (!field) throw new Error("Pick a field for every condition");
-    if (NO_VALUE_OPS.has(node.op)) return { field, op: node.op };
-    const text = String(node.value).trim();
-    if (!text) throw new Error(`Add a value for “${field}”`);
-    return { field, op: node.op, value: LIST_OPS.has(node.op) ? text.split(",").map((v) => v.trim()).filter(Boolean) : text };
-  }
-  if (!node.children.length) throw new Error("A group needs at least one condition");
-  const rules = node.children.map(treeToRule);
-  const group = rules.length === 1 && !node.negate ? rules[0] : { [node.mode]: rules };
-  return node.negate ? { not: group } : group;
-}
-
-function ruleToTree(rule) {
-  if (rule.field !== undefined) {
-    const value = Array.isArray(rule.value) ? rule.value.join(", ") : rule.value === undefined ? "" : String(rule.value);
-    return { type: "cond", field: rule.field, op: rule.op, value };
-  }
-  if (rule.not !== undefined) {
-    const inner = ruleToTree(rule.not);
-    if (inner.type === "group" && !inner.negate) return { ...inner, negate: true };
-    return { type: "group", mode: "all", negate: true, children: [inner] };
-  }
-  const mode = rule.all ? "all" : "any";
-  return { type: "group", mode, negate: false, children: (rule.all || rule.any).map(ruleToTree) };
-}
-
-function describeRule(rule, top = true) {
-  if (rule.field !== undefined) {
-    const label = operatorLabel(rule.op);
-    if (NO_VALUE_OPS.has(rule.op)) return `${rule.field} ${label}`;
-    const value = Array.isArray(rule.value) ? `[${rule.value.join(", ")}]` : rule.value;
-    return `${rule.field} ${label} ${value}`;
-  }
-  if (rule.not !== undefined) return `NOT ${describeRule(rule.not, false)}`;
-  const [word, children] = rule.all ? ["AND", rule.all] : ["OR", rule.any];
-  const text = children.map((child) => describeRule(child, false)).join(` ${word} `);
-  return top || children.length === 1 ? text : `(${text})`;
-}
-
-function safeDescribe(scope) {
-  try {
-    return describeRule(scope.rule);
-  } catch {
-    return "";
-  }
-}
-
-/* Builder rendering */
-
-function makeButton(label, action, className = "link-button") {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = className;
-  button.dataset.action = action;
-  button.textContent = label;
-  return button;
-}
-
-function renderCondition(node, parent) {
-  const row = document.createElement("div");
-  row.className = "rule-condition";
-  const field = document.createElement("input");
-  field.type = "text";
-  field.setAttribute("list", "scope-field-options");
-  field.placeholder = "field";
-  field.setAttribute("aria-label", "Field");
-  field.value = node.field;
-  field.addEventListener("input", () => { node.field = field.value; renderRulePreview(); });
-  const op = document.createElement("select");
-  op.setAttribute("aria-label", "Operator");
-  for (const item of scopeFields.operators.length ? scopeFields.operators : FALLBACK_OPERATORS) {
-    op.append(new Option(item.label, item.op, false, item.op === node.op));
-  }
-  const value = document.createElement("input");
-  value.type = "text";
-  value.setAttribute("aria-label", "Value");
-  const syncValue = () => {
-    value.hidden = NO_VALUE_OPS.has(node.op);
-    value.placeholder = LIST_OPS.has(node.op) ? "a, b, c" : "value";
-  };
-  value.value = node.value;
-  value.addEventListener("input", () => { node.value = value.value; renderRulePreview(); });
-  op.addEventListener("change", () => { node.op = op.value; syncValue(); renderRulePreview(); });
-  syncValue();
-  const remove = makeButton("×", "remove-node");
-  remove.title = "Remove condition";
-  remove.setAttribute("aria-label", "Remove condition");
-  remove.addEventListener("click", () => {
-    parent.children.splice(parent.children.indexOf(node), 1);
-    renderRuleBuilder();
-  });
-  row.append(field, op, value, remove);
-  return row;
-}
-
-function renderGroup(node, parent) {
-  const box = document.createElement("div");
-  box.className = "rule-group";
-  const head = document.createElement("div");
-  head.className = "rule-group-head";
-  const mode = document.createElement("select");
-  mode.setAttribute("aria-label", "Combine with");
-  mode.append(new Option("All of (AND)", "all", false, node.mode === "all"), new Option("Any of (OR)", "any", false, node.mode === "any"));
-  mode.addEventListener("change", () => { node.mode = mode.value; renderRulePreview(); });
-  const negateLabel = document.createElement("label");
-  negateLabel.className = "rule-negate";
-  const negate = document.createElement("input");
-  negate.type = "checkbox";
-  negate.checked = node.negate;
-  negate.addEventListener("change", () => { node.negate = negate.checked; renderRulePreview(); });
-  negateLabel.append(negate, " NOT");
-  head.append(mode, negateLabel);
-  if (parent) {
-    const remove = makeButton("×", "remove-node");
-    remove.title = "Remove group";
-    remove.setAttribute("aria-label", "Remove group");
-    remove.addEventListener("click", () => {
-      parent.children.splice(parent.children.indexOf(node), 1);
-      renderRuleBuilder();
-    });
-    head.append(remove);
-  }
-  box.append(head);
-  const body = document.createElement("div");
-  body.className = "rule-children";
-  for (const child of node.children) {
-    body.append(child.type === "cond" ? renderCondition(child, node) : renderGroup(child, node));
-  }
-  const addCondition = makeButton("+ Condition", "add-condition");
-  addCondition.addEventListener("click", () => { node.children.push(newCondition()); renderRuleBuilder(); });
-  const addGroup = makeButton("+ Group", "add-group");
-  addGroup.addEventListener("click", () => { node.children.push(newGroup("any")); renderRuleBuilder(); });
-  const actions = document.createElement("div");
-  actions.className = "rule-actions";
-  actions.append(addCondition, addGroup);
-  box.append(body, actions);
-  return box;
-}
-
-function renderRulePreview() {
-  const preview = $("rule-preview");
-  try {
-    preview.textContent = describeRule(treeToRule(ruleTree));
-    preview.classList.remove("invalid");
-  } catch (error) {
-    preview.textContent = error.message;
-    preview.classList.add("invalid");
-  }
-}
-
-function renderRuleBuilder() {
-  ruleBuilder.replaceChildren(renderGroup(ruleTree, null));
-  renderRulePreview();
-}
-
-function renderFieldOptions() {
-  const list = $("scope-field-options");
-  list.replaceChildren();
-  for (const info of scopeFields.fields) {
-    const option = new Option(info.name);
-    option.label = `${info.name} · ${info.source}${info.examples.length ? ` · e.g. ${info.examples.slice(0, 2).join(", ")}` : ""}`;
-    list.append(option);
-  }
-  const hint = $("scope-field-hint");
-  hint.textContent = scopeFields.fields.length
-    ? `${scopeFields.fields.length} fields found${scopeFields.loaded ? ` in ${scopeFields.loaded}` : ""}. You can also type any field name.`
-    : "Type any field name. Load a project to see the fields it has.";
-}
-
-async function loadScopeFields() {
-  try {
-    const response = await fetch("/api/scope-fields");
-    if (response.ok) scopeFields = await response.json();
-  } catch {
-    /* suggestions are optional */
-  }
-  renderFieldOptions();
-  renderRuleBuilder();
-}
-
-/* Saved scopes */
-
-function renderScopes() {
-  scopeList.replaceChildren();
-  $("scope-count").textContent = state.scopes.length ? String(state.scopes.length) : "";
-  for (const scope of state.scopes) {
-    const item = document.createElement("li");
-    item.className = "scope-item";
-    item.dataset.name = scope.name;
-    const text = document.createElement("div");
-    const title = document.createElement("strong");
-    title.textContent = scope.name;
-    const summary = document.createElement("small");
-    summary.textContent = safeDescribe(scope);
-    summary.title = summary.textContent;
-    text.append(title, summary);
-    item.append(text, makeButton("Edit", "edit"), makeButton("Delete", "delete"));
-    scopeList.append(item);
-  }
-}
-
-function resetScopeForm() {
-  editingScope = null;
-  scopeForm.reset();
-  ruleTree = newGroup();
-  renderRuleBuilder();
-  $("scope-cancel").hidden = true;
-  $("scope-save").textContent = "Save scope";
-}
-
-async function saveScopes(scopes) {
-  const response = await fetch("/api/settings/scopes", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(scopes),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Could not save scopes");
-  state.scopes = data;
-  renderScopes();
-}
-
-scopeForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const name = scopeForm.elements.name.value.trim();
-    const scope = { name, rule: treeToRule(ruleTree) };
-    const key = (editingScope ?? name).toLowerCase();
-    const others = state.scopes.filter((item) => item.name.toLowerCase() !== key);
-    if (others.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
-      throw new Error(`A scope named “${name}” already exists`);
-    }
-    const index = state.scopes.findIndex((item) => item.name.toLowerCase() === key);
-    const next = [...state.scopes];
-    if (index < 0) next.push(scope); else next[index] = scope;
-    await saveScopes(next);
-    resetScopeForm();
-    toast(`Saved scope “${name}”`);
-  } catch (error) {
-    toast(error.message);
-  }
-});
-$("scope-cancel").addEventListener("click", resetScopeForm);
-$("scope-settings").addEventListener("toggle", (event) => {
-  if (event.target.open) loadScopeFields();
-});
-scopeList.addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-action]");
-  const name = button?.closest(".scope-item")?.dataset.name;
-  const scope = state.scopes.find((item) => item.name === name);
-  if (!scope) return;
-  if (button.dataset.action === "edit") {
-    editingScope = scope.name;
-    scopeForm.elements.name.value = scope.name;
-    ruleTree = ruleToTree(scope.rule);
-    if (ruleTree.type === "cond") ruleTree = { type: "group", mode: "all", negate: false, children: [ruleTree] };
-    renderRuleBuilder();
-    $("scope-cancel").hidden = false;
-    $("scope-save").textContent = "Update scope";
-    scopeForm.elements.name.focus();
-  } else {
-    try {
-      await saveScopes(state.scopes.filter((item) => item !== scope));
-      if (editingScope === scope.name) resetScopeForm();
-      toast(`Deleted scope “${scope.name}”`);
-    } catch (error) {
-      toast(error.message);
-    }
-  }
-});
 
 /* ---------- Start ---------- */
 
@@ -1524,7 +1224,6 @@ async function start() {
       const settings = await response.json();
       if (settings.ui && Object.keys(settings.ui).length) persisted = settings.ui;
       state.format = settings.format;
-      state.scopes = settings.scopes;
     }
   } catch {
     /* fall back to browser storage and defaults */
@@ -1539,8 +1238,8 @@ async function start() {
   }
   renderInput();
   renderOutput();
-  renderScopes();
-  renderRuleBuilder();
+  window.KumoScopes?.load().then(renderScopeSummary);
+  window.KumoScopes?.onActiveChange(renderScopeSummary);
   $("evidence-legend").append(KumoEvidence.legend());
   loadRules();
 }

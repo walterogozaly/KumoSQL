@@ -23,6 +23,7 @@
   const SECTIONS = [
     { id: "appearance", label: "Appearance", icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>' },
     { id: "formatting", label: "SQL formatting", icon: '<path d="M4 6h16M4 12h10M4 18h13"/>' },
+    { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
   ];
 
   let dialog;
@@ -379,7 +380,15 @@
     );
   }
 
-  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting };
+  function renderScopes(body) {
+    if (!window.KumoScopes) {
+      body.append(h("p", { class: "sp-lede", text: "Scopes could not be loaded on this page." }));
+      return;
+    }
+    window.KumoScopes.renderManager(body, { onStatus: setStatus });
+  }
+
+  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, scopes: renderScopes };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -397,6 +406,7 @@
   // Search narrows the sidebar to sections with a matching setting.
   const KEYWORDS = {
     appearance: "appearance theme light dark system colour color mode",
+    scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };
   function keywordsFor(section) {
