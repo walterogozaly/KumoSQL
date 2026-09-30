@@ -215,3 +215,56 @@ def test_ui_formats_with_request_preferences_and_reports_complexity(ui_server):
     assert result["complexity"]["before"]["metrics"]["joins"] == 1
     assert result["complexity"]["after"]["band"] == "low"
     assert any(rule["name"] == "format_sql" for rule in json.load(urlopen(ui_server + "/api/rules")))
+
+
+def get_json(base_url, path):
+    with urlopen(base_url + path) as response:
+        return json.load(response)
+
+
+def test_ui_serves_roadmap_views(ui_server):
+    for path, marker in (
+        ("/graph", b"insights.js"),
+        ("/cost?x=1", b"insights.js"),
+        ("/changes", b"insights.js"),
+        ("/assets/insights.js", b"/api/graph"),
+        ("/assets/insights.css", b".graph-canvas"),
+        ("/assets/evidence.js", b"planner_checked"),
+    ):
+        with urlopen(ui_server + path) as response:
+            assert marker in response.read()
+
+
+@pytest.mark.parametrize("path", ["/api/graph", "/api/cost", "/api/changes?refresh=1"])
+def test_ui_roadmap_endpoints_flag_preview_data(ui_server, path):
+    payload = get_json(ui_server, path)
+    assert payload["preview"] is True
+    assert payload["issues"]
+
+
+def test_preview_graph_is_consistent():
+    from kumosql import preview_data
+
+    graph = preview_data.graph()
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    for edge in graph["edges"]:
+        assert edge["from"] in nodes and edge["to"] in nodes
+        assert edge["source"] in ("declared", "observed", "both", "parsed")
+        assert edge["confidence"] in ("high", "medium", "low")
+    for item in graph["column_lineage"]:
+        assert item["column"] in nodes[item["node"]]["columns"]
+        for source in item["sources"]:
+            assert source["column"] in nodes[source["node"]]["columns"]
+
+
+def test_preview_changes_use_evidence_labels_and_gate_proposals():
+    from kumosql import preview_data
+
+    payload = preview_data.changes()
+    labels = set(preview_data.EVIDENCE_LABELS)
+    for change in payload["report"]["changes"]:
+        assert change["verification"]["label"] in labels
+    for proposal in payload["proposals"]:
+        consumers = {item["label"] for item in proposal["consumers"]}
+        assert proposal["ready"] == (consumers <= {"proven", "unchanged"})
+    assert [proposal["ready"] for proposal in payload["proposals"]] == [False, True]

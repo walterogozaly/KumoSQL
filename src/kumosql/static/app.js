@@ -544,7 +544,44 @@ function setView(view) {
 
 const VERDICT_ICONS = {
   idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", unproven: "#i-alert", failed: "#i-alert",
+  planner_checked: "#i-check",
 };
+
+/* ---------- Evidence labels (#15, #16) ---------- */
+
+// Until #15 lands, a step's `verification` is a bare status string and "failed"
+// is derived from rule_success. Afterwards it may be an object with a label and
+// checks; both shapes are read here so the server can switch without UI changes.
+function verificationOf(item) {
+  const v = item.verification;
+  return v && typeof v === "object" ? v : { status: v, details: item.details || [] };
+}
+
+function evidenceLabel(item) {
+  if (item.rule_success === false) return "failed";
+  const v = verificationOf(item);
+  return KumoEvidence.normalize(v.label || v.status);
+}
+
+function evidenceChecks(item, label) {
+  const v = verificationOf(item);
+  const given = item.checks || v.checks;
+  if (Array.isArray(given)) return given;
+  const checks = [];
+  if (label === "proven") checks.push({ kind: "structural_proof", outcome: "passed" });
+  if (label === "unproven") checks.push({ kind: "structural_proof", outcome: "inconclusive", detail: (v.details || [])[0] });
+  if (label === "proven" || label === "unproven") {
+    checks.push({ kind: "planner", outcome: "not_run", detail: "Dry runs are not connected to rewrites yet" });
+  }
+  return checks;
+}
+
+function checkRow(checks) {
+  const row = document.createElement("div");
+  row.className = "ev-checks";
+  for (const check of checks) row.append(KumoEvidence.checkChip(check));
+  return row;
+}
 
 function setVerdict(kind, title, detail) {
   $("verdict").className = `verdict verdict-${kind}`;
@@ -602,13 +639,19 @@ function showReport(data) {
   };
 
   for (const detail of data.verification.details) addDetail(null, detail);
+  const chainChecks = $("chain-checks");
+  chainChecks.replaceChildren();
+  const chainLabel = evidenceLabel(data);
+  const summary = evidenceChecks(data, chainLabel);
+  if (summary.length) chainChecks.append(checkRow(summary));
   data.steps.forEach((step, index) => {
-    const outcome = step.rule_success ? step.verification : "failed";
+    const outcome = evidenceLabel(step);
     const item = document.createElement("li");
     item.className = `tl-step ${outcome}`;
     const dot = document.createElement("span");
     dot.className = "tl-dot";
     if (outcome === "proven") dot.innerHTML = `<svg class="icon"><use href="#i-check"/></svg>`;
+    else if (outcome === "planner_checked") dot.innerHTML = `<svg class="icon"><use href="#i-check"/></svg>`;
     else if (outcome === "failed" || outcome === "unproven") dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
     else dot.textContent = String(index + 1);
     const name = document.createElement("span");
@@ -616,11 +659,10 @@ function showReport(data) {
     name.textContent = labelFor(step.rule);
     const meta = document.createElement("span");
     meta.className = "tl-meta";
-    const pill = document.createElement("span");
-    pill.className = `pill pill-${outcome}`;
-    pill.textContent = outcome;
-    meta.append(plural(step.changes, "change"), pill);
+    meta.append(plural(step.changes, "change"), KumoEvidence.pill(outcome));
     item.append(dot, name, meta);
+    const checks = evidenceChecks(step, outcome);
+    if (checks.length) item.append(checkRow(checks));
     steps.append(item);
     for (const diagnostic of step.diagnostics) addDetail(step.rule, `${diagnostic.code} — ${diagnostic.message}`);
     for (const detail of step.details) addDetail(step.rule, detail);
@@ -734,7 +776,10 @@ async function transform() {
     }
 
     const reason = data.verification.reason;
-    if (data.success && data.verification.status === "unchanged") {
+    const label = evidenceLabel(data);
+    if (data.rule_success && label === "planner_checked") {
+      setVerdict("planner_checked", "Planner checked: not proven", `${reason}. Matching plans and schemas are not proof of equal results.`);
+    } else if (data.success && label === "unchanged") {
       setVerdict("unchanged", "No changes needed", "None of the selected rules changed this SQL.");
     } else if (data.success) {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
@@ -1430,6 +1475,7 @@ async function start() {
   renderInput();
   renderOutput();
   renderScopes();
+  $("evidence-legend").append(KumoEvidence.legend());
   loadRules();
 }
 

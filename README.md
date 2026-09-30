@@ -22,6 +22,8 @@ Open the URL printed by the command if your browser does not open automatically.
 
 The server listens only on `127.0.0.1` and uses the existing Python package. Pasted SQL stays local. GitHub browsing contacts GitHub only when you connect a repository or open one of its files; it supports public Dataform repositories and is read-only. The **BigQuery browser** is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. It contacts BigQuery only when you open that page, select an item, or press **Refresh projects**; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
 
+**Query graph**, **Cost** and **Change reports** are pages for the upcoming roadmap work: readers, change impact, and lineage; measured cost and savings; and semantic change reports. Until the issues behind them land, they show labeled sample data. [docs/ui-roadmap.md](docs/ui-roadmap.md) lists the issue and data shape behind each area.
+
 To use the catalog with Google Cloud CLI credentials, install the BigQuery extra and sign in with Application Default Credentials:
 
 ```powershell
