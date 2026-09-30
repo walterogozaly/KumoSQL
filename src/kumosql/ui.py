@@ -30,7 +30,6 @@ ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/browse": ("browse.html", "text/html; charset=utf-8"),
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
-    "/settings": ("settings.html", "text/html; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
