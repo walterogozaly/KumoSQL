@@ -232,6 +232,10 @@ Credentials come from `BQ_ACCESS_TOKEN`, or a service account key in `GOOGLE_APP
 kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
 ```
 
+## BigQuery test bed
+
+`examples/bq_testbed/` builds a deliberately messy, low-cost model layer over a public dataset and runs a query workload to build up job history. See [docs/bigquery-testbed.md](docs/bigquery-testbed.md) for setup, cost guards and access roles.
+
 ## CLI
 
 ```powershell
