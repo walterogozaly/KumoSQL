@@ -122,7 +122,7 @@ function setupProjectForm(data) {
   const form = $("project-form");
   form.hidden = false;
   const live = data.source?.kind === "project";
-  $("project-source").textContent = live ? `Showing ${data.source.label}` : "Showing sample data. Load a public Dataform repository to see your own graph.";
+  $("project-source").textContent = live ? `Showing ${data.source.label}` : "Showing sample data. Load a Dataform git repository (private ones work with your own git credentials) to see your own graph.";
   $("project-clear").hidden = !live;
   if (form.dataset.bound) return;
   form.dataset.bound = "1";
@@ -140,7 +140,11 @@ function setupProjectForm(data) {
   };
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    run("/api/github/load", { url: $("project-url").value.trim() }, "Loading project from GitHub…");
+    run("/api/project/git", {
+      url: $("project-url").value.trim(),
+      branch: $("project-branch").value.trim(),
+      refresh: $("project-refresh").checked,
+    }, "Loading project with git…");
   });
   $("project-clear").addEventListener("click", () => run("/api/project/clear", {}, "Clearing…"));
 }

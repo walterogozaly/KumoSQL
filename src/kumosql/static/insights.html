@@ -50,7 +50,9 @@
       </div>
       <form id="project-form" class="project-form" hidden>
         <span id="project-source" class="project-source"></span>
-        <input id="project-url" type="url" class="field" placeholder="https://github.com/owner/repository" aria-label="Public Dataform repository URL" required>
+        <input id="project-url" type="text" class="field" placeholder="git@github.com:owner/repository.git or https://…" aria-label="Dataform git repository URL" autocomplete="off" required>
+        <input id="project-branch" type="text" class="field" placeholder="branch (default)" aria-label="Branch" autocomplete="off" size="14">
+        <label class="project-refresh"><input id="project-refresh" type="checkbox"> Fetch latest</label>
         <button type="submit" class="toolbar-button">Load project</button>
         <button type="button" id="project-clear" class="toolbar-button" hidden>Use sample data</button>
         <span id="project-status" class="project-status" role="status"></span>

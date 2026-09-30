@@ -33,7 +33,7 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 
 `kumosql.live_graph` holds the project the server has loaded (in memory; it is gone after a restart) and builds the payload from a `Pipeline`. Load one by:
 
-- entering a public Dataform repository URL on the `/graph` page (`POST /api/github/load`, limited to 100 SQLX files because unauthenticated GitHub requests are rate limited),
+- entering a Dataform git remote on the `/graph` page (`POST /api/project/git` with `url`, optional `branch` and `refresh`; uses the local `git` CLI, so private repositories work; `/api/github/load` is an alias), or `kumosql-ui --git URL`,
 - `kumosql-ui --project DIR`, or
 - `POST /api/project` with `{"files": {relative path: text}, "label"}` (only `.sqlx`, `.sql` and Dataform config files; relative paths only).
 

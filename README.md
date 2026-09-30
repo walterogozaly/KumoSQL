@@ -18,9 +18,9 @@ kumosql-ui
 
 Open the URL printed by the command (`http://127.0.0.1:8765/`) if your browser does not open automatically. Turn on transformations in the **Pipeline** strip across the top, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Use **GitHub** (beside **Open**) to browse the SQLX models in a public Dataform repository and open a file in the editor. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
 
-The server listens only on `127.0.0.1` and uses the existing Python package. Pasted SQL stays local. GitHub browsing contacts GitHub only when you connect a repository or open one of its files; it supports public Dataform repositories and is read-only. The **BigQuery** page is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. Catalog answers are cached in memory and in `catalog-cache.json` in the KumoSQL data directory for an hour (set `KUMOSQL_CATALOG_TTL` in seconds to change it), so revisiting an item makes no BigQuery call; the page shows how old the copy is, serves the saved copy if BigQuery is unreachable, and **Refresh from BigQuery** re-reads everything on screen. Otherwise it contacts BigQuery only when you open that page or select an item you have not seen; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+The server listens only on `127.0.0.1` and uses the existing Python package. Pasted SQL stays local. Loading a project from a git remote runs your local `git` (see below). GitHub browsing contacts GitHub only when you connect a repository or open one of its files; it supports public Dataform repositories and is read-only. The **BigQuery** page is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. Catalog answers are cached in memory and in `catalog-cache.json` in the KumoSQL data directory for an hour (set `KUMOSQL_CATALOG_TTL` in seconds to change it), so revisiting an item makes no BigQuery call; the page shows how old the copy is, serves the saved copy if BigQuery is unreachable, and **Refresh from BigQuery** re-reads everything on screen. Otherwise it contacts BigQuery only when you open that page or select an item you have not seen; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
 
-**Query graph**, **Cost** and **Change reports** are pages for the upcoming roadmap work: readers, change impact, and lineage; measured cost and savings; and semantic change reports. The **Query graph** shows your own project once one is loaded: paste a public Dataform repository URL on that page, start the server with `kumosql-ui --project DIR` (a Dataform or SQL folder), or `POST` `{"files": {path: text}}` to `/api/project`. It shows every gap the analysis found and a "Partial graph" strip whenever any asset could not be analyzed. With nothing loaded it shows sample data behind a banner. The loaded project is kept in memory only. **Cost** and **Change reports** still show labeled sample data. [docs/ui-roadmap.md](docs/ui-roadmap.md) lists the issue and data shape behind each area.
+**Query graph**, **Cost** and **Change reports** are pages for the upcoming roadmap work: readers, change impact, and lineage; measured cost and savings; and semantic change reports. The **Query graph** shows your own project once one is loaded: enter a Dataform git remote on that page (optionally a branch, and **Fetch latest** to refresh), start the server with `kumosql-ui --git URL [--branch B] [--refresh]` or `kumosql-ui --project DIR` (a Dataform or SQL folder), or `POST` `{"files": {path: text}}` to `/api/project`. It shows every gap the analysis found and a "Partial graph" strip whenever any asset could not be analyzed. With nothing loaded it shows sample data behind a banner. The loaded project is kept in memory only. **Cost** and **Change reports** still show labeled sample data. [docs/ui-roadmap.md](docs/ui-roadmap.md) lists the issue and data shape behind each area.
 
 To use the catalog with Google Cloud CLI credentials, install the BigQuery extra and sign in with Application Default Credentials:
 
@@ -426,7 +426,7 @@ Every command prints `--help`.
 
 | Command | Purpose |
 | --- | --- |
-| `kumosql-ui` | Local browser UI (`--project DIR`, `--port`, `--no-browser`) |
+| `kumosql-ui` | Local browser UI (`--project DIR`, `--git URL`, `--branch`, `--refresh`, `--port`, `--no-browser`) |
 | `rewrite-sql` | Apply rules with verification, optional idempotence, planner and synthetic checks |
 | `lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
 | `prove-sql-equivalent` | Structural equivalence proof for two queries |
@@ -446,3 +446,14 @@ lift-subqueries input.sql --output output.sql --report
 ## What's next
 
 KumoSQL is moving toward a query graph that combines declared and observed dependencies with measured cost, backed by the verification engine described above. The graph page already shows a loaded project; the **Cost** and **Change reports** pages still use labeled sample data until job history and project snapshots can be supplied from the UI. Next up is finding proposed queries that duplicate existing tables and turning shared logic into verified refactors, with failed rewrites never mistaken for successful ones. The open work is tracked in the GitHub issues.
+
+## Loading a private Dataform repository
+
+The query graph loads a repository through the local `git` CLI, so private repositories work with the credentials you already use (SSH keys, a credential helper, or a token in an `https://` URL). KumoSQL never asks for or stores credentials and makes no unauthenticated HTTP requests for this.
+
+```bash
+kumosql-ui --git git@github.com:owner/dataform-project.git --branch main
+kumosql-pipeline --git https://github.com/owner/dataform-project.git --refresh
+```
+
+Accepted remotes are `https://`, `ssh://`, `git@host:path` and local repository paths. The repository is shallow-cloned (depth 1) into `git-cache` under the KumoSQL data directory (override with `KUMOSQL_GIT_CACHE`) and reused on later runs; `--refresh` (or **Fetch latest** in the UI) fetches the newest commit of the branch. Git never prompts: when authentication fails you get git's own message, for example `Permission denied (publickey)`. If a refresh fails, the cached copy is kept. Only `.sqlx`, `.sql` and Dataform config files are read.

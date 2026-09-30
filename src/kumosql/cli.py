@@ -274,7 +274,10 @@ def pipeline_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Analyse a whole Dataform or SQL pipeline: graph, dead columns, duplicate logic"
     )
-    parser.add_argument("root", type=Path, help="Dataform project root, folder of .sql files, or compiled graph JSON")
+    parser.add_argument("root", type=Path, nargs="?", help="Dataform project root, folder of .sql files, or compiled graph JSON")
+    parser.add_argument("--git", metavar="URL", help="Instead of a folder: clone this repository with the local git CLI (https://, ssh://, git@host:path)")
+    parser.add_argument("--branch", help="With --git: branch to load")
+    parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
     parser.add_argument(
         "--source-schema",
         type=Path,
@@ -337,6 +340,17 @@ def pipeline_main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.assess and not args.target:
         parser.error("--assess needs --target")
+    if bool(args.root) == bool(args.git):
+        parser.error("give either a project folder or --git URL")
+    if (args.branch or args.refresh) and not args.git:
+        parser.error("--branch and --refresh need --git")
+    if args.git:
+        from .git_repo import GitRepoError, sync, parse_remote, parse_branch
+
+        try:
+            args.root = sync(parse_remote(args.git), parse_branch(args.branch), args.refresh)
+        except GitRepoError as exc:
+            parser.error(str(exc))
 
     scope = None
     if args.scope:

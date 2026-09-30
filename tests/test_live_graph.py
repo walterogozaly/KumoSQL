@@ -112,14 +112,25 @@ def test_invalid_project_files_are_rejected(server, files):
     assert get(server, "/api/graph")["preview"] is True
 
 
-def test_repository_load_builds_the_graph(server, monkeypatch):
+def test_repository_load_builds_the_graph(server, tmp_path, monkeypatch):
+    from kumosql import git_repo
+
     monkeypatch.setattr(
-        github_repo, "fetch_project",
-        lambda url: {"repository": "org/repo", "branch": "main", "files": FILES},
+        git_repo, "fetch_project",
+        lambda url, branch=None, refresh=False: {
+            "repository": "repo", "branch": branch or "main", "commit": "abc1234", "files": FILES},
     )
-    result = post(server, "/api/github/load", {"url": "https://github.com/org/repo"})
-    assert result == {"loaded": True, "label": "org/repo (main)", "files": 3}
-    assert get(server, "/api/graph")["source"]["label"] == "org/repo (main)"
+    result = post(server, "/api/project/git", {"url": "git@example.com:org/repo.git", "branch": "dev"})
+    assert result == {"loaded": True, "label": "repo (dev @ abc1234)", "files": 3}
+    assert get(server, "/api/graph")["source"]["label"] == "repo (dev @ abc1234)"
+
+
+def test_repository_load_reports_git_errors(server, tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    with pytest.raises(HTTPError) as error:
+        post(server, "/api/project/git", {"url": str(tmp_path / "nope.git")})
+    assert error.value.code == 400
+    assert "git clone failed" in error.value.read().decode()
 
 
 def test_fetch_project_reads_config_and_refuses_large_projects(monkeypatch):
