@@ -39,6 +39,7 @@ from .ast_utils import quiet_parser as _quiet_parser
 from .resilience import (
     PipelineLoadError,
     describe_os_error,
+    build_completeness,
     diagnostic_entry,
     find_assets,
     guarded,
@@ -345,6 +346,20 @@ class Pipeline:
     def all_diagnostics(self) -> list[PipelineDiagnostic]:
         return [*self.diagnostics, *self._analyse().diagnostics]
 
+    def completeness(self) -> dict:
+        """What the analysis could not see and which views that affects.
+
+        ``complete`` is false when any asset failed to load or parse, a
+        statement was skipped, or a table reference was ambiguous. ``views``
+        gives a flag per view (``graph``, ``lineage``, ``impact``,
+        ``dead_columns``); a false flag means results in that view may be
+        missing readers or edges. ``gaps`` lists each asset with a ``kind``
+        and ``message``. The same block is in ``report()``.
+        """
+
+        entries = [diagnostic_entry(d.model, d.code, d.message) for d in self.all_diagnostics()]
+        return build_completeness(entries)
+
     def report(
         self,
         *,
@@ -377,7 +392,36 @@ class Pipeline:
                 diagnostic_entry("graph", "section_failed", f"graph could not be built ({error})")
             )
             report["diagnostic_summary"] = summarize(report["diagnostics"])
+        observed_gaps = self._observed_gaps(graph)
+        report["completeness"] = build_completeness(report["diagnostics"], observed_gaps)
+        if graph is not None:
+            graph["completeness"] = report["completeness"]
         return report if scope is None else self._scoped(report, scope)
+
+    @staticmethod
+    def _observed_gaps(graph: dict | None) -> list[dict]:
+        if not graph:
+            return []
+        gaps = []
+        unresolved = graph["unresolved_observations"]["count"]
+        if unresolved:
+            gaps.append(
+                {
+                    "asset": "job history",
+                    "kind": "unmatched_reference",
+                    "message": f"{unresolved} observed table reference(s) matched no asset",
+                }
+            )
+        unattributed = graph["unattributed_observations"]["count"]
+        if unattributed:
+            gaps.append(
+                {
+                    "asset": "job history",
+                    "kind": "unattributed_reads",
+                    "message": f"{unattributed} observed statement(s) read graph tables without a destination asset",
+                }
+            )
+        return gaps
 
     SCOPE_FIELDS = ("project", "dataset", "name", "table")
 
@@ -412,8 +456,19 @@ class Pipeline:
                 near.append(cluster)
         graph = None if report["graph"] is None else self._scope_graph(report["graph"], keep_node_ids)
         kept_diagnostics = [d for d in report["diagnostics"] if not d["model"] or d["model"] in keep]
+        completeness = build_completeness(
+            kept_diagnostics,
+            [
+                {k: g[k] for k in ("asset", "kind", "message")}
+                for g in report["completeness"]["gaps"]
+                if g["origin"] == "observed"
+            ],
+        )
+        if graph is not None:
+            graph["completeness"] = completeness
         return {
             **report,
+            "completeness": completeness,
             "scope": scope.name,
             "models": len(keep),
             "order": [key for key in report["order"] if key in keep],
@@ -862,12 +917,32 @@ class _TargetResolver:
                 return None
         return None
 
+    def is_ambiguous(self, table: exp.Table | str) -> bool:
+        """True when the name matches several known tables, not none."""
+
+        if isinstance(table, exp.Table):
+            name = ".".join(part.name for part in table.parts)
+        else:
+            name = table.strip("`")
+        parts = name.split(".")
+        for start in range(len(parts)):
+            matches = self._by_suffix.get(".".join(parts[start:]))
+            if matches:
+                return len(matches) > 1
+        return False
+
 
 def _parse_model(sql: str) -> exp.Expression | None:
+    return _parse_script(sql)[0]
+
+
+def _parse_script(sql: str) -> tuple[exp.Expression | None, int]:
+    """The last query of a script, and how many other queries were ignored."""
+
     with _quiet_parser():
         statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
     queries = [s for s in statements if isinstance(s, exp.Query)]
-    return queries[-1] if queries else None
+    return (queries[-1] if queries else None), max(len(queries) - 1, 0)
 
 
 def _nested_schema(flat: dict[str, dict[str, str]]) -> dict:
@@ -936,6 +1011,7 @@ class _Analysis:
         parsed: dict[str, exp.Expression] = {}
         upstream: dict[str, set[str]] = {}
         unresolved_tables: dict[str, set[str]] = {}
+        ambiguous_tables: dict[str, set[str]] = {}
         blind_models: list[str] = []
 
         for key, model in pipeline.models.items():
@@ -946,7 +1022,16 @@ class _Analysis:
             }
             if model.is_query:
                 try:
-                    query = _parse_model(model.sql)
+                    query, skipped = _parse_script(model.sql)
+                    if skipped:
+                        diagnostics.append(
+                            PipelineDiagnostic(
+                                key,
+                                "skipped_statements",
+                                f"script has {skipped + 1} queries; only the last was analysed, "
+                                f"so reads by the other {skipped} are missing from the graph",
+                            )
+                        )
                 except Exception as exc:  # sqlglot raises several error types
                     query = None
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
@@ -962,11 +1047,22 @@ class _Analysis:
                         if resolved and resolved != key:
                             parents.add(resolved)
                         elif resolved is None and table.name:
-                            unresolved_tables.setdefault(key, set()).add(
-                                _table_name_for_schema(table)
+                            bucket = (
+                                ambiguous_tables
+                                if pipeline._resolver.is_ambiguous(table)
+                                else unresolved_tables
                             )
+                            bucket.setdefault(key, set()).add(_table_name_for_schema(table))
                 elif model.sql.strip():
                     diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
+            elif model.sql.strip():
+                diagnostics.append(
+                    PipelineDiagnostic(
+                        key,
+                        "unparsed_operation",
+                        f"{model.kind} statements are not analysed; tables they read or write have no edges here",
+                    )
+                )
             if key not in parsed and model.sql.strip() and not model.declared_dependencies:
                 blind_models.append(key)
             upstream[key] = parents
@@ -1081,12 +1177,21 @@ class _Analysis:
                     PipelineDiagnostic(key, "external_tables", "reads tables outside the pipeline: " + ", ".join(unknown))
                 )
 
-        if blind_models:
+        for key, tables in sorted(ambiguous_tables.items()):
             diagnostics.append(
                 PipelineDiagnostic(
-                    ",".join(sorted(blind_models)),
+                    key,
+                    "ambiguous_reference",
+                    "reads names that match more than one table, so no edge was drawn: " + ", ".join(sorted(tables)),
+                )
+            )
+
+        for key in sorted(blind_models):
+            diagnostics.append(
+                PipelineDiagnostic(
+                    key,
                     "unknown_reads",
-                    "these models could not be analysed and declare no dependencies; dead-column detection is disabled",
+                    "could not be analysed and declares no dependencies; its reads are unknown and dead-column detection is disabled",
                 )
             )
 
@@ -1124,7 +1229,9 @@ def _topological_order(
                 ready.append(child)
     cyclic = sorted(key for key in upstream if key not in set(order))
     if cyclic:
-        diagnostics.append(PipelineDiagnostic(",".join(cyclic), "cycle", "dependency cycle between models"))
+        diagnostics.extend(
+            PipelineDiagnostic(key, "cycle", "dependency cycle between models") for key in cyclic
+        )
         order.extend(cyclic)
     return order
 

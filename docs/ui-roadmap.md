@@ -38,7 +38,7 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 | Find readers tab | #25 | Computed on the page from `edges` |
 | Assess a change tab (drop, rename, change expression). Readers whose use can't be traced are listed as Unknown | #26 | Computed on the page from `column_lineage` plus `gaps` |
 | Explain lineage tab. Columns that can't be traced are marked Unknown | #27 | `column_lineage[]`: `node`, `column`, `sources[] {node, column}`, `transform` |
-| Gaps table, dashed "Not analyzed" nodes, the "Partial graph" strip | #28 | `gaps[]`: `asset`, `kind` (`parse_error`, `inaccessible`, `unmatched_reference`, `unattributed_reads`), `message` |
+| Gaps table, dashed "Not analyzed" nodes, the "Partial graph" strip | #28 | `gaps[]`: `asset`, `kind` (`parse_error`, `inaccessible`, `unmatched_reference`, `unattributed_reads`, and other diagnostic codes), `message`. Built by `Pipeline.completeness()` (also `report()["completeness"]`, which adds `complete`, per-view flags and `blocking`); `/api/graph` still serves the preview |
 | Coverage strip | #29 | `coverage`: `assets_total`, `assets_analyzed`, `statements_total`, `statements_matched`, `sampled_impact_accuracy`, `sample_size`, `complete`; `window {start, end}` |
 
 The traversals for readers, impact and lineage run in the browser, which is fine at MVP size. If the graph gets large, add `?node=` endpoints and keep the result shapes in `insights.js` (`readersOf`, `impactOf`, `lineageOf`). The view has no "safe to delete" action, per the roadmap.
