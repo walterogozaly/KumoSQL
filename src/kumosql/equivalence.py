@@ -83,6 +83,29 @@ _VALUE_NONDETERMINISTIC_NAMES = {
 }
 
 
+# Value functions that are safe to leave in place when a rewrite does not touch
+# them. Everything else in the nondeterminism sets above (windows, tie-sensitive
+# or order-sensitive aggregates, sampling) depends on the input row set, so an
+# identical expression is not enough and it keeps blocking the proof.
+_STABLE_IF_UNCHANGED_TYPES = {
+    "CurrentDate",
+    "CurrentTime",
+    "CurrentTimestamp",
+    "Rand",
+    "Uuid",
+}
+
+_STABLE_IF_UNCHANGED_NAMES = {
+    "CURRENT_DATE",
+    "CURRENT_DATETIME",
+    "CURRENT_TIME",
+    "CURRENT_TIMESTAMP",
+    "GENERATE_UUID",
+    "RAND",
+    "SESSION_USER",
+}
+
+
 def _parse_single_query(sql: str) -> exp.Expression:
     statements = sqlglot.parse(sql, read="bigquery")
     statements = [statement for statement in statements if statement is not None]
@@ -207,8 +230,9 @@ def _merge_duplicate_ctes(query: exp.Expression) -> bool:
     already uses a canonical name and two bodies with the same text read the
     same relations. A non-recursive BigQuery CTE is evaluated per reference,
     so two deterministic CTEs with the same body produce the same rows, and a
-    CTE nobody references cannot affect the result. Nondeterministic queries
-    are refused later, so merging never hides a RAND() difference.
+    CTE nobody references cannot affect the result. A change to a RAND()-style
+    call is refused later by comparing the calls before and after normalization,
+    so merging never hides a RAND() difference.
 
     Returns whether anything changed, so the caller can re-canonicalize.
     """
@@ -507,11 +531,31 @@ def _drop_redundant_distinct(query: exp.Expression) -> None:
             select.set("distinct", None)
 
 
-def _nondeterminism_reasons(query: exp.Expression) -> list[str]:
+def _is_unchanged_safe_value(node: exp.Expression) -> bool:
+    if type(node).__name__ in _STABLE_IF_UNCHANGED_TYPES:
+        return True
+    return isinstance(node, exp.Anonymous) and (node.name or "").upper() in _STABLE_IF_UNCHANGED_NAMES
+
+
+def _value_nondeterminism_sites(query: exp.Expression) -> tuple[str, ...]:
+    """Canonical SQL of each RAND/CURRENT_*/UUID-style call, in walk order."""
+
+    return tuple(
+        node.sql(dialect="bigquery", normalize_functions="upper", comments=False)
+        for node in query.walk()
+        if _is_unchanged_safe_value(node)
+    )
+
+
+def _nondeterminism_reasons(
+    query: exp.Expression, *, allow_unchanged_values: bool = False
+) -> list[str]:
     reasons: list[str] = []
     for name in sorted(ambiguous_unnest_names(query)):
         reasons.append(f"ambiguous relation reference: UNNEST({name}) may be a misparsed join")
     for node in query.walk():
+        if allow_unchanged_values and _is_unchanged_safe_value(node):
+            continue
         node_type = type(node).__name__
         if node_type in _VALUE_NONDETERMINISTIC_TYPES:
             reasons.append(f"value nondeterminism: {node.sql(dialect='bigquery')}")
@@ -596,7 +640,9 @@ SELECT COUNTIF(left_count != right_count) = 0 AS equivalent
 FROM joined_counts"""
 
 
-def _prepare_query(sql: str, *, ignore_row_order: bool) -> tuple[exp.Expression, str, tuple[str, ...]]:
+def _prepare_query(
+    sql: str, *, ignore_row_order: bool
+) -> tuple[exp.Expression, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     # Require strict parsing before invoking the lifting transformer. Recovery
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
@@ -608,6 +654,9 @@ def _prepare_query(sql: str, *, ignore_row_order: bool) -> tuple[exp.Expression,
     query = _parse_single_query(lifted.sql)
     if ignore_row_order:
         _remove_unordered_result_order(query)
+    # Recorded before the remaining structure-changing normalizations so that
+    # merging, dropping or simplifying around a call cannot hide a change to it.
+    sites_before = _value_nondeterminism_sites(query)
     _drop_redundant_distinct(query)
     _strip_grouping_parens(query)
     _flatten_connectors(query)
@@ -618,7 +667,8 @@ def _prepare_query(sql: str, *, ignore_row_order: bool) -> tuple[exp.Expression,
         _canonicalize_cte_names(query)
     _remove_comments(query)
     canonical = _canonical_sql(query)
-    return query, canonical, tuple(_nondeterminism_reasons(query))
+    reasons = tuple(_nondeterminism_reasons(query, allow_unchanged_values=True))
+    return query, canonical, reasons, sites_before, _value_nondeterminism_sites(query)
 
 
 def prove_equivalent(
@@ -637,10 +687,10 @@ def prove_equivalent(
 
     verifier_sql: str | None = None
     try:
-        left_query, left_canonical, left_nondeterminism = _prepare_query(
+        left_query, left_canonical, left_nondeterminism, left_before, left_after = _prepare_query(
             left_sql, ignore_row_order=ignore_row_order
         )
-        right_query, right_canonical, right_nondeterminism = _prepare_query(
+        right_query, right_canonical, right_nondeterminism, right_before, right_after = _prepare_query(
             right_sql, ignore_row_order=ignore_row_order
         )
         verifier_sql = build_bag_verifier_sql(left_sql, right_sql)
@@ -652,6 +702,16 @@ def prove_equivalent(
         )
 
     diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))
+    sites_untouched = (
+        left_before == right_before
+        and left_before == left_after
+        and right_before == right_after
+    )
+    if not diagnostics and not sites_untouched:
+        diagnostics = tuple(
+            f"value nondeterminism changed: {site}"
+            for site in dict.fromkeys(left_before + right_before + left_after + right_after)
+        )
     if diagnostics:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
@@ -701,6 +761,11 @@ def prove_equivalent(
                 verifier_sql=verifier_sql,
             )
 
+    unchanged = (
+        (f"{len(left_before)} nondeterministic value expression(s) left unchanged",)
+        if left_before
+        else ()
+    )
     return EquivalenceResult(
         status=EquivalenceStatus.PROVEN_EQUIVALENT,
         reason="canonical query structures match under the selected result-order semantics",
@@ -709,4 +774,5 @@ def prove_equivalent(
         normalized_left=left_canonical,
         normalized_right=right_canonical,
         verifier_sql=verifier_sql,
+        diagnostics=unchanged,
     )

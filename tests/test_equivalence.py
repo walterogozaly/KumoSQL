@@ -29,14 +29,43 @@ def test_ignores_output_order_when_no_row_selection_is_involved():
     assert not result.diagnostics
 
 
-def test_does_not_prove_random_values():
-    result = prove_equivalent(
-        "SELECT id, RAND() AS sample FROM `p.d.customers`",
-        "SELECT id, RAND() AS sample FROM `p.d.customers`",
-    )
+def test_unchanged_value_nondeterminism_can_be_proven():
+    for call in ("RAND()", "CURRENT_TIMESTAMP()", "GENERATE_UUID()", "rand()"):
+        result = prove_equivalent(
+            f"SELECT id, {call} AS v FROM `p.d.t` WHERE a = 1 AND TRUE",
+            f"SELECT id, {call.upper()} AS v FROM `p.d.t` WHERE a = 1",
+        )
 
-    assert result.status is EquivalenceStatus.NOT_PROVEN
-    assert any("RAND" in diagnostic for diagnostic in result.diagnostics)
+        assert result.proven, call
+        assert any("left unchanged" in d for d in result.diagnostics)
+
+
+def test_changed_value_nondeterminism_is_not_proven():
+    base = "SELECT id, RAND() AS v FROM `p.d.t`"
+    variants = [
+        "SELECT id, RAND() + 1 AS v FROM `p.d.t`",
+        "SELECT id, RAND() AS v, RAND() AS w FROM `p.d.t`",
+        "SELECT id, 0.5 AS v FROM `p.d.t`",
+        "SELECT id, CURRENT_DATE() AS v FROM `p.d.t`",
+    ]
+    for other in variants:
+        for left, right in ((base, other), (other, base)):
+            result = prove_equivalent(left, right)
+            assert not result.proven, other
+    dropped = prove_equivalent(base, "SELECT id, 1 AS v FROM `p.d.t`")
+    assert dropped.status is EquivalenceStatus.NOT_PROVEN
+
+
+def test_merged_random_ctes_are_not_proven():
+    two = "WITH a AS (SELECT RAND() AS r), b AS (SELECT RAND() AS r) SELECT a.r, b.r FROM a, b"
+    one = "WITH a AS (SELECT RAND() AS r) SELECT a.r, a.r FROM a"
+    assert not prove_equivalent(two, one).proven
+    assert not prove_equivalent(one, two).proven
+
+
+def test_unchanged_window_stays_unproven():
+    sql = "SELECT id, RAND() AS v, ROW_NUMBER() OVER (ORDER BY id) AS n FROM `p.d.t`"
+    assert not prove_equivalent(sql, sql).proven
 
 
 def test_does_not_prove_limit_without_schema_constraints():

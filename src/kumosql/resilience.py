@@ -31,8 +31,39 @@ ASSET_FAILURE_CODES = frozenset(
         "lineage_error",
         "unexpanded_star",
         "section_failed",
+        "cycle",
+        "unknown_reads",
+        "skipped_statements",
+        "unparsed_operation",
+        "ambiguous_reference",
     }
 )
+
+# Views that a gap makes unreliable. A result in one of these views is only
+# complete when no blocking gap lists it.
+VIEWS = ("graph", "lineage", "impact", "dead_columns")
+
+_EFFECTS = {
+    "cycle": ("graph", "impact"),
+    "external_tables": ("lineage",),
+}
+
+# Kinds shared with the graph page's gaps table; other codes keep their own name.
+_GAP_KINDS = {
+    "read_error": "inaccessible",
+    "unreadable_directory": "inaccessible",
+    "settings_unreadable": "inaccessible",
+    "invalid_entry": "inaccessible",
+    "parse_error": "parse_error",
+    "no_query": "parse_error",
+    "sqlx_parse_error": "parse_error",
+    "unsupported_ref": "parse_error",
+    "qualify_error": "parse_error",
+    "lineage_error": "parse_error",
+    "ambiguous_reference": "unmatched_reference",
+    "external_tables": "unmatched_reference",
+    "unknown_reads": "unattributed_reads",
+}
 
 
 class PipelineLoadError(ValueError):
@@ -115,6 +146,8 @@ def diagnostic_entry(model: str, code: str, message: str) -> dict:
         "code": code,
         "message": message,
         "analysis_incomplete": code in ASSET_FAILURE_CODES,
+        "severity": "error" if code in ASSET_FAILURE_CODES else "info",
+        "effect": list(_EFFECTS.get(code, VIEWS)),
     }
 
 
@@ -124,4 +157,45 @@ def summarize(entries: list[dict]) -> dict:
         "count": len(entries),
         "assets_not_analyzed": len({e["asset"] for e in incomplete}),
         "analysis_incomplete": bool(incomplete),
+    }
+
+
+def build_completeness(entries: list[dict], extra_gaps: Iterable[dict] = ()) -> dict:
+    """Summarize what the analysis could not see, and which views that affects.
+
+    ``entries`` are :func:`diagnostic_entry` dicts. ``extra_gaps`` are gaps from
+    other sources (job history); each needs ``asset``, ``kind``, ``message``.
+    ``complete`` is false when any blocking gap exists. ``views`` says, per view,
+    whether its results can be treated as complete. Informational gaps (tables
+    outside the pipeline) are listed but do not block.
+    """
+
+    gaps: list[dict] = []
+    for entry in entries:
+        blocking = bool(entry.get("analysis_incomplete"))
+        if not blocking and entry["code"] != "external_tables":
+            continue
+        gaps.append(
+            {
+                "asset": entry["asset"],
+                "kind": _GAP_KINDS.get(entry["code"], entry["code"]),
+                "code": entry["code"],
+                "message": entry["message"],
+                "blocking": blocking,
+                "effect": entry.get("effect", list(VIEWS)),
+                "origin": "static",
+            }
+        )
+    for gap in extra_gaps:
+        gaps.append({"code": gap["kind"], "blocking": True, "effect": list(VIEWS), "origin": "observed", **gap})
+    blocking_gaps = [g for g in gaps if g["blocking"]]
+    by_code: dict[str, int] = {}
+    for gap in gaps:
+        by_code[gap["code"]] = by_code.get(gap["code"], 0) + 1
+    return {
+        "complete": not blocking_gaps,
+        "assets_not_analyzed": len({g["asset"] for g in blocking_gaps if g["origin"] == "static"}),
+        "views": {view: not any(view in g["effect"] for g in blocking_gaps) for view in VIEWS},
+        "by_code": dict(sorted(by_code.items())),
+        "gaps": gaps,
     }

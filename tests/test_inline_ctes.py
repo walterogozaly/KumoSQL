@@ -97,14 +97,13 @@ JOIN o ON o.customer_id = c.id'''
     assert result.verification.status is VerificationStatus.PROVEN
 
 
-def test_nondeterministic_body_is_rewritten_but_flagged_unproven():
+def test_nondeterministic_body_inlined_once_is_proven():
     result = _apply("WITH a AS (SELECT RAND() AS r) SELECT r FROM a")
 
     assert result.changes == 1
     assert result.rule_success
-    assert result.verification.status is VerificationStatus.UNPROVEN
-    assert any("RAND" in detail for detail in result.verification.details)
-    assert not result.success
+    assert result.verification.status is VerificationStatus.PROVEN
+    assert result.success
 
 
 def test_conservative_skips_leave_sql_byte_for_byte():

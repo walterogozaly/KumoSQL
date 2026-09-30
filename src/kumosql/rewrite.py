@@ -26,6 +26,7 @@ from .ast_utils import parse_statements, top_level_query
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
+from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 
 # Import built-in rules so they are registered.
@@ -142,7 +143,36 @@ def _order_sql(query: exp.Expression) -> str | None:
     return order.sql(dialect="bigquery", comments=False) if order is not None else None
 
 
-def _verify_sql(before: str, after: str) -> tuple[bool, list[str]]:
+DEFAULT_SMT_TIMEOUT_MS = 5000
+
+
+def _predicates_masked(query: exp.Expression) -> str:
+    """Render a query with every WHERE, HAVING, QUALIFY and JOIN ON condition blanked."""
+
+    masked = query.copy()
+    for node in list(masked.find_all(exp.Where, exp.Having, exp.Qualify)):
+        node.set("this", exp.Placeholder())
+    for join in list(masked.find_all(exp.Join)):
+        if join.args.get("on") is not None:
+            join.set("on", exp.Placeholder())
+    return masked.sql(dialect="bigquery", comments=False)
+
+
+def _predicate_only_change(old_sql: str, new_sql: str) -> bool:
+    try:
+        old = parse_statements(old_sql)[0]
+        new = parse_statements(new_sql)[0]
+        return _predicates_masked(old) == _predicates_masked(new)
+    except Exception:
+        return False
+
+
+def _verify_sql(
+    before: str,
+    after: str,
+    smt_checks: list[VerificationCheck] | None = None,
+    smt_timeout_ms: int = DEFAULT_SMT_TIMEOUT_MS,
+) -> tuple[bool, list[str]]:
     try:
         left = parse_statements(before)
         right = parse_statements(after)
@@ -171,13 +201,45 @@ def _verify_sql(before: str, after: str) -> tuple[bool, list[str]]:
         proof = prove_equivalent(old_sql, new_sql)
         if not proof.proven:
             detail = "; ".join(proof.diagnostics)
-            problems.append(
-                f"statement {index}: {proof.reason}" + (f" ({detail})" if detail else "")
-            )
+            message = f"statement {index}: {proof.reason}" + (f" ({detail})" if detail else "")
+            # A change confined to predicates may still be provable with SMT.
+            if _predicate_only_change(old_sql, new_sql):
+                smt = prove_equivalent_smt(old_sql, new_sql, timeout_ms=smt_timeout_ms)
+                if smt.status is SmtStatus.PROVEN_EQUIVALENT:
+                    if smt_checks is not None:
+                        smt_checks.append(
+                            VerificationCheck(
+                                "smt_proof",
+                                "passed",
+                                f"statement {index}: predicate-only change proven equivalent by SMT",
+                                (("assumptions", tuple(smt.assumptions)),),
+                            )
+                        )
+                    continue
+                label = (
+                    "SMT found a counterexample"
+                    if smt.status is SmtStatus.NOT_EQUIVALENT
+                    else "SMT could not prove it"
+                )
+                message += f"; {label}: {smt.reason}"
+                if smt_checks is not None:
+                    smt_checks.append(
+                        VerificationCheck(
+                            "smt_proof",
+                            "refuted" if smt.status is SmtStatus.NOT_EQUIVALENT else "not_proven",
+                            f"statement {index}: {smt.reason}",
+                        )
+                    )
+            problems.append(message)
     return not problems, problems
 
 
-def _verify_sqlx(before: str, after: str) -> tuple[bool, list[str]]:
+def _verify_sqlx(
+    before: str,
+    after: str,
+    smt_checks: list[VerificationCheck] | None = None,
+    smt_timeout_ms: int = DEFAULT_SMT_TIMEOUT_MS,
+) -> tuple[bool, list[str]]:
     try:
         left = split_sqlx_sections(before)
         right = split_sqlx_sections(after)
@@ -195,7 +257,9 @@ def _verify_sqlx(before: str, after: str) -> tuple[bool, list[str]]:
         if old == new or (not old.strip() and not new.strip()):
             continue
         try:
-            ok, section_problems = _verify_sql(mask_sqlx_by_content(old), mask_sqlx_by_content(new))
+            ok, section_problems = _verify_sql(
+                mask_sqlx_by_content(old), mask_sqlx_by_content(new), smt_checks, smt_timeout_ms
+            )
         except Exception as exc:
             ok, section_problems = False, [f"SQLX interpolations could not be masked: {exc}"]
         if not ok:
@@ -208,6 +272,7 @@ def verify_rewrite(
     after: str,
     *,
     planner_check: VerificationCheck | None = None,
+    smt_timeout_ms: int = DEFAULT_SMT_TIMEOUT_MS,
 ) -> Verification:
     """Check a rewrite and return one label with the evidence supporting it.
 
@@ -217,7 +282,9 @@ def verify_rewrite(
     trusted for automatic acceptance.
     """
 
-    return _verify_rewrite(before, after, planner_check=planner_check)
+    return _verify_rewrite(
+        before, after, planner_check=planner_check, smt_timeout_ms=smt_timeout_ms
+    )
 
 
 def _verify_rewrite(
@@ -227,6 +294,7 @@ def _verify_rewrite(
     planner_check: VerificationCheck | None = None,
     rewrite_succeeded: bool = True,
     failure_details: tuple[str, ...] = (),
+    smt_timeout_ms: int = DEFAULT_SMT_TIMEOUT_MS,
 ) -> Verification:
     if planner_check is not None and planner_check.kind != "planner":
         raise ValueError("planner_check must have kind='planner'")
@@ -260,10 +328,11 @@ def _verify_rewrite(
             checks=tuple(checks),
         )
 
+    smt_checks: list[VerificationCheck] = []
     if looks_like_sqlx(before) or looks_like_sqlx(after):
-        ok, problems = _verify_sqlx(before, after)
+        ok, problems = _verify_sqlx(before, after, smt_checks, smt_timeout_ms)
     else:
-        ok, problems = _verify_sql(before, after)
+        ok, problems = _verify_sql(before, after, smt_checks, smt_timeout_ms)
 
     proof_detail = (
         "Every changed statement was proven equivalent."
@@ -273,6 +342,7 @@ def _verify_rewrite(
     checks.append(
         VerificationCheck("equivalence_proof", "passed" if ok else "not_proven", proof_detail)
     )
+    checks.extend(smt_checks)
     checks.append(
         planner_check
         or VerificationCheck("planner", "not_run", "No planner check was run.")
