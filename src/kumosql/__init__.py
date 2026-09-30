@@ -70,6 +70,7 @@ from .pipeline import (
     load_compiled_graph,
     load_sqlx_project,
 )
+from .impact import AffectedModel, ChangeImpact, UnknownReader, assess_change
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .graph import (
     GraphEdge,
@@ -171,6 +172,10 @@ __all__ = [
     "IdentityResolution",
     "NodeIdentity",
     "Pipeline",
+    "AffectedModel",
+    "ChangeImpact",
+    "UnknownReader",
+    "assess_change",
     "Target",
     "normalize_table_reference",
     "GraphEdge",

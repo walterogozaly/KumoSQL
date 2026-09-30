@@ -550,14 +550,16 @@ class Pipeline:
 
     SCOPE_FIELDS = ("project", "dataset", "name", "table")
 
-    def _scoped(self, report: dict, scope: "SavedScope") -> dict:
+    def scope_keys(self, scope: "SavedScope") -> set[str]:
+        """Keys of the models a saved scope matches; unsupported scope fields raise ``ValueError``."""
+
         unsupported = sorted(set(scope.fields) - set(self.SCOPE_FIELDS))
         if unsupported:
             raise ValueError(
                 f"scope {scope.name!r} filters on {', '.join(unsupported)}, which pipeline models do not "
                 f"have; pipeline reports can be scoped by {', '.join(self.SCOPE_FIELDS)}"
             )
-        keep = {
+        return {
             key for key, model in self.models.items()
             if scope.matches({
                 "project": model.target.database,
@@ -566,6 +568,24 @@ class Pipeline:
                 "table": model.target.name,
             })
         }
+
+    def assess_change(
+        self, kind: str, target: str, column: str | None = None, *, scope: "SavedScope | None" = None
+    ):
+        """Blast radius of a drop, rename, changed expression or dropped table.
+
+        ``kind`` is ``drop_column``, ``rename_column``, ``change_expression``
+        or ``drop_table``. Readers that cannot be analysed are listed as
+        unknown, never dropped, and ``safe_to_delete`` is always ``unknown``.
+        See ``kumosql.impact``.
+        """
+
+        from .impact import assess_change
+
+        return assess_change(self, kind, target, column, scope=scope)
+
+    def _scoped(self, report: dict, scope: "SavedScope") -> dict:
+        keep = self.scope_keys(scope)
         keep_node_ids = {
             self.models[key].identity.stable_key
             for key in keep
