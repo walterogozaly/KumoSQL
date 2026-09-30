@@ -15,6 +15,7 @@ from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
 from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
 from .pipeline import load_compiled_graph, load_sqlx_project
+from .resilience import PipelineLoadError, parse_json_or_raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -211,13 +212,25 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         scope = get_scope(args.scope)
         if scope is None:
             parser.error(f"no saved scope named {args.scope!r}")
-    pipeline = _load_pipeline(args.root, args.source_schema)
+    try:
+        pipeline = _load_pipeline(args.root, args.source_schema)
+    except PipelineLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     try:
         data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope)
     except ValueError as exc:
         parser.error(str(exc))
     if scope is not None and not data["models"]:
         print(f"warning: scope {scope.name!r} matches no models", file=sys.stderr)
+    summary = data.get("diagnostic_summary", {})
+    if summary.get("assets_not_analyzed"):
+        count = summary["assets_not_analyzed"]
+        print(
+            f"warning: {count} asset{'s' if count != 1 else ''} could not be analyzed; "
+            "see diagnostics in the report",
+            file=sys.stderr,
+        )
     report = json.dumps(data, indent=2)
     if args.output:
         args.output.write_text(report + "\n", encoding="utf-8")
@@ -311,8 +324,10 @@ def dry_run_main(argv: list[str] | None = None) -> int:
 
 def _load_pipeline(root: Path, source_schema_path: Path | None):
     source_schema = (
-        json.loads(source_schema_path.read_text(encoding="utf-8")) if source_schema_path else None
+        parse_json_or_raise(source_schema_path, "source schema file") if source_schema_path else None
     )
+    if source_schema is not None and not isinstance(source_schema, dict):
+        raise PipelineLoadError("source schema file must be a JSON object")
     if root.is_file():
         return load_compiled_graph(root, source_schema=source_schema)
     return load_sqlx_project(root, source_schema=source_schema)
@@ -392,8 +407,12 @@ def compare_outputs_main(argv: list[str] | None = None) -> int:
             result[name] = rest
         return result
 
-    before = _load_pipeline(args.root, args.source_schema)
-    after = _load_pipeline(args.after_root, args.source_schema) if args.after_root else None
+    try:
+        before = _load_pipeline(args.root, args.source_schema)
+        after = _load_pipeline(args.after_root, args.source_schema) if args.after_root else None
+    except PipelineLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     try:
         plan = plan_output_comparison(
             before,
