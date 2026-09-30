@@ -257,6 +257,8 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .verdict-unchanged .verdict-icon { background: var(--neutral-bg); color: var(--neutral-fg); }
 .verdict-unproven { border-color: var(--warn-border); background: color-mix(in srgb, var(--warn-bg) 45%, var(--surface)); }
 .verdict-unproven .verdict-icon { background: var(--warn-bg); color: var(--warn-fg); }
+.verdict-planner_checked { border-color: var(--warn-border); background: color-mix(in srgb, var(--warn-bg) 45%, var(--surface)); }
+.verdict-planner_checked .verdict-icon { background: var(--warn-bg); color: var(--warn-fg); }
 .verdict-failed { border-color: var(--bad-border); background: color-mix(in srgb, var(--bad-bg) 45%, var(--surface)); }
 .verdict-failed .verdict-icon { background: var(--bad-bg); color: var(--bad-fg); }
 .verdict-working .verdict-icon .icon { animation: pulse 1s ease-in-out infinite; }
@@ -356,6 +358,7 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .tl-step.proven .tl-dot { background: var(--ok); color: #fff; }
 .tl-step.unchanged .tl-dot { background: var(--neutral-bg); color: var(--neutral-fg); }
 .tl-step.unproven .tl-dot { background: var(--warn); color: #fff; }
+.tl-step.planner_checked .tl-dot { background: var(--warn); color: #fff; }
 .tl-step.failed .tl-dot { background: var(--bad); color: #fff; }
 .tl-name { display: block; margin-top: 8px; font-size: 13px; font-weight: 600; }
 .tl-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--text-muted); font-size: 12px; }
@@ -363,6 +366,7 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .pill-proven { color: var(--ok-fg); background: var(--ok-bg); }
 .pill-unchanged { color: var(--neutral-fg); background: var(--neutral-bg); }
 .pill-unproven { color: var(--warn-fg); background: var(--warn-bg); }
+.pill-planner_checked { color: var(--warn-fg); background: var(--warn-bg); }
 .pill-failed { color: var(--bad-fg); background: var(--bad-bg); }
 .detail-list { margin: 16px 0 0; padding: 10px 14px 10px 30px; border: 1px solid var(--warn-border); border-radius: 9px; background: var(--warn-bg); color: var(--warn-fg); font-size: 12.5px; line-height: 1.55; }
 .detail-list:empty { display: none; }
@@ -468,3 +472,34 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 @media (max-width: 860px) { .topnav a { padding: 6px 7px; font-size: 12px; } }
 .report-heading .ev-legend-wrap { position: relative; }
 .report-heading .ev-legend-wrap[open] .ev-legend { position: absolute; z-index: 10; top: 100%; right: 0; width: min(540px, calc(100vw - 48px)); box-shadow: var(--shadow-lg); background: var(--surface); }
+
+/* Background photo. A fixed full-bleed layer sits behind the app and the main
+   surfaces turn into translucent, blurred panels (menus and dialogs stay solid).
+   Photo: Kalen Emsley on Unsplash (https://unsplash.com/photos/Bkci_8qcdvQ). */
+:root {
+  --bg-image: url("/assets/background.jpg");
+  --bg-scrim: rgba(243, 245, 242, .28);
+  --panel: rgba(255, 255, 255, .72);
+  --panel-blur: blur(18px) saturate(1.4);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-scrim: rgba(8, 13, 11, .62);
+    --panel: rgba(18, 26, 23, .74);
+  }
+}
+:root[data-theme="dark"] {
+  --bg-scrim: rgba(8, 13, 11, .62);
+  --panel: rgba(18, 26, 23, .74);
+}
+body { background: var(--bg); }
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(var(--bg-scrim), var(--bg-scrim)), var(--bg-image) center / cover no-repeat; }
+.topbar, .sidebar, .sidebar-footer, .verdict, .pane, .report { background-color: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
+.verdict-unproven { background-color: color-mix(in srgb, var(--warn-bg) 45%, var(--panel)); }
+.verdict-failed { background-color: color-mix(in srgb, var(--bad-bg) 45%, var(--panel)); }
+@media (prefers-reduced-transparency: reduce) {
+  :root { --panel: var(--surface); --panel-blur: none; }
+}
+
+/* backdrop-filter makes the topbar a stacking context; lift it above the panels so its menus aren't painted behind them. */
+.topbar { position: relative; z-index: 30; }

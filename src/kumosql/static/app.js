@@ -543,37 +543,19 @@ function setView(view) {
 /* ---------- Verdict, stats and report ---------- */
 
 const VERDICT_ICONS = {
-  idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", unproven: "#i-alert", failed: "#i-alert",
-  planner_checked: "#i-check",
+  idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", planner_checked: "#i-alert", unproven: "#i-alert", failed: "#i-alert",
 };
 
 /* ---------- Evidence labels (#15, #16) ---------- */
 
-// Until #15 lands, a step's `verification` is a bare status string and "failed"
-// is derived from rule_success. Afterwards it may be an object with a label and
-// checks; both shapes are read here so the server can switch without UI changes.
-function verificationOf(item) {
-  const v = item.verification;
-  return v && typeof v === "object" ? v : { status: v, details: item.details || [] };
-}
-
+// One label per result and per step; a failed rule is always "failed".
 function evidenceLabel(item) {
   if (item.rule_success === false) return "failed";
-  const v = verificationOf(item);
-  return KumoEvidence.normalize(v.label || v.status);
+  return KumoEvidence.normalize(item.verification?.status);
 }
 
-function evidenceChecks(item, label) {
-  const v = verificationOf(item);
-  const given = item.checks || v.checks;
-  if (Array.isArray(given)) return given;
-  const checks = [];
-  if (label === "proven") checks.push({ kind: "structural_proof", outcome: "passed" });
-  if (label === "unproven") checks.push({ kind: "structural_proof", outcome: "inconclusive", detail: (v.details || [])[0] });
-  if (label === "proven" || label === "unproven") {
-    checks.push({ kind: "planner", outcome: "not_run", detail: "Dry runs are not connected to rewrites yet" });
-  }
-  return checks;
+function evidenceChecks(item) {
+  return Array.isArray(item.verification?.checks) ? item.verification.checks : [];
 }
 
 function checkRow(checks) {
@@ -638,12 +620,23 @@ function showReport(data) {
     details.append(item);
   };
 
-  for (const detail of data.verification.details) addDetail(null, detail);
+  const addCheck = (rule, check) => {
+    const kind = check.kind.replaceAll("_", " ");
+    const outcome = check.outcome.replaceAll("_", " ");
+    addDetail(rule, `${kind}: ${outcome} — ${stripAnsi(check.detail)}`);
+  };
+  // Chips show every check; failed or unproven ones also explain themselves in the detail list.
+  const explain = (rule, checks) => {
+    for (const check of checks) if (["failed", "not_proven"].includes(check.outcome) && check.detail) addCheck(rule, check);
+  };
+
+  // The pipeline repeats each step's checks, so show one chip per kind and outcome.
+  const chain = evidenceChecks(data).filter((check, i, all) =>
+    all.findIndex((other) => other.kind === check.kind && other.outcome === check.outcome) === i);
   const chainChecks = $("chain-checks");
   chainChecks.replaceChildren();
-  const chainLabel = evidenceLabel(data);
-  const summary = evidenceChecks(data, chainLabel);
-  if (summary.length) chainChecks.append(checkRow(summary));
+  if (chain.length) chainChecks.append(checkRow(chain));
+  explain(null, evidenceChecks(data));
   data.steps.forEach((step, index) => {
     const outcome = evidenceLabel(step);
     const item = document.createElement("li");
@@ -651,8 +644,7 @@ function showReport(data) {
     const dot = document.createElement("span");
     dot.className = "tl-dot";
     if (outcome === "proven") dot.innerHTML = `<svg class="icon"><use href="#i-check"/></svg>`;
-    else if (outcome === "planner_checked") dot.innerHTML = `<svg class="icon"><use href="#i-check"/></svg>`;
-    else if (outcome === "failed" || outcome === "unproven") dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
+    else if (["failed", "unproven", "planner_checked"].includes(outcome)) dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
     else dot.textContent = String(index + 1);
     const name = document.createElement("span");
     name.className = "tl-name";
@@ -661,11 +653,10 @@ function showReport(data) {
     meta.className = "tl-meta";
     meta.append(plural(step.changes, "change"), KumoEvidence.pill(outcome));
     item.append(dot, name, meta);
-    const checks = evidenceChecks(step, outcome);
+    const checks = evidenceChecks(step);
     if (checks.length) item.append(checkRow(checks));
     steps.append(item);
     for (const diagnostic of step.diagnostics) addDetail(step.rule, `${diagnostic.code} — ${diagnostic.message}`);
-    for (const detail of step.details) addDetail(step.rule, detail);
   });
 }
 
@@ -776,17 +767,18 @@ async function transform() {
     }
 
     const reason = data.verification.reason;
-    const label = evidenceLabel(data);
-    if (data.rule_success && label === "planner_checked") {
-      setVerdict("planner_checked", "Planner checked: not proven", `${reason}. Matching plans and schemas are not proof of equal results.`);
-    } else if (data.success && label === "unchanged") {
+    const evidence = data.verification.status;
+    if (evidence === "unchanged") {
       setVerdict("unchanged", "No changes needed", "None of the selected rules changed this SQL.");
-    } else if (data.success) {
+    } else if (evidence === "proven") {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
       setVerdict("proven", "Rewrite verified", `${plural(changes, "change")}. ${reason[0].toUpperCase()}${reason.slice(1)}.`);
-    } else if (!data.rule_success) {
-      const broken = data.steps.find((step) => !step.rule_success);
-      const diagnostic = broken?.diagnostics[0]?.message || broken?.details[0] || data.verification.details[0];
+    } else if (evidence === "planner_checked") {
+      setVerdict("planner_checked", "Planner checked: not proven", `${reason}. Matching plans and schemas are not proof of equal results.`);
+    } else if (evidence === "failed") {
+      const broken = data.steps.find((step) => step.verification.status === "failed");
+      const failedCheck = broken?.verification.checks.find((check) => check.outcome === "failed");
+      const diagnostic = broken?.diagnostics[0]?.message || failedCheck?.detail || data.verification.details[0];
       const title = broken ? `${labelFor(broken.rule)} could not run cleanly` : "Transformation failed";
       setVerdict("failed", title, stripAnsi(diagnostic || reason));
     } else {

@@ -1,0 +1,9 @@
+[
+  "select record_id from `generic_table` where 1 = 1 and (is_active or false)",
+  "SELECT q.record_id FROM (SELECT record_id, category FROM `generic_table` WHERE category IS NOT NULL) AS q WHERE TRUE",
+  "WITH first_cte AS (SELECT record_id, category FROM `generic_table`), second_cte AS (SELECT record_id, category FROM `generic_table`), left_cte AS (SELECT f.record_id FROM first_cte AS f), right_cte AS (SELECT s.record_id FROM second_cte AS s) SELECT left_cte.record_id FROM left_cte JOIN right_cte USING (record_id)",
+  "WITH unused_cte AS (SELECT record_id FROM `generic_table`), single_cte AS (SELECT record_id, category FROM `generic_table` WHERE is_active) SELECT record_id FROM single_cte WHERE category IS NOT NULL",
+  "SELECT a.record_id, b.amount FROM `generic_table` AS a LEFT JOIN `aux_table` AS b ON a.record_id = b.record_id AND TRUE WHERE (a.is_active OR FALSE)",
+  "SELECT category, COUNT(*) AS total FROM `generic_table` GROUP BY category HAVING TRUE",
+  "config { type: \"table\" }\nSELECT q.record_id FROM (SELECT record_id FROM ${ref(\"generic_table\")} WHERE is_active) AS q"
+]

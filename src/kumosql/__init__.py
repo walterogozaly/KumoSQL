@@ -33,6 +33,7 @@ from .rewrite import (
     PipelineResult,
     RewriteResult,
     Verification,
+    VerificationCheck,
     VerificationStatus,
     apply_rule,
     apply_rules,
@@ -64,6 +65,7 @@ from .pipeline import (
     load_compiled_graph,
     load_sqlx_project,
 )
+from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .near_duplicates import (
     ClauseDifference,
     NearDuplicateCluster,
@@ -129,6 +131,7 @@ __all__ = [
     "RuleDiagnostic",
     "RuleOutput",
     "Verification",
+    "VerificationCheck",
     "VerificationStatus",
     "apply_rule",
     "apply_rules",
@@ -137,8 +140,11 @@ __all__ = [
     "register_rule",
     "verify_rewrite",
     "ColumnRef",
+    "IdentityResolution",
+    "NodeIdentity",
     "Pipeline",
     "Target",
+    "normalize_table_reference",
     "load_compiled_graph",
     "load_sqlx_project",
     "ClauseDifference",

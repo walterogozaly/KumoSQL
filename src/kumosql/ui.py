@@ -41,6 +41,7 @@ ASSETS = {
     "/assets/insights.js": ("insights.js", "text/javascript; charset=utf-8"),
     "/assets/browse.css": ("browse.css", "text/css; charset=utf-8"),
     "/assets/browse.js": ("browse.js", "text/javascript; charset=utf-8"),
+    "/assets/background.jpg": ("background.jpg", "image/jpeg"),
 }
 
 
@@ -78,23 +79,18 @@ def transform(sql: str, names: list[str], format_preferences: object = None) -> 
         "sql": candidate_sql,
         "success": result.success,
         "rule_success": rule_success,
-        "verification": {
-            "status": result.verification.status.value,
-            "reason": result.verification.reason,
-            "details": list(result.verification.details),
-        },
+        "verification": result.verification.to_json(),
         "steps": [
             {
                 "rule": step.rule,
                 "changes": step.changes,
                 "success": step.success,
                 "rule_success": step.rule_success,
-                "verification": step.verification.status.value,
+                "verification": step.verification.to_json(),
                 "diagnostics": [
                     {"code": item.code, "message": item.message, "statement_index": item.statement_index}
                     for item in step.diagnostics
                 ],
-                "details": list(step.verification.details),
             }
             for step in result.steps
         ],

@@ -39,6 +39,9 @@
   };
 
   const CHECKS = {
+    rewrite: { title: "Rule ran", group: "rule", issue: 15 },
+    change_detection: { title: "Change detection", group: "rule", issue: 15 },
+    equivalence_proof: { title: "Equivalence proof", group: "proof", issue: 15 },
     structural_proof: { title: "Structural proof", group: "proof", issue: 19 },
     smt: { title: "SMT proof", group: "proof", issue: 20 },
     synthetic_results: { title: "Synthetic results", group: "results", issue: 21 },
@@ -52,6 +55,7 @@
     failed: { title: "failed", tone: "bad" },
     inconclusive: { title: "inconclusive", tone: "warn" },
     unsupported: { title: "unsupported", tone: "warn" },
+    not_proven: { title: "not proven", tone: "warn" },
     not_run: { title: "not run", tone: "idle" },
   };
 

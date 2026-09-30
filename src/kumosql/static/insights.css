@@ -184,3 +184,10 @@
   .bar-row { grid-template-columns: 110px minmax(40px, 1fr) 56px; }
   .bar-row > .muted { display: none; }
 }
+
+/* Translucent panels over the background photo (see style.css). */
+.card, .coverage, .tile, .graph-detail { background-color: var(--panel, var(--surface)); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
+.coverage.is-partial { background-color: color-mix(in srgb, var(--warn-bg) 40%, var(--panel, var(--surface))); }
+.preview-banner { -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
+.insights-app .topbar { position: relative; z-index: 30; }
+.page-head { padding: 14px 18px; border-radius: 12px; background-color: var(--panel, transparent); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }

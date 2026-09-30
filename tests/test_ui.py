@@ -9,7 +9,15 @@ from urllib.request import Request, urlopen
 import pytest
 from sqlglot import exp
 
-from kumosql import RewriteRule, engine
+from kumosql import (
+    PipelineResult,
+    RewriteResult,
+    RewriteRule,
+    Verification,
+    VerificationCheck,
+    VerificationStatus,
+    engine,
+)
 from kumosql.ui import UIHandler
 
 
@@ -57,6 +65,9 @@ def test_ui_transforms_sql_and_exposes_verification(ui_server):
     })
     assert result["success"]
     assert result["verification"]["status"] == "proven"
+    assert isinstance(result["verification"]["checks"], list)
+    assert all(isinstance(step["verification"], dict) for step in result["steps"])
+    assert all("checks" in step["verification"] for step in result["steps"])
     assert "WITH" in result["sql"]
     assert "1 = 1" not in result["sql"]
     assert [step["rule"] for step in result["steps"]] == [
@@ -90,6 +101,11 @@ def test_ui_withholds_rule_failure_output_and_exposes_diagnostic(
     assert not result["success"]
     assert not result["rule_success"]
     assert result["sql"] == ""
+    assert result["verification"]["status"] == "failed"
+    assert any(
+        check["kind"] == "rewrite" and check["outcome"] == "failed"
+        for check in result["verification"]["checks"]
+    )
     assert any(
         item["code"] == diagnostic_code
         for step in result["steps"]
@@ -136,6 +152,43 @@ def test_ui_keeps_unproven_candidate_separate_from_rule_failure(ui_server, monke
     assert not result["success"]
     assert result["verification"]["status"] == "unproven"
     assert result["sql"]
+
+
+def test_ui_serializes_planner_checked_and_its_supporting_checks(ui_server, monkeypatch):
+    source = "SELECT 1 AS value"
+    candidate = "SELECT 2 AS value"
+    verification = Verification(
+        VerificationStatus.PLANNER_CHECKED,
+        "the planner check passed, but equivalence could not be proven",
+        checks=(
+            VerificationCheck("equivalence_proof", "not_proven", "No proof was found."),
+            VerificationCheck("planner", "passed", "The planner accepted the candidate."),
+        ),
+    )
+    step = RewriteResult(
+        "format_sql", source, candidate, 1, (), verification, rule_success=True
+    )
+    monkeypatch.setattr(
+        "kumosql.ui.apply_rules",
+        lambda names, sql, overrides=None: PipelineResult(sql, candidate, (step,), verification),
+    )
+
+    result = post_json(ui_server, {"sql": source, "rules": ["format_sql"]})
+
+    assert result["verification"]["status"] == "planner_checked"
+    assert result["steps"][0]["verification"]["status"] == "planner_checked"
+    assert result["verification"]["checks"] == [
+        {"kind": "equivalence_proof", "outcome": "not_proven", "detail": "No proof was found."},
+        {
+            "kind": "planner",
+            "outcome": "passed",
+            "detail": "The planner accepted the candidate.",
+        },
+    ]
+    assert result["steps"][0]["verification"]["checks"] == result["verification"]["checks"]
+    assert not result["success"]
+    assert result["rule_success"]
+    assert result["sql"] == candidate
 
 
 def test_ui_withholds_sqlx_restoration_failure_and_exposes_diagnostic(ui_server, monkeypatch):

@@ -18,16 +18,16 @@ The labels and check chips are defined once in `static/evidence.js` (`KumoEviden
 
 | UI area | Issue | Expected data |
 | --- | --- | --- |
-| One label per step and per pipeline: proven, planner checked, unproven, failed, unchanged. Shown in the verdict bar, timeline and legend | #15 | `verification.status` (or `label`) on the pipeline and on each step. `planner_checked` (with `planner checked` and `planner-checked` also accepted) is the new value. `failed` can be sent directly; until then the UI derives it from `rule_success`. |
-| Supporting checks shown as chips under each step and the pipeline | #15 | `verification.checks` (or `step.checks`): a list of `{kind, outcome, detail?}` records |
-| Planner (dry run) chip, and the "Planner checked: not proven" verdict | #16 | check `kind: "planner"`. Until #16 lands the workspace shows `Planner (dry run): not run`. |
+| One label per step and per pipeline: proven, planner checked, unproven, failed, unchanged. Shown in the verdict bar, timeline and legend | #15 (landed) | `verification.status` on the pipeline and on each step |
+| Supporting checks shown as chips under each step and the pipeline. Checks that did not pass also list their detail | #15 (landed) | `verification.checks[]`: `{kind, outcome, detail}`. Kinds so far: `rewrite`, `change_detection`, `equivalence_proof`, `planner` |
+| Planner (dry run) chip, and the "Planner checked: not proven" verdict | #16 | check `kind: "planner"` |
 | "Unchanged text kept" chip | #17 | check `kind: "source_spans"` |
 | Idempotence chip | #18 | check `kind: "idempotence"` |
 | Structural proof, SMT proof and synthetic-results chips | #19, #20, #21 | check kinds `structural_proof`, `smt` and `synthetic_results`. An `inconclusive` outcome covers a baseline that differs from itself. |
 
-Check outcomes are `passed`, `failed`, `inconclusive`, `unsupported` and `not_run`. Proof kinds and planner checks are always separate chips.
+Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupported` and `not_run`. A new kind or outcome only needs an entry in `CHECKS` or `OUTCOMES` in `evidence.js`; unknown kinds still render under their raw name. Proof kinds and planner checks are always separate chips.
 
-The workspace reads both the current response (step `verification` is a bare string) and the proposed shape, so #15 can change the server without touching `app.js`. `ws-future-*.png` shows the proposed shape, rendered by giving the page a mocked response.
+`ws-future-*.png` shows the workspace with a mocked response that includes the planned check kinds.
 
 ## Query graph: `/graph` → `/api/graph`
 
