@@ -119,6 +119,7 @@ from .table_profile import (
     profile_query,
 )
 from .overlap import Check, Match, MatchRole, OverlapResult, find_overlaps
+from .overlap_report import OverlapChecker
 from .rollups import GrainMapping, Rollup, RollupResult, find_rollups
 
 __all__ = [
@@ -127,6 +128,7 @@ __all__ = [
     "MatchRole",
     "OverlapResult",
     "find_overlaps",
+    "OverlapChecker",
     "GrainMapping",
     "Rollup",
     "RollupResult",

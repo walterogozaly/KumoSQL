@@ -164,6 +164,9 @@ class UIHandler(BaseHTTPRequestHandler):
         if route == "/api/impact":
             self._impact()
             return
+        if route == "/api/overlaps":
+            self._overlaps()
+            return
         if route in INSIGHTS:
             self._json(200, INSIGHTS[route]())
             return
@@ -184,6 +187,17 @@ class UIHandler(BaseHTTPRequestHandler):
             payload = live_graph.impact_payload(
                 preview_data.impact, _required(query, "node"), _required(query, "column"),
                 query.get("change", ["drop"])[0],
+            )
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, payload)
+
+    def _overlaps(self) -> None:
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            payload = live_graph.overlaps_payload(
+                preview_data.overlaps, _required(query, "node"), query.get("scope", [""])[0] or None
             )
         except ValueError as exc:
             self._json(400, {"error": str(exc)})

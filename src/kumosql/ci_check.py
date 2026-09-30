@@ -113,6 +113,65 @@ def _consumers(change: Any) -> str:
     return text if cons.get("complete") is True else f"{text} (list may be incomplete)"
 
 
+MAX_OVERLAP_ROWS = 8
+_KIND_TEXT = {"same_meaning": "Same meaning", "contains": "Contains", "partial": "Partial"}
+
+
+def _overlap_check_text(checks: Any) -> str:
+    parts = [f"{c.get('kind')}: {c.get('outcome')}" for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
+    return ", ".join(parts) or "none"
+
+
+def _overlap_role_text(role: Any) -> str:
+    if not isinstance(role, dict) or not role.get("role"):
+        return "unknown"
+    text = f"{role.get('role')} ({role.get('confidence')} confidence)"
+    evidence = role.get("evidence")
+    details = [str(e.get("detail")) for e in evidence[:2] if isinstance(e, dict) and e.get("detail")] if isinstance(evidence, list) else []
+    return text + (": " + "; ".join(details) if details else "")
+
+
+def _overlap_lines(changes: list) -> list[str]:
+    """The advisory "already done elsewhere" section. Never affects the conclusion."""
+
+    entries = []
+    for change in changes:
+        section = change.get("overlaps") if isinstance(change, dict) else None
+        if isinstance(section, dict):
+            entries.append((str(change.get("model", "?")), section))
+        elif section is not None:
+            entries.append((str(change.get("model", "?")), {}))
+    if not entries:
+        return []
+    lines = ["#### Already done elsewhere (advisory)", "",
+             "Existing tables that may already provide the same attributes. This never blocks the check.", ""]
+    for model, section in entries:
+        summary = section.get("summary") if isinstance(section.get("summary"), str) else ""
+        if section.get("status") == "unavailable" or not summary:
+            summary = summary or "The comparison could not be completed; no tables were compared"
+        lines.append(f"**`{_cell(model)}`**: {_cell(summary)}")
+        matches = [m for m in section.get("matches") or [] if isinstance(m, dict)] if isinstance(section.get("matches"), list) else []
+        if matches:
+            lines += ["", "| Existing table | Match | Checks | Role | Note |", "| --- | --- | --- | --- | --- |"]
+            for m in matches[:MAX_OVERLAP_ROWS]:
+                notes = [n for n, on in (("retired in this change", m.get("retiring")),
+                                         ("also new or edited in this change", m.get("in_this_change"))) if on]
+                kind = _KIND_TEXT.get(m.get("kind"), str(m.get("kind", "?")))
+                lines.append("| {} | {} ({}) | {} | {} | {} |".format(
+                    _cell(m.get("table", "?")), kind, _cell(m.get("confidence", "?")),
+                    _cell(_overlap_check_text(m.get("checks"))), _cell(_overlap_role_text(m.get("role"))),
+                    _cell("; ".join(notes))))
+            if len(matches) > MAX_OVERLAP_ROWS:
+                lines.append(f"\n_{len(matches) - MAX_OVERLAP_ROWS} more not shown._")
+        unknown = [u for u in section.get("unknown") or [] if isinstance(u, dict)] if isinstance(section.get("unknown"), list) else []
+        if unknown:
+            lines += ["", f"Could not be compared ({len(unknown)}): " + ", ".join(
+                f"`{_cell(u.get('table', '?'))}`" for u in unknown[:MAX_OVERLAP_ROWS])
+                + (" and more" if len(unknown) > MAX_OVERLAP_ROWS else "")]
+        lines.append("")
+    return lines
+
+
 def _cap(text: str) -> str:
     if len(text) <= MAX_COMMENT_CHARS:
         return text
@@ -145,6 +204,7 @@ def render_comment(report: Any, fail_on_unproven: bool = False) -> str:
         lines.append("")
     else:
         lines += ["No model definitions changed.", ""]
+    lines += _overlap_lines(shown)
     unchanged = len(changes) - len(shown)
     if unchanged:
         lines += [f"{unchanged} model{'s' if unchanged != 1 else ''} unchanged.", ""]

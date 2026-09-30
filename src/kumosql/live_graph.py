@@ -223,3 +223,32 @@ def impact_payload(preview_impact, node: str, column: str, change: str) -> dict:
         kind, node, column, observed_reads=current.get("observed_reads", ())
     )
     return {**result.to_json(), "source": {"kind": "project", "label": current["label"]}}
+
+
+def overlaps_payload(preview_overlaps, node: str, scope: str | None = None) -> dict:
+    """The ``/api/overlaps`` payload: tables that already provide the same attributes as ``node``.
+
+    A loaded project is compared with ``OverlapChecker`` (optionally limited to
+    the saved scope named ``scope``); with nothing loaded, ``preview_overlaps``
+    answers from the labeled sample data. A comparison that fails is returned
+    as ``status: "unavailable"``, never as an error, so the page keeps working.
+    Raises ``ValueError`` for an unknown scope or a node that is not a model.
+    """
+
+    from . import scopes as scope_store
+    from .overlap_report import OverlapChecker
+
+    current = loaded()
+    if current is None:
+        return preview_overlaps(node)
+    chosen = None
+    if scope:
+        chosen = scope_store.get_scope(scope)
+        if chosen is None:
+            raise ValueError("no saved scope has that name")
+    pipeline = current["pipeline"]
+    if node not in pipeline.models:
+        raise ValueError("node is not a model in the loaded project")
+    section = OverlapChecker(pipeline, scope=chosen).section(node)
+    return {**section, "node": node, "scope": scope or None,
+            "source": {"kind": "project", "label": current["label"]}}
