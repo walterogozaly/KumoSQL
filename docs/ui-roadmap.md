@@ -48,11 +48,13 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 | UI area | Issue | Fields |
 | --- | --- | --- |
 | Measured, attributed and unattributed tiles; cost by asset | #30 | `totals {measured, attributed, unattributed}`, `nodes[] {node, measured, runs, bytes_processed}`, `currency`, `window` |
-| "Where the work repeats" | #31 | `opportunities[].repeats[] {node, where}` |
+| "Where the work repeats" | #31 | `opportunities[].repeats[] {node, where}`; built by `kumosql.repeated_work_report(pipeline)` (locations only, no cost until #30 lands); the preview data stays until the page has real input |
 | Ranked opportunities list | #32 | `opportunities[]`: `rank`, `title`, `savings {value, basis, range?}`, `measured_cost`, `frequency`, `downstream_reach` |
 | Four-part recommendation (where, who, what, how verified) | #33 | `consumers[]`, `proposed_change`, `rule`, `verification {required, plan[]}` |
-| Cost rule catalog | #34 | `rules[]`: `id`, `name`, `state`, `safe_when`, `requires`, `outcome` |
+| Cost rule catalog | #34 | `rules[]`: `id`, `name`, `state` (`shipped` or `not_implemented`), `safe_when`, `requires`, `outcome`, `measured_outcome` (null until measured); built by `cost_rules.rule_catalog()` |
 | Validated savings and open estimates tiles; Measured, Estimate and Upper bound tags | #35 | `validated {accepted_changes, validated_savings, pending_estimates}`; `savings.basis` is one of `measured`, `estimate`, `upper_bound` |
+
+`kumosql.costs.build_cost(pipeline, jobs)` returns this shape from real job history (`load_jobs` reads a JSON, JSON lines or CSV export). It also adds `unit`, `counts`, `unattributed[]` (reason codes) and `edges[]`. `/api/cost` still serves the preview because no job history is configured for the server. Values are billed bytes unless an explicit `usd_per_tib` rate is given. Reader cost on a view lands on the view, never split across base tables.
 
 ## Change reports: `/changes` → `/api/changes`
 
@@ -60,10 +62,13 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 | --- | --- | --- |
 | Evidence coverage bar (proof and planner reported separately) | #22 | `evidence_coverage {changed, proven, planner_checked, unproven, failed}` |
 | Change report table: behavior, cost and consumers side by side | #36 | `report {title, base, head, generated_at, changes[]}`; each change has `model`, `kind`, `verification {label, reason, checks[]}`, `cost {basis, before?, after?}`, `consumers {models[], complete}` |
-| Code review check preview | #37 | `ci {check_name, conclusion, summary}` |
-| Query sources list | #38 | `sources[] {name, kind, state, matched}` |
+| Code review check preview | #37 | `ci {check_name, conclusion, summary}`; built by `kumosql.ci_check` from a change report (`kumosql-ci-check`); example workflow in `docs/change-report-workflow.example.yml` |
+| Query sources list | #38 | `sources[] {name, kind, state, matched}`; `state` is `connected`, `not_enabled` or `error`, `matched` is a 0-1 fraction or null. Built by `query_sources.SourceRegistry.to_json(pipeline)`, which also adds `assets_total`, `assets_matched`, `assets_unmatched`. The API keeps preview data until a pipeline and source records are supplied |
 | "N assets could not be analyzed. The rest of this report is complete." | #39 | `report.diagnostics[] {asset, message}` |
 | Guided refactors with a result for every consumer, including Unknown, and Ready or Not ready | #40, #41, #42 | `proposals[] {id, kind, title, cost_rationale, consumers[] {node, label}, ready}` |
+
+`kumosql.shared_logic.propose_shared_logic` (#40) builds the `shared_logic` proposals with this shape plus `consumers_complete`, `incomplete_reasons` and a consumer `role`. `cost_rationale` is `unknown` and `ready` is false until #41 and #42 fill them. The `/api/changes` payload is still preview data.
+`kumosql.change_report.build_change_report` (and the `kumosql-change-report BASE HEAD [--cost FILE]` command) produces `report` from two project snapshots. `/api/changes` still serves the preview because the UI has no base and head input yet; wire it to the builder once it does.
 
 `ready` is true only when every consumer is `proven` or `unchanged`. This is the strictest reading of #42; relax it in `preview_data.changes()` and in the "need a proof" message if planner checked should count.
 

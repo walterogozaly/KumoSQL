@@ -5,5 +5,6 @@
   "WITH unused_cte AS (SELECT record_id FROM `generic_table`), single_cte AS (SELECT record_id, category FROM `generic_table` WHERE is_active) SELECT record_id FROM single_cte WHERE category IS NOT NULL",
   "SELECT a.record_id, b.amount FROM `generic_table` AS a LEFT JOIN `aux_table` AS b ON a.record_id = b.record_id AND TRUE WHERE (a.is_active OR FALSE)",
   "SELECT category, COUNT(*) AS total FROM `generic_table` GROUP BY category HAVING TRUE",
-  "config { type: \"table\" }\nSELECT q.record_id FROM (SELECT record_id FROM ${ref(\"generic_table\")} WHERE is_active) AS q"
+  "config { type: \"table\" }\nSELECT q.record_id FROM (SELECT record_id FROM ${ref(\"generic_table\")} WHERE is_active) AS q",
+  "SELECT DISTINCT category, COUNT(*) AS total FROM `generic_table` GROUP BY category"
 ]
