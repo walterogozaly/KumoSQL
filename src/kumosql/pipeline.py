@@ -32,7 +32,8 @@ from sqlglot import exp
 from sqlglot.lineage import lineage
 from sqlglot.optimizer.pushdown_projections import pushdown_projections
 from sqlglot.optimizer.qualify import qualify
-from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
+from sqlglot.schema import MappingSchema
 
 from .ast_utils import quiet_parser as _quiet_parser
 from .sqlx import (
@@ -507,6 +508,17 @@ def _nested_schema(flat: dict[str, dict[str, str]]) -> dict:
     return nested
 
 
+def _add_table(schema: MappingSchema, key: str, columns: dict[str, str]) -> None:
+    parts = key.split(".")
+    parts = [""] * (3 - len(parts)) + parts if len(parts) < 3 else parts[-3:]
+    table = exp.Table(
+        this=exp.to_identifier(parts[2]),
+        db=exp.Identifier(this=parts[1]),
+        catalog=exp.Identifier(this=parts[0]),
+    )
+    schema.add_table(table, columns, dialect="bigquery")
+
+
 def _source_table(scope: Scope, column: exp.Column) -> exp.Table | None:
     current: Scope | None = scope
     while current is not None:
@@ -593,6 +605,9 @@ class _Analysis:
         consumed: dict[str, frozenset[ColumnRef]] = {}
         opaque_readers_of: set[str] = set()
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
+        # One MappingSchema grown model by model: qualify() would otherwise
+        # rebuild and re-normalise the whole nested schema for every model.
+        sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
 
         for key in order:
             query = parsed.get(key)
@@ -602,7 +617,7 @@ class _Analysis:
             try:
                 qualified = qualify(
                     query.copy(),
-                    schema=_nested_schema(schema),
+                    schema=sqlglot_schema,
                     dialect="bigquery",
                     validate_qualify_columns=False,
                     quote_identifiers=False,
@@ -652,9 +667,22 @@ class _Analysis:
             outputs[key] = names
             if names and "*" not in names:
                 schema[key] = {name: "UNKNOWN" for name in names}
+                _add_table(sqlglot_schema, key, schema[key])
+            # ``qualified`` is already qualified: hand lineage() its scope so it
+            # neither copies nor re-qualifies the query once per output column.
+            try:
+                lineage_scope = build_scope(qualified)
+            except Exception:
+                lineage_scope = None
             for name in names:
                 try:
-                    node = lineage(name, qualified, dialect="bigquery")
+                    node = lineage(
+                        name,
+                        qualified,
+                        dialect="bigquery",
+                        scope=lineage_scope,
+                        copy=lineage_scope is None,
+                    )
                 except Exception as exc:
                     diagnostics.append(
                         PipelineDiagnostic(key, "lineage_error", f"{name}: {str(exc).splitlines()[0]}")
@@ -757,10 +785,7 @@ def _select_location(select: exp.Expression) -> str:
 
 
 def _fingerprint(select: exp.Expression) -> tuple[str, str]:
-    canonical = select.copy()
-    for node in canonical.walk():
-        node.comments = None
-    sql = canonical.sql(
+    sql = select.sql(
         dialect="bigquery", normalize=True, normalize_functions="upper", comments=False
     )
     return hashlib.sha1(sql.encode("utf-8")).hexdigest()[:16], sql
