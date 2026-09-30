@@ -193,3 +193,4 @@ def test_failed_rule_overrides_unchanged_text():
         ("change_detection", "passed"),
         ("rewrite", "failed"),
     ]
+
