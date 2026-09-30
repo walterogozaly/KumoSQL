@@ -1070,7 +1070,7 @@ function readFormatForm() {
   };
 }
 
-formatForm.addEventListener("input", () => {
+formatForm.addEventListener("change", () => {
   clearTimeout(formatTimer);
   formatTimer = setTimeout(async () => {
     try {

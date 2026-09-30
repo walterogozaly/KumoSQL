@@ -139,7 +139,11 @@ def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     parsed = linter.parse_string(sql)
     if any(v.rule_code() == "PRS" for v in parsed.violations):
         raise ValueError("sqlfluff could not parse this SQL")
-    return linter.lint_string(sql, fix=True).fix_string()[0]
+    formatted = linter.lint_string(sql, fix=True).fix_string()[0]
+    # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.
+    if not sql.endswith("\n"):
+        formatted = formatted.rstrip("\n")
+    return formatted
 
 
 @register_rule
@@ -240,7 +244,7 @@ def complexity(sql: str) -> Complexity:
         return len(list(tree.recursive_crawl(*types)))
 
     def depth(segment, level=0) -> int:
-        level += segment.is_type("select_statement", "set_expression")
+        level += segment.is_type("select_statement")
         return max([level, *(depth(child, level) for child in segment.segments)])
 
     selects = count("select_statement")

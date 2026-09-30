@@ -13,6 +13,13 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+from contextlib import contextmanager
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 STATE_FILENAME = "state.json"
 _LOCK = threading.Lock()
@@ -63,6 +70,28 @@ def _write(state: dict) -> None:
         raise
 
 
+@contextmanager
+def _file_lock():
+    """Serialise writers across processes (UI server and CLI) with an OS file lock."""
+
+    path = data_dir() / ".state.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        else:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+            else:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 def get_section(name: str, default=None):
     """Return one top-level section of the saved state."""
 
@@ -73,7 +102,7 @@ def get_section(name: str, default=None):
 def set_section(name: str, value) -> None:
     """Replace one top-level section, leaving the others untouched."""
 
-    with _LOCK:
+    with _LOCK, _file_lock():
         state = load_state()
         state[name] = value
         _write(state)

@@ -74,3 +74,13 @@ def test_complexity_grows_with_structure():
 def test_complexity_rejects_sqlx():
     with pytest.raises(ValueError):
         complexity("config { type: 'table' }\nselect 1")
+
+
+def test_union_is_not_counted_as_extra_nesting():
+    assert complexity("SELECT a FROM t UNION ALL SELECT b FROM u").metrics["max_nesting"] == 0
+    assert complexity("SELECT a FROM t UNION ALL SELECT b FROM u").score == 2.0
+
+
+def test_format_keeps_the_inputs_trailing_newline_state():
+    assert not format_sql("select 1").endswith("\n")
+    assert format_sql("select 1\n").endswith("\n")

@@ -20,3 +20,11 @@ def test_corrupt_state_file_is_treated_as_empty():
 
 def test_home_override_controls_location(tmp_path):
     assert state.data_dir() == tmp_path / "kumosql-home"
+
+
+def test_concurrent_writers_do_not_lose_sections():
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda i: state.set_section(f"s{i}", {"i": i}), range(40)))
+    assert all(state.get_section(f"s{i}") == {"i": i} for i in range(40))

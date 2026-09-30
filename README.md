@@ -31,7 +31,7 @@ kumosql-scopes list
 kumosql-pipeline-report path/to/dataform --scope "My Projects"
 ```
 
-Values match case-insensitively and a trailing `*` matches a prefix. A scope may constrain several fields, and a record must match all of them. In Python, `Scope.matches(record)` and `Scope.filter(records)` apply a scope to any dicts (job rows, model metadata). `Pipeline.report(scope=...)` limits the pipeline report to models whose `project`, `dataset` or `name` match.
+Values match case-insensitively and a trailing `*` matches a prefix. A scope may constrain several fields, and a record must match all of them. In Python, `Scope.matches(record)` and `Scope.filter(records)` apply a scope to any dicts (job rows, model metadata). `Pipeline.report(scope=...)` limits the pipeline report to models whose `project`, `dataset`, `name` or `table` match; a scope on any other field (such as `author`) is rejected, and a scope that matches no models prints a warning. Duplicate groups are kept when any occurrence is in scope, so they can list out-of-scope occurrences as context.
 
 ## Rewrite rules
 

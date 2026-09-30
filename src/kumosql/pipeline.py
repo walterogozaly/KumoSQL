@@ -229,14 +229,23 @@ class Pipeline:
         """A JSON-serialisable summary of the whole-pipeline analysis.
 
         With a ``scope`` the report is limited to models whose target matches
-        it (fields ``project``, ``dataset``, ``name`` and ``table``); a
+        it (fields ``project``, ``dataset``, ``name`` and ``table``; any other
+        field raises ``ValueError``); project-level diagnostics are kept; a
         duplicate group is kept if any of its occurrences is in scope.
         """
 
         report = self._full_report(min_nodes=min_nodes, similarity=similarity)
         return report if scope is None else self._scoped(report, scope)
 
+    SCOPE_FIELDS = ("project", "dataset", "name", "table")
+
     def _scoped(self, report: dict, scope: "SavedScope") -> dict:
+        unsupported = sorted(set(scope.fields) - set(self.SCOPE_FIELDS))
+        if unsupported:
+            raise ValueError(
+                f"scope {scope.name!r} filters on {', '.join(unsupported)}, which pipeline models do not "
+                f"have; pipeline reports can be scoped by {', '.join(self.SCOPE_FIELDS)}"
+            )
         keep = {
             key for key, model in self.models.items()
             if scope.matches({
@@ -265,7 +274,7 @@ class Pipeline:
                 group for group in report["duplicates"] if any(in_scope(o) for o in group["occurrences"])
             ],
             "near_duplicates": near,
-            "diagnostics": [d for d in report["diagnostics"] if d["model"] in keep],
+            "diagnostics": [d for d in report["diagnostics"] if not d["model"] or d["model"] in keep],
         }
 
     def _full_report(self, *, min_nodes: int, similarity: float) -> dict:

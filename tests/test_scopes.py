@@ -76,3 +76,18 @@ def test_pipeline_report_can_be_limited_to_a_scope(tmp_path, capsys):
     assert scoped["order"] == ["a"]
     with pytest.raises(SystemExit):
         pipeline_main([str(tmp_path), "--scope", "nope"])
+
+
+def test_pipeline_scope_on_unsupported_field_is_rejected(tmp_path, capsys):
+    (tmp_path / "a.sql").write_text("SELECT id FROM `src.raw.t`")
+    scopes_main(["add", "Authors", "--field", "author", "ana@co.com"])
+    with pytest.raises(SystemExit):
+        pipeline_main([str(tmp_path), "--scope", "Authors"])
+    assert "author" in capsys.readouterr().err
+
+
+def test_pipeline_scope_matching_nothing_warns(tmp_path, capsys):
+    (tmp_path / "a.sql").write_text("SELECT id FROM `src.raw.t`")
+    scopes_main(["add", "Nothing", "--field", "name", "zzz"])
+    pipeline_main([str(tmp_path), "--scope", "Nothing"])
+    assert "matches no models" in capsys.readouterr().err

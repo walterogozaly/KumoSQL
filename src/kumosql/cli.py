@@ -147,9 +147,13 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         if scope is None:
             parser.error(f"no saved scope named {args.scope!r}")
     pipeline = _load_pipeline(args.root, args.source_schema)
-    report = json.dumps(
-        pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope), indent=2
-    )
+    try:
+        data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if scope is not None and not data["models"]:
+        print(f"warning: scope {scope.name!r} matches no models", file=sys.stderr)
+    report = json.dumps(data, indent=2)
     if args.output:
         args.output.write_text(report + "\n", encoding="utf-8")
     else:
