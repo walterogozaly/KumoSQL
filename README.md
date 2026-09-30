@@ -1,6 +1,10 @@
 # KumoSQL
 
-Small, deterministic transformations for BigQuery SQL that are trusted by tests rather than by an LLM at runtime.
+KumoSQL helps you change BigQuery SQL and Dataform models with evidence instead of hope. It is built around three questions:
+
+1. **What depends on this query, table, or column?** Pipeline analysis traces model and column lineage and shows the blast radius of a change.
+2. **Where is the same work being done repeatedly?** Duplicate and near-duplicate SELECT detection finds logic that could be shared.
+3. **Can a proposed change be shown to preserve behavior?** Rewrites are small, deterministic transformations, checked by static proof, SMT, synthetic-data comparison, and BigQuery dry runs. Tests decide what is trusted, not an LLM at runtime, and output that cannot be verified is flagged rather than reported as a success.
 
 New here? See the [Getting Started guide](docs/getting-started.md) for installation, a Python example, and the browser UI.
 
@@ -258,3 +262,7 @@ kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
 ```powershell
 lift-subqueries input.sql --output output.sql --report
 ```
+
+## What's next
+
+KumoSQL is moving toward a query graph that combines declared and observed dependencies with measured cost, backed by the verification engine described above. The near-term focus is making failed rewrites impossible to mistake for successful ones and making verification results easier to review.
