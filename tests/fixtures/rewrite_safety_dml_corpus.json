@@ -1,0 +1,5 @@
+[
+  "UPDATE `generic_table` SET amount = amount + 1 WHERE record_id > 0",
+  "DELETE FROM `generic_table` WHERE is_active = FALSE",
+  "MERGE `aux_table` AS target USING `generic_table` AS source ON target.record_id = source.record_id WHEN MATCHED THEN UPDATE SET amount = source.amount WHEN NOT MATCHED THEN INSERT (record_id, category, amount) VALUES (source.record_id, source.category, source.amount)"
+]
