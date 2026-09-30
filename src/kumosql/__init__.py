@@ -55,6 +55,7 @@ from .smt_equivalence import (
     SmtStatus,
     prove_equivalent_smt,
 )
+from .synthetic_check import attach_synthetic_check
 from .result_equivalence import (
     ResultEquivalence,
     ResultEquivalenceStatus,
@@ -196,6 +197,7 @@ __all__ = [
     "apply_rule",
     "apply_rules",
     "attach_planner_check",
+    "attach_synthetic_check",
     "available_rules",
     "canonical_rule_order",
     "check_idempotence",

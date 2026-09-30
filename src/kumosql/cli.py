@@ -11,6 +11,7 @@ from .lift_subqueries import lift_subqueries
 from .equivalence import prove_equivalent
 from .rewrite import apply_rules, attach_planner_check, available_rules, check_idempotence
 from .sqlx import looks_like_sqlx
+from .synthetic_check import attach_synthetic_check
 from .evidence_summary import DEFAULT_MIN_CHANGED, summarize_evidence
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
@@ -149,8 +150,31 @@ def rewrite_main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Compiled SQL for the rewritten SQLX output",
     )
+    parser.add_argument(
+        "--synthetic-check",
+        action="store_true",
+        help="Opt in to a local DuckDB comparison on synthetic data (needs --synthetic-schema); "
+        "agreement is evidence, not proof",
+    )
+    parser.add_argument(
+        "--synthetic-schema",
+        type=Path,
+        help='JSON mapping of source tables to columns, e.g. {"p.d.t": {"id": "INT64"}}',
+    )
+    parser.add_argument(
+        "--synthetic-seeds",
+        type=int,
+        default=8,
+        help="Number of synthetic datasets (seeds 0..N-1) for --synthetic-check",
+    )
     args = parser.parse_args(argv)
 
+    if args.synthetic_check and not args.synthetic_schema:
+        parser.error("--synthetic-check requires --synthetic-schema")
+    if (args.synthetic_schema or args.synthetic_seeds != 8) and not args.synthetic_check:
+        parser.error("--synthetic-schema and --synthetic-seeds require --synthetic-check")
+    if args.synthetic_seeds < 1:
+        parser.error("--synthetic-seeds must be at least 1")
     if (args.planner_location or args.planner_compiled_original or args.planner_compiled_rewritten) and not args.planner_project:
         parser.error("--planner-location and compiled SQL inputs require --planner-project")
     if bool(args.planner_compiled_original) != bool(args.planner_compiled_rewritten):
@@ -172,6 +196,15 @@ def rewrite_main(argv: list[str] | None = None) -> int:
                 if args.planner_compiled_rewritten
                 else None
             ),
+        )
+    if args.synthetic_check:
+        try:
+            synthetic_schema = json.loads(args.synthetic_schema.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"error: cannot read --synthetic-schema: {exc}", file=sys.stderr)
+            return 2
+        result = attach_synthetic_check(
+            result, synthetic_schema, seeds=range(args.synthetic_seeds)
         )
 
     for step in result.steps:
@@ -199,6 +232,8 @@ def rewrite_main(argv: list[str] | None = None) -> int:
             elif key == "schema_differences":
                 for difference in value:
                     print(f"    schema difference: {difference}", file=sys.stderr)
+            elif check.kind == "synthetic_results" and key in ("seeds", "seeds_checked"):
+                print(f"    {key}={list(value)}", file=sys.stderr)
             else:
                 print(f"    {key}={value}", file=sys.stderr)
 
