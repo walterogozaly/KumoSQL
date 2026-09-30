@@ -162,3 +162,14 @@ def test_symlinks_and_non_ascii_paths(tmp_path, monkeypatch):
 @pytest.mark.parametrize("value", ["C:\\repos\\r.git", "c:/repos/r.git", "\\\\server\\share\\r.git"])
 def test_windows_paths_are_accepted(value):
     assert git_repo.parse_remote(value) == value
+
+
+def test_repository_name_handles_every_remote_form(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(git_repo, "sync", lambda remote, branch, refresh: Path("."))
+    monkeypatch.setattr(git_repo, "_git", lambda args, cwd=None: "main")
+    monkeypatch.setattr(git_repo, "_tree_blobs", lambda checkout: {"a.sqlx": "x"})
+    monkeypatch.setattr(git_repo, "_read_blobs", lambda checkout, blobs: {"a.sqlx": b"SELECT 1"})
+    for remote in ["git@github.com:o/repo.git", "https://github.com/o/repo", "C:\\repos\\repo.git", "/srv/repo.git/"]:
+        seen[remote] = git_repo.fetch_project(remote)["repository"]
+    assert set(seen.values()) == {"repo"}

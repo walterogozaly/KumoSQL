@@ -184,7 +184,7 @@ def fetch_project(value: object, branch: object = None, refresh: bool = False) -
         files[name] = text
     if not files:
         raise GitRepoError("The repository has no readable SQL files")
-    name = re.sub(r"(?:\.git)?/?$", "", remote).rsplit("/", 1)[-1].rsplit(":", 1)[-1] or remote
+    name = re.split(r"[/\\:]", re.sub(r"(?:\.git)?[/\\]?$", "", remote))[-1] or remote
     return {"repository": name, "branch": actual, "commit": commit, "files": files}
 
 
