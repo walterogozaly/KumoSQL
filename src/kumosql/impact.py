@@ -1,0 +1,358 @@
+"""Blast radius of a proposed change: who is affected, and who cannot be checked.
+
+``assess_change`` answers "what breaks if I change this?" for one column or
+table. It is a read-only walk over what the pipeline analysis already knows:
+the models that read the target (from column consumption, so a column used
+only in a filter, join or grouping is found too) and the columns computed from
+it (lineage). Readers the analysis cannot read are never dropped from the
+answer: they are listed as ``unknown``. Readers outside the pipeline (jobs,
+dashboards, scripts that are not parsed) are invisible here, so the result
+never claims that a target is safe to remove.
+
+Job history adds the readers no compiled model declares. Given observed reads,
+tables that jobs read from the target (or from an affected model) but that no
+declared model reads are listed under ``observed``, labeled with when they were
+last seen and how confident the edge is. Job history names tables, not
+columns, so their column use is unverified: the effect is ``may_break`` or
+``may_change``, never ``breaks``. A reader already listed as affected or
+unknown is not repeated.
+"""
+
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Iterable
+
+if TYPE_CHECKING:
+    from .pipeline import ColumnRef, Pipeline
+
+CHANGE_KINDS = ("drop_column", "rename_column", "change_expression", "drop_table")
+COLUMN_KINDS = ("drop_column", "rename_column", "change_expression")
+
+SAFE_TO_DELETE_NOTE = (
+    "Not claimed. Readers outside the analysed pipeline (query history, dashboards, "
+    "unparsed operations) are not visible, so an empty result is not evidence of safety."
+)
+
+_READER_REASONS = ("parse_error", "qualify_error", "no_query", "unexpanded_star", "unparsed_operation")
+_VIA_RANK = {"output_column": 0, "condition_only": 1, "model_dependency": 2}
+
+
+@dataclass(frozen=True)
+class AffectedModel:
+    """One model that a change reaches.
+
+    ``effect`` is ``breaks`` (the model stops working), ``values_change`` (an
+    output column is computed from the changed expression),
+    ``behavior_may_change`` (the column is only used in a filter, join,
+    grouping or ordering, so rows may change) or ``indirect`` (it reads a model
+    that breaks). ``via`` is ``output_column``, ``condition_only`` or
+    ``model_dependency``. ``depth`` is 1 for direct readers.
+    """
+
+    model: str
+    effect: str
+    via: str
+    depth: int
+    columns: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class UnknownReader:
+    """A model whose use of the target cannot be determined, with a reason code."""
+
+    model: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ObservedReader:
+    """A table seen reading the target (or an affected model) only in job history.
+
+    ``effect`` is ``may_break`` or ``may_change``: history does not say which
+    columns the job used. ``via`` is the table it was seen reading.
+    ``confidence`` is that of the observed edge.
+    """
+
+    model: str
+    effect: str
+    via: str
+    depth: int
+    last_seen: str | None
+    confidence: str
+    observed_count: int
+    source: str = "observed"
+
+
+@dataclass
+class ChangeImpact:
+    kind: str
+    target: str
+    target_known: bool
+    affected: list[AffectedModel] = field(default_factory=list)
+    unknown: list[UnknownReader] = field(default_factory=list)
+    observed: list[ObservedReader] = field(default_factory=list)
+    observed_checked: bool = False
+    terminal: bool = False
+    complete: bool = True
+    incomplete_reasons: list[str] = field(default_factory=list)
+    scope: str | None = None
+    out_of_scope: int = 0
+    safe_to_delete: str = "unknown"
+    safe_to_delete_note: str = SAFE_TO_DELETE_NOTE
+
+    def to_json(self) -> dict:
+        return {
+            "kind": self.kind,
+            "target": self.target,
+            "target_known": self.target_known,
+            "affected": [
+                {"model": a.model, "effect": a.effect, "via": a.via, "depth": a.depth, "columns": list(a.columns)}
+                for a in self.affected
+            ],
+            "unknown": [{"model": u.model, "reason": u.reason} for u in self.unknown],
+            "observed": [
+                {"model": o.model, "effect": o.effect, "via": o.via, "depth": o.depth,
+                 "last_seen": o.last_seen, "confidence": o.confidence,
+                 "observed_count": o.observed_count, "source": o.source}
+                for o in self.observed
+            ],
+            "observed_checked": self.observed_checked,
+            "terminal": self.terminal,
+            "complete": self.complete,
+            "incomplete_reasons": self.incomplete_reasons,
+            "scope": self.scope,
+            "out_of_scope": self.out_of_scope,
+            "safe_to_delete": self.safe_to_delete,
+            "safe_to_delete_note": self.safe_to_delete_note,
+        }
+
+
+def assess_change(
+    pipeline: "Pipeline",
+    kind: str,
+    target: str,
+    column: str | None = None,
+    *,
+    scope=None,
+    observed_reads: Iterable[object] = (),
+) -> ChangeImpact:
+    """Blast radius of ``kind`` applied to ``target`` (a table) and ``column``.
+
+    A drop or rename reaches every model that reads the column anywhere, then
+    everything that depends on those models. A changed expression reaches the
+    columns computed from it, transitively, and models that filter or join on
+    them. Without transform kinds for a changed expression, every descendant is
+    treated as affected, which over-approximates. Column names match
+    case-insensitively. With a ``scope``, only in-scope models are listed and
+    the rest are counted in ``out_of_scope``. ``observed_reads`` are job-history
+    records (see ``build_query_graph``); readers seen only there are added under
+    ``observed``.
+    """
+
+    if kind not in CHANGE_KINDS:
+        raise ValueError(f"unknown change kind {kind!r}; expected one of {', '.join(CHANGE_KINDS)}")
+    if kind in COLUMN_KINDS and not column:
+        raise ValueError(f"{kind} needs a column")
+    if kind == "drop_table":
+        column = None
+
+    a = pipeline._analyse()
+    table = pipeline.resolve(target) or target
+    label = f"{table}.{column}" if column else table
+
+    codes_by_model: dict[str, set[str]] = {}
+    for diagnostic in a.diagnostics:
+        codes_by_model.setdefault(diagnostic.model, set()).add(diagnostic.code)
+
+    downstream = pipeline.downstream
+    readers_index: dict[str, set[str]] = {}
+    for model, refs in a.consumed.items():
+        for ref in refs:
+            readers_index.setdefault(ref.table, set()).add(model)
+
+    # Tables named in a query also count, so a SELECT * over a table is found
+    # even though it consumes no named column.
+    from .pipeline import _table_name_for_schema
+    from sqlglot import exp
+
+    for model, query in a.parsed.items():
+        ctes = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
+        for node in query.find_all(exp.Table):
+            if node.name and not (not node.db and node.name.lower() in ctes):
+                name = pipeline.resolve(node) or _table_name_for_schema(node)
+                if name != model:
+                    readers_index.setdefault(name, set()).add(model)
+
+    def readers_of(name: str) -> set[str]:
+        return set(downstream.get(name, ())) | readers_index.get(name, set())
+
+    def reader_problem(model: str) -> str | None:
+        if model in a.consumed and "*" not in a.outputs.get(model, ()):
+            return None
+        codes = codes_by_model.get(model, set())
+        return next((c for c in _READER_REASONS if c in codes), "unparsed_model")
+
+    lineage_index: dict[tuple[str, str], list["ColumnRef"]] = {}
+    for ref in a.reverse_lineage:
+        lineage_index.setdefault((ref.table, ref.column.lower()), []).append(ref)
+
+    def children(name: str, col: str) -> set["ColumnRef"]:
+        out: set["ColumnRef"] = set()
+        for ref in lineage_index.get((name, col.lower()), ()):
+            out |= a.reverse_lineage[ref]
+        return out
+
+    if column and table in a.outputs and "*" not in a.outputs[table]:
+        target_known = column.lower() in {c.lower() for c in a.outputs[table]}
+    else:
+        target_known = table in pipeline.models or table in readers_index or table in pipeline.source_schema
+    result = ChangeImpact(kind=kind, target=label, target_known=target_known)
+
+    affected: dict[str, AffectedModel] = {}
+    unknown: dict[str, str] = {}
+
+    def note(model: str, effect: str, via: str, depth: int, cols: tuple[str, ...]) -> None:
+        old = affected.get(model)
+        if old is None:
+            affected[model] = AffectedModel(model, effect, via, depth, cols)
+            return
+        better = _VIA_RANK[old.via] <= _VIA_RANK[via]
+        affected[model] = AffectedModel(
+            model,
+            old.effect if better else effect,
+            old.via if better else via,
+            min(old.depth, depth),
+            tuple(sorted(set(old.columns) | set(cols))),
+        )
+
+    def visit(name: str, cols: list[str] | None, depth: int) -> list[tuple[str, str]]:
+        """Record readers of ``name`` (of the given columns, or of the whole table).
+
+        Returns the columns of those readers that are computed from the target.
+        """
+
+        reached: list[tuple[str, str]] = []
+        wanted = None if cols is None else {c.lower() for c in cols}
+        for reader in sorted(readers_of(name)):
+            problem = reader_problem(reader)
+            if problem:
+                unknown.setdefault(reader, problem)
+                continue
+            if wanted is None:
+                note(reader, "breaks", "model_dependency", depth, ())
+                continue
+            refs = [r for r in a.consumed[reader] if r.table == name and r.column.lower() in wanted]
+            if not refs:
+                continue
+            feeds = {c for r in refs for c in children(name, r.column) if c.table == reader}
+            if kind == "change_expression":
+                effect = "values_change" if feeds else "behavior_may_change"
+            else:
+                effect = "breaks"
+            note(reader, effect, "output_column" if feeds else "condition_only", depth,
+                 tuple(sorted({r.column for r in refs})))
+            reached.extend((c.table, c.column) for c in feeds)
+        return reached
+
+    if kind == "drop_table":
+        visit(table, None, 1)
+    elif kind == "change_expression":
+        seen: set[tuple[str, str]] = set()
+        queue = deque([(table, column, 1)])
+        while queue:
+            name, col, depth = queue.popleft()
+            if (name, col.lower()) in seen:
+                continue
+            seen.add((name, col.lower()))
+            for next_table, next_column in visit(name, [col], depth):
+                queue.append((next_table, next_column, depth + 1))
+    else:
+        visit(table, [column], 1)
+
+    if kind != "change_expression":
+        # Whatever reads a model that breaks is affected too.
+        pending = deque((m.model, m.depth) for m in affected.values())
+        seen_models = set(affected)
+        while pending:
+            model, depth = pending.popleft()
+            for reader in sorted(downstream.get(model, ())):
+                if reader not in seen_models:
+                    seen_models.add(reader)
+                    note(reader, "indirect", "model_dependency", depth + 1, ())
+                    pending.append((reader, depth + 1))
+
+    # Anything downstream of a reader that could not be read is unknown too.
+    pending_unknown = deque(unknown)
+    while pending_unknown:
+        model = pending_unknown.popleft()
+        for reader in sorted(downstream.get(model, ())):
+            if reader not in unknown and reader not in affected:
+                unknown[reader] = "downstream_of_unknown_reader"
+                pending_unknown.append(reader)
+    # A model with unknown reads may read the target.
+    for model, codes in sorted(codes_by_model.items()):
+        if "unknown_reads" in codes and model not in affected:
+            unknown.setdefault(model, "unknown_reads")
+
+    observed_reads = list(observed_reads)
+    observed_found: dict[str, ObservedReader] = {}
+    if observed_reads:
+        result.observed_checked = True
+        from .graph import build_query_graph
+
+        only_observed: dict[str, list] = {}
+        for edge in build_query_graph(pipeline, observed_reads).edges:
+            if edge.observed and not (edge.declared or edge.parsed):
+                only_observed.setdefault(edge.upstream.key, []).append(edge)
+        effect = "may_change" if kind == "change_expression" else "may_break"
+        queue = deque([(table, 0)] + [(m.model, m.depth) for m in affected.values()])
+        visited: set[str] = set()
+        while queue:
+            name, depth = queue.popleft()
+            if name in visited:
+                continue
+            visited.add(name)
+            for edge in sorted(only_observed.get(name, ()), key=lambda e: e.downstream.key):
+                reader = edge.downstream.key
+                if reader == table or reader in affected or reader in unknown:
+                    continue
+                found = ObservedReader(reader, effect, name, depth + 1, edge.last_seen,
+                                       edge.confidence, edge.observed_count)
+                old = observed_found.get(reader)
+                if old is None or found.depth < old.depth or (
+                    found.depth == old.depth and (found.last_seen or "") > (old.last_seen or "")
+                ):
+                    observed_found[reader] = found
+                queue.append((reader, depth + 1))
+
+    result.terminal = table in pipeline.models and not downstream.get(table)
+    keep = pipeline.scope_keys(scope) if scope is not None else None
+    if scope is not None:
+        result.scope = scope.name
+
+    def in_scope(model: str) -> bool:
+        return keep is None or model in keep
+
+    result.affected = sorted(
+        (m for m in affected.values() if in_scope(m.model)), key=lambda m: (m.depth, m.model)
+    )
+    result.unknown = [UnknownReader(m, r) for m, r in sorted(unknown.items()) if in_scope(m)]
+    result.observed = sorted(
+        (o for o in observed_found.values() if in_scope(o.model)), key=lambda o: (o.depth, o.model)
+    )
+    result.out_of_scope = sum(1 for m in {*affected, *unknown, *observed_found} if not in_scope(m))
+
+    reasons = []
+    if not target_known:
+        reasons.append("target_not_found")
+    if unknown:
+        reasons.append("unknown_readers")
+    if not pipeline.completeness()["views"].get("impact", True):
+        reasons.append("analysis_gaps")
+    if result.terminal:
+        reasons.append("terminal_output_may_be_read_outside_pipeline")
+    result.incomplete_reasons = reasons
+    result.complete = not reasons
+    return result

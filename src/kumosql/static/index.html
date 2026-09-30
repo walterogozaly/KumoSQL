@@ -7,6 +7,9 @@
   <title>KumoSQL</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/style.css">
+  <script defer src="/assets/evidence.js"></script>
+  <script defer src="/assets/scopes.js"></script>
+  <script defer src="/assets/settings.js"></script>
   <script defer src="/assets/app.js"></script>
 </head>
 <body>
@@ -36,6 +39,7 @@
         <span class="brand-mark" aria-hidden="true">{ }</span>
         <span class="brand-text"><strong>KumoSQL</strong><span>SQL workspace</span></span>
       </div>
+      <nav class="topnav" aria-label="Main navigation"><a href="/" aria-current="page">Workspace</a><a href="/graph">Query graph</a><a href="/cost">Cost</a><a href="/changes">Change reports</a><a href="/browse">BigQuery</a></nav>
       <div class="topbar-actions">
         <div class="menu-wrap">
           <button id="examples-button" class="toolbar-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="examples-menu">
@@ -46,6 +50,7 @@
         <button id="theme-button" class="icon-button" type="button" aria-label="Theme: match system" title="Theme: match system">
           <svg class="icon"><use id="theme-icon" href="#i-monitor"/></svg>
         </button>
+        <button id="settings-button" class="toolbar-button" type="button" data-open-settings title="Settings (Ctrl+,)"><span>Settings</span></button>
         <span class="local-badge" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
       </div>
     </header>
@@ -64,6 +69,10 @@
             <button id="reset-button" class="link-button" type="button" disabled>Reset order</button>
           </div>
           <ol id="rules" class="rule-list" aria-label="Transformations"></ol>
+
+          <p class="format-link"><span>SQL formatting:</span> <button id="format-profile-link" class="link-button" type="button" data-open-settings="formatting" title="Change sqlfluff formatting in Settings"><span id="format-profile-name">Default</span></button></p>
+
+          <p class="format-link"><span>Scopes:</span> <button id="scope-link" class="link-button" type="button" data-open-settings="scopes" title="Create and choose scopes in Settings"><span>Manage</span> <span id="scope-count" class="count-label"></span></button></p>
         </div>
 
         <div class="sidebar-footer">
@@ -90,6 +99,7 @@
           <dl id="stats" class="stats" hidden>
             <div><dt>Lines</dt><dd id="stat-lines">–</dd></div>
             <div><dt>CTEs</dt><dd id="stat-ctes">–</dd></div>
+            <div><dt>Complexity</dt><dd id="stat-complexity">–</dd></div>
             <div><dt>Diff</dt><dd id="stat-diff">–</dd></div>
             <div><dt>Time</dt><dd id="stat-time">–</dd></div>
           </dl>
@@ -103,6 +113,7 @@
               <div class="pane-actions">
                 <input id="file-input" class="sr-only" type="file" accept=".sql,.sqlx,.txt,text/plain" tabindex="-1">
                 <button id="open-button" class="toolbar-button" type="button" title="Open a .sql or .sqlx file"><svg class="icon"><use href="#i-file"/></svg><span>Open</span></button>
+                <button id="github-button" class="toolbar-button" type="button" title="Open a Dataform project on GitHub">GitHub</button>
                 <button id="clear-input-button" class="icon-button" type="button" aria-label="Clear input" title="Clear input" disabled><svg class="icon"><use href="#i-x"/></svg></button>
               </div>
             </div>
@@ -142,7 +153,7 @@
                 <div id="output-empty" class="empty-state">
                   <svg class="icon"><use href="#i-spark"/></svg>
                   <strong>Your transformed SQL appears here</strong>
-                  <span>Choose rules on the left and paste some SQL.</span>
+                  <span>Choose rules above and paste some SQL.</span>
                 </div>
                 <div id="output-lines" class="code-lines"></div>
               </div>
@@ -159,13 +170,40 @@
           <div class="report-heading">
             <h2 id="report-title">Verification</h2>
             <p id="verification-reason"></p>
+            <details class="ev-legend-wrap">
+              <summary>What the labels mean</summary>
+              <div id="evidence-legend"></div>
+            </details>
           </div>
+          <div id="chain-checks" class="chain-checks" aria-label="Checks for the whole pipeline"></div>
           <ol id="steps" class="timeline"></ol>
           <ul id="verification-details" class="detail-list"></ul>
         </section>
       </main>
     </div>
   </div>
+  <dialog id="github-dialog" class="github-dialog" aria-labelledby="github-title">
+    <form id="github-connect-form" class="github-dialog-form" autocomplete="off">
+      <div class="github-dialog-heading">
+        <div><h2 id="github-title">Connect a Dataform repository</h2><p>Browse public GitHub repositories containing SQLX models.</p></div>
+        <button id="github-close" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <label for="github-url">GitHub repository URL</label>
+      <div class="github-connect-row">
+        <input id="github-url" type="url" placeholder="https://github.com/owner/repository" required>
+        <button id="github-connect" class="toolbar-button" type="submit">Connect</button>
+      </div>
+      <p class="github-note">Read-only access to public repositories. Repository SQLX files are loaded into this local editor; private repositories are not supported yet.</p>
+      <p id="github-status" class="github-status" role="status" aria-live="polite"></p>
+      <div id="github-files-panel" class="github-files-panel" hidden>
+        <label for="github-files">SQLX file <span id="github-repo-label" class="github-repo-label"></span></label>
+        <div class="github-connect-row">
+          <select id="github-files"></select>
+          <button id="github-load-file" class="toolbar-button" type="button">Open file</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

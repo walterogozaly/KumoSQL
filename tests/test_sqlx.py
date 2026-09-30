@@ -1,4 +1,5 @@
-from kumosql import count_inline_subqueries, lift_subqueries
+from kumosql import apply_rule, count_inline_subqueries, lift_subqueries
+from kumosql.engine import RewriteRule
 
 
 def test_lifts_sqlx_query_while_preserving_config_and_ref_interpolations():
@@ -56,6 +57,49 @@ FROM ${ref("customers")} ${when(incremental(), `WHERE id > 1`, ``)}'''
     assert clause_result.success
     assert '${when(incremental(), "id > 1", "TRUE")}' in expression_result.sql
     assert '${when(incremental(), `WHERE id > 1`, ``)}' in clause_result.sql
+
+
+def test_sqlx_incremental_filter_and_ref_placeholder_survive_subquery_lift():
+    incremental_filter = (
+        '${when(incremental(), '
+        '`updated_at > (SELECT MAX(updated_at) FROM ${self()})`, `TRUE`)}'
+    )
+    source = '''config { type: "incremental" }
+SELECT q.id
+FROM (
+  SELECT id FROM ${ref("source")}
+  WHERE ''' + incremental_filter + '''
+) AS q'''
+
+    result = lift_subqueries(source)
+
+    assert result.success
+    assert result.lifted_subqueries == 1
+    assert incremental_filter in result.sql
+    assert '${ref("source")}' in result.sql
+    assert count_inline_subqueries(result.sql) == 0
+
+
+def test_sqlx_restoration_failure_is_fatal_and_returns_no_rewritten_output():
+    class DropWhereRule(RewriteRule):
+        name = "test_drop_sqlx_filter"
+        summary = "Test rule that removes a masked filter"
+
+        def rewrite_statement(self, statement, index):
+            statement.set("where", None)
+            return 1, []
+
+    source = '''config { type: "incremental" }
+SELECT id FROM input
+WHERE ${when(incremental(), "id > 0", "TRUE")}'''
+
+    rule = DropWhereRule()
+    result = apply_rule(rule.name, source, overrides={rule.name: rule})
+
+    assert not result.success
+    assert result.sql == source
+    assert result.changes == 0
+    assert any(d.code == "sqlx_restore_error" for d in result.diagnostics)
 
 
 def test_sqlx_noop_is_returned_byte_for_byte():

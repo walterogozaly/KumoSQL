@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "sqlglot>=26.0",
+    "sqlfluff>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -15,6 +16,7 @@ execution = [
 dev = [
     "pytest>=8.0",
     "duckdb>=1.0",
+    "z3-solver>=4.12",
 ]
 bigquery = [
     "google-auth>=2.0",
@@ -33,6 +35,10 @@ kumosql-dry-run = "kumosql.cli:dry_run_main"
 prove-sql-smt = "kumosql.smt_equivalence:main"
 kumosql-compare-outputs = "kumosql.cli:compare_outputs_main"
 kumosql-ui = "kumosql.ui:main"
+kumosql-scopes = "kumosql.cli:scopes_main"
+kumosql-change-report = "kumosql.change_report:change_report_main"
+kumosql-ci-check = "kumosql.ci_check:main"
+kumosql-evidence-summary = "kumosql.cli:evidence_summary_main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -42,7 +48,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kumosql = ["static/*.html", "static/*.css", "static/*.js", "static/*.svg"]
+kumosql = ["static/*.html", "static/*.css", "static/*.js", "static/*.svg", "static/*.jpg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

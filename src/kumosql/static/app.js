@@ -25,6 +25,7 @@ const DEFAULT_ORDER = [
   "remove_redundant_parentheses",
   "deduplicate_ctes",
   "remove_unused_ctes",
+  "format_sql",
 ];
 const DEFAULT_ENABLED = ["lift_subqueries"];
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -132,15 +133,21 @@ const state = {
   fileName: null,
   gutterLines: 0,
   currentLine: 0,
+  format: null,
+  sqlfluffProfiles: [],
+  activeSqlfluffProfile: "",
 };
 let debounceTimer;
 let requestVersion = 0;
 let controller;
 let toastTimer;
 
-/* ---------- Preferences (per browser, best effort) ---------- */
+/* ---------- Preferences (saved on this computer by the local server) ---------- */
 
-function loadPrefs() {
+let persisted = {};
+let saveTimer;
+
+function loadLocalPrefs() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
   } catch {
@@ -148,18 +155,65 @@ function loadPrefs() {
   }
 }
 
-function savePrefs() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      theme: state.theme,
-      autoRun: state.autoRun,
-      order: state.rules.map((rule) => rule.name),
-      enabled: state.rules.filter((rule) => rule.on).map((rule) => rule.name),
-    }));
-  } catch {
-    /* storage unavailable; preferences just won't persist */
-  }
+function currentPrefs() {
+  return {
+    theme: state.theme,
+    autoRun: state.autoRun,
+    order: state.rules.map((rule) => rule.name),
+    enabled: state.rules.filter((rule) => rule.on).map((rule) => rule.name),
+    sqlfluffProfiles: state.sqlfluffProfiles,
+    activeSqlfluffProfile: state.activeSqlfluffProfile,
+  };
 }
+
+function savePrefs() {
+  const prefs = currentPrefs();
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    /* browser storage unavailable; the server copy still persists */
+  }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    fetch("/api/settings/ui", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs),
+    }).catch(() => {});
+  }, 300);
+}
+
+function profile() {
+  return state.sqlfluffProfiles.find((item) => item.id === state.activeSqlfluffProfile) || state.sqlfluffProfiles[0];
+}
+
+function initSqlfluffProfiles(prefs) {
+  const loaded = Array.isArray(prefs.sqlfluffProfiles) ? prefs.sqlfluffProfiles : [];
+  state.sqlfluffProfiles = loaded.filter((item) => item && typeof item.name === "string" && item.format && typeof item.id === "string");
+  if (!state.sqlfluffProfiles.length) state.sqlfluffProfiles = [{ id: crypto.randomUUID(), name: "Default", format: state.format }];
+  state.activeSqlfluffProfile = state.sqlfluffProfiles.some((item) => item.id === prefs.activeSqlfluffProfile)
+    ? prefs.activeSqlfluffProfile : state.sqlfluffProfiles[0].id;
+  state.format = profile().format;
+}
+
+// The sqlfluff configurations are edited on the Settings page; the workspace
+// only shows which one the Format rule uses.
+function renderFormatLink() {
+  const active = profile();
+  $("format-profile-name").textContent = active ? active.name : "Default";
+}
+
+// The settings panel saves theme and sqlfluff changes; pick them up here.
+KumoSettings.register({
+  getUi: currentPrefs,
+  onChange(ui) {
+    const before = JSON.stringify(profile()?.format);
+    initSqlfluffProfiles(ui);
+    renderFormatLink();
+    applyTheme(ui.theme);
+    if (JSON.stringify(state.format) !== before && selectedRules().includes("format_sql")) inputsChanged();
+  },
+});
 
 /* ---------- Small helpers ---------- */
 
@@ -168,6 +222,7 @@ function labelFor(name) {
     .replaceAll("_", " ")
     .replace(/\bctes\b/g, "CTEs")
     .replace(/\bcte\b/g, "CTE")
+    .replace(/\bsql\b/g, "SQL")
     .replace(/\bsingle use\b/g, "single-use")
     .replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -198,7 +253,8 @@ function selectedRules() {
 }
 
 function currentKey() {
-  return JSON.stringify([input.value, selectedRules()]);
+  const active = profile();
+  return JSON.stringify([input.value, selectedRules(), active?.id, active?.format]);
 }
 
 function toast(message) {
@@ -434,8 +490,27 @@ function setView(view) {
 /* ---------- Verdict, stats and report ---------- */
 
 const VERDICT_ICONS = {
-  idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", unproven: "#i-alert", failed: "#i-alert",
+  idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", planner_checked: "#i-alert", unproven: "#i-alert", failed: "#i-alert",
 };
+
+/* ---------- Evidence labels (#15, #16) ---------- */
+
+// One label per result and per step; a failed rule is always "failed".
+function evidenceLabel(item) {
+  if (item.rule_success === false) return "failed";
+  return KumoEvidence.normalize(item.verification?.status);
+}
+
+function evidenceChecks(item) {
+  return Array.isArray(item.verification?.checks) ? item.verification.checks : [];
+}
+
+function checkRow(checks) {
+  const row = document.createElement("div");
+  row.className = "ev-checks";
+  for (const check of checks) row.append(KumoEvidence.checkChip(check));
+  return row;
+}
 
 function setVerdict(kind, title, detail) {
   $("verdict").className = `verdict verdict-${kind}`;
@@ -444,13 +519,26 @@ function setVerdict(kind, title, detail) {
   $("verdict-detail").textContent = detail;
 }
 
-function showStats(before, after, elapsed) {
+function complexityLabel(c) {
+  return c ? `${c.score} (${c.band})` : "n/a";
+}
+
+function showStats(before, after, elapsed, complexity) {
   const ops = state.diffOps;
   const added = ops ? ops.filter((op) => op.t === "add").length : null;
   const removed = ops ? ops.filter((op) => op.t === "del").length : null;
   const arrow = (x, y) => `${x.toLocaleString()} <span class="arrow">→</span> ${y.toLocaleString()}`;
   $("stat-lines").innerHTML = arrow(lineCount(before), lineCount(after));
   $("stat-ctes").innerHTML = arrow(countCtes(before), countCtes(after));
+  const complexityCell = $("stat-complexity");
+  complexityCell.textContent = complexity && complexity.before && complexity.after
+    ? `${complexityLabel(complexity.before)} → ${complexityLabel(complexity.after)}`
+    : complexity && (complexity.before || complexity.after) ? complexityLabel(complexity.before || complexity.after) : "n/a";
+  const detail = complexity && (complexity.after || complexity.before);
+  complexityCell.title = detail
+    ? "Structural complexity from the sqlfluff parse tree: " +
+      Object.entries(detail.metrics).map(([key, value]) => `${key.replace("_", " ")}: ${value}`).join(", ")
+    : "SQLX and unparseable SQL are not scored";
   $("stat-diff").innerHTML = ops ? `<span class="num-add">+${added}</span> <span class="num-del">−${removed}</span>` : "–";
   $("stat-time").textContent = `${Math.round(elapsed)} ms`;
   $("stats").hidden = false;
@@ -479,29 +567,52 @@ function showReport(data) {
     details.append(item);
   };
 
-  for (const detail of data.verification.details) addDetail(null, detail);
+  const addCheck = (rule, check) => {
+    const kind = check.kind === "planner" ? "Planner" : check.kind.replaceAll("_", " ");
+    const outcome = check.outcome.replaceAll("_", " ");
+    let text = `${kind}: ${outcome} — ${stripAnsi(check.detail)}`;
+    if (check.kind === "planner" && check.evidence) {
+      const differences = check.evidence.schema_differences || [];
+      if (differences.length) text += `; schema differences: ${differences.join("; ")}`;
+      const bytesDelta = check.evidence.estimated_bytes_delta;
+      if (bytesDelta !== null && bytesDelta !== undefined) {
+        text += `; estimated bytes delta: ${bytesDelta} bytes (estimate)`;
+      }
+    }
+    addDetail(rule, text);
+  };
+  // Chips show every check; failed or unproven ones also explain themselves in the detail list.
+  const explain = (rule, checks) => {
+    for (const check of checks) if (["failed", "not_proven"].includes(check.outcome) && check.detail) addCheck(rule, check);
+  };
+
+  // The pipeline repeats each step's checks, so show one chip per kind and outcome.
+  const chain = evidenceChecks(data).filter((check, i, all) =>
+    all.findIndex((other) => other.kind === check.kind && other.outcome === check.outcome) === i);
+  const chainChecks = $("chain-checks");
+  chainChecks.replaceChildren();
+  if (chain.length) chainChecks.append(checkRow(chain));
+  explain(null, evidenceChecks(data));
   data.steps.forEach((step, index) => {
-    const outcome = step.rule_success ? step.verification : "failed";
+    const outcome = evidenceLabel(step);
     const item = document.createElement("li");
     item.className = `tl-step ${outcome}`;
     const dot = document.createElement("span");
     dot.className = "tl-dot";
     if (outcome === "proven") dot.innerHTML = `<svg class="icon"><use href="#i-check"/></svg>`;
-    else if (outcome === "failed" || outcome === "unproven") dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
+    else if (["failed", "unproven", "planner_checked"].includes(outcome)) dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
     else dot.textContent = String(index + 1);
     const name = document.createElement("span");
     name.className = "tl-name";
     name.textContent = labelFor(step.rule);
     const meta = document.createElement("span");
     meta.className = "tl-meta";
-    const pill = document.createElement("span");
-    pill.className = `pill pill-${outcome}`;
-    pill.textContent = outcome;
-    meta.append(plural(step.changes, "change"), pill);
+    meta.append(plural(step.changes, "change"), KumoEvidence.pill(outcome));
     item.append(dot, name, meta);
+    const checks = evidenceChecks(step);
+    if (checks.length) item.append(checkRow(checks));
     steps.append(item);
     for (const diagnostic of step.diagnostics) addDetail(step.rule, `${diagnostic.code} — ${diagnostic.message}`);
-    for (const detail of step.details) addDetail(step.rule, detail);
   });
 }
 
@@ -590,32 +701,42 @@ async function transform() {
     const response = await fetch("/api/transform", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql, rules }),
+      body: JSON.stringify({ sql, rules, format: state.format }),
       signal: controller.signal,
     });
     const data = await response.json();
     if (version !== requestVersion) return;
     if (!response.ok) throw new Error(data.error || "Transformation failed");
 
-    state.output = data.sql;
+    const candidateSql = data.rule_success ? data.sql : "";
+    state.output = candidateSql;
     state.outputKey = key;
-    state.diffOps = diffLines(sql, data.sql);
+    state.diffOps = candidateSql ? diffLines(sql, candidateSql) : null;
     state.diffDirty = true;
     renderOutput();
     if (state.view === "diff") renderDiff();
     showReport(data);
-    showStats(sql, data.sql, performance.now() - started);
+    if (data.rule_success) showStats(sql, candidateSql, performance.now() - started, data.complexity);
+    else {
+      $("stats").hidden = true;
+      $("diff-badge").hidden = true;
+    }
 
     const reason = data.verification.reason;
-    if (data.success && data.verification.status === "unchanged") {
+    const evidence = data.verification.status;
+    if (evidence === "unchanged") {
       setVerdict("unchanged", "No changes needed", "None of the selected rules changed this SQL.");
-    } else if (data.success) {
+    } else if (evidence === "proven") {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
       setVerdict("proven", "Rewrite verified", `${plural(changes, "change")}. ${reason[0].toUpperCase()}${reason.slice(1)}.`);
-    } else if (data.steps.some((step) => !step.rule_success)) {
-      const broken = data.steps.find((step) => !step.rule_success);
-      const first = broken.diagnostics[0];
-      setVerdict("failed", `${labelFor(broken.rule)} could not run cleanly`, first ? stripAnsi(first.message) : "See the verification details below before using this SQL.");
+    } else if (evidence === "planner_checked") {
+      setVerdict("planner_checked", "Planner checked: not proven", `${reason}. Matching plans and schemas are not proof of equal results.`);
+    } else if (evidence === "failed") {
+      const broken = data.steps.find((step) => step.verification.status === "failed");
+      const failedCheck = broken?.verification.checks.find((check) => check.outcome === "failed");
+      const diagnostic = broken?.diagnostics[0]?.message || failedCheck?.detail || data.verification.details[0];
+      const title = broken ? `${labelFor(broken.rule)} could not run cleanly` : "Transformation failed";
+      setVerdict("failed", title, stripAnsi(diagnostic || reason));
     } else {
       setVerdict("unproven", "Review required: not verified", reason);
     }
@@ -703,7 +824,7 @@ async function loadRules() {
     const response = await fetch("/api/rules");
     if (!response.ok) throw new Error("Could not load transformations");
     const rules = await response.json();
-    const prefs = loadPrefs();
+    const prefs = persisted;
     const saved = Array.isArray(prefs.order) ? prefs.order : [];
     const enabled = new Set(Array.isArray(prefs.enabled) ? prefs.enabled : DEFAULT_ENABLED);
     state.rules = rules.map((rule) => ({ name: rule.name, summary: rule.summary, on: enabled.has(rule.name) }));
@@ -751,7 +872,9 @@ rulesList.addEventListener("dragover", (event) => {
   const item = event.target.closest(".rule-item");
   if (!draggedRule || !item) return;
   event.preventDefault();
-  const after = event.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
+  const box = item.getBoundingClientRect();
+      const horizontal = getComputedStyle(rulesList).flexDirection === "row";
+      const after = horizontal ? event.clientX > box.left + box.width / 2 : event.clientY > box.top + box.height / 2;
   for (const other of rulesList.children) other.classList.remove("drop-before", "drop-after");
   if (item.dataset.name !== draggedRule) item.classList.add(after ? "drop-after" : "drop-before");
 });
@@ -877,6 +1000,82 @@ async function openFile(file) {
   inputsChanged({ immediate: true });
   toast(`Opened ${file.name}`);
 }
+
+let connectedGitHubRepo = null;
+const githubDialog = $("github-dialog");
+
+$("github-button").addEventListener("click", () => {
+  githubDialog.showModal();
+  $("github-url").focus();
+});
+$("github-close").addEventListener("click", () => githubDialog.close());
+githubDialog.addEventListener("click", (event) => {
+  if (event.target === githubDialog) githubDialog.close();
+});
+
+$("github-connect-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("github-connect");
+  const status = $("github-status");
+  const url = $("github-url").value.trim();
+  button.disabled = true;
+  status.textContent = "Connecting to GitHub…";
+  $("github-files-panel").hidden = true;
+  try {
+    const response = await fetch("/api/github/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not connect to repository");
+    connectedGitHubRepo = { url, branch: data.branch, repository: data.repository };
+    const files = $("github-files");
+    files.replaceChildren();
+    for (const path of data.files) {
+      const option = document.createElement("option");
+      option.value = path;
+      option.textContent = path;
+      files.append(option);
+    }
+    $("github-repo-label").textContent = `${data.repository} · ${data.branch}`;
+    $("github-files-panel").hidden = false;
+    status.textContent = `${data.files.length} SQLX file${data.files.length === 1 ? "" : "s"} found.`;
+  } catch (error) {
+    connectedGitHubRepo = null;
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("github-load-file").addEventListener("click", async () => {
+  if (!connectedGitHubRepo) return;
+  const button = $("github-load-file");
+  const path = $("github-files").value;
+  const status = $("github-status");
+  button.disabled = true;
+  status.textContent = "Loading SQLX file…";
+  try {
+    const response = await fetch("/api/github/file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...connectedGitHubRepo, path }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not load file");
+    state.fileName = path.split("/").pop();
+    setInput(data.content.replace(/\r\n/g, "\n"));
+    renderInput();
+    inputsChanged({ immediate: true });
+    githubDialog.close();
+    toast(`Opened ${path} from ${connectedGitHubRepo.repository}`);
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 $("open-button").addEventListener("click", () => $("file-input").click());
 $("file-input").addEventListener("change", (event) => {
@@ -1007,16 +1206,42 @@ document.addEventListener("keydown", (event) => {
   }
 });
 transformButton.addEventListener("click", () => inputsChanged({ immediate: true }));
+/* ---------- Scopes ---------- */
+
+function renderScopeSummary() {
+  const count = window.KumoScopes?.list().length || 0;
+  const active = window.KumoScopes?.getActive();
+  $("scope-count").textContent = active ? `${active} (active)` : count ? String(count) : "";
+}
 
 /* ---------- Start ---------- */
 
-const prefs = loadPrefs();
-applyTheme(prefs.theme);
-state.autoRun = prefs.autoRun !== false;
-$("auto-run").checked = state.autoRun;
-if (/Mac|iPhone|iPad/.test(navigator.platform)) {
-  document.querySelector(".button-kbd").textContent = "⌘ ↵";
+async function start() {
+  persisted = loadLocalPrefs();
+  try {
+    const response = await fetch("/api/settings");
+    if (response.ok) {
+      const settings = await response.json();
+      if (settings.ui && Object.keys(settings.ui).length) persisted = settings.ui;
+      state.format = settings.format;
+    }
+  } catch {
+    /* fall back to browser storage and defaults */
+  }
+  initSqlfluffProfiles(persisted);
+  renderFormatLink();
+  applyTheme(persisted.theme);
+  state.autoRun = persisted.autoRun !== false;
+  $("auto-run").checked = state.autoRun;
+  if (/Mac|iPhone|iPad/.test(navigator.platform)) {
+    document.querySelector(".button-kbd").textContent = "⌘ ↵";
+  }
+  renderInput();
+  renderOutput();
+  window.KumoScopes?.load().then(renderScopeSummary);
+  window.KumoScopes?.onActiveChange(renderScopeSummary);
+  $("evidence-legend").append(KumoEvidence.legend());
+  loadRules();
 }
-renderInput();
-renderOutput();
-loadRules();
+
+start();

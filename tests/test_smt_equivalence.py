@@ -249,3 +249,11 @@ def test_cli_reports_json(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "not_equivalent"
     assert payload["counterexample"]["tables"]["t"]
+
+
+def test_counterexample_falls_back_when_no_integral_one_exists():
+    """The bounds differ only for non-integral values, so the plain model must be used, not crash."""
+
+    result = prove_equivalent_smt("SELECT x FROM t WHERE x >= 1", "SELECT x FROM t WHERE x > 0")
+    assert result.status is SmtStatus.NOT_EQUIVALENT
+    assert result.counterexample is not None

@@ -21,13 +21,26 @@ from .cleanup import (
     RemoveTrivialPredicatesRule,
     RemoveUnusedCtesRule,
 )
+from .formatting import (
+    Complexity,
+    FormatPreferences,
+    FormatSqlRule,
+    complexity,
+    format_sql,
+)
+from .scopes import Scope, UnknownFieldError, discover_fields, get_scope, list_scopes, save_scope
+from .evidence_summary import EvidenceSummary, summarize_evidence
 from .rewrite import (
     PipelineResult,
     RewriteResult,
     Verification,
+    VerificationCheck,
     VerificationStatus,
     apply_rule,
     apply_rules,
+    attach_planner_check,
+    canonical_rule_order,
+    check_idempotence,
     verify_rewrite,
 )
 from .equivalence import (
@@ -42,6 +55,7 @@ from .smt_equivalence import (
     SmtStatus,
     prove_equivalent_smt,
 )
+from .synthetic_check import attach_synthetic_check
 from .result_equivalence import (
     ResultEquivalence,
     ResultEquivalenceStatus,
@@ -50,12 +64,27 @@ from .result_equivalence import (
     generate_synthetic_dataset,
 )
 from .pipeline import (
+    ColumnLineage,
     ColumnRef,
+    ColumnTrace,
     Pipeline,
     Target,
     load_compiled_graph,
     load_sqlx_project,
 )
+from .impact import AffectedModel, ChangeImpact, UnknownReader, assess_change
+from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
+from .graph import (
+    GraphEdge,
+    GraphNode,
+    GraphResult,
+    ObservedRead,
+    build_query_graph,
+    edge_confidence,
+)
+from .repeated_work import RepeatedWork, find_repeated_work, repeated_work_report
+from .observed_usage import TableUsage, UsageResult, observed_usage, observed_usage_report
+from .table_roles import RoleSignal, TableRole, infer_roles, table_roles_report
 from .near_duplicates import (
     ClauseDifference,
     NearDuplicateCluster,
@@ -82,8 +111,48 @@ from .fingerprint import (
     summarize_comparison,
     table_fingerprint_sql,
 )
+from .table_profile import (
+    AttributeMeaning,
+    Grain,
+    RowScope,
+    TableProfile,
+    profile_pipeline,
+    profile_query,
+)
+from .overlap import Check, Match, MatchRole, OverlapResult, find_overlaps
+from .overlap_report import OverlapChecker
+from .rollups import GrainMapping, Rollup, RollupResult, find_rollups
 
 __all__ = [
+    "Check",
+    "Match",
+    "MatchRole",
+    "OverlapResult",
+    "find_overlaps",
+    "OverlapChecker",
+    "GrainMapping",
+    "Rollup",
+    "RollupResult",
+    "find_rollups",
+    "AttributeMeaning",
+    "Grain",
+    "RowScope",
+    "TableProfile",
+    "profile_pipeline",
+    "profile_query",
+    "EvidenceSummary",
+    "summarize_evidence",
+    "RepeatedWork",
+    "find_repeated_work",
+    "repeated_work_report",
+    "RoleSignal",
+    "TableRole",
+    "infer_roles",
+    "observed_usage",
+    "observed_usage_report",
+    "TableUsage",
+    "UsageResult",
+    "table_roles_report",
     "LiftDiagnostic",
     "LiftResult",
     "count_inline_subqueries",
@@ -101,6 +170,17 @@ __all__ = [
     "assert_result_equivalent",
     "check_result_equivalence",
     "generate_synthetic_dataset",
+    "Complexity",
+    "FormatPreferences",
+    "FormatSqlRule",
+    "Scope",
+    "UnknownFieldError",
+    "discover_fields",
+    "complexity",
+    "format_sql",
+    "get_scope",
+    "list_scopes",
+    "save_scope",
     "InlineSingleUseCtesRule",
     "DeduplicateCtesRule",
     "RemoveRedundantParenthesesRule",
@@ -112,16 +192,36 @@ __all__ = [
     "RuleDiagnostic",
     "RuleOutput",
     "Verification",
+    "VerificationCheck",
     "VerificationStatus",
     "apply_rule",
     "apply_rules",
+    "attach_planner_check",
+    "attach_synthetic_check",
     "available_rules",
+    "canonical_rule_order",
+    "check_idempotence",
     "get_rule",
     "register_rule",
     "verify_rewrite",
+    "ColumnLineage",
     "ColumnRef",
+    "ColumnTrace",
+    "IdentityResolution",
+    "NodeIdentity",
     "Pipeline",
+    "AffectedModel",
+    "ChangeImpact",
+    "UnknownReader",
+    "assess_change",
     "Target",
+    "normalize_table_reference",
+    "GraphEdge",
+    "GraphNode",
+    "GraphResult",
+    "ObservedRead",
+    "build_query_graph",
+    "edge_confidence",
     "load_compiled_graph",
     "load_sqlx_project",
     "ClauseDifference",

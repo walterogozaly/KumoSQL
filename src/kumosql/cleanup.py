@@ -7,7 +7,8 @@ normalizes the same constructs independently (see ``equivalence.py``):
   and other literal-only comparisons. Only three-valued-logic identities are
   used (``p AND TRUE = p``, ``p OR FALSE = p``), so NULL behaviour is kept.
   Annihilators such as ``p AND FALSE`` are not applied, because they would
-  drop ``p`` and any error it raises.
+  drop ``p`` and any error it raises. UPDATE, DELETE, and MERGE statements are
+  left unchanged because DML rewrites are not currently proven.
 - ``remove_redundant_parentheses``: parentheses that cannot change how an
   expression parses.
 - ``deduplicate_ctes``: root CTEs with identical, deterministic bodies.
@@ -166,6 +167,13 @@ class RemoveTrivialPredicatesRule(RewriteRule):
     def rewrite_statement(
         self, statement: exp.Expression, index: int
     ) -> tuple[int, list[RuleDiagnostic]]:
+        # The verifier does not prove UPDATE, DELETE, or MERGE statements.
+        # Keep their predicates intact instead of returning a changed DML
+        # statement that cannot be shown equivalent (or dropping a required
+        # clause such as UPDATE ... WHERE TRUE).
+        if isinstance(statement, (exp.Update, exp.Delete, exp.Merge)):
+            return 0, []
+
         changes = 0
         for clause_type in (exp.Where, exp.Having, exp.Qualify):
             for clause in list(statement.find_all(clause_type)):

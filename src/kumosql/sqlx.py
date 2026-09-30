@@ -17,7 +17,11 @@ _SQLX_BLOCK_RE = re.compile(
     r"(?im)^[ \t]*(?:config|js|pre_operations|post_operations)\s*\{"
 )
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
-_TOKEN_RE = re.compile(r"__sqlx_token_\d{3}__")
+_TOKEN_RE = re.compile(r"__sqlx_token_\d+__")
+
+
+class SqlxRestorationError(ValueError):
+    """Raised when a rewrite loses or duplicates a masked SQLX interpolation."""
 
 
 def looks_like_sqlx(sql: str) -> bool:
@@ -135,6 +139,9 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
         closing = _find_interpolation_end(sql, opening)
         original = sql[opening : closing + 1]
         token = f"__sqlx_token_{ordinal:03d}__"
+        while token in sql:
+            ordinal += 1
+            token = f"__sqlx_token_{ordinal:03d}__"
         ordinal += 1
 
         prefix = "".join(output).rstrip()
@@ -166,6 +173,17 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
 
 
 def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, ...]) -> str:
+    # A successful SQL parse does not prove that sqlglot retained every opaque
+    # SQLX expression. Check the sentinels before restoring any of them so a
+    # lost or duplicated incremental filter cannot silently become valid SQL.
+    for item in restorations:
+        count = sql.count(item.token)
+        if count != 1:
+            raise SqlxRestorationError(
+                "SQLX interpolation placeholder was lost or duplicated during rewriting "
+                f"({count} copies found; expected one)"
+            )
+
     restored = sql
     for item in restorations:
         restored = item.pattern.sub(item.original, restored)

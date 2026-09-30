@@ -120,6 +120,69 @@ def test_false_literal_comparison_is_folded_but_kept():
     assert result.verification.status is PROVEN
 
 
+def test_delete_keeps_required_where_clause_when_it_is_trivial():
+    source = "DELETE FROM `p.d.t` WHERE 1 = 1"
+
+    result = apply_rule("remove_trivial_predicates", source)
+
+    assert result.sql == source
+    assert result.verification.status is UNCHANGED
+    assert sqlglot.parse_one(result.sql, read="bigquery") is not None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "UPDATE target_table SET value = 2 WHERE TRUE",
+        "UPDATE target_table SET value = 2 WHERE TRUE AND active",
+        "DELETE FROM target_table WHERE TRUE",
+        "DELETE FROM target_table WHERE active AND TRUE",
+        "MERGE INTO target_table AS target USING source_table AS source "
+        "ON target.id = source.id AND TRUE "
+        "WHEN MATCHED AND source.active AND TRUE "
+        "THEN UPDATE SET value = source.value",
+    ],
+)
+def test_dml_predicates_are_left_unchanged_when_they_cannot_be_proven(source):
+    result = apply_rule("remove_trivial_predicates", source)
+
+    assert result.sql == source
+    assert result.changes == 0
+    assert result.verification.status is UNCHANGED
+    assert result.success
+    assert sqlglot.parse_one(result.sql, read="bigquery") is not None
+
+
+@pytest.mark.parametrize(
+    "source, comments",
+    [
+        (
+            "SELECT id FROM `p.d.t` /* explains source */ WHERE 1 = 1",
+            ["/* explains source */"],
+        ),
+        (
+            "SELECT id FROM `p.d.t` WHERE 1 = 1 -- explains filter",
+            ["-- explains filter"],
+        ),
+    ],
+)
+def test_comments_survive_rewrites(source, comments):
+    result = apply_rule("remove_trivial_predicates", source)
+
+    for comment in comments:
+        assert comment in result.sql
+    assert result.verification.status is PROVEN
+
+
+def test_comment_markers_inside_literals_are_not_restored_as_comments():
+    source = "SELECT '-- not a comment /* still text */' AS note FROM `p.d.t` WHERE 1 = 1"
+
+    result = apply_rule("remove_trivial_predicates", source)
+
+    assert "-- not a comment /* still text */" in result.sql
+    assert result.sql.count("/* still text */") == 1
+
+
 # --- remove_redundant_parentheses ---------------------------------------
 
 
@@ -229,7 +292,7 @@ SELECT y FROM c"""
     result = apply_rule("remove_unused_ctes", source)
 
     assert result.changes == 2
-    assert _body(result.sql) == "WITH c AS ( SELECT 2 AS y ) SELECT y FROM c"
+    assert _body(result.sql) == "WITH c AS (SELECT 2 AS y) SELECT y FROM c"
     assert result.verification.status is PROVEN
 
 

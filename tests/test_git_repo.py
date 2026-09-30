@@ -1,0 +1,118 @@
+"""Loading a project through the local git CLI, against local bare repositories."""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from kumosql import git_repo, live_graph
+
+FILES = {
+    "workflow_settings.yaml": "defaultProject: p\ndefaultDataset: d\n",
+    "definitions/a.sqlx": "config { type: \"table\" }\nSELECT 1 AS id",
+    "definitions/b.sqlx": "config { type: \"table\" }\nSELECT id FROM ${ref(\"a\")}",
+    "notes.txt": "ignored",
+}
+
+
+def run(*args, cwd):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                        "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"],
+                        "HOME": str(cwd)})
+
+
+def commit(work: Path, files: dict, message: str):
+    for name, text in files.items():
+        (work / name).parent.mkdir(parents=True, exist_ok=True)
+        (work / name).write_text(text)
+    run("add", "-A", cwd=work)
+    run("commit", "-m", message, cwd=work)
+    run("push", "origin", "HEAD", cwd=work)
+
+
+@pytest.fixture
+def remote(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    bare = tmp_path / "remote.git"
+    work = tmp_path / "work"
+    run("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    run("clone", str(bare), str(work), cwd=tmp_path)
+    run("checkout", "-b", "main", cwd=work)
+    commit(work, FILES, "first")
+    run("checkout", "-b", "dev", cwd=work)
+    commit(work, {"definitions/c.sqlx": "SELECT 2 AS id"}, "dev")
+    run("checkout", "main", cwd=work)
+    return bare, work
+
+
+def test_loads_default_branch_and_filters_files(remote):
+    bare, _ = remote
+    fetched = git_repo.fetch_project(str(bare))
+    assert fetched["branch"] == "main"
+    assert set(fetched["files"]) == {"workflow_settings.yaml", "definitions/a.sqlx", "definitions/b.sqlx"}
+
+
+def test_branch_selection(remote):
+    bare, _ = remote
+    assert "definitions/c.sqlx" in git_repo.fetch_project(str(bare), "dev")["files"]
+
+
+def test_cache_is_reused_until_refresh(remote):
+    bare, work = remote
+    git_repo.fetch_project(str(bare))
+    commit(work, {"definitions/d.sqlx": "SELECT 3 AS id"}, "later")
+    assert "definitions/d.sqlx" not in git_repo.fetch_project(str(bare))["files"]
+    assert "definitions/d.sqlx" in git_repo.fetch_project(str(bare), refresh=True)["files"]
+
+
+def test_git_errors_are_passed_through(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    with pytest.raises(git_repo.GitRepoError, match="git clone failed: .*(not exist|not found|does not appear)"):
+        git_repo.fetch_project(str(tmp_path / "missing.git"))
+
+
+def test_failed_refresh_keeps_the_cached_copy(remote):
+    bare, _ = remote
+    git_repo.fetch_project(str(bare))
+    bare.rename(bare.with_name("moved.git"))
+    with pytest.raises(git_repo.GitRepoError, match="git clone failed"):
+        git_repo.fetch_project(str(bare), refresh=True)
+    assert git_repo.fetch_project(str(bare))["files"]
+
+
+@pytest.mark.parametrize("value", ["-oProxyCommand=x", "ext::sh -c id", "", None, "relative/path", "a\nb"])
+def test_unsafe_remotes_are_rejected(value):
+    with pytest.raises(git_repo.GitRepoError):
+        git_repo.parse_remote(value)
+
+
+@pytest.mark.parametrize("value", [
+    "https://github.com/o/r.git", "ssh://git@github.com/o/r.git", "git@github.com:o/r.git", "/srv/r.git",
+])
+def test_supported_remote_forms(value):
+    assert git_repo.parse_remote(value) == value
+
+
+def test_bad_branch_rejected():
+    with pytest.raises(git_repo.GitRepoError):
+        git_repo.parse_branch("--upload-pack=x")
+
+
+def test_non_dataform_repo_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    bare, work = tmp_path / "r.git", tmp_path / "w"
+    run("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    run("clone", str(bare), str(work), cwd=tmp_path)
+    run("checkout", "-b", "main", cwd=work)
+    commit(work, {"README.md": "hi"}, "x")
+    with pytest.raises(git_repo.GitRepoError, match="Dataform"):
+        git_repo.fetch_project(str(bare))
+
+
+def test_load_into_graph(remote):
+    bare, _ = remote
+    result = git_repo.load_into_graph(str(bare))
+    assert result["loaded"] and result["files"] == 3
+    assert live_graph.loaded()["label"].startswith("remote (main @ ")
+    live_graph.clear_project()

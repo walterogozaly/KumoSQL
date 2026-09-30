@@ -1,0 +1,40 @@
+.catalog-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin: 28px 0 12px; }
+.catalog-toolbar p { color: var(--text-muted); font-size: 13px; margin: 0; }
+.catalog-toolbar .primary-button { min-height: 42px; padding: 0 16px; }
+.catalog-status { min-height: 24px; margin-bottom: 12px; color: var(--text-muted); font-size: 13px; }
+.catalog-status.error { color: var(--bad-fg); }
+.catalog { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); min-height: 440px; }
+.catalog-panel { min-width: 0; border-right: 1px solid var(--border-subtle); }
+.catalog-panel:last-child { border-right: 0; }
+.catalog-heading { display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 0 16px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-2); }
+.catalog-heading h2 { font-size: 13px; margin: 0; }
+.catalog-heading span { color: var(--text-faint); font-size: 12px; }
+.catalog-list, .schema-content { max-height: 620px; overflow: auto; padding: 8px; }
+.catalog-item { display: flex; width: 100%; align-items: center; gap: 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); cursor: pointer; padding: 9px 8px; text-align: left; font: inherit; font-size: 13px; overflow-wrap: anywhere; }
+.catalog-item:hover { background: var(--surface-2); }
+.catalog-item[aria-current="true"] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.catalog-icon { color: var(--text-faint); flex: none; width: 16px; text-align: center; }
+.catalog-detail { color: var(--text-faint); font-size: 11px; margin-left: auto; padding-left: 5px; }
+.empty-state { color: var(--text-faint); font-size: 13px; line-height: 1.5; padding: 10px; }
+.schema-title { margin: 6px 8px 12px; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.schema-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.schema-table th, .schema-table td { padding: 7px 6px; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.schema-table th { color: var(--text-muted); font-weight: 600; }
+.schema-field { padding-left: calc(6px + var(--depth, 0) * 14px) !important; }
+.schema-type { color: var(--text-muted); }
+@media (max-width: 900px) { .catalog { grid-template-columns: repeat(2, minmax(0, 1fr)); } .catalog-panel:nth-child(2) { border-right: 0; } .catalog-panel:nth-child(-n+2) { border-bottom: 1px solid var(--border-subtle); } }
+@media (max-width: 600px) { .catalog { grid-template-columns: 1fr; } .catalog-panel { border-right: 0; border-bottom: 1px solid var(--border-subtle); min-height: 150px; } .catalog-panel:last-child { border-bottom: 0; } .catalog-toolbar { align-items: flex-start; flex-direction: column; } }
+.catalog { -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
+/* Page frame: frosted panels over the background photo, like the other pages */
+.app-shell > main { max-width: 1440px; margin: 0 auto; padding: 22px 20px 24px; }
+.intro, .catalog-toolbar, .catalog-status:not(:empty) { padding: 14px 18px; border-radius: 12px; background: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
+.intro .eyebrow { margin: 0; color: var(--accent-text); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.intro h1 { margin: 4px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.intro p:last-child { margin: 6px 0 0; color: var(--text-muted); font-size: 13.5px; }
+.catalog-toolbar { margin: 14px 0 12px; }
+.catalog-toolbar .primary-button { width: auto; }
+.catalog-status:empty { display: none; }
+.app-shell > footer { width: fit-content; max-width: calc(100% - 40px); margin: 0 20px 32px; padding: 8px 14px; border-radius: 10px; background: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); color: var(--text-muted); font-size: 12px; }
+@media (min-width: 1480px) { .app-shell > footer { margin-left: calc((100% - 1440px) / 2 + 20px); } }
+.catalog-freshness { margin-left: 6px; color: var(--text-muted); font-size: 12px; }
+.catalog-freshness.error { color: var(--bad-fg); }

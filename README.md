@@ -1,22 +1,58 @@
 # KumoSQL
 
-Small, deterministic transformations for BigQuery SQL that are trusted by tests rather than by an LLM at runtime.
+KumoSQL helps you change BigQuery SQL and Dataform models with evidence instead of hope. It is built around three questions:
 
-New here? See the [Getting Started guide](docs/getting-started.md) for installation, a Python example, and the browser UI.
+1. **What depends on this query, table, or column?** Pipeline analysis traces model and column lineage and shows the blast radius of a change.
+2. **Where is the same work being done repeatedly?** Duplicate and near-duplicate SELECT detection finds logic that could be shared.
+3. **Can a proposed change be shown to preserve behavior?** Rewrites are small, deterministic transformations, checked by static proof, SMT, synthetic-data comparison, and BigQuery dry runs. Tests decide what is trusted, not an LLM at runtime, and output that cannot be verified is flagged rather than reported as a success.
+
+New here? The [Getting Started guide](docs/getting-started.md) goes from install to a first verified rewrite, a pipeline impact report and the browser UI.
 
 ## Local browser UI
 
-On Windows, install into a user-owned virtual environment, then start the local editor:
+Install into a virtual environment (see [Getting Started](docs/getting-started.md#1-install) for macOS, Linux and Windows), then start the local editor:
 
-```powershell
-py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
-& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m pip install .
-& "$env:LOCALAPPDATA\kumosql\Scripts\kumosql-ui.exe"
+```shell
+kumosql-ui
 ```
 
-Open the URL printed by the command if your browser does not open automatically. Turn on transformations in the **Pipeline** sidebar, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
+Open the URL printed by the command (`http://127.0.0.1:8765/`) if your browser does not open automatically. Turn on transformations in the **Pipeline** strip across the top, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Use **GitHub** (beside **Open**) to browse the SQLX models in a public Dataform repository and open a file in the editor. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
 
-The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+The server listens only on `127.0.0.1` and uses the existing Python package. Pasted SQL stays local. Loading a project from a git remote runs your local `git` (see below). GitHub browsing contacts GitHub only when you connect a repository or open one of its files; it supports public Dataform repositories and is read-only. The **BigQuery** page is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. Catalog answers are cached in memory and in `catalog-cache.json` in the KumoSQL data directory for an hour (set `KUMOSQL_CATALOG_TTL` in seconds to change it), so revisiting an item makes no BigQuery call; the page shows how old the copy is, serves the saved copy if BigQuery is unreachable, and **Refresh from BigQuery** re-reads everything on screen. Otherwise it contacts BigQuery only when you open that page or select an item you have not seen; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+
+**Query graph**, **Cost** and **Change reports** are pages for the upcoming roadmap work: readers, change impact, and lineage; measured cost and savings; and semantic change reports. The **Query graph** shows your own project once one is loaded: enter a Dataform git remote on that page (optionally a branch, and **Fetch latest** to refresh), start the server with `kumosql-ui --git URL [--branch B] [--refresh]` or `kumosql-ui --project DIR` (a Dataform or SQL folder), or `POST` `{"files": {path: text}}` to `/api/project`. It shows every gap the analysis found and a "Partial graph" strip whenever any asset could not be analyzed. With nothing loaded it shows sample data behind a banner. The loaded project is kept in memory only. **Cost** and **Change reports** still show labeled sample data. [docs/ui-roadmap.md](docs/ui-roadmap.md) lists the issue and data shape behind each area.
+
+To use the catalog with Google Cloud CLI credentials, install the BigQuery extra and sign in with Application Default Credentials:
+
+```shell
+python -m pip install '.[bigquery]'
+gcloud auth application-default login
+```
+
+The browser uses the active ADC identity and read-only BigQuery scope. It lists only projects that identity can browse: each project from BigQuery's project list is probed with a one-row dataset listing and hidden if BigQuery denies it (projects where you hold only an unrelated role, or where BigQuery is disabled, do not appear). The probe is a free metadata call and the result is cached like the rest of the catalog; BigQuery permissions still control which datasets, tables, and schemas appear. `gcloud auth login` alone does not configure Application Default Credentials.
+
+**Saved state.** UI preferences (theme, enabled rules and their order), named SQLFluff formatting configurations, and scopes are saved by the local server in one JSON file in the standard per-user data directory (`%APPDATA%\kumosql\state.json` on Windows, `~/Library/Application Support/kumosql/state.json` on macOS, `$XDG_DATA_HOME/kumosql/state.json` or `~/.local/share/kumosql/state.json` on Linux). Set `KUMOSQL_HOME` to use another directory. The CLI and Python API read the same file, so a scope saved in the UI works with `--scope`.
+
+**Formatting and complexity.** The `format_sql` operation formats BigQuery SQL with [sqlfluff](https://sqlfluff.com) and is verified like every other rule. Open *Settings* from the top bar (or press Ctrl/⌘ + , or click the *SQL formatting* link under the pipeline) to set keyword case, comma position, indentation, line length, and which sqlfluff rules to apply. The *Rules* list shows every BigQuery rule in the installed sqlfluff, grouped by category with its description, each with an on/off switch; rules sqlfluff can only lint, not fix, are marked and stay off because they can't change formatted SQL. Settings opens as a panel over the current page and saves changes as you make them, except renaming a configuration, which waits for the *Rename* button. Save multiple named configurations and switch between them; the pipeline shows which one is active, and it is included in the server's persistent local state. The stats bar shows a structural complexity score before and after (hover for the breakdown). The score is a weighted sum of joins, CTEs, subqueries, set operations, `CASE` expressions, window functions, `AND`/`OR` predicates and SELECT nesting depth, banded low (<10), moderate (<25), high (<50) or very high. sqlfluff cannot parse Dataform SQLX, so those inputs are left unformatted and unscored. The same is available in Python: `format_sql(sql)` and `complexity(sql)`.
+
+**Scopes.** A scope is a saved, named *rule* that decides which records are "in": models, job-history rows or table profiles. A rule combines conditions on any field with AND, OR and NOT groups that nest, for example `job submitter IN [ana@co.com, bo@co.com]`, or `dataset starts with raw AND NOT project = sandbox`. Build one in *Settings → Scopes* (open Settings from any page, or use the *Manage* link under the Pipeline strip; the rule builder suggests the fields found in the loaded project and job history, and accepts any field name) or from the shell:
+
+```shell
+kumosql-scopes add "My Team" --rule '{"field": "submitter", "op": "in", "value": ["ana@co.com", "bo@co.com"]}'
+kumosql-scopes add "Raw, not sandbox" --rule-file rule.json
+kumosql-scopes add "My Projects" --field project growth-*      # simple "field in values" shortcut
+kumosql-scopes fields --root path/to/dataform --observed-reads jobs.json   # fields a rule can use
+kumosql-scopes list
+kumosql-pipeline-report path/to/dataform --scope "My Projects"
+```
+
+A rule is JSON: a condition is `{"field", "op", "value"}`; groups are `{"all": [...]}` (AND), `{"any": [...]}` (OR) and `{"not": rule}`. Operators: `eq`, `ne`, `in`, `not_in`, `prefix`, `suffix`, `contains`, `glob` (`*`, `?`), `regex` (a search), `gt`, `gte`, `lt`, `lte` (numbers, ISO timestamps, else text), `is_null` and `not_null`. Text comparison is case-insensitive unless a condition sets `"case_sensitive": true`; a list-valued field (a table's `columns`) matches when any element does; `labels.team` reads inside a nested object.
+
+Fields are discovered, not hardcoded. Models have `project`, `dataset`, `table`, `name`, `model`, `kind`, `path` and `depends_on`; table profiles add `grain_status`, `grain_keys`, `columns`, `column_count`, `profile_complete` and `row_filters` (computed only when a rule uses one); job-history rows have `job_id`, `creation_time`, `destination`, `referenced_tables` plus whatever else each row carries (a submitter, labels, bytes billed). A field the data does not have is an error that names it and suggests the closest match ("did you mean `dataset`?"), never a scope that silently matches nothing: for example a `submitter` rule used on the pipeline report is rejected, and a typo in a job-history rule is rejected when the graph is built. A record that merely lacks a known field counts as empty for it.
+
+Scopes saved by earlier versions (`field in values`, with a trailing `*` as a prefix match) are migrated to rules the first time they are read: one condition per field, joined with AND. Rules live in the `scopes` section of `state.json`. In Python, `Scope.matches(record)` and `Scope.filter(records)` apply a scope to any dicts, `Scope(name, rule=...)` builds one, and `discover_fields(pipeline, observed_reads, profiles)` lists the usable fields. `Pipeline.report(scope=...)`, `assess_change`, `find_overlaps`, `find_rollups` and coverage limit results to the models the rule matches, and `observed_scope` applies it to job history in the graph. A scope that matches no models prints a warning.
+
+**Choosing the active scope.** The Query graph, Cost and Change reports pages have a *Scope* picker at the top. The choice is remembered in the browser and sent to the server as `?scope=NAME` on `/api/graph`, `/api/impact`, `/api/overlaps`, `/api/cost` and `/api/changes`. With a loaded project, a rule on model fields limits the models and lineage, a rule on job-history fields (such as a submitter) limits the observed reads, and the page says which it did: a rule on job fields shows "Applied to job history only: models have no ...". A rule that no data source can evaluate is an error naming the field. Sample data is never filtered, and says so. Duplicate groups are kept when any occurrence is in scope, so they can list out-of-scope occurrences as context.
 
 ## Rewrite rules
 
@@ -30,8 +66,18 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 | `remove_redundant_parentheses` | Removes parentheses that cannot change how an expression parses |
 | `deduplicate_ctes` | Points references to a root CTE at an earlier CTE with an identical body, then drops the duplicate |
 | `remove_unused_ctes` | Removes root CTEs that nothing references |
+| `remove_redundant_distinct` | Removes `DISTINCT` over a plain `GROUP BY` whose keys are all projected unchanged (see *Cost rules*) |
+| `format_sql` | Formats with sqlfluff using your saved formatting preferences (SQL only, not SQLX) |
 
-`apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. The result's `verification.status` is `unchanged`, `proven`, or `unproven`; an unproven output is still returned, with the reasons in `verification.details`, and `result.success` is false.
+`apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
+
+- `unchanged`: the output matches the input.
+- `proven`: the equivalence prover established equivalence. A planner check, when available, is reported separately.
+- `planner_checked`: a planner accepted the candidate, but equivalence was not proven. This is not trusted for automatic acceptance.
+- `unproven`: equivalence was not established and there is no successful planner-only result. A failed planner check is reported here as a failed check.
+- `failed`: a fatal rewrite error occurred, such as a parse, transform, or output validation failure.
+
+Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
 
 ```python
 from kumosql import apply_rules
@@ -42,27 +88,37 @@ if not result.success:
 print(result.sql)
 ```
 
+`summarize_evidence(results)` reports what share of changed outputs has useful evidence, as an anonymized aggregate. A result is changed when its output text differs from its input. Useful evidence is a static proof (label `proven`) or a passing `synthetic_results` check (agreement on synthetic data) on a result that did not fail; each output counts once. Agreement is evidence, not proof, so `pct_proof` and `synthetic_agreed` are reported separately from the headline `useful_evidence`. Planner-only results are reported separately (`planner_only`, plus `planner.passed` and `planner.failed` counts that overlap the label buckets) and never count toward the headline percentage. The label counts `proven`, `planner_checked`, `unproven` and `failed` are disjoint and sum to `changed`. The summary contains counts and percentages only, built from labels and check outcomes, never from SQL, names, paths or free-text reasons. Percentages are `None` when fewer than `min_changed` (default 5) outputs changed. It raises `ValueError` if unchanged text carries a changed label or a changed output lacks an evidence label. `summary.to_json()` gives the serializable form. From the command line, `kumosql-evidence-summary PATH... --rule RULE [--min-changed N]` applies the rules to every `.sql` or `.sqlx` file (directories are searched recursively) and prints only the aggregate JSON, with no file names or SQL. The UI's `/changes` page shows the same numbers as a "Useful evidence" line in the Evidence coverage panel.
+
+When the structural prover cannot canonicalize a change that touches only WHERE, HAVING, QUALIFY or JOIN ON conditions (for example a redundant or subsumed conjunct), `verify_rewrite` tries the SMT prover described below. A proof is reported as `proven` with an `smt_proof` check listing its assumptions (no NaN, runtime errors not modeled, result column types not compared). A counterexample, an unsupported construct such as an outer join, or a missing `z3-solver` install leaves the result `unproven` and the reason appears in `verification.details`. Other changes never reach SMT. Pass `smt_timeout_ms` to `verify_rewrite` to change the 5000 ms solver limit.
+
 Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text.
 
 `inline_single_use_ctes` skips recursive WITH clauses, queries with nested WITH scopes, CTEs with column aliases, references that differ from the CTE name only in case, and references with anything beyond an alias (such as `FOR SYSTEM_TIME`).
 
-The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remove_trivial_predicates` drops `TRUE` from `AND` and `FALSE` from `OR` inside WHERE, HAVING, QUALIFY and JOIN conditions, but never applies `x AND FALSE` or `x OR TRUE`, which would discard `x` and any error it raises. It keeps `ON TRUE`, keeps `HAVING TRUE` without a GROUP BY, and folds numeric comparisons only between INT64 literals or identical literals. `remove_redundant_parentheses` keeps parentheses around an unaliased projection (BigQuery names the column after it), around a field access like `(a).b`, and around `AND` inside `OR`. `deduplicate_ctes` skips nondeterministic bodies, bodies with LIMIT, and merges that would repeat a relation name in one FROM clause.
+The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remove_trivial_predicates` drops `TRUE` from `AND` and `FALSE` from `OR` inside WHERE, HAVING, QUALIFY and JOIN conditions, but never applies `x AND FALSE` or `x OR TRUE`, which would discard `x` and any error it raises. It leaves UPDATE, DELETE and MERGE statements unchanged because DML rewrites cannot currently be proven. It keeps `ON TRUE`, keeps `HAVING TRUE` without a GROUP BY, and folds numeric comparisons only between INT64 literals or identical literals. `remove_redundant_parentheses` keeps parentheses around an unaliased projection (BigQuery names the column after it), around a field access like `(a).b`, and around `AND` inside `OR`. `deduplicate_ctes` skips nondeterministic bodies, bodies with LIMIT, and merges that would repeat a relation name in one FROM clause.
+
+**Idempotence.** Running a rule on its own output makes no further change; `tests/test_idempotence.py` checks every registered rule (and `format_sql` with non-default preferences) against the fixture corpus and hand-written edge cases, so a newly registered rule is covered automatically. `canonical_rule_order()` returns the pipeline that is also a fixed point: every rule except `lift_subqueries`, with `format_sql` last. `lift_subqueries` and `inline_single_use_ctes` are inverses, so a pipeline containing both rewrites its own output on every run; run the lifter separately. To check any rule list at run time, call `check_idempotence(names, sql)` or pass `--check-idempotence` to `rewrite-sql`: it re-runs the rules on their own output, compares the exact text, and names the rules that changed it again (the CLI exits 4 on a violation). It doubles the work, so it is opt in. Formatting last matters because the other rules re-render a statement and discard its layout.
+
+The structural proof no longer refuses a query just because it contains `RAND()`, `GENERATE_UUID()`, `CURRENT_*` or `SESSION_USER()`. Such a call is accepted when the rewrite leaves it identical and in the same number and place (checked before and after normalization); any added, removed, duplicated, merged or modified call stays `not_proven`. Windows, tie-sensitive or order-sensitive aggregates, sampling and `LIMIT`/`OFFSET` still block the proof. A proof that relied on unchanged calls reports how many in its diagnostics.
 
 To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewrite_statement(statement, index)` to edit the statement in place and return `(change_count, diagnostics)`, and decorate the class with `@register_rule`.
 
-```powershell
+```shell
 rewrite-sql input.sqlx --rule inline_single_use_ctes --output output.sqlx
 ```
 
-`rewrite-sql` exits 2 when a rule fails and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it).
+`rewrite-sql` exits 2 when a rule fails, 4 when `--check-idempotence` finds the rules change their own output, and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it). A rule failure prints a diagnostic and does not write its result.
 
-## First goal: subquery lifting
+## Subquery lifting
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
 Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
 Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
+
+Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
 For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
 
@@ -84,27 +140,23 @@ FROM (SELECT id FROM ${ref("customers")}) AS c''')
 assert result.success
 ```
 
-## Test the supplied SQL workbook fixture
+## Test the authored SQL fixture
 
-The repository includes a generic copy at `tests/fixtures/generic_sql_workbooks.json`. Each of its 533 entries contains only an `id` and `sql_text`; each distinct token pattern appears once. The full fixture test uses:
+The repository includes 32 hand-written sample queries at `tests/fixtures/sql_subquery_samples.json`. Each entry contains only an `id` and `sql_text`. The samples cover nested relations, joins, CTE placement, DML, DDL, and Dataform SQLX. The full fixture test uses:
 
-```powershell
+```shell
 pytest -m slow tests/test_workbook_fixture.py
 ```
 
-Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. To regenerate the checked-in JSON fixture from the source export:
+Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. The test fails unless every sample has zero remaining relational subqueries and no fatal diagnostics. A separate unit test verifies the small fixture shape.
 
-```powershell
-python tools/sanitize_fixture.py private.csv tests/fixtures/generic_sql_workbooks.json
+The normal unit suite (it skips the `slow` marker and needs `pip install -e ".[dev]"`; the full run takes a few minutes) is:
+
+```shell
+python -m pytest
 ```
 
-The test checks all 533 SQL entries and fails unless every row has zero remaining relational subqueries and no fatal diagnostics. A separate unit test checks the SQL text and verifies the minimal fixture shape.
-
-The normal unit suite is:
-
-```powershell
-pytest
-```
+Use `python -m pytest` rather than bare `pytest` so the repository root is importable. CI (`.github/workflows/tests.yml`) runs `python -m pytest -m "not slow"` on the floor and the current `sqlglot` release.
 
 ## Conservative SQL equivalence
 
@@ -130,7 +182,7 @@ assert result.proven
 
 CLI usage:
 
-```powershell
+```shell
 prove-sql-equivalent left.sql right.sql --verifier-sql verify.sql
 ```
 
@@ -142,6 +194,8 @@ The static prover only accepts rewrites whose normalized ASTs match. To test rew
 - Every run gets a fresh in-memory connection. Tables written by a script (`CREATE TABLE ... AS`, `INSERT`) are renamed to run-unique local names, and the final written table is compared when the script does not end in a query.
 - Dataform SQLX is supported: blocks are dropped and `${ref(...)}` becomes a table name. Any other interpolation, unknown table, or execution failure is reported as `error`, never as equivalent.
 - A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof.
+- Data generation is seeded and repeatable: the same schema and seed always produce the same rows (a test pins a digest of a small dataset, so a change to the value domains or draw order fails loudly). Column order in the schema mapping is part of the input.
+- Each side is executed twice per seed on identical data. A side that differs from itself (for example `RAND()` or `GENERATE_UUID()`) makes the result `inconclusive`, naming the side and seed, instead of a false `different` or `equivalent`. Failures while fetching results are reported as `error`.
 
 ```python
 from kumosql import assert_result_equivalent, lift_subqueries
@@ -150,6 +204,19 @@ schema = {"p.d.orders": {"customer_id": "INT64", "amount": "FLOAT64"}}
 original = "SELECT * FROM (SELECT customer_id, SUM(amount) AS total FROM `p.d.orders` GROUP BY 1) AS t"
 assert_result_equivalent(original, lift_subqueries(original).sql, schema)
 ```
+
+### Recording synthetic evidence on a rewrite result
+
+`attach_synthetic_check(result, schema, seeds=range(8))` (or `rewrite-sql --synthetic-check --synthetic-schema schema.json [--synthetic-seeds N]`) runs the harness on a changed `apply_rules` result and records one `synthetic_results` check. It is opt in; ordinary rewriting never executes anything. `schema` maps each source table as written in the SQL to its columns and BigQuery types.
+
+| Outcome | Meaning | Effect on the label |
+|---|---|---|
+| `passed` | Outputs matched on every seed | None. Agreement is evidence, not proof: an unproven result stays `unproven`, is never `trusted`, and `proven` is untouched. `summarize_evidence` counts it as `synthetic_agreed` and useful evidence. |
+| `failed` | A counterexample was found | The result drops to `unproven` (a proven result too, since a disagreeing input contradicts it). The check names the failing seed, the difference kind, row counts and up to three synthetic rows per side; it never contains query text or column names. |
+| `inconclusive` | A query differs from itself on identical data (`RAND()`, `GENERATE_UUID()`) | None. |
+| `not_run` | Nothing was compared: duckdb missing (`kumosql[execution]`), output unchanged, a rule failed, an unsupported column type, or a query that cannot be translated or executed locally | None. |
+
+Every outcome records `seeds`, `seeds_checked`, `failing_seed`, `rows_per_table`, `null_rate` and the engine version, so a failure reproduces with `generate_synthetic_dataset(schema, seed=<failing_seed>)`. Attaching again replaces the earlier synthetic check.
 
 Install the engine with `pip install -e ".[execution]"` (it is included in `.[dev]`). `tests/test_result_equivalence.py` runs every lifted query in its corpus through the harness and checks that deliberately broken rewrites are caught.
 
@@ -177,7 +244,7 @@ assert result.proven
 
 Pass `schema={"t": ["id", "a"]}` to enable `SELECT *` and unqualified columns in joins, and `exact_arithmetic=True` to reason about `+`, `-` and `*` exactly (right for INT64 and NUMERIC, not FLOAT64). The CLI prints JSON and exits 0 only on a proof:
 
-```powershell
+```shell
 prove-sql-smt left.sql right.sql --schema schema.json
 ```
 
@@ -190,16 +257,106 @@ prove-sql-smt left.sql right.sql --schema schema.json
 The result is a `Pipeline` that qualifies every model in dependency order, so each model sees the output columns of the models it reads:
 
 - `upstream`, `downstream`, `topological_order()`: the model graph, with cycles reported as diagnostics.
+- `report(observed_reads=..., observed_scope=...)`: adds a `graph` section whose edges retain declared, parsed and observed provenance, categorical confidence and observed first/last timestamps. `ObservedRead` accepts source-agnostic job rows with `creation_time`, `destination` and `referenced_tables`; callers can adapt exported history offline, and unmatched or destination-less rows remain flagged. The existing `upstream` report stays a map of model keys to parent keys.
+- `completeness()`: what the analysis could not see, so a partial graph is never mistaken for a complete one. It returns `complete`, `views` (a flag each for `graph`, `lineage`, `impact` and `dead_columns`; false means results there may miss readers or edges), `by_code` counts, and `gaps`, one per asset with a `kind` (`parse_error`, `inaccessible`, `unmatched_reference`, `unattributed_reads`, or the diagnostic code such as `skipped_statements`, `unparsed_operation`, `cycle`), a `message` and `blocking`. Blocking causes are assets that failed to load or parse, scripts with extra queries (only the last is analysed), operations (never parsed), ambiguous table names, dependency cycles, and job-history rows that matched no asset or had no destination. Tables outside the pipeline are listed as non-blocking gaps. `report()` includes the same block at `completeness` and inside `graph`; a scoped report recomputes it from the diagnostics that remain in scope. Diagnostics also carry `severity` and `effect`, and each names one model (models that could not be analysed are reported one by one, so scoping keeps them).
+- `coverage()`: anonymized aggregate coverage, also in `report()["coverage"]` (counts and ratios only; no asset names, SQL or paths). It has `assets_total`/`assets_analyzed`, `statements_total`/`statements_matched` (query statements found and analysed), traced-column counts and unexpanded stars, `edges_by_source` and `edges_by_confidence` histograms, blocking gaps by code, the observed `window`, and `complete`, which is false whenever any blocking gap exists so a high percentage is never read as full coverage. Sampled accuracy is human-scored: `kumosql-pipeline-report ROOT --sample-impact 30 --seed s -o sheet.json` writes a deterministic review sheet (local use only; it names assets), the reviewer fills `correct`, `false_positive` and `missed` counts per anonymous `sample_id`, and `--verdicts verdicts.json` adds `sampled_impact_accuracy`, `sample_size`, precision and recall with 95% intervals (all null until verdicts exist). In a scoped report (`--scope`, or `coverage(scope=...)`) coverage is computed within the scope: models, statements, columns, edges and gaps outside it are excluded, `scoped` is true and the scope's name is never included. **Release gate.** Configurable minimums turn the measures into pass/fail: `Thresholds` (`min_assets_analyzed`, `min_statements_matched`, `min_columns_traced`, `min_accuracy`, `min_precision`, `min_recall`, `min_sample_size`, `require_complete`), passed as `report(thresholds=...)` or `coverage(thresholds=...)`, adds `coverage["gate"]` with `passed`, `failed` and one check per threshold (`minimum`, `actual`, `passed`; a gated measure that is not measured, such as accuracy before verdicts exist, fails with `reason: not_measured`). On the CLI use `--min-columns-traced`, `--min-accuracy`, `--min-precision`, `--min-recall`, `--min-sample-size`, `--require-complete` or `--thresholds file.json` (flags override the file); the exit status is 3 when the gate fails. `--min-coverage 0.9` is shorthand for minimum assets analyzed and statements matched of 0.9 plus a complete analysis. Combine with `--scope` to gate one team's slice.
 - `column_lineage()`, `upstream_columns(col)`, `downstream_columns(col)`: column-level lineage across models and CTEs, with transitive closure. This is the blast radius of changing a column.
+- `assess_change(kind, table, column=None, scope=None, observed_reads=())`: the blast radius of a change, for `kind` in `drop_column`, `rename_column`, `change_expression` and `drop_table`. It finds every model that reads the column anywhere, including a column used only in a filter, join or grouping (`via: condition_only`), not just models with an output column computed from it. A drop or rename marks direct readers `breaks` and everything that depends on them `indirect`; a changed expression follows lineage transitively (`values_change`) and flags filter or join users (`behavior_may_change`); every descendant is treated as affected because transform kinds are not used to narrow it. Readers that cannot be analysed (unparseable models, `SELECT *` over an unknown schema, operations, models with unknown reads) and anything downstream of them are listed under `unknown` with a reason, never dropped, and make `complete` false. A model with no downstream readers is marked `terminal` and incomplete, since it may be read outside the pipeline. `safe_to_delete` is always `unknown`: readers outside the pipeline are not visible. Pass `observed_reads` (job-history records, as for `report()`) to add the readers no compiled model declares: tables seen reading the target or an affected model are listed under `observed` with `last_seen`, the edge `confidence`, `observed_count`, the table they were seen reading (`via`) and `depth`. Job history names tables, not columns, so their effect is `may_break` or `may_change`, never `breaks`; a reader already under `affected` or `unknown` is not repeated, and `safe_to_delete` stays `unknown`. On the command line add `--observed-reads history.json` (a JSON list of `job_id`, `creation_time`, `destination`, `referenced_tables`). The UI server exposes the same result at `GET /api/impact?node=&column=&change=drop|rename|expression`, using the loaded project and its job history (sample data when nothing is loaded); the Query graph page's Assess a change tab draws that response instead of computing impact in the browser. Column names match case-insensitively; a `scope` lists only in-scope models and counts the rest in `out_of_scope`. From the command line: `kumosql-pipeline-report ROOT --assess drop_column --target project.dataset.table.column` (use the table alone for `drop_table`).
+- `explain_lineage()`, `trace_column(col)`, `lineage_report()`: explain how each output column is built. Every output column gets one entry with a status: `traced` (built from listed source columns), `constant` (checked to read no column, such as a literal or `COUNT(*)`) or `unknown` with a reason (`unexpanded_star`, `unresolved_column` for an ambiguous or missing column, `unknown_column` for a column absent from a known schema, `lineage_error`, `untraceable_source`). Each entry also carries a transform: `passthrough`, `renamed`, `expression`, `aggregate`, `window` or `union`, taking the strongest step inside the model. `trace_column` follows the entries back to source columns and lists, separately, every column on the way that could not be traced (including columns of models that could not be parsed), so a trace with unknowns is a lower bound rather than a guess. `report()` includes the same rows as `column_lineage`. `column_lineage()` keeps its old shape but no longer contains a `*` edge for an unexpanded `SELECT *`.
 - `dead_columns()`: output columns of intermediate models that nothing downstream reads anywhere (SELECT, WHERE, JOIN, GROUP BY, or inside a Dataform `${...}` expression). Terminal models count as pipeline outputs. "Dead" means not read inside the pipeline; a dashboard reading an intermediate table directly is invisible here. Results are withheld for a table when any reader could not be analysed (an unparseable model, or `SELECT *` over a source with unknown columns).
 - `duplicate_selects()`: identical normalized SELECT subtrees in more than one place, such as the same CTE copied into several models. These are candidates for a shared model.
 - `near_duplicate_selects(threshold=0.7)`: SELECTs that are similar but not identical, such as a CTE copied into several models where one copy gained a filter or a column. Each query level (nested CTEs and subqueries collapse to tokens) becomes a multiset of tree shingles; MinHash banding proposes pairs on large pipelines, exact Jaccard similarity confirms them, and each cluster is compared clause by clause with its centre. When the differences fit a shared model, the cluster carries `shared_sql`: `literal_parameters` (only constants differ; they become `@parameters`), `extra_filters` (extra WHERE conjuncts on a non-aggregating SELECT, applied downstream as each copy's `residual_filters`), `extra_columns` (the union of columns), or both of the last two. Anything else is `mixed`, with differences but no SQL. These are candidates to check with `prove_equivalent` or `check_rewrite`, not proven rewrites.
 
 Source table columns come from `source_schema={"project.dataset.table": {"col": "TYPE"}}`. `fetch_table_schemas()` fills it from BigQuery with free dry runs.
 
-```powershell
+```shell
 kumosql-pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
+
+## Table profiles: what each table is
+
+`profile_pipeline(pipeline)` and `profile_query(pipeline, sql)` describe every pipeline model, and a proposed query that is not in the pipeline, in a form that can be compared regardless of names, casing or formatting. A `TableProfile` has three parts, each with a status and, when it cannot be told, a reason. Nothing is guessed and nothing is inferred from names.
+
+- `grain` (`Grain`): the output columns that identify one row. `derived` from `GROUP BY` keys, `SELECT DISTINCT`, `UNION DISTINCT`, a `ROW_NUMBER() = 1` dedupe (`QUALIFY` or a filtered wrapper), or the grain of an input carried through joins that cannot fan out (the joined side must be joined on its own known grain, with an inner or left join). `declared` when you pass `declared_grain={"project.dataset.table": ["id"]}` (there is no unique-key hook in the loaded project, so the caller supplies it). Otherwise `unknown` with a reason such as `fan_out_join`, `union_mixed_grain`, `unexpanded_star`, `unparsed`, `wildcard_table`, `source_without_grain` or `grain_not_in_output`.
+- `attributes` (`AttributeMeaning`): a canonical `meaning` per output column, built from column lineage and looking through views, CTEs, renames and passthroughs: `col:proj.raw.orders.amount` for a source column, `agg:SUM(col:proj.raw.orders.amount)` for an aggregate (function plus input meaning), `union(...)`, `const:...`, and `expr:...` (a normalized expression, `equality_only`: comparable for equality, never for similarity). A column with incomplete lineage, or a non-deterministic expression, is `unknown` with a reason.
+- `row_scope` (`RowScope`): the normalized `WHERE`, `HAVING` and `QUALIFY` conjuncts (plus inner-join conditions), written in terms of column meanings and sorted, and inherited from the tables it reads. A `LIMIT`, sampling, a masked incremental predicate or a filter that cannot be normalized (kept as `opaque:` text) makes it `comparable=False`.
+
+`complete` is true only when the grain is known, every attribute is known and the scope is comparable. `to_json()` gives a JSON-ready form. Both functions never raise: odd input becomes `unknown` with a reason.
+
+```python
+from kumosql import load_sqlx_project, profile_pipeline, profile_query
+
+pipeline = load_sqlx_project("path/to/dataform")
+profiles = profile_pipeline(pipeline)          # {model key: TableProfile}
+proposed = profile_query(pipeline, "SELECT customer_id, SUM(amount) AS total FROM ... GROUP BY customer_id")
+print(proposed.to_json())
+```
+
+## Finding an existing table that already provides the same thing
+
+`find_overlaps(pipeline, sql=None, *, model=None, scope=None, roles=None, declared_grain=None)` answers "is this already done elsewhere?". Give a proposed query (`sql`, profiled with `profile_query`) or an existing model key (`model`), and it compares the target's table profile with every other model's. Renamed or re-cased columns, views and chains of CTEs do not hide a match; text similarity and shared source columns never produce one. A model is never compared with itself.
+
+Each `Match` has a `kind`, a `confidence`, the matched column pairs (`attributes`, target column to candidate column), the `checks` behind it, the candidate's inferred `role` (from `infer_roles`, or the `roles` you pass) and a `reason`:
+
+- `same_meaning` (`high`): every target attribute has the same meaning as a candidate attribute (equality only), the grain keys mean the same (compared by meaning, not name), and the row scope is identical and comparable.
+- `contains` (`medium`): same attributes and grain, and the candidate's filters are a strict subset of the target's, so the target can filter it (the candidate must provide the columns those extra filters use).
+- `partial` (`low`): some attributes match at the same grain, or all do but the row scope differs or cannot be compared.
+- `unknown`: grain or lineage is unknown on either side, so no comparison was made. The reason says which. It is never a match.
+
+A candidate at a different grain is not a match. Each check (`lineage`, `grain`, `row_scope`) is `matched`, `differs` or `unknown`. Matches are sorted `same_meaning`, `contains`, `partial`, `unknown`.
+
+`scope` is an optional saved `Scope` matched against `project`, `dataset`, `table` and `model` of each candidate; candidates outside it are skipped and counted as `outside_scope`. The `OverlapResult` carries `compared` (candidates decided), `skipped` (reason to count, including the undecided in-scope ones that are also listed as `unknown`) and `candidates_in_scope`. Its `summary` always states coverage, for example `compared 3 of 5 tables; 2 skipped: outside_scope 2. No match among the compared tables`, so "no match" never appears without the counts. `to_json()` includes the summary, the target profile and every match. Reports describe behavior only and never include query text.
+
+`tests/test_overlap_hard_cases.py` is a synthetic hard-case corpus with the expected label of every candidate written down (long view and CTE chains with renames, a dimension joined two ways, fan-out joins, near-miss filters, different grains, snapshots and shards, an average of averages, one name with two meanings, two names with one meaning, and traces broken by an unparsed model, an unexpanded star or an external table). CI asserts that nothing is reported `same_meaning` unless the corpus says so, that every label matches, and that at least `MIN_DECIDED` candidates were decided rather than `unknown`; the run prints the decided and unknown counts so an everything-unknown regression is visible.
+
+```python
+from kumosql import find_overlaps, get_scope, load_sqlx_project
+
+pipeline = load_sqlx_project("path/to/dataform")
+result = find_overlaps(pipeline, "SELECT region_id, SUM(amount) FROM ... GROUP BY region_id", scope=get_scope("My Project"))
+print(result.summary)
+for match in result.matches:
+    print(match.table, match.kind, match.confidence)
+```
+
+## Finding an existing table that holds the attribute at a finer grain
+
+`find_rollups(pipeline, sql=None, *, model=None, scope=None, roles=None, declared_grain=None, mappings=())` answers "can this coarser result be computed from something we already have?". When a proposed query (or model) aggregates an attribute to a coarser grain, for example from city to state, it reports existing tables that hold the same attribute at a finer grain. It builds on table profiles and reuses the `Check`, `MatchRole` and coverage shapes of `find_overlaps`. A table at the same grain is an overlap, and a coarser table cannot produce a finer result; neither is reported as a roll-up source.
+
+Each `Rollup` (one per target column and finer table) has a `derivability`, the finer table's `columns`, the `conditions` that must hold, the `missing` pieces, `checks` (`lineage`, `grain`, `row_scope`), the table's `role` and a `reason`:
+
+- `derivable_exact`: every aggregate decomposes (sum, count, min, max, sums of products, or an average or ratio whose parts are all held) and the finer grain covers every coarser key, directly or through a known many-to-one mapping. A table that holds the raw values and the keys can answer any aggregate.
+- `derivable_with_conditions`: decomposes only with something more. An average needs the sum and the count, a ratio needs both parts (the absent parts are listed in `missing`), or the grain mapping changes over time.
+- `not_derivable`: distinct counts, medians, percentiles and any other aggregate that needs the raw rows. Informational: the table still shows where the raw data lives.
+- `unknown`: the mapping between the two grains is not known, or the finer table's row scope (filters or time window) cannot be lined up with the target's. The missing piece is named, for example the mapping to the coarser key. A table that could not be examined (unknown grain or lineage) is listed with `attribute=None` and counted under `skipped`.
+
+Window-function columns (ranks, running totals) are never reported as roll-ups. Profiles treat a sum of sums (also min of mins, max of maxes and a sum of plain counts) as the single aggregate, so a weekly total built from a daily view has the same meaning as one built from the rows; an average of averages is left alone. A composite expression read through a view column is parenthesised in place, so `SUM(view.margin)` equals `SUM(price - cost)` written out. A qualified reference (`project.dataset.view`) to a model keyed by its bare name expands `SELECT *` from that model.
+
+Mappings are found in the pipeline (a model whose grain is one key and that holds the other), from the target's own join, from a calendar truncation of a held value (`DATE_TRUNC(day, WEEK)` from `day`: many-to-one, fixed and total, so days roll up to weeks with no conditions), or supplied as `GrainMapping(child, parent, many_to_one=True, changes_over_time=None, complete=None)` using profile meanings (`col:<table>.<column>`). Conditions are listed whenever they are not verified: a mapping that may change over time, finer rows that belong to no coarser group, target filters that must be applied to the finer rows first, rounding that must happen once after combining, and joins in the finer table that could repeat or drop the measure's rows. A different row scope or time window is `unknown`, never silently exact. Like overlaps, the result states how many tables were compared and skipped, and reports never include query text.
+
+```python
+from kumosql import GrainMapping, find_rollups, load_sqlx_project
+
+pipeline = load_sqlx_project("path/to/dataform")
+result = find_rollups(pipeline, "SELECT state_id, SUM(amount) FROM ... GROUP BY state_id")
+print(result.summary)
+for item in result.rollups:
+    print(item.table, item.attribute, item.derivability, item.conditions, item.missing)
+```
+
+## Showing "already done elsewhere" in change reports and on the graph
+
+`OverlapChecker(pipeline, scope=None, name_of=None).section(model, changed=None)` combines `find_overlaps` and `find_rollups` into one JSON section, shared by the change report, the CI comment and the graph page:
+
+- `matches`: existing tables that provide the same attributes, ranked (`rank`) by match kind (`same_meaning`, `contains`, `partial`), each with `confidence`, its `checks` (`lineage`, `grain`, `row_scope`, each `matched`, `differs` or `unknown`), the table's inferred `role` and the `evidence` behind that role (the signals it rests on).
+- `unknown`: tables that could not be compared, with the reason. They are never counted as matches or as "no match".
+- `rollups`: tables that hold the same attribute at a finer grain, with their derivability.
+- `summary`, `compared`, `skipped`, `candidates_in_scope`: the coverage line, which always states how many tables were compared and how many were skipped and why, for example `compared 3 of 5 tables; 2 skipped: outside_scope 2. No match among the compared tables`. A table excluded by the scope is a skip, not a "no match".
+- `status`: `ok`, or `unavailable` when the comparison itself failed. The section then carries only the error class name (never a message or query text), and nothing else in the report changes. `find_overlaps` and `find_rollups` are wrapped so a failure is contained to that one model's section.
+
+`build_change_report(base, head, ..., scope=None, overlaps=True)` (and `kumosql-change-report ... [--scope NAME] [--no-overlaps]`) adds this section as `overlaps` on every added or modified model, compared against the head snapshot. Edge cases: a new table that overlaps several existing ones lists them all, ranked by match kind; an existing table that the same change removes is compared against the base snapshot and flagged `retiring` (a replacement, not a duplicate); a match that is itself new or edited in the same change is flagged `in_this_change`; changed models beyond the first 40 are listed as unavailable (`limit_exceeded`) because each comparison profiles the whole pipeline. `kumosql-ci-check` shows the section in its comment under "Already done elsewhere (advisory)". It is advisory only: it never changes the check conclusion, and malformed or missing sections are ignored.
+
+The graph page has an "Already elsewhere" mode in a table's detail view. It reads `GET /api/overlaps?node=KEY[&scope=NAME]`, which compares the loaded project's model on demand (labeled sample data when nothing is loaded, a 400 for a node that is not a model or an unknown scope). Reports carry behavior only, never internal names beyond the table names you supply, and never query text.
 
 ## Comparing pipeline outputs before and after a refactor
 
@@ -215,7 +372,7 @@ Models are matched by target, and when `after` is a different pipeline only the 
 
 `table_fingerprint_sql`, `compare_tables_sql` and `diff_rows_sql` do the same for any pair of tables.
 
-```powershell
+```shell
 kumosql-compare-outputs compare path/to/dataform --source-schema sources.json --after-dataset-suffix _dev > compare.sql
 bq query --use_legacy_sql=false --format=json < compare.sql > results.json
 kumosql-compare-outputs summarize results.json
@@ -224,13 +381,46 @@ kumosql-compare-outputs drilldown path/to/dataform --after-dataset-suffix _dev -
 
 ## BigQuery dry-run check
 
-`dry_run(sql, project)` asks BigQuery to plan a query without running it. That costs nothing and reads no data, but it checks names and types and returns the output schema and bytes that would be scanned. `check_rewrite(original, rewritten, project)` accepts a rewrite only when both queries plan and their output schemas match exactly (column order, type, mode and nested fields). That is a necessary check, not a proof of equivalence.
+`dry_run(sql, project)` asks BigQuery to plan a query without running it. It checks names and types and returns the output schema and an estimate of bytes processed. `check_rewrite(original, rewritten, project)` reports whether both statements planned and their output schemas match (column order, type, mode, and nested fields). Matching plans and schemas do not show that the statements return the same results. The estimated byte delta is a planning estimate, not a measure of changed results.
 
-Credentials come from `BQ_ACCESS_TOKEN`, or a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path) with `pip install '.[bigquery]'`. Read-only roles are enough: BigQuery Job User plus Data Viewer.
+Normal `apply_rule`, `apply_rules`, the rewrite CLI, and UI do not make network requests. Call `attach_planner_check` explicitly in Python, or pass `--planner-project` to `rewrite-sql`, to attach an end-to-end planner check. It records whether each side planned, whether schemas match, schema differences, and any estimated byte delta. A planner pass can label an otherwise unproven rewrite `planner_checked`; it does not upgrade an existing proof or make an unproven result trusted. Plan failures and schema mismatches add a failed planner check and leave the result nontrusted. Missing credentials or an unavailable planner are reported as `not_run` and do not fail the rewrite.
 
-```powershell
-kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
+```python
+from kumosql import apply_rules, attach_planner_check
+
+result = apply_rules(["remove_trivial_predicates"], sql_text)
+result = attach_planner_check(result, "your-billing-project")
+print(result.verification.to_json())
 ```
+
+SQLX is not sent to BigQuery as source text. Supply compiled SQL for both sides with `--planner-compiled-original` and `--planner-compiled-rewritten`; without both, the planner check is reported as not run. Multi-statement scripts and non-SELECT statements are also skipped with an explicit `not_run` check.
+
+Credentials come from `BQ_ACCESS_TOKEN`, a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path), or Google Application Default Credentials. ADC supports `gcloud auth application-default login`; install `pip install '.[bigquery]'` for the Google auth library. BigQuery dry runs need BigQuery Job User plus Data Viewer. Catalog browsing uses the read-only BigQuery scope and requires permission to list projects and read the selected metadata.
+
+```shell
+kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
+rewrite-sql input.sql --rule remove_trivial_predicates --planner-project my-project
+```
+
+The dry-run command reports planning and schema outcomes separately from rewrite evidence. It exits 0 when both statements plan with matching schemas and 2 otherwise. `rewrite-sql` keeps its usual exit behavior: a planner-only result is nontrusted and exits 3 unless `--allow-unproven` is supplied; a fatal rewrite failure remains exit 2 and its output is withheld.
+
+## Cost, change reports and refactoring proposals
+
+These pieces build on the pipeline graph. They report evidence and never claim more than they know: anything they cannot determine is shown as `unknown` or `unattributed`. The UI's `/cost` and `/changes` pages still show sample data (`/api/graph` serves the loaded project) until a job history or a pair of project snapshots is supplied; `docs/ui-roadmap.md` lists the JSON each view expects.
+
+- **Cost attribution** (`costs.py`): `load_jobs(path)` reads a JSON, JSON lines or CSV export of query job history, and `build_cost(pipeline, jobs)` attributes each job's billed bytes to one graph node. Measured and estimated costs are separate types and cannot be added. Jobs that cannot be placed go to an explicit `unattributed` bucket with a reason, and attributed plus unattributed always equals the total. A query with no destination is charged to the outermost node it read, so a query against a view lands on the view.
+- **Repeated work** (`repeated_work.py`): `repeated_work_report(pipeline)` lists identical logic, similar logic and tables read repeatedly, within one query and across models, with the location of each repeat. It reports where work repeats, not what it costs.
+- **Table roles** (`table_roles.py`): `infer_roles(pipeline, row_counts=None, declared=None)` gives every model and declared source a role (`dimension`, `fact`, `bridge` or `unknown`), a `high`/`medium`/`low` confidence and the list of signals behind it. Signals come from how parsed models read the table (lookup join vs. aggregated), its shape (source column types, or GROUP BY/DISTINCT keys and aggregate columns for models), relative size when `row_counts` is given, and a hand-declared role, which always wins. Two independent agreeing signals give `high`; one gives at most `medium`; conflicting signals give `unknown` with the conflict listed; size never decides alone. Unavailable signals are listed with `available: false` and never vote, and readers that could not be parsed are counted as unexamined. Names are never used to pick a role. An aggregate that mixes tables (`SUM(item.price - product.cost)`) measures the reader's own rows, so it does not make the lookup table a fact. `table_roles_report(pipeline)` returns the JSON form.
+
+- **Observed usage** (`observed_usage.py`): `observed_usage(pipeline, records, scope=None)` reduces job-history records that carry query text (`query` or `query_text`) to per-table usage facts: `joined_as` (readers using the table as `lookup_side`, `driving_side` or `not_joined`), `join_columns`, `columns_grouped`, `columns_aggregated` and `columns_selected` (each column with its reader count). Facts are kept per table and per reader and counted by distinct readers, never runs: a scheduled job run a hundred times counts once, ad hoc queries count once per person. A reader is the `reader`/`user_email`/`user`/`principal`/`service_account` field if present, else the destination, else the query text, else the job. Records that cannot be examined are tallied under `out_of_scope`, `invalid_record`, `no_query_text`, `truncated` (set `query_truncated`), `parse_error` or `no_known_tables`, overall and per table, so each table reports `readers_examined`, `readers_unexamined` and `unexamined_reasons`; records without text still count as reads but give no facts. Jobs that only create or alter a plain view (`CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, or `statement_type` `CREATE_VIEW`/`ALTER_VIEW`/`DROP_VIEW`) read no data: they are tallied as `view_definition` and are never readers, while a table build (`CREATE TABLE ... AS SELECT`) still counts as a read. Confidence is `low` below 3 examined readers or when most readers could not be examined, `high` from 10 examined readers with few unexamined, otherwise `medium`. Wildcard and date-sharded names fold to their base table, temporary tables and CTEs are ignored, scripts are read statement by statement, and a view is described by how it is read, not by the joins inside it. Query text, job ids and reader identities are never stored or returned (readers are hashed while counting); only counts and column names leave the module. `observed_usage_report(...)` gives the JSON form. These facts are an observed, weaker signal than parsed models. `infer_roles` has no extension point for extra evidence yet, so they are not wired into role inference; that is left for a later change.
+- **Ranking and recommendations** (`opportunities.py`, `recommendations.py`): `rank_opportunities` orders opportunities by measured cost, frequency and downstream reach without mixing `measured`, `estimate` and `upper_bound` savings. `build_recommendation` states where work repeats, who relies on it, the proposed change and how it would be verified.
+- **Cost rules** (`cost_rules.py`): `rule_catalog()` lists cost rewrite rules with their safe conditions and review requirements. One rule ships so far: `remove_redundant_distinct`, which removes `DISTINCT` only over a plain `GROUP BY` whose keys are all projected unchanged.
+- **Validated savings** (`savings.py`): `Ledger` records accepted changes with their estimate, then computes validated savings only from measured before and after windows (`min_runs` defaults to 1).
+- **Change reports** (`change_report.py`, `kumosql-change-report BASE HEAD [--cost FILE] [--scope NAME] [--no-overlaps] [-o FILE]`): compares two project snapshots and reports, for each changed model, the verification label, cost (unknown unless supplied) and downstream consumers, with `complete: false` when the graph has gaps. Added and modified models also list existing tables that already provide the same attributes (see "Showing already done elsewhere" above).
+- **Review check** (`ci_check.py`, `kumosql-ci-check report.json`): turns a change report into a check conclusion and a markdown comment. `success` needs every change proven or unchanged, complete consumer lists and no diagnostics; anything less is `neutral`, and a failed change is `failure`. The "Already done elsewhere" section is advisory and never affects the conclusion. `docs/change-report-workflow.example.yml` shows a workflow; it is not installed under `.github/workflows`.
+- **Query sources** (`query_sources.py`): a source is `connected` only when every asset it reports maps to a graph identity; otherwise it is `not_enabled`.
+- **Failures stay local** (`resilience.py`): an asset that cannot be read or parsed becomes an entry in `diagnostics` and the rest of the report is still produced. Diagnostics carry no file contents.
+- **Refactoring proposals** (`shared_logic.py`, `filter_pushdown.py`, `proposal_readiness.py`): `propose_shared_logic` and `find_upstream_filter_proposals` suggest extracting shared logic or pushing a filter upstream, listing every affected consumer and refusing when the consumer set is incomplete. Neither applies changes. `assess_proposal` marks a proposal `ready` only when every consumer is `proven` or `unchanged`; a missing result is `unknown`.
 
 ## BigQuery test bed
 
@@ -238,6 +428,38 @@ kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
 
 ## CLI
 
-```powershell
+Every command prints `--help`.
+
+| Command | Purpose |
+| --- | --- |
+| `kumosql-ui` | Local browser UI (`--project DIR`, `--git URL`, `--branch`, `--refresh`, `--port`, `--no-browser`) |
+| `rewrite-sql` | Apply rules with verification, optional idempotence, planner and synthetic checks |
+| `lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
+| `prove-sql-equivalent` | Structural equivalence proof for two queries |
+| `prove-sql-smt` | Z3 equivalence proof for two queries |
+| `kumosql-pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
+| `kumosql-scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`) |
+| `kumosql-compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |
+| `kumosql-dry-run` | BigQuery planning and schema check, no query execution |
+| `kumosql-change-report` | Report changes between two project snapshots |
+| `kumosql-ci-check` | Turn a change report into a check conclusion and comment |
+| `kumosql-evidence-summary` | Anonymized share of changed outputs that have useful evidence |
+
+```shell
 lift-subqueries input.sql --output output.sql --report
 ```
+
+## What's next
+
+KumoSQL is moving toward a query graph that combines declared and observed dependencies with measured cost, backed by the verification engine described above. The graph page already shows a loaded project; the **Cost** and **Change reports** pages still use labeled sample data until job history and project snapshots can be supplied from the UI. Next up is finding proposed queries that duplicate existing tables and turning shared logic into verified refactors, with failed rewrites never mistaken for successful ones. The open work is tracked in the GitHub issues.
+
+## Loading a private Dataform repository
+
+The query graph loads a repository through the local `git` CLI, so private repositories work with the credentials you already use (SSH keys, a credential helper, or a token in an `https://` URL). KumoSQL never asks for or stores credentials and makes no unauthenticated HTTP requests for this.
+
+```bash
+kumosql-ui --git git@github.com:owner/dataform-project.git --branch main
+kumosql-pipeline --git https://github.com/owner/dataform-project.git --refresh
+```
+
+Accepted remotes are `https://`, `ssh://`, `git@host:path` and local repository paths. The repository is shallow-cloned (depth 1) into `git-cache` under the KumoSQL data directory (override with `KUMOSQL_GIT_CACHE`) and reused on later runs; `--refresh` (or **Fetch latest** in the UI) fetches the newest commit of the branch. Git never prompts: when authentication fails you get git's own message, for example `Permission denied (publickey)`. If a refresh fails, the cached copy is kept. Only `.sqlx`, `.sql` and Dataform config files are read.

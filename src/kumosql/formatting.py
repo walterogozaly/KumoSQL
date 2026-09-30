@@ -1,0 +1,313 @@
+"""SQL formatting and complexity scoring powered by sqlfluff.
+
+``format_sql`` runs sqlfluff's fixer with user-controllable preferences, and
+is registered as the ``format_sql`` rewrite rule so it can be chosen and
+verified like any other operation. ``complexity`` scores a query from its
+sqlfluff parse tree.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field, replace
+import re
+
+from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
+from .sqlx import looks_like_sqlx
+
+DIALECT = "bigquery"
+RULE_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{1,40}$")
+MAX_RULES = 100
+
+
+@dataclass(frozen=True)
+class FormatPreferences:
+    """Formatting preferences, each mapped onto a sqlfluff setting."""
+
+    #: sqlfluff rule codes or group names to apply (e.g. ``LT01`` or ``layout``)
+    rules: tuple[str, ...] = ("layout", "capitalisation")
+    #: rule codes to skip even when selected
+    exclude_rules: tuple[str, ...] = ()
+    max_line_length: int = 80
+    indent_unit: str = "space"  # or "tab"
+    tab_space_size: int = 2
+    keyword_case: str = "upper"  # upper | lower | consistent | capitalise
+    comma_position: str = "trailing"  # trailing | leading
+
+    def to_json(self) -> dict:
+        data = asdict(self)
+        data["rules"] = list(self.rules)
+        data["exclude_rules"] = list(self.exclude_rules)
+        return data
+
+
+DEFAULT_PREFERENCES = FormatPreferences()
+_CHOICES = {
+    "indent_unit": ("space", "tab"),
+    "keyword_case": ("upper", "lower", "consistent", "capitalise"),
+    "comma_position": ("trailing", "leading"),
+}
+
+
+def _rule_list(name: str, value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > MAX_RULES:
+        raise ValueError(f"{name} must be a list of sqlfluff rule codes or groups")
+    cleaned = []
+    for item in value:
+        if not isinstance(item, str) or not RULE_NAME_RE.match(item.strip()):
+            raise ValueError(f"{name} contains an invalid sqlfluff rule: {item!r}")
+        cleaned.append(item.strip())
+    return tuple(dict.fromkeys(cleaned))
+
+
+def parse_preferences(data: object) -> FormatPreferences:
+    """Validate JSON-shaped preferences; missing keys keep their defaults."""
+
+    if data is None:
+        return DEFAULT_PREFERENCES
+    if not isinstance(data, dict):
+        raise ValueError("format preferences must be an object")
+    prefs = DEFAULT_PREFERENCES
+    unknown = set(data) - set(asdict(prefs))
+    if unknown:
+        raise ValueError(f"unknown format preference: {sorted(unknown)[0]}")
+    for key in ("rules", "exclude_rules"):
+        if key in data:
+            prefs = replace(prefs, **{key: _rule_list(key, data[key])})
+    if not prefs.rules:
+        raise ValueError("select at least one sqlfluff rule to format with")
+    for key, low, high in (("max_line_length", 20, 500), ("tab_space_size", 1, 8)):
+        if key in data:
+            value = data[key]
+            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{key} must be a whole number between {low} and {high}")
+            prefs = replace(prefs, **{key: value})
+    for key, choices in _CHOICES.items():
+        if key in data:
+            if data[key] not in choices:
+                raise ValueError(f"{key} must be one of: {', '.join(choices)}")
+            prefs = replace(prefs, **{key: data[key]})
+    return prefs
+
+
+def load_preferences() -> FormatPreferences:
+    """The saved preferences, falling back to defaults if none or invalid."""
+
+    from . import state
+
+    try:
+        return parse_preferences(state.get_section("format"))
+    except ValueError:
+        return DEFAULT_PREFERENCES
+
+
+def save_preferences(prefs: FormatPreferences) -> None:
+    from . import state
+
+    state.set_section("format", prefs.to_json())
+
+
+def _config(prefs: FormatPreferences):
+    from sqlfluff.core import FluffConfig
+
+    policy = prefs.keyword_case
+    return FluffConfig(configs={
+        "core": {
+            "dialect": DIALECT,
+            "rules": ",".join(prefs.rules),
+            "exclude_rules": ",".join(prefs.exclude_rules) or None,
+            "max_line_length": prefs.max_line_length,
+        },
+        "indentation": {"indent_unit": prefs.indent_unit, "tab_space_size": prefs.tab_space_size},
+        "layout": {"type": {"comma": {"line_position": prefs.comma_position}}},
+        "rules": {
+            "capitalisation.keywords": {"capitalisation_policy": policy},
+            "capitalisation.functions": {"extended_capitalisation_policy": policy},
+            "capitalisation.literals": {"capitalisation_policy": policy},
+            "capitalisation.types": {"extended_capitalisation_policy": policy},
+        },
+    })
+
+
+# Rule categories that only apply to other SQL dialects; KumoSQL formats BigQuery.
+_OTHER_DIALECT_CATEGORIES = frozenset({"tsql", "postgres", "oracle"})
+
+
+def sqlfluff_rules() -> list[dict]:
+    """Every sqlfluff rule that applies to BigQuery, from the installed sqlfluff.
+
+    Each entry has the rule's code, name, one-line description, category (the
+    part of the name before the dot), groups, legacy aliases, and whether
+    sqlfluff can fix it. Rules it cannot fix only lint, so they never change
+    formatted output.
+    """
+
+    import sqlfluff
+    from sqlfluff.core.rules import get_ruleset
+
+    # Fix support is not in the public rule list; read it from the registry
+    # when available and assume fixable otherwise.
+    registry = getattr(get_ruleset(), "_register", {})
+    rules = []
+    for rule in sorted(sqlfluff.list_rules(), key=lambda item: item.code):
+        category = rule.name.split(".", 1)[0]
+        if category in _OTHER_DIALECT_CATEGORIES:
+            continue
+        manifest = registry.get(rule.code)
+        rules.append({
+            "code": rule.code,
+            "name": rule.name,
+            "description": rule.description,
+            "category": category,
+            "groups": [group for group in rule.groups if group != "all"],
+            "aliases": list(rule.aliases),
+            "fixable": bool(getattr(manifest and manifest.rule_class, "is_fix_compatible", True)),
+        })
+    return rules
+
+
+_MAX_FORMAT_PASSES = 5
+
+
+def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
+    """Format BigQuery SQL with sqlfluff. Unparseable SQL raises ``ValueError``."""
+
+    from sqlfluff.core import Linter
+
+    if not sql.strip():
+        return sql
+    linter = Linter(config=_config(prefs))
+    parsed = linter.parse_string(sql)
+    if any(v.rule_code() == "PRS" for v in parsed.violations):
+        raise ValueError("sqlfluff could not parse this SQL")
+    formatted = linter.lint_string(sql, fix=True).fix_string()[0]
+    # One sqlfluff pass is not always a fixed point (a fix can enable another),
+    # which would make a second run change the output. Repeat until stable.
+    for _ in range(_MAX_FORMAT_PASSES):
+        again = linter.lint_string(formatted, fix=True).fix_string()[0]
+        if again == formatted:
+            break
+        formatted = again
+    # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.
+    if not sql.endswith("\n"):
+        formatted = formatted.rstrip("\n")
+    return formatted
+
+
+@register_rule
+class FormatSqlRule(RewriteRule):
+    """Format SQL with sqlfluff using the configured preferences."""
+
+    name = "format_sql"
+    summary = "Format with sqlfluff (layout, keyword case; set in Settings)"
+
+    def __init__(self, prefs: FormatPreferences | None = None) -> None:
+        self.prefs = prefs
+
+    def with_preferences(self, prefs: FormatPreferences) -> "FormatSqlRule":
+        return FormatSqlRule(prefs)
+
+    def apply(self, sql: str) -> RuleOutput:
+        if not sql.strip():
+            return RuleOutput("", 0, 0, 0, 0, ())
+        if looks_like_sqlx(sql):
+            return RuleOutput(sql, 0, 0, 0, 0, (
+                RuleDiagnostic(0, "unsupported_sqlx", "sqlfluff cannot format Dataform SQLX; input left unchanged"),
+            ))
+        try:
+            formatted = format_sql(sql, self.prefs or load_preferences())
+        except ValueError as exc:
+            return RuleOutput(sql, 0, 0, 0, 0, (RuleDiagnostic(0, "parse_error", str(exc)),))
+        changed = int(formatted != sql)
+        return RuleOutput(formatted, 1, changed, changed, 0, ())
+
+
+# ------------------------------------------------------------------ complexity
+
+# Weights per construct: how much each adds to the score. Nesting is scored by
+# depth, so a subquery inside a subquery costs more than two side by side.
+_WEIGHTS = {
+    "joins": 2,
+    "ctes": 1,
+    "subqueries": 3,
+    "set_operations": 2,
+    "case_expressions": 1,
+    "window_functions": 2,
+    "predicates": 0.5,
+    "max_nesting": 2,
+}
+_BANDS = ((10, "low"), (25, "moderate"), (50, "high"))
+
+
+@dataclass(frozen=True)
+class Complexity:
+    score: float
+    band: str
+    metrics: dict = field(default_factory=dict)
+
+    def to_json(self) -> dict:
+        return {"score": self.score, "band": self.band, "metrics": dict(self.metrics)}
+
+
+def _band(score: float) -> str:
+    return next((name for limit, name in _BANDS if score < limit), "very high")
+
+
+def subqueries(tree) -> int:
+    """Count SELECTs in parentheses that are not CTE bodies."""
+
+    total = 0
+
+    def walk(segment, parents: tuple[str, ...]) -> None:
+        nonlocal total
+        if segment.is_type("select_statement") and parents[-1:] == ("bracketed",) \
+                and "common_table_expression" not in parents[-2:-1]:
+            total += 1
+        for child in segment.segments:
+            walk(child, (*parents, segment.type))
+
+    walk(tree, ())
+    return total
+
+
+def complexity(sql: str) -> Complexity:
+    """Score a query's structural complexity from its sqlfluff parse tree.
+
+    The score is a weighted sum of joins, CTEs, subqueries, set operations,
+    CASE expressions, window functions, boolean predicates and maximum SELECT
+    nesting depth (weights in ``_WEIGHTS``). Bands: <10 low, <25 moderate,
+    <50 high, otherwise very high. Raises ``ValueError`` if it cannot parse.
+    """
+
+    from sqlfluff.core import FluffConfig, Linter
+
+    if looks_like_sqlx(sql):
+        raise ValueError("complexity is not available for Dataform SQLX")
+    parsed = Linter(config=FluffConfig(overrides={"dialect": DIALECT})).parse_string(sql)
+    tree = parsed.tree
+    if tree is None or any(v.rule_code() == "PRS" for v in parsed.violations):
+        raise ValueError("sqlfluff could not parse this SQL")
+
+    def count(*types: str) -> int:
+        return len(list(tree.recursive_crawl(*types)))
+
+    def depth(segment, level=0) -> int:
+        level += segment.is_type("select_statement")
+        return max([level, *(depth(child, level) for child in segment.segments)])
+
+    selects = count("select_statement")
+    metrics = {
+        "joins": count("join_clause"),
+        "ctes": count("common_table_expression"),
+        # Every SELECT beyond the top-level ones (CTE bodies aside) is nested.
+        "subqueries": subqueries(tree),
+        "set_operations": count("set_operator"),
+        "case_expressions": count("case_expression"),
+        "window_functions": count("over_clause"),
+        "predicates": len([
+            op for op in tree.recursive_crawl("binary_operator") if op.raw.upper() in ("AND", "OR")
+        ]),
+        "max_nesting": max(0, depth(tree) - 1),
+        "lines": len(sql.splitlines()),
+    }
+    score = round(sum(metrics[key] * weight for key, weight in _WEIGHTS.items()), 1)
+    return Complexity(score, _band(score), metrics)

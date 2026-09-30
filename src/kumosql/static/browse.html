@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>BigQuery browser · KumoSQL</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/browse.css">
+  <script defer src="/assets/browse.js"></script>
+  <script defer src="/assets/scopes.js"></script>
+  <script defer src="/assets/settings.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">{ }</span><span>KumoSQL</span></div>
+      <nav class="topnav" aria-label="Main navigation"><a href="/">Workspace</a><a href="/graph">Query graph</a><a href="/cost">Cost</a><a href="/changes">Change reports</a><a href="/browse" aria-current="page">BigQuery</a></nav>
+      <button class="toolbar-button" type="button" data-open-settings title="Settings (Ctrl+,)"><span>Settings</span></button>
+      <span class="local-badge"><span class="local-dot"></span>Running locally</span>
+    </header>
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">BIGQUERY CATALOG</p>
+        <h1 id="page-title">Browse your data.</h1>
+        <p>Explore the projects, datasets, and tables available to your Google Cloud credentials.</p>
+      </section>
+      <section class="catalog-toolbar" aria-label="Catalog controls">
+        <p>Answers are saved locally for an hour, so revisiting is instant and costs no BigQuery calls. <span id="catalog-freshness" class="catalog-freshness"></span></p>
+        <button id="refresh" class="primary-button" type="button">Refresh from BigQuery</button>
+      </section>
+      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">Loading projects…</div>
+      <section class="catalog" aria-label="BigQuery catalog">
+        <div class="catalog-panel">
+          <div class="catalog-heading"><h2>Projects</h2><span id="project-count"></span></div>
+          <div id="projects" class="catalog-list" aria-label="Projects"></div>
+        </div>
+        <div class="catalog-panel">
+          <div class="catalog-heading"><h2>Datasets</h2><span id="dataset-count"></span></div>
+          <div id="datasets" class="catalog-list" aria-label="Datasets"><p class="empty-state">Choose a project.</p></div>
+        </div>
+        <div class="catalog-panel">
+          <div class="catalog-heading"><h2>Tables</h2><span id="table-count"></span></div>
+          <div id="tables" class="catalog-list" aria-label="Tables"><p class="empty-state">Choose a dataset.</p></div>
+        </div>
+        <div class="catalog-panel schema-panel">
+          <div class="catalog-heading"><h2>Schema</h2></div>
+          <div id="schema" class="schema-content"><p class="empty-state">Choose a table to inspect its schema.</p></div>
+        </div>
+      </section>
+    </main>
+    <footer>Catalog metadata is read from BigQuery using your local Google Cloud credentials.</footer>
+  </div>
+</body>
+</html>

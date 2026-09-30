@@ -1,10 +1,10 @@
-"""BigQuery dry runs as a free validity and schema oracle for rewrites.
+"""BigQuery dry runs for query planning and output-schema comparison.
 
 A dry run asks BigQuery to plan a query without executing it. It costs
 nothing and reads no data, but it resolves every table and column, checks
-types, and returns the output schema and the bytes the query would scan.
-:func:`check_rewrite` uses that to reject a rewrite that BigQuery would not
-accept or whose output schema differs from the original.
+types, and returns the output schema and an estimate of bytes processed.
+:func:`check_rewrite` reports whether both queries planned with matching
+schemas. This does not show that their results are equal.
 
 Authentication, in order of preference:
 
@@ -14,6 +14,8 @@ Authentication, in order of preference:
    file's contents) or ``GOOGLE_APPLICATION_CREDENTIALS`` (a path), which
    needs the optional ``google-auth`` dependency (``pip install
    kumosql[bigquery]``).
+4. Application Default Credentials, including credentials created by
+   ``gcloud auth application-default login`` (also needs ``google-auth``).
 
 Tests pass a fake ``transport`` so nothing here needs network access.
 """
@@ -26,6 +28,10 @@ import os
 from typing import Callable
 import urllib.error
 import urllib.request
+
+from sqlglot import exp
+
+from .ast_utils import parse_statements
 
 Transport = Callable[[str, dict[str, str], bytes], tuple[int, dict]]
 
@@ -75,17 +81,51 @@ class DryRunResult:
 
 @dataclass(frozen=True)
 class RewriteCheck:
-    ok: bool
+    planned_same_schema: bool | None
     reason: str
-    original: DryRunResult
-    rewritten: DryRunResult
+    original: DryRunResult | None
+    rewritten: DryRunResult | None
     schema_differences: tuple[str, ...] = ()
 
     @property
-    def bytes_delta(self) -> int | None:
+    def outcome(self) -> str:
+        if self.planned_same_schema is None:
+            return "not_run"
+        return "passed" if self.planned_same_schema else "failed"
+
+    @property
+    def ok(self) -> bool:
+        """Compatibility alias; prefer ``planned_same_schema``."""
+
+        return self.planned_same_schema is True
+
+    @property
+    def original_planned(self) -> bool | None:
+        return None if self.original is None else self.original.ok
+
+    @property
+    def rewritten_planned(self) -> bool | None:
+        return None if self.rewritten is None else self.rewritten.ok
+
+    @property
+    def schema_matches(self) -> bool | None:
+        if self.original_planned is not True or self.rewritten_planned is not True:
+            return None
+        return not self.schema_differences
+
+    @property
+    def estimated_bytes_delta(self) -> int | None:
+        if self.original is None or self.rewritten is None:
+            return None
         before = self.original.total_bytes_processed
         after = self.rewritten.total_bytes_processed
         return None if before is None or after is None else after - before
+
+    @property
+    def bytes_delta(self) -> int | None:
+        """Compatibility alias; the value is an estimate, not a result metric."""
+
+        return self.estimated_bytes_delta
 
 
 def _urllib_transport(url: str, headers: dict[str, str], body: bytes) -> tuple[int, dict]:
@@ -110,10 +150,24 @@ def access_token() -> str:
     raw_key = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if not raw_key and not key_path:
-        raise RuntimeError(
-            "no BigQuery credentials: set BQ_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS_JSON "
-            "or GOOGLE_APPLICATION_CREDENTIALS"
-        )
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            raise RuntimeError(
+                "no BigQuery credentials found; Google Cloud credentials need google-auth: "
+                "pip install 'kumosql[bigquery]'"
+            ) from exc
+        try:
+            credentials, _ = google.auth.default(scopes=[_SCOPE])
+            if not credentials.valid:
+                credentials.refresh(Request())
+        except Exception as exc:
+            raise RuntimeError(
+                "no BigQuery credentials: set BQ_ACCESS_TOKEN, configure a service account, "
+                "or run 'gcloud auth application-default login'"
+            ) from exc
+        return credentials.token
     try:
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
@@ -127,7 +181,8 @@ def access_token() -> str:
         )
     else:
         credentials = service_account.Credentials.from_service_account_file(key_path, scopes=[_SCOPE])
-    credentials.refresh(Request())
+    if not credentials.valid:
+        credentials.refresh(Request())
     return credentials.token
 
 
@@ -216,22 +271,66 @@ def check_rewrite(
     token: str | None = None,
     transport: Transport | None = None,
 ) -> RewriteCheck:
-    """Dry-run both queries and accept the rewrite only if it plans with the same schema.
+    """Dry-run both queries and compare their output schemas.
 
-    This is a necessary check, not a proof of equivalence: two queries can
-    share a schema and still return different rows.
+    A matching plan and schema do not establish that the queries return the
+    same rows. Byte counts are estimates and are reported separately.
     """
+
+    try:
+        original_statements = parse_statements(original_sql)
+        rewritten_statements = parse_statements(rewritten_sql)
+    except Exception:
+        return RewriteCheck(
+            None,
+            "planner check was not run: both inputs must be single SELECT statements",
+            None,
+            None,
+        )
+    if (
+        len(original_statements) != 1
+        or len(rewritten_statements) != 1
+        or not isinstance(original_statements[0], exp.Query)
+        or not isinstance(rewritten_statements[0], exp.Query)
+    ):
+        return RewriteCheck(
+            None,
+            "planner check was not run: both inputs must be single SELECT statements",
+            None,
+            None,
+        )
 
     original = dry_run(original_sql, project, location=location, token=token, transport=transport)
     rewritten = dry_run(rewritten_sql, project, location=location, token=token, transport=transport)
     if not original.ok:
-        return RewriteCheck(False, f"original query fails: {original.error_message}", original, rewritten)
+        return RewriteCheck(
+            False,
+            f"original SQL could not be planned: {original.error_message}",
+            original,
+            rewritten,
+        )
     if not rewritten.ok:
-        return RewriteCheck(False, f"rewritten query fails: {rewritten.error_message}", original, rewritten)
+        return RewriteCheck(
+            False,
+            f"rewritten SQL could not be planned: {rewritten.error_message}",
+            original,
+            rewritten,
+        )
     differences = schema_differences(original.schema, rewritten.schema)
     if differences:
-        return RewriteCheck(False, "output schema changed", original, rewritten, differences)
-    return RewriteCheck(True, "both queries plan with the same output schema", original, rewritten)
+        return RewriteCheck(
+            False,
+            "both SQL statements planned, but their output schemas differ",
+            original,
+            rewritten,
+            differences,
+        )
+    return RewriteCheck(
+        True,
+        "both SQL statements planned and their output schemas match; results were not compared",
+        original,
+        rewritten,
+    )
 
 
 def fetch_table_schemas(
