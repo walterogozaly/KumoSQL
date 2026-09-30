@@ -14,8 +14,10 @@ from kumosql import (
 S = VerificationStatus
 
 
-def make(status, before="select 1", after="select 2", planner=None):
+def make(status, before="select 1", after="select 2", planner=None, synthetic=None):
     checks = (VerificationCheck("planner", planner, "SECRET detail"),) if planner else ()
+    if synthetic:
+        checks += (VerificationCheck("synthetic_results", synthetic, "SECRET rows"),)
     return RewriteResult(
         "r", before, after, 1, (), Verification(status, "SECRET reason", ("SECRET",), checks), True
     )
@@ -72,5 +74,27 @@ def test_serialized_aggregate_is_anonymous():
     text = json.dumps(summarize_evidence(mixed(), min_changed=1).to_json())
     assert "SECRET" not in text and "select" not in text.lower()
     assert set(json.loads(text)) == {
-        "total", "unchanged", "changed", "labels", "planner", "percent_of_changed",
+        "total", "unchanged", "changed", "labels", "planner", "useful_evidence",
+        "synthetic_agreed", "percent_of_changed",
     }
+
+
+def test_synthetic_agreement_counts_toward_useful_evidence_once():
+    results = [
+        make(S.PROVEN, synthetic="passed"),  # both: counted once
+        make(S.UNPROVEN, synthetic="passed"),  # agreement only
+        make(S.PLANNER_CHECKED, planner="passed", synthetic="passed"),
+        make(S.UNPROVEN, synthetic="failed"),  # disagreement is not evidence
+        make(S.UNPROVEN, synthetic="inconclusive"),
+        make(S.FAILED, synthetic="passed"),  # failed result never counts
+        make(S.PROVEN),
+        make(S.UNPROVEN),
+    ]
+    s = summarize_evidence(results, min_changed=1)
+    assert s.changed == 8
+    assert s.proven == 2 and s.synthetic_agreed == 3 and s.useful_evidence == 4
+    assert s.pct_useful_evidence == 50.0
+    assert s.pct_proof == 25.0  # proof stays separate from the headline
+    assert s.pct_synthetic_agreed == 37.5
+    assert s.pct_planner_only == 12.5
+    assert s.to_json()["useful_evidence"] == 4

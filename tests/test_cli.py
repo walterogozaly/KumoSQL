@@ -295,3 +295,31 @@ def test_dry_run_cli_uses_planner_wording_and_labels_bytes_as_estimates(
     assert "results were not compared" in output
     assert "estimated_bytes_delta=-100 (estimate)" in output
     assert not any(word in output.lower() for word in ("equivalent", "proven", "verified", "safe"))
+
+
+def test_evidence_summary_cli_prints_only_the_aggregate(tmp_path, capsys):
+    from kumosql.cli import evidence_summary_main
+
+    (tmp_path / "a.sql").write_text("SELECT secret_col FROM secret_tbl WHERE TRUE AND secret_col > 1", encoding="utf-8")
+    (tmp_path / "b.sql").write_text("SELECT 1", encoding="utf-8")
+    code = evidence_summary_main(
+        [str(tmp_path), "--rule", "remove_trivial_predicates", "--min-changed", "1"]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    data = json.loads(out)
+    assert (data["total"], data["changed"], data["unchanged"]) == (2, 1, 1)
+    assert data["useful_evidence"] == 1
+    assert data["percent_of_changed"]["useful_evidence"] == 100.0
+    assert "secret" not in out.lower() and "a.sql" not in out
+
+
+def test_evidence_summary_cli_withholds_small_percentages_and_needs_files(tmp_path, capsys):
+    from kumosql.cli import evidence_summary_main
+
+    (tmp_path / "a.sql").write_text("SELECT a FROM t WHERE TRUE AND a > 1", encoding="utf-8")
+    evidence_summary_main([str(tmp_path), "--rule", "remove_trivial_predicates"])
+    assert json.loads(capsys.readouterr().out)["percent_of_changed"]["useful_evidence"] is None
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert evidence_summary_main([str(empty), "--rule", "remove_trivial_predicates"]) == 2
