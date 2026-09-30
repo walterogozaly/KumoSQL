@@ -1,0 +1,130 @@
+[
+  {
+    "id": "q01",
+    "sql_text": "SELECT c.customer_id, c.region FROM (SELECT customer_id, region FROM `demo.sales.customers`) AS c"
+  },
+  {
+    "id": "q02",
+    "sql_text": "SELECT c.customer_id, o.order_id FROM `demo.sales.customers` AS c JOIN (SELECT customer_id, order_id FROM `demo.sales.orders`) AS o ON o.customer_id = c.customer_id"
+  },
+  {
+    "id": "q03",
+    "sql_text": "SELECT c.customer_id, p.plan_name FROM `demo.sales.customers` AS c LEFT JOIN (SELECT customer_id, plan_name FROM `demo.sales.plans`) AS p ON p.customer_id = c.customer_id"
+  },
+  {
+    "id": "q04",
+    "sql_text": "SELECT a.id, b.id FROM (SELECT id FROM `demo.analytics.left_source`) AS a CROSS JOIN (SELECT id FROM `demo.analytics.right_source`) AS b"
+  },
+  {
+    "id": "q05",
+    "sql_text": "SELECT * FROM (SELECT * FROM (SELECT customer_id FROM `demo.sales.customers`) AS inner_rows) AS outer_rows"
+  },
+  {
+    "id": "q06",
+    "sql_text": "SELECT x.customer_id FROM (SELECT customer_id FROM (SELECT customer_id FROM `demo.sales.orders`) AS staged) AS x"
+  },
+  {
+    "id": "q07",
+    "sql_text": "SELECT id FROM (SELECT id FROM `demo.sales.current_orders`) AS current_rows UNION ALL SELECT id FROM (SELECT id FROM `demo.sales.archive_orders`) AS archived_rows"
+  },
+  {
+    "id": "q08",
+    "sql_text": "WITH source_rows AS (SELECT * FROM (SELECT customer_id FROM `demo.sales.customers`) AS c) SELECT customer_id FROM source_rows"
+  },
+  {
+    "id": "q09",
+    "sql_text": "WITH regions AS (SELECT region FROM `demo.sales.regions`), enriched AS (SELECT * FROM (SELECT customer_id, region FROM regions) AS r) SELECT * FROM enriched"
+  },
+  {
+    "id": "q10",
+    "sql_text": "WITH customers AS (SELECT * FROM (SELECT customer_id FROM `demo.sales.customers`) AS c), orders AS (SELECT * FROM (SELECT order_id, customer_id FROM `demo.sales.orders`) AS o) SELECT * FROM customers JOIN orders USING (customer_id)"
+  },
+  {
+    "id": "q11",
+    "sql_text": "WITH active_customers AS (SELECT customer_id FROM `demo.sales.customers`) SELECT * FROM active_customers JOIN (SELECT customer_id FROM `demo.sales.orders`) AS o USING (customer_id)"
+  },
+  {
+    "id": "q12",
+    "sql_text": "CREATE OR REPLACE TABLE `demo.marts.customer_orders` AS SELECT * FROM (SELECT customer_id, order_id FROM `demo.sales.orders`) AS o"
+  },
+  {
+    "id": "q13",
+    "sql_text": "CREATE OR REPLACE VIEW `demo.marts.active_customers` AS SELECT * FROM (SELECT customer_id FROM `demo.sales.customers` WHERE active) AS c"
+  },
+  {
+    "id": "q14",
+    "sql_text": "CREATE TEMP TABLE recent_orders AS SELECT * FROM (SELECT order_id, order_date FROM `demo.sales.orders` WHERE order_date >= DATE '2025-01-01') AS recent"
+  },
+  {
+    "id": "q15",
+    "sql_text": "INSERT INTO `demo.marts.order_summary` (customer_id, order_count) SELECT customer_id, COUNT(*) FROM (SELECT customer_id FROM `demo.sales.orders`) AS o GROUP BY customer_id"
+  },
+  {
+    "id": "q16",
+    "sql_text": "MERGE `demo.marts.customers` AS target USING (SELECT customer_id, email FROM `demo.sales.customer_updates`) AS source ON target.customer_id = source.customer_id WHEN MATCHED THEN UPDATE SET email = source.email WHEN NOT MATCHED THEN INSERT (customer_id, email) VALUES (source.customer_id, source.email)"
+  },
+  {
+    "id": "q17",
+    "sql_text": "UPDATE `demo.marts.customers` AS target SET region = source.region FROM (SELECT customer_id, region FROM `demo.sales.region_updates`) AS source WHERE target.customer_id = source.customer_id"
+  },
+  {
+    "id": "q18",
+    "sql_text": "SELECT c.customer_id FROM `demo.sales.customers` AS c WHERE EXISTS (SELECT 1 FROM (SELECT customer_id FROM `demo.sales.orders`) AS o WHERE o.customer_id = c.customer_id)"
+  },
+  {
+    "id": "q19",
+    "sql_text": "WITH customers AS (SELECT customer_id FROM `demo.sales.customers`) SELECT * FROM (SELECT customer_id FROM customers) AS c WHERE customer_id IN (SELECT customer_id FROM `demo.sales.vip_customers`)"
+  },
+  {
+    "id": "q20",
+    "sql_text": "SELECT customer_id, order_id FROM (SELECT customer_id, order_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date DESC) AS rn FROM `demo.sales.orders`) AS ranked WHERE rn = 1"
+  },
+  {
+    "id": "q21",
+    "sql_text": "SELECT region, order_count FROM (SELECT region, COUNT(*) AS order_count FROM `demo.sales.orders` GROUP BY region) AS totals HAVING order_count > 10"
+  },
+  {
+    "id": "q22",
+    "sql_text": "SELECT c.customer_id, item FROM `demo.sales.customers` AS c JOIN (SELECT customer_id, items FROM `demo.sales.order_arrays`) AS o ON c.customer_id = o.customer_id, UNNEST(o.items) AS item"
+  },
+  {
+    "id": "q23",
+    "sql_text": "SELECT * FROM (SELECT customer_id FROM `demo.sales.customers`) AS c JOIN (SELECT customer_id FROM `demo.sales.orders`) AS o USING (customer_id) LEFT JOIN (SELECT customer_id FROM `demo.sales.support_cases`) AS s USING (customer_id)"
+  },
+  {
+    "id": "q24",
+    "sql_text": "WITH first_batch AS (SELECT id FROM (SELECT id FROM `demo.events.batch_one`) AS b), second_batch AS (SELECT id FROM (SELECT id FROM `demo.events.batch_two`) AS b) SELECT id FROM first_batch UNION ALL SELECT id FROM second_batch"
+  },
+  {
+    "id": "q25",
+    "sql_text": "CREATE TABLE `demo.marts.daily_orders` PARTITION BY order_date AS SELECT * FROM (SELECT order_id, order_date FROM `demo.sales.orders`) AS o"
+  },
+  {
+    "id": "q26",
+    "sql_text": "config { type: \"table\" }\nSELECT c.customer_id FROM ${ref(\"customers\")} AS c JOIN (SELECT customer_id FROM ${ref(\"orders\")}) AS o USING (customer_id)"
+  },
+  {
+    "id": "q27",
+    "sql_text": "config { type: \"view\" }\nSELECT * FROM (SELECT customer_id FROM ${ref(\"customers\")}) AS c"
+  },
+  {
+    "id": "q28",
+    "sql_text": "config { type: \"table\" }\nSELECT * FROM (SELECT customer_id FROM ${ref(\"customers\")}) AS c WHERE ${when(incremental(), \"customer_id > 100\", \"TRUE\")}"
+  },
+  {
+    "id": "q29",
+    "sql_text": "config { type: \"table\" }\npre_operations {\n  DECLARE run_id INT64 DEFAULT 1;\n}\nSELECT * FROM (SELECT customer_id FROM ${ref(\"customers\")}) AS c\npost_operations {\n  SELECT ${self()};\n}"
+  },
+  {
+    "id": "q30",
+    "sql_text": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT * FROM (SELECT * FROM (SELECT customer_id FROM ${ref(\"customers\")}) AS base) AS staged"
+  },
+  {
+    "id": "q31",
+    "sql_text": "config { type: \"table\" }\nSELECT c.customer_id, o.order_id FROM ${ref(\"customers\")} AS c LEFT JOIN (SELECT customer_id, order_id FROM ${ref(\"orders\")}) AS o ON o.customer_id = c.customer_id WHERE c.customer_id IN (SELECT customer_id FROM ${ref(\"vip_customers\")})"
+  },
+  {
+    "id": "q32",
+    "sql_text": "config { type: \"table\" }\nWITH source_rows AS (SELECT * FROM (SELECT customer_id FROM ${ref(\"customers\")}) AS c) SELECT * FROM source_rows JOIN (SELECT customer_id FROM ${ref(\"orders\")}) AS o USING (customer_id)"
+  }
+]

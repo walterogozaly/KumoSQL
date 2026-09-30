@@ -84,21 +84,15 @@ FROM (SELECT id FROM ${ref("customers")}) AS c''')
 assert result.success
 ```
 
-## Test the supplied SQL workbook fixture
+## Test the authored SQL fixture
 
-The repository includes a generic copy at `tests/fixtures/generic_sql_workbooks.json`. Each of its 533 entries contains only an `id` and `sql_text`; each distinct token pattern appears once. The full fixture test uses:
+The repository includes 32 hand-written sample queries at `tests/fixtures/sql_subquery_samples.json`. Each entry contains only an `id` and `sql_text`. The samples cover nested relations, joins, CTE placement, DML, DDL, and Dataform SQLX. The full fixture test uses:
 
 ```powershell
 pytest -m slow tests/test_workbook_fixture.py
 ```
 
-Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. To regenerate the checked-in JSON fixture from the source export:
-
-```powershell
-python tools/sanitize_fixture.py private.csv tests/fixtures/generic_sql_workbooks.json
-```
-
-The test checks all 533 SQL entries and fails unless every row has zero remaining relational subqueries and no fatal diagnostics. A separate unit test checks the SQL text and verifies the minimal fixture shape.
+Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. The test fails unless every sample has zero remaining relational subqueries and no fatal diagnostics. A separate unit test verifies the small fixture shape.
 
 The normal unit suite is:
 
