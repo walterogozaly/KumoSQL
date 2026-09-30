@@ -67,6 +67,7 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 | "N assets could not be analyzed. The rest of this report is complete." | #39 | `report.diagnostics[] {asset, message}` |
 | Guided refactors with a result for every consumer, including Unknown, and Ready or Not ready | #40, #41, #42 | `proposals[] {id, kind, title, cost_rationale, consumers[] {node, label}, ready}` |
 
+`kumosql.shared_logic.propose_shared_logic` (#40) builds the `shared_logic` proposals with this shape plus `consumers_complete`, `incomplete_reasons` and a consumer `role`. `cost_rationale` is `unknown` and `ready` is false until #41 and #42 fill them. The `/api/changes` payload is still preview data.
 `kumosql.change_report.build_change_report` (and the `kumosql-change-report BASE HEAD [--cost FILE]` command) produces `report` from two project snapshots. `/api/changes` still serves the preview because the UI has no base and head input yet; wire it to the builder once it does.
 
 `ready` is true only when every consumer is `proven` or `unchanged`. This is the strictest reading of #42; relax it in `preview_data.changes()` and in the "need a proof" message if planner checked should count.
