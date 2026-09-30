@@ -152,3 +152,38 @@ def test_cli_project_option_loads_a_folder(tmp_path, monkeypatch):
     with pytest.raises(Stop):
         ui.main(["--project", str(tmp_path), "--no-browser"])
     assert live_graph.loaded()["label"] == str(tmp_path)
+
+
+def get(base, path):
+    with urlopen(base + path) as response:
+        return json.load(response)
+
+
+def test_impact_endpoint_serves_labeled_sample_and_validates(server):
+    sample = get(server, "/api/impact?node=staging.stg_orders&column=amount_usd&change=drop")
+    assert sample["source"]["kind"] == "sample"
+    assert {a["model"] for a in sample["affected"]} >= {"marts.fct_orders", "marts.daily_revenue"}
+    observed = {o["model"]: o for o in sample["observed"]}
+    assert observed["reporting.exec_dashboard"]["effect"] == "may_break"
+    assert observed["reporting.exec_dashboard"]["last_seen"] and observed["reporting.exec_dashboard"]["confidence"]
+    assert not set(observed) & {a["model"] for a in sample["affected"]}
+    assert sample["safe_to_delete"] == "unknown"
+    for path in ("/api/impact?node=a&column=b&change=explode", "/api/impact?node=a", "/api/impact"):
+        with pytest.raises(HTTPError) as error:
+            get(server, path)
+        assert error.value.code == 400
+
+
+def test_impact_endpoint_uses_the_loaded_project_and_its_job_history(server):
+    pipeline = live_graph.load_files(FILES, "demo")
+    live_graph.set_project(
+        pipeline, "demo",
+        observed_reads=[{"job_id": "j1", "creation_time": "2026-09-20T06:00:00Z",
+                        "destination": "proj.rep.board", "referenced_tables": ["stg_orders"]}],
+    )
+    result = get(server, "/api/impact?node=stg.stg_orders&column=amt&change=drop")
+    assert result["source"] == {"kind": "project", "label": "demo"}
+    assert [a["model"] for a in result["affected"]] == ["marts.fct"]
+    assert [(o["model"], o["depth"]) for o in result["observed"]] == [("proj.rep.board", 1)]
+    graph = get(server, "/api/graph")
+    assert any(e["source"] == "observed" for e in graph["edges"])

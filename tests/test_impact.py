@@ -141,3 +141,84 @@ def test_cli_assess(tmp_path, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["affected"][0]["model"] == "p.m.r"
     assert data["safe_to_delete"] == "unknown"
+
+
+def job(job_id, destination, *references, when="2026-09-20T06:00:00Z"):
+    return {"job_id": job_id, "creation_time": when, "destination": destination,
+            "referenced_tables": list(references)}
+
+
+OBSERVED_PIPELINE = dict(
+    base="SELECT id, x FROM `p.raw.a`",
+    declared="SELECT x FROM `p.m.base`",
+)
+
+
+def test_observed_only_reader_is_listed_and_labeled():
+    pipeline = build(**OBSERVED_PIPELINE)
+    history = [
+        job("j1", "p.m.declared", "p.m.base"),
+        job("j2", "p.rep.board", "p.m.base", when="2026-09-21T06:00:00Z"),
+        job("j3", "p.rep.board", "p.m.base", when="2026-09-25T06:00:00Z"),
+    ]
+    impact = pipeline.assess_change("drop_column", "p.m.base", "x", observed_reads=history)
+    assert impact.observed_checked
+    assert [o.model for o in impact.observed] == ["p.rep.board"]
+    seen = impact.observed[0]
+    assert seen.effect == "may_break" and seen.depth == 1 and seen.via == "p.m.base"
+    assert seen.last_seen.startswith("2026-09-25") and seen.observed_count == 2
+    assert seen.confidence == "medium"
+    # A reader declared in the pipeline is not repeated as observed.
+    assert "p.m.declared" in by_model(impact)
+    assert impact.to_json()["observed"][0]["source"] == "observed"
+    assert impact.safe_to_delete == "unknown"
+
+
+def test_observed_readers_follow_affected_models_and_chains():
+    pipeline = build(**OBSERVED_PIPELINE)
+    history = [
+        job("j1", "p.rep.board", "p.m.declared"),
+        job("j2", "p.rep.export", "p.rep.board"),
+        job("j3", "p.rep.self", "p.rep.self"),
+    ]
+    found = {o.model: o for o in pipeline.assess_change("drop_column", "p.m.base", "x", observed_reads=history).observed}
+    assert found["p.rep.board"].depth == 2 and found["p.rep.board"].via == "p.m.declared"
+    assert found["p.rep.export"].depth == 3
+    changed = pipeline.assess_change("change_expression", "p.m.base", "x", observed_reads=history)
+    assert {o.effect for o in changed.observed} == {"may_change"}
+
+
+def test_observed_reads_do_not_change_declared_results_or_add_unrelated_readers():
+    pipeline = build(**OBSERVED_PIPELINE)
+    plain = pipeline.assess_change("drop_column", "p.m.base", "x")
+    assert plain.observed == [] and not plain.observed_checked
+    history = [job("j1", "p.rep.board", "p.raw.b")]
+    withhistory = pipeline.assess_change("drop_column", "p.m.base", "x", observed_reads=history)
+    assert withhistory.observed == []
+    assert withhistory.observed_checked
+    assert withhistory.affected == plain.affected and withhistory.unknown == plain.unknown
+
+
+def test_observed_reader_respects_scope():
+    pipeline = build(**OBSERVED_PIPELINE)
+    history = [job("j1", "p.rep.board", "p.m.base")]
+    scope = Scope(name="only declared", fields={"name": ("declared",)})
+    impact = pipeline.assess_change("drop_column", "p.m.base", "x", scope=scope, observed_reads=history)
+    assert impact.observed == [] and impact.out_of_scope == 1
+
+
+def test_cli_assess_with_observed_reads(tmp_path, capsys):
+    graph = {"tables": [
+        {"target": {"database": "p", "schema": "m", "name": "base"}, "query": "SELECT id, x FROM `p.raw.a`"},
+    ]}
+    path = tmp_path / "graph.json"
+    path.write_text(json.dumps(graph), encoding="utf-8")
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps(SCHEMA), encoding="utf-8")
+    history = tmp_path / "history.json"
+    history.write_text(json.dumps([job("j1", "p.rep.board", "p.m.base")]), encoding="utf-8")
+    args = [str(path), "--source-schema", str(schema), "--assess", "drop_column", "--target", "p.m.base.x",
+            "--observed-reads", str(history)]
+    assert pipeline_main(args) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [o["model"] for o in data["observed"]] == ["p.rep.board"]
