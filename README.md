@@ -251,6 +251,25 @@ Source table columns come from `source_schema={"project.dataset.table": {"col": 
 kumosql-pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
 
+## Table profiles: what each table is
+
+`profile_pipeline(pipeline)` and `profile_query(pipeline, sql)` describe every pipeline model, and a proposed query that is not in the pipeline, in a form that can be compared regardless of names, casing or formatting. A `TableProfile` has three parts, each with a status and, when it cannot be told, a reason. Nothing is guessed and nothing is inferred from names.
+
+- `grain` (`Grain`): the output columns that identify one row. `derived` from `GROUP BY` keys, `SELECT DISTINCT`, `UNION DISTINCT`, a `ROW_NUMBER() = 1` dedupe (`QUALIFY` or a filtered wrapper), or the grain of an input carried through joins that cannot fan out (the joined side must be joined on its own known grain, with an inner or left join). `declared` when you pass `declared_grain={"project.dataset.table": ["id"]}` (there is no unique-key hook in the loaded project, so the caller supplies it). Otherwise `unknown` with a reason such as `fan_out_join`, `union_mixed_grain`, `unexpanded_star`, `unparsed`, `wildcard_table`, `source_without_grain` or `grain_not_in_output`.
+- `attributes` (`AttributeMeaning`): a canonical `meaning` per output column, built from column lineage and looking through views, CTEs, renames and passthroughs: `col:proj.raw.orders.amount` for a source column, `agg:SUM(col:proj.raw.orders.amount)` for an aggregate (function plus input meaning), `union(...)`, `const:...`, and `expr:...` (a normalized expression, `equality_only`: comparable for equality, never for similarity). A column with incomplete lineage, or a non-deterministic expression, is `unknown` with a reason.
+- `row_scope` (`RowScope`): the normalized `WHERE`, `HAVING` and `QUALIFY` conjuncts (plus inner-join conditions), written in terms of column meanings and sorted, and inherited from the tables it reads. A `LIMIT`, sampling, a masked incremental predicate or a filter that cannot be normalized (kept as `opaque:` text) makes it `comparable=False`.
+
+`complete` is true only when the grain is known, every attribute is known and the scope is comparable. `to_json()` gives a JSON-ready form. Both functions never raise: odd input becomes `unknown` with a reason.
+
+```python
+from kumosql import load_sqlx_project, profile_pipeline, profile_query
+
+pipeline = load_sqlx_project("path/to/dataform")
+profiles = profile_pipeline(pipeline)          # {model key: TableProfile}
+proposed = profile_query(pipeline, "SELECT customer_id, SUM(amount) AS total FROM ... GROUP BY customer_id")
+print(proposed.to_json())
+```
+
 ## Comparing pipeline outputs before and after a refactor
 
 `plan_output_comparison(before, after=None, before_location=..., after_location=...)` plans a comparison of every table, view and incremental model's output across two builds of a pipeline, for example production against a development dataset built from the refactored code. It generates BigQuery SQL in three tiers, from cheapest to most detailed:
