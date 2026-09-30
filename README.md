@@ -297,6 +297,29 @@ for match in result.matches:
     print(match.table, match.kind, match.confidence)
 ```
 
+## Finding an existing table that holds the attribute at a finer grain
+
+`find_rollups(pipeline, sql=None, *, model=None, scope=None, roles=None, declared_grain=None, mappings=())` answers "can this coarser result be computed from something we already have?". When a proposed query (or model) aggregates an attribute to a coarser grain, for example from city to state, it reports existing tables that hold the same attribute at a finer grain. It builds on table profiles and reuses the `Check`, `MatchRole` and coverage shapes of `find_overlaps`. A table at the same grain is an overlap, and a coarser table cannot produce a finer result; neither is reported as a roll-up source.
+
+Each `Rollup` (one per target column and finer table) has a `derivability`, the finer table's `columns`, the `conditions` that must hold, the `missing` pieces, `checks` (`lineage`, `grain`, `row_scope`), the table's `role` and a `reason`:
+
+- `derivable_exact`: every aggregate decomposes (sum, count, min, max, sums of products, or an average or ratio whose parts are all held) and the finer grain covers every coarser key, directly or through a known many-to-one mapping. A table that holds the raw values and the keys can answer any aggregate.
+- `derivable_with_conditions`: decomposes only with something more. An average needs the sum and the count, a ratio needs both parts (the absent parts are listed in `missing`), or the grain mapping changes over time.
+- `not_derivable`: distinct counts, medians, percentiles and any other aggregate that needs the raw rows. Informational: the table still shows where the raw data lives.
+- `unknown`: the mapping between the two grains is not known, or the finer table's row scope (filters or time window) cannot be lined up with the target's. The missing piece is named, for example the mapping to the coarser key. A table that could not be examined (unknown grain or lineage) is listed with `attribute=None` and counted under `skipped`.
+
+Mappings are found in the pipeline (a model whose grain is one key and that holds the other), from the target's own join, or supplied as `GrainMapping(child, parent, many_to_one=True, changes_over_time=None, complete=None)` using profile meanings (`col:<table>.<column>`). Conditions are listed whenever they are not verified: a mapping that may change over time, finer rows that belong to no coarser group, target filters that must be applied to the finer rows first, rounding that must happen once after combining, and joins in the finer table that could repeat or drop the measure's rows. A different row scope or time window is `unknown`, never silently exact. Like overlaps, the result states how many tables were compared and skipped, and reports never include query text.
+
+```python
+from kumosql import GrainMapping, find_rollups, load_sqlx_project
+
+pipeline = load_sqlx_project("path/to/dataform")
+result = find_rollups(pipeline, "SELECT state_id, SUM(amount) FROM ... GROUP BY state_id")
+print(result.summary)
+for item in result.rollups:
+    print(item.table, item.attribute, item.derivability, item.conditions, item.missing)
+```
+
 ## Comparing pipeline outputs before and after a refactor
 
 `plan_output_comparison(before, after=None, before_location=..., after_location=...)` plans a comparison of every table, view and incremental model's output across two builds of a pipeline, for example production against a development dataset built from the refactored code. It generates BigQuery SQL in three tiers, from cheapest to most detailed:
