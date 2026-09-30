@@ -254,6 +254,8 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .verdict-unchanged .verdict-icon { background: var(--neutral-bg); color: var(--neutral-fg); }
 .verdict-unproven { border-color: var(--warn-border); background: color-mix(in srgb, var(--warn-bg) 45%, var(--surface)); }
 .verdict-unproven .verdict-icon { background: var(--warn-bg); color: var(--warn-fg); }
+.verdict-planner_checked { border-color: var(--warn-border); background: color-mix(in srgb, var(--warn-bg) 45%, var(--surface)); }
+.verdict-planner_checked .verdict-icon { background: var(--warn-bg); color: var(--warn-fg); }
 .verdict-failed { border-color: var(--bad-border); background: color-mix(in srgb, var(--bad-bg) 45%, var(--surface)); }
 .verdict-failed .verdict-icon { background: var(--bad-bg); color: var(--bad-fg); }
 .verdict-working .verdict-icon .icon { animation: pulse 1s ease-in-out infinite; }
@@ -353,6 +355,7 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .tl-step.proven .tl-dot { background: var(--ok); color: #fff; }
 .tl-step.unchanged .tl-dot { background: var(--neutral-bg); color: var(--neutral-fg); }
 .tl-step.unproven .tl-dot { background: var(--warn); color: #fff; }
+.tl-step.planner_checked .tl-dot { background: var(--warn); color: #fff; }
 .tl-step.failed .tl-dot { background: var(--bad); color: #fff; }
 .tl-name { display: block; margin-top: 8px; font-size: 13px; font-weight: 600; }
 .tl-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--text-muted); font-size: 12px; }
@@ -360,6 +363,7 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .pill-proven { color: var(--ok-fg); background: var(--ok-bg); }
 .pill-unchanged { color: var(--neutral-fg); background: var(--neutral-bg); }
 .pill-unproven { color: var(--warn-fg); background: var(--warn-bg); }
+.pill-planner_checked { color: var(--warn-fg); background: var(--warn-bg); }
 .pill-failed { color: var(--bad-fg); background: var(--bad-bg); }
 .detail-list { margin: 16px 0 0; padding: 10px 14px 10px 30px; border: 1px solid var(--warn-border); border-radius: 9px; background: var(--warn-bg); color: var(--warn-fg); font-size: 12.5px; line-height: 1.55; }
 .detail-list:empty { display: none; }

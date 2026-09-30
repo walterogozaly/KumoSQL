@@ -1,9 +1,9 @@
 """Apply registered rewrite rules and check each output for equivalence.
 
 Every changed output is compared with its input by the conservative prover in
-``kumosql.equivalence``. The result is ``proven`` only when every changed
-statement is proven equivalent; anything else is returned but flagged
-``unproven`` with the reason, so callers can decide whether to accept it.
+``kumosql.equivalence``. Each result has one evidence label and separate
+records for the checks that support it. Only ``unchanged`` and ``proven`` are
+trusted for automatic acceptance; a fatal rule failure is labeled ``failed``.
 
 Statements are checked pairwise. For ``CREATE ... AS`` and ``INSERT ...
 SELECT`` the statement text around the query must be unchanged and the
@@ -34,11 +34,25 @@ from . import lift_subqueries as _lift_subqueries  # noqa: F401
 
 
 class VerificationStatus(str, Enum):
-    """How far a rewrite's output has been checked against its input."""
+    """The single evidence label assigned to a rewrite result."""
 
     UNCHANGED = "unchanged"
     PROVEN = "proven"
+    PLANNER_CHECKED = "planner_checked"
     UNPROVEN = "unproven"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class VerificationCheck:
+    """One independently reported check supporting an evidence label."""
+
+    kind: str
+    outcome: str
+    detail: str
+
+    def to_json(self) -> dict[str, str]:
+        return {"kind": self.kind, "outcome": self.outcome, "detail": self.detail}
 
 
 @dataclass(frozen=True)
@@ -46,10 +60,21 @@ class Verification:
     status: VerificationStatus
     reason: str
     details: tuple[str, ...] = ()
+    checks: tuple[VerificationCheck, ...] = ()
 
     @property
     def trusted(self) -> bool:
-        return self.status is not VerificationStatus.UNPROVEN
+        return self.status in (VerificationStatus.UNCHANGED, VerificationStatus.PROVEN)
+
+    def to_json(self) -> dict[str, object]:
+        """Return the same JSON shape for pipeline and per-rule results."""
+
+        return {
+            "status": self.status.value,
+            "reason": self.reason,
+            "details": list(self.details),
+            "checks": [check.to_json() for check in self.checks],
+        }
 
 
 @dataclass(frozen=True)
@@ -164,28 +189,129 @@ def _verify_sqlx(before: str, after: str) -> tuple[bool, list[str]]:
     return not problems, problems
 
 
-def verify_rewrite(before: str, after: str) -> Verification:
-    """Check that ``after`` is a proven-equivalent rewrite of ``before``."""
+def verify_rewrite(
+    before: str,
+    after: str,
+    *,
+    planner_check: VerificationCheck | None = None,
+) -> Verification:
+    """Check a rewrite and return one label with the evidence supporting it.
 
+    A caller may attach a planner check when one has run. Planner evidence is
+    reported separately from the structural proof; it can yield
+    ``planner_checked`` when no proof is available, but that label is not
+    trusted for automatic acceptance.
+    """
+
+    return _verify_rewrite(before, after, planner_check=planner_check)
+
+
+def _verify_rewrite(
+    before: str,
+    after: str,
+    *,
+    planner_check: VerificationCheck | None = None,
+    rewrite_succeeded: bool = True,
+    failure_details: tuple[str, ...] = (),
+) -> Verification:
+    if planner_check is not None and planner_check.kind != "planner":
+        raise ValueError("planner_check must have kind='planner'")
+
+    checks: list[VerificationCheck] = []
     if before == after:
-        return Verification(VerificationStatus.UNCHANGED, "output is identical to input")
+        checks.append(
+            VerificationCheck("change_detection", "passed", "Output is identical to input.")
+        )
+        if planner_check is not None:
+            checks.append(planner_check)
+        if not rewrite_succeeded:
+            details = failure_details or ("The rewrite rule did not complete successfully.",)
+            checks.append(VerificationCheck("rewrite", "failed", "; ".join(details)))
+            return Verification(
+                VerificationStatus.FAILED,
+                "the rewrite rule did not complete successfully",
+                details,
+                tuple(checks),
+            )
+        if planner_check is not None and planner_check.outcome == "failed":
+            return Verification(
+                VerificationStatus.UNPROVEN,
+                "the planner check failed",
+                (planner_check.detail,),
+                tuple(checks),
+            )
+        return Verification(
+            VerificationStatus.UNCHANGED,
+            "output is identical to input",
+            checks=tuple(checks),
+        )
+
     if looks_like_sqlx(before) or looks_like_sqlx(after):
         ok, problems = _verify_sqlx(before, after)
     else:
         ok, problems = _verify_sql(before, after)
-    if ok:
+
+    proof_detail = (
+        "Every changed statement was proven equivalent."
+        if ok
+        else "; ".join(problems) or "The equivalence prover could not establish equivalence."
+    )
+    checks.append(
+        VerificationCheck("equivalence_proof", "passed" if ok else "not_proven", proof_detail)
+    )
+    checks.append(
+        planner_check
+        or VerificationCheck("planner", "not_run", "No planner check was run.")
+    )
+
+    if not rewrite_succeeded:
+        details = failure_details or ("The rewrite rule did not complete successfully.",)
+        checks.append(VerificationCheck("rewrite", "failed", "; ".join(details)))
         return Verification(
-            VerificationStatus.PROVEN, "every changed statement was proven equivalent"
+            VerificationStatus.FAILED,
+            "the rewrite rule did not complete successfully",
+            details,
+            tuple(checks),
+        )
+
+    if ok and (planner_check is None or planner_check.outcome in ("passed", "not_run")):
+        return Verification(
+            VerificationStatus.PROVEN,
+            "every changed statement was proven equivalent",
+            checks=tuple(checks),
+        )
+    if planner_check is not None and planner_check.outcome == "passed":
+        return Verification(
+            VerificationStatus.PLANNER_CHECKED,
+            "the planner check passed, but equivalence could not be proven",
+            tuple(problems),
+            tuple(checks),
+        )
+    if planner_check is not None and planner_check.outcome == "failed":
+        return Verification(
+            VerificationStatus.UNPROVEN,
+            "the planner check failed",
+            (planner_check.detail,),
+            tuple(checks),
         )
     return Verification(
         VerificationStatus.UNPROVEN,
         "equivalence could not be proven for every changed statement",
         tuple(problems),
+        tuple(checks),
     )
 
 
 def _result(rule_name: str, sql: str, output: RuleOutput) -> RewriteResult:
-    verification = verify_rewrite(sql, output.sql)
+    failure_details = tuple(
+        f"{diagnostic.code}: {diagnostic.message}" for diagnostic in output.diagnostics
+    )
+    verification = _verify_rewrite(
+        sql,
+        output.sql,
+        rewrite_succeeded=output.success,
+        failure_details=failure_details,
+    )
     return RewriteResult(
         rule=rule_name,
         input_sql=sql,
@@ -221,15 +347,112 @@ def apply_rules(
         steps.append(step)
         current = step.sql
 
-    if current == sql:
-        verification = Verification(VerificationStatus.UNCHANGED, "output is identical to input")
+    step_checks = tuple(
+        VerificationCheck(
+            check.kind,
+            check.outcome,
+            f"{step.rule}: {check.detail}",
+        )
+        for step in steps
+        for check in step.verification.checks
+    )
+    rule_succeeded = all(step.rule_success for step in steps)
+    failure_details = tuple(
+        f"{step.rule}: {diagnostic.code}: {diagnostic.message}"
+        for step in steps
+        if not step.rule_success
+        for diagnostic in step.diagnostics
+    ) or tuple(
+        f"{step.rule}: {step.verification.reason}"
+        for step in steps
+        if not step.rule_success
+    )
+
+    if not rule_succeeded:
+        base = _verify_rewrite(
+            sql,
+            current,
+            rewrite_succeeded=False,
+            failure_details=failure_details,
+        )
+        verification = Verification(
+            base.status,
+            base.reason,
+            base.details,
+            step_checks + base.checks,
+        )
+    elif current == sql:
+        base = verify_rewrite(sql, current)
+        planner_failure = next(
+            (
+                check
+                for check in step_checks
+                if check.kind == "planner" and check.outcome == "failed"
+            ),
+            None,
+        )
+        if planner_failure is not None:
+            verification = Verification(
+                VerificationStatus.UNPROVEN,
+                "the planner check failed",
+                (planner_failure.detail,),
+                step_checks + base.checks,
+            )
+        else:
+            verification = Verification(
+                base.status,
+                base.reason,
+                base.details,
+                step_checks + base.checks,
+            )
     elif all(step.verification.trusted for step in steps):
         verification = Verification(
-            VerificationStatus.PROVEN, "every step was unchanged or proven equivalent"
+            VerificationStatus.PROVEN,
+            "every step was unchanged or proven equivalent",
+            checks=step_checks,
         )
     else:
         # A chain with an unproven step can still be proven directly.
-        verification = verify_rewrite(sql, current)
+        base = verify_rewrite(sql, current)
+        planner_failure = next(
+            (
+                check
+                for check in step_checks
+                if check.kind == "planner" and check.outcome == "failed"
+            ),
+            None,
+        )
+        if planner_failure is not None:
+            verification = Verification(
+                VerificationStatus.UNPROVEN,
+                "the planner check failed",
+                (planner_failure.detail,),
+                step_checks + base.checks,
+            )
+        elif base.trusted:
+            verification = Verification(
+                base.status,
+                base.reason,
+                base.details,
+                step_checks + base.checks,
+            )
+        elif any(
+            check.kind == "planner" and check.outcome == "passed"
+            for check in step_checks
+        ):
+            verification = Verification(
+                VerificationStatus.PLANNER_CHECKED,
+                "the planner checks passed, but equivalence could not be proven",
+                base.details,
+                step_checks + base.checks,
+            )
+        else:
+            verification = Verification(
+                base.status,
+                base.reason,
+                base.details,
+                step_checks + base.checks,
+            )
     return PipelineResult(sql, current, tuple(steps), verification)
 
 
@@ -237,6 +460,7 @@ __all__ = [
     "PipelineResult",
     "RewriteResult",
     "Verification",
+    "VerificationCheck",
     "VerificationStatus",
     "apply_rule",
     "apply_rules",

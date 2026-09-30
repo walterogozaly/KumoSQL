@@ -543,7 +543,7 @@ function setView(view) {
 /* ---------- Verdict, stats and report ---------- */
 
 const VERDICT_ICONS = {
-  idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", unproven: "#i-alert", failed: "#i-alert",
+  idle: "#i-file", working: "#i-spark", proven: "#i-check", unchanged: "#i-equal", planner_checked: "#i-alert", unproven: "#i-alert", failed: "#i-alert",
 };
 
 function setVerdict(kind, title, detail) {
@@ -601,15 +601,21 @@ function showReport(data) {
     details.append(item);
   };
 
-  for (const detail of data.verification.details) addDetail(null, detail);
+  const addCheck = (rule, check) => {
+    const kind = check.kind.replaceAll("_", " ");
+    const outcome = check.outcome.replaceAll("_", " ");
+    addDetail(rule, `${kind}: ${outcome} — ${stripAnsi(check.detail)}`);
+  };
+
+  for (const check of data.verification.checks) addCheck(null, check);
   data.steps.forEach((step, index) => {
-    const outcome = step.rule_success ? step.verification : "failed";
+    const outcome = step.verification.status;
     const item = document.createElement("li");
     item.className = `tl-step ${outcome}`;
     const dot = document.createElement("span");
     dot.className = "tl-dot";
     if (outcome === "proven") dot.innerHTML = `<svg class="icon"><use href="#i-check"/></svg>`;
-    else if (outcome === "failed" || outcome === "unproven") dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
+    else if (["failed", "unproven", "planner_checked"].includes(outcome)) dot.innerHTML = `<svg class="icon"><use href="#i-alert"/></svg>`;
     else dot.textContent = String(index + 1);
     const name = document.createElement("span");
     name.className = "tl-name";
@@ -618,12 +624,11 @@ function showReport(data) {
     meta.className = "tl-meta";
     const pill = document.createElement("span");
     pill.className = `pill pill-${outcome}`;
-    pill.textContent = outcome;
+    pill.textContent = outcome.replaceAll("_", " ");
     meta.append(plural(step.changes, "change"), pill);
     item.append(dot, name, meta);
     steps.append(item);
     for (const diagnostic of step.diagnostics) addDetail(step.rule, `${diagnostic.code} — ${diagnostic.message}`);
-    for (const detail of step.details) addDetail(step.rule, detail);
   });
 }
 
@@ -734,14 +739,18 @@ async function transform() {
     }
 
     const reason = data.verification.reason;
-    if (data.success && data.verification.status === "unchanged") {
+    const evidence = data.verification.status;
+    if (evidence === "unchanged") {
       setVerdict("unchanged", "No changes needed", "None of the selected rules changed this SQL.");
-    } else if (data.success) {
+    } else if (evidence === "proven") {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
       setVerdict("proven", "Rewrite verified", `${plural(changes, "change")}. ${reason[0].toUpperCase()}${reason.slice(1)}.`);
-    } else if (!data.rule_success) {
-      const broken = data.steps.find((step) => !step.rule_success);
-      const diagnostic = broken?.diagnostics[0]?.message || broken?.details[0] || data.verification.details[0];
+    } else if (evidence === "planner_checked") {
+      setVerdict("planner_checked", "Planner checked", reason);
+    } else if (evidence === "failed") {
+      const broken = data.steps.find((step) => step.verification.status === "failed");
+      const failedCheck = broken?.verification.checks.find((check) => check.outcome === "failed");
+      const diagnostic = broken?.diagnostics[0]?.message || failedCheck?.detail || data.verification.details[0];
       const title = broken ? `${labelFor(broken.rule)} could not run cleanly` : "Transformation failed";
       setVerdict("failed", title, stripAnsi(diagnostic || reason));
     } else {
