@@ -679,8 +679,8 @@ function sourcesPanel(sources) {
     h("ul", { class: "plain-list sources" }, sources.map((source) => h("li", { class: "source-row" },
       h("div", {}, h("strong", { text: source.name }), h("br"), h("span", { class: "muted small", text: source.kind })),
       source.matched !== null ? h("span", { class: "mono small", text: `${Math.round(source.matched * 100)}% matched` }) : null,
-      tag(source.state === "connected" ? "Connected" : source.state === "planned" ? "Planned" : "Error",
-        source.state === "connected" ? "ok" : source.state === "planned" ? "idle" : "bad")))));
+      tag(source.state === "connected" ? "Connected" : source.state === "planned" ? "Planned" : source.state === "not_enabled" ? "Not enabled" : "Error",
+        source.state === "connected" ? "ok" : source.state === "planned" || source.state === "not_enabled" ? "idle" : "bad")))));
 }
 
 start();
