@@ -31,12 +31,39 @@ function queryUrl(endpoint, values) {
   return `/api/catalog/${endpoint}?${params.toString()}`;
 }
 
-async function requestJson(url) {
-  const response = await fetch(url);
+const freshness = {};
+const freshnessLabel = document.getElementById("catalog-freshness");
+
+function ago(seconds) {
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  return `${Math.floor(seconds / 86400)} d ago`;
+}
+
+function renderFreshness() {
+  const levels = Object.values(freshness);
+  if (!levels.length) {
+    freshnessLabel.textContent = "";
+    return;
+  }
+  const oldest = Math.min(...levels.map((level) => level.fetchedAt));
+  const stale = levels.some((level) => level.stale);
+  const cached = levels.some((level) => level.cached);
+  freshnessLabel.textContent = `${stale ? "Offline, showing saved copy from" : cached ? "Saved copy from" : "Loaded"} ${ago(Date.now() / 1000 - oldest)}`;
+  freshnessLabel.classList.toggle("error", stale);
+}
+
+async function requestJson(url, level, refresh = false) {
+  const response = await fetch(refresh ? `${url}&refresh=1` : url);
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "BigQuery request failed");
-  return payload;
+  freshness[level] = payload;
+  renderFreshness();
+  return payload.data;
 }
+
+setInterval(renderFreshness, 30000);
 
 function itemButton(label, icon, detail, selected, onClick) {
   const button = document.createElement("button");
@@ -60,9 +87,10 @@ function itemButton(label, icon, detail, selected, onClick) {
   return button;
 }
 
-async function loadProjects() {
+async function loadProjects(refresh = false) {
   const version = ++projectRequest;
   chosenProject = chosenDataset = chosenTable = "";
+  for (const key of Object.keys(freshness)) delete freshness[key];
   clearPane(projectsPane, "Loading projects…");
   clearPane(datasetsPane, "Choose a project.");
   clearPane(tablesPane, "Choose a dataset.");
@@ -72,7 +100,7 @@ async function loadProjects() {
   document.getElementById("table-count").textContent = "";
   setStatus("Loading projects…");
   try {
-    const projects = await requestJson("/api/catalog/projects");
+    const projects = await requestJson("/api/catalog/projects?", "projects", refresh);
     if (version !== projectRequest) return;
     clearPane(projectsPane);
     for (const project of projects) {
@@ -89,9 +117,10 @@ async function loadProjects() {
   }
 }
 
-async function selectProject(project) {
+async function selectProject(project, refresh = false) {
   chosenProject = project;
   chosenDataset = chosenTable = "";
+  for (const key of ["datasets", "tables", "table"]) delete freshness[key];
   renderProjectsSelection();
   clearPane(datasetsPane, "Loading datasets…");
   clearPane(tablesPane, "Choose a dataset.");
@@ -100,7 +129,7 @@ async function selectProject(project) {
   const version = ++datasetRequest;
   setStatus(`Loading datasets in ${project}…`);
   try {
-    const datasets = await requestJson(queryUrl("datasets", { project }));
+    const datasets = await requestJson(queryUrl("datasets", { project }), "datasets", refresh);
     if (version !== datasetRequest || chosenProject !== project) return;
     clearPane(datasetsPane);
     for (const dataset of datasets) {
@@ -123,9 +152,10 @@ function renderProjectsSelection() {
   }
 }
 
-async function selectDataset(dataset) {
+async function selectDataset(dataset, refresh = false) {
   chosenDataset = dataset;
   chosenTable = "";
+  for (const key of ["tables", "table"]) delete freshness[key];
   for (const button of datasetsPane.querySelectorAll("button")) {
     button.setAttribute("aria-current", button.dataset.value === dataset ? "true" : "false");
   }
@@ -135,7 +165,7 @@ async function selectDataset(dataset) {
   const version = ++tableRequest;
   setStatus(`Loading tables in ${project}.${dataset}…`);
   try {
-    const tables = await requestJson(queryUrl("tables", { project, dataset }));
+    const tables = await requestJson(queryUrl("tables", { project, dataset }), "tables", refresh);
     if (version !== tableRequest || chosenDataset !== dataset) return;
     clearPane(tablesPane);
     for (const table of tables) {
@@ -170,7 +200,7 @@ function addFields(rows, fields, depth = 0) {
   }
 }
 
-async function selectTable(table) {
+async function selectTable(table, refresh = false) {
   chosenTable = table;
   for (const button of tablesPane.querySelectorAll("button")) {
     button.setAttribute("aria-current", button.dataset.value === table ? "true" : "false");
@@ -181,7 +211,7 @@ async function selectTable(table) {
   const version = ++schemaRequest;
   setStatus(`Loading schema for ${project}.${dataset}.${table}…`);
   try {
-    const metadata = await requestJson(queryUrl("table", { project, dataset, table }));
+    const metadata = await requestJson(queryUrl("table", { project, dataset, table }), "table", refresh);
     if (version !== schemaRequest || chosenTable !== table) return;
     clearPane(schemaPane);
     const title = document.createElement("p");
@@ -209,5 +239,22 @@ async function selectTable(table) {
   }
 }
 
-document.getElementById("refresh").addEventListener("click", loadProjects);
+// Refresh re-reads every level currently on screen from BigQuery, keeping the selection.
+async function refreshAll() {
+  const [project, dataset, table] = [chosenProject, chosenDataset, chosenTable];
+  const button = document.getElementById("refresh");
+  button.disabled = true;
+  try {
+    await loadProjects(true);
+    if (!project) return;
+    await selectProject(project, true);
+    if (!dataset) return;
+    await selectDataset(dataset, true);
+    if (table) await selectTable(table, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById("refresh").addEventListener("click", refreshAll);
 loadProjects();

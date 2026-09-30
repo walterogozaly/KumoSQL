@@ -36,3 +36,5 @@
 .catalog-status:empty { display: none; }
 .app-shell > footer { width: fit-content; max-width: calc(100% - 40px); margin: 0 20px 32px; padding: 8px 14px; border-radius: 10px; background: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); color: var(--text-muted); font-size: 12px; }
 @media (min-width: 1480px) { .app-shell > footer { margin-left: calc((100% - 1440px) / 2 + 20px); } }
+.catalog-freshness { margin-left: 6px; color: var(--text-muted); font-size: 12px; }
+.catalog-freshness.error { color: var(--bad-fg); }
