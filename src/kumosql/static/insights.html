@@ -48,6 +48,13 @@
           <ul id="preview-issues"></ul>
         </details>
       </div>
+      <form id="project-form" class="project-form" hidden>
+        <span id="project-source" class="project-source"></span>
+        <input id="project-url" type="url" class="field" placeholder="https://github.com/owner/repository" aria-label="Public Dataform repository URL" required>
+        <button type="submit" class="toolbar-button">Load project</button>
+        <button type="button" id="project-clear" class="toolbar-button" hidden>Use sample data</button>
+        <span id="project-status" class="project-status" role="status"></span>
+      </form>
       <div id="load-error" class="load-error" role="alert" hidden></div>
       <div id="view" class="view"></div>
     </main>

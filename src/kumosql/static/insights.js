@@ -117,6 +117,34 @@ function showPreview(data) {
   }
 }
 
+/* The graph page shows the loaded project, or labeled sample data when none is loaded. */
+function setupProjectForm(data) {
+  const form = $("project-form");
+  form.hidden = false;
+  const live = data.source?.kind === "project";
+  $("project-source").textContent = live ? `Showing ${data.source.label}` : "Showing sample data. Load a public Dataform repository to see your own graph.";
+  $("project-clear").hidden = !live;
+  if (form.dataset.bound) return;
+  form.dataset.bound = "1";
+  const run = async (path, body, busy) => {
+    const status = $("project-status");
+    status.textContent = busy;
+    try {
+      const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not load the project");
+      location.reload();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  };
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    run("/api/github/load", { url: $("project-url").value.trim() }, "Loading project from GitHub…");
+  });
+  $("project-clear").addEventListener("click", () => run("/api/project/clear", {}, "Clearing…"));
+}
+
 async function start() {
   const name = location.pathname.replace(/^\/+|\/+$/g, "") || "graph";
   const view = VIEWS[name] || VIEWS.graph;
@@ -134,6 +162,7 @@ async function start() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not load this view");
     showPreview(data);
+    if (name === "graph") setupProjectForm(data);
     view.render(data, $("view"));
   } catch (error) {
     $("load-error").hidden = false;
@@ -256,9 +285,12 @@ function lineageOf(graph, id, column, seen = new Set()) {
 function renderGraph(data, root) {
   const graph = buildGraph(data);
   const params = new URLSearchParams(location.search);
+  const firstTraced = data.nodes.find((node) => graph.traced.has(node.id)) || data.nodes[0];
+  const initialNode = graph.nodes.has(params.get("node")) ? params.get("node") : graph.nodes.has("staging.stg_orders") ? "staging.stg_orders" : firstTraced?.id;
+  const initialColumns = graph.nodes.get(initialNode)?.columns || [];
   const state = {
-    node: graph.nodes.has(params.get("node")) ? params.get("node") : "staging.stg_orders",
-    column: params.get("column") || "amount_usd",
+    node: initialNode,
+    column: params.get("column") || (initialColumns.includes("amount_usd") ? "amount_usd" : initialColumns[0] || null),
     mode: ["readers", "impact", "lineage"].includes(params.get("mode")) ? params.get("mode") : "readers",
     change: "drop",
   };
@@ -271,8 +303,8 @@ function renderGraph(data, root) {
     h("dl", { class: "coverage-stats" },
       stat("Assets analyzed", `${coverage.assets_analyzed} of ${coverage.assets_total}`),
       stat("Statements matched", percent(coverage.statements_matched, coverage.statements_total)),
-      stat("Sampled impact accuracy", `${Math.round(coverage.sampled_impact_accuracy * 100)}%`, `${coverage.sample_size} sampled reports`),
-      stat("Job history", windowLabel(data.window)),
+      stat("Sampled impact accuracy", coverage.sampled_impact_accuracy == null ? "Not reviewed" : `${Math.round(coverage.sampled_impact_accuracy * 100)}%`, `${coverage.sample_size} sampled reports`),
+      stat("Job history", data.window?.start || data.window?.end ? windowLabel(data.window) : "None"),
       stat("Gaps", String(data.gaps.length))));
 
   const search = h("input", { type: "search", class: "field", placeholder: "Find an asset or asset.column", list: "asset-options", "aria-label": "Find an asset" });
