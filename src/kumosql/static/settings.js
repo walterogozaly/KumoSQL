@@ -34,6 +34,20 @@
   let current = "appearance";
   let saveTimer;
   let formatTimer;
+  // sqlfluff's rule list (from the installed sqlfluff) and the active
+  // configuration's enabled rule codes while the formatting section is shown.
+  let ruleCatalog = null;
+  let enabledRules = null;
+  const CATEGORY_HINTS = {
+    layout: "Spacing, indentation, line breaks and line length.",
+    capitalisation: "Upper or lower case for keywords, names, functions, literals and types.",
+    aliasing: "How tables and columns are aliased.",
+    convention: "One consistent choice where SQL allows several ways to write the same thing.",
+    structure: "Simpler query structure, like dropping redundant CASE branches or unused CTEs.",
+    ambiguous: "SQL whose meaning is unclear, like a bare JOIN or DISTINCT with GROUP BY.",
+    references: "How columns and tables are referenced and quoted.",
+    jinja: "Spacing inside Jinja template tags.",
+  };
 
   const h = (tag, attrs = {}, ...children) => {
     const element = document.createElement(tag);
@@ -155,15 +169,120 @@
       const element = form.querySelector(`[data-field="${field.name}"]`);
       if (field.type === "choice") format[field.name] = element.querySelector('[aria-checked="true"]')?.dataset.value ?? format[field.name];
       else if (field.type === "number") format[field.name] = Number(element.value);
-      else format[field.name] = element.value.split(",").map((item) => item.trim()).filter(Boolean);
+      else if (element) format[field.name] = element.value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+    if (enabledRules) {
+      format.rules = ruleCatalog.map((rule) => rule.code).filter((code) => enabledRules.has(code));
+      format.exclude_rules = [];
     }
     return format;
+  }
+
+  // Saved configurations may name groups ("layout"), rule names or legacy
+  // aliases; turn them into the rule codes they cover.
+  function expandRules(selectors) {
+    const codes = new Set();
+    for (const raw of selectors || []) {
+      const selector = String(raw).trim().toLowerCase();
+      for (const rule of ruleCatalog) {
+        if (rule.code.toLowerCase() === selector || rule.name === selector
+          || rule.aliases.some((alias) => alias.toLowerCase() === selector)
+          || rule.groups.includes(selector)) codes.add(rule.code);
+      }
+    }
+    return codes;
+  }
+
+  function renderRules(form) {
+    const format = active().format || {};
+    const excluded = expandRules(format.exclude_rules);
+    enabledRules = new Set([...expandRules(format.rules)].filter((code) => !excluded.has(code)));
+    const save = () => scheduleFormatSave(form);
+    const categories = [...new Set(ruleCatalog.map((rule) => rule.category))];
+    const search = h("input", { type: "search", class: "sp-input sp-rule-search", placeholder: "Search rules by code, name or description", "aria-label": "Search sqlfluff rules" });
+    const empty = h("p", { class: "sp-rule-empty", text: "No rules match.", hidden: true });
+    const groups = [];
+
+    for (const category of categories) {
+      const rules = ruleCatalog.filter((rule) => rule.category === category);
+      const count = h("span", { class: "sp-rule-count" });
+      const updateCount = () => {
+        const on = rules.filter((rule) => enabledRules.has(rule.code)).length;
+        count.textContent = `${on} of ${rules.length} on`;
+      };
+      const toggles = [];
+      const setAll = (value) => {
+        for (const [rule, input] of toggles) {
+          if (!rule.fixable) continue;
+          input.checked = value;
+          if (value) enabledRules.add(rule.code); else enabledRules.delete(rule.code);
+        }
+        updateCount();
+        save();
+      };
+      const list = h("div", { class: "sp-rule-list" });
+      for (const rule of rules) {
+        const id = `sp-rule-${rule.code}`;
+        const input = h("input", { id, type: "checkbox", checked: enabledRules.has(rule.code), disabled: !rule.fixable });
+        input.addEventListener("change", () => {
+          if (input.checked) enabledRules.add(rule.code); else enabledRules.delete(rule.code);
+          updateCount();
+          save();
+        });
+        toggles.push([rule, input]);
+        list.append(h("div", { class: `sp-rule${rule.fixable ? "" : " is-lint-only"}`, "data-search": `${rule.code} ${rule.name} ${rule.description}`.toLowerCase() },
+          h("label", { class: "sp-rule-text", for: id },
+            h("span", { class: "sp-rule-desc", text: rule.description }),
+            h("span", { class: "sp-rule-meta" },
+              h("code", { text: rule.code }), h("span", { text: rule.name }),
+              rule.fixable ? null : h("span", { class: "sp-rule-tag", text: "Lint only", title: "sqlfluff can report this but not fix it, so it never changes formatted SQL" }))),
+          h("label", { class: "switch sp-switch", title: rule.fixable ? "" : "Lint-only rules can't change formatted SQL" },
+            input, h("span", { class: "switch-track", "aria-hidden": "true" }))));
+      }
+      updateCount();
+      const group = h("section", { class: "sp-rule-group" },
+        h("div", { class: "sp-rule-head" },
+          h("div", {},
+            h("h4", { text: category[0].toUpperCase() + category.slice(1) }),
+            h("p", { class: "sp-row-hint", text: CATEGORY_HINTS[category] || "" })),
+          h("div", { class: "sp-inline" }, count,
+            h("button", { type: "button", class: "link-button", text: "All on", onclick: () => setAll(true) }),
+            h("button", { type: "button", class: "link-button", text: "All off", onclick: () => setAll(false) }))),
+        list);
+      groups.push(group);
+    }
+
+    search.addEventListener("input", () => {
+      const text = search.value.trim().toLowerCase();
+      let shown = 0;
+      for (const group of groups) {
+        let groupShown = 0;
+        for (const rule of group.querySelectorAll(".sp-rule")) {
+          const match = !text || rule.dataset.search.includes(text);
+          rule.hidden = !match;
+          if (match) groupShown += 1;
+        }
+        group.hidden = !groupShown;
+        shown += groupShown;
+      }
+      empty.hidden = shown > 0;
+    });
+
+    const lintOnly = ruleCatalog.filter((rule) => !rule.fixable).length;
+    return h("div", { class: "sp-rules" },
+      h("h3", { class: "sp-subheading", text: "Rules" }),
+      h("p", { class: "sp-lede", text: `The sqlfluff rules the Format SQL rule applies (${ruleCatalog.length} BigQuery rules from sqlfluff). ${lintOnly} are lint only: sqlfluff can report them but not fix them, so they can't change formatted SQL and stay off.` }),
+      search, empty, ...groups);
   }
 
   function scheduleFormatSave(form) {
     clearTimeout(formatTimer);
     setStatus("Saving…");
     formatTimer = setTimeout(async () => {
+      if (enabledRules && !enabledRules.size) {
+        setStatus("Turn on at least one rule", true);
+        return;
+      }
       const profile = active();
       try {
         profile.format = await putJson("/api/settings/format", readFormat(form), "Could not save sqlfluff settings");
@@ -233,6 +352,7 @@
 
     const form = h("form", { class: "sp-group", autocomplete: "off", onsubmit: (event) => event.preventDefault() });
     for (const field of FORMAT_FIELDS) {
+      if (field.type === "list" && ruleCatalog) continue;
       const id = `sp-${field.name}`;
       let control;
       if (field.type === "choice") {
@@ -255,6 +375,7 @@
         row("Active configuration", "The configuration the Format SQL rule uses.", select, "sp-profile"),
         row("Name", "Type a new name, then press Rename.", h("div", { class: "sp-inline" }, name, actions), "sp-profile-name")),
       form,
+      ...(ruleCatalog ? [renderRules(form)] : []),
     );
   }
 
@@ -262,6 +383,7 @@
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
+    enabledRules = null;
     for (const link of dialog.querySelectorAll(".sp-nav button")) {
       link.setAttribute("aria-current", String(link.dataset.section === current));
     }
@@ -277,16 +399,28 @@
     appearance: "appearance theme light dark system colour color mode",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };
+  function keywordsFor(section) {
+    if (section !== "formatting" || !ruleCatalog) return KEYWORDS[section];
+    const rules = ruleCatalog.map((rule) => `${rule.code} ${rule.name} ${rule.description}`).join(" ");
+    return `${KEYWORDS.formatting} ${rules.toLowerCase()}`;
+  }
+
   function filter(query) {
     const text = query.trim().toLowerCase();
     let first = null;
     for (const link of dialog.querySelectorAll(".sp-nav button")) {
-      const match = !text || KEYWORDS[link.dataset.section].includes(text);
+      const match = !text || keywordsFor(link.dataset.section).includes(text);
       link.hidden = !match;
       if (match && !first) first = link.dataset.section;
     }
     for (const item of dialog.querySelectorAll(".sp-row")) {
       item.classList.toggle("is-match", Boolean(text) && item.dataset.search.includes(text));
+    }
+    // A search that only matches sqlfluff rules narrows the rule list as well.
+    const ruleSearch = dialog.querySelector(".sp-rule-search");
+    if (ruleSearch && !KEYWORDS.formatting.includes(text)) {
+      ruleSearch.value = text;
+      ruleSearch.dispatchEvent(new Event("input"));
     }
     return first;
   }
@@ -295,7 +429,7 @@
     const search = h("input", { type: "search", placeholder: "Search", "aria-label": "Search settings" });
     search.addEventListener("input", () => {
       const first = filter(search.value);
-      if (first && !KEYWORDS[current].includes(search.value.trim().toLowerCase())) show(first);
+      if (first && !keywordsFor(current).includes(search.value.trim().toLowerCase())) show(first);
     });
     const nav = h("nav", { class: "sp-nav", "aria-label": "Settings sections" });
     for (const section of SECTIONS) {
@@ -338,6 +472,14 @@
       /* fall back to browser storage and defaults */
     }
     if (provider) ui = { ...ui, ...structuredClone(provider.getUi()) };
+    if (!ruleCatalog) {
+      try {
+        const response = await fetch("/api/sqlfluff/rules");
+        if (response.ok) ruleCatalog = await response.json();
+      } catch {
+        /* keep the free-text rule fields */
+      }
+    }
     const loaded = Array.isArray(ui.sqlfluffProfiles) ? ui.sqlfluffProfiles : [];
     profiles = loaded.filter((item) => item && typeof item.name === "string" && item.format && typeof item.id === "string");
     if (!profiles.length) profiles = [{ id: crypto.randomUUID(), name: "Default", format }];

@@ -149,6 +149,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
             })
             return
+        if self.path == "/api/sqlfluff/rules":
+            from .formatting import sqlfluff_rules
+
+            self._json(200, sqlfluff_rules())
+            return
         if self.path == "/api/rules":
             self._json(200, [
                 {"name": name, "summary": rule.summary}

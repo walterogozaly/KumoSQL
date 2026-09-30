@@ -340,3 +340,15 @@ def test_preview_changes_use_evidence_labels_and_gate_proposals():
         consumers = {item["label"] for item in proposal["consumers"]}
         assert proposal["ready"] == (consumers <= {"proven", "unchanged"})
     assert [proposal["ready"] for proposal in payload["proposals"]] == [False, True]
+
+
+def test_ui_lists_sqlfluff_rules_for_the_settings_panel(ui_server):
+    with urlopen(ui_server + "/api/sqlfluff/rules") as response:
+        rules = json.load(response)
+    by_code = {rule["code"]: rule for rule in rules}
+    assert by_code["LT01"]["category"] == "layout"
+    assert by_code["LT01"]["description"]
+    assert by_code["CP01"]["fixable"] is True
+    assert "capitalisation" in by_code["CP01"]["groups"]
+    # Rules for other dialects are left out; KumoSQL formats BigQuery.
+    assert not any(rule["category"] in ("tsql", "postgres", "oracle") for rule in rules)
