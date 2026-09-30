@@ -81,32 +81,79 @@ def test_missing_credentials_are_a_clear_error(monkeypatch):
         dry_run("SELECT 1", "p", transport=FakeBigQuery({}))
 
 
-def test_check_rewrite_accepts_same_schema_and_reports_bytes_saved():
-    fake = FakeBigQuery({"old": ok(ID_TOTAL, "5000"), "new": ok(ID_TOTAL, "3000")})
+def test_check_rewrite_reports_matching_plans_and_estimated_bytes_delta():
+    fake = FakeBigQuery({"SELECT 1": ok(ID_TOTAL, "5000"), "SELECT 2": ok(ID_TOTAL, "3000")})
 
-    check = check_rewrite("old", "new", "p", token="t", transport=fake)
+    check = check_rewrite("SELECT 1", "SELECT 2", "p", token="t", transport=fake)
 
+    assert check.planned_same_schema
     assert check.ok
-    assert check.bytes_delta == -2000
+    assert check.original_planned
+    assert check.rewritten_planned
+    assert check.schema_matches is True
+    assert check.estimated_bytes_delta == -2000
 
 
 def test_check_rewrite_rejects_failing_rewrite():
-    fake = FakeBigQuery({"old": ok(ID_TOTAL), "new": failure("Syntax error")})
+    fake = FakeBigQuery(
+        {"SELECT 1": ok(ID_TOTAL), "SELECT missing FROM source": failure("Unknown column")}
+    )
 
-    check = check_rewrite("old", "new", "p", token="t", transport=fake)
+    check = check_rewrite(
+        "SELECT 1", "SELECT missing FROM source", "p", token="t", transport=fake
+    )
 
     assert not check.ok
-    assert "rewritten query fails" in check.reason
+    assert "rewritten SQL could not be planned" in check.reason
+    assert check.original_planned
+    assert not check.rewritten_planned
+    assert check.schema_matches is None
 
 
 def test_check_rewrite_rejects_schema_change():
     changed = [{"name": "id", "type": "INTEGER"}, {"name": "total", "type": "NUMERIC"}]
-    fake = FakeBigQuery({"old": ok(ID_TOTAL), "new": ok(changed)})
+    fake = FakeBigQuery({"SELECT 1": ok(ID_TOTAL), "SELECT 2": ok(changed)})
 
-    check = check_rewrite("old", "new", "p", token="t", transport=fake)
+    check = check_rewrite("SELECT 1", "SELECT 2", "p", token="t", transport=fake)
 
     assert not check.ok
+    assert not check.planned_same_schema
+    assert check.schema_matches is False
     assert check.schema_differences == ("total: total FLOAT64 != total NUMERIC",)
+
+
+def test_check_rewrite_distinguishes_original_plan_failure():
+    fake = FakeBigQuery({"SELECT * FROM missing": failure("Unknown source"), "SELECT 2": ok(ID_TOTAL)})
+
+    check = check_rewrite("SELECT * FROM missing", "SELECT 2", "p", token="t", transport=fake)
+
+    assert not check.planned_same_schema
+    assert "original SQL could not be planned" in check.reason
+    assert not check.original_planned
+    assert check.rewritten_planned
+    assert check.schema_matches is None
+
+
+@pytest.mark.parametrize(
+    ("original", "rewritten"),
+    [
+        ("UPDATE source SET value = 1", "UPDATE source SET value = 2"),
+        ("SELECT 1; SELECT 2", "SELECT 1; SELECT 3"),
+        ("CREATE TABLE target AS SELECT 1", "CREATE TABLE target AS SELECT 2"),
+    ],
+)
+def test_check_rewrite_skips_nonselect_and_multistatement_inputs(original, rewritten):
+    fake = FakeBigQuery({})
+
+    check = check_rewrite(original, rewritten, "p", token="t", transport=fake)
+
+    assert check.outcome == "not_run"
+    assert check.planned_same_schema is None
+    assert check.original_planned is None
+    assert check.rewritten_planned is None
+    assert check.schema_matches is None
+    assert "single SELECT statements" in check.reason
+    assert fake.requests == []
 
 
 def test_schema_differences_check_order_mode_and_nested_fields():

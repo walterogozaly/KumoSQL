@@ -621,9 +621,18 @@ function showReport(data) {
   };
 
   const addCheck = (rule, check) => {
-    const kind = check.kind.replaceAll("_", " ");
+    const kind = check.kind === "planner" ? "Planner" : check.kind.replaceAll("_", " ");
     const outcome = check.outcome.replaceAll("_", " ");
-    addDetail(rule, `${kind}: ${outcome} — ${stripAnsi(check.detail)}`);
+    let text = `${kind}: ${outcome} — ${stripAnsi(check.detail)}`;
+    if (check.kind === "planner" && check.evidence) {
+      const differences = check.evidence.schema_differences || [];
+      if (differences.length) text += `; schema differences: ${differences.join("; ")}`;
+      const bytesDelta = check.evidence.estimated_bytes_delta;
+      if (bytesDelta !== null && bytesDelta !== undefined) {
+        text += `; estimated bytes delta: ${bytesDelta} bytes (estimate)`;
+      }
+    }
+    addDetail(rule, text);
   };
   // Chips show every check; failed or unproven ones also explain themselves in the detail list.
   const explain = (rule, checks) => {
