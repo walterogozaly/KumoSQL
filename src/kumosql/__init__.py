@@ -29,6 +29,7 @@ from .formatting import (
     format_sql,
 )
 from .scopes import Scope, get_scope, list_scopes, save_scope
+from .evidence_summary import EvidenceSummary, summarize_evidence
 from .rewrite import (
     PipelineResult,
     RewriteResult,
@@ -104,6 +105,8 @@ from .fingerprint import (
 )
 
 __all__ = [
+    "EvidenceSummary",
+    "summarize_evidence",
     "RepeatedWork",
     "find_repeated_work",
     "repeated_work_report",

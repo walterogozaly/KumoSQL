@@ -81,6 +81,8 @@ if not result.success:
 print(result.sql)
 ```
 
+`summarize_evidence(results)` reports what share of changed outputs has useful evidence, as an anonymized aggregate. A result is changed when its output text differs from its input. Only a static proof counts as useful evidence; planner-only results are reported separately (`planner_only`, plus `planner.passed` and `planner.failed` counts that overlap the label buckets) and never count toward the headline percentage. The label counts `proven`, `planner_checked`, `unproven` and `failed` are disjoint and sum to `changed`. The summary contains counts and percentages only, built from labels and check outcomes, never from SQL, names, paths or free-text reasons. Percentages are `None` when fewer than `min_changed` (default 5) outputs changed. It raises `ValueError` if unchanged text carries a changed label or a changed output lacks an evidence label. `summary.to_json()` gives the serializable form.
+
 Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text.
 
 `inline_single_use_ctes` skips recursive WITH clauses, queries with nested WITH scopes, CTEs with column aliases, references that differ from the CTE name only in case, and references with anything beyond an alias (such as `FOR SYSTEM_TIME`).
