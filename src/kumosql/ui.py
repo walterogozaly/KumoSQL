@@ -298,7 +298,7 @@ class UIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path not in (
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
-            "/api/project", "/api/project/clear",
+            "/api/project/git", "/api/project", "/api/project/clear",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -314,13 +314,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 from .github_repo import connect
 
                 result = connect(payload.get("url"))
-            elif self.path == "/api/github/load":
-                from .github_repo import fetch_project
+            elif self.path in ("/api/github/load", "/api/project/git"):
+                from .git_repo import load_into_graph
 
-                fetched = fetch_project(payload.get("url"))
-                label = f"{fetched['repository']} ({fetched['branch']})"
-                live_graph.load_files(fetched["files"], label)
-                result = {"loaded": True, "label": label, "files": len(fetched["files"])}
+                result = load_into_graph(
+                    payload.get("url"), payload.get("branch"), payload.get("refresh") is True)
             elif self.path == "/api/project":
                 label = payload.get("label")
                 live_graph.load_files(payload.get("files"), label if isinstance(label, str) else "")
@@ -360,11 +358,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Open the local KumoSQL browser UI")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
     parser.add_argument("--project", metavar="DIR", help="Load a Dataform or SQL folder into the query graph page")
+    parser.add_argument("--git", metavar="URL", help="Load a Dataform repository through the local git CLI (private repositories work with your own credentials)")
+    parser.add_argument("--branch", help="With --git: branch to load (default: the remote's default branch)")
+    parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
 
+    if args.git and args.project:
+        parser.error("use either --project or --git, not both")
+    if (args.branch or args.refresh) and not args.git:
+        parser.error("--branch and --refresh need --git")
+    if args.git:
+        from .git_repo import GitRepoError, load_into_graph
+
+        try:
+            print(f"Loaded {load_into_graph(args.git, args.branch, args.refresh)['label']}", flush=True)
+        except GitRepoError as exc:
+            parser.error(str(exc))
     if args.project:
         from .pipeline import load_sqlx_project
 
