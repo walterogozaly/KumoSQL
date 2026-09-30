@@ -1059,10 +1059,6 @@ class _TargetResolver:
         return False
 
 
-def _parse_model(sql: str) -> exp.Expression | None:
-    return _parse_script(sql)[0]
-
-
 def _parse_script(sql: str) -> tuple[exp.Expression | None, int]:
     """The last query of a script, and how many other queries were ignored."""
 
