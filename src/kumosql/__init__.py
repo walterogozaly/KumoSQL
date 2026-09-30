@@ -37,6 +37,7 @@ from .rewrite import (
     VerificationStatus,
     apply_rule,
     apply_rules,
+    attach_planner_check,
     verify_rewrite,
 )
 from .equivalence import (
@@ -143,6 +144,7 @@ __all__ = [
     "VerificationStatus",
     "apply_rule",
     "apply_rules",
+    "attach_planner_check",
     "available_rules",
     "get_rule",
     "register_rule",

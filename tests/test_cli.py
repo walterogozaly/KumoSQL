@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from sqlglot import exp
 
@@ -8,9 +10,32 @@ from kumosql import (
     Verification,
     VerificationCheck,
     VerificationStatus,
+    attach_planner_check,
     engine,
+    verify_rewrite,
 )
-from kumosql.cli import main, rewrite_main
+from kumosql.cli import dry_run_main, main, rewrite_main
+from kumosql.dryrun import check_rewrite
+
+
+class _FakePlanner:
+    def __init__(self, responses):
+        self.responses = responses
+        self.queries = []
+
+    def __call__(self, url, headers, body):
+        query = json.loads(body)["configuration"]["query"]["query"]
+        self.queries.append(query)
+        return self.responses[query]
+
+
+def _planner_result(fields, bytes_processed):
+    return 200, {
+        "statistics": {
+            "totalBytesProcessed": str(bytes_processed),
+            "query": {"schema": {"fields": fields}},
+        }
+    }
 
 
 class _DropWhereRule(RewriteRule):
@@ -183,3 +208,90 @@ def test_rewrite_cli_unproven_override_is_explicit_and_warned(tmp_path, monkeypa
     assert status == 0
     assert "WHERE" not in output_path.read_text(encoding="utf-8")
     assert "warning: output is not proven equivalent" in captured.err
+
+
+def test_rewrite_cli_opt_in_attaches_planner_only_label(tmp_path, monkeypatch, capsys):
+    source = "SELECT 1 AS value"
+    candidate = "SELECT 2 AS value"
+    input_path = tmp_path / "input.sql"
+    output_path = tmp_path / "output.sql"
+    input_path.write_text(source, encoding="utf-8")
+    verification = verify_rewrite(source, candidate)
+    step = RewriteResult("format_sql", source, candidate, 1, (), verification, True)
+    pipeline = PipelineResult(source, candidate, (step,), verification)
+    monkeypatch.setattr("kumosql.cli.apply_rules", lambda names, sql: pipeline)
+    fields = [{"name": "value", "type": "INTEGER"}]
+    fake = _FakePlanner(
+        {source: _planner_result(fields, 1000), candidate: _planner_result(fields, 1200)}
+    )
+
+    def attach_with_fake(result, project, **kwargs):
+        return attach_planner_check(result, project, token="token", transport=fake, **kwargs)
+
+    monkeypatch.setattr("kumosql.cli.attach_planner_check", attach_with_fake)
+    status = rewrite_main(
+        [
+            str(input_path),
+            "--rule",
+            "format_sql",
+            "--output",
+            str(output_path),
+            "--planner-project",
+            "billing",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 3
+    assert output_path.read_text(encoding="utf-8").strip() == candidate
+    assert "verification=planner_checked" in captured.err
+    assert "check planner=passed:" in captured.err
+    assert "estimated bytes delta: 200 bytes (estimate)" in captured.err
+    assert fake.queries == [source, candidate]
+
+
+def test_rewrite_cli_does_not_attach_planner_without_opt_in(tmp_path, monkeypatch, capsys):
+    input_path = tmp_path / "input.sql"
+    input_path.write_text("SELECT 1", encoding="utf-8")
+    monkeypatch.setattr(
+        "kumosql.cli.attach_planner_check",
+        lambda *args, **kwargs: pytest.fail("planner attachment requires explicit opt-in"),
+    )
+
+    status = rewrite_main([str(input_path), "--rule", "remove_trivial_predicates"])
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert captured.out.strip() == "SELECT 1"
+    assert "check planner=" not in captured.err
+
+
+def test_dry_run_cli_uses_planner_wording_and_labels_bytes_as_estimates(
+    tmp_path, monkeypatch, capsys
+):
+    original_path = tmp_path / "original.sql"
+    rewritten_path = tmp_path / "rewritten.sql"
+    original_path.write_text("SELECT 1", encoding="utf-8")
+    rewritten_path.write_text("SELECT 2", encoding="utf-8")
+    fields = [{"name": "value", "type": "INTEGER"}]
+    fake = _FakePlanner(
+        {"SELECT 1": _planner_result(fields, 1000), "SELECT 2": _planner_result(fields, 900)}
+    )
+    monkeypatch.setattr(
+        "kumosql.cli.check_rewrite",
+        lambda before, after, project, location=None: check_rewrite(
+            before, after, project, location=location, token="token", transport=fake
+        ),
+    )
+
+    status = dry_run_main(
+        [str(original_path), "--rewritten", str(rewritten_path), "--project", "billing"]
+    )
+
+    output = capsys.readouterr().out
+    assert status == 0
+    assert "planner_check=passed" in output
+    assert "schema_matches=True" in output
+    assert "results were not compared" in output
+    assert "estimated_bytes_delta=-100 (estimate)" in output
+    assert not any(word in output.lower() for word in ("equivalent", "proven", "verified", "safe"))

@@ -260,13 +260,28 @@ kumosql-compare-outputs drilldown path/to/dataform --after-dataset-suffix _dev -
 
 ## BigQuery dry-run check
 
-`dry_run(sql, project)` asks BigQuery to plan a query without running it. That costs nothing and reads no data, but it checks names and types and returns the output schema and bytes that would be scanned. `check_rewrite(original, rewritten, project)` accepts a rewrite only when both queries plan and their output schemas match exactly (column order, type, mode and nested fields). That is a necessary check, not a proof of equivalence.
+`dry_run(sql, project)` asks BigQuery to plan a query without running it. It checks names and types and returns the output schema and an estimate of bytes processed. `check_rewrite(original, rewritten, project)` reports whether both statements planned and their output schemas match (column order, type, mode, and nested fields). Matching plans and schemas do not show that the statements return the same results. The estimated byte delta is a planning estimate, not a measure of changed results.
+
+Normal `apply_rule`, `apply_rules`, the rewrite CLI, and UI do not make network requests. Call `attach_planner_check` explicitly in Python, or pass `--planner-project` to `rewrite-sql`, to attach an end-to-end planner check. It records whether each side planned, whether schemas match, schema differences, and any estimated byte delta. A planner pass can label an otherwise unproven rewrite `planner_checked`; it does not upgrade an existing proof or make an unproven result trusted. Plan failures and schema mismatches add a failed planner check and leave the result nontrusted. Missing credentials or an unavailable planner are reported as `not_run` and do not fail the rewrite.
+
+```python
+from kumosql import apply_rules, attach_planner_check
+
+result = apply_rules(["remove_trivial_predicates"], sql_text)
+result = attach_planner_check(result, "your-billing-project")
+print(result.verification.to_json())
+```
+
+SQLX is not sent to BigQuery as source text. Supply compiled SQL for both sides with `--planner-compiled-original` and `--planner-compiled-rewritten`; without both, the planner check is reported as not run. Multi-statement scripts and non-SELECT statements are also skipped with an explicit `not_run` check.
 
 Credentials come from `BQ_ACCESS_TOKEN`, a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path), or Google Application Default Credentials. ADC supports `gcloud auth application-default login`; install `pip install '.[bigquery]'` for the Google auth library. BigQuery dry runs need BigQuery Job User plus Data Viewer. Catalog browsing uses the read-only BigQuery scope and requires permission to list projects and read the selected metadata.
 
 ```powershell
 kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
+rewrite-sql input.sql --rule remove_trivial_predicates --planner-project my-project
 ```
+
+The dry-run command reports planning and schema outcomes separately from rewrite evidence. It exits 0 when both statements plan with matching schemas and 2 otherwise. `rewrite-sql` keeps its usual exit behavior: a planner-only result is nontrusted and exits 3 unless `--allow-unproven` is supplied; a fatal rewrite failure remains exit 2 and its output is withheld.
 
 ## CLI
 
