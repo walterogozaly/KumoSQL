@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from dataclasses import dataclass, fields
 from typing import Mapping
 
 VERDICT_KEYS = ("correct", "false_positive", "missed")
@@ -67,6 +68,112 @@ def score_verdicts(verdicts: Mapping[str, Mapping[str, int]] | None) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class Thresholds:
+    """Configurable release minimums. ``None`` leaves a measure ungated.
+
+    Ratios are 0-1. ``min_sample_size`` counts reviewed impact reports.
+    ``require_complete`` fails the gate while any blocking gap exists.
+    """
+
+    min_assets_analyzed: float | None = None
+    min_statements_matched: float | None = None
+    min_columns_traced: float | None = None
+    min_accuracy: float | None = None
+    min_precision: float | None = None
+    min_recall: float | None = None
+    min_sample_size: int | None = None
+    require_complete: bool = False
+
+    def __post_init__(self) -> None:
+        for spec in fields(self):
+            value = getattr(self, spec.name)
+            if spec.name == "require_complete":
+                if not isinstance(value, bool):
+                    raise ValueError("require_complete must be true or false")
+            elif value is None:
+                continue
+            elif isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{spec.name} must be a number")
+            elif spec.name == "min_sample_size":
+                if value < 0 or value != int(value):
+                    raise ValueError("min_sample_size must be a non-negative whole number")
+            elif not 0 <= value <= 1:
+                raise ValueError(f"{spec.name} must be between 0 and 1")
+
+    @classmethod
+    def from_json(cls, data: object) -> "Thresholds":
+        """Validate a JSON object of thresholds; unknown keys raise ``ValueError``."""
+
+        if not isinstance(data, dict):
+            raise ValueError("thresholds must be an object")
+        known = {spec.name for spec in fields(cls)}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            raise ValueError(f"unknown threshold {', '.join(map(repr, unknown))}; known: {', '.join(sorted(known))}")
+        return cls(**data)
+
+    def to_json(self) -> dict:
+        return {spec.name: getattr(self, spec.name) for spec in fields(self)}
+
+
+_GATED = (
+    ("min_assets_analyzed", "assets_analyzed_ratio"),
+    ("min_statements_matched", "statements_matched_ratio"),
+    ("min_columns_traced", "columns_traced_ratio"),
+    ("min_accuracy", "sampled_impact_accuracy"),
+    ("min_precision", "precision"),
+    ("min_recall", "recall"),
+    ("min_sample_size", "sample_size"),
+)
+
+
+def evaluate_gate(coverage: Mapping, thresholds: Thresholds) -> dict:
+    """Pass/fail of a coverage block against ``thresholds``. Pure and anonymous.
+
+    A measure that is gated but not measured (no statements, no reviewer
+    verdicts) fails: an unmeasured release is not a passing one.
+    """
+
+    def actual_of(metric: str):
+        if metric in coverage:
+            return coverage[metric]
+        return (coverage.get("accuracy") or {}).get(metric)
+
+    checks = []
+    for name, metric in _GATED:
+        minimum = getattr(thresholds, name)
+        if minimum is None:
+            continue
+        actual = actual_of(metric)
+        passed = actual is not None and actual >= minimum
+        checks.append({
+            "check": name,
+            "metric": metric,
+            "minimum": minimum,
+            "actual": actual,
+            "passed": passed,
+            **({} if actual is not None else {"reason": "not_measured"}),
+        })
+    if thresholds.require_complete:
+        complete = bool(coverage.get("complete"))
+        checks.append({
+            "check": "require_complete",
+            "metric": "complete",
+            "minimum": True,
+            "actual": complete,
+            "passed": complete,
+        })
+    failed = [c["check"] for c in checks if not c["passed"]]
+    return {
+        "passed": not failed,
+        "failed": failed,
+        "checks": checks,
+        "thresholds": thresholds.to_json(),
+        "scoped": bool(coverage.get("scoped")),
+    }
+
+
 def _impact_sets(graph: Mapping | None) -> dict[str, list[str]]:
     impacted: dict[str, set[str]] = {}
     for edge in (graph or {}).get("edges", ()):
@@ -103,8 +210,14 @@ def build_coverage(
     statements: tuple[int, int] = (0, 0),
     verdicts: Mapping[str, Mapping[str, int]] | None = None,
     window: Mapping[str, str | None] | None = None,
+    thresholds: Thresholds | None = None,
+    scoped: bool = False,
 ) -> dict:
     """Anonymized aggregate coverage of a pipeline report.
+
+    With ``thresholds`` the result carries a ``gate`` block (see
+    :func:`evaluate_gate`); ``scoped`` marks a coverage computed within a saved scope (the scope's name
+    is never included; names can identify people or teams).
 
     Contains only counts and ratios. ``complete`` is false whenever analysis
     is incomplete, so a high percentage is never read as full coverage.
@@ -126,7 +239,7 @@ def build_coverage(
     analyzed = max(assets_total - completeness["assets_not_analyzed"], 0)
     total_statements, matched_statements = statements
     score = score_verdicts(verdicts)
-    return {
+    result = {
         "assets_total": assets_total,
         "assets_analyzed": analyzed,
         "assets_analyzed_ratio": _ratio(analyzed, assets_total),
@@ -151,3 +264,6 @@ def build_coverage(
             "end": (window or {}).get("end") or (max(seen) if seen else None),
         },
     }
+    result["scoped"] = scoped
+    result["gate"] = evaluate_gate(result, thresholds) if thresholds else None
+    return result
