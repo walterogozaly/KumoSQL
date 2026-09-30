@@ -39,6 +39,7 @@ from .rewrite import (
     apply_rule,
     apply_rules,
     attach_planner_check,
+    canonical_rule_order,
     verify_rewrite,
 )
 from .equivalence import (
@@ -156,6 +157,7 @@ __all__ = [
     "apply_rules",
     "attach_planner_check",
     "available_rules",
+    "canonical_rule_order",
     "get_rule",
     "register_rule",
     "verify_rewrite",
