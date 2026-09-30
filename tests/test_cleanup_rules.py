@@ -131,6 +131,29 @@ def test_delete_keeps_required_where_clause_when_it_is_trivial():
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "UPDATE target_table SET value = 2 WHERE TRUE",
+        "UPDATE target_table SET value = 2 WHERE TRUE AND active",
+        "DELETE FROM target_table WHERE TRUE",
+        "DELETE FROM target_table WHERE active AND TRUE",
+        "MERGE INTO target_table AS target USING source_table AS source "
+        "ON target.id = source.id AND TRUE "
+        "WHEN MATCHED AND source.active AND TRUE "
+        "THEN UPDATE SET value = source.value",
+    ],
+)
+def test_dml_predicates_are_left_unchanged_when_they_cannot_be_proven(source):
+    result = apply_rule("remove_trivial_predicates", source)
+
+    assert result.sql == source
+    assert result.changes == 0
+    assert result.verification.status is UNCHANGED
+    assert result.success
+    assert sqlglot.parse_one(result.sql, read="bigquery") is not None
+
+
+@pytest.mark.parametrize(
     "source, comments",
     [
         (
