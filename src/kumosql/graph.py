@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Iterable, Literal, Mapping
 from sqlglot import exp
 
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
+from .scopes import job_record
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -66,7 +67,15 @@ class ObservedRead:
         )
 
     def scope_record(self) -> dict[str, object]:
-        return dict(self.attributes)
+        """Fields a scope rule can use: the source's attributes plus the job's own fields."""
+
+        return {
+            **self.attributes,
+            "job_id": self.job_id,
+            "creation_time": self.creation_time,
+            "destination": self.destination,
+            "referenced_tables": list(self.referenced_tables),
+        }
 
 
 @dataclass(frozen=True)
@@ -361,6 +370,14 @@ def build_query_graph(
     unattributed_samples: list[dict[str, object]] = []
     filtered_count = 0
     invalid_timestamp_count = 0
+
+    if scope is not None:
+        observed_reads = list(observed_reads)
+        seen_fields: set[str] = set()
+        for raw_record in observed_reads:
+            seen_fields.update(job_record(raw_record))
+        if seen_fields:
+            scope.require_fields(seen_fields, "job-history records")
 
     for row_index, raw_record in enumerate(observed_reads):
         if isinstance(raw_record, ObservedRead):
