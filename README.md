@@ -422,6 +422,10 @@ These pieces build on the pipeline graph. They report evidence and never claim m
 - **Failures stay local** (`resilience.py`): an asset that cannot be read or parsed becomes an entry in `diagnostics` and the rest of the report is still produced. Diagnostics carry no file contents.
 - **Refactoring proposals** (`shared_logic.py`, `filter_pushdown.py`, `proposal_readiness.py`): `propose_shared_logic` and `find_upstream_filter_proposals` suggest extracting shared logic or pushing a filter upstream, listing every affected consumer and refusing when the consumer set is incomplete. Neither applies changes. `assess_proposal` marks a proposal `ready` only when every consumer is `proven` or `unchanged`; a missing result is `unknown`.
 
+## BigQuery test bed
+
+`examples/bq_testbed/` builds a deliberately messy, low-cost model layer over a public dataset and runs a query workload to build up job history. See [docs/bigquery-testbed.md](docs/bigquery-testbed.md) for setup, cost guards and access roles.
+
 ## CLI
 
 Every command prints `--help`.
