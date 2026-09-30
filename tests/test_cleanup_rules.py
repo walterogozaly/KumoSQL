@@ -292,7 +292,7 @@ SELECT y FROM c"""
     result = apply_rule("remove_unused_ctes", source)
 
     assert result.changes == 2
-    assert _body(result.sql) == "WITH c AS ( SELECT 2 AS y ) SELECT y FROM c"
+    assert _body(result.sql) == "WITH c AS (SELECT 2 AS y) SELECT y FROM c"
     assert result.verification.status is PROVEN
 
 
