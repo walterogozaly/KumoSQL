@@ -15,13 +15,15 @@ identified by its text.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Iterable, Mapping
+from urllib.error import URLError
 
 from sqlglot import exp
 
 from .ast_utils import parse_statements, top_level_query
+from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
@@ -51,9 +53,20 @@ class VerificationCheck:
     kind: str
     outcome: str
     detail: str
+    evidence: tuple[tuple[str, object], ...] = ()
 
-    def to_json(self) -> dict[str, str]:
-        return {"kind": self.kind, "outcome": self.outcome, "detail": self.detail}
+    def to_json(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "kind": self.kind,
+            "outcome": self.outcome,
+            "detail": self.detail,
+        }
+        if self.evidence:
+            result["evidence"] = {
+                key: list(value) if isinstance(value, tuple) else value
+                for key, value in self.evidence
+            }
+        return result
 
 
 @dataclass(frozen=True)
@@ -353,6 +366,16 @@ def apply_rules(
             check.kind,
             check.outcome,
             f"{step.rule}: {check.detail}",
+            (
+                tuple(
+                    (key, value)
+                    for key, value in check.evidence
+                    if key not in ("scope", "rule")
+                )
+                + (("scope", "step"), ("rule", step.rule))
+                if check.kind == "planner"
+                else check.evidence
+            ),
         )
         for step in steps
         for check in step.verification.checks
@@ -447,6 +470,185 @@ def apply_rules(
     return PipelineResult(sql, current, tuple(steps), verification)
 
 
+def _planner_check_evidence(
+    *,
+    original_planned: bool | None = None,
+    rewritten_planned: bool | None = None,
+    schema_matches: bool | None = None,
+    schema_differences: tuple[str, ...] = (),
+    estimated_bytes_delta: int | None = None,
+    compiled_sql_used: bool = False,
+    scope: str = "end_to_end",
+) -> tuple[tuple[str, object], ...]:
+    return (
+        ("scope", scope),
+        ("original_planned", original_planned),
+        ("rewritten_planned", rewritten_planned),
+        ("schema_matches", schema_matches),
+        ("schema_differences", schema_differences),
+        ("estimated_bytes_delta", estimated_bytes_delta),
+        ("results_compared", False),
+        ("compiled_sql_used", compiled_sql_used),
+    )
+
+
+def _replace_end_to_end_planner_check(
+    verification: Verification, planner_check: VerificationCheck
+) -> Verification:
+    checks = tuple(
+        check
+        for check in verification.checks
+        if not (
+            check.kind == "planner"
+            and (
+                (check.outcome == "not_run" and check.detail == "No planner check was run.")
+                or dict(check.evidence).get("scope") == "end_to_end"
+            )
+        )
+    ) + (planner_check,)
+
+    if verification.status is VerificationStatus.FAILED:
+        return replace(verification, checks=checks)
+    if planner_check.outcome == "failed":
+        return Verification(
+            VerificationStatus.UNPROVEN,
+            "the planner check failed; query result equality was not established",
+            (planner_check.detail,),
+            checks,
+        )
+    if (
+        planner_check.outcome == "passed"
+        and verification.status is VerificationStatus.UNPROVEN
+    ):
+        return Verification(
+            VerificationStatus.PLANNER_CHECKED,
+            "both queries planned with matching schemas; query result equality was not established",
+            verification.details,
+            checks,
+        )
+    return replace(verification, checks=checks)
+
+
+def attach_planner_check(
+    result: RewriteResult | PipelineResult,
+    project: str,
+    *,
+    location: str | None = None,
+    token: str | None = None,
+    transport: Transport | None = None,
+    compiled_original_sql: str | None = None,
+    compiled_rewritten_sql: str | None = None,
+) -> RewriteResult | PipelineResult:
+    """Opt in to planner evidence for a changed result.
+
+    Planner checks compare whether both queries plan and whether their output
+    schemas match. They do not compare rows and never establish equivalence.
+    This function is the only rewrite-result entry point that invokes the
+    BigQuery dry-run transport; ordinary rewriting remains offline.
+
+    SQLX sources need both compiled SQL strings. Only a single SELECT query
+    on each side is planned; multi-statement scripts and DML/DDL are reported
+    as not planned.
+    """
+
+    if not project:
+        raise ValueError("project is required to run a planner check")
+
+    before = result.input_sql
+    after = result.sql
+    verification = result.verification
+    rule_failed = verification.status is VerificationStatus.FAILED or (
+        isinstance(result, RewriteResult) and not result.rule_success
+    ) or (
+        isinstance(result, PipelineResult)
+        and any(not step.rule_success for step in result.steps)
+    )
+
+    def not_run(detail: str, *, compiled: bool = False) -> RewriteResult | PipelineResult:
+        check = VerificationCheck(
+            "planner",
+            "not_run",
+            detail,
+            _planner_check_evidence(compiled_sql_used=compiled),
+        )
+        return replace(
+            result,
+            verification=_replace_end_to_end_planner_check(verification, check),
+        )
+
+    if rule_failed:
+        return not_run("Planner check was skipped because the rewrite failed.")
+    if before == after:
+        return not_run("Planner check was skipped because the output did not change.")
+
+    compiled_supplied = compiled_original_sql is not None or compiled_rewritten_sql is not None
+    is_sqlx = looks_like_sqlx(before) or looks_like_sqlx(after)
+    if compiled_supplied and not is_sqlx:
+        return not_run(
+            "Planner check was skipped; compiled SQL overrides are only accepted for SQLX."
+        )
+    if compiled_supplied and (
+        compiled_original_sql is None or compiled_rewritten_sql is None
+    ):
+        return not_run(
+            "Planner check was skipped; provide both compiled SQL inputs for SQLX.",
+        )
+    if is_sqlx and not compiled_supplied:
+        return not_run(
+            "Planner check was skipped because SQLX must be compiled first; provide both compiled SQL inputs."
+        )
+
+    planner_before = compiled_original_sql if compiled_supplied else before
+    planner_after = compiled_rewritten_sql if compiled_supplied else after
+    assert planner_before is not None and planner_after is not None
+    if looks_like_sqlx(planner_before) or looks_like_sqlx(planner_after):
+        return not_run(
+            "Planner check was skipped because the supplied SQLX inputs are not compiled SQL.",
+            compiled=compiled_supplied,
+        )
+
+    try:
+        check = check_rewrite(
+            planner_before,
+            planner_after,
+            project,
+            location=location,
+            token=token,
+            transport=transport,
+        )
+    except (RuntimeError, OSError, URLError) as exc:
+        not_run_check = VerificationCheck(
+            "planner",
+            "not_run",
+            f"Planner check was not run: {exc}",
+            _planner_check_evidence(compiled_sql_used=compiled_supplied),
+        )
+        return replace(
+            result,
+            verification=_replace_end_to_end_planner_check(verification, not_run_check),
+        )
+
+    outcome = check.outcome
+    detail = f"{check.reason}; query result equality was not checked"
+    planner_record = VerificationCheck(
+        "planner",
+        outcome,
+        detail,
+        _planner_check_evidence(
+            original_planned=check.original_planned,
+            rewritten_planned=check.rewritten_planned,
+            schema_matches=check.schema_matches,
+            schema_differences=check.schema_differences,
+            estimated_bytes_delta=check.estimated_bytes_delta,
+            compiled_sql_used=compiled_supplied,
+        ),
+    )
+    return replace(
+        result,
+        verification=_replace_end_to_end_planner_check(verification, planner_record),
+    )
+
+
 __all__ = [
     "PipelineResult",
     "RewriteResult",
@@ -455,6 +657,7 @@ __all__ = [
     "VerificationStatus",
     "apply_rule",
     "apply_rules",
+    "attach_planner_check",
     "available_rules",
     "verify_rewrite",
 ]

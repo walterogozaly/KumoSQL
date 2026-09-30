@@ -162,7 +162,18 @@ def test_ui_serializes_planner_checked_and_its_supporting_checks(ui_server, monk
         "the planner check passed, but equivalence could not be proven",
         checks=(
             VerificationCheck("equivalence_proof", "not_proven", "No proof was found."),
-            VerificationCheck("planner", "passed", "The planner accepted the candidate."),
+            VerificationCheck(
+                "planner",
+                "passed",
+                "Both queries planned and schemas match; results were not compared.",
+                (
+                    ("scope", "end_to_end"),
+                    ("schema_matches", True),
+                    ("schema_differences", ()),
+                    ("estimated_bytes_delta", 120),
+                    ("results_compared", False),
+                ),
+            ),
         ),
     )
     step = RewriteResult(
@@ -182,7 +193,14 @@ def test_ui_serializes_planner_checked_and_its_supporting_checks(ui_server, monk
         {
             "kind": "planner",
             "outcome": "passed",
-            "detail": "The planner accepted the candidate.",
+            "detail": "Both queries planned and schemas match; results were not compared.",
+            "evidence": {
+                "scope": "end_to_end",
+                "schema_matches": True,
+                "schema_differences": [],
+                "estimated_bytes_delta": 120,
+                "results_compared": False,
+            },
         },
     ]
     assert result["steps"][0]["verification"]["checks"] == result["verification"]["checks"]
