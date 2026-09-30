@@ -204,6 +204,18 @@ function renderFormatLink() {
   $("format-profile-name").textContent = active ? active.name : "Default";
 }
 
+// The settings panel saves theme and sqlfluff changes; pick them up here.
+KumoSettings.register({
+  getUi: currentPrefs,
+  onChange(ui) {
+    const before = JSON.stringify(profile()?.format);
+    initSqlfluffProfiles(ui);
+    renderFormatLink();
+    applyTheme(ui.theme);
+    if (JSON.stringify(state.format) !== before && selectedRules().includes("format_sql")) inputsChanged();
+  },
+});
+
 /* ---------- Small helpers ---------- */
 
 function labelFor(name) {

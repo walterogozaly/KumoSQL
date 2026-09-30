@@ -8,6 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/style.css">
   <script defer src="/assets/evidence.js"></script>
+  <script defer src="/assets/settings.js"></script>
   <script defer src="/assets/app.js"></script>
 </head>
 <body>
@@ -48,7 +49,7 @@
         <button id="theme-button" class="icon-button" type="button" aria-label="Theme: match system" title="Theme: match system">
           <svg class="icon"><use id="theme-icon" href="#i-monitor"/></svg>
         </button>
-        <a id="settings-button" class="toolbar-button" href="/settings"><span>Settings</span></a>
+        <button id="settings-button" class="toolbar-button" type="button" data-open-settings title="Settings (Ctrl+,)"><span>Settings</span></button>
         <span class="local-badge" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
       </div>
     </header>
@@ -68,7 +69,7 @@
           </div>
           <ol id="rules" class="rule-list" aria-label="Transformations"></ol>
 
-          <p class="format-link"><span>SQL formatting:</span> <a id="format-profile-link" href="/settings#formatting" title="Change sqlfluff formatting in Settings"><span id="format-profile-name">Default</span></a></p>
+          <p class="format-link"><span>SQL formatting:</span> <button id="format-profile-link" class="link-button" type="button" data-open-settings="formatting" title="Change sqlfluff formatting in Settings"><span id="format-profile-name">Default</span></button></p>
 
           <details class="settings-group" id="scope-settings">
             <summary>Scopes <span id="scope-count" class="count-label"></span></summary>
