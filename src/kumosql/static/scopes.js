@@ -109,7 +109,7 @@
       if (NO_VALUE_OPS.has(node.op)) return { field, op: node.op };
       const text = String(node.value).trim();
       if (!text) throw new Error(`Add a value for “${field}”`);
-      return { field, op: node.op, value: LIST_OPS.has(node.op) ? text.split(",").map((v) => v.trim()).filter(Boolean) : text };
+      return { field, op: node.op, value: LIST_OPS.has(node.op) ? text.split(/[,;\n\r]+/).map((v) => v.trim()).filter(Boolean) : text };
     }
     if (!node.children.length) throw new Error("A group needs at least one condition");
     const rules = node.children.map(treeToRule);
@@ -177,11 +177,16 @@
       const op = h("select", { "aria-label": "Operator" });
       for (const item of operators()) op.append(new Option(item.label, item.op, false, item.op === node.op));
       const value = h("input", { type: "text", "aria-label": "Value", value: node.value });
+      // A list takes a pasted block: commas, semicolons or one value per line.
+      const listValue = h("textarea", { rows: "3", "aria-label": "Values", spellcheck: "false", placeholder: "Paste values: one per line, or separated by commas" });
+      listValue.value = node.value;
       const syncValue = () => {
-        value.hidden = NO_VALUE_OPS.has(node.op);
-        value.placeholder = LIST_OPS.has(node.op) ? "a, b, c" : "value";
+        value.hidden = NO_VALUE_OPS.has(node.op) || LIST_OPS.has(node.op);
+        listValue.hidden = !LIST_OPS.has(node.op);
+        value.placeholder = "value";
       };
-      value.addEventListener("input", () => { node.value = value.value; showPreview(); });
+      value.addEventListener("input", () => { node.value = value.value; listValue.value = value.value; showPreview(); });
+      listValue.addEventListener("input", () => { node.value = listValue.value; value.value = listValue.value; showPreview(); });
       op.addEventListener("change", () => { node.op = op.value; syncValue(); showPreview(); });
       syncValue();
       const remove = linkButton("×", "remove-node");
@@ -189,7 +194,7 @@
       remove.title = "Remove condition";
       remove.setAttribute("aria-label", "Remove condition");
       remove.addEventListener("click", () => { parent.children.splice(parent.children.indexOf(node), 1); redraw(); });
-      return h("div", { class: "rule-condition" }, field, op, value, remove);
+      return h("div", { class: "rule-condition" }, field, op, value, listValue, remove);
     };
 
     const renderGroup = (node, parent) => {

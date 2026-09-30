@@ -287,3 +287,23 @@ def test_cli_report_with_rule_scope_and_unknown_field(tmp_path, capsys):
     with pytest.raises(SystemExit):
         pipeline_main([str(root), "--scope", "Typo"])
     assert "did you mean 'dataset'" in capsys.readouterr().err
+
+
+def test_team_rule_on_information_schema_jobs_user_email():
+    team = "ana@co.com\r\nBo@co.com; cy@co.com , dee@co.com\n\n"
+    scope = rule_scope(cond("user_email", "in", team))
+    assert scope.rule["value"] == ["ana@co.com", "Bo@co.com", "cy@co.com", "dee@co.com"]
+    row = {"job_id": "bquxjob_1", "user_email": "BO@co.com", "project_id": "p", "job_type": "QUERY",
+           "destination_table": {"project_id": "p", "dataset_id": "d", "table_id": "t"},
+           "referenced_tables": [{"project_id": "p", "dataset_id": "raw", "table_id": "t"}]}
+    assert scope.matches(row)
+    assert not scope.matches({**row, "user_email": "zed@co.com"})
+    # the same rule composes with other conditions, e.g. only query jobs
+    both = rule_scope({"all": [cond("user_email", "in", ["bo@co.com"]), cond("job_type", "eq", "query")]})
+    assert both.matches(row)
+
+
+def test_jobs_view_columns_are_suggested_before_any_job_history_is_loaded():
+    found = {f.name: f for f in discover_fields()}
+    assert found["user_email"].source == "job"
+    assert found["total_bytes_billed"].kind == "number"
