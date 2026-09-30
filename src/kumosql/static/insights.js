@@ -241,27 +241,31 @@ function readersOf(graph, id) {
   return [...seen.values()];
 }
 
-/** Consumers affected by a change to one column (#26). */
-function impactOf(graph, id, column, change) {
-  const affected = new Map();
-  const walk = (node, col, hops, via) => {
-    for (const item of graph.consumers.get(`${node}.${col}`) || []) {
-      const key = `${item.node}.${item.column}`;
-      if (affected.has(key)) continue;
-      let effect = "Results may change";
-      if (change !== "expression") effect = hops === 0 ? "Breaks" : "Breaks upstream";
-      affected.set(key, { node: item.node, column: item.column, hops: hops + 1, effect, via, transform: item.transform });
-      walk(item.node, item.column, hops + 1, `${item.node}.${item.column}`);
-    }
-  };
-  walk(id, column, 0, null);
-  const affectedNodes = new Set([...affected.values()].map((item) => item.node));
-  // Readers whose column use could not be traced are unknown, never "safe".
-  const unknown = readersOf(graph, id)
-    .filter((reader) => !affectedNodes.has(reader.id) && (!graph.traced.has(reader.id) || graph.gaps.has(reader.id)))
-    .map((reader) => ({ node: reader.id, reason: graph.gaps.get(reader.id)?.message || "Column use could not be traced" }));
-  const unaffected = readersOf(graph, id).filter((reader) => !affectedNodes.has(reader.id) && !unknown.some((u) => u.node === reader.id));
-  return { affected: [...affected.values()], unknown, unaffected };
+/* Change impact (#26) is computed by the server (/api/impact): the same
+   Pipeline.assess_change result the CLI returns, with readers seen only in job
+   history. The page only fetches it, caches it per request and draws it. */
+const IMPACT_EFFECTS = {
+  breaks: ["Breaks", "bad", "The model reads this column and stops working"],
+  indirect: ["Breaks upstream", "bad", "Reads a model that breaks"],
+  values_change: ["Results may change", "info", "An output column is computed from the changed expression"],
+  behavior_may_change: ["Rows may change", "info", "Uses the column only in a filter, join or grouping"],
+  may_break: ["May break", "warn", "Job history shows the read; which columns it uses is not known"],
+  may_change: ["May change", "warn", "Job history shows the read; which columns it uses is not known"],
+};
+const UNKNOWN_REASONS = {
+  parse_error: "Could not be parsed", qualify_error: "Could not be resolved", no_query: "Has no query",
+  unexpanded_star: "SELECT * over an unknown schema", unparsed_operation: "Operation, not analyzed",
+  unparsed_model: "Could not be analyzed", unknown_reads: "Reads tables that could not be determined",
+  downstream_of_unknown_reader: "Downstream of a reader that could not be read",
+  column_use_not_traced: "Column use could not be traced",
+};
+
+async function fetchImpact(node, column, change) {
+  const query = new URLSearchParams({ node, column, change });
+  const response = await fetch(`/api/impact?${query}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not assess this change");
+  return data;
 }
 
 /** Trace a column back to its sources (#27). */
@@ -363,13 +367,27 @@ function renderGraph(data, root) {
     update();
   }
 
+  const impactCache = new Map();
+  /** The server's impact result for the current selection, or null while it loads or failed. */
+  function impactFor() {
+    if (state.mode !== "impact" || !state.column) return null;
+    const key = JSON.stringify([state.node, state.column, state.change]);
+    const cached = impactCache.get(key);
+    if (cached) return cached.result || null;
+    impactCache.set(key, { pending: true });
+    fetchImpact(state.node, state.column, state.change)
+      .then((result) => impactCache.set(key, { result }))
+      .catch((error) => impactCache.set(key, { error: error.message }))
+      .finally(update);
+    return null;
+  }
+
   function highlightSet() {
     const set = new Set([state.node]);
     if (state.mode === "readers") for (const reader of readersOf(graph, state.node)) set.add(reader.id);
     if (state.mode === "impact" && state.column) {
-      const impact = impactOf(graph, state.node, state.column, state.change);
-      for (const item of impact.affected) set.add(item.node);
-      for (const item of impact.unknown) set.add(item.node);
+      const impact = impactFor();
+      for (const item of [...(impact?.affected || []), ...(impact?.unknown || []), ...(impact?.observed || [])]) set.add(item.model);
     }
     if (state.mode === "lineage" && state.column) {
       const collect = (tree) => { set.add(tree.node); tree.sources.forEach(collect); };
@@ -470,21 +488,41 @@ function renderGraph(data, root) {
       const change = h("select", { class: "field", "aria-label": "Change type", onchange: (event) => { state.change = event.target.value; update(); } },
         [["drop", "Drop column"], ["rename", "Rename column"], ["expression", "Change expression"]].map(([value, label]) =>
           h("option", { value, selected: value === state.change }, label)));
-      const impact = state.column ? impactOf(graph, node.id, state.column, state.change) : { affected: [], unknown: [], unaffected: [] };
-      body = h("div", {},
-        h("div", { class: "field-row" }, columnPicker(node), h("label", { class: "field-label" }, "Change", change)),
-        h("h3", { text: `Affected (${impact.affected.length})` }),
-        impact.affected.length ? h("ul", { class: "plain-list" }, impact.affected.map((item) =>
-          h("li", { class: "reader" }, nodeLink(item.node, item.column),
-            h("span", { class: "edge-meta" }, tag(item.effect, item.effect === "Results may change" ? "info" : "bad"),
-              h("span", { class: "muted small", text: item.transform })))))
-          : h("p", { class: "muted small", text: "No traced consumer uses this column." }),
-        impact.unknown.length ? h("h3", { text: `Unknown (${impact.unknown.length})` }) : null,
-        impact.unknown.length ? h("ul", { class: "plain-list" }, impact.unknown.map((item) =>
-          h("li", { class: "reader" }, nodeLink(item.node), h("span", { class: "edge-meta" }, E.pill("unknown"), h("span", { class: "muted small", text: item.reason })))))
-          : null,
-        h("p", { class: "muted small", text: `${impact.unaffected.length} other readers do not use this column.` }),
-        h("p", { class: "callout", text: "“Safe to delete” is not offered until graph coverage is complete." }));
+      const impact = impactFor();
+      const entry = state.column ? impactCache.get(JSON.stringify([node.id, state.column, state.change])) : null;
+      const effectTag = (effect) => {
+        const [text, tone, title] = IMPACT_EFFECTS[effect] || [effect, "idle", ""];
+        return tag(text, tone, title);
+      };
+      const heading = h("div", { class: "field-row" }, columnPicker(node), h("label", { class: "field-label" }, "Change", change));
+      if (!impact) {
+        body = h("div", {}, heading,
+          h("p", { class: "muted small", text: entry?.error || (state.column ? "Assessing the change…" : "Pick a column to assess.") }));
+      } else {
+        const depthNote = (item) => (item.depth > 1 ? `${item.depth} hops` : "direct");
+        body = h("div", {}, heading,
+          h("h3", { text: `Affected (${impact.affected.length})` }),
+          impact.affected.length ? h("ul", { class: "plain-list" }, impact.affected.map((item) =>
+            h("li", { class: "reader" }, nodeLink(item.model),
+              h("span", { class: "edge-meta" }, effectTag(item.effect),
+                h("span", { class: "muted small", text: depthNote(item) }),
+                item.columns?.length ? h("span", { class: "muted small", text: `uses ${item.columns.join(", ")}` }) : null))))
+            : h("p", { class: "muted small", text: "No declared model uses this column." }),
+          impact.unknown.length ? h("h3", { text: `Unknown (${impact.unknown.length})` }) : null,
+          impact.unknown.length ? h("ul", { class: "plain-list" }, impact.unknown.map((item) =>
+            h("li", { class: "reader" }, nodeLink(item.model), h("span", { class: "edge-meta" }, E.pill("unknown"),
+              h("span", { class: "muted small", text: UNKNOWN_REASONS[item.reason] || item.reason }))))) : null,
+          impact.observed.length ? h("h3", { text: `Seen in job history (${impact.observed.length})` }) : null,
+          impact.observed.length ? h("ul", { class: "plain-list" }, impact.observed.map((item) =>
+            h("li", { class: "reader" }, nodeLink(item.model),
+              h("span", { class: "edge-meta" }, tag("Observed", "info", EDGE_SOURCES.observed[1]), effectTag(item.effect),
+                tag(`${item.confidence} confidence`, CONFIDENCE_TONE[item.confidence] || "idle"),
+                h("span", { class: "muted small", text: item.last_seen ? `last seen ${shortDate(item.last_seen)}` : "not seen in window" }),
+                h("span", { class: "muted small", text: `${depthNote(item)} via ${item.via}` }))))) : null,
+          impact.observed.length ? h("p", { class: "muted small", text: "Job history names tables, not columns, so these readers are listed as possibly affected." }) : null,
+          impact.complete ? null : h("p", { class: "callout", text: "This result may miss readers: " + impact.incomplete_reasons.join(", ").replaceAll("_", " ") + "." }),
+          h("p", { class: "callout", text: "“Safe to delete” is not offered until graph coverage is complete." }));
+      }
     } else {
       const tree = state.column ? lineageOf(graph, node.id, state.column) : null;
       const renderTree = (item) => h("li", {},

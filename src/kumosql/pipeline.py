@@ -592,19 +592,26 @@ class Pipeline:
         }
 
     def assess_change(
-        self, kind: str, target: str, column: str | None = None, *, scope: "SavedScope | None" = None
+        self,
+        kind: str,
+        target: str,
+        column: str | None = None,
+        *,
+        scope: "SavedScope | None" = None,
+        observed_reads: Iterable[object] = (),
     ):
         """Blast radius of a drop, rename, changed expression or dropped table.
 
         ``kind`` is ``drop_column``, ``rename_column``, ``change_expression``
         or ``drop_table``. Readers that cannot be analysed are listed as
         unknown, never dropped, and ``safe_to_delete`` is always ``unknown``.
-        See ``kumosql.impact``.
+        ``observed_reads`` (job history) add readers no model declares, listed
+        under ``observed`` with last seen and confidence. See ``kumosql.impact``.
         """
 
         from .impact import assess_change
 
-        return assess_change(self, kind, target, column, scope=scope)
+        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads)
 
     def _scoped(self, report: dict, scope: "SavedScope") -> dict:
         keep = self.scope_keys(scope)

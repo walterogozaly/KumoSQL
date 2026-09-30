@@ -8,6 +8,7 @@ from importlib.resources import files
 import json
 import threading
 import webbrowser
+from urllib.parse import parse_qs, urlsplit
 
 from . import live_graph
 from . import preview_data
@@ -155,6 +156,9 @@ class UIHandler(BaseHTTPRequestHandler):
             ])
             return
         route = self.path.split("?", 1)[0]
+        if route == "/api/impact":
+            self._impact()
+            return
         if route in INSIGHTS:
             self._json(200, INSIGHTS[route]())
             return
@@ -168,6 +172,18 @@ class UIHandler(BaseHTTPRequestHandler):
         filename, content_type = asset
         body = files("kumosql").joinpath("static", filename).read_bytes()
         self._send(200, body, content_type)
+
+    def _impact(self) -> None:
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            payload = live_graph.impact_payload(
+                preview_data.impact, _required(query, "node"), _required(query, "column"),
+                query.get("change", ["drop"])[0],
+            )
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, payload)
 
     def do_PUT(self) -> None:
         section = self.path.removeprefix("/api/settings/")

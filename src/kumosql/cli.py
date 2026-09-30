@@ -259,6 +259,12 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         help="Instead of the report, list the models a change would affect (needs --target)",
     )
     parser.add_argument(
+        "--observed-reads",
+        type=Path,
+        help="With --assess: JSON list of job-history records (job_id, creation_time, destination, referenced_tables); "
+        "readers seen only there are listed under observed",
+    )
+    parser.add_argument(
         "--target",
         help="Table for drop_table, or table.column for the column changes, e.g. proj.dataset.table.column",
     )
@@ -313,8 +319,18 @@ def pipeline_main(argv: list[str] | None = None) -> int:
             table, _, column = args.target.rpartition(".")
             if not table or not column:
                 parser.error("--target must be table.column for column changes")
+        observed_reads = []
+        if args.observed_reads:
+            try:
+                observed_reads = json.loads(args.observed_reads.read_text(encoding="utf-8"))
+                if not isinstance(observed_reads, list):
+                    raise ValueError("expected a JSON list")
+            except (OSError, ValueError) as exc:
+                parser.error(f"could not read --observed-reads: {exc}")
         try:
-            data = pipeline.assess_change(args.assess, table, column, scope=scope).to_json()
+            data = pipeline.assess_change(
+                args.assess, table, column, scope=scope, observed_reads=observed_reads
+            ).to_json()
         except ValueError as exc:
             parser.error(str(exc))
         text = json.dumps(data, indent=2)

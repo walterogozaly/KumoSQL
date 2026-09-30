@@ -8,13 +8,21 @@ it (lineage). Readers the analysis cannot read are never dropped from the
 answer: they are listed as ``unknown``. Readers outside the pipeline (jobs,
 dashboards, scripts that are not parsed) are invisible here, so the result
 never claims that a target is safe to remove.
+
+Job history adds the readers no compiled model declares. Given observed reads,
+tables that jobs read from the target (or from an affected model) but that no
+declared model reads are listed under ``observed``, labeled with when they were
+last seen and how confident the edge is. Job history names tables, not
+columns, so their column use is unverified: the effect is ``may_break`` or
+``may_change``, never ``breaks``. A reader already listed as affected or
+unknown is not repeated.
 """
 
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from .pipeline import ColumnRef, Pipeline
@@ -58,6 +66,25 @@ class UnknownReader:
     reason: str
 
 
+@dataclass(frozen=True)
+class ObservedReader:
+    """A table seen reading the target (or an affected model) only in job history.
+
+    ``effect`` is ``may_break`` or ``may_change``: history does not say which
+    columns the job used. ``via`` is the table it was seen reading.
+    ``confidence`` is that of the observed edge.
+    """
+
+    model: str
+    effect: str
+    via: str
+    depth: int
+    last_seen: str | None
+    confidence: str
+    observed_count: int
+    source: str = "observed"
+
+
 @dataclass
 class ChangeImpact:
     kind: str
@@ -65,6 +92,8 @@ class ChangeImpact:
     target_known: bool
     affected: list[AffectedModel] = field(default_factory=list)
     unknown: list[UnknownReader] = field(default_factory=list)
+    observed: list[ObservedReader] = field(default_factory=list)
+    observed_checked: bool = False
     terminal: bool = False
     complete: bool = True
     incomplete_reasons: list[str] = field(default_factory=list)
@@ -83,6 +112,13 @@ class ChangeImpact:
                 for a in self.affected
             ],
             "unknown": [{"model": u.model, "reason": u.reason} for u in self.unknown],
+            "observed": [
+                {"model": o.model, "effect": o.effect, "via": o.via, "depth": o.depth,
+                 "last_seen": o.last_seen, "confidence": o.confidence,
+                 "observed_count": o.observed_count, "source": o.source}
+                for o in self.observed
+            ],
+            "observed_checked": self.observed_checked,
             "terminal": self.terminal,
             "complete": self.complete,
             "incomplete_reasons": self.incomplete_reasons,
@@ -100,6 +136,7 @@ def assess_change(
     column: str | None = None,
     *,
     scope=None,
+    observed_reads: Iterable[object] = (),
 ) -> ChangeImpact:
     """Blast radius of ``kind`` applied to ``target`` (a table) and ``column``.
 
@@ -109,7 +146,9 @@ def assess_change(
     them. Without transform kinds for a changed expression, every descendant is
     treated as affected, which over-approximates. Column names match
     case-insensitively. With a ``scope``, only in-scope models are listed and
-    the rest are counted in ``out_of_scope``.
+    the rest are counted in ``out_of_scope``. ``observed_reads`` are job-history
+    records (see ``build_query_graph``); readers seen only there are added under
+    ``observed``.
     """
 
     if kind not in CHANGE_KINDS:
@@ -257,6 +296,37 @@ def assess_change(
         if "unknown_reads" in codes and model not in affected:
             unknown.setdefault(model, "unknown_reads")
 
+    observed_reads = list(observed_reads)
+    observed_found: dict[str, ObservedReader] = {}
+    if observed_reads:
+        result.observed_checked = True
+        from .graph import build_query_graph
+
+        only_observed: dict[str, list] = {}
+        for edge in build_query_graph(pipeline, observed_reads).edges:
+            if edge.observed and not (edge.declared or edge.parsed):
+                only_observed.setdefault(edge.upstream.key, []).append(edge)
+        effect = "may_change" if kind == "change_expression" else "may_break"
+        queue = deque([(table, 0)] + [(m.model, m.depth) for m in affected.values()])
+        visited: set[str] = set()
+        while queue:
+            name, depth = queue.popleft()
+            if name in visited:
+                continue
+            visited.add(name)
+            for edge in sorted(only_observed.get(name, ()), key=lambda e: e.downstream.key):
+                reader = edge.downstream.key
+                if reader == table or reader in affected or reader in unknown:
+                    continue
+                found = ObservedReader(reader, effect, name, depth + 1, edge.last_seen,
+                                       edge.confidence, edge.observed_count)
+                old = observed_found.get(reader)
+                if old is None or found.depth < old.depth or (
+                    found.depth == old.depth and (found.last_seen or "") > (old.last_seen or "")
+                ):
+                    observed_found[reader] = found
+                queue.append((reader, depth + 1))
+
     result.terminal = table in pipeline.models and not downstream.get(table)
     keep = pipeline.scope_keys(scope) if scope is not None else None
     if scope is not None:
@@ -269,7 +339,10 @@ def assess_change(
         (m for m in affected.values() if in_scope(m.model)), key=lambda m: (m.depth, m.model)
     )
     result.unknown = [UnknownReader(m, r) for m, r in sorted(unknown.items()) if in_scope(m)]
-    result.out_of_scope = sum(1 for m in {*affected, *unknown} if not in_scope(m))
+    result.observed = sorted(
+        (o for o in observed_found.values() if in_scope(o.model)), key=lambda o: (o.depth, o.model)
+    )
+    result.out_of_scope = sum(1 for m in {*affected, *unknown, *observed_found} if not in_scope(m))
 
     reasons = []
     if not target_known:

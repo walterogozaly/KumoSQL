@@ -13,6 +13,7 @@ blocking gap exists, so a partial graph is never presented as complete.
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
+from typing import Iterable
 import tempfile
 import threading
 
@@ -31,12 +32,16 @@ class ProjectError(ValueError):
     """The supplied project files could not be loaded."""
 
 
-def set_project(pipeline: Pipeline, label: str) -> None:
-    """Make ``pipeline`` the project the graph page shows."""
+def set_project(pipeline: Pipeline, label: str, observed_reads: Iterable[object] = ()) -> None:
+    """Make ``pipeline`` the project the graph page shows.
+
+    ``observed_reads`` are job-history records; when given they feed both the
+    graph and the impact view.
+    """
 
     global _LOADED
     with _LOCK:
-        _LOADED = {"pipeline": pipeline, "label": label}
+        _LOADED = {"pipeline": pipeline, "label": label, "observed_reads": tuple(observed_reads)}
 
 
 def clear_project() -> None:
@@ -105,10 +110,10 @@ def _split(key: str) -> tuple[str, str]:
     return (".".join(parts[-3:-1]) if len(parts) > 1 else ""), parts[-1]
 
 
-def graph_payload(pipeline: Pipeline, label: str = "") -> dict:
+def graph_payload(pipeline: Pipeline, label: str = "", observed_reads: Iterable[object] = ()) -> dict:
     """The ``/api/graph`` payload for a real pipeline. No ``preview`` flag."""
 
-    report = pipeline.report()
+    report = pipeline.report(observed_reads=observed_reads)
     graph = report.get("graph") or {"nodes": [], "edges": []}
     completeness = report["completeness"]
     lineage = pipeline.lineage_report()
@@ -194,4 +199,27 @@ def graph_or_preview(preview) -> dict:
         payload = preview()
         payload["source"] = {"kind": "sample", "label": "Sample data"}
         return payload
-    return graph_payload(current["pipeline"], current["label"])
+    return graph_payload(current["pipeline"], current["label"], current.get("observed_reads", ()))
+
+
+_PAGE_CHANGES = {"drop": "drop_column", "rename": "rename_column", "expression": "change_expression"}
+
+
+def impact_payload(preview_impact, node: str, column: str, change: str) -> dict:
+    """The ``/api/impact`` payload: the server's blast radius of one column change.
+
+    ``change`` is ``drop``, ``rename`` or ``expression``. A loaded project is
+    assessed by ``Pipeline.assess_change`` together with its job history; with
+    nothing loaded, ``preview_impact`` answers from the labeled sample data.
+    """
+
+    kind = _PAGE_CHANGES.get(change)
+    if kind is None:
+        raise ValueError("change must be drop, rename or expression")
+    current = loaded()
+    if current is None:
+        return preview_impact(node, column, kind)
+    result = current["pipeline"].assess_change(
+        kind, node, column, observed_reads=current.get("observed_reads", ())
+    )
+    return {**result.to_json(), "source": {"kind": "project", "label": current["label"]}}

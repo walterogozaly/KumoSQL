@@ -306,3 +306,89 @@ def changes() -> dict:
         # #42: ready only when every affected consumer has a verification result.
         proposal["ready"] = all(item["label"] in ("proven", "unchanged") for item in proposal["consumers"])
     return payload
+
+
+def impact(node, column, kind):
+    """Sample blast radius of one column change, in the shape of ``ChangeImpact.to_json``.
+
+    Mirrors what ``Pipeline.assess_change`` returns for a real project so the
+    page renders the server's answer either way. Readers seen only in job
+    history are listed under ``observed``, not ``affected``.
+    """
+
+    graph = _GRAPH
+    lineage = [item for item in graph["column_lineage"] if item["transform"] != "observed read"]
+    gaps = {gap["asset"] for gap in graph["gaps"]}
+    traced = {item["node"] for item in lineage}
+    down = {}
+    observed_down = {}
+    for edge in graph["edges"]:
+        target = observed_down if edge["source"] == "observed" else down
+        target.setdefault(edge["from"], []).append(edge)
+
+    affected = {}
+    queue = [(node, column, 1, None)]
+    seen = set()
+    while queue:
+        table, col, depth, _ = queue.pop(0)
+        if (table, col) in seen:
+            continue
+        seen.add((table, col))
+        for item in lineage:
+            if not any(src["node"] == table and src["column"] == col for src in item["sources"]):
+                continue
+            if kind == "change_expression":
+                effect = "values_change"
+            else:
+                effect = "breaks" if depth == 1 else "indirect"
+            old = affected.get(item["node"])
+            cols = set(old["columns"]) if old else set()
+            cols.add(col)
+            if old is None or depth < old["depth"]:
+                affected[item["node"]] = {"model": item["node"], "effect": effect, "via": "output_column",
+                                          "depth": depth, "columns": sorted(cols)}
+            queue.append((item["node"], item["column"], depth + 1, table))
+
+    readers = {}
+    frontier = [node]
+    while frontier:
+        following = []
+        for name in frontier:
+            for edge in down.get(name, ()):
+                if edge["to"] not in readers and edge["to"] != node:
+                    readers[edge["to"]] = edge
+                    following.append(edge["to"])
+        frontier = following
+    unknown = [
+        {"model": name, "reason": "unparsed_model" if name in gaps else "column_use_not_traced"}
+        for name in sorted(readers)
+        if name not in affected and (name not in traced or name in gaps)
+    ]
+
+    observed = {}
+    frontier = [(node, 0)] + [(m["model"], m["depth"]) for m in affected.values()]
+    while frontier:
+        name, depth = frontier.pop(0)
+        for edge in observed_down.get(name, ()):
+            target = edge["to"]
+            if target == node or target in affected or target in observed:
+                continue
+            observed[target] = {
+                "model": target, "effect": "may_change" if kind == "change_expression" else "may_break",
+                "via": name, "depth": depth + 1, "last_seen": edge["last_seen"],
+                "confidence": edge["confidence"], "observed_count": edge["observed_count"], "source": "observed",
+            }
+            frontier.append((target, depth + 1))
+
+    return {
+        "kind": kind, "target": f"{node}.{column}", "target_known": True,
+        "affected": sorted(affected.values(), key=lambda a: (a["depth"], a["model"])),
+        "unknown": unknown,
+        "observed": sorted(observed.values(), key=lambda o: (o["depth"], o["model"])),
+        "observed_checked": True, "terminal": False, "complete": False,
+        "incomplete_reasons": ["unknown_readers"] if unknown else [],
+        "scope": None, "out_of_scope": 0,
+        "safe_to_delete": "unknown",
+        "safe_to_delete_note": "Not claimed. Readers outside the analysed pipeline are not visible.",
+        "source": {"kind": "sample", "label": "Sample data"},
+    }
