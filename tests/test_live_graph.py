@@ -223,3 +223,59 @@ def test_overlaps_endpoint_compares_the_loaded_project(server):
         with pytest.raises(HTTPError) as error:
             get(server, path)
         assert error.value.code == 400
+
+
+def _put_scopes(base, scopes):
+    request = Request(base + "/api/settings/scopes", data=json.dumps(scopes).encode(), method="PUT",
+                      headers={"Content-Type": "application/json"})
+    with urlopen(request) as response:
+        return json.load(response)
+
+
+JOBS = [
+    {"job_id": "j1", "creation_time": "2026-09-20T06:00:00Z", "destination": "proj.rep.board",
+     "referenced_tables": ["stg_orders"], "submitter": "ana@co.com"},
+    {"job_id": "j2", "creation_time": "2026-09-20T07:00:00Z", "destination": "proj.rep.other",
+     "referenced_tables": ["stg_orders"], "submitter": "bo@co.com"},
+]
+
+
+def test_active_scope_limits_the_graph_to_models_and_job_history(server):
+    live_graph.set_project(live_graph.load_files(FILES, "demo"), "demo", observed_reads=JOBS)
+    _put_scopes(server, [
+        {"name": "Ana", "rule": {"field": "submitter", "op": "in", "value": ["ana@co.com"]}},
+        {"name": "Marts", "rule": {"field": "dataset", "op": "eq", "value": "marts"}},
+        {"name": "Typo", "rule": {"field": "submiter", "op": "eq", "value": "x"}},
+    ])
+    everything = get(server, "/api/graph")
+    assert everything["scope"] is None
+
+    ana = get(server, "/api/graph?scope=Ana")
+    assert ana["scope"]["applied_to"] == ["job history"] and "models have no" in ana["scope"]["note"]
+    assert sum(e["observed_count"] for e in ana["edges"]) == 1
+    assert {n["id"] for n in ana["nodes"]} >= {n["id"] for n in everything["nodes"] if n["kind"] == "model"}
+
+    marts = get(server, "/api/graph?scope=Marts")
+    assert marts["scope"]["applied_to"] == ["models"]
+    assert "marts.fct" in {n["id"] for n in marts["nodes"]}
+    assert len(marts["column_lineage"]) < len(everything["column_lineage"])
+
+    for bad, words in (("/api/graph?scope=Missing", "no saved scope"), ("/api/graph?scope=Typo", "cannot be applied")):
+        with pytest.raises(HTTPError) as error:
+            get(server, bad)
+        assert error.value.code == 400
+        assert words in json.load(error.value)["error"]
+
+
+def test_active_scope_limits_impact_and_labels_sample_pages(server):
+    live_graph.set_project(live_graph.load_files(FILES, "demo"), "demo", observed_reads=JOBS)
+    _put_scopes(server, [{"name": "Ana", "rule": {"field": "submitter", "op": "eq", "value": "ana@co.com"}}])
+    result = get(server, "/api/impact?node=stg.stg_orders&column=amt&change=drop&scope=Ana")
+    assert [o["model"] for o in result["observed"]] == ["proj.rep.board"]
+    assert result["scope_plan"]["applied_to"] == ["job history"]
+
+    live_graph.clear_project()
+    for page in ("/api/graph", "/api/cost", "/api/changes"):
+        note = get(server, page + "?scope=Ana")["scope"]
+        assert note["applied_to"] == [] and "Sample data" in note["note"]
+        assert get(server, page)["scope"] is None

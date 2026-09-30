@@ -110,13 +110,41 @@ def _split(key: str) -> tuple[str, str]:
     return (".".join(parts[-3:-1]) if len(parts) > 1 else ""), parts[-1]
 
 
-def graph_payload(pipeline: Pipeline, label: str = "", observed_reads: Iterable[object] = ()) -> dict:
-    """The ``/api/graph`` payload for a real pipeline. No ``preview`` flag."""
+def _plan(scope_name: str | None, observed_reads: Iterable[object]):
+    """The saved scope named ``scope_name`` and where it applies; ``ValueError`` for an unknown name."""
 
-    report = pipeline.report(observed_reads=observed_reads)
+    from . import scopes as scope_store
+
+    if not scope_name:
+        return None
+    chosen = scope_store.get_scope(scope_name)
+    if chosen is None:
+        raise ValueError(f"no saved scope named {scope_name!r}")
+    return scope_store.plan_scope(chosen, observed_reads)
+
+
+def graph_payload(
+    pipeline: Pipeline, label: str = "", observed_reads: Iterable[object] = (), scope_name: str | None = None
+) -> dict:
+    """The ``/api/graph`` payload for a real pipeline. No ``preview`` flag.
+
+    With ``scope_name`` (a saved scope) the graph is limited to the models it
+    matches and the job history it matches; ``scope`` in the payload says which.
+    """
+
+    observed_reads = list(observed_reads)
+    plan = _plan(scope_name, observed_reads)
+    report = pipeline.report(
+        observed_reads=observed_reads,
+        scope=plan.models if plan else None,
+        observed_scope=plan.jobs if plan else None,
+    )
     graph = report.get("graph") or {"nodes": [], "edges": []}
     completeness = report["completeness"]
     lineage = pipeline.lineage_report()
+    if plan and plan.models is not None:
+        keep = pipeline.scope_keys(plan.models)
+        lineage = [row for row in lineage if row["node"] in keep]
 
     columns: dict[str, list[str]] = {}
 
@@ -173,6 +201,7 @@ def graph_payload(pipeline: Pipeline, label: str = "", observed_reads: Iterable[
     coverage.setdefault("complete", completeness["complete"])
     return {
         "source": {"kind": "project", "label": label},
+        "scope": plan.to_json() if plan else None,
         "window": coverage.get("window") or {"start": None, "end": None},
         "coverage": coverage,
         "nodes": nodes,
@@ -191,21 +220,31 @@ def graph_payload(pipeline: Pipeline, label: str = "", observed_reads: Iterable[
     }
 
 
-def graph_or_preview(preview) -> dict:
+def sample_scope_note(scope_name: str | None) -> dict | None:
+    """What a page with sample data says about the chosen scope: it does not apply."""
+
+    if not scope_name:
+        return None
+    return {"name": scope_name, "rule": None, "applied_to": [],
+            "note": "Sample data is not filtered by scopes. Load a project to apply this scope."}
+
+
+def graph_or_preview(preview, scope_name: str | None = None) -> dict:
     """Real graph when a project is loaded, else the labeled sample data."""
 
     current = loaded()
     if current is None:
         payload = preview()
         payload["source"] = {"kind": "sample", "label": "Sample data"}
+        payload["scope"] = sample_scope_note(scope_name)
         return payload
-    return graph_payload(current["pipeline"], current["label"], current.get("observed_reads", ()))
+    return graph_payload(current["pipeline"], current["label"], current.get("observed_reads", ()), scope_name)
 
 
 _PAGE_CHANGES = {"drop": "drop_column", "rename": "rename_column", "expression": "change_expression"}
 
 
-def impact_payload(preview_impact, node: str, column: str, change: str) -> dict:
+def impact_payload(preview_impact, node: str, column: str, change: str, scope_name: str | None = None) -> dict:
     """The ``/api/impact`` payload: the server's blast radius of one column change.
 
     ``change`` is ``drop``, ``rename`` or ``expression``. A loaded project is
@@ -219,10 +258,17 @@ def impact_payload(preview_impact, node: str, column: str, change: str) -> dict:
     current = loaded()
     if current is None:
         return preview_impact(node, column, kind)
+    reads = list(current.get("observed_reads", ()))
+    plan = _plan(scope_name, reads)
+    if plan and plan.jobs is not None:
+        from .scopes import job_record
+
+        reads = [row for row in reads if plan.jobs.matches(job_record(row))]
     result = current["pipeline"].assess_change(
-        kind, node, column, observed_reads=current.get("observed_reads", ())
+        kind, node, column, scope=plan.models if plan else None, observed_reads=reads
     )
-    return {**result.to_json(), "source": {"kind": "project", "label": current["label"]}}
+    return {**result.to_json(), "source": {"kind": "project", "label": current["label"]},
+            "scope_plan": plan.to_json() if plan else None}
 
 
 def overlaps_payload(preview_overlaps, node: str, scope: str | None = None) -> dict:
@@ -241,14 +287,11 @@ def overlaps_payload(preview_overlaps, node: str, scope: str | None = None) -> d
     current = loaded()
     if current is None:
         return preview_overlaps(node)
-    chosen = None
-    if scope:
-        chosen = scope_store.get_scope(scope)
-        if chosen is None:
-            raise ValueError("no saved scope has that name")
+    plan = _plan(scope, current.get("observed_reads", ()))
+    chosen = plan.models if plan else None
     pipeline = current["pipeline"]
     if node not in pipeline.models:
         raise ValueError("node is not a model in the loaded project")
     section = OverlapChecker(pipeline, scope=chosen).section(node)
-    return {**section, "node": node, "scope": scope or None,
+    return {**section, "node": node, "scope": scope or None, "scope_plan": plan.to_json() if plan else None,
             "source": {"kind": "project", "label": current["label"]}}

@@ -530,6 +530,53 @@ def discover_fields(
     ]
 
 
+@dataclass(frozen=True)
+class ScopePlan:
+    """Where a scope can be applied: models, job history, or both."""
+
+    scope: Scope
+    models: Scope | None
+    jobs: Scope | None
+    note: str | None = None
+
+    def to_json(self) -> dict:
+        applied = [name for name, part in (("models", self.models), ("job history", self.jobs)) if part is not None]
+        return {"name": self.scope.name, "rule": self.scope.describe(), "applied_to": applied, "note": self.note}
+
+
+def plan_scope(scope: Scope, observed_reads: Iterable[object] = ()) -> ScopePlan:
+    """Decide which data a saved scope applies to, for pages that show models and job history together.
+
+    A rule on model fields limits the models, a rule on job fields limits the
+    job history, and each is reported in ``note`` when it cannot apply to the
+    other. A rule no data source can evaluate raises :class:`UnknownFieldError`.
+    """
+
+    reads = list(observed_reads)
+    job_fields: set[str] = set()
+    for row in reads:
+        job_fields.update(job_record(row))
+    model_fields = (*MODEL_FIELDS, *PROFILE_FIELDS)
+    model_missing = scope.unknown_fields(model_fields)
+    job_missing = scope.unknown_fields(job_fields)
+    models_ok = not model_missing
+    jobs_ok = bool(reads) and not job_missing
+    if not models_ok and not jobs_ok:
+        if not reads:
+            scope.require_fields(model_fields, "pipeline models (no job history is loaded)")
+        raise UnknownFieldError(
+            f"scope {scope.name!r} cannot be applied: pipeline models have no "
+            f"{', '.join(map(repr, model_missing))}, and job history has no {', '.join(map(repr, job_missing))}. "
+            f"Model fields: {', '.join(model_fields)}. Job fields: {', '.join(sorted(job_fields, key=str.casefold)) or 'none loaded'}"
+        )
+    note = None
+    if models_ok and not jobs_ok and reads:
+        note = f"Job history was not filtered: it has no {', '.join(map(repr, job_missing))}."
+    elif jobs_ok and not models_ok:
+        note = f"Applied to job history only: models have no {', '.join(map(repr, model_missing))}."
+    return ScopePlan(scope, scope if models_ok else None, scope if jobs_ok else None, note)
+
+
 # ------------------------------------------------------------------- storage
 
 

@@ -24,16 +24,28 @@ MAX_UI_STATE_BYTES = 64 * 1024
 # Roadmap views. Each returns a JSON payload; preview_data stands in until the
 # issues listed in docs/ui-roadmap.md replace these with real implementations.
 # /api/graph serves the loaded project and falls back to labeled sample data.
+def _sample_with_scope(make):
+    """A sample-data view that carries a note when a scope was chosen, since samples are never filtered."""
+
+    def build(scope: str | None = None) -> dict:
+        payload = make()
+        payload["scope"] = live_graph.sample_scope_note(scope)
+        return payload
+
+    return build
+
+
 INSIGHTS = {
-    "/api/graph": lambda: live_graph.graph_or_preview(preview_data.graph),
-    "/api/cost": preview_data.cost,
-    "/api/changes": preview_data.changes,
+    "/api/graph": lambda scope=None: live_graph.graph_or_preview(preview_data.graph, scope),
+    "/api/cost": _sample_with_scope(preview_data.cost),
+    "/api/changes": _sample_with_scope(preview_data.changes),
 }
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/browse": ("browse.html", "text/html; charset=utf-8"),
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
+    "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
@@ -171,7 +183,11 @@ class UIHandler(BaseHTTPRequestHandler):
             self._overlaps()
             return
         if route in INSIGHTS:
-            self._json(200, INSIGHTS[route]())
+            scope = parse_qs(urlsplit(self.path).query).get("scope", [""])[0] or None
+            try:
+                self._json(200, INSIGHTS[route](scope))
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
             return
         if self.path.startswith("/api/catalog/"):
             self._catalog()
@@ -212,7 +228,7 @@ class UIHandler(BaseHTTPRequestHandler):
         try:
             payload = live_graph.impact_payload(
                 preview_data.impact, _required(query, "node"), _required(query, "column"),
-                query.get("change", ["drop"])[0],
+                query.get("change", ["drop"])[0], query.get("scope", [""])[0] or None,
             )
         except ValueError as exc:
             self._json(400, {"error": str(exc)})

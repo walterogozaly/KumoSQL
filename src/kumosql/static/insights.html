@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/assets/style.css">
   <link rel="stylesheet" href="/assets/insights.css">
   <script defer src="/assets/evidence.js"></script>
+  <script defer src="/assets/scopes.js"></script>
   <script defer src="/assets/insights.js"></script>
   <script defer src="/assets/settings.js"></script>
 </head>
@@ -40,6 +41,11 @@
           <p id="page-lede" class="lede"></p>
         </div>
       </header>
+      <div class="scope-bar" id="scope-bar">
+        <label class="scope-pick"><span>Scope</span> <select id="scope-picker" aria-label="Active scope"></select></label>
+        <button type="button" class="link-button" data-open-settings="scopes">Manage scopes</button>
+        <span id="scope-note" class="scope-note" role="status"></span>
+      </div>
       <div id="preview-banner" class="preview-banner" role="note" hidden>
         <strong>Preview with sample data.</strong>
         <span>This view is not connected to your project yet. Names and numbers below are examples.</span>

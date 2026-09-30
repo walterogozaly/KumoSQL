@@ -628,3 +628,15 @@ select.sp-input { min-width: 200px; }
 .sp-switch { flex: none; }
 .sp-switch input:disabled + .switch-track { opacity: .4; cursor: not-allowed; }
 @media (max-width: 720px) { .sp-rule-head { flex-direction: column; align-items: flex-start; gap: 6px; } }
+
+/* Active-scope bar on the graph, cost and change pages */
+.scope-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 12px; font-size: 13px; }
+.scope-pick { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-weight: 500; }
+.scope-pick select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; padding: 4px 8px; max-width: 240px; }
+.scope-note { color: var(--text-muted); min-width: 0; overflow-wrap: anywhere; }
+.scope-note.is-warn { color: var(--warn-text, var(--text)); }
+.scope-item.is-active { border-color: var(--accent-text); }
+.sp-scope-form { max-width: 620px; display: flex; flex-direction: column; gap: 12px; }
+.sp-scope-label { display: flex; flex-direction: column; gap: 3px; color: var(--text-muted); font-size: 12.5px; font-weight: 500; }
+.sp-scope-form input[type="text"], .sp-scope-form select { font: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+.rule-negate input { width: auto; }
