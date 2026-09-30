@@ -605,3 +605,26 @@ select.sp-input { min-width: 200px; }
 .remove-node { font-size: 15px; line-height: 1; color: var(--text-muted); }
 .rule-preview { margin: 0; padding: 5px 7px; border-radius: 6px; background: var(--surface-2, var(--surface)); border: 1px dashed var(--border-strong); font-family: var(--font-mono); font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; }
 .rule-preview.invalid { color: var(--text-muted); font-family: inherit; }
+
+/* sqlfluff rule toggles in the settings panel */
+.sp-rules { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--border); }
+.sp-subheading { margin: 0 0 6px; font-size: 14.5px; font-weight: 650; }
+.sp-rule-search { width: 100%; margin: 4px 0 6px; }
+.sp-rule-empty { color: var(--text-muted); font-size: 13px; }
+.sp-rule-group { margin-top: 18px; }
+.sp-rule-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.sp-rule-head h4 { margin: 0; font-size: 13.5px; font-weight: 650; }
+.sp-rule-head .sp-row-hint { margin-top: 2px; }
+.sp-rule-head .sp-inline { flex: none; gap: 12px; }
+.sp-rule-count { color: var(--text-faint); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sp-rule { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
+.sp-rule-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; cursor: pointer; }
+.sp-rule-desc { font-size: 13px; }
+.sp-rule-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-faint); font-size: 11.5px; }
+.sp-rule-meta code { padding: 0 5px; border-radius: 4px; background: var(--border-subtle); color: var(--text-muted); font: 600 11px var(--font-mono); }
+.sp-rule-tag { padding: 0 6px; border-radius: 999px; background: var(--idle-bg); color: var(--idle-fg); font-weight: 600; }
+.sp-rule.is-lint-only .sp-rule-text { cursor: default; }
+.sp-rule.is-lint-only .sp-rule-desc { color: var(--text-muted); }
+.sp-switch { flex: none; }
+.sp-switch input:disabled + .switch-track { opacity: .4; cursor: not-allowed; }
+@media (max-width: 720px) { .sp-rule-head { flex-direction: column; align-items: flex-start; gap: 6px; } }

@@ -128,6 +128,43 @@ def _config(prefs: FormatPreferences):
     })
 
 
+# Rule categories that only apply to other SQL dialects; KumoSQL formats BigQuery.
+_OTHER_DIALECT_CATEGORIES = frozenset({"tsql", "postgres", "oracle"})
+
+
+def sqlfluff_rules() -> list[dict]:
+    """Every sqlfluff rule that applies to BigQuery, from the installed sqlfluff.
+
+    Each entry has the rule's code, name, one-line description, category (the
+    part of the name before the dot), groups, legacy aliases, and whether
+    sqlfluff can fix it. Rules it cannot fix only lint, so they never change
+    formatted output.
+    """
+
+    import sqlfluff
+    from sqlfluff.core.rules import get_ruleset
+
+    # Fix support is not in the public rule list; read it from the registry
+    # when available and assume fixable otherwise.
+    registry = getattr(get_ruleset(), "_register", {})
+    rules = []
+    for rule in sorted(sqlfluff.list_rules(), key=lambda item: item.code):
+        category = rule.name.split(".", 1)[0]
+        if category in _OTHER_DIALECT_CATEGORIES:
+            continue
+        manifest = registry.get(rule.code)
+        rules.append({
+            "code": rule.code,
+            "name": rule.name,
+            "description": rule.description,
+            "category": category,
+            "groups": [group for group in rule.groups if group != "all"],
+            "aliases": list(rule.aliases),
+            "fixable": bool(getattr(manifest and manifest.rule_class, "is_fix_compatible", True)),
+        })
+    return rules
+
+
 _MAX_FORMAT_PASSES = 5
 
 
@@ -161,7 +198,7 @@ class FormatSqlRule(RewriteRule):
     """Format SQL with sqlfluff using the configured preferences."""
 
     name = "format_sql"
-    summary = "Format with sqlfluff (layout, keyword case; set in Formatting preferences)"
+    summary = "Format with sqlfluff (layout, keyword case; set in Settings)"
 
     def __init__(self, prefs: FormatPreferences | None = None) -> None:
         self.prefs = prefs

@@ -82,6 +82,7 @@ from .graph import (
     edge_confidence,
 )
 from .repeated_work import RepeatedWork, find_repeated_work, repeated_work_report
+from .observed_usage import TableUsage, UsageResult, observed_usage, observed_usage_report
 from .table_roles import RoleSignal, TableRole, infer_roles, table_roles_report
 from .near_duplicates import (
     ClauseDifference,
@@ -144,6 +145,10 @@ __all__ = [
     "RoleSignal",
     "TableRole",
     "infer_roles",
+    "observed_usage",
+    "observed_usage_report",
+    "TableUsage",
+    "UsageResult",
     "table_roles_report",
     "LiftDiagnostic",
     "LiftResult",

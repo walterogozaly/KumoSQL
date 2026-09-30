@@ -152,6 +152,11 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/scope-fields":
             self._json(200, self._scope_fields())
             return
+        if self.path == "/api/sqlfluff/rules":
+            from .formatting import sqlfluff_rules
+
+            self._json(200, sqlfluff_rules())
+            return
         if self.path == "/api/rules":
             self._json(200, [
                 {"name": name, "summary": rule.summary}

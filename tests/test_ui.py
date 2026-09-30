@@ -350,3 +350,14 @@ def test_ui_lists_scope_fields_including_saved_scopes(ui_server):
     payload = get_json(ui_server, "/api/scope-fields")
     assert any(f["name"] == "submitter" and f["source"] == "saved" for f in payload["fields"])
     assert {"in", "regex", "is_null"} <= {o["op"] for o in payload["operators"]}
+
+def test_ui_lists_sqlfluff_rules_for_the_settings_panel(ui_server):
+    with urlopen(ui_server + "/api/sqlfluff/rules") as response:
+        rules = json.load(response)
+    by_code = {rule["code"]: rule for rule in rules}
+    assert by_code["LT01"]["category"] == "layout"
+    assert by_code["LT01"]["description"]
+    assert by_code["CP01"]["fixable"] is True
+    assert "capitalisation" in by_code["CP01"]["groups"]
+    # Rules for other dialects are left out; KumoSQL formats BigQuery.
+    assert not any(rule["category"] in ("tsql", "postgres", "oracle") for rule in rules)
