@@ -157,6 +157,7 @@
               <div class="pane-actions">
                 <input id="file-input" class="sr-only" type="file" accept=".sql,.sqlx,.txt,text/plain" tabindex="-1">
                 <button id="open-button" class="toolbar-button" type="button" title="Open a .sql or .sqlx file"><svg class="icon"><use href="#i-file"/></svg><span>Open</span></button>
+                <button id="github-button" class="toolbar-button" type="button" title="Open a Dataform project on GitHub">GitHub</button>
                 <button id="clear-input-button" class="icon-button" type="button" aria-label="Clear input" title="Clear input" disabled><svg class="icon"><use href="#i-x"/></svg></button>
               </div>
             </div>
@@ -220,6 +221,28 @@
       </main>
     </div>
   </div>
+  <dialog id="github-dialog" class="github-dialog" aria-labelledby="github-title">
+    <form id="github-connect-form" class="github-dialog-form" autocomplete="off">
+      <div class="github-dialog-heading">
+        <div><h2 id="github-title">Connect a Dataform repository</h2><p>Browse public GitHub repositories containing SQLX models.</p></div>
+        <button id="github-close" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <label for="github-url">GitHub repository URL</label>
+      <div class="github-connect-row">
+        <input id="github-url" type="url" placeholder="https://github.com/owner/repository" required>
+        <button id="github-connect" class="toolbar-button" type="submit">Connect</button>
+      </div>
+      <p class="github-note">Read-only access to public repositories. Repository SQLX files are loaded into this local editor; private repositories are not supported yet.</p>
+      <p id="github-status" class="github-status" role="status" aria-live="polite"></p>
+      <div id="github-files-panel" class="github-files-panel" hidden>
+        <label for="github-files">SQLX file <span id="github-repo-label" class="github-repo-label"></span></label>
+        <div class="github-connect-row">
+          <select id="github-files"></select>
+          <button id="github-load-file" class="toolbar-button" type="button">Open file</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
