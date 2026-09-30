@@ -70,6 +70,7 @@ from .pipeline import (
     load_compiled_graph,
     load_sqlx_project,
 )
+from .impact import AffectedModel, ChangeImpact, UnknownReader, assess_change
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .graph import (
     GraphEdge,
@@ -80,6 +81,7 @@ from .graph import (
     edge_confidence,
 )
 from .repeated_work import RepeatedWork, find_repeated_work, repeated_work_report
+from .table_roles import RoleSignal, TableRole, infer_roles, table_roles_report
 from .near_duplicates import (
     ClauseDifference,
     NearDuplicateCluster,
@@ -113,6 +115,10 @@ __all__ = [
     "RepeatedWork",
     "find_repeated_work",
     "repeated_work_report",
+    "RoleSignal",
+    "TableRole",
+    "infer_roles",
+    "table_roles_report",
     "LiftDiagnostic",
     "LiftResult",
     "count_inline_subqueries",
@@ -166,6 +172,10 @@ __all__ = [
     "IdentityResolution",
     "NodeIdentity",
     "Pipeline",
+    "AffectedModel",
+    "ChangeImpact",
+    "UnknownReader",
+    "assess_change",
     "Target",
     "normalize_table_reference",
     "GraphEdge",
