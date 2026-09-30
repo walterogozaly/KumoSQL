@@ -13,10 +13,14 @@ equivalence prover can itself use rules without an import cycle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 import re
 from typing import ClassVar
 
+import sqlglot
 from sqlglot import exp
+from sqlglot.dialects.bigquery import BigQuery
+from sqlglot.tokens import TokenType
 
 from .ast_utils import cte_dependency_errors, parse_statements, render_statement
 from .sqlx import (
@@ -32,22 +36,31 @@ from .sqlx import (
 def _sql_comments(sql: str) -> list[str]:
     """Extract SQL comments without mistaking comment markers in literals."""
 
-    comments: list[str] = []
+    return [comment for _, _, comment in _sql_comment_spans(sql)]
+
+
+def _sql_comment_spans(sql: str) -> list[tuple[int, int, str]]:
+    """Return comment spans while skipping quoted SQL strings and identifiers."""
+
+    comments: list[tuple[int, int, str]] = []
     i = 0
     while i < len(sql):
         if sql.startswith("--", i):
+            start = i
             end = sql.find("\n", i + 2)
             if end < 0:
                 end = len(sql)
-            comments.append(sql[i:end])
+            comments.append((start, end, sql[start:end]))
             i = end
             continue
         if sql.startswith("/*", i):
+            start = i
             end = sql.find("*/", i + 2)
             if end < 0:
                 break
-            comments.append(sql[i : end + 2])
-            i = end + 2
+            end += 2
+            comments.append((start, end, sql[start:end]))
+            i = end
             continue
         if sql[i] in "'\"`":
             quote = sql[i]
@@ -72,39 +85,167 @@ def _sql_comments(sql: str) -> list[str]:
     return comments
 
 
-def _comment_key(comment: str) -> str:
-    if comment.startswith("--"):
-        return comment[2:].strip()
-    return comment[2:-2].strip()
+_KEYWORD_TOKEN_TYPES = set(BigQuery.Tokenizer.KEYWORDS.values()) | {TokenType.ALIAS}
 
 
-def _preserve_comments(source: str, rendered: str) -> str:
-    """Restore comments dropped by sqlglot while formatting a changed query.
+def _token_key(token) -> tuple[TokenType, str]:
+    text = token.text.upper() if token.token_type in _KEYWORD_TOKEN_TYPES else token.text
+    return token.token_type, text
 
-    sqlglot retains comments attached to surviving AST nodes, but comments
-    between tokens and comments attached to removed predicates can disappear.
-    Keep those comments as leading comments on the rendered statement.
-    """
 
-    source_comments = _sql_comments(source)
-    output_comments = _sql_comments(rendered)
-    available: dict[str, int] = {}
-    for comment in output_comments:
-        key = _comment_key(comment)
-        available[key] = available.get(key, 0) + 1
+def _without_comments(statement: exp.Expression) -> exp.Expression:
+    result = statement.copy()
+    for node in result.walk():
+        node.comments = None
+    return result
 
-    missing: list[str] = []
-    for comment in source_comments:
-        key = _comment_key(comment)
-        if available.get(key, 0):
-            available[key] -= 1
+
+def _same_ast(left: list[exp.Expression], right: list[exp.Expression]) -> bool:
+    return len(left) == len(right) and all(
+        _without_comments(a) == _without_comments(b) for a, b in zip(left, right)
+    )
+
+
+def _rewriteable_statements(statements: list[exp.Expression]) -> list[tuple[int, exp.Expression]]:
+    """Ignore parser-only semicolon nodes while keeping original indices."""
+
+    return [
+        (index, statement)
+        for index, statement in enumerate(statements)
+        if not isinstance(statement, exp.Semicolon)
+    ]
+
+
+def _statement_segments(
+    sql: str, expected_count: int, *, recover: bool
+) -> list[tuple[int, int, exp.Expression]] | None:
+    """Locate each parsed statement in source without splitting literal semicolons."""
+
+    try:
+        tokens = sqlglot.tokenize(sql, read="bigquery")
+        segments: list[tuple[int, int, exp.Expression]] = []
+        cursor = 0
+        for token in tokens:
+            if token.token_type is not TokenType.SEMICOLON:
+                continue
+            parsed = parse_statements(sql[cursor : token.start], recover=recover)
+            if len(parsed) > 1:
+                return None
+            if parsed:
+                segments.append((cursor, token.start, parsed[0]))
+            cursor = token.end + 1
+
+        parsed = parse_statements(sql[cursor:], recover=recover)
+        if len(parsed) > 1:
+            return None
+        if parsed:
+            segments.append((cursor, len(sql), parsed[0]))
+    except Exception:
+        return None
+    return segments if len(segments) == expected_count else None
+
+
+def _format_preserved_comments(comments: list[str], *, line_start: bool) -> str:
+    if not comments:
+        return ""
+    rendered = ""
+    for comment in comments:
+        if comment.startswith("--"):
+            rendered += ("" if line_start and not rendered else "\n") + comment + "\n"
         else:
-            missing.append(comment)
-    if not missing:
-        return rendered
+            rendered += comment + " "
+    return rendered
 
-    # Put each comment on its own line so a line comment cannot swallow SQL.
-    return "\n".join(missing) + "\n" + rendered
+
+def _splice_statement(source: str, rendered: str) -> str:
+    """Patch only token-different spans, preserving all other source bytes."""
+
+    source_tokens = sqlglot.tokenize(source, read="bigquery")
+    target_tokens = sqlglot.tokenize(rendered, read="bigquery")
+    if not source_tokens or not target_tokens:
+        raise ValueError("a changed statement could not be aligned to SQL tokens")
+
+    source_keys = [_token_key(token) for token in source_tokens]
+    target_keys = [_token_key(token) for token in target_tokens]
+    matcher = SequenceMatcher(a=source_keys, b=target_keys, autojunk=False)
+    comment_spans = _sql_comment_spans(source)
+    edits: list[tuple[int, int, str]] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+
+        has_left = i1 > 0
+        has_right = i2 < len(source_tokens)
+        if has_left:
+            source_start = source_tokens[i1 - 1].end + 1
+        elif i1 < len(source_tokens):
+            source_start = source_tokens[i1].start
+        else:
+            source_start = len(source)
+        if has_right:
+            source_end = source_tokens[i2].start
+        elif i2 > i1:
+            source_end = source_tokens[i2 - 1].end + 1
+        else:
+            source_end = source_start
+
+        target_has_left = j1 > 0
+        target_has_right = j2 < len(target_tokens)
+        if target_has_left:
+            target_start = target_tokens[j1 - 1].end + 1
+        elif j1 < len(target_tokens):
+            target_start = target_tokens[j1].start
+        else:
+            target_start = len(rendered)
+        if target_has_right:
+            target_end = target_tokens[j2].start
+        elif j2 > j1:
+            target_end = target_tokens[j2 - 1].end + 1
+        else:
+            target_end = target_start
+
+        replacement = rendered[target_start:target_end]
+        enclosed = [
+            (start, end, comment)
+            for start, end, comment in comment_spans
+            if source_start <= start and end <= source_end
+        ]
+        left_comments: list[str] = []
+        right_comments: list[str] = []
+        left_anchor = source_tokens[i1 - 1].end + 1 if has_left else source_start
+        right_anchor = source_tokens[i2].start if has_right else source_end
+        for start, end, comment in enclosed:
+            if not has_right or (has_left and start - left_anchor <= right_anchor - end):
+                left_comments.append(comment)
+            else:
+                right_comments.append(comment)
+
+        if left_comments:
+            leading = re.match(r"\s*", replacement).group(0)
+            remainder = replacement[len(leading) :]
+            if has_left and not leading:
+                leading = " "
+            replacement = leading + _format_preserved_comments(
+                left_comments, line_start=not has_left
+            ) + remainder
+        if right_comments:
+            trailing = re.search(r"\s*$", replacement).group(0)
+            body = replacement[: len(replacement) - len(trailing)] if trailing else replacement
+            if body and not body.endswith((" ", "\t", "\r", "\n")):
+                body += " "
+            replacement = body + _format_preserved_comments(
+                right_comments, line_start=False
+            ) + trailing
+
+        edits.append((source_start, source_end, replacement))
+
+    result = source
+    for start, end, replacement in reversed(edits):
+        result = result[:start] + replacement + result[end:]
+    if sorted(_sql_comments(result)) != sorted(_sql_comments(source)):
+        raise ValueError("a source comment could not be retained during span editing")
+    return result
 
 
 FATAL_DIAGNOSTIC_CODES = frozenset(
@@ -116,6 +257,7 @@ FATAL_DIAGNOSTIC_CODES = frozenset(
         "cte_dependency_error",
         "inline_subqueries_remaining",
         "output_parse_error",
+        "source_splice_error",
     }
 )
 
@@ -207,10 +349,35 @@ class RewriteRule:
             )
 
         initial_remaining = self.count_remaining(statements)
-        rendered: list[str] = []
+        rewriteable = _rewriteable_statements(statements)
+        segments = _statement_segments(sql, len(rewriteable), recover=recovered)
+        if segments is None or not _same_ast(
+            [statement for _, statement in rewriteable],
+            [statement for _, _, statement in segments],
+        ):
+            return RuleOutput(
+                sql,
+                len(statements),
+                0,
+                0,
+                initial_remaining,
+                (
+                    *diagnostics,
+                    RuleDiagnostic(
+                        -1,
+                        "source_splice_error",
+                        "SQL statements could not be mapped to their original source spans",
+                    ),
+                ),
+            )
+
+        rewritten_statements: list[exp.Expression] = []
+        rendered_statements: list[str] = []
+        edits: list[tuple[int, int, str]] = []
         changed_statements = 0
         changes = 0
-        for index, statement in enumerate(statements):
+        for (index, _), (start, end, statement) in zip(rewriteable, segments):
+            before = statement.copy()
             try:
                 count, statement_diagnostics = self.rewrite_statement(statement, index)
                 diagnostics.extend(statement_diagnostics)
@@ -219,41 +386,84 @@ class RewriteRule:
                 if count:
                     changed_statements += 1
                     changes += count
-                rendered.append(render_statement(statement))
+                    rendered_statement = render_statement(_without_comments(statement))
+                    try:
+                        replacement = _splice_statement(
+                            sql[start:end], rendered_statement
+                        )
+                    except Exception as exc:
+                        diagnostics.append(
+                            RuleDiagnostic(
+                                index,
+                                "source_splice_error",
+                                f"SQL source spans could not be safely edited: {exc}",
+                            )
+                        )
+                        return RuleOutput(
+                            sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics)
+                        )
+                    edits.append((start, end, replacement))
+                rewritten_statements.append(statement)
             except Exception as exc:
                 diagnostics.append(RuleDiagnostic(index, "transform_error", str(exc)))
-                # Preserve the original statement if an AST edge case is hit.
-                rendered.append(statement.sql(dialect="bigquery"))
+                # Do not keep a partially mutated AST after a failed rule step.
+                statement = before
+                rewritten_statements.append(before)
+            rendered_statements.append(render_statement(_without_comments(statement)))
 
         if changes == 0:
+            if not _same_ast(
+                [statement for _, statement in rewriteable], rewritten_statements
+            ):
+                diagnostics.append(
+                    RuleDiagnostic(
+                        -1,
+                        "source_splice_error",
+                        "A rule changed an AST without reporting a source edit",
+                    )
+                )
+                return RuleOutput(
+                    sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics)
+                )
             return RuleOutput(sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics))
 
-        output = ";\n\n".join(part.rstrip() for part in rendered if part.strip())
-        output = _preserve_comments(sql, output)
-        output_statements: list[exp.Expression] | None = None
+        output = sql
+        for start, end, replacement in reversed(edits):
+            output = output[:start] + replacement + output[end:]
         try:
-            output_statements = parse_statements(output)
-            remaining = self.count_remaining(output_statements)
+            output_statements = parse_statements(output, recover=recovered)
         except Exception as exc:
-            if recovered:
-                # Recovery mode is intentionally used for BigQuery constructs
-                # that sqlglot cannot round-trip strictly (for example FOR
-                # SYSTEM_TIME). The transformed AST is still available, so use
-                # it rather than declaring the serialized text a failure.
-                remaining = self.count_remaining(statements)
-                diagnostics.append(RuleDiagnostic(-1, "recovered_output_parse", str(exc)))
-            else:
-                try:
-                    remaining = self.count_remaining(parse_statements(output, recover=True))
-                    diagnostics.append(RuleDiagnostic(-1, "recovered_output_parse", str(exc)))
-                except Exception:
-                    remaining = 0
-                    diagnostics.append(RuleDiagnostic(-1, "output_parse_error", str(exc)))
+            diagnostics.append(RuleDiagnostic(-1, "output_parse_error", str(exc)))
+            return RuleOutput(sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics))
 
-        if output_statements is not None:
-            for index, statement in enumerate(output_statements):
-                for error in cte_dependency_errors(statement):
-                    diagnostics.append(RuleDiagnostic(index, "cte_dependency_error", error))
+        try:
+            rendered_reference = ";\n\n".join(
+                part.rstrip() for part in rendered_statements if part.strip()
+            )
+            rendered_reference_statements = parse_statements(
+                rendered_reference, recover=recovered
+            )
+        except Exception as exc:
+            diagnostics.append(RuleDiagnostic(-1, "output_parse_error", str(exc)))
+            return RuleOutput(sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics))
+
+        if not _same_ast(
+            [statement for statement in rendered_reference_statements if not isinstance(statement, exp.Semicolon)],
+            [statement for statement in output_statements if not isinstance(statement, exp.Semicolon)],
+        ):
+            diagnostics.append(
+                RuleDiagnostic(
+                    -1,
+                    "output_parse_error",
+                    "Spliced SQL did not preserve the rewritten statement structure",
+                )
+            )
+            return RuleOutput(sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics))
+
+        remaining = self.count_remaining(output_statements)
+        for index, statement in enumerate(output_statements):
+            for error in cte_dependency_errors(statement):
+                diagnostics.append(RuleDiagnostic(index, "cte_dependency_error", error))
 
         return RuleOutput(
             output,
