@@ -27,6 +27,7 @@ ASSETS = {
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/assets/browse.css": ("browse.css", "text/css; charset=utf-8"),
     "/assets/browse.js": ("browse.js", "text/javascript; charset=utf-8"),
+    "/assets/background.jpg": ("background.jpg", "image/jpeg"),
 }
 
 
