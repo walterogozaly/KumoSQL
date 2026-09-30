@@ -1,7 +1,15 @@
 import pytest
 from sqlglot import exp
 
-from kumosql import RewriteRule, engine
+from kumosql import (
+    PipelineResult,
+    RewriteResult,
+    RewriteRule,
+    Verification,
+    VerificationCheck,
+    VerificationStatus,
+    engine,
+)
 from kumosql.cli import main, rewrite_main
 
 
@@ -57,6 +65,8 @@ def test_rewrite_cli_withholds_rule_failure_output_and_shows_diagnostic(
     assert status == 2
     assert output_path.read_text(encoding="utf-8") == "keep this file"
     assert captured.out == ""
+    assert "verification=failed" in captured.err
+    assert "check rewrite=failed:" in captured.err
     assert f"diagnostic: {diagnostic_code}:" in captured.err
 
 
@@ -111,6 +121,45 @@ def test_rewrite_cli_keeps_unproven_output_as_review_result(tmp_path, monkeypatc
     assert status == 3
     assert "WHERE" not in output_path.read_text(encoding="utf-8")
     assert "verification=unproven" in captured.err
+    assert "check equivalence_proof=not_proven:" in captured.err
+    assert "check planner=not_run:" in captured.err
+
+
+def test_rewrite_cli_reports_planner_checked_as_one_untrusted_label(
+    tmp_path, monkeypatch, capsys
+):
+    input_path = tmp_path / "input.sql"
+    output_path = tmp_path / "output.sql"
+    input_path.write_text("SELECT 1 AS value", encoding="utf-8")
+    source = input_path.read_text(encoding="utf-8")
+    candidate = "SELECT 2 AS value"
+    verification = Verification(
+        VerificationStatus.PLANNER_CHECKED,
+        "the planner check passed, but equivalence could not be proven",
+        checks=(
+            VerificationCheck("equivalence_proof", "not_proven", "No proof was found."),
+            VerificationCheck("planner", "passed", "The planner accepted the candidate."),
+        ),
+    )
+    step = RewriteResult(
+        "format_sql", source, candidate, 1, (), verification, rule_success=True
+    )
+    monkeypatch.setattr(
+        "kumosql.cli.apply_rules",
+        lambda names, sql: PipelineResult(sql, candidate, (step,), verification),
+    )
+
+    status = rewrite_main(
+        [str(input_path), "--rule", "format_sql", "--output", str(output_path)]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 3
+    assert output_path.read_text(encoding="utf-8").strip() == candidate
+    assert captured.err.count("verification=planner_checked") == 2
+    assert captured.err.count(
+        "check planner=passed: The planner accepted the candidate."
+    ) == 1
 
 
 def test_rewrite_cli_unproven_override_is_explicit_and_warned(tmp_path, monkeypatch, capsys):

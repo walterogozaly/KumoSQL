@@ -60,7 +60,15 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 | `remove_unused_ctes` | Removes root CTEs that nothing references |
 | `format_sql` | Formats with sqlfluff using your saved formatting preferences (SQL only, not SQLX) |
 
-`apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. The result's `verification.status` is `unchanged`, `proven`, or `unproven`; an unproven output is still returned, with the reasons in `verification.details`, and `result.success` is false.
+`apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
+
+- `unchanged`: the output matches the input.
+- `proven`: the equivalence prover established equivalence. A planner check, when available, is reported separately.
+- `planner_checked`: a planner accepted the candidate, but equivalence was not proven. This is not trusted for automatic acceptance.
+- `unproven`: equivalence was not established and there is no successful planner-only result. A failed planner check is reported here as a failed check.
+- `failed`: a fatal rewrite error occurred, such as a parse, transform, or output validation failure.
+
+Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
 
 ```python
 from kumosql import apply_rules

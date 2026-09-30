@@ -93,7 +93,7 @@ def rewrite_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-unproven",
         action="store_true",
-        help="Exit 0 after writing output even when equivalence could not be proven",
+        help="Exit 0 after writing output when it is unproven or only planner checked",
     )
     args = parser.parse_args(argv)
 
@@ -101,15 +101,20 @@ def rewrite_main(argv: list[str] | None = None) -> int:
 
     for step in result.steps:
         print(
-            f"{step.rule}: changes={step.changes} ok={step.rule_success} "
+            f"{step.rule}: changes={step.changes} "
             f"verification={step.verification.status.value}",
             file=sys.stderr,
         )
         for diagnostic in step.diagnostics:
             print(f"  diagnostic: {diagnostic.code}: {diagnostic.message}", file=sys.stderr)
         for detail in step.verification.details:
-            print(f"  unproven: {detail}", file=sys.stderr)
+            print(f"  detail: {detail}", file=sys.stderr)
     print(f"verification={result.verification.status.value}", file=sys.stderr)
+    for check in result.verification.checks:
+        print(
+            f"  check {check.kind}={check.outcome}: {check.detail}",
+            file=sys.stderr,
+        )
 
     if not all(step.rule_success for step in result.steps):
         return 2
