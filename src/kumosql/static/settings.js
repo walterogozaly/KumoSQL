@@ -192,22 +192,33 @@
     const format = profile.format || {};
     const select = h("select", { id: "sp-profile", class: "sp-input", onchange: (event) => activate(event.target.value) });
     for (const item of profiles) select.append(h("option", { value: item.id, text: item.name, selected: item.id === activeId }));
+    // Renaming waits for the Rename button (or Enter); typing alone saves nothing.
+    const rename = () => {
+      const next = name.value.trim();
+      if (next === profile.name) return;
+      if (!next || profiles.some((item) => item !== profile && item.name.toLowerCase() === next.toLowerCase())) {
+        setStatus(next ? "Configuration names must be unique" : "Give this configuration a name", true);
+        return;
+      }
+      profile.name = next;
+      name.value = next;
+      select.querySelector(`option[value="${profile.id}"]`).textContent = next;
+      renameButton.disabled = true;
+      saveUi();
+      setStatus("Renamed");
+    };
     const name = h("input", {
       id: "sp-profile-name", class: "sp-input", type: "text", maxlength: "60", value: profile.name,
-      onchange: (event) => {
-        const next = event.target.value.trim();
-        if (!next || profiles.some((item) => item !== profile && item.name.toLowerCase() === next.toLowerCase())) {
-          setStatus(next ? "Configuration names must be unique" : "Give this configuration a name", true);
-          event.target.value = profile.name;
-          return;
-        }
-        profile.name = next;
-        select.querySelector(`option[value="${profile.id}"]`).textContent = next;
-        saveUi();
-        setStatus("Saved");
+      oninput: () => {
+        const next = name.value.trim();
+        renameButton.disabled = !next || next === profile.name;
+        setStatus("");
       },
+      onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); rename(); } },
     });
+    const renameButton = h("button", { type: "button", class: "toolbar-button", text: "Rename", disabled: true, onclick: rename });
     const actions = h("div", { class: "sp-inline" },
+      renameButton,
       h("button", { type: "button", class: "toolbar-button", text: "New", onclick: () => {
         const item = { id: crypto.randomUUID(), name: `Configuration ${profiles.length + 1}`, format: { ...format } };
         profiles.push(item);
@@ -242,7 +253,7 @@
       h("p", { class: "sp-lede", text: "Used by the Format SQL rule in the pipeline. Keep several named sqlfluff configurations and pick which one is active." }),
       h("div", { class: "sp-group" },
         row("Active configuration", "The configuration the Format SQL rule uses.", select, "sp-profile"),
-        row("Name", "Rename the active configuration.", h("div", { class: "sp-inline" }, name, actions), "sp-profile-name")),
+        row("Name", "Type a new name, then press Rename.", h("div", { class: "sp-inline" }, name, actions), "sp-profile-name")),
       form,
     );
   }
