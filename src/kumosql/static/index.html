@@ -73,13 +73,18 @@
 
           <details class="settings-group" id="scope-settings">
             <summary>Scopes <span id="scope-count" class="count-label"></span></summary>
-            <p class="sidebar-hint">A scope is a saved label on any field, like a team’s authors or projects, used to limit refactors and searches.</p>
+            <p class="sidebar-hint">A scope is a saved rule that decides what is “in”: combine conditions on any field (like a job’s submitter, a project or a table’s columns) with AND, OR and NOT, to limit refactors and searches.</p>
             <ul id="scope-list" class="scope-list"></ul>
             <form id="scope-form" class="settings-form" autocomplete="off">
               <label class="wide">Name
                 <input name="name" type="text" maxlength="80" placeholder="My Team" required></label>
-              <label class="wide">Filters, one per line
-                <textarea name="filters" rows="3" spellcheck="false" placeholder="author = ana@co.com, bo@co.com&#10;project = growth-*" required></textarea></label>
+              <div class="wide rule-field">
+                <span>Include when</span>
+                <div id="rule-builder" class="rule-builder"></div>
+                <datalist id="scope-field-options"></datalist>
+                <p id="rule-preview" class="rule-preview" aria-live="polite"></p>
+                <p id="scope-field-hint" class="sidebar-hint"></p>
+              </div>
               <div class="settings-actions">
                 <button id="scope-save" class="toolbar-button" type="submit">Save scope</button>
                 <button id="scope-cancel" class="link-button" type="button" hidden>Cancel</button>

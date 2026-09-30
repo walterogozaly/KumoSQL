@@ -570,26 +570,44 @@ class Pipeline:
             )
         return gaps
 
-    SCOPE_FIELDS = ("project", "dataset", "name", "table")
+    def model_record(self, key: str, profile: object | None = None) -> dict[str, object]:
+        """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own."""
 
-    def scope_keys(self, scope: "SavedScope") -> set[str]:
-        """Keys of the models a saved scope matches; unsupported scope fields raise ``ValueError``."""
+        from .scopes import profile_record
 
-        unsupported = sorted(set(scope.fields) - set(self.SCOPE_FIELDS))
-        if unsupported:
-            raise ValueError(
-                f"scope {scope.name!r} filters on {', '.join(unsupported)}, which pipeline models do not "
-                f"have; pipeline reports can be scoped by {', '.join(self.SCOPE_FIELDS)}"
-            )
-        return {
-            key for key, model in self.models.items()
-            if scope.matches({
-                "project": model.target.database,
-                "dataset": model.target.schema,
-                "name": model.target.name,
-                "table": model.target.name,
-            })
+        model = self.models[key]
+        target = model.target
+        record: dict[str, object] = {
+            "project": target.database,
+            "dataset": target.schema,
+            "table": target.name,
+            "name": target.name,
+            "model": key,
+            "kind": model.kind,
+            "path": model.path,
+            "depends_on": [dep.key for dep in model.declared_dependencies],
         }
+        if profile is not None:
+            record.update(profile_record(profile))
+        return record
+
+    def scope_keys(self, scope: "SavedScope", profiles: "Mapping[str, object] | None" = None) -> set[str]:
+        """Keys of the models a saved scope matches.
+
+        A rule field that models do not have (job-history fields such as a
+        submitter, for instance) raises ``UnknownFieldError``, a ``ValueError``.
+        Table-profile fields are computed on demand, or taken from ``profiles``.
+        """
+
+        from .scopes import MODEL_FIELDS, PROFILE_FIELDS
+
+        scope.require_fields((*MODEL_FIELDS, *PROFILE_FIELDS), "pipeline models")
+        if profiles is None and set(map(str.casefold, scope.fields_used())) & set(PROFILE_FIELDS):
+            from .table_profile import profile_pipeline
+
+            profiles = profile_pipeline(self)
+        profiles = profiles or {}
+        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key)))}
 
     def assess_change(
         self,

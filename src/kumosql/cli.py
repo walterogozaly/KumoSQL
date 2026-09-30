@@ -15,7 +15,7 @@ from .synthetic_check import attach_synthetic_check
 from .evidence_summary import DEFAULT_MIN_CHANGED, summarize_evidence
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
-from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
+from .scopes import Scope, delete_scope, discover_fields, get_scope, list_scopes, parse_scope, save_scope
 from .coverage import Thresholds, sample_impact_reports, score_verdicts
 from .pipeline import load_compiled_graph, load_sqlx_project
 from .resilience import PipelineLoadError, parse_json_or_raise
@@ -452,33 +452,81 @@ def _cli_thresholds(parser: argparse.ArgumentParser, args: argparse.Namespace) -
 
 def scopes_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Manage saved scopes: named labels of authors, projects or any other field"
+        description="Manage saved scopes: named rules over models, job history and table profiles"
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="Show saved scopes")
-    add = commands.add_parser("add", help="Create or replace a scope")
+    add = commands.add_parser(
+        "add",
+        help="Create or replace a scope",
+        description="Give the scope a rule with --rule/--rule-file (any conditions, nested AND/OR/NOT), "
+        "or a simple 'field in values' filter with --field.",
+    )
     add.add_argument("name", help='Scope name, e.g. "My Team"')
     add.add_argument(
         "--field",
         action="append",
         nargs="+",
         metavar=("FIELD", "VALUE"),
-        required=True,
         help="A field and its values, e.g. --field author ana@co.com bo@co.com (end a value with * for a prefix)",
     )
+    add.add_argument(
+        "--rule",
+        help='Rule as JSON, e.g. \'{"field": "submitter", "op": "in", "value": ["ana@co.com"]}\'; '
+        'groups are {"all": [...]}, {"any": [...]} and {"not": rule}',
+    )
+    add.add_argument("--rule-file", type=Path, help="Read the rule JSON from a file")
     remove = commands.add_parser("remove", help="Delete a scope")
     remove.add_argument("name")
+    fields = commands.add_parser("fields", help="List the fields a rule can use, found in your data")
+    fields.add_argument("--root", type=Path, help="Dataform project (or compiled graph) to read model and profile fields from")
+    fields.add_argument("--source-schema", type=Path, help="Source schema JSON, as for kumosql-pipeline-report")
+    fields.add_argument("--observed-reads", type=Path, help="Job-history JSON list to read job fields from")
     args = parser.parse_args(argv)
 
     if args.command == "list":
         for scope in list_scopes():
             print(json.dumps(scope.to_json()))
+    elif args.command == "fields":
+        pipeline = None
+        if args.root:
+            try:
+                pipeline = _load_pipeline(args.root, args.source_schema)
+            except PipelineLoadError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+        reads: list = []
+        if args.observed_reads:
+            try:
+                reads = json.loads(args.observed_reads.read_text(encoding="utf-8"))
+                if not isinstance(reads, list):
+                    raise ValueError("expected a JSON list")
+            except (OSError, ValueError) as exc:
+                parser.error(f"could not read --observed-reads: {exc}")
+        profiles = None
+        if pipeline is not None:
+            from .table_profile import profile_pipeline
+
+            profiles = profile_pipeline(pipeline)
+        for info in discover_fields(pipeline, reads, profiles):
+            examples = f"  e.g. {', '.join(info.examples[:3])}" if info.examples else ""
+            print(f"{info.name}\t{info.source}\t{info.kind}{examples}")
     elif args.command == "add":
-        fields: dict[str, list[str]] = {}
-        for field, *values in args.field:
-            fields.setdefault(field, []).extend(values)
+        given = [bool(args.field), bool(args.rule), bool(args.rule_file)]
+        if sum(given) != 1:
+            parser.error("give exactly one of --field, --rule or --rule-file")
         try:
-            save_scope(parse_scope({"name": args.name, "fields": fields}))
+            if args.field:
+                filters: dict[str, list[str]] = {}
+                for field, *values in args.field:
+                    filters.setdefault(field, []).extend(values)
+                data = {"name": args.name, "fields": filters}
+            else:
+                text = args.rule if args.rule else args.rule_file.read_text(encoding="utf-8")
+                data = {"name": args.name, "rule": json.loads(text)}
+            save_scope(parse_scope(data))
+        except (OSError, json.JSONDecodeError) as exc:
+            parser.error(f"could not read the rule: {exc}")
         except ValueError as exc:
             parser.error(str(exc))
     elif not delete_scope(args.name):
