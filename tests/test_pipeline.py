@@ -389,3 +389,146 @@ def test_lineage_report_rows_and_pipeline_report_section():
     }
     assert rows[("p.m.s", "*")]["status"] == "unknown" and rows[("p.m.s", "*")]["reason"] == "unexpanded_star"
     assert pipeline.report()["column_lineage"] == pipeline.lineage_report()
+
+
+# ------------------------------------------------------------ gaps (#28)
+
+
+def _gap_codes(report):
+    return {g["code"] for g in report["completeness"]["gaps"]}
+
+
+def test_complete_pipeline_reports_complete(tmp_path):
+    write(tmp_path, "a.sql", "SELECT id FROM `proj.raw.people`")
+    write(tmp_path, "b.sql", "SELECT id FROM a")
+
+    report = load_sqlx_project(tmp_path).report()
+
+    assert report["completeness"]["complete"] is True
+    assert all(report["completeness"]["views"].values())
+    assert report["graph"]["completeness"]["complete"] is True
+
+
+def test_unparseable_model_marks_every_view_incomplete(tmp_path):
+    write(tmp_path, "base.sql", "SELECT id FROM `proj.raw.people`")
+    write(tmp_path, "broken.sql", "SELECT id FROM base WHERE (")
+
+    report = load_sqlx_project(tmp_path).report()
+    completeness = report["completeness"]
+
+    assert completeness["complete"] is False
+    assert not any(completeness["views"].values())
+    assert {"parse_error", "unknown_reads"} <= _gap_codes(report)
+    assert completeness["assets_not_analyzed"] == 1
+    assert report["graph"]["completeness"]["complete"] is False
+    assert {g["asset"] for g in completeness["gaps"] if g["blocking"]} == {"broken"}
+
+
+def test_unknown_reads_is_reported_per_model_and_survives_scoping(tmp_path):
+    from kumosql.scopes import parse_scope
+
+    write(tmp_path, "one.sql", "SELECT id FROM (")
+    write(tmp_path, "two.sql", "SELECT id FROM (")
+    write(tmp_path, "fine.sql", "SELECT 1 AS id")
+    pipeline = load_sqlx_project(tmp_path)
+
+    unknown = [d for d in pipeline.all_diagnostics() if d.code == "unknown_reads"]
+    assert sorted(d.model for d in unknown) == ["one", "two"]
+
+    report = pipeline.report(scope=parse_scope({"name": "one-only", "fields": {"name": ["one"]}}))
+    assert any(d["code"] == "unknown_reads" and d["model"] == "one" for d in report["diagnostics"])
+    assert report["completeness"]["complete"] is False
+    assert {g["asset"] for g in report["completeness"]["gaps"]} == {"one"}
+
+    clean = pipeline.report(scope=parse_scope({"name": "fine", "fields": {"name": ["fine"]}}))
+    assert clean["completeness"]["complete"] is True
+
+
+def test_cycle_marks_graph_and_impact_incomplete():
+    graph = {
+        "tables": [
+            {"target": {"schema": "d", "name": "x"}, "query": "SELECT id FROM d.y"},
+            {"target": {"schema": "d", "name": "y"}, "query": "SELECT id FROM d.x"},
+        ]
+    }
+    completeness = load_compiled_graph(graph).completeness()
+
+    assert completeness["views"]["graph"] is False
+    assert completeness["views"]["impact"] is False
+    assert completeness["views"]["lineage"] is True
+
+
+def test_extra_queries_in_a_script_are_reported():
+    graph = {
+        "tables": [
+            {
+                "target": {"schema": "d", "name": "x"},
+                "queries": ["SELECT id FROM d.a", "SELECT id FROM d.b"],
+            },
+            {"target": {"schema": "d", "name": "a"}, "query": "SELECT 1 AS id"},
+            {"target": {"schema": "d", "name": "b"}, "query": "SELECT 1 AS id"},
+        ]
+    }
+    pipeline = load_compiled_graph(graph)
+
+    assert any(d.code == "skipped_statements" and d.model == "d.x" for d in pipeline.all_diagnostics())
+    assert pipeline.completeness()["complete"] is False
+
+
+def test_operations_are_listed_as_not_analysed():
+    graph = {
+        "tables": [{"target": {"schema": "d", "name": "a"}, "query": "SELECT 1 AS id"}],
+        "operations": [
+            {
+                "target": {"schema": "d", "name": "load"},
+                "queries": ["INSERT INTO d.a SELECT 2"],
+                "dependencyTargets": [{"schema": "d", "name": "a"}],
+            }
+        ],
+    }
+    completeness = load_compiled_graph(graph).completeness()
+
+    assert completeness["complete"] is False
+    assert completeness["by_code"]["unparsed_operation"] == 1
+    assert completeness["gaps"][0]["asset"] == "d.load"
+
+
+def test_ambiguous_table_reference_is_distinct_from_external():
+    graph = {
+        "tables": [
+            {"target": {"schema": "a", "name": "events"}, "query": "SELECT 1 AS id"},
+            {"target": {"schema": "b", "name": "events"}, "query": "SELECT 1 AS id"},
+            {
+                "target": {"schema": "c", "name": "report"},
+                "query": "SELECT id FROM events JOIN elsewhere.t USING (id)",
+            },
+        ]
+    }
+    pipeline = load_compiled_graph(graph)
+    codes = {(d.model, d.code) for d in pipeline.all_diagnostics()}
+
+    assert ("c.report", "ambiguous_reference") in codes
+    assert ("c.report", "external_tables") in codes
+    assert pipeline.completeness()["views"]["graph"] is False
+
+
+def test_external_tables_are_listed_but_do_not_block():
+    graph = {"tables": [{"target": {"schema": "c", "name": "report"}, "query": "SELECT id FROM elsewhere.t"}]}
+    completeness = load_compiled_graph(graph).completeness()
+
+    assert completeness["complete"] is True
+    assert completeness["gaps"][0]["kind"] == "unmatched_reference"
+    assert completeness["gaps"][0]["blocking"] is False
+
+
+def test_unattributed_observations_make_the_graph_incomplete(tmp_path):
+    from kumosql.graph import ObservedRead
+
+    write(tmp_path, "a.sql", "SELECT 1 AS id")
+    pipeline = load_sqlx_project(tmp_path)
+    read = ObservedRead("job-1", "2024-01-01T00:00:00Z", None, ("a",))
+
+    report = pipeline.report(observed_reads=[read])
+
+    assert report["completeness"]["complete"] is False
+    assert "unattributed_reads" in _gap_codes(report)
