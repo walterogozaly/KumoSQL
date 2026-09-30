@@ -77,6 +77,15 @@ MODEL_FIELDS = ("project", "dataset", "table", "name", "model", "kind", "path", 
 PROFILE_FIELDS = ("grain_status", "grain_keys", "columns", "column_count", "profile_complete", "row_filters")
 #: Fields every job-history record carries, beside its source-specific ones.
 JOB_FIELDS = ("job_id", "creation_time", "destination", "referenced_tables")
+#: Columns of BigQuery's INFORMATION_SCHEMA.JOBS, offered as field suggestions before any job
+#: history is loaded. A suggestion only: a rule may name any field, and is checked against the data.
+JOBS_VIEW_COLUMNS = (
+    ("user_email", "text"), ("project_id", "text"), ("job_type", "text"), ("statement_type", "text"),
+    ("priority", "text"), ("state", "text"), ("reservation_id", "text"), ("labels", "list"),
+    ("total_bytes_billed", "number"), ("total_bytes_processed", "number"), ("total_slot_ms", "number"),
+    ("creation_time", "time"), ("start_time", "time"), ("end_time", "time"),
+)
+_LIST_SPLIT = re.compile(r"[,;\n\r]+")
 
 
 class UnknownFieldError(ValueError):
@@ -126,7 +135,10 @@ def _parse_condition(data: Mapping) -> dict:
             raise ValueError(f"{op} on {name!r} takes no value")
     elif op in _LIST_OPS:
         values = data.get("value")
-        if isinstance(values, (str, int, float)) and not isinstance(values, bool):
+        if isinstance(values, str):
+            # A pasted list: commas, semicolons or one value per line.
+            values = _LIST_SPLIT.split(values)
+        elif isinstance(values, (int, float)) and not isinstance(values, bool):
             values = [values]
         if not isinstance(values, list) or not values or len(values) > MAX_VALUES:
             raise ValueError(f"{op} on {name!r} needs a list of values")
@@ -520,6 +532,8 @@ def discover_fields(
         if index >= max_rows:
             break
         note("job", job_record(row))
+    for name, kind in JOBS_VIEW_COLUMNS:
+        seen.setdefault(("job", name), (kind, []))
     if pipeline is not None and not profiles:
         for name in PROFILE_FIELDS:
             seen.setdefault(("profile", name), ("list" if name in ("grain_keys", "columns", "row_filters") else "text", []))
