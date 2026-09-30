@@ -7,8 +7,11 @@ profile) is in the scope when the rule matches it. Rules are trees::
     {"all": [rule, ...]}                                                     # AND
     {"any": [rule, ...]}                                                     # OR
     {"not": rule}                                                            # NOT
+    {"scope": "my_team"}                                                     # in another saved scope
 
-Groups nest, so "submitter in [...] AND (dataset starts with raw OR NOT
+A scope can be built from other saved scopes (``{"scope": name}``): "our_department" is
+``any`` of ``my_team`` and ``partner_team`` (OR, the union), or ``all`` of them (AND, only what
+both contain). A scope cannot refer to itself, directly or through others. Groups nest, so "submitter in [...] AND (dataset starts with raw OR NOT
 project = sandbox)" is one scope. Conditions can name any field: which fields
 exist is discovered from the data (:func:`discover_fields`), not hardcoded.
 
@@ -106,10 +109,15 @@ def parse_rule(data: object, *, _depth: int = 0, _count: list[int] | None = None
         raise ValueError(f"rule groups can nest at most {MAX_DEPTH} levels deep")
     if not isinstance(data, Mapping):
         raise ValueError("a rule must be an object")
-    keys = set(data) & {"all", "any", "not", "field"}
+    keys = set(data) & {"all", "any", "not", "field", "scope"}
     if len(keys) != 1:
-        raise ValueError('a rule needs exactly one of "field", "all", "any" or "not"')
+        raise ValueError('a rule needs exactly one of "field", "all", "any", "not" or "scope"')
     (kind,) = keys
+    if kind == "scope":
+        ref = data["scope"]
+        if not isinstance(ref, str) or not ref.strip():
+            raise ValueError("a scope reference needs the name of a saved scope")
+        return {"scope": ref.strip()}
     if kind in ("all", "any"):
         children = data[kind]
         if not isinstance(children, list) or not children:
@@ -174,6 +182,8 @@ def rule_fields(rule: Mapping) -> list[str]:
     found: list[str] = []
 
     def walk(node: Mapping) -> None:
+        if "scope" in node:
+            return
         if "field" in node:
             if node["field"] not in found:
                 found.append(node["field"])
@@ -190,6 +200,8 @@ def rule_fields(rule: Mapping) -> list[str]:
 def describe_rule(rule: Mapping, *, _top: bool = True) -> str:
     """A one-line reading of a rule, e.g. ``submitter is one of [a, b] AND NOT project = x``."""
 
+    if "scope" in rule:
+        return f"in scope “{rule['scope']}”"
     if "field" in rule:
         op = rule["op"]
         label = OPERATORS[op]
@@ -292,7 +304,34 @@ def _condition_matches(node: Mapping, record: Mapping[str, object]) -> bool:
     return any(_ordered(t, pattern, op) for t in texts)
 
 
+def expand_rule(rule: Mapping, lookup: Mapping[str, "Scope"], stack: tuple[str, ...]) -> dict:
+    """``rule`` with every scope reference replaced by that scope's rule.
+
+    ``lookup`` maps lower-cased scope names to scopes; ``stack`` is the chain of
+    scopes being expanded. Raises ``ValueError`` for an unknown scope or a cycle.
+    """
+
+    if "scope" in rule:
+        ref = rule["scope"]
+        key = ref.casefold()
+        if key in stack:
+            chain = " → ".join([*stack[stack.index(key):], key])
+            raise ValueError(f"scopes cannot refer to themselves: {chain}")
+        target = lookup.get(key)
+        if target is None:
+            raise ValueError(f"refers to scope {ref!r}, which is not saved")
+        return expand_rule(target.rule, lookup, (*stack, key))
+    if "not" in rule:
+        return {"not": expand_rule(rule["not"], lookup, stack)}
+    for group in ("all", "any"):
+        if group in rule:
+            return {group: [expand_rule(child, lookup, stack) for child in rule[group]]}
+    return dict(rule)
+
+
 def evaluate_rule(rule: Mapping, record: Mapping[str, object]) -> bool:
+    if "scope" in rule:
+        raise ValueError("scope references must be expanded before evaluation")
     if "field" in rule:
         return _condition_matches(rule, record)
     if "not" in rule:
@@ -338,7 +377,7 @@ def rule_from_fields(fields: Mapping[str, Iterable[str]]) -> dict:
 class Scope:
     """A named rule. ``Scope(name, fields)`` still builds one from ``{field: values}``."""
 
-    __slots__ = ("name", "rule")
+    __slots__ = ("name", "rule", "_expanded")
 
     def __init__(self, name: str, fields: Mapping[str, Iterable[str]] | None = None, *, rule: Mapping | None = None):
         if (fields is None) == (rule is None):
@@ -347,6 +386,7 @@ class Scope:
         object.__setattr__(
             self, "rule", parse_rule(rule) if rule is not None else rule_from_fields(fields)  # type: ignore[arg-type]
         )
+        object.__setattr__(self, "_expanded", None)
 
     def __setattr__(self, key: str, value: object) -> None:
         raise AttributeError("scopes are immutable")
@@ -371,8 +411,41 @@ class Scope:
                 found[node["field"]] = tuple(str(v) for v in node["value"])
         return found
 
+    def references(self) -> list[str]:
+        """Names of the saved scopes this rule refers to directly."""
+
+        found: list[str] = []
+
+        def walk(node: Mapping) -> None:
+            if "scope" in node:
+                if node["scope"] not in found:
+                    found.append(node["scope"])
+            elif "not" in node:
+                walk(node["not"])
+            elif "field" not in node:
+                for child in node.get("all") or node.get("any") or ():
+                    walk(child)
+
+        walk(self.rule)
+        return found
+
+    def expanded_rule(self, lookup: Mapping[str, "Scope"] | None = None) -> dict:
+        """The rule with referenced scopes inlined. Without ``lookup`` the saved scopes are used (and cached)."""
+
+        if lookup is None:
+            if self._expanded is not None:
+                return self._expanded
+            if not self.references():
+                object.__setattr__(self, "_expanded", self.rule)
+                return self.rule
+            lookup = {s.name.casefold(): s for s in list_scopes()}
+            expanded = expand_rule(self.rule, lookup, (self.name.casefold(),))
+            object.__setattr__(self, "_expanded", expanded)
+            return expanded
+        return expand_rule(self.rule, lookup, (self.name.casefold(),))
+
     def fields_used(self) -> list[str]:
-        return rule_fields(self.rule)
+        return rule_fields(self.expanded_rule())
 
     def describe(self) -> str:
         return describe_rule(self.rule)
@@ -380,7 +453,7 @@ class Scope:
     def matches(self, record: Mapping[str, object]) -> bool:
         """Whether ``record`` satisfies the rule. A missing field is null for that record."""
 
-        return evaluate_rule(self.rule, record)
+        return evaluate_rule(self.expanded_rule(), record)
 
     def filter(self, records: Iterable[Mapping[str, object]]) -> list[Mapping[str, object]]:
         return [record for record in records if self.matches(record)]
@@ -626,6 +699,12 @@ def save_scopes(scopes: Iterable[Scope]) -> None:
     names = [scope.name.casefold() for scope in scopes]
     if len(set(names)) != len(names):
         raise ValueError("scope names must be unique")
+    lookup = {scope.name.casefold(): scope for scope in scopes}
+    for scope in scopes:
+        try:
+            scope.expanded_rule(lookup)
+        except ValueError as exc:
+            raise ValueError(f"scope {scope.name!r}: {exc}") from exc
     state.set_section(SECTION, [scope.to_json() for scope in scopes])
 
 
@@ -644,5 +723,8 @@ def delete_scope(name: str) -> bool:
     kept = [s for s in scopes if s.name.casefold() != key]
     if len(kept) == len(scopes):
         return False
+    users = [s.name for s in kept if key in {r.casefold() for r in s.references()}]
+    if users:
+        raise ValueError(f"scope {name.strip()!r} is used by {', '.join(map(repr, users))}; remove it from those first")
     save_scopes(kept)
     return True

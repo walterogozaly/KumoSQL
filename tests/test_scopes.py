@@ -307,3 +307,72 @@ def test_jobs_view_columns_are_suggested_before_any_job_history_is_loaded():
     found = {f.name: f for f in discover_fields()}
     assert found["user_email"].source == "job"
     assert found["total_bytes_billed"].kind == "number"
+
+
+# --------------------------------------------------- scopes built from scopes
+
+
+def ref(name):
+    return {"scope": name}
+
+
+def save_team_scopes():
+    save_scope(rule_scope(cond("user_email", "in", ["ana@co.com", "bo@co.com"]), "my_team"))
+    save_scope(rule_scope(cond("user_email", "in", ["cy@co.com"]), "partner_team"))
+
+
+def test_a_scope_can_be_the_union_or_the_intersection_of_other_scopes():
+    save_team_scopes()
+    either = rule_scope({"any": [ref("my_team"), ref("partner_team")]}, "our_department")
+    both = rule_scope({"all": [ref("my_team"), ref("partner_team")]}, "overlap")
+    not_mine = rule_scope({"all": [ref("partner_team"), {"not": ref("my_team")}]}, "partners_only")
+    assert [either.matches({"user_email": e}) for e in ("ana@co.com", "CY@co.com", "zed@co.com")] == [True, True, False]
+    assert not both.matches({"user_email": "ana@co.com"})
+    assert not_mine.matches({"user_email": "cy@co.com"}) and not not_mine.matches({"user_email": "bo@co.com"})
+    assert either.describe() == "in scope “my_team” OR in scope “partner_team”"
+    assert either.fields_used() == ["user_email"] and either.references() == ["my_team", "partner_team"]
+
+
+def test_nested_scope_references_and_mixed_conditions():
+    save_team_scopes()
+    save_scope(rule_scope({"any": [ref("my_team"), ref("partner_team")]}, "our_department"))
+    org = rule_scope({"all": [ref("our_department"), cond("job_type", "eq", "query")]}, "org_queries")
+    assert org.matches({"user_email": "cy@co.com", "job_type": "QUERY"})
+    assert not org.matches({"user_email": "cy@co.com", "job_type": "LOAD"})
+
+
+def test_scope_references_are_checked_on_save():
+    save_team_scopes()
+    with pytest.raises(ValueError, match="not saved"):
+        save_scope(rule_scope(ref("nope"), "broken"))
+    with pytest.raises(ValueError, match="cannot refer to themselves"):
+        save_scope(rule_scope({"any": [ref("self_ref"), cond("a", "eq", "x")]}, "self_ref"))
+    save_scope(rule_scope(ref("my_team"), "a_scope"))
+    with pytest.raises(ValueError, match="cannot refer to themselves: a_scope → my_team → a_scope"):
+        save_scope(rule_scope(ref("a_scope"), "my_team"))
+    assert [s.name for s in list_scopes()] == ["my_team", "partner_team", "a_scope"]
+
+
+def test_a_referenced_scope_cannot_be_deleted_or_left_dangling():
+    save_team_scopes()
+    save_scope(rule_scope({"any": [ref("my_team"), ref("partner_team")]}, "our_department"))
+    with pytest.raises(ValueError, match="used by 'our_department'"):
+        delete_scope("my_team")
+    assert delete_scope("our_department") and delete_scope("my_team")
+
+
+def test_unsaved_reference_fails_loudly_when_used():
+    scope = rule_scope(ref("ghost"), "orphan")
+    with pytest.raises(ValueError, match="not saved"):
+        scope.matches({"a": 1})
+    with pytest.raises(ValueError):
+        parse_rule({"scope": ""})
+
+
+def test_cli_scope_from_scopes_and_unknown_field_inside_reference(tmp_path, capsys):
+    save_team_scopes()
+    scopes_main(["add", "Dept", "--rule", json.dumps({"any": [ref("my_team"), ref("partner_team")]})])
+    root = write_project(tmp_path)
+    with pytest.raises(SystemExit):
+        pipeline_main([str(root), "--scope", "Dept"])
+    assert "user_email" in capsys.readouterr().err  # models have no such field, named clearly
