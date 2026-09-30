@@ -39,3 +39,17 @@ def test_cache_survives_restart_and_serves_stale_on_error(monkeypatch):
     assert result["data"] == ["a"] and result["stale"] is True
     with pytest.raises(catalog.CatalogError):
         catalog.cached("k", boom, refresh=True)
+
+
+def test_list_projects_hides_projects_without_access(monkeypatch):
+    def fake_get(path, params=None):
+        if path == "projects":
+            return {"projects": [{"id": "ok"}, {"id": "denied"}, {"id": "flaky"}]}
+        if "denied" in path:
+            raise catalog.CatalogError("no", 403)
+        if "flaky" in path:
+            raise catalog.CatalogError("down", 503)
+        return {}
+
+    monkeypatch.setattr(catalog, "_get", fake_get)
+    assert [p["id"] for p in catalog.list_projects()] == ["ok", "flaky"]
