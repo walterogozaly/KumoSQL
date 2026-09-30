@@ -997,10 +997,20 @@ class _Prover:
         if result == z3.unsat:
             return True
         if result == z3.sat:
-            self.candidates.append((self._nice_model(solver, occs) or solver.model(), list(occs)))
+            self.candidates.append((self._counterexample(solver, occs), list(occs)))
         else:
             self.unknown = True
         return False
+
+    def _counterexample(self, solver, occs):
+        """A model of the last satisfiable check, preferring an integral one.
+
+        The plain model is read first: ``_nice_model`` runs further checks, and
+        after those the solver holds no model to fall back on.
+        """
+
+        base = solver.model()
+        return self._nice_model(solver, occs) or base
 
     def _nice_model(self, solver, occs):
         """Prefer integer-valued counterexamples; they fit INT64 and FLOAT64."""
@@ -1025,7 +1035,7 @@ class _Prover:
         solver.add(*facts)
         solver.add(pred)
         if solver.check() == z3.sat:
-            self.candidates.append((self._nice_model(solver, occs) or solver.model(), list(occs)))
+            self.candidates.append((self._counterexample(solver, occs), list(occs)))
 
     # ---- mappings ------------------------------------------------------
 
