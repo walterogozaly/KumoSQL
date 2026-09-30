@@ -14,6 +14,8 @@ Authentication, in order of preference:
    file's contents) or ``GOOGLE_APPLICATION_CREDENTIALS`` (a path), which
    needs the optional ``google-auth`` dependency (``pip install
    kumosql[bigquery]``).
+4. Application Default Credentials, including credentials created by
+   ``gcloud auth application-default login`` (also needs ``google-auth``).
 
 Tests pass a fake ``transport`` so nothing here needs network access.
 """
@@ -110,10 +112,24 @@ def access_token() -> str:
     raw_key = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if not raw_key and not key_path:
-        raise RuntimeError(
-            "no BigQuery credentials: set BQ_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS_JSON "
-            "or GOOGLE_APPLICATION_CREDENTIALS"
-        )
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            raise RuntimeError(
+                "no BigQuery credentials found; Google Cloud credentials need google-auth: "
+                "pip install 'kumosql[bigquery]'"
+            ) from exc
+        try:
+            credentials, _ = google.auth.default(scopes=[_SCOPE])
+            if not credentials.valid:
+                credentials.refresh(Request())
+        except Exception as exc:
+            raise RuntimeError(
+                "no BigQuery credentials: set BQ_ACCESS_TOKEN, configure a service account, "
+                "or run 'gcloud auth application-default login'"
+            ) from exc
+        return credentials.token
     try:
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
@@ -127,7 +143,8 @@ def access_token() -> str:
         )
     else:
         credentials = service_account.Credentials.from_service_account_file(key_path, scopes=[_SCOPE])
-    credentials.refresh(Request())
+    if not credentials.valid:
+        credentials.refresh(Request())
     return credentials.token
 
 

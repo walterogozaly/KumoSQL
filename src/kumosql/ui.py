@@ -19,9 +19,13 @@ MAX_REQUEST_BYTES = 5 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/browse": ("browse.html", "text/html; charset=utf-8"),
+    "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+    "/assets/browse.css": ("browse.css", "text/css; charset=utf-8"),
+    "/assets/browse.js": ("browse.js", "text/javascript; charset=utf-8"),
 }
 
 
@@ -130,6 +134,9 @@ class UIHandler(BaseHTTPRequestHandler):
                 for name, rule in available_rules().items()
             ])
             return
+        if self.path.startswith("/api/catalog/"):
+            self._catalog()
+            return
         asset = ASSETS.get(self.path)
         if asset is None:
             self._json(404, {"error": "not found"})
@@ -137,6 +144,35 @@ class UIHandler(BaseHTTPRequestHandler):
         filename, content_type = asset
         body = files("kumosql").joinpath("static", filename).read_bytes()
         self._send(200, body, content_type)
+
+    def _catalog(self) -> None:
+        from urllib.parse import parse_qs, urlsplit
+
+        from . import bigquery_catalog
+
+        route = urlsplit(self.path).path
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            if route == "/api/catalog/projects":
+                result = bigquery_catalog.list_projects()
+            elif route == "/api/catalog/datasets":
+                result = bigquery_catalog.list_datasets(_required(query, "project"))
+            elif route == "/api/catalog/tables":
+                result = bigquery_catalog.list_tables(
+                    _required(query, "project"), _required(query, "dataset")
+                )
+            elif route == "/api/catalog/table":
+                result = bigquery_catalog.get_table(
+                    _required(query, "project"), _required(query, "dataset"),
+                    _required(query, "table"),
+                )
+            else:
+                self._json(404, {"error": "not found"})
+                return
+        except (ValueError, bigquery_catalog.CatalogError, RuntimeError) as exc:
+            self._json(502, {"error": str(exc)})
+            return
+        self._json(200, result)
 
     def do_PUT(self) -> None:
         section = self.path.removeprefix("/api/settings/")
@@ -182,6 +218,13 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
             return
         self._json(200, result)
+
+
+def _required(query: dict[str, list[str]], name: str) -> str:
+    value = query.get(name, [""])[0]
+    if not value or len(value) > 1024:
+        raise ValueError(f"{name} is required")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:

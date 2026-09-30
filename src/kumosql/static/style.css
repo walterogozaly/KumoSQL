@@ -418,3 +418,6 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .scope-item div { flex: 1; min-width: 0; }
 .scope-item strong, .scope-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scope-item small { color: var(--text-muted); font-size: 11.5px; }
+.topnav { display: flex; gap: 20px; margin-left: auto; margin-right: 20px; }
+.topnav a { color: var(--muted, #657184); font-size: 13px; font-weight: 600; text-decoration: none; }
+.topnav a:hover { color: var(--ink, #192333); }

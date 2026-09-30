@@ -16,7 +16,16 @@ py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
 
 Open the URL printed by the command if your browser does not open automatically. Turn on transformations in the **Pipeline** sidebar, paste BigQuery SQL or Dataform SQLX (or open or drop a `.sql`/`.sqlx` file) into **Original SQL**, and review the highlighted result, a line diff, and the per-step verification report. Rules run top to bottom; drag them or use the arrows to change the order. The result updates after a short pause while typing, or use **Transform SQL** or Ctrl+Enter. Output that cannot be verified remains visible with a review warning. **Examples** loads sample SQL for each rule, and the result can be copied, downloaded, or sent back to the editor for another pass.
 
-The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. The **BigQuery browser** is a separate page that lists projects, datasets, tables, and table schemas using your Google Cloud credentials. It contacts BigQuery only when you open that page, select an item, or press **Refresh projects**; the SQL editor itself remains local. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
+
+To use the catalog with Google Cloud CLI credentials, install the BigQuery extra and sign in with Application Default Credentials:
+
+```powershell
+python -m pip install '.[bigquery]'
+gcloud auth application-default login
+```
+
+The browser uses the active ADC identity and read-only BigQuery scope. It lists projects that identity can see; BigQuery permissions still control which datasets, tables, and schemas appear. `gcloud auth login` alone does not configure Application Default Credentials.
 
 **Saved state.** UI preferences (theme, enabled rules and their order), formatting preferences and scopes are saved by the local server in one JSON file in the standard per-user data directory (`%APPDATA%\kumosql\state.json` on Windows, `~/Library/Application Support/kumosql/state.json` on macOS, `$XDG_DATA_HOME/kumosql/state.json` or `~/.local/share/kumosql/state.json` on Linux). Set `KUMOSQL_HOME` to use another directory. The CLI and Python API read the same file, so a scope saved in the UI works with `--scope`.
 
@@ -236,7 +245,7 @@ kumosql-compare-outputs drilldown path/to/dataform --after-dataset-suffix _dev -
 
 `dry_run(sql, project)` asks BigQuery to plan a query without running it. That costs nothing and reads no data, but it checks names and types and returns the output schema and bytes that would be scanned. `check_rewrite(original, rewritten, project)` accepts a rewrite only when both queries plan and their output schemas match exactly (column order, type, mode and nested fields). That is a necessary check, not a proof of equivalence.
 
-Credentials come from `BQ_ACCESS_TOKEN`, or a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path) with `pip install '.[bigquery]'`. Read-only roles are enough: BigQuery Job User plus Data Viewer.
+Credentials come from `BQ_ACCESS_TOKEN`, a service account key in `GOOGLE_APPLICATION_CREDENTIALS_JSON` (contents) or `GOOGLE_APPLICATION_CREDENTIALS` (path), or Google Application Default Credentials. ADC supports `gcloud auth application-default login`; install `pip install '.[bigquery]'` for the Google auth library. BigQuery dry runs need BigQuery Job User plus Data Viewer. Catalog browsing uses the read-only BigQuery scope and requires permission to list projects and read the selected metadata.
 
 ```powershell
 kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project
