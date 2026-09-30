@@ -436,16 +436,6 @@ def apply_rules(
                 base.details,
                 step_checks + base.checks,
             )
-        elif any(
-            check.kind == "planner" and check.outcome == "passed"
-            for check in step_checks
-        ):
-            verification = Verification(
-                VerificationStatus.PLANNER_CHECKED,
-                "the planner checks passed, but equivalence could not be proven",
-                base.details,
-                step_checks + base.checks,
-            )
         else:
             verification = Verification(
                 base.status,

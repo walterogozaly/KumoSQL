@@ -160,6 +160,26 @@ def test_pipeline_does_not_upgrade_a_planner_rejection_to_proven(monkeypatch):
     )
 
 
+def test_pipeline_does_not_claim_planner_checked_from_a_step_check(monkeypatch):
+    source = "SELECT 1 AS value"
+    candidate = "SELECT 2 AS value"
+    step_verification = verify_rewrite(
+        source,
+        candidate,
+        planner_check=VerificationCheck("planner", "passed", "The step pair planned."),
+    )
+    step = RewriteResult(
+        "test_rule", source, candidate, 1, (), step_verification, rule_success=True
+    )
+    monkeypatch.setattr("kumosql.rewrite.apply_rule", lambda name, sql, overrides=None: step)
+
+    result = apply_rules(["test_rule"], source)
+
+    assert step.verification.status is VerificationStatus.PLANNER_CHECKED
+    assert result.verification.status is VerificationStatus.UNPROVEN
+    assert not result.success
+
+
 def test_failed_rule_overrides_unchanged_text():
     source = "SELECT * FROM"
 
