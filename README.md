@@ -89,6 +89,8 @@ Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in 
 
 Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
 
+Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
+
 For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
 
 ```python

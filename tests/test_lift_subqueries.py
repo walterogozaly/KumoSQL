@@ -1,4 +1,27 @@
+import sqlglot
+from sqlglot import exp
+
 from kumosql import count_inline_subqueries, lift_subqueries
+
+
+def _assert_root_ctes_follow_dependencies(sql):
+    statement = sqlglot.parse_one(sql, read="bigquery")
+    with_clause = statement.args.get("with_") or statement.args.get("with")
+    assert with_clause is not None
+
+    ctes = with_clause.expressions
+    names = {
+        cte.args["alias"].this.name
+        for cte in ctes
+        if cte.args.get("alias") is not None
+    }
+    positions = {cte.args["alias"].this.name: index for index, cte in enumerate(ctes)}
+    for owner_index, cte in enumerate(ctes):
+        for table in cte.find_all(exp.Table):
+            if not table.db and not table.catalog and table.name in names:
+                assert positions[table.name] < owner_index, (
+                    f"CTE {table.name!r} must appear before its dependent CTE"
+                )
 
 
 def test_lifts_from_subquery_and_preserves_source_alias():
@@ -24,7 +47,7 @@ FROM (
 
     assert result.success
     assert result.lifted_subqueries == 2
-    assert result.sql.index("__lifted_subquery_001 AS") < result.sql.index("__lifted_subquery_002 AS")
+    _assert_root_ctes_follow_dependencies(result.sql)
 
 
 def test_lifts_from_existing_cte_before_that_cte():
@@ -41,6 +64,22 @@ SELECT * FROM STOPS JOIN DRIVERS ON TRUE"""
     assert result.lifted_subqueries == 1
     assert result.sql.index("__lifted_subquery_001 AS") < result.sql.index("STOPS AS")
     assert result.sql.index("STOPS AS") < result.sql.index("DRIVERS AS")
+    _assert_root_ctes_follow_dependencies(result.sql)
+
+
+def test_generic_lift_is_ordered_before_ctes_that_depend_on_it():
+    source = """WITH base AS (
+  SELECT * FROM (SELECT item_id FROM source_table) AS nested_source
+), child AS (
+  SELECT item_id FROM base
+)
+SELECT item_id FROM child"""
+
+    result = lift_subqueries(source)
+
+    assert result.success
+    assert result.lifted_subqueries == 1
+    _assert_root_ctes_follow_dependencies(result.sql)
 
 
 def test_noop_sql_is_returned_byte_for_byte():
@@ -63,6 +102,25 @@ SELECT * FROM __lifted_subquery_001"""
 
     assert not result.success
     assert any(d.code == "cte_dependency_error" for d in result.diagnostics)
+
+
+def test_forward_cte_dependency_is_a_failed_rewrite():
+    source = """WITH first_cte AS (
+  SELECT * FROM later_cte
+), later_cte AS (
+  SELECT item_id FROM source_table
+)
+SELECT * FROM first_cte"""
+
+    result = lift_subqueries(source)
+
+    assert not result.success
+    assert result.sql == source
+    assert any(
+        diagnostic.code == "cte_dependency_error"
+        and "referenced before it is defined" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
 
 
 def test_lifted_sql_uses_four_space_indentation():
