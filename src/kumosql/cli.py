@@ -204,8 +204,19 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         help="Smallest tree similarity (0-1) for SELECTs to be reported as near-duplicates",
     )
     parser.add_argument("--scope", help="Limit the report to a saved scope (see kumosql-scopes)")
+    parser.add_argument(
+        "--assess",
+        choices=("drop_column", "rename_column", "change_expression", "drop_table"),
+        help="Instead of the report, list the models a change would affect (needs --target)",
+    )
+    parser.add_argument(
+        "--target",
+        help="Table for drop_table, or table.column for the column changes, e.g. proj.dataset.table.column",
+    )
     parser.add_argument("-o", "--output", type=Path, help="Write the JSON report here; stdout if omitted")
     args = parser.parse_args(argv)
+    if args.assess and not args.target:
+        parser.error("--assess needs --target")
 
     scope = None
     if args.scope:
@@ -217,6 +228,22 @@ def pipeline_main(argv: list[str] | None = None) -> int:
     except PipelineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    if args.assess:
+        table, column = args.target, None
+        if args.assess != "drop_table":
+            table, _, column = args.target.rpartition(".")
+            if not table or not column:
+                parser.error("--target must be table.column for column changes")
+        try:
+            data = pipeline.assess_change(args.assess, table, column, scope=scope).to_json()
+        except ValueError as exc:
+            parser.error(str(exc))
+        text = json.dumps(data, indent=2)
+        if args.output:
+            args.output.write_text(text + "\n", encoding="utf-8")
+        else:
+            print(text)
+        return 0
     try:
         data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope)
     except ValueError as exc:
