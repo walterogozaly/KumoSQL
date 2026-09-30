@@ -285,6 +285,8 @@ A candidate at a different grain is not a match. Each check (`lineage`, `grain`,
 
 `scope` is an optional saved `Scope` matched against `project`, `dataset`, `table` and `model` of each candidate; candidates outside it are skipped and counted as `outside_scope`. The `OverlapResult` carries `compared` (candidates decided), `skipped` (reason to count, including the undecided in-scope ones that are also listed as `unknown`) and `candidates_in_scope`. Its `summary` always states coverage, for example `compared 3 of 5 tables; 2 skipped: outside_scope 2. No match among the compared tables`, so "no match" never appears without the counts. `to_json()` includes the summary, the target profile and every match. Reports describe behavior only and never include query text.
 
+`tests/test_overlap_hard_cases.py` is a synthetic hard-case corpus with the expected label of every candidate written down (long view and CTE chains with renames, a dimension joined two ways, fan-out joins, near-miss filters, different grains, snapshots and shards, an average of averages, one name with two meanings, two names with one meaning, and traces broken by an unparsed model, an unexpanded star or an external table). CI asserts that nothing is reported `same_meaning` unless the corpus says so, that every label matches, and that at least `MIN_DECIDED` candidates were decided rather than `unknown`; the run prints the decided and unknown counts so an everything-unknown regression is visible.
+
 ```python
 from kumosql import find_overlaps, get_scope, load_sqlx_project
 
