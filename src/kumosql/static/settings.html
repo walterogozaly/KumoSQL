@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Settings · KumoSQL</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/insights.css">
+  <script defer src="/assets/settings.js"></script>
+</head>
+<body>
+  <div class="app insights-app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">{ }</span>
+        <span class="brand-text"><strong>KumoSQL</strong><span>Settings</span></span>
+      </div>
+      <nav class="topnav" aria-label="Main navigation">
+        <a href="/">Workspace</a>
+        <a href="/graph">Query graph</a>
+        <a href="/cost">Cost</a>
+        <a href="/changes">Change reports</a>
+        <a href="/browse">BigQuery</a>
+      </nav>
+      <div class="topbar-actions">
+        <a class="toolbar-button" href="/settings" aria-current="page"><span>Settings</span></a>
+        <span class="local-badge" title="Settings are saved on this computer"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
+      </div>
+    </header>
+
+    <main class="insights-main settings-main">
+      <header class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p class="lede">Preferences are saved on this computer by the local server.</p>
+        </div>
+      </header>
+
+      <section id="formatting" class="card settings-card" aria-labelledby="formatting-title">
+        <div class="settings-card-head">
+          <div>
+            <h2 id="formatting-title">SQL formatting (sqlfluff)</h2>
+            <p class="settings-card-hint">Used by the <strong>Format SQL</strong> rule in the workspace pipeline. Save several named configurations and pick which one is active.</p>
+          </div>
+          <span id="format-status" class="settings-status" role="status" aria-live="polite"></span>
+        </div>
+
+        <div class="settings-profile-controls">
+          <label for="sqlfluff-profile-select">Active configuration</label>
+          <select id="sqlfluff-profile-select"></select>
+          <label for="sqlfluff-profile-name">Name</label>
+          <input id="sqlfluff-profile-name" type="text" maxlength="60" value="Default">
+        </div>
+
+        <form id="format-form" class="settings-form" autocomplete="off">
+          <label>Keyword case
+            <select name="keyword_case">
+              <option value="upper">UPPER</option><option value="lower">lower</option>
+              <option value="capitalise">Capitalised</option><option value="consistent">Keep consistent</option>
+            </select></label>
+          <label>Commas
+            <select name="comma_position"><option value="trailing">Trailing</option><option value="leading">Leading</option></select></label>
+          <label>Indent with
+            <select name="indent_unit"><option value="space">Spaces</option><option value="tab">Tabs</option></select></label>
+          <label>Indent size
+            <input name="tab_space_size" type="number" min="1" max="8" step="1"></label>
+          <label>Max line length
+            <input name="max_line_length" type="number" min="20" max="500" step="1"></label>
+          <label class="wide">sqlfluff rules
+            <input name="rules" type="text" spellcheck="false" placeholder="layout, capitalisation, LT01"></label>
+          <label class="wide">Excluded rules
+            <input name="exclude_rules" type="text" spellcheck="false" placeholder="e.g. LT05"></label>
+          <div class="settings-actions">
+            <button id="sqlfluff-profile-save" class="primary-button" type="submit">Save configuration</button>
+            <button id="sqlfluff-profile-new" class="toolbar-button" type="button">New configuration</button>
+            <button id="sqlfluff-profile-delete" class="link-button danger-link" type="button">Delete</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
