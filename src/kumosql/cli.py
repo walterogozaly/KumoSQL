@@ -14,6 +14,7 @@ from .sqlx import looks_like_sqlx
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
 from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
+from .coverage import sample_impact_reports, score_verdicts
 from .pipeline import load_compiled_graph, load_sqlx_project
 from .resilience import PipelineLoadError, parse_json_or_raise
 
@@ -204,6 +205,20 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         help="Smallest tree similarity (0-1) for SELECTs to be reported as near-duplicates",
     )
     parser.add_argument("--scope", help="Limit the report to a saved scope (see kumosql-scopes)")
+    parser.add_argument(
+        "--verdicts",
+        type=Path,
+        help='JSON of reviewer verdicts by sample id, e.g. {"ab12": {"correct": 4, "false_positive": 1, "missed": 0}}',
+    )
+    parser.add_argument(
+        "--sample-impact", type=int, metavar="N", help="Write a review sheet of N sampled impact reports and exit"
+    )
+    parser.add_argument("--seed", default="kumosql", help="Seed for --sample-impact")
+    parser.add_argument(
+        "--min-coverage",
+        type=float,
+        help="Exit 3 if assets analyzed or statements matched fall below this ratio (0-1), or analysis is incomplete",
+    )
     parser.add_argument("-o", "--output", type=Path, help="Write the JSON report here; stdout if omitted")
     args = parser.parse_args(argv)
 
@@ -217,10 +232,24 @@ def pipeline_main(argv: list[str] | None = None) -> int:
     except PipelineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    verdicts = None
+    if args.verdicts:
+        try:
+            verdicts = json.loads(args.verdicts.read_text(encoding="utf-8"))
+            score_verdicts(verdicts)
+        except (OSError, ValueError, AttributeError, TypeError) as exc:
+            parser.error(f"unreadable verdicts file: {exc}")
     try:
-        data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope)
+        data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope, verdicts=verdicts)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.sample_impact is not None:
+        sheet = json.dumps(sample_impact_reports(data, args.sample_impact, args.seed), indent=2)
+        if args.output:
+            args.output.write_text(sheet + "\n", encoding="utf-8")
+        else:
+            print(sheet)
+        return 0
     if scope is not None and not data["models"]:
         print(f"warning: scope {scope.name!r} matches no models", file=sys.stderr)
     summary = data.get("diagnostic_summary", {})
@@ -236,6 +265,12 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         args.output.write_text(report + "\n", encoding="utf-8")
     else:
         print(report)
+    coverage = data.get("coverage")
+    if args.min_coverage is not None:
+        ratios = [coverage and coverage.get("assets_analyzed_ratio"), coverage and coverage.get("statements_matched_ratio")]
+        if not coverage or not coverage["complete"] or any(r is not None and r < args.min_coverage for r in ratios):
+            print("error: graph coverage is below the requested gate", file=sys.stderr)
+            return 3
     return 0
 
 

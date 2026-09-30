@@ -468,6 +468,8 @@ class Pipeline:
         scope: "SavedScope | None" = None,
         observed_reads: Iterable[object] = (),
         observed_scope: "SavedScope | None" = None,
+        verdicts: "Mapping[str, Mapping[str, int]] | None" = None,
+        window: "Mapping[str, str | None] | None" = None,
     ) -> dict:
         """A JSON-serialisable summary of the whole-pipeline analysis.
 
@@ -496,7 +498,30 @@ class Pipeline:
         report["completeness"] = build_completeness(report["diagnostics"], observed_gaps)
         if graph is not None:
             graph["completeness"] = report["completeness"]
+        report["coverage"] = guarded(None, lambda: self._coverage_of(report, verdicts, window))[0]
         return report if scope is None else self._scoped(report, scope)
+
+    def _coverage_of(self, report: dict, verdicts, window) -> dict:
+        from .coverage import build_coverage
+
+        analysis = self._analyse()
+        return build_coverage(
+            report,
+            statements=(analysis.statements_total, analysis.statements_matched),
+            verdicts=verdicts,
+            window=window,
+        )
+
+    def coverage(
+        self,
+        *,
+        observed_reads: Iterable[object] = (),
+        verdicts: "Mapping[str, Mapping[str, int]] | None" = None,
+        window: "Mapping[str, str | None] | None" = None,
+    ) -> dict:
+        """Anonymized aggregate coverage; see :mod:`kumosql.coverage`."""
+
+        return self.report(observed_reads=observed_reads, verdicts=verdicts, window=window)["coverage"]
 
     @staticmethod
     def _observed_gaps(graph: dict | None) -> list[dict]:
@@ -1107,6 +1132,9 @@ class _Analysis:
     # declared dependencies), so no column can be called dead.
     blind: bool
     diagnostics: list[PipelineDiagnostic]
+    # Query statements seen in query models, and how many were analysed.
+    statements_total: int = 0
+    statements_matched: int = 0
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1125,6 +1153,7 @@ class _Analysis:
         unresolved_tables: dict[str, set[str]] = {}
         ambiguous_tables: dict[str, set[str]] = {}
         blind_models: list[str] = []
+        statements_total = statements_matched = 0
 
         for key, model in pipeline.models.items():
             parents = {
@@ -1135,6 +1164,8 @@ class _Analysis:
             if model.is_query:
                 try:
                     query, skipped = _parse_script(model.sql)
+                    statements_total += skipped + 1
+                    statements_matched += 1 if query is not None else 0
                     if skipped:
                         diagnostics.append(
                             PipelineDiagnostic(
@@ -1146,6 +1177,7 @@ class _Analysis:
                         )
                 except Exception as exc:  # sqlglot raises several error types
                     query = None
+                    statements_total += 1
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
                 if query is not None:
                     parsed[key] = query
@@ -1335,6 +1367,8 @@ class _Analysis:
             opaque_readers_of=opaque_readers_of,
             blind=bool(blind_models),
             diagnostics=diagnostics,
+            statements_total=statements_total,
+            statements_matched=statements_matched,
         )
 
 
