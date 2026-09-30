@@ -9,6 +9,7 @@ import json
 import threading
 import webbrowser
 
+from . import live_graph
 from . import preview_data
 from . import scopes as scope_store
 from . import state
@@ -21,8 +22,9 @@ MAX_GITHUB_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
 # Roadmap views. Each returns a JSON payload; preview_data stands in until the
 # issues listed in docs/ui-roadmap.md replace these with real implementations.
+# /api/graph serves the loaded project and falls back to labeled sample data.
 INSIGHTS = {
-    "/api/graph": preview_data.graph,
+    "/api/graph": lambda: live_graph.graph_or_preview(preview_data.graph),
     "/api/cost": preview_data.cost,
     "/api/changes": preview_data.changes,
 }
@@ -226,7 +228,10 @@ class UIHandler(BaseHTTPRequestHandler):
         self._json(200, result)
 
     def do_POST(self) -> None:
-        if self.path not in ("/api/transform", "/api/github/connect", "/api/github/file"):
+        if self.path not in (
+            "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
+            "/api/project", "/api/project/clear",
+        ):
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(
@@ -241,6 +246,20 @@ class UIHandler(BaseHTTPRequestHandler):
                 from .github_repo import connect
 
                 result = connect(payload.get("url"))
+            elif self.path == "/api/github/load":
+                from .github_repo import fetch_project
+
+                fetched = fetch_project(payload.get("url"))
+                label = f"{fetched['repository']} ({fetched['branch']})"
+                live_graph.load_files(fetched["files"], label)
+                result = {"loaded": True, "label": label, "files": len(fetched["files"])}
+            elif self.path == "/api/project":
+                label = payload.get("label")
+                live_graph.load_files(payload.get("files"), label if isinstance(label, str) else "")
+                result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
+            elif self.path == "/api/project/clear":
+                live_graph.clear_project()
+                result = {"loaded": False}
             elif self.path == "/api/github/file":
                 from .github_repo import read_file
 
@@ -263,11 +282,19 @@ def _required(query: dict[str, list[str]], name: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Open the local KumoSQL browser UI")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
+    parser.add_argument("--project", metavar="DIR", help="Load a Dataform or SQL folder into the query graph page")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
 
+    if args.project:
+        from .pipeline import load_sqlx_project
+
+        try:
+            live_graph.set_project(load_sqlx_project(args.project), args.project)
+        except Exception as exc:
+            parser.error(f"could not load project: {exc}")
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), UIHandler)
     except OSError as exc:

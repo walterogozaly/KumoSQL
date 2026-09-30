@@ -1,11 +1,11 @@
 # UI for the roadmap
 
-The browser UI already has the pages the roadmap needs. Views without a backend yet show sample data behind a "Preview with sample data" banner. This note says which issue owns each area, and what data it expects, so that each issue ends with a working screen.
+The browser UI already has the pages the roadmap needs. The query graph shows the loaded project (see below); other views without a backend yet show sample data behind a "Preview with sample data" banner. This note says which issue owns each area, and what data it expects, so that each issue ends with a working screen.
 
 ## How the preview data works
 
 - `src/kumosql/preview_data.py` returns the sample payloads. Every payload has `"preview": true` and an `issues` list.
-- `src/kumosql/ui.py` serves those payloads at `/api/graph`, `/api/cost` and `/api/changes` (see `INSIGHTS`).
+- `src/kumosql/ui.py` serves those payloads at `/api/cost` and `/api/changes` (see `INSIGHTS`). `/api/graph` serves the loaded project and uses the sample only when nothing is loaded.
 - `src/kumosql/static/insights.js` renders `/graph`, `/cost` and `/changes`. It shows the banner whenever `preview` is true.
 
 To wire up a view, return the same shape from real code in `INSIGHTS` and drop `preview`. The field lists below are the contract, and `tests/test_ui.py` checks the sample data against it. If an issue needs a different shape, change the sample data and the renderer in the same PR.
@@ -31,6 +31,16 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 
 ## Query graph: `/graph` → `/api/graph`
 
+`kumosql.live_graph` holds the project the server has loaded (in memory; it is gone after a restart) and builds the payload from a `Pipeline`. Load one by:
+
+- entering a public Dataform repository URL on the `/graph` page (`POST /api/github/load`, limited to 100 SQLX files because unauthenticated GitHub requests are rate limited),
+- `kumosql-ui --project DIR`, or
+- `POST /api/project` with `{"files": {relative path: text}, "label"}` (only `.sqlx`, `.sql` and Dataform config files; relative paths only).
+
+`POST /api/project/clear` (the "Use sample data" button) goes back to the sample.
+
+Live payloads have no `preview` flag and carry `source {kind: "project", label}`; the sample carries `source {kind: "sample"}` and the banner. Live payloads add `completeness {complete, views, assets_not_analyzed}` and `blocking` on each gap. Tables the project reads but does not define are `source` nodes; a model that failed to parse is listed as a gap and its node is drawn as "Not analyzed". `coverage.complete` is false whenever a blocking gap exists, so the "Partial graph" strip cannot be missed. Observed edges, last seen and the sampled accuracy need job history, which the server does not have yet; they stay empty (`sampled_impact_accuracy` is null and shown as "Not reviewed").
+
 | UI area | Issue | Fields |
 | --- | --- | --- |
 | Node cards and the detail header (identity, kind, how it was matched) | #23 | `nodes[]`: `id`, `dataset`, `name`, `kind` (`source`, `model`, `view`, `observed`, `unmatched`), `source`, `columns[]`, `note?` |
@@ -38,7 +48,7 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 | Find readers tab | #25 | Computed on the page from `edges` |
 | Assess a change tab (drop, rename, change expression). Readers whose use can't be traced are listed as Unknown | #26 | Computed on the page from `column_lineage` plus `gaps`. Python: `Pipeline.assess_change(kind, table, column)` (`kumosql.impact`) returns `affected[] {model, effect, via, depth, columns}`, `unknown[] {model, reason}`, `complete` and `safe_to_delete` (always `unknown`); the page still computes its own view |
 | Explain lineage tab. Columns that can't be traced are marked Unknown | #27 | `column_lineage[]`: `node`, `column`, `sources[] {node, column}`, `transform`, plus `status` (`traced`, `constant`, `unknown`), `reason?` and `complete`. Built by `Pipeline.lineage_report()`; the sample data does not include the extra fields yet |
-| Gaps table, dashed "Not analyzed" nodes, the "Partial graph" strip | #28 | `gaps[]`: `asset`, `kind` (`parse_error`, `inaccessible`, `unmatched_reference`, `unattributed_reads`, and other diagnostic codes), `message`. Built by `Pipeline.completeness()` (also `report()["completeness"]`, which adds `complete`, per-view flags and `blocking`); `/api/graph` still serves the preview |
+| Gaps table, dashed "Not analyzed" nodes, the "Partial graph" strip | #28 | `gaps[]`: `asset`, `kind` (`parse_error`, `inaccessible`, `unmatched_reference`, `unattributed_reads`, and other diagnostic codes), `message`. Built by `Pipeline.completeness()` (also `report()["completeness"]`, which adds `complete`, per-view flags and `blocking`); `/api/graph` serves it for a loaded project |
 | Coverage strip | #29 | `coverage`: `assets_total`, `assets_analyzed`, `statements_total`, `statements_matched`, `sampled_impact_accuracy` (null until reviewed), `sample_size`, `complete`; `window {start, end}`. Also ratios, column, edge-source/confidence and gap counts, and an `accuracy` block with precision/recall intervals. Built by `Pipeline.coverage()` (also `report()["coverage"]`); anonymized aggregates only |
 
 The traversals for readers, impact and lineage run in the browser, which is fine at MVP size. If the graph gets large, add `?node=` endpoints and keep the result shapes in `insights.js` (`readersOf`, `impactOf`, `lineageOf`). The view has no "safe to delete" action, per the roadmap.

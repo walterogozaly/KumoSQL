@@ -94,16 +94,24 @@ def connect(value: str) -> dict:
         "repository": details.get("full_name", f"{owner}/{repo}"),
         "branch": branch,
         "files": paths,
+        "config": [name for name in _CONFIG_NAMES if any(
+            isinstance(item, dict) and item.get("path") == name for item in entries)],
     }
 
 
 def read_file(value: str, branch: str, path: str) -> dict:
     """Fetch one tracked SQLX file from a connected public repository."""
 
+    if not isinstance(path, str) or not path.lower().endswith(".sqlx"):
+        raise GitHubRepoError("Choose a .sqlx file from the repository")
+    return _read_file(value, branch, path)
+
+
+def _read_file(value: str, branch: str, path: str) -> dict:
     owner, repo = parse_repo_url(value)
     if not isinstance(branch, str) or not branch or len(branch) > 255:
         raise GitHubRepoError("Invalid branch")
-    if not isinstance(path, str) or len(path) > 2048 or not path.lower().endswith(".sqlx"):
+    if not isinstance(path, str) or len(path) > 2048:
         raise GitHubRepoError("Choose a .sqlx file from the repository")
     if path.startswith("/") or ".." in path.split("/") or "\\" in path:
         raise GitHubRepoError("Invalid repository file path")
@@ -121,3 +129,26 @@ def read_file(value: str, branch: str, path: str) -> dict:
     if len(content.encode("utf-8")) > 5 * 1024 * 1024:
         raise GitHubRepoError("The selected file is larger than 5 MB")
     return {"path": path, "content": content}
+
+
+MAX_PROJECT_FILES = 100
+_CONFIG_NAMES = ("workflow_settings.yaml", "workflow_settings.yml", "dataform.json")
+
+
+def fetch_project(value: str) -> dict:
+    """Download every SQLX file (and the root Dataform config) of a public repository.
+
+    Returns ``{"repository", "branch", "files": {path: text}}``. Unauthenticated
+    GitHub requests are rate limited, so projects over ``MAX_PROJECT_FILES``
+    files are refused instead of being loaded partially.
+    """
+
+    listing = connect(value)
+    if len(listing["files"]) > MAX_PROJECT_FILES:
+        raise GitHubRepoError(
+            f"Project has {len(listing['files'])} SQLX files; loading is limited to {MAX_PROJECT_FILES}"
+        )
+    files: dict[str, str] = {}
+    for path in [*listing["config"], *listing["files"]]:
+        files[path] = _read_file(value, listing["branch"], path)["content"]
+    return {"repository": listing["repository"], "branch": listing["branch"], "files": files}
