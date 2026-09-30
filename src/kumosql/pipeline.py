@@ -41,6 +41,7 @@ from .sqlx import (
 )
 
 if TYPE_CHECKING:
+    from .scopes import Scope as SavedScope
     from .near_duplicates import NearDuplicateCluster
 
 
@@ -224,9 +225,50 @@ class Pipeline:
     def all_diagnostics(self) -> list[PipelineDiagnostic]:
         return [*self.diagnostics, *self._analyse().diagnostics]
 
-    def report(self, *, min_nodes: int = 12, similarity: float = 0.7) -> dict:
-        """A JSON-serialisable summary of the whole-pipeline analysis."""
+    def report(self, *, min_nodes: int = 12, similarity: float = 0.7, scope: "SavedScope | None" = None) -> dict:
+        """A JSON-serialisable summary of the whole-pipeline analysis.
 
+        With a ``scope`` the report is limited to models whose target matches
+        it (fields ``project``, ``dataset``, ``name`` and ``table``); a
+        duplicate group is kept if any of its occurrences is in scope.
+        """
+
+        report = self._full_report(min_nodes=min_nodes, similarity=similarity)
+        return report if scope is None else self._scoped(report, scope)
+
+    def _scoped(self, report: dict, scope: "SavedScope") -> dict:
+        keep = {
+            key for key, model in self.models.items()
+            if scope.matches({
+                "project": model.target.database,
+                "dataset": model.target.schema,
+                "name": model.target.name,
+                "table": model.target.name,
+            })
+        }
+
+        def in_scope(occurrence: str) -> bool:
+            return occurrence.rpartition(" (")[0] in keep
+
+        near = []
+        for cluster in report["near_duplicates"]:
+            if any(in_scope(o) for v in cluster["variants"] for o in v["occurrences"]):
+                near.append(cluster)
+        return {
+            **report,
+            "scope": scope.name,
+            "models": len(keep),
+            "order": [key for key in report["order"] if key in keep],
+            "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
+            "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
+            "duplicates": [
+                group for group in report["duplicates"] if any(in_scope(o) for o in group["occurrences"])
+            ],
+            "near_duplicates": near,
+            "diagnostics": [d for d in report["diagnostics"] if d["model"] in keep],
+        }
+
+    def _full_report(self, *, min_nodes: int, similarity: float) -> dict:
         return {
             "models": len(self.models),
             "sources": sorted(self.sources),

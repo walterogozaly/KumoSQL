@@ -21,6 +21,14 @@ from .cleanup import (
     RemoveTrivialPredicatesRule,
     RemoveUnusedCtesRule,
 )
+from .formatting import (
+    Complexity,
+    FormatPreferences,
+    FormatSqlRule,
+    complexity,
+    format_sql,
+)
+from .scopes import Scope, get_scope, list_scopes, save_scope
 from .rewrite import (
     PipelineResult,
     RewriteResult,
@@ -101,6 +109,15 @@ __all__ = [
     "assert_result_equivalent",
     "check_result_equivalence",
     "generate_synthetic_dataset",
+    "Complexity",
+    "FormatPreferences",
+    "FormatSqlRule",
+    "Scope",
+    "complexity",
+    "format_sql",
+    "get_scope",
+    "list_scopes",
+    "save_scope",
     "InlineSingleUseCtesRule",
     "DeduplicateCtesRule",
     "RemoveRedundantParenthesesRule",

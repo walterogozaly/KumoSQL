@@ -25,6 +25,7 @@ const DEFAULT_ORDER = [
   "remove_redundant_parentheses",
   "deduplicate_ctes",
   "remove_unused_ctes",
+  "format_sql",
 ];
 const DEFAULT_ENABLED = ["lift_subqueries"];
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -132,15 +133,20 @@ const state = {
   fileName: null,
   gutterLines: 0,
   currentLine: 0,
+  format: null,
+  scopes: [],
 };
 let debounceTimer;
 let requestVersion = 0;
 let controller;
 let toastTimer;
 
-/* ---------- Preferences (per browser, best effort) ---------- */
+/* ---------- Preferences (saved on this computer by the local server) ---------- */
 
-function loadPrefs() {
+let persisted = {};
+let saveTimer;
+
+function loadLocalPrefs() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
   } catch {
@@ -148,17 +154,30 @@ function loadPrefs() {
   }
 }
 
+function currentPrefs() {
+  return {
+    theme: state.theme,
+    autoRun: state.autoRun,
+    order: state.rules.map((rule) => rule.name),
+    enabled: state.rules.filter((rule) => rule.on).map((rule) => rule.name),
+  };
+}
+
 function savePrefs() {
+  const prefs = currentPrefs();
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      theme: state.theme,
-      autoRun: state.autoRun,
-      order: state.rules.map((rule) => rule.name),
-      enabled: state.rules.filter((rule) => rule.on).map((rule) => rule.name),
-    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
   } catch {
-    /* storage unavailable; preferences just won't persist */
+    /* browser storage unavailable; the server copy still persists */
   }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    fetch("/api/settings/ui", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs),
+    }).catch(() => {});
+  }, 300);
 }
 
 /* ---------- Small helpers ---------- */
@@ -168,6 +187,7 @@ function labelFor(name) {
     .replaceAll("_", " ")
     .replace(/\bctes\b/g, "CTEs")
     .replace(/\bcte\b/g, "CTE")
+    .replace(/\bsql\b/g, "SQL")
     .replace(/\bsingle use\b/g, "single-use")
     .replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -444,13 +464,26 @@ function setVerdict(kind, title, detail) {
   $("verdict-detail").textContent = detail;
 }
 
-function showStats(before, after, elapsed) {
+function complexityLabel(c) {
+  return c ? `${c.score} (${c.band})` : "n/a";
+}
+
+function showStats(before, after, elapsed, complexity) {
   const ops = state.diffOps;
   const added = ops ? ops.filter((op) => op.t === "add").length : null;
   const removed = ops ? ops.filter((op) => op.t === "del").length : null;
   const arrow = (x, y) => `${x.toLocaleString()} <span class="arrow">→</span> ${y.toLocaleString()}`;
   $("stat-lines").innerHTML = arrow(lineCount(before), lineCount(after));
   $("stat-ctes").innerHTML = arrow(countCtes(before), countCtes(after));
+  const complexityCell = $("stat-complexity");
+  complexityCell.textContent = complexity && complexity.before && complexity.after
+    ? `${complexityLabel(complexity.before)} → ${complexityLabel(complexity.after)}`
+    : complexity && (complexity.before || complexity.after) ? complexityLabel(complexity.before || complexity.after) : "n/a";
+  const detail = complexity && (complexity.after || complexity.before);
+  complexityCell.title = detail
+    ? "Structural complexity from the sqlfluff parse tree: " +
+      Object.entries(detail.metrics).map(([key, value]) => `${key.replace("_", " ")}: ${value}`).join(", ")
+    : "SQLX and unparseable SQL are not scored";
   $("stat-diff").innerHTML = ops ? `<span class="num-add">+${added}</span> <span class="num-del">−${removed}</span>` : "–";
   $("stat-time").textContent = `${Math.round(elapsed)} ms`;
   $("stats").hidden = false;
@@ -590,7 +623,7 @@ async function transform() {
     const response = await fetch("/api/transform", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql, rules }),
+      body: JSON.stringify({ sql, rules, format: state.format }),
       signal: controller.signal,
     });
     const data = await response.json();
@@ -604,7 +637,7 @@ async function transform() {
     renderOutput();
     if (state.view === "diff") renderDiff();
     showReport(data);
-    showStats(sql, data.sql, performance.now() - started);
+    showStats(sql, data.sql, performance.now() - started, data.complexity);
 
     const reason = data.verification.reason;
     if (data.success && data.verification.status === "unchanged") {
@@ -703,7 +736,7 @@ async function loadRules() {
     const response = await fetch("/api/rules");
     if (!response.ok) throw new Error("Could not load transformations");
     const rules = await response.json();
-    const prefs = loadPrefs();
+    const prefs = persisted;
     const saved = Array.isArray(prefs.order) ? prefs.order : [];
     const enabled = new Set(Array.isArray(prefs.enabled) ? prefs.enabled : DEFAULT_ENABLED);
     state.rules = rules.map((rule) => ({ name: rule.name, summary: rule.summary, on: enabled.has(rule.name) }));
@@ -1008,15 +1041,198 @@ document.addEventListener("keydown", (event) => {
 });
 transformButton.addEventListener("click", () => inputsChanged({ immediate: true }));
 
+/* ---------- Formatting preferences ---------- */
+
+const formatForm = $("format-form");
+let formatTimer;
+
+function fillFormatForm() {
+  const prefs = state.format;
+  if (!prefs) return;
+  for (const element of formatForm.elements) {
+    if (!element.name) continue;
+    const value = prefs[element.name];
+    element.value = Array.isArray(value) ? value.join(", ") : value ?? "";
+  }
+}
+
+function readFormatForm() {
+  const list = (text) => text.split(",").map((item) => item.trim()).filter(Boolean);
+  const data = new FormData(formatForm);
+  return {
+    keyword_case: data.get("keyword_case"),
+    comma_position: data.get("comma_position"),
+    indent_unit: data.get("indent_unit"),
+    tab_space_size: Number(data.get("tab_space_size")),
+    max_line_length: Number(data.get("max_line_length")),
+    rules: list(data.get("rules")),
+    exclude_rules: list(data.get("exclude_rules")),
+  };
+}
+
+formatForm.addEventListener("input", () => {
+  clearTimeout(formatTimer);
+  formatTimer = setTimeout(async () => {
+    try {
+      const response = await fetch("/api/settings/format", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(readFormatForm()),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not save formatting preferences");
+      state.format = data;
+      if (selectedRules().includes("format_sql")) inputsChanged();
+    } catch (error) {
+      toast(error.message);
+    }
+  }, 400);
+});
+formatForm.addEventListener("submit", (event) => event.preventDefault());
+
+/* ---------- Scopes ---------- */
+
+const scopeForm = $("scope-form");
+const scopeList = $("scope-list");
+let editingScope = null;
+
+function parseFilters(text) {
+  const fields = {};
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const at = line.indexOf("=");
+    if (at < 1) throw new Error(`Write each filter as “field = value, value”: ${line.trim()}`);
+    const field = line.slice(0, at).trim();
+    const values = line.slice(at + 1).split(",").map((value) => value.trim()).filter(Boolean);
+    if (!values.length) throw new Error(`Add at least one value for ${field}`);
+    fields[field] = [...(fields[field] || []), ...values];
+  }
+  return fields;
+}
+
+function filtersText(scope) {
+  return Object.entries(scope.fields).map(([field, values]) => `${field} = ${values.join(", ")}`).join("\n");
+}
+
+function renderScopes() {
+  scopeList.replaceChildren();
+  $("scope-count").textContent = state.scopes.length ? String(state.scopes.length) : "";
+  for (const scope of state.scopes) {
+    const item = document.createElement("li");
+    item.className = "scope-item";
+    item.dataset.name = scope.name;
+    const text = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = scope.name;
+    const summary = document.createElement("small");
+    summary.textContent = Object.entries(scope.fields)
+      .map(([field, values]) => `${field}: ${values.length}`).join(" · ");
+    summary.title = filtersText(scope);
+    text.append(title, summary);
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "link-button";
+    edit.dataset.action = "edit";
+    edit.textContent = "Edit";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "link-button";
+    remove.dataset.action = "delete";
+    remove.textContent = "Delete";
+    item.append(text, edit, remove);
+    scopeList.append(item);
+  }
+}
+
+function resetScopeForm() {
+  editingScope = null;
+  scopeForm.reset();
+  $("scope-cancel").hidden = true;
+  $("scope-save").textContent = "Save scope";
+}
+
+async function saveScopes(scopes) {
+  const response = await fetch("/api/settings/scopes", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(scopes),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not save scopes");
+  state.scopes = data;
+  renderScopes();
+}
+
+scopeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const name = scopeForm.elements.name.value.trim();
+    const scope = { name, fields: parseFilters(scopeForm.elements.filters.value) };
+    const key = (editingScope ?? name).toLowerCase();
+    const others = state.scopes.filter((item) => item.name.toLowerCase() !== key);
+    if (others.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`A scope named “${name}” already exists`);
+    }
+    const index = state.scopes.findIndex((item) => item.name.toLowerCase() === key);
+    const next = [...state.scopes];
+    if (index < 0) next.push(scope); else next[index] = scope;
+    await saveScopes(next);
+    resetScopeForm();
+    toast(`Saved scope “${name}”`);
+  } catch (error) {
+    toast(error.message);
+  }
+});
+$("scope-cancel").addEventListener("click", resetScopeForm);
+scopeList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  const name = button?.closest(".scope-item")?.dataset.name;
+  const scope = state.scopes.find((item) => item.name === name);
+  if (!scope) return;
+  if (button.dataset.action === "edit") {
+    editingScope = scope.name;
+    scopeForm.elements.name.value = scope.name;
+    scopeForm.elements.filters.value = filtersText(scope);
+    $("scope-cancel").hidden = false;
+    $("scope-save").textContent = "Update scope";
+    scopeForm.elements.name.focus();
+  } else {
+    try {
+      await saveScopes(state.scopes.filter((item) => item !== scope));
+      if (editingScope === scope.name) resetScopeForm();
+      toast(`Deleted scope “${scope.name}”`);
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+});
+
 /* ---------- Start ---------- */
 
-const prefs = loadPrefs();
-applyTheme(prefs.theme);
-state.autoRun = prefs.autoRun !== false;
-$("auto-run").checked = state.autoRun;
-if (/Mac|iPhone|iPad/.test(navigator.platform)) {
-  document.querySelector(".button-kbd").textContent = "⌘ ↵";
+async function start() {
+  persisted = loadLocalPrefs();
+  try {
+    const response = await fetch("/api/settings");
+    if (response.ok) {
+      const settings = await response.json();
+      if (settings.ui && Object.keys(settings.ui).length) persisted = settings.ui;
+      state.format = settings.format;
+      state.scopes = settings.scopes;
+    }
+  } catch {
+    /* fall back to browser storage and defaults */
+  }
+  applyTheme(persisted.theme);
+  state.autoRun = persisted.autoRun !== false;
+  $("auto-run").checked = state.autoRun;
+  if (/Mac|iPhone|iPad/.test(navigator.platform)) {
+    document.querySelector(".button-kbd").textContent = "⌘ ↵";
+  }
+  renderInput();
+  renderOutput();
+  fillFormatForm();
+  renderScopes();
+  loadRules();
 }
-renderInput();
-renderOutput();
-loadRules();
+
+start();

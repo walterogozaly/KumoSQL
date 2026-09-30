@@ -18,6 +18,21 @@ Open the URL printed by the command if your browser does not open automatically.
 
 The server listens only on `127.0.0.1`, uses the existing Python package, and does not send pasted SQL to an external service. Use `kumosql-ui --no-browser` to start without opening a browser, or `--port 8766` to choose another local port. Stop it with Ctrl+C. No UI-specific dependency is required.
 
+**Saved state.** UI preferences (theme, enabled rules and their order), formatting preferences and scopes are saved by the local server in one JSON file in the standard per-user data directory (`%APPDATA%\kumosql\state.json` on Windows, `~/Library/Application Support/kumosql/state.json` on macOS, `$XDG_DATA_HOME/kumosql/state.json` or `~/.local/share/kumosql/state.json` on Linux). Set `KUMOSQL_HOME` to use another directory. The CLI and Python API read the same file, so a scope saved in the UI works with `--scope`.
+
+**Formatting and complexity.** The `format_sql` operation formats BigQuery SQL with [sqlfluff](https://sqlfluff.com) and is verified like every other rule. Open *Formatting preferences* in the sidebar to set keyword case, comma position, indentation, line length, and which sqlfluff rules to apply or exclude. The stats bar shows a structural complexity score before and after (hover for the breakdown). The score is a weighted sum of joins, CTEs, subqueries, set operations, `CASE` expressions, window functions, `AND`/`OR` predicates and SELECT nesting depth, banded low (<10), moderate (<25), high (<50) or very high. sqlfluff cannot parse Dataform SQLX, so those inputs are left unformatted and unscored. The same is available in Python: `format_sql(sql)` and `complexity(sql)`.
+
+**Scopes.** A scope is a saved, named label of associations on any field: a `My Team` scope of authors, or a `My Team's Projects` scope of BigQuery projects. Create them under *Scopes* in the sidebar or from the shell:
+
+```powershell
+kumosql-scopes add "My Team" --field author ana@co.com bo@co.com
+kumosql-scopes add "My Projects" --field project growth-*
+kumosql-scopes list
+kumosql-pipeline-report path/to/dataform --scope "My Projects"
+```
+
+Values match case-insensitively and a trailing `*` matches a prefix. A scope may constrain several fields, and a record must match all of them. In Python, `Scope.matches(record)` and `Scope.filter(records)` apply a scope to any dicts (job rows, model metadata). `Pipeline.report(scope=...)` limits the pipeline report to models whose `project`, `dataset` or `name` match.
+
 ## Rewrite rules
 
 Each transformation is a rule in a registry. A rule only says how to rewrite one parsed statement; a shared driver handles SQLX blocks and `${...}` interpolations, strict parsing with a visible recovery fallback, formatting, byte-for-byte no-ops, and CTE dependency checks.
@@ -30,6 +45,7 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 | `remove_redundant_parentheses` | Removes parentheses that cannot change how an expression parses |
 | `deduplicate_ctes` | Points references to a root CTE at an earlier CTE with an identical body, then drops the duplicate |
 | `remove_unused_ctes` | Removes root CTEs that nothing references |
+| `format_sql` | Formats with sqlfluff using your saved formatting preferences (SQL only, not SQLX) |
 
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. The result's `verification.status` is `unchanged`, `proven`, or `unproven`; an unproven output is still returned, with the reasons in `verification.details`, and `result.success` is false.
 

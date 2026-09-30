@@ -12,6 +12,7 @@ from .equivalence import prove_equivalent
 from .rewrite import apply_rules, available_rules
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
+from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
 from .pipeline import load_compiled_graph, load_sqlx_project
 
 
@@ -136,15 +137,59 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         default=0.7,
         help="Smallest tree similarity (0-1) for SELECTs to be reported as near-duplicates",
     )
+    parser.add_argument("--scope", help="Limit the report to a saved scope (see kumosql-scopes)")
     parser.add_argument("-o", "--output", type=Path, help="Write the JSON report here; stdout if omitted")
     args = parser.parse_args(argv)
 
+    scope = None
+    if args.scope:
+        scope = get_scope(args.scope)
+        if scope is None:
+            parser.error(f"no saved scope named {args.scope!r}")
     pipeline = _load_pipeline(args.root, args.source_schema)
-    report = json.dumps(pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity), indent=2)
+    report = json.dumps(
+        pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope), indent=2
+    )
     if args.output:
         args.output.write_text(report + "\n", encoding="utf-8")
     else:
         print(report)
+    return 0
+
+
+def scopes_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Manage saved scopes: named labels of authors, projects or any other field"
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("list", help="Show saved scopes")
+    add = commands.add_parser("add", help="Create or replace a scope")
+    add.add_argument("name", help='Scope name, e.g. "My Team"')
+    add.add_argument(
+        "--field",
+        action="append",
+        nargs="+",
+        metavar=("FIELD", "VALUE"),
+        required=True,
+        help="A field and its values, e.g. --field author ana@co.com bo@co.com (end a value with * for a prefix)",
+    )
+    remove = commands.add_parser("remove", help="Delete a scope")
+    remove.add_argument("name")
+    args = parser.parse_args(argv)
+
+    if args.command == "list":
+        for scope in list_scopes():
+            print(json.dumps(scope.to_json()))
+    elif args.command == "add":
+        fields: dict[str, list[str]] = {}
+        for field, *values in args.field:
+            fields.setdefault(field, []).extend(values)
+        try:
+            save_scope(parse_scope({"name": args.name, "fields": fields}))
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif not delete_scope(args.name):
+        parser.error(f"no saved scope named {args.name!r}")
     return 0
 
 

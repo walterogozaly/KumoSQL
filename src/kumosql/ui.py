@@ -9,10 +9,14 @@ import json
 import threading
 import webbrowser
 
+from . import scopes as scope_store
+from . import state
+from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
 from .rewrite import apply_rules, available_rules
 
 
 MAX_REQUEST_BYTES = 5 * 1024 * 1024
+MAX_UI_STATE_BYTES = 64 * 1024
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
@@ -21,7 +25,14 @@ ASSETS = {
 }
 
 
-def transform(sql: str, names: list[str]) -> dict:
+def _complexity(sql: str) -> dict | None:
+    try:
+        return complexity(sql).to_json()
+    except Exception:
+        return None
+
+
+def transform(sql: str, names: list[str], format_preferences: object = None) -> dict:
     """Apply selected rules and return a JSON-ready report."""
 
     if not isinstance(sql, str):
@@ -34,8 +45,12 @@ def transform(sql: str, names: list[str]) -> dict:
     if not sql.strip():
         raise ValueError("paste SQL or SQLX to transform")
 
-    result = apply_rules(names, sql)
+    overrides = None
+    if format_preferences is not None:
+        overrides = {"format_sql": FormatSqlRule(parse_preferences(format_preferences))}
+    result = apply_rules(names, sql, overrides=overrides)
     return {
+        "complexity": {"before": _complexity(sql), "after": _complexity(result.sql)},
         "sql": result.sql,
         "success": result.success,
         "verification": {
@@ -81,7 +96,34 @@ class UIHandler(BaseHTTPRequestHandler):
     def _json(self, status: int, payload: dict | list) -> None:
         self._send(status, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")
 
+    def _read_json(self, limit: int = MAX_REQUEST_BYTES):
+        """Read a JSON request body; sends the error response and returns None on failure."""
+
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json(415, {"error": "send application/json"})
+            return None
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._json(411, {"error": "Content-Length is required"})
+            return None
+        if length < 0 or length > limit:
+            self._json(413, {"error": "request is too large"})
+            return None
+        try:
+            return json.loads(self.rfile.read(length))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            self._json(400, {"error": str(exc)})
+            return None
+
     def do_GET(self) -> None:
+        if self.path == "/api/settings":
+            self._json(200, {
+                "ui": state.get_section("ui", {}),
+                "format": load_preferences().to_json(),
+                "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
+            })
+            return
         if self.path == "/api/rules":
             self._json(200, [
                 {"name": name, "summary": rule.summary}
@@ -96,27 +138,47 @@ class UIHandler(BaseHTTPRequestHandler):
         body = files("kumosql").joinpath("static", filename).read_bytes()
         self._send(200, body, content_type)
 
+    def do_PUT(self) -> None:
+        section = self.path.removeprefix("/api/settings/")
+        if section not in ("ui", "format", "scopes") or section == self.path:
+            self._json(404, {"error": "not found"})
+            return
+        payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
+        if payload is None:
+            return
+        try:
+            if section == "ui":
+                if not isinstance(payload, dict):
+                    raise ValueError("ui settings must be an object")
+                state.set_section("ui", payload)
+                saved = payload
+            elif section == "format":
+                prefs = parse_preferences(payload)
+                save_preferences(prefs)
+                saved = prefs.to_json()
+            else:
+                if not isinstance(payload, list):
+                    raise ValueError("scopes must be a list")
+                parsed = [scope_store.parse_scope(item) for item in payload]
+                scope_store.save_scopes(parsed)
+                saved = [scope.to_json() for scope in parsed]
+        except (ValueError, OSError) as exc:
+            self._json(400 if isinstance(exc, ValueError) else 500, {"error": str(exc)})
+            return
+        self._json(200, saved)
+
     def do_POST(self) -> None:
         if self.path != "/api/transform":
             self._json(404, {"error": "not found"})
             return
-        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
-            self._json(415, {"error": "send application/json"})
+        payload = self._read_json()
+        if payload is None:
             return
         try:
-            length = int(self.headers.get("Content-Length", ""))
-        except ValueError:
-            self._json(411, {"error": "Content-Length is required"})
-            return
-        if length < 0 or length > MAX_REQUEST_BYTES:
-            self._json(413, {"error": "SQL input is too large"})
-            return
-        try:
-            payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("request must be a JSON object")
-            result = transform(payload.get("sql"), payload.get("rules"))
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = transform(payload.get("sql"), payload.get("rules"), payload.get("format"))
+        except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
         self._json(200, result)
