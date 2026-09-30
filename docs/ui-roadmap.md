@@ -23,7 +23,7 @@ The labels and check chips are defined once in `static/evidence.js` (`KumoEviden
 | Planner (dry run) chip, and the "Planner checked: not proven" verdict | #16 | check `kind: "planner"` |
 | "Unchanged text kept" chip | #17 | check `kind: "source_spans"` |
 | Idempotence chip | #18 | check `kind: "idempotence"` |
-| Structural proof, SMT proof and synthetic-results chips | #19, #20, #21 | check kinds `structural_proof`, `smt` and `synthetic_results`. An `inconclusive` outcome covers a baseline that differs from itself. |
+| Structural proof, SMT proof and synthetic-results chips | #19, #20, #21 | check kinds `structural_proof`, `smt` and `synthetic_results`. An `inconclusive` outcome covers a baseline that differs from itself. `synthetic_results` is emitted by `kumosql.attach_synthetic_check` (`rewrite-sql --synthetic-check`), outcomes `passed`/`failed`/`inconclusive`/`not_run`, evidence `seeds`, `seeds_checked`, `failing_seed`, `rows_per_table`, `null_rate`, `engine`. A pass never changes the label or trust; a failure shows the counterexample by seed and counts (no query text) and demotes the result to `unproven`. |
 
 Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupported` and `not_run`. A new kind or outcome only needs an entry in `CHECKS` or `OUTCOMES` in `evidence.js`; unknown kinds still render under their raw name. Proof kinds and planner checks are always separate chips.
 

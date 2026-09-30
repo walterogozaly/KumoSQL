@@ -196,6 +196,19 @@ original = "SELECT * FROM (SELECT customer_id, SUM(amount) AS total FROM `p.d.or
 assert_result_equivalent(original, lift_subqueries(original).sql, schema)
 ```
 
+### Recording synthetic evidence on a rewrite result
+
+`attach_synthetic_check(result, schema, seeds=range(8))` (or `rewrite-sql --synthetic-check --synthetic-schema schema.json [--synthetic-seeds N]`) runs the harness on a changed `apply_rules` result and records one `synthetic_results` check. It is opt in; ordinary rewriting never executes anything. `schema` maps each source table as written in the SQL to its columns and BigQuery types.
+
+| Outcome | Meaning | Effect on the label |
+|---|---|---|
+| `passed` | Outputs matched on every seed | None. Agreement is evidence, not proof: an unproven result stays `unproven`, is never `trusted`, and `proven` is untouched. `summarize_evidence` counts it as `synthetic_agreed` and useful evidence. |
+| `failed` | A counterexample was found | The result drops to `unproven` (a proven result too, since a disagreeing input contradicts it). The check names the failing seed, the difference kind, row counts and up to three synthetic rows per side; it never contains query text or column names. |
+| `inconclusive` | A query differs from itself on identical data (`RAND()`, `GENERATE_UUID()`) | None. |
+| `not_run` | Nothing was compared: duckdb missing (`kumosql[execution]`), output unchanged, a rule failed, an unsupported column type, or a query that cannot be translated or executed locally | None. |
+
+Every outcome records `seeds`, `seeds_checked`, `failing_seed`, `rows_per_table`, `null_rate` and the engine version, so a failure reproduces with `generate_synthetic_dataset(schema, seed=<failing_seed>)`. Attaching again replaces the earlier synthetic check.
+
 Install the engine with `pip install -e ".[execution]"` (it is included in `.[dev]`). `tests/test_result_equivalence.py` runs every lifted query in its corpus through the harness and checks that deliberately broken rewrites are caught.
 
 ## SMT equivalence prover
