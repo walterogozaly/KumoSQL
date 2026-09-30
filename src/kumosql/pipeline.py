@@ -36,6 +36,16 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from .ast_utils import quiet_parser as _quiet_parser
+from .resilience import (
+    PipelineLoadError,
+    describe_os_error,
+    diagnostic_entry,
+    find_assets,
+    guarded,
+    parse_json_or_raise,
+    read_text_or_reason,
+    summarize,
+)
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .sqlx import (
     mask_sqlx_interpolations as _mask_sqlx_interpolations,
@@ -357,9 +367,16 @@ class Pipeline:
         report = self._full_report(min_nodes=min_nodes, similarity=similarity)
         from .graph import build_query_graph
 
-        report["graph"] = build_query_graph(
-            self, observed_reads, scope=observed_scope
-        ).to_json()
+        graph, error = guarded(
+            None,
+            lambda: build_query_graph(self, observed_reads, scope=observed_scope).to_json(),
+        )
+        report["graph"] = graph
+        if error:
+            report["diagnostics"].append(
+                diagnostic_entry("graph", "section_failed", f"graph could not be built ({error})")
+            )
+            report["diagnostic_summary"] = summarize(report["diagnostics"])
         return report if scope is None else self._scoped(report, scope)
 
     SCOPE_FIELDS = ("project", "dataset", "name", "table")
@@ -393,7 +410,30 @@ class Pipeline:
         for cluster in report["near_duplicates"]:
             if any(in_scope(o) for v in cluster["variants"] for o in v["occurrences"]):
                 near.append(cluster)
-        graph = dict(report["graph"])
+        graph = None if report["graph"] is None else self._scope_graph(report["graph"], keep_node_ids)
+        kept_diagnostics = [d for d in report["diagnostics"] if not d["model"] or d["model"] in keep]
+        return {
+            **report,
+            "scope": scope.name,
+            "models": len(keep),
+            "order": [key for key in report["order"] if key in keep],
+            "node_identities": {
+                key: value for key, value in report["node_identities"].items() if key in keep
+            },
+            "graph": graph,
+            "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
+            "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
+            "duplicates": [
+                group for group in report["duplicates"] if any(in_scope(o) for o in group["occurrences"])
+            ],
+            "near_duplicates": near,
+            "diagnostics": kept_diagnostics,
+            "diagnostic_summary": summarize(kept_diagnostics),
+        }
+
+    @staticmethod
+    def _scope_graph(graph: dict, keep_node_ids: set) -> dict:
+        graph = dict(graph)
         graph["edges"] = [
             edge for edge in graph["edges"] if edge["downstream_id"] in keep_node_ids
         ]
@@ -435,25 +475,46 @@ class Pipeline:
             }
             for diagnostic in graph["diagnostics"]
         ]
-        return {
-            **report,
-            "scope": scope.name,
-            "models": len(keep),
-            "order": [key for key in report["order"] if key in keep],
-            "node_identities": {
-                key: value for key, value in report["node_identities"].items() if key in keep
-            },
-            "graph": graph,
-            "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
-            "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
-            "duplicates": [
-                group for group in report["duplicates"] if any(in_scope(o) for o in group["occurrences"])
-            ],
-            "near_duplicates": near,
-            "diagnostics": [d for d in report["diagnostics"] if not d["model"] or d["model"] in keep],
-        }
+        return graph
 
     def _full_report(self, *, min_nodes: int, similarity: float) -> dict:
+        failed: list[PipelineDiagnostic] = []
+
+        def section(name: str, default, action):
+            value, error = guarded(default, action)
+            if error:
+                failed.append(
+                    PipelineDiagnostic(name, "section_failed", f"{name} could not be computed ({error})")
+                )
+            return value
+
+        order = section("order", [], self.topological_order)
+        dead = section("dead_columns", {}, lambda: {k: list(v) for k, v in self.dead_columns().items()})
+        duplicates = section(
+            "duplicates",
+            [],
+            lambda: [
+                {
+                    "fingerprint": group.fingerprint,
+                    "node_count": group.node_count,
+                    "occurrences": [f"{o.model} ({o.location})" for o in group.occurrences],
+                    "sql": group.sql,
+                }
+                for group in self.duplicate_selects(min_nodes=min_nodes)
+            ],
+        )
+        near = section(
+            "near_duplicates",
+            [],
+            lambda: [
+                cluster.to_json()
+                for cluster in self.near_duplicate_selects(min_nodes=min_nodes, threshold=similarity)
+            ],
+        )
+        diagnostics = [
+            diagnostic_entry(d.model, d.code, d.message)
+            for d in [*self.diagnostics, *guarded([], lambda: self._analyse().diagnostics)[0], *failed]
+        ]
         return {
             "models": len(self.models),
             "sources": sorted(self.sources),
@@ -465,26 +526,13 @@ class Pipeline:
                 }
                 for key, model in sorted(self.models.items())
             },
-            "order": self.topological_order(),
+            "order": order,
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
-            "dead_columns": {key: list(value) for key, value in self.dead_columns().items()},
-            "duplicates": [
-                {
-                    "fingerprint": group.fingerprint,
-                    "node_count": group.node_count,
-                    "occurrences": [f"{o.model} ({o.location})" for o in group.occurrences],
-                    "sql": group.sql,
-                }
-                for group in self.duplicate_selects(min_nodes=min_nodes)
-            ],
-            "near_duplicates": [
-                cluster.to_json()
-                for cluster in self.near_duplicate_selects(min_nodes=min_nodes, threshold=similarity)
-            ],
-            "diagnostics": [
-                {"model": d.model, "code": d.code, "message": d.message}
-                for d in self.all_diagnostics()
-            ],
+            "dead_columns": dead,
+            "duplicates": duplicates,
+            "near_duplicates": near,
+            "diagnostics": diagnostics,
+            "diagnostic_summary": summarize(diagnostics),
         }
 
     def _analyse(self) -> "_Analysis":
@@ -547,9 +595,32 @@ def _config_value(config: str, key: str) -> str | None:
     return match.group(2) if match else None
 
 
-def _read_project_defaults(root: Path) -> tuple[str, str]:
-    """Return (default project, default dataset) from Dataform settings, if any."""
+def _read_project_defaults(
+    root: Path, diagnostics: list[PipelineDiagnostic] | None = None
+) -> tuple[str, str]:
+    """Return (default project, default dataset) from Dataform settings, if any.
 
+    An unreadable or malformed settings file yields empty defaults and a
+    ``settings_unreadable`` diagnostic when ``diagnostics`` is given.
+    """
+
+    try:
+        return _read_project_defaults_strict(root)
+    except (OSError, UnicodeError, ValueError, AttributeError) as exc:
+        if diagnostics is None:
+            raise
+        reason = (
+            describe_os_error(exc)
+            if isinstance(exc, (OSError, UnicodeError))
+            else "settings file is not valid JSON"
+        )
+        diagnostics.append(
+            PipelineDiagnostic("", "settings_unreadable", f"{reason}; project defaults were not applied")
+        )
+        return "", ""
+
+
+def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
     settings = root / "workflow_settings.yaml"
     if settings.is_file():
         text = settings.read_text(encoding="utf-8")
@@ -579,7 +650,7 @@ def _parse_ref_args(args: str, default: Target) -> Target:
         return Target(default.database, parts[0], parts[1])
     if len(parts) >= 3:
         return Target(parts[0], parts[1], parts[2])
-    raise ValueError(f"unsupported ref() arguments: {args!r}")
+    raise ValueError("unsupported ref() arguments")
 
 
 def load_sqlx_project(
@@ -596,18 +667,43 @@ def load_sqlx_project(
     """
 
     root = Path(root)
-    database, dataset = _read_project_defaults(root)
+    if not root.is_dir():
+        raise PipelineLoadError("project folder was not found or is not a directory")
+    diagnostics: list[PipelineDiagnostic] = []
+    database, dataset = _read_project_defaults(root, diagnostics)
     search_root = root / "definitions" if (root / "definitions").is_dir() else root
     models: dict[str, Model] = {}
     sources: dict[str, Target] = {}
-    diagnostics: list[PipelineDiagnostic] = []
 
-    for path in sorted([*search_root.rglob("*.sqlx"), *search_root.rglob("*.sql")]):
-        text = path.read_text(encoding="utf-8")
+    def unlistable(directory: Path, reason: str) -> None:
+        try:
+            label = str(directory.relative_to(root))
+        except ValueError:
+            label = "."
+        diagnostics.append(
+            PipelineDiagnostic(label, "unreadable_directory", f"{reason}; files inside were not analyzed")
+        )
+
+    def add_model(model: Model) -> None:
+        if model.key in models:
+            diagnostics.append(
+                PipelineDiagnostic(
+                    model.path or model.key,
+                    "duplicate_model",
+                    f"defines the same table as {models[model.key].path or model.key}; the earlier definition was replaced",
+                )
+            )
+        models[model.key] = model
+
+    for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
         relative = str(path.relative_to(root))
+        text, reason = read_text_or_reason(path)
+        if text is None:
+            diagnostics.append(PipelineDiagnostic(relative, "read_error", f"{reason}; asset was skipped"))
+            continue
         if path.suffix == ".sql":
             target = Target(name=path.stem)
-            models[target.key] = Model(target, "sql", text, relative)
+            add_model(Model(target, "sql", text, relative))
             continue
         try:
             sections = _split_sqlx_sections(text)
@@ -645,7 +741,7 @@ def load_sqlx_project(
         if "${" in body:
             body, restorations = _mask_sqlx_interpolations(body)
             masked = tuple(item.original for item in restorations)
-        models[target.key] = Model(target, kind, body, relative, tuple(dependencies), masked)
+        add_model(Model(target, kind, body, relative, tuple(dependencies), masked))
 
     return Pipeline(
         models,
@@ -665,39 +761,76 @@ def load_compiled_graph(
     """Load the JSON printed by ``dataform compile --json``."""
 
     if isinstance(graph, (str, Path)):
-        graph = json.loads(Path(graph).read_text(encoding="utf-8"))
+        graph = parse_json_or_raise(Path(graph), "compiled graph")
+    if not isinstance(graph, dict):
+        raise PipelineLoadError("compiled graph must be a JSON object")
 
-    def target_of(raw: dict) -> Target:
-        return Target(raw.get("database", ""), raw.get("schema", ""), raw.get("name", ""))
+    diagnostics: list[PipelineDiagnostic] = []
+
+    def target_of(raw: object) -> Target:
+        if not isinstance(raw, dict):
+            raise ValueError("target is not an object")
+        return Target(*(str(raw.get(field) or "") for field in ("database", "schema", "name")))
+
+    def list_of(kind_key: str) -> list:
+        value = graph.get(kind_key, [])
+        if not isinstance(value, list):
+            diagnostics.append(
+                PipelineDiagnostic(kind_key, "invalid_entry", f"{kind_key!r} is not a list; its entries were skipped")
+            )
+            return []
+        return value
 
     models: dict[str, Model] = {}
     for kind_key, default_kind in (("tables", "table"), ("assertions", "assertion"), ("operations", "operations")):
-        for item in graph.get(kind_key, []):
-            target = target_of(item.get("target", {}))
-            sql = item.get("query")
-            if sql is None:
-                sql = ";\n".join(item.get("queries", []))
-            kind = item.get("type", default_kind) if kind_key == "tables" else default_kind
-            model = Model(
-                target,
-                kind,
-                sql,
-                item.get("fileName"),
-                tuple(target_of(dep) for dep in item.get("dependencyTargets", [])),
-            )
+        for index, item in enumerate(list_of(kind_key)):
+            label = f"{kind_key}[{index}]"
+            try:
+                target = target_of(item.get("target", {}))
+                label = target.key or label
+                sql = item.get("query")
+                if sql is None:
+                    sql = ";\n".join(item.get("queries", []))
+                if not isinstance(sql, str):
+                    raise ValueError("query is not text")
+                kind = item.get("type", default_kind) if kind_key == "tables" else default_kind
+                file_name = item.get("fileName")
+                model = Model(
+                    target,
+                    str(kind),
+                    sql,
+                    file_name if isinstance(file_name, str) else None,
+                    tuple(target_of(dep) for dep in item.get("dependencyTargets", [])),
+                )
+            except (AttributeError, TypeError, ValueError):
+                diagnostics.append(
+                    PipelineDiagnostic(label, "invalid_entry", "entry is malformed; asset was skipped")
+                )
+                continue
             key = target.key or (model.identity.key if model.identity else "")
             if key:
+                if key in models:
+                    diagnostics.append(
+                        PipelineDiagnostic(key, "duplicate_model", "defined more than once; the earlier definition was replaced")
+                    )
                 models[key] = model
-    sources = {
-        target.key: target
-        for target in (target_of(item.get("target", {})) for item in graph.get("declarations", []))
-    }
+    sources: dict[str, Target] = {}
+    for index, item in enumerate(list_of("declarations")):
+        try:
+            target = target_of(item.get("target", {}))
+        except (AttributeError, TypeError, ValueError):
+            diagnostics.append(
+                PipelineDiagnostic(f"declarations[{index}]", "invalid_entry", "entry is malformed; asset was skipped")
+            )
+            continue
+        sources[target.key] = target
     return Pipeline(
         models,
         sources,
         dict(source_schema or {}),
-        default_project=graph.get("defaultDatabase", graph.get("defaultProject", "")),
-        default_dataset=graph.get("defaultSchema", graph.get("defaultDataset", "")),
+        diagnostics,
+        default_project=str(graph.get("defaultDatabase", graph.get("defaultProject", "")) or ""),
+        default_dataset=str(graph.get("defaultSchema", graph.get("defaultDataset", "")) or ""),
     )
 
 

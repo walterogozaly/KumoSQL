@@ -24,6 +24,7 @@ from .ast_utils import (
     set_with_clause,
     with_clause as _with_clause,
 )
+from .distinct_safety import distinct_is_redundant
 from .lift_subqueries import lift_subqueries
 
 
@@ -498,6 +499,14 @@ def _remove_unordered_result_order(query: exp.Expression) -> None:
         query.set("order", None)
 
 
+def _drop_redundant_distinct(query: exp.Expression) -> None:
+    """DISTINCT over a GROUP BY whose keys are all projected removes no rows."""
+
+    for select in query.find_all(exp.Select):
+        if distinct_is_redundant(select):
+            select.set("distinct", None)
+
+
 def _nondeterminism_reasons(query: exp.Expression) -> list[str]:
     reasons: list[str] = []
     for name in sorted(ambiguous_unnest_names(query)):
@@ -599,6 +608,7 @@ def _prepare_query(sql: str, *, ignore_row_order: bool) -> tuple[exp.Expression,
     query = _parse_single_query(lifted.sql)
     if ignore_row_order:
         _remove_unordered_result_order(query)
+    _drop_redundant_distinct(query)
     _strip_grouping_parens(query)
     _flatten_connectors(query)
     _normalize_predicates(query)

@@ -1,0 +1,50 @@
+# Example only. This file lives under docs/ so it does not run.
+# To use it, copy it to .github/workflows/ once the change report producer
+# (issue #36) exists. The "Build change report" step is a placeholder for it.
+name: change-report
+on:
+  pull_request:
+    paths: ["**/*.sqlx", "**/*.sql", "workflow_settings.yaml"]
+concurrency:
+  group: kumosql-report-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: write   # read-only on fork PRs; the comment step is then skipped
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: head}
+      - uses: actions/checkout@v4
+        with: {ref: "${{ github.base_ref }}", path: base}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -e "head[smt]"
+      - name: Build change report
+        run: |
+          echo "Producing report.json from base/ and head/ waits on issue #36" >&2
+          exit 1
+      - name: Render check and comment
+        run: kumosql-ci-check report.json --comment-out comment.md --check-out check.json
+      - run: cat comment.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: change-report
+          path: |
+            report.json
+            check.json
+      - name: Upsert pull request comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/${{ github.event.number }}/comments" --paginate \
+               --jq '[.[] | select(.body | startswith("<!-- kumosql-change-report -->"))][0].id // empty')
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md
+          else
+            gh pr comment ${{ github.event.number }} --body-file comment.md
+          fi
+      - name: Fail on failed evidence
+        run: kumosql-ci-check report.json --exit-code >/dev/null

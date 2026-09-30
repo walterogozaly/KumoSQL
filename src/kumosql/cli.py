@@ -9,11 +9,13 @@ import sys
 
 from .lift_subqueries import lift_subqueries
 from .equivalence import prove_equivalent
-from .rewrite import apply_rules, available_rules
+from .rewrite import apply_rules, attach_planner_check, available_rules
+from .sqlx import looks_like_sqlx
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
 from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
 from .pipeline import load_compiled_graph, load_sqlx_project
+from .resilience import PipelineLoadError, parse_json_or_raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,9 +97,45 @@ def rewrite_main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Exit 0 after writing output when it is unproven or only planner checked",
     )
+    parser.add_argument(
+        "--planner-project",
+        help="Opt in to a BigQuery planning and output-schema check (credentials required)",
+    )
+    parser.add_argument("--planner-location", help="BigQuery job location for the opt-in planner check")
+    parser.add_argument(
+        "--planner-compiled-original",
+        type=Path,
+        help="Compiled SQL for the original SQLX input",
+    )
+    parser.add_argument(
+        "--planner-compiled-rewritten",
+        type=Path,
+        help="Compiled SQL for the rewritten SQLX output",
+    )
     args = parser.parse_args(argv)
 
+    if (args.planner_location or args.planner_compiled_original or args.planner_compiled_rewritten) and not args.planner_project:
+        parser.error("--planner-location and compiled SQL inputs require --planner-project")
+    if bool(args.planner_compiled_original) != bool(args.planner_compiled_rewritten):
+        parser.error("provide both --planner-compiled-original and --planner-compiled-rewritten")
+
     result = apply_rules(args.rule, args.input.read_text(encoding="utf-8"))
+    if args.planner_project:
+        result = attach_planner_check(
+            result,
+            args.planner_project,
+            location=args.planner_location,
+            compiled_original_sql=(
+                args.planner_compiled_original.read_text(encoding="utf-8")
+                if args.planner_compiled_original
+                else None
+            ),
+            compiled_rewritten_sql=(
+                args.planner_compiled_rewritten.read_text(encoding="utf-8")
+                if args.planner_compiled_rewritten
+                else None
+            ),
+        )
 
     for step in result.steps:
         print(
@@ -115,6 +153,17 @@ def rewrite_main(argv: list[str] | None = None) -> int:
             f"  check {check.kind}={check.outcome}: {check.detail}",
             file=sys.stderr,
         )
+        for key, value in check.evidence:
+            if key == "scope":
+                continue
+            if key == "estimated_bytes_delta":
+                if value is not None:
+                    print(f"    estimated bytes delta: {value} bytes (estimate)", file=sys.stderr)
+            elif key == "schema_differences":
+                for difference in value:
+                    print(f"    schema difference: {difference}", file=sys.stderr)
+            else:
+                print(f"    {key}={value}", file=sys.stderr)
 
     if not all(step.rule_success for step in result.steps):
         return 2
@@ -163,13 +212,25 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         scope = get_scope(args.scope)
         if scope is None:
             parser.error(f"no saved scope named {args.scope!r}")
-    pipeline = _load_pipeline(args.root, args.source_schema)
+    try:
+        pipeline = _load_pipeline(args.root, args.source_schema)
+    except PipelineLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     try:
         data = pipeline.report(min_nodes=args.min_nodes, similarity=args.similarity, scope=scope)
     except ValueError as exc:
         parser.error(str(exc))
     if scope is not None and not data["models"]:
         print(f"warning: scope {scope.name!r} matches no models", file=sys.stderr)
+    summary = data.get("diagnostic_summary", {})
+    if summary.get("assets_not_analyzed"):
+        count = summary["assets_not_analyzed"]
+        print(
+            f"warning: {count} asset{'s' if count != 1 else ''} could not be analyzed; "
+            "see diagnostics in the report",
+            file=sys.stderr,
+        )
     report = json.dumps(data, indent=2)
     if args.output:
         args.output.write_text(report + "\n", encoding="utf-8")
@@ -216,7 +277,7 @@ def scopes_main(argv: list[str] | None = None) -> int:
 
 def dry_run_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Dry-run a BigQuery query, or check that a rewrite plans with the same schema"
+        description="Check BigQuery query planning and output schemas without comparing query results"
     )
     parser.add_argument("sql", type=Path, help="SQL file (the original, when --rewritten is given)")
     parser.add_argument("--rewritten", type=Path, help="Rewritten SQL file to compare against")
@@ -226,22 +287,36 @@ def dry_run_main(argv: list[str] | None = None) -> int:
 
     sql = args.sql.read_text(encoding="utf-8")
     if args.rewritten:
+        rewritten_sql = args.rewritten.read_text(encoding="utf-8")
+        if looks_like_sqlx(sql) or looks_like_sqlx(rewritten_sql):
+            print("planner_check=not_run: compile both SQLX inputs before planning")
+            print("scope=planning and output-schema comparison only; results were not compared")
+            return 2
         check = check_rewrite(
-            sql, args.rewritten.read_text(encoding="utf-8"), args.project, location=args.location
+            sql, rewritten_sql, args.project, location=args.location
         )
-        print("ok" if check.ok else "rejected")
+        print("planner_check=passed" if check.planned_same_schema else "planner_check=failed")
         print(check.reason)
+        print(f"original_planned={check.original_planned}")
+        print(f"rewritten_planned={check.rewritten_planned}")
+        print(f"schema_matches={check.schema_matches}")
+        print("scope=planning and output-schema comparison only; results were not compared")
         for difference in check.schema_differences:
             print(f"schema: {difference}")
-        if check.bytes_delta is not None:
-            print(f"bytes_delta={check.bytes_delta}")
-        return 0 if check.ok else 2
+        if check.estimated_bytes_delta is not None:
+            print(f"estimated_bytes_delta={check.estimated_bytes_delta} (estimate)")
+        return 0 if check.planned_same_schema else 2
 
+    if looks_like_sqlx(sql):
+        print("query_plan=not_run: compile SQLX before planning")
+        return 2
     result = dry_run(sql, args.project, location=args.location)
     if not result.ok:
-        print(f"error: {result.error_message}")
+        print(f"query_plan=failed: {result.error_message}")
         return 2
-    print(f"bytes={result.total_bytes_processed}")
+    print("query_plan=passed")
+    print("scope=planning only; query results were not compared")
+    print(f"estimated_bytes={result.total_bytes_processed} (estimate)")
     for field in result.schema:
         print(field.describe())
     return 0
@@ -249,8 +324,10 @@ def dry_run_main(argv: list[str] | None = None) -> int:
 
 def _load_pipeline(root: Path, source_schema_path: Path | None):
     source_schema = (
-        json.loads(source_schema_path.read_text(encoding="utf-8")) if source_schema_path else None
+        parse_json_or_raise(source_schema_path, "source schema file") if source_schema_path else None
     )
+    if source_schema is not None and not isinstance(source_schema, dict):
+        raise PipelineLoadError("source schema file must be a JSON object")
     if root.is_file():
         return load_compiled_graph(root, source_schema=source_schema)
     return load_sqlx_project(root, source_schema=source_schema)
@@ -330,8 +407,12 @@ def compare_outputs_main(argv: list[str] | None = None) -> int:
             result[name] = rest
         return result
 
-    before = _load_pipeline(args.root, args.source_schema)
-    after = _load_pipeline(args.after_root, args.source_schema) if args.after_root else None
+    try:
+        before = _load_pipeline(args.root, args.source_schema)
+        after = _load_pipeline(args.after_root, args.source_schema) if args.after_root else None
+    except PipelineLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     try:
         plan = plan_output_comparison(
             before,
