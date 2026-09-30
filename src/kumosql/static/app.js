@@ -1000,6 +1000,82 @@ async function openFile(file) {
   toast(`Opened ${file.name}`);
 }
 
+let connectedGitHubRepo = null;
+const githubDialog = $("github-dialog");
+
+$("github-button").addEventListener("click", () => {
+  githubDialog.showModal();
+  $("github-url").focus();
+});
+$("github-close").addEventListener("click", () => githubDialog.close());
+githubDialog.addEventListener("click", (event) => {
+  if (event.target === githubDialog) githubDialog.close();
+});
+
+$("github-connect-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("github-connect");
+  const status = $("github-status");
+  const url = $("github-url").value.trim();
+  button.disabled = true;
+  status.textContent = "Connecting to GitHub…";
+  $("github-files-panel").hidden = true;
+  try {
+    const response = await fetch("/api/github/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not connect to repository");
+    connectedGitHubRepo = { url, branch: data.branch, repository: data.repository };
+    const files = $("github-files");
+    files.replaceChildren();
+    for (const path of data.files) {
+      const option = document.createElement("option");
+      option.value = path;
+      option.textContent = path;
+      files.append(option);
+    }
+    $("github-repo-label").textContent = `${data.repository} · ${data.branch}`;
+    $("github-files-panel").hidden = false;
+    status.textContent = `${data.files.length} SQLX file${data.files.length === 1 ? "" : "s"} found.`;
+  } catch (error) {
+    connectedGitHubRepo = null;
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("github-load-file").addEventListener("click", async () => {
+  if (!connectedGitHubRepo) return;
+  const button = $("github-load-file");
+  const path = $("github-files").value;
+  const status = $("github-status");
+  button.disabled = true;
+  status.textContent = "Loading SQLX file…";
+  try {
+    const response = await fetch("/api/github/file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...connectedGitHubRepo, path }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not load file");
+    state.fileName = path.split("/").pop();
+    setInput(data.content.replace(/\r\n/g, "\n"));
+    renderInput();
+    inputsChanged({ immediate: true });
+    githubDialog.close();
+    toast(`Opened ${path} from ${connectedGitHubRepo.repository}`);
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("open-button").addEventListener("click", () => $("file-input").click());
 $("file-input").addEventListener("change", (event) => {
   openFile(event.target.files[0]);

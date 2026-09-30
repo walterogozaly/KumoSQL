@@ -16,6 +16,7 @@ from .rewrite import apply_rules, available_rules
 
 
 MAX_REQUEST_BYTES = 5 * 1024 * 1024
+MAX_GITHUB_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -204,16 +205,27 @@ class UIHandler(BaseHTTPRequestHandler):
         self._json(200, result)
 
     def do_POST(self) -> None:
-        if self.path != "/api/transform":
+        if self.path not in ("/api/transform", "/api/github/connect", "/api/github/file"):
             self._json(404, {"error": "not found"})
             return
-        payload = self._read_json()
+        payload = self._read_json(
+            MAX_GITHUB_REQUEST_BYTES if self.path.startswith("/api/github/") else MAX_REQUEST_BYTES
+        )
         if payload is None:
             return
         try:
             if not isinstance(payload, dict):
                 raise ValueError("request must be a JSON object")
-            result = transform(payload.get("sql"), payload.get("rules"), payload.get("format"))
+            if self.path == "/api/github/connect":
+                from .github_repo import connect
+
+                result = connect(payload.get("url"))
+            elif self.path == "/api/github/file":
+                from .github_repo import read_file
+
+                result = read_file(payload.get("url"), payload.get("branch"), payload.get("path"))
+            else:
+                result = transform(payload.get("sql"), payload.get("rules"), payload.get("format"))
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             self._json(400, {"error": str(exc)})
             return
