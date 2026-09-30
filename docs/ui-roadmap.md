@@ -70,7 +70,7 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 
 | UI area | Issue | Fields |
 | --- | --- | --- |
-| Evidence coverage bar (proof and planner reported separately) | #22 | `evidence_coverage {changed, proven, planner_checked, unproven, failed}` |
+| Evidence coverage bar (proof and planner reported separately) | #22 | `evidence_coverage {changed, proven, planner_checked, unproven, failed, synthetic_agreed, useful_evidence}`; headline "Useful evidence" is `useful_evidence / changed` (proof plus synthetic agreement, each output once); built from `kumosql.summarize_evidence(results).to_json()` or `kumosql-evidence-summary` (labels and counts only). The API keeps preview data until a corpus run is supplied |
 | Change report table: behavior, cost and consumers side by side | #36 | `report {title, base, head, generated_at, changes[]}`; each change has `model`, `kind`, `verification {label, reason, checks[]}`, `cost {basis, before?, after?}`, `consumers {models[], complete}` |
 | Code review check preview | #37 | `ci {check_name, conclusion, summary}`; built by `kumosql.ci_check` from a change report (`kumosql-ci-check`); example workflow in `docs/change-report-workflow.example.yml` |
 | Query sources list | #38 | `sources[] {name, kind, state, matched}`; `state` is `connected`, `not_enabled` or `error`, `matched` is a 0-1 fraction or null. Built by `query_sources.SourceRegistry.to_json(pipeline)`, which also adds `assets_total`, `assets_matched`, `assets_unmatched`. The API keeps preview data until a pipeline and source records are supplied |
