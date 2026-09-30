@@ -221,20 +221,27 @@ class UIHandler(BaseHTTPRequestHandler):
 
         route = urlsplit(self.path).path
         query = parse_qs(urlsplit(self.path).query)
+        refresh = query.get("refresh", [""])[0] == "1"
         try:
             if route == "/api/catalog/projects":
-                result = bigquery_catalog.list_projects()
+                result = bigquery_catalog.cached(
+                    "projects", bigquery_catalog.list_projects, refresh)
             elif route == "/api/catalog/datasets":
-                result = bigquery_catalog.list_datasets(_required(query, "project"))
+                project = _required(query, "project")
+                result = bigquery_catalog.cached(
+                    f"datasets\x1f{project}",
+                    lambda: bigquery_catalog.list_datasets(project), refresh)
             elif route == "/api/catalog/tables":
-                result = bigquery_catalog.list_tables(
-                    _required(query, "project"), _required(query, "dataset")
-                )
+                project, dataset = _required(query, "project"), _required(query, "dataset")
+                result = bigquery_catalog.cached(
+                    f"tables\x1f{project}\x1f{dataset}",
+                    lambda: bigquery_catalog.list_tables(project, dataset), refresh)
             elif route == "/api/catalog/table":
-                result = bigquery_catalog.get_table(
-                    _required(query, "project"), _required(query, "dataset"),
-                    _required(query, "table"),
-                )
+                project, dataset = _required(query, "project"), _required(query, "dataset")
+                table = _required(query, "table")
+                result = bigquery_catalog.cached(
+                    f"table\x1f{project}\x1f{dataset}\x1f{table}",
+                    lambda: bigquery_catalog.get_table(project, dataset, table), refresh)
             else:
                 self._json(404, {"error": "not found"})
                 return

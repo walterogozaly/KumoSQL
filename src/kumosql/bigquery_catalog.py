@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+import time
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .dryrun import access_token
+from .state import data_dir
 
 _API = "https://bigquery.googleapis.com/bigquery/v2"
 
@@ -16,8 +22,104 @@ class CatalogError(RuntimeError):
     """A BigQuery catalog request failed with a user-facing message."""
 
 
+# Catalog listings and schemas are metadata calls: free, but each is a network
+# round trip and the first also mints an OAuth token. Answers are kept in memory
+# and in a small file so reopening the page or revisiting an item is instant.
+DEFAULT_TTL_SECONDS = 3600
+_TOKEN_SECONDS = 1800
+_lock = threading.Lock()
+_memory: dict[str, dict] = {}
+_token: tuple[str, float] | None = None
+_disk_loaded = False
+
+
+def ttl_seconds() -> float:
+    try:
+        return max(0.0, float(os.environ.get("KUMOSQL_CATALOG_TTL", DEFAULT_TTL_SECONDS)))
+    except ValueError:
+        return DEFAULT_TTL_SECONDS
+
+
+def _cache_path() -> Path:
+    return data_dir() / "catalog-cache.json"
+
+
+def _load_disk() -> None:
+    global _disk_loaded
+    if _disk_loaded:
+        return
+    _disk_loaded = True
+    try:
+        stored = json.loads(_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(stored, dict):
+        for key, entry in stored.items():
+            if isinstance(entry, dict) and "at" in entry and "data" in entry:
+                _memory.setdefault(key, entry)
+
+
+def _save_disk() -> None:
+    path = _cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temp = tempfile.mkstemp(dir=path.parent, prefix=".catalog-", suffix=".tmp")
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            json.dump(_memory, out)
+        os.replace(temp, path)
+    except OSError:
+        pass  # the cache is an optimization; never fail a request over it
+
+
+def clear_cache() -> None:
+    global _disk_loaded
+    with _lock:
+        _memory.clear()
+        _disk_loaded = True
+        try:
+            _cache_path().unlink()
+        except OSError:
+            pass
+
+
+def cached(key: str, fetch, refresh: bool = False) -> dict:
+    """Return ``{"data", "fetchedAt", "cached", "stale"}`` for ``key``.
+
+    A fresh entry is served without calling BigQuery. ``refresh`` bypasses it.
+    If BigQuery fails and an older copy exists, that copy is returned marked
+    stale instead of an error.
+    """
+    with _lock:
+        _load_disk()
+        entry = _memory.get(key)
+    now = time.time()
+    if entry and not refresh and now - entry["at"] < ttl_seconds():
+        return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True, "stale": False}
+    try:
+        data = fetch()
+    except (CatalogError, RuntimeError):
+        if entry and not refresh:
+            return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True, "stale": True}
+        raise
+    with _lock:
+        _memory[key] = {"at": now, "data": data}
+        _save_disk()
+    return {"data": data, "fetchedAt": now, "cached": False, "stale": False}
+
+
+def _token_cached() -> str:
+    global _token
+    if os.environ.get("BQ_ACCESS_TOKEN"):
+        return access_token()
+    if _token and time.time() < _token[1]:
+        return _token[0]
+    value = access_token()
+    _token = (value, time.time() + _TOKEN_SECONDS)
+    return value
+
+
 def _get(path: str, params: dict[str, str] | None = None) -> dict:
-    token = access_token()
+    token = _token_cached()
     url = f"{_API}/{path}"
     if params:
         url += "?" + urlencode(params)
