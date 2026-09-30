@@ -51,7 +51,7 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 | "Where the work repeats" | #31 | `opportunities[].repeats[] {node, where}` |
 | Ranked opportunities list | #32 | `opportunities[]`: `rank`, `title`, `savings {value, basis, range?}`, `measured_cost`, `frequency`, `downstream_reach` |
 | Four-part recommendation (where, who, what, how verified) | #33 | `consumers[]`, `proposed_change`, `rule`, `verification {required, plan[]}` |
-| Cost rule catalog | #34 | `rules[]`: `id`, `name`, `state`, `safe_when`, `requires`, `outcome` |
+| Cost rule catalog | #34 | `rules[]`: `id`, `name`, `state` (`shipped` or `not_implemented`), `safe_when`, `requires`, `outcome`, `measured_outcome` (null until measured); built by `cost_rules.rule_catalog()` |
 | Validated savings and open estimates tiles; Measured, Estimate and Upper bound tags | #35 | `validated {accepted_changes, validated_savings, pending_estimates}`; `savings.basis` is one of `measured`, `estimate`, `upper_bound` |
 
 ## Change reports: `/changes` → `/api/changes`
