@@ -268,3 +268,59 @@ def test_sqlx_rejects_unknown_interpolations():
     assert sqlx_to_sql('config { type: "view" }\nSELECT * FROM ${ref("a")}').strip() == "SELECT * FROM `a`"
     with pytest.raises(ExecutionError):
         sqlx_to_sql("SELECT * FROM ${self()}")
+
+
+# ---------------------------------------------------------------------------
+# Reproducibility and nondeterministic baselines
+# ---------------------------------------------------------------------------
+
+PINNED_DIGEST = "5ae4f0478bb9833d8ae6581075f62776b24765c0edb74185018f3a1cc8c7742f"
+
+
+def _digest_of_pinned_dataset() -> str:
+    import hashlib
+
+    dataset = generate_synthetic_dataset(
+        {"p.d.t": {"a": "INT64", "b": "STRING"}}, seed=3, rows_per_table=6
+    )
+    return hashlib.sha256(repr(dataset.tables["p.d.t"].rows).encode()).hexdigest()
+
+
+def test_synthetic_dataset_is_pinned_across_versions():
+    assert _digest_of_pinned_dataset() == PINNED_DIGEST
+
+
+def test_nondeterministic_baseline_is_inconclusive():
+    sql = "SELECT customer_id, RAND() AS r FROM `p.d.orders`"
+    result = check_result_equivalence(sql, sql, SCHEMA, seeds=range(1, 4))
+    assert result.status is ResultEquivalenceStatus.INCONCLUSIVE
+    assert not result.equivalent
+    assert "left side" in result.reason
+    assert result.describe().startswith("inconclusive")
+
+
+def test_nondeterministic_right_side_is_named():
+    result = check_result_equivalence(
+        "SELECT customer_id, 1.0 AS r FROM `p.d.orders`",
+        "SELECT customer_id, RAND() AS r FROM `p.d.orders`",
+        SCHEMA,
+        seeds=range(1, 4),
+    )
+    assert result.status is ResultEquivalenceStatus.INCONCLUSIVE
+    assert "right side" in result.reason
+
+
+def test_stable_baseline_still_reports_different_and_equivalent():
+    base = "SELECT customer_id FROM `p.d.orders`"
+    different = check_result_equivalence(
+        base, base + " WHERE amount > 1", SCHEMA, seeds=range(1, 6)
+    )
+    assert different.status is ResultEquivalenceStatus.DIFFERENT
+    same = check_result_equivalence(base, base, SCHEMA, seeds=range(1, 4))
+    assert same.status is ResultEquivalenceStatus.EQUIVALENT
+
+
+def test_time_function_never_escapes_as_exception():
+    sql = "SELECT CURRENT_TIMESTAMP() AS t FROM `p.d.orders`"
+    result = check_result_equivalence(sql, sql, SCHEMA, seeds=range(1, 3))
+    assert isinstance(result.status, ResultEquivalenceStatus)

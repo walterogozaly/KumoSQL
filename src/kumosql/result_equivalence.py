@@ -42,6 +42,7 @@ class ResultEquivalenceStatus(str, Enum):
     EQUIVALENT = "equivalent"
     DIFFERENT = "different"
     ERROR = "error"
+    INCONCLUSIVE = "inconclusive"
 
 
 @dataclass(frozen=True)
@@ -415,8 +416,11 @@ def execute_on_dataset(
             cursor = connection.execute(f'SELECT * FROM "{last_target}"')
         if cursor is None or cursor.description is None:
             raise ExecutionError("script produced neither a query result nor a written table")
-        columns = tuple(column[0] for column in cursor.description)
-        rows = tuple(tuple(row) for row in cursor.fetchall())
+        try:
+            columns = tuple(column[0] for column in cursor.description)
+            rows = tuple(tuple(row) for row in cursor.fetchall())
+        except Exception as exc:
+            raise ExecutionError(f"DuckDB failed while fetching results: {exc}") from exc
     finally:
         connection.close()
     return QueryOutput(columns=columns, rows=rows), statements
@@ -486,7 +490,9 @@ def check_result_equivalence(
     """Run both queries over several synthetic datasets and compare results.
 
     Stops at the first seed that yields a counterexample or an execution
-    error. An error on either side is never reported as equivalence.
+    error. An error on either side is never reported as equivalence. Each side
+    is executed twice per seed; a side that differs from itself makes the
+    result ``INCONCLUSIVE`` instead of equivalent or different.
     """
 
     checked: list[int] = []
@@ -517,6 +523,41 @@ def check_result_equivalence(
                 left_output=left_output,
                 left_duckdb_sql=tuple(left_sql_out),
             )
+        # A side that disagrees with itself on identical input cannot support
+        # either an equivalence or a counterexample claim.
+        for side, side_sql, first_output in (
+            ("left", left_sql, left_output),
+            ("right", right_sql, right_output),
+        ):
+            try:
+                repeat_output, _ = execute_on_dataset(
+                    side_sql, schema, dataset, run_tag=f"{side}_{seed}_repeat"
+                )
+            except ExecutionError as exc:
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.ERROR,
+                    f"{side} side failed on repeat run: {exc}",
+                    tuple(checked),
+                    seed,
+                )
+            stable, _, _, _ = compare_outputs(
+                first_output,
+                repeat_output,
+                ignore_row_order=ignore_row_order,
+                check_column_names=check_column_names,
+                float_digits=float_digits,
+            )
+            if not stable:
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.INCONCLUSIVE,
+                    f"{side} side returned different results on two runs over the same "
+                    f"synthetic data (seed {seed}); it is nondeterministic, so the "
+                    "comparison proves nothing either way",
+                    tuple(checked),
+                    seed,
+                    left_duckdb_sql=tuple(left_sql_out),
+                    right_duckdb_sql=tuple(right_sql_out),
+                )
         checked.append(seed)
         equal, reason, only_left, only_right = compare_outputs(
             left_output,
