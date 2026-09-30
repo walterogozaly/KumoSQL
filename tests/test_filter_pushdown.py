@@ -1,3 +1,5 @@
+import pytest
+
 from kumosql import load_compiled_graph
 from kumosql.filter_pushdown import find_upstream_filter_proposals
 
@@ -48,6 +50,8 @@ def test_common_filter_is_proposed_with_full_consumer_set():
 
 
 def test_output_alias_is_mapped_to_source_column():
+    # `amt > 0` and `0 < amt` are only recognised as the same filter by the SMT prover.
+    pytest.importorskip("z3")
     result = run(STG, reader("a", "s.amt > 0"), reader("b", "0 < s.amt"))
     assert [p.predicate for p in result.proposals] == ["amount > 0"]
 
