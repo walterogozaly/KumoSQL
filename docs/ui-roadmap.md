@@ -54,6 +54,8 @@ The traversals for readers, impact and lineage run in the browser, which is fine
 | Cost rule catalog | #34 | `rules[]`: `id`, `name`, `state`, `safe_when`, `requires`, `outcome` |
 | Validated savings and open estimates tiles; Measured, Estimate and Upper bound tags | #35 | `validated {accepted_changes, validated_savings, pending_estimates}`; `savings.basis` is one of `measured`, `estimate`, `upper_bound` |
 
+`kumosql.costs.build_cost(pipeline, jobs)` returns this shape from real job history (`load_jobs` reads a JSON, JSON lines or CSV export). It also adds `unit`, `counts`, `unattributed[]` (reason codes) and `edges[]`. `/api/cost` still serves the preview because no job history is configured for the server. Values are billed bytes unless an explicit `usd_per_tib` rate is given. Reader cost on a view lands on the view, never split across base tables.
+
 ## Change reports: `/changes` → `/api/changes`
 
 | UI area | Issue | Fields |
