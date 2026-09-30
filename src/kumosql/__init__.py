@@ -105,8 +105,22 @@ from .fingerprint import (
     summarize_comparison,
     table_fingerprint_sql,
 )
+from .table_profile import (
+    AttributeMeaning,
+    Grain,
+    RowScope,
+    TableProfile,
+    profile_pipeline,
+    profile_query,
+)
 
 __all__ = [
+    "AttributeMeaning",
+    "Grain",
+    "RowScope",
+    "TableProfile",
+    "profile_pipeline",
+    "profile_query",
     "EvidenceSummary",
     "summarize_evidence",
     "RepeatedWork",
