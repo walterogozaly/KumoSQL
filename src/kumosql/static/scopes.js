@@ -103,6 +103,10 @@
   const newGroup = (mode = "all") => ({ type: "group", mode, negate: false, children: [newCondition()] });
 
   function treeToRule(node) {
+    if (node.type === "ref") {
+      if (!node.name) throw new Error("Pick a scope for every “in scope” condition");
+      return { scope: node.name };
+    }
     if (node.type === "cond") {
       const field = node.field.trim();
       if (!field) throw new Error("Pick a field for every condition");
@@ -118,6 +122,7 @@
   }
 
   function ruleToTree(rule) {
+    if (rule.scope !== undefined) return { type: "ref", name: rule.scope };
     if (rule.field !== undefined) {
       const value = Array.isArray(rule.value) ? rule.value.join(", ") : rule.value === undefined ? "" : String(rule.value);
       return { type: "cond", field: rule.field, op: rule.op, value };
@@ -132,6 +137,7 @@
   }
 
   function describeRule(rule, top = true) {
+    if (rule.scope !== undefined) return `in scope “${rule.scope}”`;
     if (rule.field !== undefined) {
       const label = operatorLabel(rule.op);
       if (NO_VALUE_OPS.has(rule.op)) return `${rule.field} ${label}`;
@@ -156,7 +162,7 @@
 
   const linkButton = (label, action) => h("button", { type: "button", class: "link-button", "data-action": action, text: label });
 
-  function renderBuilder(container, tree, preview, datalistId) {
+  function renderBuilder(container, tree, preview, datalistId, scopeChoices = () => []) {
     const redraw = () => {
       container.replaceChildren(renderGroup(tree, null));
       showPreview();
@@ -197,6 +203,22 @@
       return h("div", { class: "rule-condition" }, field, op, value, listValue, remove);
     };
 
+    const renderRef = (node, parent) => {
+      const choices = scopeChoices();
+      const pick = h("select", { "aria-label": "Scope" });
+      pick.append(new Option("Choose a scope…", "", false, !node.name));
+      for (const name of [...new Set([...choices, ...(node.name ? [node.name] : [])])]) {
+        pick.append(new Option(name, name, false, name === node.name));
+      }
+      pick.addEventListener("change", () => { node.name = pick.value; showPreview(); });
+      const remove = linkButton("×", "remove-node");
+      remove.classList.add("remove-node");
+      remove.title = "Remove condition";
+      remove.setAttribute("aria-label", "Remove condition");
+      remove.addEventListener("click", () => { parent.children.splice(parent.children.indexOf(node), 1); redraw(); });
+      return h("div", { class: "rule-condition rule-ref" }, h("span", { class: "rule-ref-label", text: "In scope" }), pick, remove);
+    };
+
     const renderGroup = (node, parent) => {
       const mode = h("select", { "aria-label": "Combine with" });
       mode.append(new Option("All of (AND)", "all", false, node.mode === "all"), new Option("Any of (OR)", "any", false, node.mode === "any"));
@@ -214,12 +236,17 @@
         head.append(remove);
       }
       const children = h("div", { class: "rule-children" },
-        ...node.children.map((child) => (child.type === "cond" ? renderCondition(child, node) : renderGroup(child, node))));
+        ...node.children.map((child) => (child.type === "cond" ? renderCondition(child, node)
+          : child.type === "ref" ? renderRef(child, node) : renderGroup(child, node))));
       const addCondition = linkButton("+ Condition", "add-condition");
       addCondition.addEventListener("click", () => { node.children.push(newCondition()); redraw(); });
       const addGroup = linkButton("+ Group", "add-group");
       addGroup.addEventListener("click", () => { node.children.push(newGroup("any")); redraw(); });
-      return h("div", { class: "rule-group" }, head, children, h("div", { class: "rule-actions" }, addCondition, addGroup));
+      const addScope = linkButton("+ Scope", "add-scope");
+      addScope.title = "Include everything another saved scope includes";
+      addScope.disabled = scopeChoices().length === 0;
+      addScope.addEventListener("click", () => { node.children.push({ type: "ref", name: "" }); redraw(); });
+      return h("div", { class: "rule-group" }, head, children, h("div", { class: "rule-actions" }, addCondition, addScope, addGroup));
     };
 
     redraw();
@@ -241,7 +268,8 @@
     const saveButton = h("button", { type: "submit", class: "toolbar-button", text: "Save scope" });
     const cancel = h("button", { type: "button", class: "link-button", text: "Cancel", hidden: "" });
     const empty = h("p", { class: "sp-row-hint", text: "No scopes yet. Create one below." });
-    let redraw = renderBuilder(builder, tree, preview, datalistId);
+    const scopeChoices = () => scopes.filter((item) => item.name !== editing).map((item) => item.name);
+    let redraw = renderBuilder(builder, tree, preview, datalistId, scopeChoices);
 
     const fillFields = () => {
       datalist.replaceChildren(...fieldInfo.fields.map((info) => {
@@ -256,7 +284,7 @@
 
     const setTree = (next) => {
       tree = next;
-      redraw = renderBuilder(builder, tree, preview, datalistId);
+      redraw = renderBuilder(builder, tree, preview, datalistId, scopeChoices);
     };
     const reset = () => {
       editing = null;
@@ -341,7 +369,7 @@
 
     body.append(
       h("h3", { class: "sp-heading", text: "Scopes" }),
-      h("p", { class: "sp-lede", text: "A scope is a saved rule that decides what is “in”: combine conditions on any field (a job’s submitter, a project, a table’s columns) with AND, OR and NOT. Choose the active scope on the graph and report pages to limit what they show." }),
+      h("p", { class: "sp-lede", text: "A scope is a saved rule that decides what is “in”: combine conditions on any field (a job’s submitter, a project, a table’s columns) and other scopes with AND, OR and NOT. Choose the active scope on the graph and report pages to limit what they show." }),
       h("div", { class: "sp-group" }, list, empty),
       h("h4", { class: "sp-subheading", text: "New scope" }),
       form);

@@ -279,3 +279,20 @@ def test_active_scope_limits_impact_and_labels_sample_pages(server):
         note = get(server, page + "?scope=Ana")["scope"]
         assert note["applied_to"] == [] and "Sample data" in note["note"]
         assert get(server, page)["scope"] is None
+
+
+def test_scope_built_from_other_scopes_applies_to_job_history(server):
+    live_graph.set_project(live_graph.load_files(FILES, "demo"), "demo", observed_reads=JOBS)
+    _put_scopes(server, [
+        {"name": "ana", "rule": {"field": "submitter", "op": "eq", "value": "ana@co.com"}},
+        {"name": "bo", "rule": {"field": "submitter", "op": "eq", "value": "bo@co.com"}},
+        {"name": "both_teams", "rule": {"any": [{"scope": "ana"}, {"scope": "bo"}]}},
+        {"name": "only_shared", "rule": {"all": [{"scope": "ana"}, {"scope": "bo"}]}},
+    ])
+    union = get(server, "/api/graph?scope=both_teams")
+    assert sum(e["observed_count"] for e in union["edges"]) == 2
+    assert union["scope"]["rule"] == "in scope “ana” OR in scope “bo”"
+    assert sum(e["observed_count"] for e in get(server, "/api/graph?scope=only_shared")["edges"]) == 0
+    with pytest.raises(HTTPError) as error:
+        _put_scopes(server, [{"name": "loop", "rule": {"scope": "loop"}}])
+    assert error.value.code == 400 and "cannot refer to themselves" in json.load(error.value)["error"]
