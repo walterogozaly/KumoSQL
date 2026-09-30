@@ -30,6 +30,7 @@ from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 
 # Import built-in rules so they are registered.
 from . import cleanup as _cleanup  # noqa: F401
+from . import cost_rules as _cost_rules  # noqa: F401
 from . import formatting as _formatting  # noqa: F401
 from . import inline_ctes as _inline_ctes  # noqa: F401
 from . import lift_subqueries as _lift_subqueries  # noqa: F401
