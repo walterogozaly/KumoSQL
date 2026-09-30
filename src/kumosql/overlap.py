@@ -175,10 +175,11 @@ def find_overlaps(
     skipped: dict[str, int] = {}
     compared = 0
     in_scope = 0
+    keep = pipeline.scope_keys(scope, profiles) if scope is not None else None
     for key in sorted(pipeline.models):
         if key == target_key:
             continue
-        if scope is not None and not scope.matches(_record(pipeline, key)):
+        if keep is not None and key not in keep:
             skipped["outside_scope"] = skipped.get("outside_scope", 0) + 1
             continue
         in_scope += 1
@@ -211,11 +212,6 @@ def _resolve(pipeline: Pipeline, model: str | None) -> str:
         return pipeline.resolve(text) or text
     except Exception:  # noqa: BLE001
         return text
-
-
-def _record(pipeline: Pipeline, key: str) -> dict[str, str]:
-    target = pipeline.models[key].target
-    return {"project": target.database, "dataset": target.schema, "table": target.name, "model": key}
 
 
 def _with_role(match: Match, role: MatchRole) -> Match:

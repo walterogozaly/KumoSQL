@@ -28,7 +28,7 @@ from .formatting import (
     complexity,
     format_sql,
 )
-from .scopes import Scope, get_scope, list_scopes, save_scope
+from .scopes import Scope, UnknownFieldError, discover_fields, get_scope, list_scopes, save_scope
 from .evidence_summary import EvidenceSummary, summarize_evidence
 from .rewrite import (
     PipelineResult,
@@ -166,6 +166,8 @@ __all__ = [
     "FormatPreferences",
     "FormatSqlRule",
     "Scope",
+    "UnknownFieldError",
+    "discover_fields",
     "complexity",
     "format_sql",
     "get_scope",

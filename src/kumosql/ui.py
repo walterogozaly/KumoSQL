@@ -149,6 +149,9 @@ class UIHandler(BaseHTTPRequestHandler):
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
             })
             return
+        if self.path == "/api/scope-fields":
+            self._json(200, self._scope_fields())
+            return
         if self.path == "/api/rules":
             self._json(200, [
                 {"name": name, "summary": rule.summary}
@@ -172,6 +175,29 @@ class UIHandler(BaseHTTPRequestHandler):
         filename, content_type = asset
         body = files("kumosql").joinpath("static", filename).read_bytes()
         self._send(200, body, content_type)
+
+    @staticmethod
+    def _scope_fields() -> dict:
+        """Fields a scope rule can use, discovered from the loaded project and its job history."""
+
+        loaded = live_graph.loaded()
+        fields = scope_store.discover_fields(
+            loaded["pipeline"] if loaded else None,
+            loaded["observed_reads"] if loaded else (),
+            _profiles(loaded["pipeline"]) if loaded else None,
+        )
+        known = {info.name.casefold() for info in fields}
+        # Fields of saved scopes stay editable even when their data is not loaded.
+        for scope in scope_store.list_scopes():
+            for name in scope.fields_used():
+                if name.casefold() not in known:
+                    known.add(name.casefold())
+                    fields.append(scope_store.FieldInfo(name, "saved"))
+        return {
+            "fields": [info.to_json() for info in fields],
+            "operators": [{"op": op, "label": label} for op, label in scope_store.OPERATORS.items()],
+            "loaded": loaded["label"] if loaded else None,
+        }
 
     def _impact(self) -> None:
         query = parse_qs(urlsplit(self.path).query)
@@ -293,6 +319,15 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
             return
         self._json(200, result)
+
+
+def _profiles(pipeline) -> dict | None:
+    from .table_profile import profile_pipeline
+
+    try:
+        return profile_pipeline(pipeline)
+    except Exception:  # noqa: BLE001 - profile fields are optional suggestions
+        return None
 
 
 def _required(query: dict[str, list[str]], name: str) -> str:

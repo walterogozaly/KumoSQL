@@ -252,7 +252,10 @@ def get_settings(base_url):
 def test_ui_settings_persist_across_server_restarts(ui_server):
     assert get_settings(ui_server)["ui"] == {}
     put_json(ui_server, "ui", {"theme": "dark", "enabled": ["format_sql"]})
-    scopes = [{"name": "My Team", "fields": {"author": ["ana@co.com"]}}]
+    scopes = [{"name": "My Team", "rule": {"field": "author", "op": "in", "value": ["ana@co.com"]}}]
+    assert put_json(ui_server, "scopes", scopes) == scopes
+    legacy = [{"name": "Old", "fields": {"author": ["ana@co.com"]}}]
+    assert put_json(ui_server, "scopes", legacy)[0]["rule"]["op"] == "in"
     assert put_json(ui_server, "scopes", scopes) == scopes
     saved = put_json(ui_server, "format", {"keyword_case": "lower"})
     assert saved["keyword_case"] == "lower"
@@ -340,3 +343,10 @@ def test_preview_changes_use_evidence_labels_and_gate_proposals():
         consumers = {item["label"] for item in proposal["consumers"]}
         assert proposal["ready"] == (consumers <= {"proven", "unchanged"})
     assert [proposal["ready"] for proposal in payload["proposals"]] == [False, True]
+
+
+def test_ui_lists_scope_fields_including_saved_scopes(ui_server):
+    put_json(ui_server, "scopes", [{"name": "Mine", "rule": {"field": "submitter", "op": "eq", "value": "ana"}}])
+    payload = get_json(ui_server, "/api/scope-fields")
+    assert any(f["name"] == "submitter" and f["source"] == "saved" for f in payload["fields"])
+    assert {"in", "regex", "is_null"} <= {o["op"] for o in payload["operators"]}
