@@ -20,12 +20,12 @@ whose consumers could not be fully analysed.
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Mapping
 
 import sqlglot
 from sqlglot import exp
@@ -36,6 +36,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from .ast_utils import quiet_parser as _quiet_parser
+from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .sqlx import (
     mask_sqlx_interpolations as _mask_sqlx_interpolations,
     split_sqlx_sections as _split_sqlx_sections,
@@ -88,6 +89,18 @@ class Model:
         return self.target.key
 
     @property
+    def identity(self) -> NodeIdentity | None:
+        """Identity of the output table, falling back to the asset path."""
+
+        if self.target.key:
+            return NodeIdentity.for_target(self.target.database, self.target.schema, self.target.name)
+        return self.asset_identity
+
+    @property
+    def asset_identity(self) -> NodeIdentity | None:
+        return NodeIdentity.for_asset(self.path) if self.path else None
+
+    @property
     def is_query(self) -> bool:
         return self.kind in {"table", "view", "incremental", "assertion", "sql"}
 
@@ -119,17 +132,113 @@ class Pipeline:
     sources: dict[str, Target] = field(default_factory=dict)
     source_schema: dict[str, dict[str, str]] = field(default_factory=dict)
     diagnostics: list[PipelineDiagnostic] = field(default_factory=list)
+    default_project: str = ""
+    default_dataset: str = ""
 
     # ------------------------------------------------------------------ graph
 
     def __post_init__(self) -> None:
-        self._resolver = _TargetResolver([*self.models, *self.sources])
+        target_keys = [model.target.key for model in self.models.values() if model.target.key]
+        self._resolver = _TargetResolver([*target_keys, *self.sources])
+        self._known_table_nodes: set[NodeIdentity] = set()
+        self._node_kinds: dict[NodeIdentity, str] = {}
+        self._asset_nodes: dict[NodeIdentity, set[NodeIdentity]] = defaultdict(set)
+        for model in self.models.values():
+            identity = model.identity
+            if identity is not None:
+                if identity.kind == "table":
+                    self._known_table_nodes.add(identity)
+                self._node_kinds.setdefault(identity, model.kind)
+            if model.asset_identity is not None and identity is not None:
+                self._asset_nodes[model.asset_identity].add(identity)
+        for target in self.sources.values():
+            identity = NodeIdentity.for_target(target.database, target.schema, target.name)
+            self._known_table_nodes.add(identity)
+            self._node_kinds.setdefault(identity, "source")
         self._analysis: _Analysis | None = None
 
     def resolve(self, table: exp.Table | str) -> str | None:
         """Map a table reference to a model or declared source key."""
 
+        resolution = self.resolve_reference(table, use_defaults=True)
+        if resolution.matched:
+            return resolution.identity.key
+        # Existing SQL analysis permits suffix resolution for query text.
+        # Observed job references use resolve_observed_references, which is
+        # exact and never uses this fallback.
         return self._resolver.resolve(table)
+
+    def resolve_reference(self, reference: object, *, use_defaults: bool = False) -> IdentityResolution:
+        """Resolve a reference to a known node or retain it as an external identity.
+
+        Defaults are intended for SQL references. Observed job references
+        should be passed as fully-qualified values without defaults.
+        """
+
+        label = _reference_label(reference)
+        if _is_asset_reference(reference):
+            asset = reference if isinstance(reference, NodeIdentity) else NodeIdentity.for_asset(label)
+            candidates = tuple(sorted(self._asset_nodes.get(asset, ()), key=lambda node: node.stable_key))
+            if len(candidates) == 1:
+                identity = candidates[0]
+                return IdentityResolution(label, identity, "exact", node_kind=self._node_kinds.get(identity, "model"))
+            if len(candidates) > 1:
+                return IdentityResolution(label, asset, "ambiguous", candidates, "external")
+            return IdentityResolution(label, asset, "unmatched", node_kind="external")
+
+        normalized = normalize_table_reference(
+            reference,
+            default_project=self.default_project if use_defaults else "",
+            default_dataset=self.default_dataset if use_defaults else "",
+        )
+        if normalized is None:
+            return IdentityResolution(
+                label, NodeIdentity.unresolved(label), "unmatched", node_kind="external"
+            )
+        if normalized.kind == "wildcard":
+            return IdentityResolution(label, normalized, "pattern", node_kind="wildcard")
+        if normalized.kind == "system":
+            return IdentityResolution(label, normalized, "system", node_kind="system")
+
+        base_identity = replace(normalized, decorator="") if normalized.decorator else normalized
+        if base_identity in self._known_table_nodes:
+            return IdentityResolution(
+                label,
+                base_identity,
+                "via_default" if normalized.defaulted else "exact",
+                node_kind=self._node_kinds.get(base_identity, "source"),
+                decorator=normalized.decorator,
+            )
+
+        candidates = self._identity_candidates(base_identity)
+        status = "ambiguous" if len(candidates) > 1 else "unmatched"
+        return IdentityResolution(
+            label,
+            normalized,
+            status,
+            candidates,
+            "external",
+            normalized.decorator,
+        )
+
+    def resolve_observed_references(self, references: Iterable[object]) -> tuple[IdentityResolution, ...]:
+        """Resolve every observed job reference while retaining unmatched items."""
+
+        return tuple(self.resolve_reference(reference) for reference in references)
+
+    def _identity_candidates(self, reference: NodeIdentity) -> tuple[NodeIdentity, ...]:
+        # Candidates help explain ambiguous partial names. A fully qualified
+        # observation must never be suggested as another project's table.
+        if reference.kind != "table" or not reference.parts or len(reference.parts) >= 3:
+            return ()
+        candidates = []
+        for known in self._known_table_nodes:
+            if known.kind != "table" or not known.parts:
+                continue
+            short, long = sorted((reference.parts, known.parts), key=len)
+            if short == long[-len(short) :]:
+                candidates.append(known)
+        return tuple(sorted(candidates, key=lambda node: node.stable_key))
 
     @property
     def upstream(self) -> dict[str, set[str]]:
@@ -269,6 +378,9 @@ class Pipeline:
             "scope": scope.name,
             "models": len(keep),
             "order": [key for key in report["order"] if key in keep],
+            "node_identities": {
+                key: value for key, value in report["node_identities"].items() if key in keep
+            },
             "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
             "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
             "duplicates": [
@@ -282,6 +394,14 @@ class Pipeline:
         return {
             "models": len(self.models),
             "sources": sorted(self.sources),
+            "node_identities": {
+                key: {
+                    "identity": model.identity.to_json() if model.identity else None,
+                    "model_kind": model.kind,
+                    "asset": model.asset_identity.to_json() if model.asset_identity else None,
+                }
+                for key, model in sorted(self.models.items())
+            },
             "order": self.topological_order(),
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
             "dead_columns": {key: list(value) for key, value in self.dead_columns().items()},
@@ -311,6 +431,47 @@ class Pipeline:
 
 
 # --------------------------------------------------------------------- loading
+
+
+def _reference_label(reference: object) -> str:
+    if isinstance(reference, str):
+        return reference.strip()
+    if isinstance(reference, NodeIdentity):
+        return reference.key
+    if isinstance(reference, Mapping):
+        nested = reference.get("tableReference")
+        if isinstance(nested, Mapping):
+            reference = nested
+        parts = [
+            str(reference.get(key, ""))
+            for key in ("projectId", "datasetId", "tableId")
+            if reference.get(key)
+        ]
+        if not parts:
+            parts = [
+                str(reference.get(key, ""))
+                for key in ("database", "schema", "name")
+                if reference.get(key)
+            ]
+        return ".".join(parts) if parts else str(reference)
+    if all(hasattr(reference, key) for key in ("database", "schema", "name")):
+        return ".".join(
+            str(getattr(reference, key))
+            for key in ("database", "schema", "name")
+            if getattr(reference, key)
+        )
+    if getattr(reference, "parts", None) is not None:
+        return ".".join(part.name for part in reference.parts)
+    return str(reference)
+
+
+def _is_asset_reference(reference: object) -> bool:
+    if isinstance(reference, NodeIdentity):
+        return reference.kind == "asset"
+    if not isinstance(reference, str):
+        return False
+    normalized = reference.replace("\\", "/")
+    return "/" in normalized or normalized.lower().endswith((".sql", ".sqlx"))
 
 
 _REF_RE = re.compile(r"\$\{\s*ref\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
@@ -423,7 +584,14 @@ def load_sqlx_project(
             masked = tuple(item.original for item in restorations)
         models[target.key] = Model(target, kind, body, relative, tuple(dependencies), masked)
 
-    return Pipeline(models, sources, dict(source_schema or {}), diagnostics)
+    return Pipeline(
+        models,
+        sources,
+        dict(source_schema or {}),
+        diagnostics,
+        default_project=database,
+        default_dataset=dataset,
+    )
 
 
 def load_compiled_graph(
@@ -447,18 +615,27 @@ def load_compiled_graph(
             if sql is None:
                 sql = ";\n".join(item.get("queries", []))
             kind = item.get("type", default_kind) if kind_key == "tables" else default_kind
-            models[target.key] = Model(
+            model = Model(
                 target,
                 kind,
                 sql,
                 item.get("fileName"),
                 tuple(target_of(dep) for dep in item.get("dependencyTargets", [])),
             )
+            key = target.key or (model.identity.key if model.identity else "")
+            if key:
+                models[key] = model
     sources = {
         target.key: target
         for target in (target_of(item.get("target", {})) for item in graph.get("declarations", []))
     }
-    return Pipeline(models, sources, dict(source_schema or {}))
+    return Pipeline(
+        models,
+        sources,
+        dict(source_schema or {}),
+        default_project=graph.get("defaultDatabase", graph.get("defaultProject", "")),
+        default_dataset=graph.get("defaultSchema", graph.get("defaultDataset", "")),
+    )
 
 
 # -------------------------------------------------------------------- analysis
@@ -470,7 +647,7 @@ class _TargetResolver:
     def __init__(self, keys: list[str]):
         self._by_suffix: dict[str, set[str]] = defaultdict(set)
         for key in keys:
-            parts = key.lower().split(".")
+            parts = key.split(".")
             for start in range(len(parts)):
                 self._by_suffix[".".join(parts[start:])].add(key)
 
@@ -479,7 +656,7 @@ class _TargetResolver:
             name = ".".join(part.name for part in table.parts)
         else:
             name = table.strip("`")
-        parts = name.lower().split(".")
+        parts = name.split(".")
         # Try the most specific spelling first, then drop leading qualifiers.
         for start in range(len(parts)):
             matches = self._by_suffix.get(".".join(parts[start:]))
