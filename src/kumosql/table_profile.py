@@ -17,6 +17,7 @@ and a profile is ``complete`` only when all three parts are known.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -306,6 +307,54 @@ def _canon_pass(node: exp.Expression) -> exp.Expression:
             clone.set("expressions", [o.copy() for o in ordered])
             return clone
     return node
+
+
+def _is_call(text: str) -> bool:
+    """Whether ``text`` is one function call, ``FN(...)``, so it needs no parentheses when inlined."""
+
+    match = re.match(r"[A-Z][A-Z_0-9]*\(", text)
+    if match is None:
+        return False
+    depth = 0
+    for index in range(match.end() - 1, len(text)):
+        depth += {"(": 1, ")": -1}.get(text[index], 0)
+        if depth == 0:
+            return index == len(text) - 1
+    return False
+
+
+def _meaning_node(meaning: str) -> exp.Expression:
+    """The node that stands for a column's meaning inside a larger expression.
+
+    A composite ``expr:`` meaning is parenthesised, so ``SUM(margin)`` over a view
+    column reads the same as ``SUM(price - cost)`` written out in place.
+    """
+
+    if meaning.startswith("expr:"):
+        inner = meaning[len("expr:"):]
+        return exp.Var(this=inner) if _is_call(inner) else exp.Paren(this=exp.Var(this=inner))
+    return exp.Var(this=meaning)
+
+
+_REAGGREGATE = {exp.Sum: ("SUM", "COUNT"), exp.Min: ("MIN",), exp.Max: ("MAX",)}
+
+
+def _collapse_nested(node: exp.Expression) -> str | None:
+    """``SUM(SUM(x))`` is ``SUM(x)`` (likewise MIN, MAX and ``SUM(COUNT(x))``).
+
+    Only when the inner aggregate is a plain, non-distinct one: the same rows are
+    combined either way. Any filter between the two stages is a row-scope filter.
+    """
+
+    inner = node.this
+    if not isinstance(inner, exp.Var) or not inner.name.startswith("agg:"):
+        return None
+    for kind, allowed in _REAGGREGATE.items():
+        if type(node) is kind:
+            match = re.match(r"agg:([A-Z_0-9]+)\((?!DISTINCT )", inner.name)
+            if match and match.group(1) in allowed:
+                return inner.name
+    return None
 
 
 def _canon_sql(node: exp.Expression) -> str:
@@ -667,7 +716,7 @@ class _Profiler:
         if isinstance(expr, exp.Column):
             return "col", self._col_meaning(expr, ctx, allow_alias, depth)
         for column in columns:
-            column.replace(exp.Var(this=self._col_meaning(column, ctx, allow_alias, depth)))
+            column.replace(_meaning_node(self._col_meaning(column, ctx, allow_alias, depth)))
             replaced += 1
 
         wrapped = 0
@@ -679,6 +728,12 @@ class _Profiler:
                 return exp.Var(this="window:" + _canon_sql(node))
             if isinstance(node, exp.AggFunc):
                 wrapped += 1
+                collapsed = _collapse_nested(node)
+                if collapsed is not None:
+                    return exp.Var(this=collapsed)
+                if isinstance(node.this, exp.Paren) and isinstance(node.this.this, exp.Var):
+                    node = node.copy()
+                    node.set("this", node.this.this)
                 return exp.Var(this="agg:" + _canon_sql(node))
             return node
 
