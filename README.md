@@ -87,6 +87,8 @@ Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the 
 
 The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remove_trivial_predicates` drops `TRUE` from `AND` and `FALSE` from `OR` inside WHERE, HAVING, QUALIFY and JOIN conditions, but never applies `x AND FALSE` or `x OR TRUE`, which would discard `x` and any error it raises. It leaves UPDATE, DELETE and MERGE statements unchanged because DML rewrites cannot currently be proven. It keeps `ON TRUE`, keeps `HAVING TRUE` without a GROUP BY, and folds numeric comparisons only between INT64 literals or identical literals. `remove_redundant_parentheses` keeps parentheses around an unaliased projection (BigQuery names the column after it), around a field access like `(a).b`, and around `AND` inside `OR`. `deduplicate_ctes` skips nondeterministic bodies, bodies with LIMIT, and merges that would repeat a relation name in one FROM clause.
 
+The structural proof no longer refuses a query just because it contains `RAND()`, `GENERATE_UUID()`, `CURRENT_*` or `SESSION_USER()`. Such a call is accepted when the rewrite leaves it identical and in the same number and place (checked before and after normalization); any added, removed, duplicated, merged or modified call stays `not_proven`. Windows, tie-sensitive or order-sensitive aggregates, sampling and `LIMIT`/`OFFSET` still block the proof. A proof that relied on unchanged calls reports how many in its diagnostics.
+
 To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewrite_statement(statement, index)` to edit the statement in place and return `(change_count, diagnostics)`, and decorate the class with `@register_rule`.
 
 ```powershell
