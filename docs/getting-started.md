@@ -10,7 +10,7 @@ Install the latest version from this repository with pip:
 python -m pip install "git+https://github.com/walterogozaly/KumoSQL.git"
 ```
 
-On Windows, `py -3.11 -m pip install "git+https://github.com/walterogozaly/KumoSQL.git"` selects Python 3.11 explicitly. To install a local checkout instead, run `python -m pip install .` from the repository root. For development, use `python -m pip install -e ".[dev]"`.
+On Windows, `py -3.11 -m pip install "git+https://github.com/walterogozaly/KumoSQL.git"` selects Python 3.11 explicitly. To install a local checkout instead, run `python -m pip install .` from the repository root. For development, use `python -m pip install -e ".[dev]"`, which includes the DuckDB and Z3 extras the full test suite needs.
 
 The distribution is named `kumosql`; the Python import package is `kumosql`.
 
