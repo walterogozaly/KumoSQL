@@ -245,7 +245,10 @@ _CHANGES = {
         ],
     },
     # #22: share of changed outputs with useful evidence; proof and planner kept apart.
-    "evidence_coverage": {"changed": 212, "proven": 131, "planner_checked": 38, "unproven": 36, "failed": 7},
+    "evidence_coverage": {
+        "changed": 212, "proven": 131, "planner_checked": 38, "unproven": 36, "failed": 7,
+        "synthetic_agreed": 24, "useful_evidence": 147,
+    },
     # #37: what the CI check posts on a review request.
     "ci": {
         "check_name": "KumoSQL change report", "conclusion": "neutral",
