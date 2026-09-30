@@ -83,6 +83,41 @@ class ColumnRef:
         return f"{self.table}.{self.column}"
 
 
+@dataclass(frozen=True)
+class ColumnLineage:
+    """How one model output column is built, one hop back.
+
+    ``status`` is ``traced`` (built from ``sources``), ``constant`` (checked
+    to read no column at all, such as a literal or ``COUNT(*)``) or
+    ``unknown`` (could not be traced; ``reason`` says why and ``sources``
+    holds only what was resolved before the trace gave up). ``transform`` is
+    ``passthrough``, ``renamed``, ``expression``, ``aggregate``, ``window``,
+    ``union``, ``constant`` or ``unknown``.
+    """
+
+    column: "ColumnRef"
+    sources: frozenset["ColumnRef"]
+    status: str
+    transform: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ColumnTrace:
+    """Everything upstream of one column, with untraceable parts kept apart."""
+
+    column: "ColumnRef"
+    upstream: frozenset["ColumnRef"]
+    # Columns the trace ended on that are not produced by any pipeline model.
+    sources: frozenset["ColumnRef"]
+    # Columns on the way whose own inputs could not be traced, with the reason.
+    unknown: tuple[tuple["ColumnRef", str], ...]
+
+    @property
+    def complete(self) -> bool:
+        return not self.unknown
+
+
 @dataclass
 class Model:
     """One pipeline node: a table, view, incremental table, assertion or operation."""
@@ -275,6 +310,71 @@ class Pipeline:
         """Direct lineage: each model output column to the columns it is built from."""
 
         return dict(self._analyse().lineage)
+
+    def explain_lineage(self) -> dict[ColumnRef, ColumnLineage]:
+        """One-hop lineage for every output column of every analysed model.
+
+        Unlike ``column_lineage()``, a column that could not be traced is
+        present with ``status == "unknown"`` and a reason, and is never
+        confused with a column that reads nothing (``status == "constant"``).
+        """
+
+        return dict(self._analyse().records)
+
+    def trace_column(self, column: ColumnRef) -> ColumnTrace:
+        """Trace ``column`` back to source columns, reporting what is unknown.
+
+        ``unknown`` lists every column on the path whose inputs could not be
+        determined (a failed or unparsed model, an unexpanded ``SELECT *``,
+        an ambiguous reference), so a result with unknowns is a lower bound.
+        """
+
+        analysis = self._analyse()
+        seen: set[ColumnRef] = set()
+        sources: set[ColumnRef] = set()
+        unknown: dict[ColumnRef, str] = {}
+        pending = deque([column])
+        while pending:
+            item = pending.popleft()
+            if item in seen:
+                continue
+            seen.add(item)
+            record = analysis.records.get(item)
+            if record is None:
+                reason = analysis.untraced_reason(item, self.models)
+                if reason:
+                    unknown[item] = reason
+                else:
+                    sources.add(item)
+                continue
+            if record.status == "unknown":
+                unknown[item] = record.reason or "unknown"
+            pending.extend(sorted(record.sources))
+        seen.discard(column)
+        return ColumnTrace(
+            column=column,
+            upstream=frozenset(seen),
+            sources=frozenset(sources - {column}),
+            unknown=tuple(sorted(unknown.items())),
+        )
+
+    def lineage_report(self) -> list[dict]:
+        """JSON-ready lineage rows for the graph view's Explain lineage tab."""
+
+        rows = []
+        for ref, record in sorted(self._analyse().records.items()):
+            row = {
+                "node": ref.table,
+                "column": ref.column,
+                "sources": [{"node": s.table, "column": s.column} for s in sorted(record.sources)],
+                "transform": record.transform,
+                "status": record.status,
+                "complete": self.trace_column(ref).complete,
+            }
+            if record.reason:
+                row["reason"] = record.reason
+            rows.append(row)
+        return rows
 
     def upstream_columns(self, column: ColumnRef) -> frozenset[ColumnRef]:
         """Every column, across all models and sources, that feeds ``column``."""
@@ -545,6 +645,7 @@ class Pipeline:
 
         order = section("order", [], self.topological_order)
         dead = section("dead_columns", {}, lambda: {k: list(v) for k, v in self.dead_columns().items()})
+        lineage_rows = section("column_lineage", [], self.lineage_report)
         duplicates = section(
             "duplicates",
             [],
@@ -584,6 +685,7 @@ class Pipeline:
             "order": order,
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
             "dead_columns": dead,
+            "column_lineage": lineage_rows,
             "duplicates": duplicates,
             "near_duplicates": near,
             "diagnostics": diagnostics,
@@ -997,6 +1099,7 @@ class _Analysis:
     parsed: dict[str, exp.Expression]
     outputs: dict[str, tuple[str, ...]]
     lineage: dict[ColumnRef, frozenset[ColumnRef]]
+    records: dict[ColumnRef, ColumnLineage]
     reverse_lineage: dict[ColumnRef, frozenset[ColumnRef]]
     consumed: dict[str, frozenset[ColumnRef]]
     opaque_readers_of: set[str]
@@ -1004,6 +1107,15 @@ class _Analysis:
     # declared dependencies), so no column can be called dead.
     blind: bool
     diagnostics: list[PipelineDiagnostic]
+
+    def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
+        """Why a column with no lineage record is unknown, or None for a source column."""
+
+        if column.table in self.outputs:
+            return "unexpanded_star" if "*" in self.outputs[column.table] else "unknown_column"
+        if column.table in models:
+            return "unparsed_model"
+        return None
 
     @classmethod
     def run(cls, pipeline: Pipeline) -> "_Analysis":
@@ -1071,6 +1183,7 @@ class _Analysis:
 
         outputs: dict[str, tuple[str, ...]] = {}
         direct: dict[ColumnRef, frozenset[ColumnRef]] = {}
+        records: dict[ColumnRef, ColumnLineage] = {}
         consumed: dict[str, frozenset[ColumnRef]] = {}
         opaque_readers_of: set[str] = set()
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
@@ -1143,7 +1256,12 @@ class _Analysis:
                 lineage_scope = build_scope(qualified)
             except Exception:
                 lineage_scope = None
+            is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
             for name in names:
+                ref = ColumnRef(key, name)
+                if name == "*":
+                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                    continue
                 try:
                     node = lineage(
                         name,
@@ -1152,18 +1270,28 @@ class _Analysis:
                         scope=lineage_scope,
                         copy=lineage_scope is None,
                     )
+                    leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union)
+                    if reason == "unresolved_column" and lineage_scope is not None:
+                        # With no schema for a table, the pre-built scope keeps a
+                        # bare column unresolved; re-qualifying resolves it when
+                        # only one table is in scope and leaves real ambiguity.
+                        retry = lineage(name, qualified, dialect="bigquery", copy=True)
+                        again = _scan_lineage(pipeline, schema, retry, name, is_union)
+                        if again[1] != "unresolved_column":
+                            leaves, reason, transform = again
                 except Exception as exc:
                     diagnostics.append(
                         PipelineDiagnostic(key, "lineage_error", f"{name}: {str(exc).splitlines()[0]}")
                     )
+                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_error")
                     continue
-                leaves: set[ColumnRef] = set()
-                for item in node.walk():
-                    if item.downstream or not isinstance(item.source, exp.Table):
-                        continue
-                    owner = pipeline.resolve(item.source) or _table_name_for_schema(item.source)
-                    leaves.add(ColumnRef(owner, item.name.split(".")[-1].strip('"`')))
-                direct[ColumnRef(key, name)] = frozenset(leaves)
+                if reason:
+                    records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
+                elif not leaves:
+                    records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
+                else:
+                    records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
+                direct[ref] = frozenset(leaves)
 
         reverse: dict[ColumnRef, set[ColumnRef]] = defaultdict(set)
         for column, parents in direct.items():
@@ -1201,12 +1329,72 @@ class _Analysis:
             parsed=parsed,
             outputs=outputs,
             lineage=direct,
+            records=records,
             reverse_lineage={k: frozenset(v) for k, v in reverse.items()},
             consumed=consumed,
             opaque_readers_of=opaque_readers_of,
             blind=bool(blind_models),
             diagnostics=diagnostics,
         )
+
+
+_TRANSFORM_RANK = {"passthrough": 0, "renamed": 1, "expression": 2, "aggregate": 3, "window": 4}
+
+
+def _scan_lineage(
+    pipeline: "Pipeline",
+    schema: dict[str, dict[str, str]],
+    node,
+    name: str,
+    is_union: bool,
+) -> tuple[set[ColumnRef], str | None, str]:
+    """Leaf columns, the reason the trace is incomplete (or None), and the transform."""
+
+    leaves: set[ColumnRef] = set()
+    reason: str | None = None
+    transform = "passthrough"
+    reads_column = False
+    literal_unnest = False
+    for item in node.walk():
+        if item.downstream:
+            projection = item.expression
+            if isinstance(projection, exp.Alias):
+                projection = projection.this
+            if item is node:
+                reads_column = projection.find(exp.Column) is not None
+            kind = _transform_kind(projection, item.name.split(".")[-1])
+            if _TRANSFORM_RANK.get(kind, 0) > _TRANSFORM_RANK[transform]:
+                transform = kind
+            continue
+        if isinstance(item.source, exp.Table):
+            owner = pipeline.resolve(item.source) or _table_name_for_schema(item.source)
+            leaf = ColumnRef(owner, item.name.split(".")[-1].strip('"`'))
+            known = {c.lower() for c in schema.get(owner, {})}
+            if known and leaf.column.lower() not in known:
+                reason = reason or "unknown_column"
+            else:
+                leaves.add(leaf)
+        elif isinstance(item.source, exp.Placeholder):
+            reason = reason or "unresolved_column"
+        elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
+            literal_unnest = True  # UNNEST of literals reads no column
+        elif item is not node:
+            reason = reason or "untraceable_source"
+    if reason is None and not leaves and reads_column and not literal_unnest:
+        reason = "unresolved_column"
+    return leaves, reason, "union" if is_union else transform
+
+
+def _transform_kind(projection: exp.Expression, name: str) -> str:
+    if isinstance(projection, exp.Column):
+        return "passthrough" if projection.name.lower() == name.lower() else "renamed"
+    if projection.find(exp.Window) is not None:
+        return "window"
+    if projection.find(exp.AggFunc) is not None:
+        return "aggregate"
+    if projection.find(exp.Column) is None:
+        return "constant"
+    return "expression"
 
 
 def _topological_order(
