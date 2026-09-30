@@ -197,75 +197,11 @@ function initSqlfluffProfiles(prefs) {
   state.format = profile().format;
 }
 
-function renderProfiles() {
-  const select = $("sqlfluff-profile-select");
-  select.replaceChildren();
-  for (const item of state.sqlfluffProfiles) {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.name;
-    select.append(option);
-  }
+// The sqlfluff configurations are edited on the Settings page; the workspace
+// only shows which one the Format rule uses.
+function renderFormatLink() {
   const active = profile();
-  if (!active) return;
-  select.value = active.id;
-  $("sqlfluff-profile-name").value = active.name;
-  $("sqlfluff-profile-delete").disabled = state.sqlfluffProfiles.length < 2;
-  state.format = active.format;
-  fillFormatForm();
-}
-
-async function saveActiveProfile() {
-  const active = profile();
-  const name = $("sqlfluff-profile-name").value.trim();
-  if (!name) { toast("Give this configuration a name"); return false; }
-  if (state.sqlfluffProfiles.some((item) => item.id !== active.id && item.name.toLowerCase() === name.toLowerCase())) {
-    toast("Configuration names must be unique"); return false;
-  }
-  active.name = name;
-  active.format = readFormatForm();
-  state.format = active.format;
-  try {
-    const response = await fetch("/api/settings/format", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(active.format),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not save SQLFluff settings");
-    active.format = state.format = data;
-  } catch (error) {
-    toast(error.message);
-    return false;
-  }
-  savePrefs();
-  renderProfiles();
-  toast("SQLFluff settings saved");
-  return true;
-}
-
-async function activateProfile(id) {
-  const selected = state.sqlfluffProfiles.find((item) => item.id === id);
-  if (!selected) return;
-  state.activeSqlfluffProfile = id;
-  state.format = selected.format;
-  renderProfiles();
-  savePrefs();
-  try {
-    const response = await fetch("/api/settings/format", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(selected.format),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not apply SQLFluff settings");
-    state.format = selected.format = data;
-    fillFormatForm();
-    savePrefs();
-    if (selectedRules().includes("format_sql")) inputsChanged();
-  } catch (error) {
-    toast(error.message);
-  }
+  $("format-profile-name").textContent = active ? active.name : "Default";
 }
 
 /* ---------- Small helpers ---------- */
@@ -1259,82 +1195,6 @@ document.addEventListener("keydown", (event) => {
   }
 });
 transformButton.addEventListener("click", () => inputsChanged({ immediate: true }));
-$("settings-button").addEventListener("click", () => {
-  const settings = $("format-settings");
-  settings.open = true;
-  settings.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  $("sqlfluff-profile-select").focus();
-});
-
-/* ---------- Formatting preferences ---------- */
-
-const formatForm = $("format-form");
-let formatTimer;
-
-function fillFormatForm() {
-  const prefs = state.format;
-  if (!prefs) return;
-  for (const element of formatForm.elements) {
-    if (!element.name) continue;
-    const value = prefs[element.name];
-    element.value = Array.isArray(value) ? value.join(", ") : value ?? "";
-  }
-}
-
-function readFormatForm() {
-  const list = (text) => text.split(",").map((item) => item.trim()).filter(Boolean);
-  const data = new FormData(formatForm);
-  return {
-    keyword_case: data.get("keyword_case"),
-    comma_position: data.get("comma_position"),
-    indent_unit: data.get("indent_unit"),
-    tab_space_size: Number(data.get("tab_space_size")),
-    max_line_length: Number(data.get("max_line_length")),
-    rules: list(data.get("rules")),
-    exclude_rules: list(data.get("exclude_rules")),
-  };
-}
-
-formatForm.addEventListener("change", () => {
-  clearTimeout(formatTimer);
-  formatTimer = setTimeout(async () => {
-    try {
-      const response = await fetch("/api/settings/format", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(readFormatForm()),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not save formatting preferences");
-      state.format = data;
-      const active = profile();
-      if (active) active.format = data;
-      savePrefs();
-      if (selectedRules().includes("format_sql")) inputsChanged();
-    } catch (error) {
-      toast(error.message);
-    }
-  }, 400);
-});
-formatForm.addEventListener("submit", (event) => event.preventDefault());
-
-$("sqlfluff-profile-select").addEventListener("change", (event) => activateProfile(event.target.value));
-$("sqlfluff-profile-save").addEventListener("click", saveActiveProfile);
-$("sqlfluff-profile-new").addEventListener("click", () => {
-  const item = { id: crypto.randomUUID(), name: `Configuration ${state.sqlfluffProfiles.length + 1}`, format: state.format || readFormatForm() };
-  state.sqlfluffProfiles.push(item);
-  state.activeSqlfluffProfile = item.id;
-  renderProfiles();
-  savePrefs();
-  $("sqlfluff-profile-name").focus();
-  $("sqlfluff-profile-name").select();
-});
-$("sqlfluff-profile-delete").addEventListener("click", () => {
-  if (state.sqlfluffProfiles.length < 2) return;
-  state.sqlfluffProfiles = state.sqlfluffProfiles.filter((item) => item.id !== state.activeSqlfluffProfile);
-  activateProfile(state.sqlfluffProfiles[0].id);
-});
-
 /* ---------- Scopes ---------- */
 
 const scopeForm = $("scope-form");
@@ -1468,7 +1328,7 @@ async function start() {
     /* fall back to browser storage and defaults */
   }
   initSqlfluffProfiles(persisted);
-  renderProfiles();
+  renderFormatLink();
   applyTheme(persisted.theme);
   state.autoRun = persisted.autoRun !== false;
   $("auto-run").checked = state.autoRun;

@@ -48,7 +48,7 @@
         <button id="theme-button" class="icon-button" type="button" aria-label="Theme: match system" title="Theme: match system">
           <svg class="icon"><use id="theme-icon" href="#i-monitor"/></svg>
         </button>
-        <button id="settings-button" class="toolbar-button" type="button"><span>Settings</span></button>
+        <a id="settings-button" class="toolbar-button" href="/settings"><span>Settings</span></a>
         <span class="local-badge" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
       </div>
     </header>
@@ -68,40 +68,7 @@
           </div>
           <ol id="rules" class="rule-list" aria-label="Transformations"></ol>
 
-          <details class="settings-group" id="format-settings">
-            <summary>Formatting preferences</summary>
-            <p class="sidebar-hint">Used by the sqlfluff “Format” operation. Saved on this computer.</p>
-            <div class="settings-profile-controls">
-              <label for="sqlfluff-profile-select">Configuration</label>
-              <select id="sqlfluff-profile-select" aria-label="SQLFluff configuration"></select>
-              <label for="sqlfluff-profile-name">Name</label>
-              <input id="sqlfluff-profile-name" type="text" maxlength="60" value="Default">
-              <div class="settings-actions">
-                <button id="sqlfluff-profile-new" class="toolbar-button" type="button">New</button>
-                <button id="sqlfluff-profile-save" class="toolbar-button" type="button">Save configuration</button>
-                <button id="sqlfluff-profile-delete" class="link-button" type="button">Delete</button>
-              </div>
-            </div>
-            <form id="format-form" class="settings-form" autocomplete="off">
-              <label>Keyword case
-                <select name="keyword_case">
-                  <option value="upper">UPPER</option><option value="lower">lower</option>
-                  <option value="capitalise">Capitalised</option><option value="consistent">Keep consistent</option>
-                </select></label>
-              <label>Commas
-                <select name="comma_position"><option value="trailing">Trailing</option><option value="leading">Leading</option></select></label>
-              <label>Indent with
-                <select name="indent_unit"><option value="space">Spaces</option><option value="tab">Tabs</option></select></label>
-              <label>Indent size
-                <input name="tab_space_size" type="number" min="1" max="8" step="1"></label>
-              <label>Max line length
-                <input name="max_line_length" type="number" min="20" max="500" step="1"></label>
-              <label class="wide">sqlfluff rules
-                <input name="rules" type="text" spellcheck="false" placeholder="layout, capitalisation, LT01"></label>
-              <label class="wide">Excluded rules
-                <input name="exclude_rules" type="text" spellcheck="false" placeholder="e.g. LT05"></label>
-            </form>
-          </details>
+          <p class="format-link"><span>SQL formatting:</span> <a id="format-profile-link" href="/settings#formatting" title="Change sqlfluff formatting in Settings"><span id="format-profile-name">Default</span></a></p>
 
           <details class="settings-group" id="scope-settings">
             <summary>Scopes <span id="scope-count" class="count-label"></span></summary>
