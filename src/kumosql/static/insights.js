@@ -708,13 +708,16 @@ function renderChanges(data, root) {
 
 /** Share of changed outputs with useful evidence (#22); proof and planner stay separate. */
 function coveragePanel(coverage) {
+  const useful = coverage.useful_evidence ?? coverage.proven;
+  const agreed = coverage.synthetic_agreed ?? 0;
   const keys = ["proven", "planner_checked", "unproven", "failed"];
   return panel("Evidence coverage", { note: `${coverage.changed} changed outputs, anonymized aggregate` },
     h("div", { class: "stacked", role: "img", "aria-label": keys.map((key) => `${E.LABELS[key].title} ${percent(coverage[key], coverage.changed)}`).join(", ") },
       keys.map((key) => h("span", { class: `stacked-seg ev-${E.LABELS[key].tone}`, style: { flex: String(coverage[key]) }, title: `${E.LABELS[key].title}: ${coverage[key]}` }))),
     h("dl", { class: "coverage-stats is-grid" },
       keys.map((key) => h("div", {}, h("dt", {}, E.pill(key)), h("dd", { text: percent(coverage[key], coverage.changed) })))),
-    h("p", { class: "muted small", text: "Proof and planner checks are counted separately. A planner check is never counted as proof." }));
+    h("p", { class: "coverage-headline", "data-testid": "useful-evidence", text: `Useful evidence: ${percent(useful, coverage.changed)} of changed outputs (${useful} of ${coverage.changed}), including ${agreed} that agree on synthetic data.` }),
+    h("p", { class: "muted small", text: "Proof, synthetic agreement and planner checks are counted separately. Agreement is evidence, not proof, and a planner check is never counted as either." }));
 }
 
 /** Preview of the check posted on a review request (#37). */

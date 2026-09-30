@@ -11,6 +11,7 @@ from .lift_subqueries import lift_subqueries
 from .equivalence import prove_equivalent
 from .rewrite import apply_rules, attach_planner_check, available_rules, check_idempotence
 from .sqlx import looks_like_sqlx
+from .evidence_summary import DEFAULT_MIN_CHANGED, summarize_evidence
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
 from .scopes import Scope, delete_scope, get_scope, list_scopes, parse_scope, save_scope
@@ -75,6 +76,36 @@ def prove_main(argv: list[str] | None = None) -> int:
     if args.verifier_sql and result.verifier_sql:
         args.verifier_sql.write_text(result.verifier_sql + "\n", encoding="utf-8")
     return 0 if result.proven else 2
+
+
+def evidence_summary_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Print the anonymized share of changed outputs with useful evidence"
+    )
+    parser.add_argument("paths", nargs="+", type=Path, help=".sql or .sqlx files, or directories searched recursively")
+    parser.add_argument(
+        "--rule", action="append", choices=sorted(available_rules()), required=True,
+        help="Rule to apply to every file; repeat to apply several in order",
+    )
+    parser.add_argument(
+        "--min-changed", type=int, default=DEFAULT_MIN_CHANGED,
+        help="Withhold percentages below this many changed outputs",
+    )
+    args = parser.parse_args(argv)
+
+    files: list[Path] = []
+    for path in args.paths:
+        if path.is_dir():
+            files.extend(sorted(p for p in path.rglob("*") if p.suffix in (".sql", ".sqlx")))
+        else:
+            files.append(path)
+    if not files:
+        print("error: no .sql or .sqlx files found", file=sys.stderr)
+        return 2
+    results = [apply_rules(args.rule, f.read_text(encoding="utf-8")) for f in files]
+    # Only the aggregate is printed: no file names, SQL text or reasons.
+    print(json.dumps(summarize_evidence(results, min_changed=args.min_changed).to_json(), indent=2))
+    return 0
 
 
 def rewrite_main(argv: list[str] | None = None) -> int:

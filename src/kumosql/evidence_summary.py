@@ -7,13 +7,19 @@ verification. It holds counts and percentages only.
 Definitions:
 
 * A result is *changed* when its output text differs from its input text.
-* *Useful evidence* is a static equivalence proof (label ``proven``). A planner
-  check only shows that both statements plan with matching schemas; it is not
-  proof, so it is reported separately and never counts toward the headline.
+* *Useful evidence* is a static equivalence proof (label ``proven``) or
+  agreement on synthetic data (a ``synthetic_results`` check that passed) on a
+  result that did not fail. Agreement is evidence, not proof, so it has its own
+  count. A planner check only shows that both statements plan with matching
+  schemas; it is neither, so it is reported separately and never counts
+  toward the headline.
 * The label buckets (``proven``, ``planner_checked``, ``unproven``,
   ``failed``) are disjoint and sum to ``changed``. ``planner_passed`` and
   ``planner_failed`` count changed results by their planner check outcome
-  regardless of label, so they overlap the buckets.
+  regardless of label, so they overlap the buckets. ``synthetic_agreed``
+  counts changed, non-failed results with passing synthetic agreement and
+  overlaps the buckets too; ``useful_evidence`` is the union of ``proven`` and
+  ``synthetic_agreed``.
 """
 
 from __future__ import annotations
@@ -26,6 +32,8 @@ from .rewrite import PipelineResult, RewriteResult, VerificationStatus
 # Below this many changed outputs a percentage could identify individual
 # outputs, so it is withheld (the counts are still reported).
 DEFAULT_MIN_CHANGED = 5
+
+SYNTHETIC_KIND = "synthetic_results"
 
 _CHANGED_LABELS = (
     VerificationStatus.PROVEN,
@@ -46,11 +54,14 @@ class EvidenceSummary:
     failed: int
     planner_passed: int
     planner_failed: int
+    synthetic_agreed: int
+    useful_evidence: int
     pct_useful_evidence: float | None
     pct_proof: float | None
     pct_planner_only: float | None
     pct_no_evidence: float | None
     pct_planner_passed: float | None
+    pct_synthetic_agreed: float | None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -64,12 +75,15 @@ class EvidenceSummary:
                 "failed": self.failed,
             },
             "planner": {"passed": self.planner_passed, "failed": self.planner_failed},
+            "useful_evidence": self.useful_evidence,
+            "synthetic_agreed": self.synthetic_agreed,
             "percent_of_changed": {
                 "useful_evidence": self.pct_useful_evidence,
                 "proof": self.pct_proof,
                 "planner_only": self.pct_planner_only,
                 "no_evidence": self.pct_no_evidence,
                 "planner_passed": self.pct_planner_passed,
+                "synthetic_agreed": self.pct_synthetic_agreed,
             },
         }
 
@@ -94,6 +108,7 @@ def summarize_evidence(
 
     counts = {label: 0 for label in _CHANGED_LABELS}
     total = unchanged = planner_passed = planner_failed = 0
+    synthetic_agreed = useful = 0
     for result in results:
         total += 1
         status = result.verification.status
@@ -105,6 +120,12 @@ def summarize_evidence(
         if status not in counts:
             raise ValueError("changed output has no precise evidence label")
         counts[status] += 1
+        agreed = status is not VerificationStatus.FAILED and any(
+            check.kind == SYNTHETIC_KIND and check.outcome == "passed"
+            for check in result.verification.checks
+        )
+        synthetic_agreed += agreed
+        useful += agreed or status is VerificationStatus.PROVEN
         for check in result.verification.checks:
             if check.kind == "planner":
                 planner_passed += check.outcome == "passed"
@@ -124,9 +145,12 @@ def summarize_evidence(
         failed=counts[VerificationStatus.FAILED],
         planner_passed=planner_passed,
         planner_failed=planner_failed,
-        pct_useful_evidence=_pct(proven, changed, min_changed),
+        synthetic_agreed=synthetic_agreed,
+        useful_evidence=useful,
+        pct_useful_evidence=_pct(useful, changed, min_changed),
         pct_proof=_pct(proven, changed, min_changed),
         pct_planner_only=_pct(planner_only, changed, min_changed),
         pct_no_evidence=_pct(none, changed, min_changed),
         pct_planner_passed=_pct(planner_passed, changed, min_changed),
+        pct_synthetic_agreed=_pct(synthetic_agreed, changed, min_changed),
     )
