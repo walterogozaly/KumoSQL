@@ -64,6 +64,46 @@
             <button id="reset-button" class="link-button" type="button" disabled>Reset order</button>
           </div>
           <ol id="rules" class="rule-list" aria-label="Transformations"></ol>
+
+          <details class="settings-group" id="format-settings">
+            <summary>Formatting preferences</summary>
+            <p class="sidebar-hint">Used by the sqlfluff “Format” operation. Saved on this computer.</p>
+            <form id="format-form" class="settings-form" autocomplete="off">
+              <label>Keyword case
+                <select name="keyword_case">
+                  <option value="upper">UPPER</option><option value="lower">lower</option>
+                  <option value="capitalise">Capitalised</option><option value="consistent">Keep consistent</option>
+                </select></label>
+              <label>Commas
+                <select name="comma_position"><option value="trailing">Trailing</option><option value="leading">Leading</option></select></label>
+              <label>Indent with
+                <select name="indent_unit"><option value="space">Spaces</option><option value="tab">Tabs</option></select></label>
+              <label>Indent size
+                <input name="tab_space_size" type="number" min="1" max="8" step="1"></label>
+              <label>Max line length
+                <input name="max_line_length" type="number" min="20" max="500" step="1"></label>
+              <label class="wide">sqlfluff rules
+                <input name="rules" type="text" spellcheck="false" placeholder="layout, capitalisation, LT01"></label>
+              <label class="wide">Excluded rules
+                <input name="exclude_rules" type="text" spellcheck="false" placeholder="e.g. LT05"></label>
+            </form>
+          </details>
+
+          <details class="settings-group" id="scope-settings">
+            <summary>Scopes <span id="scope-count" class="count-label"></span></summary>
+            <p class="sidebar-hint">A scope is a saved label on any field, like a team’s authors or projects, used to limit refactors and searches.</p>
+            <ul id="scope-list" class="scope-list"></ul>
+            <form id="scope-form" class="settings-form" autocomplete="off">
+              <label class="wide">Name
+                <input name="name" type="text" maxlength="80" placeholder="My Team" required></label>
+              <label class="wide">Filters, one per line
+                <textarea name="filters" rows="3" spellcheck="false" placeholder="author = ana@co.com, bo@co.com&#10;project = growth-*" required></textarea></label>
+              <div class="settings-actions">
+                <button id="scope-save" class="toolbar-button" type="submit">Save scope</button>
+                <button id="scope-cancel" class="link-button" type="button" hidden>Cancel</button>
+              </div>
+            </form>
+          </details>
         </div>
 
         <div class="sidebar-footer">
@@ -90,6 +130,7 @@
           <dl id="stats" class="stats" hidden>
             <div><dt>Lines</dt><dd id="stat-lines">–</dd></div>
             <div><dt>CTEs</dt><dd id="stat-ctes">–</dd></div>
+            <div><dt>Complexity</dt><dd id="stat-complexity">–</dd></div>
             <div><dt>Diff</dt><dd id="stat-diff">–</dd></div>
             <div><dt>Time</dt><dd id="stat-time">–</dd></div>
           </dl>

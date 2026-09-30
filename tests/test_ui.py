@@ -67,3 +67,59 @@ def test_ui_rejects_unknown_rules(ui_server):
         post_json(ui_server, {"sql": "SELECT 1", "rules": ["not_a_rule"]})
     assert error.value.code == 400
     assert "unknown" in json.load(error.value)["error"]
+
+
+def put_json(base_url, section, payload):
+    request = Request(
+        f"{base_url}/api/settings/{section}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="PUT",
+    )
+    with urlopen(request) as response:
+        return json.load(response)
+
+
+def get_settings(base_url):
+    with urlopen(base_url + "/api/settings") as response:
+        return json.load(response)
+
+
+def test_ui_settings_persist_across_server_restarts(ui_server):
+    assert get_settings(ui_server)["ui"] == {}
+    put_json(ui_server, "ui", {"theme": "dark", "enabled": ["format_sql"]})
+    scopes = [{"name": "My Team", "fields": {"author": ["ana@co.com"]}}]
+    assert put_json(ui_server, "scopes", scopes) == scopes
+    saved = put_json(ui_server, "format", {"keyword_case": "lower"})
+    assert saved["keyword_case"] == "lower"
+
+    settings = get_settings(ui_server)  # state lives on disk, not in the server object
+    assert settings["ui"]["theme"] == "dark"
+    assert settings["scopes"] == scopes
+    assert settings["format"]["keyword_case"] == "lower"
+
+
+def test_ui_rejects_invalid_settings(ui_server):
+    for section, payload in (
+        ("scopes", [{"name": "x"}]),
+        ("scopes", [{"name": "a", "fields": {"f": ["v"]}}, {"name": "A", "fields": {"f": ["v"]}}]),
+        ("format", {"max_line_length": 1}),
+        ("ui", []),
+    ):
+        with pytest.raises(HTTPError) as error:
+            put_json(ui_server, section, payload)
+        assert error.value.code == 400
+    with pytest.raises(HTTPError) as error:
+        put_json(ui_server, "other", {})
+    assert error.value.code == 404
+
+
+def test_ui_formats_with_request_preferences_and_reports_complexity(ui_server):
+    sql = "select a,b from t join u on t.id=u.id"
+    result = post_json(ui_server, {
+        "sql": sql, "rules": ["format_sql"], "format": {"keyword_case": "lower"},
+    })
+    assert result["success"] and result["sql"].startswith("select")
+    assert result["complexity"]["before"]["metrics"]["joins"] == 1
+    assert result["complexity"]["after"]["band"] == "low"
+    assert any(rule["name"] == "format_sql" for rule in json.load(urlopen(ui_server + "/api/rules")))

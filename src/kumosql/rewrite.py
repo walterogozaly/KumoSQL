@@ -17,17 +17,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from sqlglot import exp
 
 from .ast_utils import parse_statements, top_level_query
-from .engine import RuleDiagnostic, RuleOutput, available_rules, get_rule
+from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 
 # Import built-in rules so they are registered.
 from . import cleanup as _cleanup  # noqa: F401
+from . import formatting as _formatting  # noqa: F401
 from . import inline_ctes as _inline_ctes  # noqa: F401
 from . import lift_subqueries as _lift_subqueries  # noqa: F401
 
@@ -196,19 +197,27 @@ def _result(rule_name: str, sql: str, output: RuleOutput) -> RewriteResult:
     )
 
 
-def apply_rule(name: str, sql: str) -> RewriteResult:
-    """Apply one registered rule and verify its output."""
+def apply_rule(
+    name: str, sql: str, *, overrides: Mapping[str, RewriteRule] | None = None
+) -> RewriteResult:
+    """Apply one registered rule and verify its output.
 
-    return _result(name, sql, get_rule(name).apply(sql))
+    ``overrides`` swaps in a differently configured instance for a rule name.
+    """
+
+    rule = overrides[name] if overrides and name in overrides else get_rule(name)
+    return _result(name, sql, rule.apply(sql))
 
 
-def apply_rules(names: Iterable[str], sql: str) -> PipelineResult:
+def apply_rules(
+    names: Iterable[str], sql: str, *, overrides: Mapping[str, RewriteRule] | None = None
+) -> PipelineResult:
     """Apply rules in order, verifying every step and the end-to-end result."""
 
     steps: list[RewriteResult] = []
     current = sql
     for name in names:
-        step = apply_rule(name, current)
+        step = apply_rule(name, current, overrides=overrides)
         steps.append(step)
         current = step.sql
 
