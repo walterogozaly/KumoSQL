@@ -117,8 +117,14 @@ from .table_profile import (
     profile_pipeline,
     profile_query,
 )
+from .overlap import Check, Match, MatchRole, OverlapResult, find_overlaps
 
 __all__ = [
+    "Check",
+    "Match",
+    "MatchRole",
+    "OverlapResult",
+    "find_overlaps",
     "AttributeMeaning",
     "Grain",
     "RowScope",

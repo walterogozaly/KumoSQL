@@ -270,6 +270,31 @@ proposed = profile_query(pipeline, "SELECT customer_id, SUM(amount) AS total FRO
 print(proposed.to_json())
 ```
 
+## Finding an existing table that already provides the same thing
+
+`find_overlaps(pipeline, sql=None, *, model=None, scope=None, roles=None, declared_grain=None)` answers "is this already done elsewhere?". Give a proposed query (`sql`, profiled with `profile_query`) or an existing model key (`model`), and it compares the target's table profile with every other model's. Renamed or re-cased columns, views and chains of CTEs do not hide a match; text similarity and shared source columns never produce one. A model is never compared with itself.
+
+Each `Match` has a `kind`, a `confidence`, the matched column pairs (`attributes`, target column to candidate column), the `checks` behind it, the candidate's inferred `role` (from `infer_roles`, or the `roles` you pass) and a `reason`:
+
+- `same_meaning` (`high`): every target attribute has the same meaning as a candidate attribute (equality only), the grain keys mean the same (compared by meaning, not name), and the row scope is identical and comparable.
+- `contains` (`medium`): same attributes and grain, and the candidate's filters are a strict subset of the target's, so the target can filter it (the candidate must provide the columns those extra filters use).
+- `partial` (`low`): some attributes match at the same grain, or all do but the row scope differs or cannot be compared.
+- `unknown`: grain or lineage is unknown on either side, so no comparison was made. The reason says which. It is never a match.
+
+A candidate at a different grain is not a match. Each check (`lineage`, `grain`, `row_scope`) is `matched`, `differs` or `unknown`. Matches are sorted `same_meaning`, `contains`, `partial`, `unknown`.
+
+`scope` is an optional saved `Scope` matched against `project`, `dataset`, `table` and `model` of each candidate; candidates outside it are skipped and counted as `outside_scope`. The `OverlapResult` carries `compared` (candidates decided), `skipped` (reason to count, including the undecided in-scope ones that are also listed as `unknown`) and `candidates_in_scope`. Its `summary` always states coverage, for example `compared 3 of 5 tables; 2 skipped: outside_scope 2. No match among the compared tables`, so "no match" never appears without the counts. `to_json()` includes the summary, the target profile and every match. Reports describe behavior only and never include query text.
+
+```python
+from kumosql import find_overlaps, get_scope, load_sqlx_project
+
+pipeline = load_sqlx_project("path/to/dataform")
+result = find_overlaps(pipeline, "SELECT region_id, SUM(amount) FROM ... GROUP BY region_id", scope=get_scope("My Project"))
+print(result.summary)
+for match in result.matches:
+    print(match.table, match.kind, match.confidence)
+```
+
 ## Comparing pipeline outputs before and after a refactor
 
 `plan_output_comparison(before, after=None, before_location=..., after_location=...)` plans a comparison of every table, view and incremental model's output across two builds of a pipeline, for example production against a development dataset built from the refactored code. It generates BigQuery SQL in three tiers, from cheapest to most detailed:
