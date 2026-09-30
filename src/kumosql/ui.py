@@ -54,10 +54,16 @@ def transform(sql: str, names: list[str], format_preferences: object = None) -> 
     if format_preferences is not None:
         overrides = {"format_sql": FormatSqlRule(parse_preferences(format_preferences))}
     result = apply_rules(names, sql, overrides=overrides)
+    rule_success = all(step.rule_success for step in result.steps)
+    candidate_sql = result.sql if rule_success else ""
     return {
-        "complexity": {"before": _complexity(sql), "after": _complexity(result.sql)},
-        "sql": result.sql,
+        "complexity": {
+            "before": _complexity(sql),
+            "after": _complexity(candidate_sql) if candidate_sql else None,
+        },
+        "sql": candidate_sql,
         "success": result.success,
+        "rule_success": rule_success,
         "verification": {
             "status": result.verification.status.value,
             "reason": result.verification.reason,

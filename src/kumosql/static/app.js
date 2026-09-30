@@ -719,14 +719,19 @@ async function transform() {
     if (version !== requestVersion) return;
     if (!response.ok) throw new Error(data.error || "Transformation failed");
 
-    state.output = data.sql;
+    const candidateSql = data.rule_success ? data.sql : "";
+    state.output = candidateSql;
     state.outputKey = key;
-    state.diffOps = diffLines(sql, data.sql);
+    state.diffOps = candidateSql ? diffLines(sql, candidateSql) : null;
     state.diffDirty = true;
     renderOutput();
     if (state.view === "diff") renderDiff();
     showReport(data);
-    showStats(sql, data.sql, performance.now() - started, data.complexity);
+    if (data.rule_success) showStats(sql, candidateSql, performance.now() - started, data.complexity);
+    else {
+      $("stats").hidden = true;
+      $("diff-badge").hidden = true;
+    }
 
     const reason = data.verification.reason;
     if (data.success && data.verification.status === "unchanged") {
@@ -734,10 +739,11 @@ async function transform() {
     } else if (data.success) {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
       setVerdict("proven", "Rewrite verified", `${plural(changes, "change")}. ${reason[0].toUpperCase()}${reason.slice(1)}.`);
-    } else if (data.steps.some((step) => !step.rule_success)) {
+    } else if (!data.rule_success) {
       const broken = data.steps.find((step) => !step.rule_success);
-      const first = broken.diagnostics[0];
-      setVerdict("failed", `${labelFor(broken.rule)} could not run cleanly`, first ? stripAnsi(first.message) : "See the verification details below before using this SQL.");
+      const diagnostic = broken?.diagnostics[0]?.message || broken?.details[0] || data.verification.details[0];
+      const title = broken ? `${labelFor(broken.rule)} could not run cleanly` : "Transformation failed";
+      setVerdict("failed", title, stripAnsi(diagnostic || reason));
     } else {
       setVerdict("unproven", "Review required: not verified", reason);
     }

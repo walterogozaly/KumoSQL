@@ -79,7 +79,7 @@ To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewr
 rewrite-sql input.sqlx --rule inline_single_use_ctes --output output.sqlx
 ```
 
-`rewrite-sql` exits 2 when a rule fails and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it).
+`rewrite-sql` exits 2 when a rule fails and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it). A rule failure prints a diagnostic and does not write its result.
 
 ## First goal: subquery lifting
 
