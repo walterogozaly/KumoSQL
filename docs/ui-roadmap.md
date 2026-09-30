@@ -37,7 +37,7 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 | Edge line styles (declared, observed, both, parsed only), confidence and last seen | #24 | `edges[]`: `from`, `to`, `source`, `confidence` (`high`, `medium`, `low`), `last_seen?`, `observed_count` |
 | Find readers tab | #25 | Computed on the page from `edges` |
 | Assess a change tab (drop, rename, change expression). Readers whose use can't be traced are listed as Unknown | #26 | Computed on the page from `column_lineage` plus `gaps` |
-| Explain lineage tab. Columns that can't be traced are marked Unknown | #27 | `column_lineage[]`: `node`, `column`, `sources[] {node, column}`, `transform` |
+| Explain lineage tab. Columns that can't be traced are marked Unknown | #27 | `column_lineage[]`: `node`, `column`, `sources[] {node, column}`, `transform`, plus `status` (`traced`, `constant`, `unknown`), `reason?` and `complete`. Built by `Pipeline.lineage_report()`; the sample data does not include the extra fields yet |
 | Gaps table, dashed "Not analyzed" nodes, the "Partial graph" strip | #28 | `gaps[]`: `asset`, `kind` (`parse_error`, `inaccessible`, `unmatched_reference`, `unattributed_reads`), `message` |
 | Coverage strip | #29 | `coverage`: `assets_total`, `assets_analyzed`, `statements_total`, `statements_matched`, `sampled_impact_accuracy`, `sample_size`, `complete`; `window {start, end}` |
 

@@ -245,3 +245,147 @@ def test_pipeline_cli_writes_json_report(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["models"] == 3
     assert report["dead_columns"] == {"proj.analytics.stg_orders": ["id", "status"]}
+
+
+# ------------------------------------------------------------ explain lineage
+
+LINEAGE_SCHEMA = {
+    "p.raw.a": {"id": "INT64", "x": "INT64"},
+    "p.raw.b": {"id": "INT64", "x": "INT64", "y": "INT64"},
+}
+
+
+def lineage_pipeline(**queries):
+    graph = {"tables": [{"target": {"database": "p", "schema": "m", "name": n}, "query": q} for n, q in queries.items()]}
+    return load_compiled_graph(graph, source_schema=LINEAGE_SCHEMA)
+
+
+def record(pipeline, model, column):
+    return pipeline.explain_lineage()[ColumnRef(f"p.m.{model}", column)]
+
+
+def test_constant_columns_are_distinct_from_untraceable_ones():
+    pipeline = lineage_pipeline(
+        t="SELECT 1 AS one, COUNT(*) AS n, id AS id FROM `p.raw.a` GROUP BY id",
+    )
+
+    assert record(pipeline, "t", "one").status == "constant"
+    assert record(pipeline, "t", "n").status == "constant"
+    assert record(pipeline, "t", "id").status == "traced"
+    assert record(pipeline, "t", "id").transform == "passthrough"
+
+
+def test_ambiguous_bare_column_is_unknown_not_empty():
+    pipeline = lineage_pipeline(t="SELECT x FROM `p.raw.a` AS a JOIN `p.raw.b` AS b ON a.id = b.id")
+
+    item = record(pipeline, "t", "x")
+    assert item.status == "unknown" and item.reason == "unresolved_column"
+    assert pipeline.trace_column(ColumnRef("p.m.t", "x")).complete is False
+
+
+def test_column_missing_from_known_schema_is_unknown():
+    pipeline = lineage_pipeline(t="SELECT zzz AS z, id FROM `p.raw.a`")
+
+    assert record(pipeline, "t", "z").reason == "unknown_column"
+    assert record(pipeline, "t", "id").status == "traced"
+    assert not pipeline.column_lineage().get(ColumnRef("p.m.t", "z"))
+
+
+def test_unexpanded_star_is_marked_unknown_and_propagates():
+    pipeline = lineage_pipeline(
+        s="SELECT * FROM `p.ext.unknown_table`",
+        t="SELECT id, 1 AS one FROM s",
+    )
+
+    star = record(pipeline, "s", "*")
+    assert star.status == "unknown" and star.reason == "unexpanded_star"
+    assert not any(ref.column == "*" for parents in pipeline.column_lineage().values() for ref in parents)
+    trace = pipeline.trace_column(ColumnRef("p.m.t", "id"))
+    assert not trace.complete
+    assert dict(trace.unknown)[ColumnRef("p.m.s", "id")] == "unexpanded_star"
+    assert pipeline.trace_column(ColumnRef("p.m.t", "one")).complete
+
+
+def test_failed_lineage_call_still_gets_an_entry(monkeypatch):
+    import kumosql.pipeline as module
+
+    def boom(*args, **kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(module, "lineage", boom)
+    pipeline = lineage_pipeline(t="SELECT id FROM `p.raw.a`")
+
+    item = record(pipeline, "t", "id")
+    assert item.status == "unknown" and item.reason == "lineage_error"
+    assert any(d.code == "lineage_error" for d in pipeline.all_diagnostics())
+
+
+def test_unparseable_upstream_model_makes_downstream_unknown():
+    pipeline = lineage_pipeline(bad="SELECT id FROM `p.raw.a` WHERE (", t="SELECT id FROM bad")
+
+    trace = pipeline.trace_column(ColumnRef("p.m.t", "id"))
+
+    assert dict(trace.unknown) == {ColumnRef("p.m.bad", "id"): "unparsed_model"}
+    assert trace.sources == frozenset()
+
+
+def test_trace_reaches_sources_through_join_alias_cte_and_expression():
+    pipeline = lineage_pipeline(
+        c="WITH j AS (SELECT l.x AS lx, r.y + r.x AS s FROM `p.raw.a` AS l JOIN `p.raw.b` AS r ON l.id = r.id) "
+        "SELECT lx AS out_x, s AS out_s FROM j",
+    )
+
+    assert record(pipeline, "c", "out_x").transform == "renamed"
+    assert record(pipeline, "c", "out_s").transform == "expression"
+    trace = pipeline.trace_column(ColumnRef("p.m.c", "out_x"))
+    assert trace.complete and trace.sources == {ColumnRef("p.raw.a", "x")}
+    assert pipeline.trace_column(ColumnRef("p.m.c", "out_s")).sources == {
+        ColumnRef("p.raw.b", "y"),
+        ColumnRef("p.raw.b", "x"),
+    }
+
+
+def test_self_join_with_two_aliases_traces_both_sides_to_one_column():
+    pipeline = lineage_pipeline(t="SELECT a1.x + a2.x AS total FROM `p.raw.a` a1 JOIN `p.raw.a` a2 ON a1.id = a2.id")
+
+    assert record(pipeline, "t", "total").sources == {ColumnRef("p.raw.a", "x")}
+
+
+def test_transform_kinds_and_scalar_subquery_and_unnest_literal():
+    pipeline = lineage_pipeline(
+        t="SELECT SUM(x) AS s, ROW_NUMBER() OVER (ORDER BY id) AS rn, (SELECT MAX(y) FROM `p.raw.b`) AS m FROM `p.raw.a`",
+        u="SELECT n FROM UNNEST([1, 2]) AS n",
+        v="SELECT id FROM `p.raw.a` UNION ALL SELECT id FROM `p.raw.b`",
+    )
+
+    assert record(pipeline, "t", "s").transform == "aggregate"
+    assert record(pipeline, "t", "rn").transform == "window"
+    assert record(pipeline, "t", "m").sources == {ColumnRef("p.raw.b", "y")}
+    assert record(pipeline, "u", "n").status == "constant"
+    assert record(pipeline, "v", "id").sources == {ColumnRef("p.raw.a", "id"), ColumnRef("p.raw.b", "id")}
+    assert record(pipeline, "v", "id").transform == "union"
+
+
+def test_external_table_columns_end_the_trace_as_sources():
+    pipeline = lineage_pipeline(t="SELECT q FROM `other.ds.outside`")
+
+    trace = pipeline.trace_column(ColumnRef("p.m.t", "q"))
+
+    assert trace.complete and trace.sources == {ColumnRef("other.ds.outside", "q")}
+
+
+def test_lineage_report_rows_and_pipeline_report_section():
+    pipeline = lineage_pipeline(s="SELECT * FROM `p.ext.unknown_table`", t="SELECT id AS k FROM `p.raw.a`")
+
+    rows = {(r["node"], r["column"]): r for r in pipeline.lineage_report()}
+
+    assert rows[("p.m.t", "k")] == {
+        "node": "p.m.t",
+        "column": "k",
+        "sources": [{"node": "p.raw.a", "column": "id"}],
+        "transform": "renamed",
+        "status": "traced",
+        "complete": True,
+    }
+    assert rows[("p.m.s", "*")]["status"] == "unknown" and rows[("p.m.s", "*")]["reason"] == "unexpanded_star"
+    assert pipeline.report()["column_lineage"] == pipeline.lineage_report()

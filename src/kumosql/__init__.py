@@ -60,7 +60,9 @@ from .result_equivalence import (
     generate_synthetic_dataset,
 )
 from .pipeline import (
+    ColumnLineage,
     ColumnRef,
+    ColumnTrace,
     Pipeline,
     Target,
     load_compiled_graph,
@@ -153,7 +155,9 @@ __all__ = [
     "get_rule",
     "register_rule",
     "verify_rewrite",
+    "ColumnLineage",
     "ColumnRef",
+    "ColumnTrace",
     "IdentityResolution",
     "NodeIdentity",
     "Pipeline",

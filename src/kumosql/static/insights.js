@@ -248,6 +248,7 @@ function lineageOf(graph, id, column, seen = new Set()) {
   }
   return {
     node: id, column, transform: item.transform,
+    unknown: item.status === "unknown",
     sources: item.sources.map((source) => lineageOf(graph, source.node, source.column, seen)),
   };
 }
