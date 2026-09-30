@@ -145,35 +145,6 @@ class UIHandler(BaseHTTPRequestHandler):
         body = files("kumosql").joinpath("static", filename).read_bytes()
         self._send(200, body, content_type)
 
-    def _catalog(self) -> None:
-        from urllib.parse import parse_qs, urlsplit
-
-        from . import bigquery_catalog
-
-        route = urlsplit(self.path).path
-        query = parse_qs(urlsplit(self.path).query)
-        try:
-            if route == "/api/catalog/projects":
-                result = bigquery_catalog.list_projects()
-            elif route == "/api/catalog/datasets":
-                result = bigquery_catalog.list_datasets(_required(query, "project"))
-            elif route == "/api/catalog/tables":
-                result = bigquery_catalog.list_tables(
-                    _required(query, "project"), _required(query, "dataset")
-                )
-            elif route == "/api/catalog/table":
-                result = bigquery_catalog.get_table(
-                    _required(query, "project"), _required(query, "dataset"),
-                    _required(query, "table"),
-                )
-            else:
-                self._json(404, {"error": "not found"})
-                return
-        except (ValueError, bigquery_catalog.CatalogError, RuntimeError) as exc:
-            self._json(502, {"error": str(exc)})
-            return
-        self._json(200, result)
-
     def do_PUT(self) -> None:
         section = self.path.removeprefix("/api/settings/")
         if section not in ("ui", "format", "scopes") or section == self.path:
@@ -203,6 +174,35 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, saved)
 
+    def _catalog(self) -> None:
+        from urllib.parse import parse_qs, urlsplit
+
+        from . import bigquery_catalog
+
+        route = urlsplit(self.path).path
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            if route == "/api/catalog/projects":
+                result = bigquery_catalog.list_projects()
+            elif route == "/api/catalog/datasets":
+                result = bigquery_catalog.list_datasets(_required(query, "project"))
+            elif route == "/api/catalog/tables":
+                result = bigquery_catalog.list_tables(
+                    _required(query, "project"), _required(query, "dataset")
+                )
+            elif route == "/api/catalog/table":
+                result = bigquery_catalog.get_table(
+                    _required(query, "project"), _required(query, "dataset"),
+                    _required(query, "table"),
+                )
+            else:
+                self._json(404, {"error": "not found"})
+                return
+        except (ValueError, bigquery_catalog.CatalogError, RuntimeError) as exc:
+            self._json(502, {"error": str(exc)})
+            return
+        self._json(200, result)
+
     def do_POST(self) -> None:
         if self.path != "/api/transform":
             self._json(404, {"error": "not found"})
@@ -214,7 +214,7 @@ class UIHandler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError("request must be a JSON object")
             result = transform(payload.get("sql"), payload.get("rules"), payload.get("format"))
-        except ValueError as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             self._json(400, {"error": str(exc)})
             return
         self._json(200, result)

@@ -169,6 +169,11 @@ class RemoveTrivialPredicatesRule(RewriteRule):
         changes = 0
         for clause_type in (exp.Where, exp.Having, exp.Qualify):
             for clause in list(statement.find_all(clause_type)):
+                # BigQuery requires a WHERE clause on DELETE. Removing a
+                # tautology here would turn a valid full-table delete into
+                # invalid SQL, so leave that statement untouched.
+                if clause_type is exp.Where and isinstance(clause.parent, exp.Delete):
+                    continue
                 condition, count = simplify_predicate(clause.this)
                 changes += count
                 clause.set("this", condition)

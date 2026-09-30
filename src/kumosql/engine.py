@@ -28,6 +28,84 @@ from .sqlx import (
 )
 
 
+def _sql_comments(sql: str) -> list[str]:
+    """Extract SQL comments without mistaking comment markers in literals."""
+
+    comments: list[str] = []
+    i = 0
+    while i < len(sql):
+        if sql.startswith("--", i):
+            end = sql.find("\n", i + 2)
+            if end < 0:
+                end = len(sql)
+            comments.append(sql[i:end])
+            i = end
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            if end < 0:
+                break
+            comments.append(sql[i : end + 2])
+            i = end + 2
+            continue
+        if sql[i] in "'\"`":
+            quote = sql[i]
+            triple = sql.startswith(quote * 3, i)
+            delimiter = quote * (3 if triple else 1)
+            i += len(delimiter)
+            while i < len(sql):
+                if sql[i] == "\\":
+                    i += 2
+                    continue
+                if sql.startswith(delimiter, i):
+                    # SQL's doubled quote escapes a quote in single/double
+                    # quoted strings and identifiers.
+                    if not triple and sql.startswith(quote * 2, i):
+                        i += 2
+                        continue
+                    i += len(delimiter)
+                    break
+                i += 1
+            continue
+        i += 1
+    return comments
+
+
+def _comment_key(comment: str) -> str:
+    if comment.startswith("--"):
+        return comment[2:].strip()
+    return comment[2:-2].strip()
+
+
+def _preserve_comments(source: str, rendered: str) -> str:
+    """Restore comments dropped by sqlglot while formatting a changed query.
+
+    sqlglot retains comments attached to surviving AST nodes, but comments
+    between tokens and comments attached to removed predicates can disappear.
+    Keep those comments as leading comments on the rendered statement.
+    """
+
+    source_comments = _sql_comments(source)
+    output_comments = _sql_comments(rendered)
+    available: dict[str, int] = {}
+    for comment in output_comments:
+        key = _comment_key(comment)
+        available[key] = available.get(key, 0) + 1
+
+    missing: list[str] = []
+    for comment in source_comments:
+        key = _comment_key(comment)
+        if available.get(key, 0):
+            available[key] -= 1
+        else:
+            missing.append(comment)
+    if not missing:
+        return rendered
+
+    # Put each comment on its own line so a line comment cannot swallow SQL.
+    return "\n".join(missing) + "\n" + rendered
+
+
 FATAL_DIAGNOSTIC_CODES = frozenset(
     {
         "parse_error",
@@ -149,6 +227,7 @@ class RewriteRule:
             return RuleOutput(sql, len(statements), 0, 0, initial_remaining, tuple(diagnostics))
 
         output = ";\n\n".join(part.rstrip() for part in rendered if part.strip())
+        output = _preserve_comments(sql, output)
         output_statements: list[exp.Expression] | None = None
         try:
             output_statements = parse_statements(output)

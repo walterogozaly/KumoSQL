@@ -135,6 +135,8 @@ const state = {
   currentLine: 0,
   format: null,
   scopes: [],
+  sqlfluffProfiles: [],
+  activeSqlfluffProfile: "",
 };
 let debounceTimer;
 let requestVersion = 0;
@@ -160,6 +162,8 @@ function currentPrefs() {
     autoRun: state.autoRun,
     order: state.rules.map((rule) => rule.name),
     enabled: state.rules.filter((rule) => rule.on).map((rule) => rule.name),
+    sqlfluffProfiles: state.sqlfluffProfiles,
+    activeSqlfluffProfile: state.activeSqlfluffProfile,
   };
 }
 
@@ -178,6 +182,90 @@ function savePrefs() {
       body: JSON.stringify(prefs),
     }).catch(() => {});
   }, 300);
+}
+
+function profile() {
+  return state.sqlfluffProfiles.find((item) => item.id === state.activeSqlfluffProfile) || state.sqlfluffProfiles[0];
+}
+
+function initSqlfluffProfiles(prefs) {
+  const loaded = Array.isArray(prefs.sqlfluffProfiles) ? prefs.sqlfluffProfiles : [];
+  state.sqlfluffProfiles = loaded.filter((item) => item && typeof item.name === "string" && item.format && typeof item.id === "string");
+  if (!state.sqlfluffProfiles.length) state.sqlfluffProfiles = [{ id: crypto.randomUUID(), name: "Default", format: state.format }];
+  state.activeSqlfluffProfile = state.sqlfluffProfiles.some((item) => item.id === prefs.activeSqlfluffProfile)
+    ? prefs.activeSqlfluffProfile : state.sqlfluffProfiles[0].id;
+  state.format = profile().format;
+}
+
+function renderProfiles() {
+  const select = $("sqlfluff-profile-select");
+  select.replaceChildren();
+  for (const item of state.sqlfluffProfiles) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name;
+    select.append(option);
+  }
+  const active = profile();
+  if (!active) return;
+  select.value = active.id;
+  $("sqlfluff-profile-name").value = active.name;
+  $("sqlfluff-profile-delete").disabled = state.sqlfluffProfiles.length < 2;
+  state.format = active.format;
+  fillFormatForm();
+}
+
+async function saveActiveProfile() {
+  const active = profile();
+  const name = $("sqlfluff-profile-name").value.trim();
+  if (!name) { toast("Give this configuration a name"); return false; }
+  if (state.sqlfluffProfiles.some((item) => item.id !== active.id && item.name.toLowerCase() === name.toLowerCase())) {
+    toast("Configuration names must be unique"); return false;
+  }
+  active.name = name;
+  active.format = readFormatForm();
+  state.format = active.format;
+  try {
+    const response = await fetch("/api/settings/format", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(active.format),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not save SQLFluff settings");
+    active.format = state.format = data;
+  } catch (error) {
+    toast(error.message);
+    return false;
+  }
+  savePrefs();
+  renderProfiles();
+  toast("SQLFluff settings saved");
+  return true;
+}
+
+async function activateProfile(id) {
+  const selected = state.sqlfluffProfiles.find((item) => item.id === id);
+  if (!selected) return;
+  state.activeSqlfluffProfile = id;
+  state.format = selected.format;
+  renderProfiles();
+  savePrefs();
+  try {
+    const response = await fetch("/api/settings/format", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selected.format),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not apply SQLFluff settings");
+    state.format = selected.format = data;
+    fillFormatForm();
+    savePrefs();
+    if (selectedRules().includes("format_sql")) inputsChanged();
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 /* ---------- Small helpers ---------- */
@@ -218,7 +306,8 @@ function selectedRules() {
 }
 
 function currentKey() {
-  return JSON.stringify([input.value, selectedRules()]);
+  const active = profile();
+  return JSON.stringify([input.value, selectedRules(), active?.id, active?.format]);
 }
 
 function toast(message) {
@@ -1040,6 +1129,12 @@ document.addEventListener("keydown", (event) => {
   }
 });
 transformButton.addEventListener("click", () => inputsChanged({ immediate: true }));
+$("settings-button").addEventListener("click", () => {
+  const settings = $("format-settings");
+  settings.open = true;
+  settings.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("sqlfluff-profile-select").focus();
+});
 
 /* ---------- Formatting preferences ---------- */
 
@@ -1082,6 +1177,9 @@ formatForm.addEventListener("change", () => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not save formatting preferences");
       state.format = data;
+      const active = profile();
+      if (active) active.format = data;
+      savePrefs();
       if (selectedRules().includes("format_sql")) inputsChanged();
     } catch (error) {
       toast(error.message);
@@ -1089,6 +1187,23 @@ formatForm.addEventListener("change", () => {
   }, 400);
 });
 formatForm.addEventListener("submit", (event) => event.preventDefault());
+
+$("sqlfluff-profile-select").addEventListener("change", (event) => activateProfile(event.target.value));
+$("sqlfluff-profile-save").addEventListener("click", saveActiveProfile);
+$("sqlfluff-profile-new").addEventListener("click", () => {
+  const item = { id: crypto.randomUUID(), name: `Configuration ${state.sqlfluffProfiles.length + 1}`, format: state.format || readFormatForm() };
+  state.sqlfluffProfiles.push(item);
+  state.activeSqlfluffProfile = item.id;
+  renderProfiles();
+  savePrefs();
+  $("sqlfluff-profile-name").focus();
+  $("sqlfluff-profile-name").select();
+});
+$("sqlfluff-profile-delete").addEventListener("click", () => {
+  if (state.sqlfluffProfiles.length < 2) return;
+  state.sqlfluffProfiles = state.sqlfluffProfiles.filter((item) => item.id !== state.activeSqlfluffProfile);
+  activateProfile(state.sqlfluffProfiles[0].id);
+});
 
 /* ---------- Scopes ---------- */
 
@@ -1222,6 +1337,8 @@ async function start() {
   } catch {
     /* fall back to browser storage and defaults */
   }
+  initSqlfluffProfiles(persisted);
+  renderProfiles();
   applyTheme(persisted.theme);
   state.autoRun = persisted.autoRun !== false;
   $("auto-run").checked = state.autoRun;
@@ -1230,7 +1347,6 @@ async function start() {
   }
   renderInput();
   renderOutput();
-  fillFormatForm();
   renderScopes();
   loadRules();
 }

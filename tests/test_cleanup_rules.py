@@ -120,6 +120,46 @@ def test_false_literal_comparison_is_folded_but_kept():
     assert result.verification.status is PROVEN
 
 
+def test_delete_keeps_required_where_clause_when_it_is_trivial():
+    source = "DELETE FROM `p.d.t` WHERE 1 = 1"
+
+    result = apply_rule("remove_trivial_predicates", source)
+
+    assert result.sql == source
+    assert result.verification.status is UNCHANGED
+    assert sqlglot.parse_one(result.sql, read="bigquery") is not None
+
+
+@pytest.mark.parametrize(
+    "source, comments",
+    [
+        (
+            "SELECT id FROM `p.d.t` /* explains source */ WHERE 1 = 1",
+            ["/* explains source */"],
+        ),
+        (
+            "SELECT id FROM `p.d.t` WHERE 1 = 1 -- explains filter",
+            ["-- explains filter"],
+        ),
+    ],
+)
+def test_comments_survive_rewrites(source, comments):
+    result = apply_rule("remove_trivial_predicates", source)
+
+    for comment in comments:
+        assert comment in result.sql
+    assert result.verification.status is PROVEN
+
+
+def test_comment_markers_inside_literals_are_not_restored_as_comments():
+    source = "SELECT '-- not a comment /* still text */' AS note FROM `p.d.t` WHERE 1 = 1"
+
+    result = apply_rule("remove_trivial_predicates", source)
+
+    assert "-- not a comment /* still text */" in result.sql
+    assert result.sql.count("/* still text */") == 1
+
+
 # --- remove_redundant_parentheses ---------------------------------------
 
 
