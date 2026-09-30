@@ -19,7 +19,7 @@ Requires the [Google Cloud SDK](https://cloud.google.com/sdk) (`bq`) and `gcloud
 
 ```bash
 python examples/bq_testbed/build_testbed.py --project kumosql --print-only      # show all SQL, no access needed
-python examples/bq_testbed/build_testbed.py --project kumosql --estimate-only   # dry-run the raw copy
+python examples/bq_testbed/build_testbed.py --project kumosql --estimate-only   # dry-run the raw copy (steps that read not-yet-built tables are skipped)
 python examples/bq_testbed/build_testbed.py --project kumosql                   # build, then run 3 rounds
 python examples/bq_testbed/build_testbed.py --project kumosql --workload-only --rounds 5   # add more history
 ```

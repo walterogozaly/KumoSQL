@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,7 +47,8 @@ class Runner:
         self.project = project
         self.max_job_bytes = max_job_bytes
         self.max_total_bytes = max_total_bytes
-        self.bq = bq
+        # Resolve the full path: on Windows `bq` is bq.cmd, which subprocess cannot launch by bare name.
+        self.bq = shutil.which(bq) or bq
         self.estimated_total = 0
         self.jobs_run = 0
 
@@ -134,14 +136,17 @@ def main(argv: list[str] | None = None) -> int:
     runner = Runner(args.project, args.max_job_mb * 1024**2, int(args.max_total_gb * 1024**3))
     try:
         if args.estimate_only:
-            for kind, sql in build:
-                if kind == "raw":
-                    try:
-                        runner.estimated_total += runner.estimate(sql)
-                    except RuntimeError:
-                        print("skipped an estimate that needs a table from an earlier step")
-            print(f"raw copy would process about {runner.estimated_total / 1024**2:,.1f} MB; "
-                  "workload estimates need the models to exist (run a build first)")
+            estimated, skipped = 0, []
+            for (kind, sql), name in zip(build, [None] + [s.name for s in models.STEPS]):
+                if kind != "raw":
+                    continue
+                try:
+                    estimated += runner.estimate(sql)
+                except RuntimeError:
+                    skipped.append(name)
+            print(f"estimated {estimated / 1024**2:,.1f} MB for the raw copy steps that could be checked")
+            if skipped:
+                print(f"no estimate for {', '.join(skipped)}: they read tables that do not exist yet")
             return 0
         names = [None] + [s.name for s in models.STEPS]
         for (kind, sql), name in zip(build, names):
