@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 from typing import Iterable
+import os
 import tempfile
 import threading
 
@@ -78,6 +79,9 @@ def load_files(files: object, label: str) -> Pipeline:
         label = "uploaded project"
     total = 0
     with tempfile.TemporaryDirectory(prefix="kumosql-project-") as directory:
+        if os.name == "nt":
+            # Extended-length prefix: repository paths can exceed Windows' 260-character limit.
+            directory = "\\\\?\\" + str(Path(directory).resolve())
         for path, text in files.items():
             relative = _safe_path(path)
             if not isinstance(text, str):

@@ -116,3 +116,30 @@ def test_load_into_graph(remote):
     assert result["loaded"] and result["files"] == 3
     assert live_graph.loaded()["label"].startswith("remote (main @ ")
     live_graph.clear_project()
+
+
+def test_very_long_paths_load_without_a_working_tree(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    bare, work = tmp_path / "r.git", tmp_path / "w"
+    run("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    run("clone", str(bare), str(work), cwd=tmp_path)
+    run("checkout", "-b", "main", cwd=work)
+    deep = "definitions/" + "/".join(["very_long_directory_name_" + "x" * 40] * 5) + "/" + "m" * 120 + ".sqlx"
+    assert len(deep) > 300
+    commit(work, {"workflow_settings.yaml": FILES["workflow_settings.yaml"], deep: "SELECT 1 AS id"}, "long")
+    fetched = git_repo.fetch_project(str(bare))
+    assert deep in fetched["files"]
+    cached = next((tmp_path / "cache").iterdir())
+    assert not (cached / "definitions").exists()  # nothing was checked out
+
+
+def test_non_ascii_paths_and_symlinks(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    bare, work = tmp_path / "r.git", tmp_path / "w"
+    run("init", "--bare", "-b", "main", str(bare), cwd=tmp_path)
+    run("clone", str(bare), str(work), cwd=tmp_path)
+    run("checkout", "-b", "main", cwd=work)
+    (work / "definitions").mkdir()
+    (work / "definitions" / "link.sqlx").symlink_to("/etc/passwd")
+    commit(work, {"definitions/café.sqlx": "SELECT 1 AS id"}, "x")
+    assert set(git_repo.fetch_project(str(bare))["files"]) == {"definitions/café.sqlx"}
