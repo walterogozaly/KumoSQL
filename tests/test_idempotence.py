@@ -96,3 +96,31 @@ def test_lift_then_inline_is_documented_as_not_a_fixed_point():
     first = apply_rules(names, sql)
     second = apply_rules(names, first.sql)
     assert sum(step.changes for step in second.steps) > 0
+
+
+def test_check_idempotence_passes_for_the_canonical_pipeline():
+    from kumosql import canonical_rule_order, check_idempotence
+
+    check = check_idempotence(canonical_rule_order(), "SELECT a FROM (SELECT a FROM t) WHERE TRUE")
+    assert check.idempotent
+    assert check.to_json()["outcome"] == "passed"
+
+
+def test_check_idempotence_reports_the_rule_that_keeps_changing():
+    from kumosql import check_idempotence
+
+    # The lifter and the CTE inliner undo each other, so together they never settle.
+    check = check_idempotence(["lift_subqueries", "inline_single_use_ctes"], "SELECT a FROM (SELECT a FROM t) s")
+    assert not check.idempotent
+    assert set(check.rules_that_changed) == {"lift_subqueries", "inline_single_use_ctes"}
+    assert check.to_json()["outcome"] == "failed"
+
+
+def test_cli_check_idempotence_flag(tmp_path, capsys):
+    from kumosql.cli import rewrite_main
+
+    src = tmp_path / "q.sql"
+    src.write_text("SELECT a FROM t WHERE TRUE\n")
+    code = rewrite_main([str(src), "-r", "remove_trivial_predicates", "--check-idempotence"])
+    assert code == 0
+    assert "idempotence=passed" in capsys.readouterr().err

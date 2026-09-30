@@ -719,6 +719,51 @@ def attach_planner_check(
     )
 
 
+@dataclass(frozen=True)
+class IdempotenceCheck:
+    """Whether re-running a rule list on its own output changes it again."""
+
+    rules: tuple[str, ...]
+    idempotent: bool
+    sql: str
+    rerun_sql: str
+    rules_that_changed: tuple[str, ...]
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "kind": "idempotence",
+            "outcome": "passed" if self.idempotent else "failed",
+            "rules": list(self.rules),
+            "rules_that_changed": list(self.rules_that_changed),
+        }
+
+
+def check_idempotence(
+    names: Iterable[str],
+    sql: str,
+    *,
+    overrides: Mapping[str, RewriteRule] | None = None,
+) -> IdempotenceCheck:
+    """Apply ``names`` to ``sql``, then again to the output, and compare the text.
+
+    The comparison is on exact text so formatting oscillation is caught. Running
+    the rules twice doubles the work, so this is opt in (``rewrite-sql
+    --check-idempotence``) rather than part of ``apply_rules``.
+    """
+
+    rules = tuple(names)
+    first = apply_rules(rules, sql, overrides=overrides)
+    second = apply_rules(rules, first.sql, overrides=overrides)
+    changed = tuple(step.rule for step in second.steps if step.changes or step.sql != step.input_sql)
+    return IdempotenceCheck(
+        rules=rules,
+        idempotent=second.sql == first.sql and not changed,
+        sql=first.sql,
+        rerun_sql=second.sql,
+        rules_that_changed=changed,
+    )
+
+
 def canonical_rule_order() -> tuple[str, ...]:
     """The rules that can run together, in an order whose output is a fixed point.
 
@@ -736,6 +781,7 @@ def canonical_rule_order() -> tuple[str, ...]:
 
 
 __all__ = [
+    "IdempotenceCheck",
     "PipelineResult",
     "RewriteResult",
     "Verification",
@@ -746,5 +792,6 @@ __all__ = [
     "attach_planner_check",
     "available_rules",
     "canonical_rule_order",
+    "check_idempotence",
     "verify_rewrite",
 ]

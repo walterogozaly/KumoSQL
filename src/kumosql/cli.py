@@ -9,7 +9,7 @@ import sys
 
 from .lift_subqueries import lift_subqueries
 from .equivalence import prove_equivalent
-from .rewrite import apply_rules, attach_planner_check, available_rules
+from .rewrite import apply_rules, attach_planner_check, available_rules, check_idempotence
 from .sqlx import looks_like_sqlx
 from .dryrun import check_rewrite, dry_run
 from .fingerprint import Location, compare_snapshots, plan_output_comparison, summarize_comparison
@@ -99,6 +99,11 @@ def rewrite_main(argv: list[str] | None = None) -> int:
         help="Exit 0 after writing output when it is unproven or only planner checked",
     )
     parser.add_argument(
+        "--check-idempotence",
+        action="store_true",
+        help="Also run the rules on their own output and exit 4 if it changes again",
+    )
+    parser.add_argument(
         "--planner-project",
         help="Opt in to a BigQuery planning and output-schema check (credentials required)",
     )
@@ -175,6 +180,18 @@ def rewrite_main(argv: list[str] | None = None) -> int:
         sys.stdout.write(result.sql)
         if result.sql:
             sys.stdout.write("\n")
+
+    if args.check_idempotence:
+        again = check_idempotence(args.rule, args.input.read_text(encoding="utf-8"))
+        if again.idempotent:
+            print("idempotence=passed", file=sys.stderr)
+        else:
+            print(
+                "idempotence=failed: running the rules on their own output changed it again"
+                + (f" ({', '.join(again.rules_that_changed)})" if again.rules_that_changed else ""),
+                file=sys.stderr,
+            )
+            return 4
 
     if not result.verification.trusted:
         if args.allow_unproven:
