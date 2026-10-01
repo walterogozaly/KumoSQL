@@ -246,3 +246,54 @@ def test_filter_on_a_different_condition_is_not_proven():
         schema={"dept": ["deptno"]}, compare_names=False, dialect="mysql",
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+SCHEMA = {"emp": ["empno", "deptno", "sal"], "dept": ["deptno", "name"]}
+
+
+def _prove(left, right):
+    return prove_equivalent_algebraic(left, right, schema=SCHEMA, compare_names=False, dialect="mysql")
+
+
+def test_the_same_scalar_subquery_on_both_sides_is_one_value():
+    result = _prove(
+        "SELECT empno FROM emp WHERE sal = (SELECT MAX(sal) FROM emp WHERE deptno > 3) AND deptno = 1",
+        "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT MAX(sal) FROM emp WHERE deptno > 3) = sal",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    assert "scalar subqueries return at most one row" in " ".join(result.assumptions)
+
+
+def test_differently_written_equivalent_scalar_subqueries_are_matched():
+    result = _prove(
+        "SELECT empno FROM emp WHERE sal = (SELECT MAX(sal) FROM emp WHERE deptno > 3)",
+        "SELECT empno FROM emp WHERE sal = (SELECT MAX(x.sal) FROM (SELECT sal FROM emp WHERE deptno > 3 AND deptno IS NOT NULL) AS x)",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_different_scalar_subqueries_are_not_equated():
+    result = _prove(
+        "SELECT empno FROM emp WHERE sal = (SELECT MAX(sal) FROM emp WHERE deptno > 3)",
+        "SELECT empno FROM emp WHERE sal = (SELECT MAX(sal) FROM emp WHERE deptno > 4)",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_a_correlated_scalar_subquery_is_never_replaced_by_a_shared_value():
+    # The same text reads a different outer column on each side: it must not be equated.
+    result = _prove(
+        "SELECT e.empno FROM emp e WHERE e.sal = (SELECT MAX(sal) FROM emp WHERE deptno = e.deptno)",
+        "SELECT e.empno FROM emp e WHERE e.sal = (SELECT MAX(sal) FROM emp WHERE deptno = e.empno)",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_an_unresolvable_column_counts_as_correlated():
+    from kumosql import scalar_subqueries
+    import sqlglot
+
+    tree = sqlglot.parse_one("SELECT 1 FROM emp WHERE sal = (SELECT MAX(sal) FROM emp WHERE deptno > mystery)")
+    node = next(tree.find_all(sqlglot.exp.Subquery))
+    assert not scalar_subqueries.is_uncorrelated(node, SCHEMA)
+    assert not scalar_subqueries.is_uncorrelated(node, None)

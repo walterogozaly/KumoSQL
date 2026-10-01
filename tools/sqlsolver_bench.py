@@ -85,9 +85,16 @@ def load_pairs(path: Path) -> list[tuple[str, str]]:
     return list(zip(lines[0::2], lines[1::2]))
 
 
+def spark_days(sql: str) -> str:
+    """Spark's date_sub(date, days) takes a number of days where MySQL wants an INTERVAL."""
+
+    return re.sub(r"date_(sub|add)\(\s*('[\d-]+')\s*,\s*(\d+)\s*\)", r"date_\1(\2, INTERVAL \3 DAY)", sql, flags=re.I)
+
+
 def to_dialect(sql: str, dialect: str) -> str:
     # Spark writes date('1994-01-01 +08'); the engines under test read the date part.
     sql = re.sub(r"date\(\s*'(\d{4}-\d{2}-\d{2})\s*[+-]\d{2}(?::?\d{2})?'\s*\)", r"date('\1')", sql, flags=re.I)
+    sql = spark_days(sql)
     sql = re.sub(r"(?<=[\w$])\$|\$(?=\w)", "_S_", sql)  # DuckDB rejects $ in bare names (EXPR$0, $f1)
     return sqlglot.transpile(sql, read="mysql", write=dialect)[0]
 
@@ -160,6 +167,7 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
     import duckdb
 
     rng = random.Random(seed)
+    left, right = spark_days(left), spark_days(right)
     try:
         left_sql, right_sql = to_dialect(left, "duckdb"), to_dialect(right, "duckdb")
         used = [tables[n] for n in sorted(referenced_tables(left, right)) if n in tables]
@@ -234,7 +242,7 @@ def default_prove(left: str, right: str, tables: dict[str, Table]) -> bool:
         for t in tables.values()
     }
     return prove_equivalent_algebraic(
-        left, right, schema=schema, constraints=constraints, compare_names=False, dialect="mysql", exact_arithmetic=True
+        spark_days(left), spark_days(right), schema=schema, constraints=constraints, compare_names=False, dialect="mysql", exact_arithmetic=True
     ).proven
 
 
