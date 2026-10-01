@@ -485,6 +485,23 @@ def markdown(results, cases, dry_runs) -> str:
     return "\n".join(lines) + "\n"
 
 
+def gaps_markdown() -> str:
+    """A table of ``known_gaps.json`` grouped by stage, owner and reason."""
+
+    groups: dict[tuple[str, str, str], list[str]] = defaultdict(list)
+    for key, gap in load_known_gaps().items():
+        case_id, stage = key.split("::")
+        reason = re.sub(r"\s*Line \d+, Col: \d+\.?", "", gap["reason"])
+        reason = re.sub(r"(source_splice_error|recovered_parse|parse_error|output_parse_error)(; \1)+", r"\1", reason)
+        reason = re.sub(r"(?:kumosql\.kumosql_messy|bigquery-public-data)\.[\w.*-]+(, )?", "", reason).strip(" :,") or reason
+        groups[(stage, gap["owner"], reason[:90])].append(case_id)
+    lines = ["| Stage | Owner | Reason | Cases | Examples |", "|---|---|---|---:|---|"]
+    for (stage, owner, reason), ids in sorted(groups.items(), key=lambda kv: (STAGES.index(kv[0][0]) if kv[0][0] in STAGES else 99, -len(kv[1]))):
+        examples = ", ".join(f"`{i}`" for i in sorted(ids)[:3])
+        lines.append(f"| {stage} | {owner} | {reason.replace('|', '/')} | {len(ids)} | {examples} |")
+    return "\n".join(lines) + "\n"
+
+
 def _cell(counts: Counter) -> str:
     parts = [f"{counts[PASS]} ✅"]
     if counts[UNSUPPORTED]:
@@ -537,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", type=Path, help="write per-case results here")
     parser.add_argument("--markdown", type=Path, help="write the summary table here")
+    parser.add_argument("--write-docs", type=Path, help="replace the coverage tables in this markdown file")
     parser.add_argument("--update-known-gaps", action="store_true", help="record current gaps in known_gaps.json")
     parser.add_argument("--failures", action="store_true", help="list every failing case/stage")
     args = parser.parse_args(argv)
@@ -545,10 +563,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         args.json.write_text(json.dumps({k: {s: list(v) for s, v in r.items()} for k, r in results.items()}, indent=1))
     if args.markdown:
-        args.markdown.write_text(markdown(results, cases, load_dry_runs()))
+        args.markdown.write_text(markdown(results, cases, load_dry_runs()) + "\n" + gaps_markdown())
+    if args.write_docs:
+        start, end = "<!-- coverage-table:start -->", "<!-- coverage-table:end -->"
+        text = args.write_docs.read_text()
+        table = markdown(results, cases, load_dry_runs()) + "\n### Known gaps\n\n" + gaps_markdown()
+        head, _, rest = text.partition(start)
+        _, _, tail = rest.partition(end)
+        args.write_docs.write_text(f"{head}{start}\n{table}{end}{tail}")
     if args.update_known_gaps:
         print(f"{update_known_gaps(results)} known gaps recorded")
-    if args.failures or not (args.json or args.markdown or args.update_known_gaps):
+    if args.failures or not (args.json or args.markdown or args.update_known_gaps or args.write_docs):
         for case_id, stages in results.items():
             for stage, (status, detail) in stages.items():
                 if status == FAIL:

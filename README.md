@@ -468,6 +468,10 @@ These pieces build on the pipeline graph. They report evidence and never claim m
 - **Failures stay local** (`resilience.py`): an asset that cannot be read or parsed becomes an entry in `diagnostics` and the rest of the report is still produced. Diagnostics carry no file contents.
 - **Refactoring proposals** (`shared_logic.py`, `filter_pushdown.py`, `proposal_readiness.py`): `propose_shared_logic` and `find_upstream_filter_proposals` suggest extracting shared logic or pushing a filter upstream, listing every affected consumer and refusing when the consumer set is incomplete. Neither applies changes. `assess_proposal` marks a proposal `ready` only when every consumer is `proven` or `unchanged`; a missing result is `unknown`.
 
+## BigQuery and Dataform syntax coverage
+
+`tests/fixtures/bq_syntax/` holds about 320 small, valid cases (one per GoogleSQL or Dataform construct) and a manifest. Every case runs through parsing, the Dataform loader, graph and lineage, fingerprint SQL, cleanup and rewrite, formatting and the SMT prover; gaps are recorded in `known_gaps.json` so a new one fails the suite. [docs/bigquery-syntax-coverage.md](docs/bigquery-syntax-coverage.md) has the per-family table, the list of gaps and who owns each, and how to dry-run the fixtures against BigQuery (free, never billed) with `python tools/bq_dry_run_manifest.py --project PROJECT`.
+
 ## BigQuery test bed
 
 `examples/bq_testbed/` builds a deliberately messy, low-cost model layer over a public dataset and runs a query workload to build up job history. See [docs/bigquery-testbed.md](docs/bigquery-testbed.md) for setup, cost guards and access roles.

@@ -20,6 +20,7 @@ from .resilience import (
     read_text_or_reason,
 )
 from .sqlx import (
+    _SQLX_BLOCK_RE as _SQLX_CONFIG_RE,
     mask_sqlx_interpolations as _mask_sqlx_interpolations,
     split_sqlx_sections as _split_sqlx_sections,
 )
@@ -272,7 +273,7 @@ def load_sqlx_project(
         if text is None:
             diagnostics.append(PipelineDiagnostic(relative, "read_error", f"{reason}; asset was skipped"))
             return None
-        if path.suffix == ".sql":
+        if path.suffix == ".sql" and not _SQLX_CONFIG_RE.search(text):
             target = Target(name=path.stem)
             add_model(Model(target, "sql", text, relative))
             return None
