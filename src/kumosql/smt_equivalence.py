@@ -177,6 +177,21 @@ class _Unknown(Exception):
 # --------------------------------------------------------------------------
 
 _VALUE_SORT = None
+_STRING_RANK = None
+
+
+def _string_rank():
+    """An order-embedding of strings into the reals: ``a < b`` iff ``rank(a) < rank(b)``.
+
+    Z3's own string ordering takes seconds even for ``d < '1994-12-01'``. The
+    prover only needs the ordering facts the queries use (see ``order_facts``),
+    which hold in the real ordering, so a proof over the abstraction holds there too.
+    """
+
+    global _STRING_RANK
+    if _STRING_RANK is None:
+        _STRING_RANK = z3.Function("string_rank", z3.StringSort(), z3.RealSort())
+    return _STRING_RANK
 
 
 def _value_sort():
@@ -236,7 +251,7 @@ def _lt(a, b):
         V.num(a) < V.num(b),
         z3.If(
             z3.And(V.is_Str(a), V.is_Str(b)),
-            V.str(a) < V.str(b),
+            _string_rank()(V.str(a)) < _string_rank()(V.str(b)),
             z3.If(
                 z3.And(V.is_Bool(a), V.is_Bool(b)),
                 z3.And(z3.Not(V.bool(a)), V.bool(b)),
@@ -244,6 +259,14 @@ def _lt(a, b):
             ),
         ),
     )
+
+
+def _rank_injective(a, b):
+    """Equal ranks mean equal strings (the ranking is one-to-one), stated for the pair ``a``, ``b``."""
+
+    V, rank = _value_sort(), _string_rank()
+    sa, sb = V.str(a), V.str(b)
+    return z3.Implies(rank(sa) == rank(sb), sa == sb)
 
 
 def _pair_lt(a: _Val, b: _Val):
@@ -465,6 +488,9 @@ class _Compiler:
         self.semijoin = True
         self.used_setsrc = False
         self.limit_opaque = False
+        # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
+        self.ordered = False
+        self.string_literals: set[str] = set()
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -1047,8 +1073,11 @@ class _Compiler:
         unknown_or_true = self._existence(query, env, lambda scope, node: z3.Not(compare(scope, node).f))
         return _Pred(true_atom, z3.Not(unknown_or_true))
 
-    @staticmethod
-    def _compare(op: str, a: _Val, b: _Val) -> _Pred:
+    def _compare(self, op: str, a: _Val, b: _Val) -> _Pred:
+        if op not in ("=", "<>"):
+            self.ordered = True
+            # Equal ranks mean equal strings (the ranking is one-to-one); stated for the compared pair.
+            self.facts.append(_rank_injective(a.val, b.val))
         if op == "=":
             r = a.val == b.val
         elif op == "<>":
@@ -1136,6 +1165,8 @@ class _Compiler:
         if isinstance(e, (exp.Add, exp.Mul)):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
             # Commutative: apply the function to the arguments in a canonical order.
+            self.ordered = True
+            self.facts.append(_rank_injective(_canon(a), _canon(b)))
             swap = _pair_lt(b, a)
             first = _Val(z3.If(swap, b.null, a.null), z3.If(swap, b.val, a.val))
             second = _Val(z3.If(swap, a.null, b.null), z3.If(swap, a.val, b.val))
@@ -1173,6 +1204,7 @@ class _Compiler:
         V = _value_sort()
         if e.is_string:
             text = e.this
+            self.string_literals.add(text)
             if _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
                 raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' is modeled)")
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal(text)))
@@ -1180,6 +1212,16 @@ class _Compiler:
         if negate:
             value = -value
         return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{value.numerator}/{value.denominator}")))
+
+    def order_facts(self) -> list:
+        """Facts about the string ordering that the compiled queries may rely on."""
+
+        if not self.ordered or not self.string_literals:
+            return []
+        rank = _string_rank()
+        literals = sorted(self.string_literals)
+        facts = [rank(z3.StringVal(a)) < rank(z3.StringVal(b)) for a, b in zip(literals, literals[1:])]
+        return facts
 
     def _function(self, name: str, arity: int):
         self.uses_uf = True
@@ -2218,6 +2260,11 @@ def _prove_core(
         except sqlglot.errors.ParseError as error:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=assumptions)
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ())
+        extra = compiler.order_facts()
+        if extra:
+            for union in (left, right):
+                for block in union.branches:
+                    block.facts = block.facts + extra
 
         if len(left.names) != len(right.names):
             return SmtEquivalenceResult(

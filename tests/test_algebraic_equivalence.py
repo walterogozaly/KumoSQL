@@ -146,3 +146,27 @@ def test_aggregates_of_group_keys():
     assert not prove_equivalent_algebraic(
         "SELECT sal, SUM(sal) FROM emp GROUP BY sal", right.replace("sal, sal, sal", "sal, sal"), schema=schema, compare_names=False
     ).proven
+
+
+def test_constant_dates_are_folded():
+    plain = "SELECT a FROM t WHERE d >= DATE '1994-09-01' AND d < DATE '1994-12-01'"
+    spark = "SELECT a FROM t WHERE d >= date('1994-09-01 +08') AND d < date('1994-09-01 +08') + INTERVAL '3' MONTH"
+    clamped = "SELECT a FROM t WHERE d < DATE_ADD(DATE '2020-01-31', INTERVAL 1 MONTH)"
+    leap = "SELECT a FROM t WHERE d < DATE '2020-02-29'"
+    schema = {"t": ["a", "d"]}
+    assert prove_equivalent_algebraic(plain, spark, schema=schema, dialect="mysql").proven
+    assert prove_equivalent_algebraic(clamped, leap, schema=schema).proven
+    other = "SELECT a FROM t WHERE d >= DATE '1994-09-01' AND d < DATE '1994-12-02'"
+    assert not prove_equivalent_algebraic(plain, other, schema=schema).proven
+
+
+def test_string_and_date_ordering_is_fast_and_exact():
+    schema = {"t": ["a", "d"]}
+    base = "SELECT a FROM t WHERE d >= DATE '1994-09-01' AND d < DATE '1994-12-01'"
+    assert prove_equivalent_algebraic(
+        base, "SELECT a FROM t WHERE NOT (d < DATE '1994-09-01') AND NOT (d >= DATE '1994-12-01')", schema=schema
+    ).proven
+    # Strings exist between '1994-08-31' and '1994-09-01', so these differ.
+    assert not prove_equivalent_algebraic(
+        base, "SELECT a FROM t WHERE d > DATE '1994-08-31' AND d < DATE '1994-12-01'", schema=schema
+    ).proven
