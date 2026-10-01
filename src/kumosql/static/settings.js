@@ -23,6 +23,7 @@
   const SECTIONS = [
     { id: "appearance", label: "Appearance", icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>' },
     { id: "formatting", label: "SQL formatting", icon: '<path d="M4 6h16M4 12h10M4 18h13"/>' },
+    { id: "storage", label: "Local data folder", icon: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>' },
     { id: "repositories", label: "Repositories", icon: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-12 5"/>' },
     { id: "bigquery", label: "BigQuery projects", icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
@@ -411,6 +412,38 @@
     return `${Math.round(seconds / 86400)} days ago`;
   }
 
+  async function renderStorage(body) {
+    body.append(
+      h("h3", { class: "sp-heading", text: "Local data folder" }),
+      h("p", { class: "sp-lede", text: "The folder where KumoSQL keeps working files on this computer, starting with copies of your Dataform repositories. Choose a folder in your home folder, not under AppData: the Microsoft Store build of Python hides AppData from git. KumoSQL checks that the folder exists, is writable, and that git can use it." }));
+    const status = h("p", { class: "sp-row-hint" });
+    const folder = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Local data folder", autocomplete: "off", required: "" });
+    const use = h("button", { type: "button", class: "link-button", text: "Use suggested folder" });
+    const form = h("form", { class: "repo-form" }, folder, h("button", { type: "submit", class: "toolbar-button", text: "Save folder" }), use);
+    body.append(form, status);
+    let info = { folder: null, suggested: "" };
+    const draw = () => {
+      folder.value = info.folder || "";
+      folder.placeholder = info.suggested;
+      status.textContent = info.override ? `Overridden by the KUMOSQL_GIT_CACHE environment variable: ${info.override}`
+        : info.folder ? `Repository clones are kept in ${info.folder}.` : "No folder chosen yet. Connecting a repository needs one.";
+    };
+    use.addEventListener("click", () => { folder.value = info.suggested; });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setStatus("Checking the folder with git…");
+      try {
+        info = await repoCall("POST", "/api/storage", { folder: folder.value.trim() });
+        setStatus("Saved");
+        draw();
+        if (info.previous) status.textContent += ` Clones in ${info.previous} are not moved; repositories are cloned again here on their next load, and the old folder can be deleted.`;
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+    try { info = await repoCall("GET", "/api/storage"); draw(); } catch (error) { setStatus(error.message, true); }
+  }
+
   async function renderRepositories(body) {
     body.append(
       h("h3", { class: "sp-heading", text: "Repositories" }),
@@ -419,8 +452,18 @@
     const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "git@github.com:owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
     const branch = h("input", { type: "text", class: "sp-input", placeholder: "branch (default)", "aria-label": "Branch", autocomplete: "off", size: "14" });
     const form = h("form", { class: "repo-form" }, url, branch, h("button", { type: "submit", class: "toolbar-button", text: "Connect" }));
-    body.append(list, form);
+    const needFolder = h("p", { class: "sp-row-hint is-error", hidden: true });
+    const chooseFolder = h("button", { type: "button", class: "link-button", text: "Choose a local data folder", hidden: true });
+    chooseFolder.addEventListener("click", () => show("storage"));
+    body.append(list, needFolder, chooseFolder, form);
     let data = { repositories: [], active: null };
+    repoCall("GET", "/api/storage").then((info) => {
+      if (info.configured) return;
+      for (const element of form.elements) element.disabled = true;
+      needFolder.textContent = "Choose a local data folder before connecting a repository. KumoSQL keeps repository clones there.";
+      needFolder.hidden = false;
+      chooseFolder.hidden = false;
+    }).catch(() => { /* the server will say so when you connect */ });
 
     const draw = () => {
       list.replaceChildren();
@@ -481,7 +524,7 @@
     window.KumoBqProjects.renderBilling(body, { onStatus: setStatus });
   }
 
-  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes };
+  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -499,6 +542,7 @@
   // Search narrows the sidebar to sections with a matching setting.
   const KEYWORDS = {
     appearance: "appearance theme light dark system colour color mode",
+    storage: "storage local data folder directory clones cache path appdata home",
     repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
     bigquery: "bigquery projects choose select project catalog browse tab billing project query cache hours lifetime",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
