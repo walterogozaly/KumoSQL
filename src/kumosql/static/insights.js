@@ -218,6 +218,15 @@ function showScope(scope) {
   }
 }
 
+function pendingCard(data) {
+  const { stage, elapsed } = data.pending;
+  return h("section", { class: "card empty-state", "data-testid": "pending-state", role: "status" },
+    h("h2", { text: "Analyzing your models" }),
+    h("p", { text: data.message }),
+    h("p", { class: "muted", text: `${stage ? `Now: ${stage}. ` : ""}${Math.round(elapsed)} seconds so far.` }),
+    h("p", { class: "muted small" }, h("a", { href: "/graph", text: "Open the query graph" }), " while this finishes."));
+}
+
 async function start() {
   const name = location.pathname.replace(/^\/+|\/+$/g, "") || "graph";
   const view = VIEWS[name] || VIEWS.graph;
@@ -229,9 +238,18 @@ async function start() {
   try {
     await setupScopePicker();
     await window.KumoTags?.load();
-    const response = await fetch(withScope(name === "cost" ? withRate(view.endpoint) : view.endpoint));
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not load this view");
+    const url = withScope(name === "cost" ? withRate(view.endpoint) : view.endpoint);
+    let data;
+    for (;;) {
+      const response = await fetch(url);
+      data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load this view");
+      if (!data.pending) break;
+      // The slow analysis is still running in the background: show progress and ask again.
+      $("view").replaceChildren(pendingCard(data));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    $("view").replaceChildren();
     showScope(data.scope);
     setupProjectForm(data);
     if (data.empty) $("view").append(emptyState(data));

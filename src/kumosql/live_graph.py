@@ -21,9 +21,13 @@ import json
 import os
 import shutil
 import tempfile
+import hashlib
 import threading
+import time
+from collections import OrderedDict
 
 from .pipeline import Pipeline, load_sqlx_project
+from .timing import stage
 
 MAX_FILES = 500
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
@@ -40,6 +44,92 @@ _JOBS: dict = {"records": (), "label": ""}
 
 class ProjectError(ValueError):
     """The supplied project files could not be loaded."""
+
+
+# Projects already analysed, by content: reloading the same commit reuses the whole analysis.
+_PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
+_PROJECT_CACHE_SIZE = 3
+_ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
+
+
+def _content_key(files: dict) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        digest.update(path.encode("utf-8", "replace") + b"\0" + files[path].encode("utf-8", "replace") + b"\0")
+    return digest.hexdigest()
+
+
+def _warm(pipeline: Pipeline, state: dict) -> None:
+    """Run the slow searches (identical and similar SELECTs) in the background.
+
+    The graph does not need them; the Cost and Change reports pages do, and show
+    progress until they are done. Results are kept on the pipeline.
+    """
+
+    try:
+        state["stage"] = "identical queries"
+        pipeline.duplicate_selects(min_nodes=12)
+        state["stage"] = "similar queries"
+        pipeline.near_duplicate_selects(min_nodes=12, threshold=0.7)
+        state["stage"] = "repeated work"
+        from .repeated_work import repeated_work_report
+
+        pipeline._remembered(("repeated_work",), lambda: repeated_work_report(pipeline))
+        state["state"] = "done"
+    except Exception as exc:  # noqa: BLE001 - the pages fall back to computing it themselves
+        state.update(state="failed", error=str(exc))
+    state["finished"] = time.time()
+    state["event"].set()
+
+
+def start_background_analysis(pipeline: Pipeline) -> None:
+    """Start (once per project) the slow analysis a project needs for its other pages."""
+
+    with _LOCK:
+        if id(pipeline) in _ANALYSIS:
+            return
+        done = all(pipeline.has_remembered(name) for name in ("duplicates", "near_duplicates", "repeated_work"))
+        state = {"state": "done" if done else "running", "stage": "", "started": time.time(), "pipeline": pipeline,
+                 "event": threading.Event()}
+        if done:
+            state["finished"] = state["started"]
+            state["event"].set()
+        _ANALYSIS[id(pipeline)] = state
+        for stale in [key for key, item in _ANALYSIS.items() if item["pipeline"] is not _LOADED_PIPELINE()]:
+            if stale != id(pipeline):
+                _ANALYSIS.pop(stale, None)
+    if not done:
+        threading.Thread(target=_warm, args=(pipeline, state), name="kumosql-analysis", daemon=True).start()
+
+
+def _LOADED_PIPELINE():
+    return _LOADED["pipeline"] if _LOADED else None
+
+
+def analysis_status(pipeline: Pipeline | None = None) -> dict:
+    """``{"state": "running"|"done"|"failed"|"idle", "stage", "elapsed"}`` for the loaded project's slow analysis."""
+
+    with _LOCK:
+        target = pipeline or _LOADED_PIPELINE()
+        state = _ANALYSIS.get(id(target)) if target is not None else None
+        if state is None or state["pipeline"] is not target:
+            return {"state": "idle", "stage": "", "elapsed": 0}
+        end = state.get("finished") or time.time()
+        return {"state": state["state"], "stage": state["stage"], "elapsed": round(end - state["started"], 1)}
+
+
+def pending_payload(current: dict, scope_name: str | None = None) -> dict | None:
+    """What a page that needs the slow analysis answers while it is still running, else ``None``."""
+
+    with _LOCK:
+        state = _ANALYSIS.get(id(current["pipeline"]))
+    if state is not None:
+        state["event"].wait(0.5)  # small projects finish at once; only a slow analysis shows progress
+    status = analysis_status(current["pipeline"])
+    if status["state"] != "running":
+        return None
+    return {"pending": status, "source": source_info(), "scope": None,
+            "message": "Looking for repeated work in your models. This runs in the background; the query graph is already available."}
 
 
 def set_project(
@@ -59,6 +149,7 @@ def set_project(
         if observed_reads is not None:
             records = tuple(observed_reads)
             _JOBS.update(records=records, label="provided records" if records else "")
+    start_background_analysis(pipeline)
 
 
 def clear_project() -> None:
@@ -223,13 +314,28 @@ class _Checkout:
 def pipeline_from_files(files: object):
     """Load a ``Pipeline`` from ``{relative path: text}``."""
 
+    key = _content_key(files) if isinstance(files, dict) and all(isinstance(v, str) for v in files.values()) else None
+    with _LOCK:
+        cached = _PROJECT_CACHE.get(key) if key else None
+        if cached is not None:
+            _PROJECT_CACHE.move_to_end(key)
+    if cached is not None:
+        with stage("project cache hit", files=len(files)):
+            return cached
     with _Checkout() as directory:
-        _write_files(files, directory)
+        with stage("write files", files=len(files) if isinstance(files, dict) else 0):
+            _write_files(files, directory)
         try:
-            pipeline = load_sqlx_project(directory)
+            with stage("parse project"):
+                pipeline = load_sqlx_project(directory)
             pipeline.completeness()  # analyse now: the folder is deleted on exit
         except Exception as exc:  # loader errors are user-facing
             raise ProjectError(str(exc) or "project could not be loaded") from exc
+    if key:
+        with _LOCK:
+            _PROJECT_CACHE[key] = pipeline
+            while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:
+                _PROJECT_CACHE.popitem(last=False)
     return pipeline
 
 
@@ -280,14 +386,18 @@ def graph_payload(
 
     observed_reads = list(observed_reads)
     plan = _plan(scope_name, observed_reads)
-    report = pipeline.report(
-        observed_reads=observed_reads,
-        scope=plan.models if plan else None,
-        observed_scope=plan.jobs if plan else None,
-    )
+    with stage("graph report", models=len(pipeline.models)):
+        # The duplicate searches are the slowest part and the graph does not use them.
+        report = pipeline.report(
+            observed_reads=observed_reads,
+            scope=plan.models if plan else None,
+            observed_scope=plan.jobs if plan else None,
+            include_duplicates=False,
+        )
     graph = report.get("graph") or {"nodes": [], "edges": []}
     completeness = report["completeness"]
-    lineage = pipeline.lineage_report()
+    with stage("lineage"):
+        lineage = pipeline.lineage_report()
     if plan and plan.models is not None:
         keep = pipeline.scope_keys(plan.models)
         lineage = [row for row in lineage if row["node"] in keep]
@@ -373,7 +483,8 @@ def graph_or_empty(scope_name: str | None = None) -> dict:
     if current is None:
         return empty_payload(
             "project", "Load a Dataform project to see its query graph.", scope_name)
-    payload = graph_payload(current["pipeline"], current["label"], current["observed_reads"], scope_name)
+    with stage("graph payload"):
+        payload = graph_payload(current["pipeline"], current["label"], current["observed_reads"], scope_name)
     try:  # production schedules come from saved Dataform data only; never block or fail the graph
         from .workflow_configs import annotate
 
