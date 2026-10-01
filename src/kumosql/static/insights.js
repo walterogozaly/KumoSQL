@@ -1,23 +1,12 @@
 "use strict";
 
 /* Query graph, cost and change report views.
-   Each view reads one JSON endpoint (see docs/ui-roadmap.md). While the backend
-   for a view is on the roadmap the server returns sample data with
-   `preview: true`, and this page shows a banner saying so. */
+   Each view reads one JSON endpoint (see docs/ui-roadmap.md) built from what the
+   server has loaded: the project, its job history and, for change reports, a
+   comparison with another branch. When something is missing the endpoint answers
+   `empty: true` and this page says what to load. */
 
 const E = window.KumoEvidence;
-const REPO_ISSUES = "https://github.com/walterogozaly/KumoSQL/issues/";
-
-const ISSUE_TITLES = {
-  22: "Evidence coverage metric", 23: "Asset and table identity", 24: "Declared and observed edges",
-  25: "Find readers", 26: "Assess a change", 27: "Column lineage", 28: "Expose gaps",
-  29: "Coverage and accuracy measures", 30: "Attribute cost to the graph", 31: "Repeated computation",
-  32: "Rank opportunities", 33: "Recommendation format", 34: "Cost rewrite rule catalog",
-  35: "Validated savings", 36: "Semantic change reports", 37: "CI check", 38: "Further query sources",
-  39: "Failures stay local", 40: "Shared-logic extraction", 41: "Upstream filter changes",
-  42: "Per-consumer verification",
-};
-
 const VIEWS = {
   graph: {
     endpoint: "/api/graph", eyebrow: "Query graph", title: "What reads this, and what breaks if it changes?",
@@ -108,35 +97,37 @@ async function applySavedTheme() {
   }
 }
 
-function showPreview(data) {
-  $("preview-banner").hidden = !data.preview;
-  const list = $("preview-issues");
-  list.replaceChildren();
-  for (const number of data.issues || []) {
-    list.append(h("li", {}, h("a", { href: REPO_ISSUES + number, target: "_blank", rel: "noopener" }, `#${number}`), ` ${ISSUE_TITLES[number] || ""}`));
+/** Post JSON to the local server; reload the page on success so every view reflects the new data. */
+async function post(path, body, statusNode, busy) {
+  statusNode.textContent = busy;
+  try {
+    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "That did not work");
+    return result;
+  } catch (error) {
+    statusNode.textContent = error.message;
+    return null;
   }
 }
 
-/* The graph page shows the loaded project, or labeled sample data when none is loaded. */
+/* What is loaded, and the controls to load it. Every page shows them, because every page needs a project
+   and the cost and graph pages get richer with job history. */
 function setupProjectForm(data) {
-  const form = $("project-form");
-  form.hidden = false;
   const live = data.source?.kind === "project";
-  $("project-source").textContent = live ? `Showing ${data.source.label}` : "Showing sample data. Load a Dataform git repository (private ones work with your own git credentials) to see your own graph.";
+  $("project-source").textContent = live
+    ? `Showing ${data.source.label}`
+    : "No project loaded. Load a Dataform git repository (private ones work with your own git credentials).";
   $("project-clear").hidden = !live;
+  const jobs = data.source?.jobs;
+  $("jobs-bar").hidden = !live;
+  $("jobs-source").textContent = jobs ? `Job history: ${jobs.label} (${jobs.count.toLocaleString()} jobs)` : "No job history loaded. Export BigQuery job history as JSON, JSON lines or CSV.";
+  $("jobs-clear").hidden = !jobs;
+  const form = $("project-form");
   if (form.dataset.bound) return;
   form.dataset.bound = "1";
-  const run = async (path, body, busy) => {
-    const status = $("project-status");
-    status.textContent = busy;
-    try {
-      const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not load the project");
-      location.reload();
-    } catch (error) {
-      status.textContent = error.message;
-    }
+  const run = async (path, body, busy, statusNode = $("project-status")) => {
+    if (await post(path, body, statusNode, busy)) location.reload();
   };
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -147,6 +138,20 @@ function setupProjectForm(data) {
     }, "Loading project with git…");
   });
   $("project-clear").addEventListener("click", () => run("/api/project/clear", {}, "Clearing…"));
+  $("jobs-clear").addEventListener("click", () => run("/api/jobs/clear", {}, "Removing…", $("jobs-status")));
+  $("jobs-file").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    $("jobs-status").textContent = `Reading ${file.name}…`;
+    run("/api/jobs", { filename: file.name, text: await file.text() }, `Loading ${file.name}…`, $("jobs-status"));
+  });
+}
+
+/** What a view says when it has nothing to show: what to load, no numbers. */
+function emptyState(data) {
+  return h("section", { class: "card empty-state", "data-testid": "empty-state" },
+    h("h2", { text: data.needs === "project" ? "Nothing loaded yet" : "Nothing to show yet" }),
+    h("p", { text: data.message }));
 }
 
 /* ---------- Active scope ---------- */
@@ -183,23 +188,19 @@ async function start() {
   const name = location.pathname.replace(/^\/+|\/+$/g, "") || "graph";
   const view = VIEWS[name] || VIEWS.graph;
   document.title = `${view.eyebrow} · KumoSQL`;
-  $("brand-sub").textContent = view.eyebrow;
   $("page-eyebrow").textContent = view.eyebrow;
   $("page-title").textContent = view.title;
   $("page-lede").textContent = view.lede;
-  for (const link of document.querySelectorAll(".topnav a[data-view]")) {
-    if (VIEWS[link.dataset.view] === view) link.setAttribute("aria-current", "page");
-  }
   applySavedTheme();
   try {
     await setupScopePicker();
-    const response = await fetch(withScope(view.endpoint));
+    const response = await fetch(withScope(name === "cost" ? withRate(view.endpoint) : view.endpoint));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not load this view");
-    showPreview(data);
     showScope(data.scope);
-    if (name === "graph") setupProjectForm(data);
-    view.render(data, $("view"));
+    setupProjectForm(data);
+    if (data.empty) $("view").append(emptyState(data));
+    else view.render(data, $("view"));
   } catch (error) {
     $("load-error").hidden = false;
     $("load-error").textContent = error.message;
@@ -700,21 +701,65 @@ function gapsPanel(data) {
    Cost (#30-#35)
    ====================================================================== */
 
+/* Cost is in bytes billed unless the viewer gives a price per TiB. The price is remembered in this browser only. */
+function savedRate() {
+  try { return localStorage.getItem("kumosql.usdPerTib") || ""; } catch { return ""; }
+}
+
+function withRate(path) {
+  const rate = savedRate();
+  return rate ? `${path}${path.includes("?") ? "&" : "?"}rate=${encodeURIComponent(rate)}` : path;
+}
+
+function bytes(value) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+  let n = Number(value);
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
+}
+
+/** A cost value in the payload's unit: currency when a price was given, bytes billed otherwise. */
+function amount(value, data) {
+  if (value === null || value === undefined) return "–";
+  return data.unit === "currency" ? money(value, data.currency || "USD") : bytes(value);
+}
+
+function ratePanel(data) {
+  const input = h("input", { type: "number", min: "0", step: "any", class: "field", id: "rate-input", value: savedRate(), placeholder: "e.g. 6.25", "aria-label": "Price per TiB billed" });
+  const apply = () => {
+    try { localStorage.setItem("kumosql.usdPerTib", input.value.trim()); } catch { /* the price just is not remembered */ }
+    location.reload();
+  };
+  return h("form", { class: "project-form", onsubmit: (event) => { event.preventDefault(); apply(); } },
+    h("span", { class: "project-source", text: data.unit === "currency" ? `Showing money at ${savedRate()} per TiB billed.` : "Showing bytes billed. Enter your price per TiB to see money." }),
+    h("label", {}, "Price per TiB (USD) ", input),
+    h("button", { type: "submit", class: "toolbar-button", text: "Apply" }));
+}
+
 function renderCost(data, root) {
-  const c = data.currency;
-  const totals = data.totals;
-  root.append(h("div", { class: "tiles" },
-    tile("Measured cost", money(totals.measured, c), windowLabel(data.window), basisTag("measured")),
-    tile("Attributed to the graph", money(totals.attributed, c), `${percent(totals.attributed, totals.measured)} of measured cost`),
-    tile("Unattributed", money(totals.unattributed, c), "Jobs that match no asset", null, "warn"),
-    tile("Validated savings", money(data.validated.validated_savings, c), `From ${data.validated.accepted_changes} accepted change${data.validated.accepted_changes === 1 ? "" : "s"}`, basisTag("measured")),
-    tile("Open estimates", money(data.validated.pending_estimates, c), "Not counted until validated", basisTag("estimate"))));
+  root.append(ratePanel(data));
+  if (data.has_jobs) {
+    const totals = data.totals;
+    root.append(h("div", { class: "tiles" },
+      tile("Measured cost", amount(totals.measured, data), `${data.counts.jobs.toLocaleString()} jobs, ${windowLabel(data.window) || "no dates"}`, basisTag("measured")),
+      tile("Attributed to the graph", amount(totals.attributed, data), `${percent(totals.attributed, totals.measured)} of measured cost`),
+      tile("Unattributed", amount(totals.unattributed, data), "Jobs that match no asset", null, "warn"),
+      tile("Validated savings", amount(data.validated.validated_savings, data), `From ${data.validated.accepted_changes} accepted change${data.validated.accepted_changes === 1 ? "" : "s"}`, basisTag("measured")),
+      tile("Open estimates", amount(data.validated.pending_estimates, data), "Not counted until validated", basisTag("estimate"))));
+  } else {
+    root.append(h("section", { class: "card empty-state", "data-testid": "empty-state" },
+      h("h2", { text: data.needs_jobs ? "No job history loaded" : "No jobs in this scope" }),
+      h("p", { text: data.needs_jobs
+        ? "Load a BigQuery job-history export above to see measured cost per asset. Until then, only the work that repeats in your models is listed, with no cost."
+        : "The active scope keeps none of the loaded jobs. Pick another scope or choose All." })));
+  }
 
   const detail = h("div", { class: "reco" });
   const list = h("ol", { class: "opp-list" });
   const choose = (opportunity) => {
     for (const item of list.children) item.classList.toggle("is-selected", item.dataset.id === opportunity.id);
-    detail.replaceChildren(recommendation(opportunity, c));
+    detail.replaceChildren(recommendation(opportunity, data));
   };
   for (const opportunity of data.opportunities) {
     list.append(h("li", { "data-id": opportunity.id },
@@ -723,34 +768,38 @@ function renderCost(data, root) {
         h("span", { class: "opp-body" },
           h("strong", { text: opportunity.title }),
           h("span", { class: "opp-meta" },
-            h("span", { class: "mono", text: money(opportunity.savings.value, c) }), basisTag(opportunity.savings.basis),
-            h("span", { class: "muted small", text: `${opportunity.frequency} · reaches ${opportunity.downstream_reach}` }),
-            opportunity.status === "validated" ? tag("Validated", "ok") : null)))));
+            opportunity.measured_cost === null ? h("span", { class: "muted small", text: "No cost data" })
+              : h("span", { class: "mono", text: amount(opportunity.measured_cost, data) }),
+            opportunity.measured_cost === null ? null : basisTag("measured"),
+            h("span", { class: "muted small", text: `${opportunity.occurrences} places · reaches ${opportunity.downstream_reach}` }))))));
   }
   root.append(h("div", { class: "cost-layout" },
-    panel("Opportunities", { note: "Ranked by measured cost, frequency and downstream reach" }, list),
-    panel("Recommendation", {}, detail)));
-  choose(data.opportunities[0]);
+    panel("Where the work repeats", { note: data.has_jobs ? "Ranked by measured cost of the models involved" : "Found by comparing model SQL" },
+      data.opportunities.length ? list : h("p", { class: "muted", text: "No repeated work found in the loaded models." })),
+    panel("Details", {}, data.opportunities.length ? detail : h("p", { class: "muted", text: "Nothing to show." }))));
+  if (data.opportunities.length) choose(data.opportunities[0]);
 
-  const max = Math.max(...data.nodes.map((node) => node.measured), totals.unattributed);
-  const bar = (label, value, extra, tone = "") => h("li", { class: "bar-row" },
-    h("span", { class: "bar-label mono", text: label }),
-    h("span", { class: "bar-track" }, h("span", { class: `bar-fill ${tone}`, style: { width: `${(value / max) * 100}%` } })),
-    h("span", { class: "bar-value mono", text: money(value, c) }),
-    h("span", { class: "muted small", text: extra }));
-  root.append(h("div", { class: "cost-layout" },
-    panel("Cost by asset", { note: `Measured, ${windowLabel(data.window)}` },
+  if (data.has_jobs) {
+    const max = Math.max(1, ...data.nodes.map((node) => node.measured), data.totals.unattributed);
+    const bar = (label, value, extra, tone = "") => h("li", { class: "bar-row" },
+      h("span", { class: "bar-label mono", text: label }),
+      h("span", { class: "bar-track" }, h("span", { class: `bar-fill ${tone}`, style: { width: `${(value / max) * 100}%` } })),
+      h("span", { class: "bar-value mono", text: amount(value, data) }),
+      h("span", { class: "muted small", text: extra }));
+    root.append(panel("Cost by asset", { note: `Measured, ${windowLabel(data.window)}` },
       h("ul", { class: "bars" },
         data.nodes.map((node) => bar(node.node, node.measured, `${node.runs} runs`)),
-        bar("Unattributed", totals.unattributed, "no matching asset", "is-warn"))),
-    panel("Cost rule catalog", { note: "Each rule ships alone" },
-      h("div", { class: "table-wrap" }, h("table", { class: "data-table" },
-        h("thead", {}, h("tr", {}, h("th", { text: "Rule" }), h("th", { text: "Safe when" }), h("th", { text: "Requires" }), h("th", { text: "Outcome" }))),
-        h("tbody", {}, data.rules.map((rule) => h("tr", {},
-          h("td", {}, h("strong", { text: rule.name }), h("br"), tag(rule.state === "shipped" ? "Shipped" : "Planned", rule.state === "shipped" ? "ok" : "idle")),
-          h("td", { text: rule.safe_when }),
-          h("td", {}, E.pill(rule.requires)),
-          h("td", { class: "muted", text: rule.outcome })))))))));
+        data.unattributed.map((item) => bar("Unattributed", item.measured, item.description, "is-warn")))));
+  }
+
+  root.append(panel("Cost rule catalog", { note: "Each rule ships alone" },
+    h("div", { class: "table-wrap" }, h("table", { class: "data-table" },
+      h("thead", {}, h("tr", {}, h("th", { text: "Rule" }), h("th", { text: "Safe when" }), h("th", { text: "Requires" }), h("th", { text: "Outcome" }))),
+      h("tbody", {}, data.rules.map((rule) => h("tr", {},
+        h("td", {}, h("strong", { text: rule.name }), h("br"), tag(rule.state === "shipped" ? "Shipped" : "Planned", rule.state === "shipped" ? "ok" : "idle")),
+        h("td", { text: rule.safe_when }),
+        h("td", {}, E.pill(rule.requires)),
+        h("td", { class: "muted", text: rule.outcome }))))))));
 }
 
 function tile(label, value, note, badge, tone) {
@@ -760,36 +809,60 @@ function tile(label, value, note, badge, tone) {
     h("span", { class: "tile-note" }, badge, note ? h("span", { text: note }) : null));
 }
 
-/** The first recommendation format (#33): where, who, what, and how verified. */
-function recommendation(opportunity, currency) {
+/** What is known about one repeated piece of work. No saving is claimed: that needs a proposed change. */
+function recommendation(opportunity, data) {
   const section = (number, title, ...body) => h("div", { class: "reco-step" },
     h("span", { class: "reco-num", text: number }), h("div", {}, h("h3", { text: title }), ...body));
   return h("div", {},
     h("div", { class: "reco-head" },
       h("h3", { class: "reco-title", text: opportunity.title }),
       h("p", { class: "reco-savings" },
-        "Saves ", h("strong", { class: "mono", text: opportunity.savings.range
-          ? `${money(opportunity.savings.range[0], currency)} to ${money(opportunity.savings.range[1], currency)}`
-          : money(opportunity.savings.value, currency) }),
-        " a month ", basisTag(opportunity.savings.basis),
-        h("span", { class: "muted small", text: ` of ${money(opportunity.measured_cost, currency)} measured` }))),
+        opportunity.measured_cost === null ? "No cost data for the models involved."
+          : ["The models involved cost ", h("strong", { class: "mono", text: amount(opportunity.measured_cost, data) }), " measured, ", opportunity.frequency, ". "],
+        h("span", { class: "muted small", text: "No saving is estimated until a change is proposed and verified." }))),
     section("1", "Where the work repeats",
       h("ul", { class: "plain-list" }, opportunity.repeats.map((item) => h("li", {}, h("span", { class: "mono", text: item.node }), h("span", { class: "muted small", text: ` ${item.where}` }))))),
-    section("2", "Who relies on it",
-      h("p", { class: "chips" }, opportunity.consumers.map((id) => h("a", { class: "chip mono", href: `/graph?node=${encodeURIComponent(id)}&mode=readers`, text: id })))),
-    section("3", "Proposed change", h("p", { text: opportunity.proposed_change }),
-      h("p", { class: "muted small" }, "Rule: ", h("span", { class: "mono", text: opportunity.rule }))),
-    section("4", "How it would be verified",
-      h("p", {}, "Needs ", E.pill(opportunity.verification.required), " for every changed consumer."),
-      h("ul", { class: "plain-list" }, opportunity.verification.plan.map((step) => h("li", { text: step })))));
+    section("2", "How sure we are",
+      h("p", { class: "muted", text: { identical_text: "The text is identical.", similar: "The logic is similar, not identical.", same_source: "The same source table is scanned." }[opportunity.certainty] || opportunity.certainty })),
+    section("3", "Next step", h("p", {}, "Open ", h("a", { href: "/changes" }, "Change reports"), " to compare a branch that removes the repetition. Each affected model gets a verification result.")));
 }
 
 /* ======================================================================
    Change reports, CI, sources and proposals (#22, #36-#42)
    ====================================================================== */
 
+function compareForm(data) {
+  const status = h("span", { class: "project-status", role: "status" });
+  const base = h("input", { type: "text", class: "field", placeholder: "base branch, for example main", "aria-label": "Base branch", autocomplete: "off", size: "20", required: true });
+  const refresh = h("input", { type: "checkbox" });
+  const form = h("form", { class: "project-form", onsubmit: async (event) => {
+    event.preventDefault();
+    const result = await post("/api/changes/compare", { base: base.value.trim(), refresh: refresh.checked, scope: window.KumoScopes?.params().scope || "" }, status, "Comparing branches with git…");
+    if (result) location.reload();
+  } },
+    h("span", { class: "project-source", text: data.can_compare
+      ? `Compare ${data.remote_branch || "the loaded branch"} against another branch of the same repository.`
+      : "Change reports compare two branches of a git repository. Load the project from git on this page to use them." }),
+    base, h("label", { class: "project-refresh" }, refresh, " Fetch latest"),
+    h("button", { type: "submit", class: "toolbar-button", disabled: !data.can_compare, text: "Compare" }), status);
+  return form;
+}
+
 function renderChanges(data, root) {
+  root.append(compareForm(data));
   const report = data.report;
+  if (!report) {
+    root.append(h("section", { class: "card empty-state", "data-testid": "empty-state" },
+      h("h2", { text: "No comparison yet" }),
+      h("p", { text: "Enter a base branch above to see what changed against the loaded project: behavior, cost and affected consumers for every model." })));
+  } else {
+    renderReport(data, report, root);
+  }
+  if (data.proposals.length) root.append(h("div", { class: "cost-layout" }, proposalsPanel(data.proposals), sourcesPanel(data.sources)));
+  else root.append(sourcesPanel(data.sources));
+}
+
+function renderReport(data, report, root) {
   const changed = report.changes.filter((change) => change.kind !== "unchanged");
   const counts = {};
   for (const change of report.changes) {
@@ -831,9 +904,11 @@ function renderChanges(data, root) {
   root.append(panel("Change report", { note: `${changed.length} changed model${changed.length === 1 ? "" : "s"}` },
     head,
     diagnostics,
-    h("div", { class: "table-wrap" }, h("table", { class: "data-table change-table" },
-      h("thead", {}, h("tr", {}, h("th", { text: "Model" }), h("th", { text: "Behavior" }), h("th", { text: "Cost per month" }), h("th", { text: "Affected consumers" }))),
-      h("tbody", {}, rows))),
+    report.changes.length
+      ? h("div", { class: "table-wrap" }, h("table", { class: "data-table change-table" },
+        h("thead", {}, h("tr", {}, h("th", { text: "Model" }), h("th", { text: "Behavior" }), h("th", { text: "Cost per month" }), h("th", { text: "Affected consumers" }))),
+        h("tbody", {}, rows)))
+      : h("p", { class: "muted", text: "No model differs between these branches." }),
     h("details", { class: "ev-legend-wrap in-card" }, h("summary", { text: "What the labels mean" }), E.legend())));
 
   const compared = report.changes.filter((change) => change.overlaps);
@@ -845,7 +920,6 @@ function renderChanges(data, root) {
   }
 
   root.append(h("div", { class: "cost-layout" }, coveragePanel(data.evidence_coverage), ciPanel(data.ci, report)));
-  root.append(h("div", { class: "cost-layout" }, proposalsPanel(data.proposals), sourcesPanel(data.sources)));
 }
 
 /** Share of changed outputs with useful evidence (#22); proof and planner stay separate. */
@@ -853,18 +927,18 @@ function coveragePanel(coverage) {
   const useful = coverage.useful_evidence ?? coverage.proven;
   const agreed = coverage.synthetic_agreed ?? 0;
   const keys = ["proven", "planner_checked", "unproven", "failed"];
-  return panel("Evidence coverage", { note: `${coverage.changed} changed outputs, anonymized aggregate` },
+  return panel("Evidence coverage", { note: `${coverage.changed} changed model${coverage.changed === 1 ? "" : "s"}` },
     h("div", { class: "stacked", role: "img", "aria-label": keys.map((key) => `${E.LABELS[key].title} ${percent(coverage[key], coverage.changed)}`).join(", ") },
       keys.map((key) => h("span", { class: `stacked-seg ev-${E.LABELS[key].tone}`, style: { flex: String(coverage[key]) }, title: `${E.LABELS[key].title}: ${coverage[key]}` }))),
     h("dl", { class: "coverage-stats is-grid" },
       keys.map((key) => h("div", {}, h("dt", {}, E.pill(key)), h("dd", { text: percent(coverage[key], coverage.changed) })))),
-    h("p", { class: "coverage-headline", "data-testid": "useful-evidence", text: `Useful evidence: ${percent(useful, coverage.changed)} of changed outputs (${useful} of ${coverage.changed}), including ${agreed} that agree on synthetic data.` }),
+    h("p", { class: "coverage-headline", "data-testid": "useful-evidence", text: `Useful evidence: ${percent(useful, coverage.changed)} of changed models (${useful} of ${coverage.changed}), including ${agreed} that agree on synthetic data.` }),
     h("p", { class: "muted small", text: "Proof, synthetic agreement and planner checks are counted separately. Agreement is evidence, not proof, and a planner check is never counted as either." }));
 }
 
-/** Preview of the check posted on a review request (#37). */
+/** The check CI would post on a review request for this comparison (#37). */
 function ciPanel(ci, report) {
-  return panel("Code review check", { note: "Posted by CI on each review request" },
+  return panel("Code review check", { note: "What CI would post on a review request" },
     h("div", { class: "ci-card" },
       h("div", { class: "ci-row" }, h("span", { class: `ci-dot ci-${ci.conclusion}` }), h("strong", { text: ci.check_name }), tag(ci.conclusion === "neutral" ? "Needs review" : ci.conclusion, ci.conclusion === "success" ? "ok" : "warn")),
       h("p", { class: "muted small", text: ci.summary }),
@@ -892,10 +966,10 @@ function proposalsPanel(proposals) {
 
 /** Query sources feeding the graph (#38). */
 function sourcesPanel(sources) {
-  return panel("Query sources", { note: "Enabled once identities reconcile" },
+  return panel("Query sources", { note: "What the graph is built from" },
     h("ul", { class: "plain-list sources" }, sources.map((source) => h("li", { class: "source-row" },
-      h("div", {}, h("strong", { text: source.name }), h("br"), h("span", { class: "muted small", text: source.kind })),
-      source.matched !== null ? h("span", { class: "mono small", text: `${Math.round(source.matched * 100)}% matched` }) : null,
+      h("div", {}, h("strong", { text: source.name }), h("br"), h("span", { class: "muted small", text: source.detail || source.kind })),
+      source.matched !== null && source.matched !== undefined ? h("span", { class: "mono small", text: `${Math.round(source.matched * 100)}% matched` }) : null,
       tag(source.state === "connected" ? "Connected" : source.state === "planned" ? "Planned" : source.state === "not_enabled" ? "Not enabled" : "Error",
         source.state === "connected" ? "ok" : source.state === "planned" || source.state === "not_enabled" ? "idle" : "bad")))));
 }

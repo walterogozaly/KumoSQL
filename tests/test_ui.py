@@ -49,6 +49,8 @@ def test_ui_serves_assets_and_registered_rules(ui_server):
         ("/", b"Original SQL"),
         ("/assets/style.css", b".workspace"),
         ("/assets/app.js", b"/api/transform"),
+        ("/assets/shell.js", b"kumosql-sidebar"),
+        ("/assets/shell.css", b".rail"),
         ("/favicon.svg", b"<svg"),
         ("/assets/settings.js", b"/api/settings/format"),
     ):
@@ -311,38 +313,19 @@ def test_ui_serves_roadmap_views(ui_server):
 
 
 @pytest.mark.parametrize("path", ["/api/graph", "/api/cost", "/api/changes?refresh=1"])
-def test_ui_roadmap_endpoints_flag_preview_data(ui_server, path):
+def test_ui_insight_endpoints_serve_an_empty_state_without_a_project(ui_server, path):
     payload = get_json(ui_server, path)
-    assert payload["preview"] is True
-    assert payload["issues"]
+    assert payload["empty"] is True and payload["needs"] == "project"
+    assert payload["message"] and payload["source"]["kind"] == "none"
+    assert "preview" not in payload
 
 
-def test_preview_graph_is_consistent():
-    from kumosql import preview_data
-
-    graph = preview_data.graph()
-    nodes = {node["id"]: node for node in graph["nodes"]}
-    for edge in graph["edges"]:
-        assert edge["from"] in nodes and edge["to"] in nodes
-        assert edge["source"] in ("declared", "observed", "both", "parsed")
-        assert edge["confidence"] in ("high", "medium", "low")
-    for item in graph["column_lineage"]:
-        assert item["column"] in nodes[item["node"]]["columns"]
-        for source in item["sources"]:
-            assert source["column"] in nodes[source["node"]]["columns"]
-
-
-def test_preview_changes_use_evidence_labels_and_gate_proposals():
-    from kumosql import preview_data
-
-    payload = preview_data.changes()
-    labels = set(preview_data.EVIDENCE_LABELS)
-    for change in payload["report"]["changes"]:
-        assert change["verification"]["label"] in labels
-    for proposal in payload["proposals"]:
-        consumers = {item["label"] for item in proposal["consumers"]}
-        assert proposal["ready"] == (consumers <= {"proven", "unchanged"})
-    assert [proposal["ready"] for proposal in payload["proposals"]] == [False, True]
+def test_ui_pages_carry_no_sample_data_banner(ui_server):
+    for path in ("/graph", "/cost", "/changes", "/assets/insights.js"):
+        with urlopen(ui_server + path) as response:
+            page = response.read().decode()
+        assert "Preview with sample data" not in page and "Roadmap items" not in page
+        assert "sample data" not in page.lower()
 
 
 def test_ui_lists_scope_fields_including_saved_scopes(ui_server):

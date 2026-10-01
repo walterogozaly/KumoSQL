@@ -34,11 +34,6 @@ const DIFF_CELL_LIMIT = 4_000_000;
 const FOLD_CONTEXT = 3;
 const STORAGE_KEY = "kumosql-ui";
 const THEMES = ["system", "light", "dark"];
-const THEME_META = {
-  system: { icon: "#i-monitor", label: "Theme: match system" },
-  light: { icon: "#i-sun", label: "Theme: light" },
-  dark: { icon: "#i-moon", label: "Theme: dark" },
-};
 
 const EXAMPLES = [
   {
@@ -974,16 +969,7 @@ function applyTheme(theme) {
   state.theme = THEMES.includes(theme) ? theme : "system";
   if (state.theme === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = state.theme;
-  const meta = THEME_META[state.theme];
-  $("theme-icon").setAttribute("href", meta.icon);
-  $("theme-button").setAttribute("aria-label", meta.label);
-  $("theme-button").title = meta.label;
 }
-
-$("theme-button").addEventListener("click", () => {
-  applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]);
-  savePrefs();
-});
 
 /* ---------- Files, copy, download ---------- */
 

@@ -95,6 +95,15 @@ def test_missing_runtime_falls_back_to_z3(tmp_path, monkeypatch):
     assert result.status is SmtStatus.PROVEN_EQUIVALENT
 
 
+def test_auto_uses_algebraic_proof_before_sqlsolver(tmp_path, monkeypatch):
+    pytest.importorskip("z3")
+    monkeypatch.setenv("KUMOSQL_SQLSOLVER_HOME", str(tmp_path))
+    left = "SELECT COUNT(*) AS n FROM (SELECT a FROM A UNION ALL SELECT a FROM B) AS u"
+    right = "SELECT SUM(n) AS n FROM (SELECT COUNT(*) AS n FROM A UNION ALL SELECT COUNT(*) AS n FROM B) AS v"
+    assert backend.prove_equivalent(left, right, schema={"A": ["a"], "B": ["a"]}).proven
+    assert not backend.prove_equivalent(left, right, backend="z3").proven
+
+
 def test_sqlsolver_backend_alone_reports_unavailable(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_SQLSOLVER_HOME", str(tmp_path))
     result = backend.prove_equivalent(LEFT, RIGHT, schema=SCHEMA, backend="sqlsolver")

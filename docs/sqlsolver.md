@@ -1,14 +1,23 @@
-# SQLSolver backend
+# Algebraic prover (SQLSolver's arithmetic) for BigQuery and Dataform SQL
 
-KumoSQL can use [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) as a second equivalence prover next to the Z3 prover in `smt_equivalence.py`. SQLSolver (SIGMOD 2024) proves bag-equivalence with linear integer arithmetic and handles shapes the Z3 prover rejects.
+KumoSQL ports the core of [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (SIGMOD 2024, Apache-2.0) to Python on top of `z3-solver`. What is taken is its *system of arithmetic*: a query is a function from tuples to multiplicities (natural numbers), so under bag semantics `UNION ALL` is addition, a join is multiplication, a filter or projection is linear, and equivalence becomes an arithmetic identity that an SMT solver can decide. Everything runs in pure Python from a user-level `pip install`, so it works on locked-down work computers: no Java, no native Z3 build, no admin rights.
 
-## Design rules
+## Plan
 
-- **Additive.** SQLSolver can only turn `not_proven` into `proven_equivalent`. Missing runtime, untranslatable SQL, `NEQ`, `UNKNOWN`, `TIMEOUT` and any failure fall back to `prove_equivalent_smt`. SQLSolver's `NEQ` has no counterexample, so it is never reported as `not_equivalent`; the Z3 fallback supplies counterexamples.
-- **No admin rights.** Nothing is installed system-wide and no PATH or registry edits are needed. The runtime lives in one user folder: `KUMOSQL_SQLSOLVER_HOME`, default `%LOCALAPPDATA%\kumosql\sqlsolver` on Windows and `~/.local/share/kumosql/sqlsolver` elsewhere.
-- **License.** SQLSolver is Apache-2.0, which permits redistribution with its LICENSE and NOTICE. This repo does not vendor it yet; it is built or downloaded into the user folder.
+1. **Algebraic normal form (done, `algebraic_equivalence.py`).** Joins, filters and projections distribute over `UNION ALL`; `COUNT`, `SUM`, `MIN` and `MAX` over a union become partial aggregates combined arithmetically (with or without `GROUP BY`); redundant regrouping is dropped; union shapes are canonical. Every rewrite is checked against SQLite on random databases (NULLs and empty tables included).
+2. **Multiplicity algebra (next).** Replace text-matching of derived tables with a real intermediate representation: queries as sums of products of table multiplicities, `DISTINCT` as squash (`‖x‖`), selection as an indicator, and unification of bound tuple variables. Equivalence of two normal forms is discharged by Z3 over integers. This subsumes the bijection search in `smt_equivalence.py` for bag queries and handles nested derived tables and CTEs uniformly.
+3. **LIA\* reduction.** SQLSolver's key step for aggregates over joins and nested subqueries: group cardinalities and per-group sums are encoded as sets of integer vectors with a star operator, then reduced to plain linear integer arithmetic (a Parikh-style closed form) that Z3 decides. Done in Python with `z3-solver`; the reduction is validated against SQLSolver's published benchmarks (Calcite, TPC-H) and the existing SQLite fuzz harness.
+4. **BigQuery and Dataform front end.** Schemas come from Dataform declarations and BigQuery table metadata (types, `NOT NULL`, partition and unique keys when known, which strengthen proofs). Dialect handling for `SAFE_*`, `IFNULL`, date functions and `UNNEST` stays conservative: unsupported shapes return `not_proven`, never a wrong proof.
+5. **Pipeline and UI.** Rewrite verification and the equivalent-work reports use the algebraic prover; a Settings toggle and a status line show which stage produced each proof.
+6. **Optional Java SQLSolver (kept as a cross-check, done as an adapter).** `sqlsolver_backend.py` can run the real jar from a user folder when present, as a second opinion after the Python prover. It is never required. A setup helper and Windows validation of this path are last and lowest priority.
 
-## Runtime layout
+## Windows without admin rights
+
+Steps 1–5 need only `pip install --user` (or a venv) for `sqlglot` and `z3-solver`; the z3 wheel bundles its own native library. Only step 6 needs Java, a Z3 Java binding and Windows Z3 DLLs, all fetched into one user folder (`KUMOSQL_SQLSOLVER_HOME`, default `%LOCALAPPDATA%\kumosql\sqlsolver`). SQLSolver's license (Apache-2.0) permits redistribution with its LICENSE and NOTICE; nothing is vendored today.
+
+## Optional Java backend
+
+`prove_equivalent(left, right, schema=...)` in `sqlsolver_backend.py` runs the algebraic prover first and asks the real SQLSolver only when no proof is found. Layout of the user folder:
 
 ```
 <home>/sqlsolver.jar     built with `gradle fatjar` from SQLSolver (Java 17)
@@ -16,18 +25,4 @@ KumoSQL can use [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) as a second
 <home>/jre/bin/java      optional portable JRE 17+, used when no Java is on PATH
 ```
 
-Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`. `prove-sql-sqlsolver --check` says what is missing. SQLSolver's repository ships only Linux Z3 libraries, so Windows needs the Windows build of Z3 4.13.0 (`libz3.dll`, `libz3java.dll`) from the Z3 release page, unzipped into `<home>/lib`.
-
-## Translation
-
-BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite-compatible SQL. Table names such as `proj.ds.orders` become `proj__ds__orders`, identifiers are lowercased and unquoted, and the schema is written as `CREATE TABLE` statements (BigQuery types mapped to SQL types; untyped columns are `INT`). Queries are refused, and fall back to Z3, when they use `UNNEST`, `QUALIFY`, window functions, arrays or structs, `PIVOT`, `TABLESAMPLE`, `SELECT * EXCEPT/REPLACE`, nondeterministic functions, or a table missing from the schema.
-
-SQLSolver answers `EQ` when both queries fail its semantic checks. To stop a mistyped schema from producing a false proof, each query is also compared with an always-empty wrapper of itself in the same JVM run; if either control says `EQ`, the proof is discarded.
-
-## Rollout
-
-1. **Adapter and fallback** (this change): translation, runtime discovery, `prove_equivalent`, `prove-sql-sqlsolver`, tests against a stub Java.
-2. **Real-engine validation:** build the jar, run the corpus used by `test_smt_fuzz.py` and `test_safety_corpus.py` through it, and record where it disagrees with Z3. Do this on Linux and on a Windows laptop with no admin rights.
-3. **Setup command:** `kumosql-sqlsolver-setup` downloads a portable JRE and the Z3 natives into the user folder and fetches or builds the jar, with checksums.
-4. **Pipeline integration:** Dataform declarations and BigQuery table metadata supply schemas automatically; `prove_equivalent` is used by rewrite verification and the equivalent-work reports.
-5. **UI:** a Settings toggle and a status line showing which backend produced each proof.
+Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `prove-sql-sqlsolver --check` says what is missing. BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite SQL (table names flattened to one identifier, schema as `CREATE TABLE`). Queries using `UNNEST`, `QUALIFY`, windows, arrays, structs, `PIVOT`, `TABLESAMPLE`, nondeterministic functions or tables missing from the schema are refused. SQLSolver answers `EQ` when both queries fail its semantic checks, so each query is also compared with an always-empty wrapper of itself; a control that comes back `EQ` voids the proof. SQLSolver's `NEQ` carries no counterexample, so it is reported as `not_proven`; counterexamples come from the Z3 stage.

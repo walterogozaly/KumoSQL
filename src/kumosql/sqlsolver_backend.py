@@ -1,11 +1,12 @@
-"""Optional SQLSolver backend for query-equivalence proofs.
+"""Equivalence proofs with the algebraic prover plus an optional SQLSolver backend.
 
 SQLSolver (https://github.com/SJTU-IPADS/SQLSolver, Apache-2.0) is a Java prover
 that decides bag-equivalence of SQL queries with linear integer arithmetic. It is
 stronger than the Z3 prover in ``smt_equivalence`` on some shapes (aggregates over
 joins, nested subqueries) and weaker on others, so this module only ever *adds*
-proofs: anything SQLSolver cannot run, translate or decide falls back to
-``prove_equivalent_smt``.
+proofs. ``prove_equivalent`` tries the pure-Python algebraic prover first
+(``algebraic_equivalence``, which also gives counterexamples) and asks
+SQLSolver only when that finds no proof.
 
 Nothing here needs administrator rights. The runtime is looked up in user space:
 
@@ -37,6 +38,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .algebraic_equivalence import prove_equivalent_algebraic
 from .smt_equivalence import (
     SmtEquivalenceResult,
     SmtStatus,
@@ -345,39 +347,41 @@ def prove_equivalent(
     sqlsolver_timeout_s: float = 60.0,
     exact_arithmetic: bool = False,
 ) -> SmtEquivalenceResult:
-    """Prove equivalence with SQLSolver when available, else with Z3.
+    """Prove equivalence with the algebraic prover, then SQLSolver when installed.
 
-    ``backend`` is ``"auto"`` (SQLSolver first, Z3 when SQLSolver cannot prove),
-    ``"sqlsolver"`` or ``"z3"``. A Z3 counterexample is kept even when SQLSolver
-    could not decide, because it is the only backend that produces one.
+    ``backend`` is ``"auto"`` (algebraic normalization plus Z3 first, SQLSolver
+    only when that finds no proof), ``"algebraic"``, ``"sqlsolver"`` or ``"z3"``
+    (plain, no normalization). The algebraic stage is pure Python on top of
+    ``z3-solver`` and also supplies counterexamples, which SQLSolver cannot.
     """
 
-    if backend not in {"auto", "sqlsolver", "z3"}:
+    if backend not in {"auto", "algebraic", "sqlsolver", "z3"}:
         raise ValueError(f"unknown backend {backend!r}")
-    first: SmtEquivalenceResult | None = None
-    if backend != "z3":
-        if schema is None:
-            first = SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "SQLSolver needs a schema")
-        else:
-            first = prove_equivalent_sqlsolver(left_sql, right_sql, schema=schema, timeout_s=sqlsolver_timeout_s)
-        if first.proven or backend == "sqlsolver":
-            return first
     plain_schema = (
         {table: [c if isinstance(c, str) else c[0] for c in cols] for table, cols in schema.items()}
         if schema
         else None
     )
-    second = prove_equivalent_smt(
-        left_sql, right_sql, schema=plain_schema, exact_arithmetic=exact_arithmetic, timeout_ms=timeout_ms
-    )
-    if first is not None and not second.proven:
-        return SmtEquivalenceResult(
-            second.status,
-            f"{first.reason}; Z3: {second.reason}",
-            counterexample=second.counterexample,
-            assumptions=second.assumptions,
+    first: SmtEquivalenceResult | None = None
+    if backend in {"auto", "algebraic", "z3"}:
+        prover = prove_equivalent_smt if backend == "z3" else prove_equivalent_algebraic
+        first = prover(
+            left_sql, right_sql, schema=plain_schema, exact_arithmetic=exact_arithmetic, timeout_ms=timeout_ms
         )
-    return second
+        if first.proven or backend != "auto":
+            return first
+    if schema is None:
+        second = SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "SQLSolver needs a schema")
+    else:
+        second = prove_equivalent_sqlsolver(left_sql, right_sql, schema=schema, timeout_s=sqlsolver_timeout_s)
+    if first is None or second.proven:
+        return second
+    return SmtEquivalenceResult(
+        first.status,
+        f"{first.reason}; SQLSolver: {second.reason}",
+        counterexample=first.counterexample,
+        assumptions=first.assumptions,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -385,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("left", nargs="?", help="path to the left SQL file")
     parser.add_argument("right", nargs="?", help="path to the right SQL file")
     parser.add_argument("--schema", help="JSON file mapping table names to column lists or [name, type] pairs")
-    parser.add_argument("--backend", choices=["auto", "sqlsolver", "z3"], default="auto")
+    parser.add_argument("--backend", choices=["auto", "algebraic", "sqlsolver", "z3"], default="auto")
     parser.add_argument("--check", action="store_true", help="report whether Java and SQLSolver are usable, then exit")
     args = parser.parse_args(argv)
     if args.check:

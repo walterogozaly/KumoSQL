@@ -1,7 +1,7 @@
 "use strict";
 
 /* Settings panel. A modal with a section sidebar that opens over whichever page
-   you are on (Settings button in the top bar, or Ctrl/⌘ + ,). Changes save as
+   you are on (Settings in the sidebar, or Ctrl/⌘ + ,). Changes save as
    you make them. The workspace registers a provider so its own saved state
    (rule order, auto-run) is kept and it hears about theme and format changes. */
 
@@ -508,6 +508,13 @@
 
   window.KumoSettings = {
     open,
+    // The sidebar's theme button: apply, then save like the Appearance section does.
+    async setTheme(theme) {
+      applyTheme(theme);
+      await load();
+      ui.theme = theme;
+      saveUi();
+    },
     // The workspace passes getUi (its current saved state) and onChange.
     register({ getUi, onChange }) {
       provider = { getUi };

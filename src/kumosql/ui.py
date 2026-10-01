@@ -11,7 +11,7 @@ import webbrowser
 from urllib.parse import parse_qs, urlsplit
 
 from . import live_graph
-from . import preview_data
+from . import live_insights
 from . import scopes as scope_store
 from . import state
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
@@ -21,24 +21,23 @@ from .rewrite import apply_rules, available_rules
 MAX_REQUEST_BYTES = 5 * 1024 * 1024
 MAX_GITHUB_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
-# Roadmap views. Each returns a JSON payload; preview_data stands in until the
-# issues listed in docs/ui-roadmap.md replace these with real implementations.
-# /api/graph serves the loaded project and falls back to labeled sample data.
-def _sample_with_scope(make):
-    """A sample-data view that carries a note when a scope was chosen, since samples are never filtered."""
-
-    def build(scope: str | None = None) -> dict:
-        payload = make()
-        payload["scope"] = live_graph.sample_scope_note(scope)
-        return payload
-
-    return build
+MAX_JOBS_REQUEST_BYTES = 64 * 1024 * 1024
+# Insight views. Each returns a JSON payload built from what the server has
+# loaded (project, job history, change comparison); with nothing loaded the
+# payload is an empty state that says what to load (see docs/ui-roadmap.md).
+def _cost(scope: str | None = None, query: dict | None = None) -> dict:
+    rate = (query or {}).get("rate", [""])[0]
+    try:
+        value = float(rate) if rate else None
+    except ValueError:
+        raise ValueError("price per TiB must be a number") from None
+    return live_insights.cost_payload(scope, value)
 
 
 INSIGHTS = {
-    "/api/graph": lambda scope=None: live_graph.graph_or_preview(preview_data.graph, scope),
-    "/api/cost": _sample_with_scope(preview_data.cost),
-    "/api/changes": _sample_with_scope(preview_data.changes),
+    "/api/graph": lambda scope=None, query=None: live_graph.graph_or_empty(scope),
+    "/api/cost": _cost,
+    "/api/changes": lambda scope=None, query=None: live_insights.changes_payload(scope),
 }
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -47,6 +46,8 @@ ASSETS = {
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
+    "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/assets/evidence.js": ("evidence.js", "text/javascript; charset=utf-8"),
@@ -185,9 +186,10 @@ class UIHandler(BaseHTTPRequestHandler):
             self._overlaps()
             return
         if route in INSIGHTS:
-            scope = parse_qs(urlsplit(self.path).query).get("scope", [""])[0] or None
+            query = parse_qs(urlsplit(self.path).query)
+            scope = query.get("scope", [""])[0] or None
             try:
-                self._json(200, INSIGHTS[route](scope))
+                self._json(200, INSIGHTS[route](scope, query))
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
             return
@@ -229,7 +231,7 @@ class UIHandler(BaseHTTPRequestHandler):
         query = parse_qs(urlsplit(self.path).query)
         try:
             payload = live_graph.impact_payload(
-                preview_data.impact, _required(query, "node"), _required(query, "column"),
+                _required(query, "node"), _required(query, "column"),
                 query.get("change", ["drop"])[0], query.get("scope", [""])[0] or None,
             )
         except ValueError as exc:
@@ -241,7 +243,7 @@ class UIHandler(BaseHTTPRequestHandler):
         query = parse_qs(urlsplit(self.path).query)
         try:
             payload = live_graph.overlaps_payload(
-                preview_data.overlaps, _required(query, "node"), query.get("scope", [""])[0] or None
+                _required(query, "node"), query.get("scope", [""])[0] or None
             )
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
@@ -325,11 +327,13 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path not in (
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
             "/api/project/git", "/api/project", "/api/project/clear",
+            "/api/jobs", "/api/jobs/clear", "/api/changes/compare",
         ):
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(
-            MAX_GITHUB_REQUEST_BYTES if self.path.startswith("/api/github/") else MAX_REQUEST_BYTES
+            MAX_JOBS_REQUEST_BYTES if self.path == "/api/jobs"
+            else MAX_GITHUB_REQUEST_BYTES if self.path.startswith("/api/github/") else MAX_REQUEST_BYTES
         )
         if payload is None:
             return
@@ -352,6 +356,15 @@ class UIHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/project/clear":
                 live_graph.clear_project()
                 result = {"loaded": False}
+            elif self.path == "/api/jobs":
+                result = {"jobs": live_graph.load_job_history(payload.get("text"), payload.get("filename"))}
+            elif self.path == "/api/jobs/clear":
+                live_graph.clear_job_history()
+                result = {"jobs": 0}
+            elif self.path == "/api/changes/compare":
+                scope = payload.get("scope")
+                result = live_insights.compare_branch(
+                    payload.get("base"), payload.get("refresh") is True, scope if isinstance(scope, str) and scope else None)
             elif self.path == "/api/github/file":
                 from .github_repo import read_file
 
@@ -387,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--git", metavar="URL", help="Load a Dataform repository through the local git CLI (private repositories work with your own credentials)")
     parser.add_argument("--branch", help="With --git: branch to load (default: the remote's default branch)")
     parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
+    parser.add_argument("--jobs", metavar="FILE", help="Load a BigQuery job-history export (JSON, JSON lines or CSV) for the cost page and observed edges; needs --project or --git")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -410,6 +424,14 @@ def main(argv: list[str] | None = None) -> int:
             live_graph.set_project(load_sqlx_project(args.project), args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
+    if args.jobs:
+        if not live_graph.loaded():
+            parser.error("--jobs needs --project or --git")
+        try:
+            with open(args.jobs, encoding="utf-8") as handle:
+                print(f"Loaded {live_graph.load_job_history(handle.read(), args.jobs)} jobs", flush=True)
+        except (OSError, ValueError) as exc:
+            parser.error(f"could not load --jobs: {exc}")
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), UIHandler)
     except OSError as exc:
