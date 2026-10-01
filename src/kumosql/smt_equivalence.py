@@ -154,6 +154,9 @@ _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
 
 
+_UNNEST_TABLE = "$unnest"
+
+
 class _Env(dict):
     """Alias -> source for one query scope; ``outer`` is the enclosing scope of a subquery."""
 
@@ -709,6 +712,38 @@ class _Compiler:
                 items.append((join.this, join))
         for source_node, join in items:
             side = (join.args.get("side") or "").upper() if join is not None else ""
+            if isinstance(source_node, exp.Unnest):
+                if side or (join is not None and join.args.get("on") is not None) or len(source_node.expressions) != 1:
+                    raise Unsupported("UNNEST outside a cross join")
+                alias_node = source_node.args.get("alias")
+                alias = (alias_node.name if alias_node is not None else "") or self.fresh("unnest")
+                alias = alias.lower()
+                columns = alias_node.args.get("columns") if alias_node is not None else None
+                element = (columns[0].name if columns else alias).lower()
+                offset_arg = source_node.args.get("offset")
+                offset = ((offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else "").lower()
+                occ = _Occ(_UNNEST_TABLE, self.fresh("u"), ["arr", "value", "offset"])
+                cols = {element: occ.col("value")}
+                if offset:
+                    cols[offset] = occ.col("offset")
+                source = _Source(cols=cols, order=list(cols))
+                new_states = []
+                for st in states:
+                    if alias in st.env:
+                        raise Unsupported(f"duplicate alias {alias}")
+                    saved, self.collector = self.collector, st.subs
+                    try:
+                        array = self._val(source_node.expressions[0], st.env, None, None)
+                    finally:
+                        self.collector = saved
+                    arr = occ.col("arr")
+                    linked = z3.And(z3.Not(array.null), z3.Not(arr.null), array.val == arr.val)
+                    joined_env = _Env(st.env)
+                    joined_env.outer = st.env.outer
+                    joined_env[alias] = source
+                    new_states.append(_State(st.occs + [occ], st.conds + [_Pred(linked, z3.Not(linked))], joined_env, list(st.subs)))
+                states = new_states
+                continue
             b_occs: list[_Occ] = []
             b_conds: list[_Pred] = []
             b_subs: list = []
@@ -1197,6 +1232,8 @@ class _Compiler:
             return resolved
         if isinstance(e, exp.Literal):
             return self._literal(e, negate=False)
+        if isinstance(e, exp.Array) and not any(isinstance(n, exp.Column) for n in e.walk()):
+            return _Val(z3.BoolVal(False), V.Str(z3.StringVal("\x00array:" + e.sql(dialect="bigquery"))))
         if isinstance(e, exp.Null):
             return _Val(z3.BoolVal(True), V.Num(0))
         if isinstance(e, exp.Boolean):
@@ -1475,6 +1512,8 @@ class _Prover:
     def __init__(self, timeout_ms: int, constraints: dict[str, TableConstraints] | None = None):
         self.timeout_ms = timeout_ms
         self.constraints = {k.lower(): v for k, v in (constraints or {}).items()}
+        # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
+        self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
         self.candidates: list[tuple[object, list[_Occ]]] = []
 
@@ -2492,7 +2531,7 @@ def _export(value):
 def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counterexample | None:
     blocks = list(left.branches) + list(right.branches)
     all_occs = [o for b in blocks for o in b.occs]
-    if any(o.opaque for o in all_occs) or any(b.subs for b in blocks):
+    if any(o.opaque or o.table == _UNNEST_TABLE for o in all_occs) or any(b.subs for b in blocks):
         return None
     for block in blocks:
         prover.witness(block.cond.t, block.occs, block.facts)
