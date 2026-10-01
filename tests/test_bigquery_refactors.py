@@ -103,9 +103,29 @@ PROVEN = {
         "SELECT order_id FROM (SELECT order_id, amount FROM orders ORDER BY amount, order_id LIMIT 5)",
         "SELECT order_id FROM orders ORDER BY amount, order_id LIMIT 5",
     ),
+    "comma and cross join unnest": (
+        "SELECT order_id, t FROM orders, UNNEST([1, 2, 3]) AS t WHERE t > order_id",
+        "SELECT order_id, t FROM orders CROSS JOIN UNNEST([1, 2, 3]) AS t WHERE order_id < t",
+    ),
+    "unnest of a column": (
+        "SELECT c.customer_id, t FROM customers c, UNNEST(c.name) AS t WHERE t IS NOT NULL",
+        "SELECT c.customer_id, t FROM customers c, UNNEST(c.name) AS t WHERE NOT t IS NULL",
+    ),
 }
 
 NOT_PROVEN = {
+    "unnest of a different array": (
+        "SELECT order_id FROM orders, UNNEST([1, 2, 3]) AS t",
+        "SELECT order_id FROM orders, UNNEST([1, 2]) AS t",
+    ),
+    "unnest repeated multiplies the rows": (
+        "SELECT order_id FROM orders, UNNEST([1, 2]) AS t",
+        "SELECT order_id FROM orders, UNNEST([1, 2]) AS t, UNNEST([1, 2]) AS u",
+    ),
+    "unnest filter changed": (
+        "SELECT order_id FROM orders, UNNEST([1, 2, 3]) AS t WHERE t > 1",
+        "SELECT order_id FROM orders, UNNEST([1, 2, 3]) AS t WHERE t > 2",
+    ),
     "limit in a derived table, ordered the other way": (
         "SELECT order_id FROM (SELECT order_id, amount FROM orders ORDER BY amount, order_id LIMIT 5)",
         "SELECT order_id FROM orders ORDER BY amount DESC, order_id LIMIT 5",
