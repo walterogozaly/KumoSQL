@@ -92,6 +92,21 @@
     return node;
   }
 
+  /** The facts a proof relied on, collected from the checks that carry them. */
+  function assumptions(checks) {
+    const seen = [];
+    for (const check of checks || []) {
+      for (const item of (check.evidence && check.evidence.assumptions) || []) if (!seen.includes(item)) seen.push(item);
+    }
+    if (!seen.length) return null;
+    const box = el("details", "ev-assumptions");
+    box.append(el("summary", "", `Assumptions (${seen.length})`));
+    const list = el("ul");
+    for (const item of seen) list.append(el("li", "", item));
+    box.append(list);
+    return box;
+  }
+
   /** Definition list of the five result labels, for legends. */
   function legend(keys = ["proven", "planner_checked", "unproven", "failed", "unchanged"]) {
     const list = el("dl", "ev-legend");
@@ -105,5 +120,5 @@
     return list;
   }
 
-  window.KumoEvidence = { LABELS, CHECKS, OUTCOMES, normalize, pill, checkChip, legend };
+  window.KumoEvidence = { LABELS, CHECKS, OUTCOMES, normalize, pill, checkChip, assumptions, legend };
 })();

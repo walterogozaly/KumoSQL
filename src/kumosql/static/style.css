@@ -680,3 +680,10 @@ select.sp-input { min-width: 200px; }
 .tags-in-use { margin: 0; }
 
 .diag-preview { width: 100%; height: auto; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; white-space: pre; overflow: auto; margin-top: 8px; }
+
+.ev-assumptions { margin-top: 8px; font-size: 12px; }
+.ev-assumptions summary { cursor: pointer; color: var(--muted, inherit); }
+.ev-assumptions ul { margin: 6px 0 0; padding-left: 18px; }
+.sp-queries { align-items: stretch; }
+.sp-query { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
+.sp-pre { margin: 6px 0 0; padding: 8px; overflow: auto; font-size: 12px; white-space: pre-wrap; }

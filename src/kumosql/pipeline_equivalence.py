@@ -246,6 +246,29 @@ def prove_loaded(left: object, right: object) -> dict:
     ).to_json()
 
 
+def prove_queries(left: object, right: object) -> dict:
+    """``POST /api/prove-queries``: prove two pasted queries return the same rows."""
+
+    from . import prover_context
+    from .smt_equivalence import SmtStatus
+
+    if not isinstance(left, str) or not isinstance(right, str) or not left.strip() or not right.strip():
+        raise ValueError("paste both queries")
+    config = prover_context.settings()
+    if not config["enabled"]:
+        raise ValueError("the solver is turned off in Settings")
+    result = prover_context.prove(left, right)
+    data = {"status": result.status.value, "reason": result.reason, "assumptions": list(result.assumptions)}
+    if result.status is SmtStatus.NOT_EQUIVALENT and result.counterexample is not None:
+        example = result.counterexample
+        data["counterexample"] = {
+            "tables": {name: [dict(row) for row in rows] for name, rows in example.tables.items()},
+            "left_rows": [list(row) for row in example.left_rows],
+            "right_rows": [list(row) for row in example.right_rows],
+        }
+    return data
+
+
 def main(argv: list[str] | None = None) -> int:
     """``python -m kumosql prove-tables LEFT RIGHT --project DIR`` and ``equivalence list|add|remove``."""
 
