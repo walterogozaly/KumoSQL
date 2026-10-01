@@ -210,6 +210,12 @@
 
 .project-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 12.5px; }
 .project-source { font-weight: 650; flex-basis: 100%; }
+/* Scope, project, job history and price share one panel instead of floating over the photo. */
+.source-panel { display: grid; gap: 8px; padding: 10px 18px; border-radius: var(--radius-2xl); background-color: var(--panel, var(--surface)); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
+.source-panel .scope-bar { margin: 0; }
+.source-panel .project-form + .project-form, .source-panel .scope-bar + .project-form { padding-top: 8px; border-top: 1px solid var(--border); }
+.source-panel .project-source { flex-basis: auto; margin-right: 4px; }
+.source-panel .project-status:empty { display: none; }
 .project-form .field { flex: 1 1 260px; min-width: 0; }
 .project-status { color: var(--muted, inherit); }
 
@@ -221,3 +227,4 @@
 .detail-tags-edit { margin: 10px 0 14px; }
 .detail-tags-edit .eyebrow { margin: 0 0 6px; }
 .detail-tags-edit .is-error { color: var(--bad-fg); }
+.source-panel #rate-form .field { flex: 0 1 140px; }

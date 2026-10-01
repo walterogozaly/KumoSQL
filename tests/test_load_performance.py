@@ -157,3 +157,41 @@ def ui_server_url():
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_stage_start_and_progress_lines_show_a_long_stage_is_alive(capsys):
+    progress = timing.Progress("demo loop", 3, every=0.0, slow=0.0)
+    with timing.stage("demo stage", models=2431):
+        for label in ("alpha", "beta", "gamma"):
+            progress.step(label)
+        progress.finish()
+    err = capsys.readouterr().err
+    assert "[kumosql] demo stage: started (models 2,431)" in err
+    assert "demo loop: started (3 items)" in err and "demo loop: 3/3" in err
+    assert "slow item 1 of 3 took" in err
+    assert "alpha" not in err and "beta" not in err
+    assert timing.current_progress() == []
+
+
+def test_analysis_logs_each_stage_before_it_finishes(capsys):
+    live_graph.pipeline_from_files(FILES)
+    err = capsys.readouterr().err
+    for line in ("analyse: started", "read models: started", "order models: started", "trace columns: started"):
+        assert line in err
+
+
+def test_a_slow_model_keeps_its_edges_but_skips_column_tracing(monkeypatch):
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "0.000000001")
+    pipeline = live_graph.pipeline_from_files(FILES)
+    codes = {entry["code"]: entry for entry in pipeline.report(include_duplicates=False)["diagnostics"]}
+    assert "lineage_skipped" in codes
+    completeness = pipeline.completeness()
+    assert completeness["complete"] is False and completeness["views"]["lineage"] is False
+    assert pipeline.upstream["b"] == {"a"}  # the graph edge is unaffected
+
+
+def test_no_budget_means_no_skipping(monkeypatch):
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "0")
+    monkeypatch.setenv("KUMOSQL_LINEAGE_SECONDS", "0")
+    pipeline = live_graph.pipeline_from_files({**FILES, "definitions/z.sqlx": 'config { type: "table" }\nselect 1 as z'})
+    assert all(e["code"] != "lineage_skipped" for e in pipeline.report(include_duplicates=False)["diagnostics"])

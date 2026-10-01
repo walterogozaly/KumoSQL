@@ -174,7 +174,7 @@
   <dialog id="github-dialog" class="github-dialog" aria-labelledby="github-title">
     <form id="github-connect-form" class="github-dialog-form" autocomplete="off">
       <div class="github-dialog-heading">
-        <div><h2 id="github-title">Connect a Dataform repository</h2><p>Browse public GitHub repositories containing SQLX models.</p></div>
+        <div><h2 id="github-title">Open a file from GitHub</h2><p>Browse the SQLX models in a public GitHub repository and open one in the editor.</p></div>
         <button id="github-close" class="icon-button" type="button" aria-label="Close">×</button>
       </div>
       <label for="github-url">GitHub repository URL</label>
@@ -182,7 +182,7 @@
         <input id="github-url" type="url" placeholder="https://github.com/owner/repository" required>
         <button id="github-connect" class="toolbar-button" type="submit">Connect</button>
       </div>
-      <p class="github-note">Read-only access to public repositories. Repository SQLX files are loaded into this local editor; private repositories are not supported yet.</p>
+      <p class="github-note">Read-only, public repositories only. To analyse a private Dataform repository, connect it under Settings → Repositories.</p>
       <p id="github-status" class="github-status" role="status" aria-live="polite"></p>
       <div id="github-files-panel" class="github-files-panel" hidden>
         <label for="github-files">SQLX file <span id="github-repo-label" class="github-repo-label"></span></label>

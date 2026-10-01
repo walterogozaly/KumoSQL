@@ -53,7 +53,9 @@
         const background = status.analysis && status.analysis.state === "running" ? status.analysis : null;
         const item = busy || (background && { label: `Analyzing ${background.stage || "models"}`, elapsed: background.elapsed });
         if (item) {
-          text.textContent = `${item.label}… ${Math.round(item.elapsed)}s`;
+          const step = (status.progress || [])[0];
+          const count = step ? ` ${step.done.toLocaleString()}/${step.total.toLocaleString()}` : "";
+          text.textContent = `${item.label}…${count} ${Math.round(item.elapsed)}s`;
           box.title = "KumoSQL is working in the background. You can keep using the app.";
           box.hidden = false;
           delay = 1500;

@@ -209,9 +209,9 @@ def test_no_counterexample_when_uninterpreted_functions_are_involved():
     "sql",
     [
         "SELECT a FROM t LIMIT 5",
-        "SELECT a FROM t x LEFT JOIN u y ON x.id = y.id",
+        "SELECT a FROM t x JOIN u y USING (id)",
         "SELECT RAND() AS r FROM t",
-        "SELECT a FROM t WHERE a IN (SELECT a FROM u)",
+        "SELECT a FROM t WHERE a IN (SELECT a FROM u LIMIT 1)",
         "SELECT ROW_NUMBER() OVER (ORDER BY a) AS r FROM t",
         "SELECT a FROM t WHERE d = '2020-1-1'",
         "SELECT * FROM t",

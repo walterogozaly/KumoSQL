@@ -129,6 +129,7 @@ function renderProjects(projects) {
     projectsPane.append(button);
   }
   document.getElementById("project-count").textContent = projects.length ? String(projects.length) : "";
+  document.getElementById("refresh").disabled = !projects.length;
   if (!projects.length) {
     clearPane(projectsPane, "No projects chosen yet.");
     const choose = document.createElement("button");
@@ -468,11 +469,13 @@ loadProjects();
 window.addEventListener("kumosql:bq-projects", (event) => {
   const projects = event.detail || [];
   renderProjects(projects);
+  if (projects.length && !chosenProject) setStatus("Choose a project to see its datasets.");
   if (chosenProject && !projects.includes(chosenProject)) {
     chosenProject = chosenDataset = chosenTable = "";
     clearPane(datasetsPane, "Choose a project.");
     clearPane(tablesPane, "Choose a dataset.");
     clearPane(schemaPane, "Choose a table to inspect its schema.");
+    setStatus(projects.length ? "Choose a project to see its datasets." : status.textContent);
   }
 });
 
