@@ -852,3 +852,31 @@ def test_bigquery_column_types_make_a_widening_cast_free():
     assert not prove_equivalent_algebraic(
         "SELECT id FROM d.t WHERE amt > 1", narrow, schema=facts.columns, types=facts.types
     ).proven
+
+
+REWRITE_SQL = [
+    "SELECT a.id, (SELECT SUM(b.y) FROM b WHERE b.id = a.id) AS t FROM a",
+    "SELECT a.id, COALESCE((SELECT MAX(b.y) FROM b WHERE b.id = a.id AND b.y > 1), 0) + 1 AS t FROM a",
+    "SELECT SUM(s) AS total FROM (SELECT id, SUM(y) AS s FROM b GROUP BY id)",
+    "SELECT MIN(s) AS m, MAX(s) AS x FROM (SELECT id, MIN(y) AS s FROM b GROUP BY id)",
+    "SELECT a.id FROM a WHERE a.id IN (SELECT id FROM b UNION ALL SELECT x FROM a)",
+    "SELECT a.id FROM a WHERE a.id NOT IN (SELECT id FROM b UNION ALL SELECT x FROM a)",
+    "SELECT MIN(y) AS m, COUNT(*) AS n, SUM(y) AS s FROM b WHERE y IS NOT NULL",
+    "SELECT COUNT(*) AS n FROM b WHERE y IS NOT NULL",
+]
+
+
+@pytest.mark.parametrize("sql", REWRITE_SQL)
+def test_select_list_rollup_union_in_and_null_guard_rewrites_preserve_results(sql):
+    rng = random.Random(3)
+    schema = {"a": ["id", "x"], "b": ["id", "y"]}
+    normalized = normalize(sql, schema=schema)
+    for _ in range(80):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE a (id INT, x INT)")
+        db.execute("CREATE TABLE b (id INT, y INT)")
+        for table in ("a", "b"):
+            for _ in range(rng.choice([0, 1, 3, 5])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?)", [rng.choice([None, 0, 1, 2, 3]) for _ in range(2)])
+        runnable = sqlglot.transpile(normalized, read="bigquery", write="sqlite")[0]
+        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), normalized

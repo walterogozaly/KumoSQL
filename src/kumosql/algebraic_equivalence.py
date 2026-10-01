@@ -302,6 +302,46 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
     return result
 
 
+def _roll_up_aggregate(select: exp.Select) -> exp.Expression | None:
+    """``SELECT SUM(s) FROM (SELECT k, SUM(x) AS s FROM t GROUP BY k)`` is ``SELECT SUM(x) FROM t``.
+
+    A global aggregate over the groups of a grouped select combines their partial results:
+    SUM of sums, MIN of minimums and MAX of maximums are the aggregate over all rows (NULL for
+    no rows on both sides). ``SUM`` of ``COUNT`` is not, it reads NULL where ``COUNT`` reads 0.
+    """
+
+    if select.args.get("group") or select.args.get("where") or select.args.get("joins") or not _no_extras(select, allow_group=False):
+        return None
+    from_ = select.args.get("from_") or select.args.get("from")
+    source = from_.this if from_ else None
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select):
+        return None
+    inner = source.this
+    if not inner.args.get("group") or inner.args.get("having") or not _no_extras(inner, allow_group=True):
+        return None
+    parts: dict[str, exp.Expression] = {}
+    for item in inner.expressions:
+        expr = item.this if isinstance(item, exp.Alias) else item
+        if item.alias_or_name and _is_agg(expr) and isinstance(expr, (exp.Sum, exp.Min, exp.Max)):
+            parts[item.alias_or_name.lower()] = expr
+    items = []
+    for item in select.expressions:
+        expr = item.this if isinstance(item, exp.Alias) else item
+        if not (isinstance(expr, (exp.Sum, exp.Min, exp.Max)) and isinstance(expr.this, exp.Column) and not expr.this.table or isinstance(expr, (exp.Sum, exp.Min, exp.Max)) and isinstance(expr.this, exp.Column) and (expr.this.table or "").lower() == (source.alias or "").lower()):
+            return None
+        part = parts.get(expr.this.name.lower())
+        if part is None or type(part) is not type(expr) or part.args.get("distinct") or isinstance(part.this, exp.Distinct):
+            return None
+        name = item.alias_or_name
+        items.append(exp.alias_(part.copy(), name) if name else part.copy())
+    if not items:
+        return None
+    result = inner.copy()
+    result.set("expressions", items)
+    result.set("group", None)
+    return result
+
+
 def _named(expr: exp.Expression, name: str) -> exp.Expression:
     return exp.alias_(expr, name) if name else expr
 
@@ -795,6 +835,66 @@ def _decorrelate_aggregate(select: exp.Select, schema: dict[str, list[str]] | No
             result.set("where", exp.Where(this=_and_all(new_conditions)))
             derived_source = exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias)))
             result.set("joins", list(result.args.get("joins") or []) + [exp.Join(this=derived_source)])
+            return result
+    return None
+
+
+def _decorrelate_select_list(select: exp.Select, schema: dict[str, list[str]] | None) -> exp.Expression | None:
+    """``SELECT k, (SELECT SUM(x) FROM t WHERE t.k = outer.k) FROM outer`` reads ``outer LEFT JOIN`` the grouped table.
+
+    A correlated scalar aggregate (not ``COUNT``) with equality correlations is NULL for a row with
+    no match and the group's value otherwise, which is what a left join to ``GROUP BY k`` gives.
+    """
+
+    if not schema or any(select.find_all(exp.Window)) or select.args.get("group") or select.args.get("having"):
+        return None
+    if not any(isinstance(n, exp.Subquery) and n.find_ancestor(exp.Select) is select for e in select.expressions for n in e.walk()):
+        return None
+    from .eager_aggregation import _own_aggregates
+
+    if _own_aggregates(select) or select.args.get("distinct") is not None:
+        return None
+    schema = {k.lower(): [c.lower() for c in v] for k, v in schema.items()}
+    items = _sources_of(select)
+    if any(join.args.get("using") is not None for join in select.args.get("joins") or []):
+        return None
+
+    def table_columns(source: exp.Expression) -> list[str] | None:
+        if isinstance(source, exp.Table) and not source.args.get("joins") and not source.args.get("pivots"):
+            return schema.get(".".join(p.name for p in source.parts).lower())
+        if isinstance(source, exp.Subquery):
+            return _select_names(source.this)
+        return None
+
+    outer_known = [(i.alias_or_name.lower(), table_columns(i)) for i in items]
+    if any(columns is None or not alias for alias, columns in outer_known):
+        return None
+
+    def outer_resolves(column: exp.Column) -> bool:
+        if column.table:
+            return any(alias == column.table.lower() and column.name.lower() in cols for alias, cols in outer_known)
+        return sum(column.name.lower() in cols for _, cols in outer_known) == 1
+
+    for position, item in enumerate(select.expressions):
+        for subquery in item.find_all(exp.Subquery):
+            if subquery.find_ancestor(exp.Select) is not select or not isinstance(subquery.this, exp.Select):
+                continue
+            if any(isinstance(a, (exp.Subquery,)) for a in _ancestors_of(subquery, item) if a is not subquery):
+                continue
+            built = _decorrelated(subquery.this, table_columns, outer_resolves)
+            if built is None:
+                continue
+            derived, keys, _ = built
+            alias = f"kqd{next(_decorrelate_counter)}"
+            result = select.copy()
+            target = result.expressions[position]
+            for node in target.find_all(exp.Subquery):
+                if node.sql() == subquery.sql():
+                    node.replace(value_column(alias))
+                    break
+            on = _and_all([exp.EQ(this=outer.copy(), expression=exp.column(f"kqk{i}", table=alias)) for i, (_, outer) in enumerate(keys)])
+            source = exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias)))
+            result.set("joins", list(result.args.get("joins") or []) + [exp.Join(this=source, side="LEFT", on=on)])
             return result
     return None
 
@@ -2137,11 +2237,85 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
     return tree
 
 
+def _drop_global_null_filter(select: exp.Select) -> exp.Expression | None:
+    """``SELECT MIN(x), COUNT(*) FROM t WHERE x IS NOT NULL`` is ``SELECT MIN(x), COUNT(x) FROM t``.
+
+    A global aggregate over one column ignores its NULLs already, so the guard only matters to
+    ``COUNT(*)``, which becomes ``COUNT(x)``. With a ``GROUP BY`` a group of NULLs would vanish, so
+    this holds only without one.
+    """
+
+    where = select.args.get("where")
+    if where is None or select.args.get("group") or select.args.get("having") or not _no_extras(select, allow_group=False):
+        return None
+    parts = _conjuncts(where.this)
+    for index, part in enumerate(parts):
+        if not (isinstance(part, exp.Not) and isinstance(part.this, exp.Is) and isinstance(part.this.expression, exp.Null)):
+            continue
+        target = part.this.this
+        if not isinstance(target, exp.Column) or isinstance(target.this, exp.Star):
+            continue
+        copy = select.copy()
+        ok = bool(copy.expressions)
+        for item in copy.expressions:
+            expr = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(expr, exp.Count) and isinstance(expr.this, exp.Star) and not expr.args.get("distinct"):
+                expr.set("this", target.copy())
+            elif isinstance(expr, (exp.Sum, exp.Min, exp.Max, exp.Avg, exp.Count)) and isinstance(expr.this, exp.Column) and expr.this.sql() == target.sql():
+                continue
+            else:
+                ok = False
+                break
+        if not ok:
+            continue
+        rest = [c for j, c in enumerate(parts) if j != index]
+        copy.set("where", exp.Where(this=_and_all([c.copy() for c in rest])) if rest else None)
+        return copy
+    return None
+
+
+def _in_over_union(tree: exp.Expression) -> exp.Expression:
+    """``x IN (SELECT a FROM p UNION ALL SELECT b FROM q)`` is ``x IN (SELECT a FROM p) OR x IN (SELECT b FROM q)``.
+
+    A match in either branch is a match in the union and an unknown stays unknown, so the three-valued
+    result agrees (and so does ``NOT IN`` as the negation).
+    """
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if not isinstance(node, exp.In) or node.args.get("expressions") or node.args.get("unnest"):
+            return node
+        query = node.args.get("query")
+        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union:
+            return node
+        branches, stack = [], [query.this]
+        while stack:
+            part = stack.pop()
+            if type(part) is exp.Union:
+                stack.extend([part.expression, part.this])
+            elif isinstance(part, exp.Select):
+                branches.append(part)
+            else:
+                return node
+        if len(branches) < 2 or any(isinstance(n, (exp.Subquery, exp.Select)) for n in node.this.walk()):
+            return node
+        tests = [exp.In(this=node.this.copy(), query=exp.Subquery(this=b.copy())) for b in branches]
+        result = tests[0]
+        for test in tests[1:]:
+            result = exp.Or(this=result, expression=test)
+        return exp.Paren(this=result)
+
+    return tree.transform(step)
+
+
 def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
     """``COUNTIF(c)`` is ``COUNT(CASE WHEN c THEN 1 END)``; ``SAFE_DIVIDE(a, b)`` is ``IF(b = 0, NULL, a / b)``;
     ``STARTS_WITH(x, 'p')`` is ``x LIKE 'p%'`` (and ``ENDS_WITH`` ``'%p'``) for a pattern without wildcards."""
 
     def step(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.DPipe):
+            return exp.Concat(expressions=[node.this.copy(), node.expression.copy()])
+        if isinstance(node, (exp.Lower, exp.Upper)) and isinstance(node.this, exp.Trim) and not any(node.this.args.get(k) for k in ("expression", "position", "collation")):
+            return exp.Trim(this=type(node)(this=node.this.this.copy()))
         if isinstance(node, exp.CountIf):
             return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this.copy(), true=exp.Literal.number(1))]))
         if isinstance(node, (exp.StartsWith, exp.EndsWith)):
@@ -2157,7 +2331,12 @@ def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
             )
         return node
 
-    return tree.transform(step)
+    for _ in range(3):
+        before = tree.sql()
+        tree = tree.transform(step)
+        if tree.sql() == before:
+            break
+    return tree
 
 
 def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
@@ -2194,6 +2373,7 @@ def normalize(
     tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
     tree = _grouped_in_to_derived(tree)
+    tree = _in_over_union(tree)
     tree = _fold_dates(tree)
     tree = _fold_constants(tree)
     tree = _fold_trivia(tree)
@@ -2216,7 +2396,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten

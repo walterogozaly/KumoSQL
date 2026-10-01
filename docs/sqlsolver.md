@@ -60,3 +60,7 @@ Everyday BigQuery refactors (CTE inlining, `USING` joins, `* EXCEPT`, `COUNTIF`,
 ## Keyed dimension joined to a grouped fact
 
 With a declared key on `customers`, `customers JOIN (SELECT customer_id, SUM(x) ... GROUP BY customer_id)` is rewritten to the flat join grouped by the key, so a CTE-reuse refactor and its flat form are proved equal. Without the declared key nothing changes.
+
+## Everyday refactors
+
+`tests/test_bigquery_refactors.py` lists everyday BigQuery refactors the prover proves and near misses it refuses. Added in this round: a correlated scalar aggregate in the select list versus a left join to the grouped table (the inner join is refused), the sum of grouped sums versus the plain sum (a sum of grouped counts is refused: it reads NULL for no rows), `IN` over a `UNION ALL` versus an `OR` of the branches, a NULL guard under a global aggregate (refused under a `GROUP BY`), `LOWER(TRIM(x))` versus `TRIM(LOWER(x))` and `||` versus `CONCAT`.
