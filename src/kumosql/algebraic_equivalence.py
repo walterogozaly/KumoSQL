@@ -732,6 +732,167 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
     return None
 
 
+_decorrelate_counter = itertools.count()
+_COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
+_SCALAR_NODES = (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Paren, exp.Neg, exp.Literal)
+
+
+def _decorrelate_aggregate(select: exp.Select, schema: dict[str, list[str]] | None) -> exp.Expression | None:
+    """``x < (SELECT agg(e) FROM t WHERE t.k = outer.k AND c)`` read as a join with ``GROUP BY k``.
+
+    A correlated scalar aggregate compared in WHERE is the join to one row per key: an outer row
+    with no matching rows reads NULL, and a comparison with NULL rejects the row, so the inner
+    join drops the same rows. ``COUNT`` is excluded (it reads 0, not NULL, for no rows).
+    """
+
+    if not schema or select.args.get("where") is None or any(select.find_all(exp.Window)):
+        return None
+    schema = {k.lower(): [c.lower() for c in v] for k, v in schema.items()}
+    items = _sources_of(select)
+    for join in select.args.get("joins") or []:
+        if join.args.get("side") or join.args.get("kind") in _OUTER or join.args.get("using") is not None:
+            return None
+
+    def table_columns(source: exp.Expression) -> list[str] | None:
+        if isinstance(source, exp.Table) and not source.args.get("joins") and not source.args.get("pivots"):
+            return schema.get(".".join(p.name for p in source.parts).lower())
+        if isinstance(source, exp.Subquery):
+            return _select_names(source.this)
+        return None
+
+    outer_known = [(i.alias_or_name.lower(), table_columns(i)) for i in items]
+    if any(columns is None or not alias for alias, columns in outer_known):
+        return None
+
+    def outer_resolves(column: exp.Column) -> bool:
+        if column.table:
+            return any(alias == column.table.lower() and column.name.lower() in cols for alias, cols in outer_known)
+        return sum(column.name.lower() in cols for _, cols in outer_known) == 1
+
+    conditions = _conjuncts(select.args["where"].this)
+    for position, condition in enumerate(conditions):
+        if not isinstance(condition, _COMPARISONS):
+            continue
+        for side in ("this", "expression"):
+            subquery = condition.args[side]
+            if not isinstance(subquery, exp.Subquery) or not isinstance(subquery.this, exp.Select):
+                continue
+            built = _decorrelated(subquery.this, table_columns, outer_resolves)
+            if built is None:
+                continue
+            derived, keys, value = built
+            alias = f"kqd{next(_decorrelate_counter)}"
+            other = condition.args["expression" if side == "this" else "this"]
+            if any(isinstance(n, (exp.Subquery, exp.Select)) for n in other.walk()):
+                continue
+            joined = [exp.EQ(this=outer.copy(), expression=exp.column(f"kqk{i}", table=alias)) for i, (_, outer) in enumerate(keys)]
+            comparison = type(condition)(
+                this=value_column(alias) if side == "this" else other.copy(),
+                expression=other.copy() if side == "this" else value_column(alias),
+            )
+            result = select.copy()
+            new_conditions = [c.copy() for j, c in enumerate(conditions) if j != position] + joined + [comparison]
+            result.set("where", exp.Where(this=_and_all(new_conditions)))
+            derived_source = exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias)))
+            result.set("joins", list(result.args.get("joins") or []) + [exp.Join(this=derived_source)])
+            return result
+    return None
+
+
+def value_column(alias: str) -> exp.Expression:
+    return exp.column("kqv", table=alias)
+
+
+def _decorrelated(inner: exp.Select, table_columns, outer_resolves):
+    """``(derived select, [(inner key, outer column)], value expression)`` for a decorrelatable subquery."""
+
+    if len(inner.expressions) != 1 or not _no_extras(inner, allow_group=False) or inner.args.get("limit"):
+        return None
+    sources = _sources_of(inner)
+    if not sources or any(not isinstance(i, exp.Table) or not i.alias_or_name for i in sources):
+        return None
+    for join in inner.args.get("joins") or []:
+        if join.args.get("side") or join.args.get("kind") in _OUTER or join.args.get("using") is not None or join.args.get("on") is not None:
+            return None
+    known = [(i.alias_or_name.lower(), table_columns(i)) for i in sources]
+    if any(cols is None for _, cols in known) or len({a for a, _ in known}) != len(known):
+        return None
+    value = inner.expressions[0]
+    value = value.this if isinstance(value, exp.Alias) else value
+    aggregates = list(value.find_all(exp.AggFunc))
+    if not aggregates or any(isinstance(a, exp.Count) for a in aggregates):
+        return None
+    for node in value.walk():
+        if isinstance(node, exp.Column):
+            if not any(isinstance(a, exp.AggFunc) for a in _ancestors_of(node, value)):
+                return None
+        elif not isinstance(node, _SCALAR_NODES + (exp.AggFunc,)) and not isinstance(node.parent, exp.AggFunc) and not _inside_aggregate(node, value):
+            return None
+
+    def side(expression: exp.Expression) -> str | None:
+        """``inner`` / ``outer`` when every column of the expression is, ``None`` when mixed or empty."""
+
+        kinds = set()
+        for column in expression.find_all(exp.Column):
+            if isinstance(column.this, exp.Star):
+                return None
+            if column.table:
+                kinds.add("inner" if column.table.lower() in {a for a, _ in known} else "outer")
+            else:
+                hits = [a for a, cols in known if column.name.lower() in cols]
+                kinds.add("inner" if len(hits) == 1 else "outer" if not hits else "?")
+        if "?" in kinds or len(kinds) != 1:
+            return None
+        return kinds.pop()
+
+    if any(isinstance(n, (exp.Subquery, exp.Exists)) for n in inner.walk() if n is not inner):
+        return None
+    local, keys = [], []
+    where = inner.args.get("where")
+    for condition in _conjuncts(where.this) if where is not None else []:
+        columns = list(condition.find_all(exp.Column))
+        kinds = {side(c) for c in columns}
+        if kinds == {"inner"} or not columns:
+            local.append(condition)
+            continue
+        if isinstance(condition, exp.EQ):
+            a, b = side(condition.this), side(condition.expression)
+            if (a, b) == ("outer", "inner"):
+                condition = exp.EQ(this=condition.expression, expression=condition.this)
+                a, b = b, a
+            if (a, b) == ("inner", "outer") and isinstance(condition.expression, exp.Column) and outer_resolves(condition.expression):
+                keys.append((condition.this, condition.expression))
+                continue
+        return None
+    if not keys:
+        return None
+    # The value must not read an outer column.
+    if any(side(c) != "inner" for c in value.find_all(exp.Column)):
+        return None
+    derived = exp.Select(
+        expressions=[exp.alias_(inner_key.copy(), f"kqk{i}") for i, (inner_key, _) in enumerate(keys)] + [exp.alias_(value.copy(), "kqv")]
+    )
+    derived.set("from_", exp.From(this=sources[0].copy()))
+    derived.set("joins", [exp.Join(this=s.copy()) for s in sources[1:]] or None)
+    if local:
+        derived.set("where", exp.Where(this=_and_all([c.copy() for c in local])))
+    derived.set("group", exp.Group(expressions=[k.copy() for k, _ in keys]))
+    return derived, keys, value
+
+
+def _ancestors_of(node: exp.Expression, stop: exp.Expression):
+    node = node.parent
+    while node is not None:
+        yield node
+        if node is stop:
+            return
+        node = node.parent
+
+
+def _inside_aggregate(node: exp.Expression, root: exp.Expression) -> bool:
+    return any(isinstance(a, exp.AggFunc) for a in _ancestors_of(node, root))
+
+
 def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
     """An aggregate over an outer join reads the join as one derived relation.
 
@@ -1236,6 +1397,17 @@ def _declared_not_null(holder: exp.Expression, not_null: dict[str, set[str]]) ->
     return found
 
 
+def _aggregate_guard(part: exp.Expression, declared: set[str]) -> bool:
+    if not (isinstance(part, exp.Not) and isinstance(part.this, exp.Is) and isinstance(part.this.expression, exp.Null)):
+        return False
+    call = part.this.this
+    return (
+        isinstance(call, (exp.Min, exp.Max, exp.Sum, exp.Avg))
+        and isinstance(call.this, exp.Column)
+        and call.this.sql() in declared
+    )
+
+
 def _fold_null_guards(tree: exp.Expression, not_null: dict[str, frozenset[str]] | None = None) -> exp.Expression:
     """Drop ``x IS NOT NULL`` from a condition that already compares ``x``.
 
@@ -1258,6 +1430,9 @@ def _fold_null_guards(tree: exp.Expression, not_null: dict[str, frozenset[str]] 
         }
         declared = _declared_not_null(holder, not_null) if not_null else set()
         kept = [part for part in parts if not _guard_of(part, rejected | declared)]
+        if isinstance(holder, exp.Having) and holder.parent is not None and holder.parent.args.get("group"):
+            # A group is never empty, so MIN/MAX/SUM/AVG of a NOT NULL column is never NULL.
+            kept = [part for part in kept if not _aggregate_guard(part, declared)]
         if not kept or (len(kept) == len(parts) and not any(isinstance(p, exp.Paren) for p in condition.find_all(exp.Paren) if isinstance(p.parent, exp.And) or p is condition)):
             continue
         rebuilt = _and_all(kept)
@@ -1303,7 +1478,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_inline_expression_projection, _prune_derived, _merge_spj_source, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _merge_spj_source, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
