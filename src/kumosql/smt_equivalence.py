@@ -2576,7 +2576,7 @@ def _all_occs(unions) -> list[_Occ]:
     def from_subs(subs):
         for sub in subs:
             found.extend(sub.occs)
-            from_subs(sub.subs)
+            from_subs(getattr(sub, "nested", None) or [])
 
     for union in unions:
         for branch in union.branches:
