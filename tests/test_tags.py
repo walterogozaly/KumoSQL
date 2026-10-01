@@ -24,9 +24,19 @@ TABLES = {
 }
 
 
+REAL_PEEK = bq.peek
+REAL_CACHED = bq.cached
+
+
 @pytest.fixture(autouse=True)
 def catalog(monkeypatch):
     live_graph.clear_project()
+    tags._inventory.update(running=False, errors={}, failed_at={})
+
+    def no_network(*args, **kwargs):
+        raise bq.CatalogError("offline in tests")
+
+    monkeypatch.setattr(bq, "cached", no_network)
     state.set_section("bigquery", {"projects": ["p1"]})
 
     def peek(key):
@@ -282,3 +292,48 @@ def test_tags_endpoint_reports_a_failure_instead_of_dropping_the_connection(serv
     monkeypatch.setattr(tags, "snapshot", boom)
     status, body = call(server, "GET", "/api/tags")
     assert status == 500 and "KeyError" in body["error"]
+
+
+def test_chosen_projects_are_listed_in_the_background_so_rules_reach_unopened_datasets(monkeypatch):
+    """A rule on a dataset nobody opened still tags its tables: the catalog of chosen projects is filled in."""
+
+    import time
+
+    monkeypatch.setattr(bq, "peek", REAL_PEEK)
+    monkeypatch.setattr(bq, "cached", REAL_CACHED)
+    bq.clear_cache()
+    calls = []
+    monkeypatch.setattr(bq, "list_datasets", lambda project: calls.append(("datasets", project)) or [{"id": "ARCHIVE"}, {"id": "prod"}])
+    monkeypatch.setattr(bq, "list_tables", lambda project, dataset: calls.append(("tables", dataset)) or (
+        [{"id": "a_old", "type": "TABLE"}, {"id": "f", "type": "UDF"}] if dataset == "ARCHIVE" else [{"id": "t", "type": "TABLE"}]))
+    tags.save_rules([{"tag": "Archived", "rule": {"field": "dataset", "op": "eq", "value": "archive"}}])
+    first = tags.snapshot()
+    assert first["syncing"] is True and first["objects"] == {}
+    for _ in range(100):
+        snap = tags.snapshot()
+        if not snap["syncing"]:
+            break
+        time.sleep(0.05)
+    assert set(snap["objects"]) == {"p1.archive.a_old", "p1.archive.f"}
+    assert snap["tags"] == [{"tag": "Archived", "count": 2}] and snap["sync_errors"] == {}
+    assert sorted(calls) == [("datasets", "p1"), ("tables", "ARCHIVE"), ("tables", "prod")]
+    before = len(calls)
+    tags.snapshot()
+    assert len(calls) == before  # nothing is missing now, nothing is fetched again
+    bq.clear_cache()
+
+
+def test_a_project_that_cannot_be_listed_is_reported_and_not_retried_at_once(monkeypatch):
+    import time
+
+    monkeypatch.setattr(bq, "peek", REAL_PEEK)
+    bq.clear_cache()
+    tags.snapshot()
+    for _ in range(100):
+        snap = tags.snapshot()
+        if not snap["syncing"]:
+            break
+        time.sleep(0.05)
+    assert "offline in tests" in snap["sync_errors"]["p1"]
+    assert tags.start_inventory() is False  # failed a moment ago: wait before asking again
+

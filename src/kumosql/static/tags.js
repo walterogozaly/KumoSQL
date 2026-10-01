@@ -33,9 +33,20 @@
     return data;
   }
 
+  // While the server fills in the catalog of the chosen projects (so rules reach tables nobody opened),
+  // ask again every few seconds, so tags appear as they are worked out.
+  let pollTimer = null;
+  let polls = 0;
   function adopt(next) {
     snapshot = next;
     loaded = true;
+    clearTimeout(pollTimer);
+    if (next.syncing && polls < 60) {
+      polls += 1;
+      pollTimer = setTimeout(load, 2500);
+    } else if (!next.syncing) {
+      polls = 0;
+    }
     for (const listener of listeners) listener();
     return snapshot;
   }
@@ -286,6 +297,8 @@
     load, change, tagsFor, hasTag, chips, editor, renderRules,
     names: () => snapshot.tags.map((item) => item.tag),
     isLoaded: () => loaded,
+    syncing: () => Boolean(snapshot.syncing),
+    syncErrors: () => snapshot.sync_errors || {},
     onChange: (listener) => listeners.add(listener),
     onError: (listener) => errorListeners.add(listener),
     error: () => loadError,
