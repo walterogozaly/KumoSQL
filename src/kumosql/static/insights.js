@@ -117,7 +117,7 @@ function setupProjectForm(data) {
   const live = data.source?.kind === "project";
   $("project-source").textContent = live
     ? `Showing ${data.source.label}`
-    : "No repository loaded. Connect a Dataform git repository in Settings; private ones work with your own git credentials.";
+    : "No repository loaded.";
   const jobs = data.source?.jobs;
   $("jobs-bar").hidden = !live;
   $("jobs-source").textContent = jobs ? `Job history: ${jobs.label} (${jobs.count.toLocaleString()} jobs)` : "No job history loaded. Export BigQuery job history as JSON, JSON lines or CSV.";
@@ -843,14 +843,16 @@ function ratePanel(data) {
     try { localStorage.setItem("kumosql.usdPerTib", input.value.trim()); } catch { /* the price just is not remembered */ }
     location.reload();
   };
-  return h("form", { class: "project-form", onsubmit: (event) => { event.preventDefault(); apply(); } },
+  return h("form", { class: "project-form", id: "rate-form", onsubmit: (event) => { event.preventDefault(); apply(); } },
     h("span", { class: "project-source", text: data.unit === "currency" ? `Showing money at ${savedRate()} per TiB billed.` : "Showing bytes billed. Enter your price per TiB to see money." }),
     h("label", {}, "Price per TiB (USD) ", input),
     h("button", { type: "submit", class: "toolbar-button", text: "Apply" }));
 }
 
 function renderCost(data, root) {
-  root.append(ratePanel(data));
+  // The price belongs with what the page shows (scope, project, job history).
+  $("rate-form")?.remove();
+  ($("source-panel") || root).append(ratePanel(data));
   if (data.has_jobs) {
     const totals = data.totals;
     root.append(h("div", { class: "tiles" },

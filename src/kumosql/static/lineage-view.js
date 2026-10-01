@@ -295,10 +295,13 @@
     }
 
     /* ----- viewport ----- */
-    function fit(padding = 30) {
+    function fit(padding = 56) {  // clears the zoom buttons in the top-left corner
       if (!cy || !cy.nodes().length) return;
       cy.fit(undefined, padding);
       if (cy.zoom() > 1.2) { cy.zoom(1.2); cy.center(); }
+      // A wide, shallow graph would sit in the middle of a tall, mostly empty stage; start it at the top.
+      const box = cy.elements().boundingBox();
+      if (box.h * cy.zoom() + 2 * padding < stage.clientHeight) cy.pan({ x: cy.pan().x, y: padding - box.y1 * cy.zoom() });
       drawMinimap();
     }
     function zoomBy(factor) {
@@ -446,7 +449,8 @@
           placed = true;
           const node = cy.getElementById(owner.get(selected));
           if (node.nonempty()) { cy.zoom({ level: 0.9, position: node.position() }); cy.center(node); }
-        } else if (changed && selected && !state.focus.on) centerOn(selected);
+        } else if (changed && selected && !state.focus.on && placed) centerOn(selected);
+        // The first selection of a small graph keeps the fitted view: centering on it pushed half the graph out of sight.
         placed = true;
       },
       fit,
