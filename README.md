@@ -254,16 +254,24 @@ prove-sql-smt left.sql right.sql --schema schema.json
 
 `tests/test_smt_fuzz.py` checks the prover against SQLite on random queries and databases: every proof must hold and every counterexample must separate the queries.
 
-## SQLSolver backend (optional, no admin rights)
+## Algebraic prover and SQLSolver (no admin rights)
 
-[SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (Apache-2.0) is a Java prover for query equivalence. `kumosql.sqlsolver_backend.prove_equivalent(left, right, schema=...)` asks it first and falls back to the Z3 prover when SQLSolver is missing, cannot translate the query, times out, or answers anything but "equivalent". It only ever adds proofs. See [docs/sqlsolver.md](docs/sqlsolver.md) for setup, the translation rules and the rollout plan.
+What makes [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (SIGMOD 2024) strong is that it treats queries as arithmetic over tuple multiplicities: under bag semantics `UNION ALL` is addition, a join is multiplication, and aggregates over a sum split into partial aggregates combined arithmetically. `kumosql.algebraic_equivalence` brings that into KumoSQL in pure Python on top of the existing Z3 prover, so it installs per user with `pip install --user -e ".[smt]"`:
+
+- joins, filters and projections distribute over a derived `UNION ALL`;
+- `COUNT`, `SUM`, `MIN` and `MAX` over a `UNION ALL` equal the same function over per-branch partial aggregates (`COUNT` combines with `SUM`), with or without `GROUP BY`;
+- redundant regrouping of an already-grouped subquery is dropped, and union branches are put in a canonical order and naming so equal shapes compare equal.
+
+`AVG`, `DISTINCT`, outer joins, `LIMIT` and `UNION DISTINCT` are left alone. `tests/test_algebraic_equivalence.py` runs every rewrite on random SQLite databases (empty tables and NULLs included) to check normalization never changes results.
+
+`kumosql.sqlsolver_backend.prove_equivalent(left, right, schema=...)` runs the algebraic prover first and, only when it finds no proof, the real SQLSolver jar if one is installed in a user folder. See [docs/sqlsolver.md](docs/sqlsolver.md) for setup, the translation rules and the rollout plan.
 
 ```shell
-prove-sql-sqlsolver left.sql right.sql --schema schema.json   # --backend auto|sqlsolver|z3
+prove-sql-sqlsolver left.sql right.sql --schema schema.json   # --backend auto|algebraic|sqlsolver|z3
 prove-sql-sqlsolver --check                                   # is Java + SQLSolver usable here?
 ```
 
-The schema must list every table (as written in the query) with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. Everything is read from a user folder (`KUMOSQL_SQLSOLVER_HOME`), so nothing needs installing system-wide. Status: the adapter is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
+The SQLSolver stage needs a schema listing every table with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. It is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
 
 ## Whole-pipeline analysis
 
@@ -452,7 +460,7 @@ Every command prints `--help`.
 | `lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
 | `prove-sql-equivalent` | Structural equivalence proof for two queries |
 | `prove-sql-smt` | Z3 equivalence proof for two queries |
-| `prove-sql-sqlsolver` | SQLSolver equivalence proof with Z3 fallback (`--check` tests the setup) |
+| `prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
 | `kumosql-pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
 | `kumosql-scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`) |
 | `kumosql-compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |
