@@ -33,6 +33,7 @@ import re
 import sqlglot
 from sqlglot import exp
 
+from .eager_aggregation import flatten_grouped_join, unnest_grouped_source
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -458,6 +459,22 @@ def _shift(day: datetime.date, count: int, unit: str) -> datetime.date | None:
     return None
 
 
+def _fold_count_coalesce(tree: exp.Expression) -> exp.Expression:
+    """``COALESCE(COUNT(..), 0)`` is the count: a count is never NULL."""
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if (
+            isinstance(node, exp.Coalesce)
+            and isinstance(node.this, exp.Count)
+            and len(node.expressions) == 1
+            and node.expressions[0].sql() == "0"
+        ):
+            return node.this
+        return node
+
+    return tree.transform(step)
+
+
 def _fold_dates(tree: exp.Expression) -> exp.Expression:
     """Constant dates become ``CAST('YYYY-MM-DD' AS DATE)``, including ``DATE('..' )`` with a
     time-zone suffix and ``date + INTERVAL n DAY/MONTH/YEAR``, so equal dates compare equal."""
@@ -803,15 +820,15 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_prune_derived, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, _key_aggregates):
+            for rule in (_prune_derived, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
         return node
 
-    for _ in range(4):
+    for _ in range(8):
         before = tree.sql(dialect="bigquery")
-        tree = tree.transform(step)
+        tree = _fold_count_coalesce(tree.transform(step))
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):

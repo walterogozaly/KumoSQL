@@ -88,6 +88,7 @@ def load_pairs(path: Path) -> list[tuple[str, str]]:
 def to_dialect(sql: str, dialect: str) -> str:
     # Spark writes date('1994-01-01 +08'); the engines under test read the date part.
     sql = re.sub(r"date\(\s*'(\d{4}-\d{2}-\d{2})\s*[+-]\d{2}(?::?\d{2})?'\s*\)", r"date('\1')", sql, flags=re.I)
+    sql = re.sub(r"(?<=[\w$])\$|\$(?=\w)", "_S_", sql)  # DuckDB rejects $ in bare names (EXPR$0, $f1)
     return sqlglot.transpile(sql, read="mysql", write=dialect)[0]
 
 
