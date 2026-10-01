@@ -172,8 +172,8 @@ _QUOTED_RE = re.compile(r"`[^`\n]*`")
 def _restore_quoted(original: str, formatted: str) -> str:
     """Put back the exact text of every backtick-quoted name.
 
-    sqlfluff changes the case of a quoted function name (``\`p.d.f\`(x)`` becomes
-    ``\`P.D.F\`(x)``), but BigQuery treats routine and table paths as case
+    sqlfluff changes the case of a quoted function name (`p.d.f`(x) becomes
+    `P.D.F`(x)), but BigQuery treats routine and table paths as case
     sensitive. Quoted names are in the same order before and after formatting, so
     they are restored one for one; if the counts or spellings (ignoring case)
     differ, the output is left as sqlfluff made it.

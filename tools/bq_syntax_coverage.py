@@ -438,30 +438,50 @@ def load_dry_runs() -> dict[str, dict]:
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
+def _dry_cell(ids, dry_runs) -> str:
+    if not dry_runs:
+        return "–"
+    counts = Counter(dry_runs.get(i, {}).get("status", "not_run") for i in ids)
+    parts = [f"{counts['ok']} ✅"]
+    if counts["error"]:
+        parts.append(f"{counts['error']} ❌")
+    if counts["not_run"]:
+        parts.append(f"{counts['not_run']} –")
+    return " ".join(parts)
+
+
 def markdown(results, cases, dry_runs) -> str:
     by_id = {c["id"]: c for c in cases}
     families: dict[str, list[str]] = defaultdict(list)
     for case_id in results:
-        families[case_id.split("/")[0] if by_id[case_id]["kind"] == "sql" else "dataform"].append(case_id)
+        if by_id[case_id]["kind"] == "sql":
+            families[case_id.split("/")[0]].append(case_id)
+    header = ["parse", "load", "graph", "fingerprint", "cleanup", "format", "prover"]
     lines = [
-        "| Family | Cases | " + " | ".join(STAGES) + " |",
-        "|---|---:|" + "---|" * len(STAGES),
+        "| Family | Cases | " + " | ".join(header) + " | dry run |",
+        "|---|---:|" + "---|" * (len(header) + 1),
     ]
     totals: dict[str, Counter] = {s: Counter() for s in STAGES}
+    every = []
     for family in sorted(families):
-        ids = [i for i in families[family] if by_id[i]["kind"] == "sql"]
-        if not ids:
-            continue
+        ids = families[family]
+        every += ids
         cells = []
         for stage in STAGES:
             counts = Counter(results[i][stage][0] for i in ids)
             totals[stage].update(counts)
             cells.append(_cell(counts))
-        lines.append(f"| {family} | {len(ids)} | " + " | ".join(cells) + " |")
-    lines.append("| **all SQL** | %d | " % sum(len(f) for f in [[i for i in v if by_id[i]['kind'] == 'sql'] for v in families.values()]) + " | ".join(_cell(totals[s]) for s in STAGES) + " |")
+        lines.append(f"| {family} | {len(ids)} | " + " | ".join(cells) + f" | {_dry_cell(ids, dry_runs)} |")
+    lines.append(f"| **all GoogleSQL** | {len(every)} | " + " | ".join(_cell(totals[s]) for s in STAGES) + f" | {_dry_cell(every, dry_runs)} |")
     sqlx_ids = [i for i in results if by_id[i]["kind"] == "sqlx"]
-    lines += ["", "| Dataform SQLX | Cases | " + " | ".join(SQLX_STAGES) + " |", "|---|---:|" + "---|" * len(SQLX_STAGES)]
-    lines.append(f"| all SQLX | {len(sqlx_ids)} | " + " | ".join(_cell(Counter(results[i][s][0] for i in sqlx_ids)) for s in SQLX_STAGES) + " |")
+    lines += [
+        "",
+        "| Dataform | Cases | " + " | ".join(SQLX_STAGES) + " | dry run |",
+        "|---|---:|" + "---|" * (len(SQLX_STAGES) + 1),
+        f"| SQLX actions | {len(sqlx_ids)} | "
+        + " | ".join(_cell(Counter(results[i][s][0] for i in sqlx_ids)) for s in SQLX_STAGES)
+        + f" | {_dry_cell(sqlx_ids, dry_runs)} |",
+    ]
     return "\n".join(lines) + "\n"
 
 
