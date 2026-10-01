@@ -10,7 +10,7 @@ import threading
 import webbrowser
 from urllib.parse import parse_qs, urlsplit
 
-from . import live_graph
+from . import console, live_graph
 from . import live_insights
 from . import scope_queries
 from . import scopes as scope_store
@@ -118,8 +118,22 @@ def transform(sql: str, names: list[str], format_preferences: object = None) -> 
     }
 
 
+class UIServer(ThreadingHTTPServer):
+    """Threaded, with its errors logged to a file: the console may be frozen by a click."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address) -> None:
+        import traceback
+
+        console.log(f"error handling {client_address[0]}: {traceback.format_exc().strip()}")
+
+
 class UIHandler(BaseHTTPRequestHandler):
     """Serve bundled assets and a small same-origin JSON API."""
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature set by the base class
+        console.log(f"{self.address_string()} {format % args}")
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -555,12 +569,13 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             parser.error(f"could not load --jobs: {exc}")
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), UIHandler)
+        server = UIServer(("127.0.0.1", args.port), UIHandler)
     except OSError as exc:
         parser.error(f"could not start local server: {exc}")
     url = f"http://127.0.0.1:{args.port}/"
+    console.disable_quick_edit()
     print(f"KumoSQL UI: {url}", flush=True)
-    print("Press Ctrl+C to stop.", flush=True)
+    print(f"Press Ctrl+C to stop. Requests are logged to {console.log_path()}", flush=True)
     if not args.no_browser:
         threading.Timer(0.3, lambda: webbrowser.open(url)).start()
     try:
