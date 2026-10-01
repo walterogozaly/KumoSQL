@@ -807,9 +807,7 @@ class _Compiler:
             occs.append(occ)
             return alias, _Source(occ=occ)
         if isinstance(node, exp.Subquery):
-            alias = node.alias_or_name.lower()
-            if not alias:
-                raise Unsupported("unaliased subquery in FROM")
+            alias = node.alias_or_name.lower() or self.fresh("anon")
             return alias, self._derived(node.this, ctes, occs, conds)
         raise Unsupported(f"FROM item {type(node).__name__}")
 
@@ -1872,6 +1870,76 @@ class _Prover:
                 changes["having"] = _Pred(_subst(block.having.t, pairs), _subst(block.having.f, pairs))
         return dataclasses.replace(block, **changes)
 
+    def sub_consequences(self, block):
+        """Facts ``atom => condition on outer columns`` implied by each existence test.
+
+        A witness row satisfies the guard, so a guard condition over columns that
+        the guard equates to outer columns holds of those outer columns. The atom
+        is otherwise free, so without this a required test would not tell the
+        prover that, e.g., ``d.x = e.x AND e.x > 7`` forces ``d.x > 7``.
+        """
+
+        if not block.subs or any(o.opaque for o in block.occs):
+            return block
+        extra = []
+        for sub in block.subs:
+            if any(o.opaque for o in sub.occs):
+                continue
+            inner_ids = set()
+            for occ in sub.occs:
+                for v in occ.cols.values():
+                    inner_ids.update((v.null.get_id(), v.val.get_id()))
+            conjuncts, stack = [], [sub.guard]
+            while stack:
+                term = stack.pop()
+                if z3.is_and(term):
+                    stack.extend(term.children())
+                else:
+                    conjuncts.append(term)
+
+            def consts(term):
+                found, todo = set(), [term]
+                while todo:
+                    t = todo.pop()
+                    if z3.is_const(t) and t.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+                        found.add(t.get_id())
+                    todo.extend(t.children())
+                return found
+
+            ids = {c.get_id() for c in conjuncts}
+            pairs = []
+            for occ in sub.occs:
+                for v in occ.cols.values():
+                    for term in conjuncts:
+                        if not z3.is_eq(term):
+                            continue
+                        left, right = term.children()
+                        if right.eq(v.val):
+                            left, right = right, left
+                        if not left.eq(v.val) or consts(right) & inner_ids:
+                            continue
+                        # ``right`` is an outer term; the pair is known non-NULL when both sides' flags are.
+                        outer_null = z3.Bool(right.decl().name() + "#null") if z3.is_const(right) else None
+                        if (
+                            outer_null is not None
+                            and z3.Not(v.null).get_id() in ids
+                            and z3.Not(outer_null).get_id() in ids
+                        ):
+                            pairs.append((v.val, right))
+                            pairs.append((v.null, outer_null))
+                            break
+            for term in conjuncts:
+                used = consts(term)
+                if not used:
+                    continue
+                moved = _subst(term, pairs)
+                if consts(moved) & inner_ids:
+                    continue
+                extra.append(z3.Implies(sub.atom, moved))
+        if extra:
+            block.facts = block.facts + extra
+        return block
+
     def push_having(self, block):
         """``HAVING`` on group keys only is a ``WHERE`` filter (every row of a group agrees on it)."""
 
@@ -2000,6 +2068,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             b = prover.push_having(b)
             b = prover.as_distinct_spj(b)
             b = prover.inline_unique_subs(b)
+            b = prover.sub_consequences(b)
             if union.distinct or b.distinct:
                 b = prover.inline_unique_subs(b, require_unique=False)
             branches.append(prover.merge_key_occurrences(b))
