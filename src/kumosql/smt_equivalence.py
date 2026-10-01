@@ -1361,6 +1361,13 @@ class _Compiler:
     def _aggregate(self, func: str, e, env, agg: _AggCtx | None) -> _Val:
         if agg is None:
             raise Unsupported(f"aggregate in a non-aggregate position: {e.sql(dialect='bigquery')}")
+        if func == "AVG" and e.this is not None and not any(e.args.get(k) for k in ("having_max", "ignore_nulls", "order", "limit", "separator")):
+            # AVG(x) is SUM(x) / COUNT(x): NULL when no value is present, and shared with a spelled-out quotient.
+            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg)
+            count = self._aggregate("COUNT", exp.Count(this=e.this.copy()), env, agg)
+            null_fn, val_fn = self._function("Div", 2)
+            args = self._uf_args([total, count])
+            return _Val(z3.Or(total.null, null_fn(*args)), val_fn(*args))
         V = _value_sort()
         target = e.this
         distinct = False

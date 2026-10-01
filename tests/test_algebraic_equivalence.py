@@ -643,3 +643,17 @@ def test_isolating_windows_preserves_results(sql):
         for _ in range(rng.choice([0, 1, 4, 7])):
             db.execute("INSERT INTO t VALUES (?, ?, ?)", [rng.choice([None, 0, 1, 2]) for _ in range(3)])
         assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+def test_avg_is_a_sum_divided_by_a_count():
+    schema = {"dept": ["deptno", "name"]}
+    constraints = {"dept": TableConstraints(not_null=frozenset({"deptno"}))}
+    avg = "SELECT name, AVG(deptno) FROM dept GROUP BY name"
+    quotient = "SELECT name, SUM(deptno) / COUNT(*) FROM dept GROUP BY name"
+    result = prove_equivalent_algebraic(avg, quotient, schema=schema, constraints=constraints, compare_names=False, dialect="mysql")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # COUNT(*) counts NULL values too, so without the NOT NULL fact the quotient differs.
+    result = prove_equivalent_algebraic(avg, quotient, schema=schema, compare_names=False, dialect="mysql")
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+    result = prove_equivalent_algebraic(avg, "SELECT name, SUM(deptno) / COUNT(DISTINCT deptno) FROM dept GROUP BY name", schema=schema, constraints=constraints, compare_names=False, dialect="mysql")
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
