@@ -7,6 +7,8 @@
   <title>KumoSQL</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/shell.css">
+  <script src="/assets/shell.js"></script>
   <script defer src="/assets/evidence.js"></script>
   <script defer src="/assets/scopes.js"></script>
   <script defer src="/assets/settings.js"></script>
@@ -34,27 +36,6 @@
   </svg>
 
   <div class="app">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">{ }</span>
-        <span class="brand-text"><strong>KumoSQL</strong><span>SQL workspace</span></span>
-      </div>
-      <nav class="topnav" aria-label="Main navigation"><a href="/" aria-current="page">Workspace</a><a href="/graph">Query graph</a><a href="/cost">Cost</a><a href="/changes">Change reports</a><a href="/browse">BigQuery</a></nav>
-      <div class="topbar-actions">
-        <div class="menu-wrap">
-          <button id="examples-button" class="toolbar-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="examples-menu">
-            <svg class="icon"><use href="#i-spark"/></svg><span>Examples</span><svg class="icon icon-sm"><use href="#i-chevron"/></svg>
-          </button>
-          <div id="examples-menu" class="menu" role="menu" aria-label="Examples" hidden></div>
-        </div>
-        <button id="theme-button" class="icon-button" type="button" aria-label="Theme: match system" title="Theme: match system">
-          <svg class="icon"><use id="theme-icon" href="#i-monitor"/></svg>
-        </button>
-        <button id="settings-button" class="toolbar-button" type="button" data-open-settings title="Settings (Ctrl+,)"><span>Settings</span></button>
-        <span class="local-badge" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
-      </div>
-    </header>
-
     <div class="layout">
       <aside class="sidebar" aria-labelledby="pipeline-title">
         <div class="sidebar-section">
@@ -103,6 +84,12 @@
             <div><dt>Diff</dt><dd id="stat-diff">–</dd></div>
             <div><dt>Time</dt><dd id="stat-time">–</dd></div>
           </dl>
+          <div class="menu-wrap">
+            <button id="examples-button" class="toolbar-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="examples-menu">
+              <svg class="icon"><use href="#i-spark"/></svg><span>Examples</span><svg class="icon icon-sm"><use href="#i-chevron"/></svg>
+            </button>
+            <div id="examples-menu" class="menu" role="menu" aria-label="Examples" hidden></div>
+          </div>
           <button id="details-button" class="toolbar-button" type="button" hidden>Details<svg class="icon icon-sm"><use href="#i-chevron"/></svg></button>
         </section>
 

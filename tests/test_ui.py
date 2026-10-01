@@ -49,6 +49,8 @@ def test_ui_serves_assets_and_registered_rules(ui_server):
         ("/", b"Original SQL"),
         ("/assets/style.css", b".workspace"),
         ("/assets/app.js", b"/api/transform"),
+        ("/assets/shell.js", b"kumosql-sidebar"),
+        ("/assets/shell.css", b".rail"),
         ("/favicon.svg", b"<svg"),
         ("/assets/settings.js", b"/api/settings/format"),
     ):

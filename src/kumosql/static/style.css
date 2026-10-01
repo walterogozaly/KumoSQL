@@ -6,7 +6,7 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   --code-size: 13px;
   --code-line: 21px;
-  --topbar-h: 56px;
+  --topbar-h: 0px;
 
   --bg: #f2f5f9;
   --surface: #ffffff;
@@ -166,14 +166,8 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 
 /* App frame */
 .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
-.topbar { flex: none; height: var(--topbar-h); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px 0 18px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 8px; background: #1c3f86; color: #dce8ff; font: 700 13px var(--font-mono); }
-.brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
-.brand-text strong { font-size: 14px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
-.brand-text span { color: var(--text-faint); font-size: 11.5px; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
-.local-badge { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border: 1px solid var(--border); border-radius: 999px; color: var(--ok-fg); background: var(--ok-bg); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .local-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
 
 .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); }
@@ -408,8 +402,7 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
   .editor, .viewer { flex: none; height: 300px; }
 }
 @media (max-width: 520px) {
-  .brand-text span, .local-text, #examples-button span { display: none; }
-  .local-badge { width: 30px; padding: 0; justify-content: center; }
+  #examples-button span { display: none; }
   .menu { right: -76px; width: min(320px, calc(100vw - 32px)); }
   .verdict { align-items: flex-start; }
   .verdict-text span { white-space: normal; }
@@ -445,10 +438,6 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .scope-item div { flex: 1; min-width: 0; }
 .scope-item strong, .scope-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scope-item small { color: var(--text-muted); font-size: 11.5px; }
-.topnav { display: flex; gap: 2px; min-width: 0; margin-left: auto; margin-right: 12px; overflow-x: auto; scrollbar-width: none; }
-.topnav a { flex: none; padding: 6px 10px; border-radius: 7px; color: var(--text-muted); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
-.topnav a:hover { color: var(--text); background: var(--surface-2); }
-.topnav a[aria-current="page"] { color: var(--accent-text); background: var(--accent-soft); }
 
 /* ---------- Evidence labels and checks (shared with the roadmap views) ---------- */
 .ev-pill { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; white-space: nowrap; }
@@ -470,7 +459,6 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .verdict-planner_checked { border-color: var(--info-border); background: color-mix(in srgb, var(--info-bg) 45%, var(--surface)); }
 .verdict-planner_checked .verdict-icon { background: var(--info-bg); color: var(--info-fg); }
 .tl-step.planner_checked .tl-dot { background: var(--info); color: #fff; }
-@media (max-width: 860px) { .topnav a { padding: 6px 7px; font-size: 12px; } }
 .report-heading .ev-legend-wrap { position: relative; }
 .report-heading .ev-legend-wrap[open] .ev-legend { position: absolute; z-index: 10; top: 100%; right: 0; width: min(540px, calc(100vw - 48px)); box-shadow: var(--shadow-lg); background: var(--surface); }
 
@@ -495,15 +483,15 @@ h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 }
 body { background: var(--bg); }
 body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(var(--bg-scrim), var(--bg-scrim)), var(--bg-image) center 30% / cover no-repeat; }
-.topbar, .sidebar, .sidebar-footer, .verdict, .pane, .report { background-color: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
+.sidebar, .sidebar-footer, .verdict, .pane, .report { background-color: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
 .verdict-unproven { background-color: color-mix(in srgb, var(--warn-bg) 45%, var(--panel)); }
 .verdict-failed { background-color: color-mix(in srgb, var(--bad-bg) 45%, var(--panel)); }
 @media (prefers-reduced-transparency: reduce) {
   :root { --panel: var(--surface); --panel-blur: none; }
 }
 
-/* backdrop-filter makes the topbar a stacking context; lift it above the panels so its menus aren't painted behind them. */
-.topbar { position: relative; z-index: 30; }
+/* backdrop-filter makes the verdict a stacking context; lift it above the panels so the Examples menu isn't painted behind them. */
+.verdict { position: relative; z-index: 30; }
 /* Pipeline as a horizontal strip above the editors (wide screens); on narrow
    screens the stacked sidebar layout above still applies. */
 @media (min-width: 861px) {

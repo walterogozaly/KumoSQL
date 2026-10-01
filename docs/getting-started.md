@@ -124,9 +124,12 @@ kumosql-ui --project demo
 
 This starts a local server at `http://127.0.0.1:8765/` and opens your browser. Use `--no-browser` to skip opening it, `--port 8766` to pick another port, and Ctrl+C to stop. The server listens only on `127.0.0.1`, and pasted SQL stays on your computer.
 
+- **Sidebar.** Pages (Workspace, Query graph, Cost, Change reports, BigQuery) are listed down the left; **Settings** and the **Theme** button (system, light, dark) are pinned at the bottom. The panel button at the top collapses it to icons and expands it again, and your choice is remembered. On narrow screens the sidebar is a drawer opened from the menu button in the top-left.
+
+  ![Sidebar expanded](images/sidebar/ws-light.png) ![Sidebar collapsed](images/sidebar/ws-collapsed.png)
 - **Workspace.** Paste BigQuery SQL or Dataform SQLX into **Original SQL** (or use **Open**, or drop a file on the editor). The **Pipeline** strip across the top lists the rules; tick the ones you want and drag them (or use the arrows) to change the order. **Examples** loads a sample for each rule. The result updates as you type; press Ctrl+Enter or **Transform SQL** to run it on demand. The verdict bar shows one label for the whole result, and **Details** shows the evidence behind each step. **Diff** shows which lines changed, and the buttons beside **Copy** download the result or send it back into the editor.
 - **Query graph.** With `--project demo` this shows your own models, their readers, the impact of a change (**Assess a change**), column lineage, and tables that already provide the same thing (**Already elsewhere**). A strip warns whenever something could not be analyzed. You can also enter a Dataform git remote on the page, or start with `kumosql-ui --git git@github.com:owner/repo.git`; private repositories work through your own git credentials.
-- **Settings** (top bar, or Ctrl/⌘ + `,`). Appearance, and SQL formatting: keyword case, indentation, line length and the full list of sqlfluff rules, with named configurations you can switch between.
+- **Settings** (bottom of the sidebar, or Ctrl/⌘ + `,`). Appearance, and SQL formatting: keyword case, indentation, line length and the full list of sqlfluff rules, with named configurations you can switch between.
 - **Scopes** (*Settings → Scopes*, also linked under the Pipeline strip). Saved rules that limit which models, job rows or tables an analysis covers. Pick the active scope with the *Scope* picker on the Query graph, Cost and Change reports pages.
 - **Cost** and **Change reports** show labeled sample data until you supply job history or a pair of project snapshots (see below).
 
