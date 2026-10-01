@@ -193,21 +193,21 @@ def load_sqlx_project(
             )
         models[model.key] = model
 
-    for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
+    def load_asset(path: Path) -> None:
         relative = str(path.relative_to(root))
         text, reason = read_text_or_reason(path)
         if text is None:
             diagnostics.append(PipelineDiagnostic(relative, "read_error", f"{reason}; asset was skipped"))
-            continue
+            return
         if path.suffix == ".sql":
             target = Target(name=path.stem)
             add_model(Model(target, "sql", text, relative))
-            continue
+            return
         try:
             sections = _split_sqlx_sections(text)
         except ValueError as exc:
             diagnostics.append(PipelineDiagnostic(relative, "sqlx_parse_error", str(exc)))
-            continue
+            return
         config = next(
             (body for kind, body in sections if kind == "block" and body.lstrip().startswith("config")),
             "",
@@ -220,7 +220,7 @@ def load_sqlx_project(
         )
         if kind == "declaration":
             sources[target.key] = target
-            continue
+            return
         default = Target(database, dataset, "")
         body = "".join(section for kind_, section in sections if kind_ == "sql")
         dependencies: list[Target] = []
@@ -245,6 +245,14 @@ def load_sqlx_project(
             diagnostics.append(PipelineDiagnostic(relative, "config_tags_unreadable", f"could not read tags ({type(exc).__name__}: {exc}); the model was kept without tags"))
             tags = ()
         add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags))
+
+    for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
+        try:
+            load_asset(path)
+        except Exception as exc:  # noqa: BLE001 - one odd file must not fail the whole project
+            diagnostics.append(PipelineDiagnostic(
+                str(path.relative_to(root)), "asset_unreadable",
+                f"could not be analyzed ({type(exc).__name__}: {exc}); asset was skipped"))
 
     from .pipeline import Pipeline  # deferred: pipeline imports this module
 

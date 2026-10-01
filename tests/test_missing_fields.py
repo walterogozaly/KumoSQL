@@ -63,3 +63,25 @@ def test_unexpected_failures_name_the_step_and_repository(monkeypatch):
     monkeypatch.setattr(live_graph, "load_files", boom)
     with pytest.raises(git_repo.GitRepoError, match=r"team/dataform \(main @ abc\).*building the graph|Reading the SQL files of team/dataform"):
         git_repo.load_into_graph("https://example.com/team/dataform.git")
+
+
+def test_one_unreadable_file_is_skipped_and_named(tmp_path, monkeypatch):
+    from kumosql import pipeline_loading
+
+    (tmp_path / "definitions").mkdir()
+    (tmp_path / "definitions" / "good.sqlx").write_text('config { type: "table" }\nselect 1 a')
+    (tmp_path / "definitions" / "odd.sqlx").write_text('config { type: "table" }\nselect 2 a')
+
+    original = pipeline_loading._split_sqlx_sections
+
+    def marked(text):
+        sections = original(text)
+        if "select 2" in text:
+            raise TypeError("expected string or bytes-like object, got 'NoneType'")
+        return sections
+
+    monkeypatch.setattr(pipeline_loading, "_split_sqlx_sections", marked)
+    pipeline = load_sqlx_project(tmp_path)
+    assert len(pipeline.models) == 1
+    odd = [d for d in pipeline.diagnostics if d.code == "asset_unreadable"]
+    assert len(odd) == 1 and "odd.sqlx" in odd[0].model and "TypeError" in odd[0].message
