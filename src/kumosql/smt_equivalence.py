@@ -1111,16 +1111,20 @@ class _Compiler:
         inner_node = query
         while isinstance(inner_node, exp.Subquery):
             inner_node = inner_node.this
-        if not isinstance(inner_node, exp.Select) or len(inner_node.expressions) != 1:
+        lefts = list(e.this.expressions) if isinstance(e.this, exp.Tuple) else [e.this]
+        if not isinstance(inner_node, exp.Select) or len(inner_node.expressions) != len(lefts):
             raise Unsupported("IN subquery shape")
         if any(isinstance(i, exp.Star) for i in inner_node.expressions) or any(inner_node.find_all(exp.AggFunc)):
             raise Unsupported("IN subquery shape")
-        left = self._val(e.this, env, agg, aliases)
+        left_values = [self._val(item, env, agg, aliases) for item in lefts]
 
         def compare(scope, node):
-            item = node.expressions[0]
-            right = self._val(item.this if isinstance(item, exp.Alias) else item, scope, None, None)
-            return self._compare("=", left, right)
+            tests = []
+            for left, item in zip(left_values, node.expressions):
+                right = self._val(item.this if isinstance(item, exp.Alias) else item, scope, None, None)
+                tests.append(self._compare("=", left, right))
+            # A row value equals another when every pair is equal; it differs when some pair differs.
+            return _Pred(z3.And(*[t.t for t in tests]), z3.Or(*[t.f for t in tests]))
 
         true_atom = self._existence(query, env, lambda scope, node: compare(scope, node).t)
         unknown_or_true = self._existence(query, env, lambda scope, node: z3.Not(compare(scope, node).f))
@@ -1342,6 +1346,13 @@ class _Compiler:
             arg = _box(self._pred(target, env, None, None))
         else:
             arg = self._val(target, env, None, None)
+        all_null = arg is not None and func in ("COUNT", "SUM", "MIN", "MAX", "AVG") and z3.is_true(z3.simplify(arg.null))
+        if all_null:
+            # An aggregate of values that are all NULL: COUNT is 0, the others are NULL. The call is still
+            # registered, so the query keeps its aggregate shape (one row for a global aggregate).
+            uid = self.fresh("agg")
+            agg.calls.append(_AggCall(func, distinct, arg, _Val(z3.BoolVal(False), z3.Const(uid, V))))
+            return _Val(z3.BoolVal(False), V.Num(0)) if func == "COUNT" else _Val(z3.BoolVal(True), V.Num(0))
         for call in agg.calls:
             same_arg = (call.arg is None and arg is None) or (
                 call.arg is not None and arg is not None
@@ -2143,6 +2154,21 @@ def _prune(prover: "_Prover", union: _Union) -> None:
     union.branches = kept
 
 
+def _constant_global(block):
+    """A global aggregate whose outputs do not depend on any aggregate (``SELECT COUNT(NULL) FROM t``)
+    returns exactly one constant row, like a SELECT without FROM."""
+
+    if (
+        isinstance(block, _Agg)
+        and block.is_global
+        and block.having is None
+        and not block.subs
+        and all(_is_ground(v.val) and _is_ground(v.null) for v in block.outputs)
+    ):
+        return _Spj([], _const_pred(True), block.outputs, block.names, distinct=block.distinct, facts=[])
+    return block
+
+
 def _is_set(u: _Union) -> bool:
     return u.distinct or (len(u.branches) == 1 and u.branches[0].distinct)
 
@@ -2153,6 +2179,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
         _prune(prover, union)
         branches = []
         for b in union.branches:
+            b = _constant_global(b)
             b = prover.resolve_set_sources(b)
             b = prover.push_having(b)
             b = prover.as_distinct_spj(b)

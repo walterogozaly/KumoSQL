@@ -379,3 +379,42 @@ def test_a_left_join_is_not_a_right_join_in_an_aggregate():
         schema=OJ_SCHEMA, compare_names=False, dialect="mysql",
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        ("SELECT COUNT(NULL) FROM dept", "SELECT 0"),
+        ("SELECT COUNT(DISTINCT (deptno = NULL)) FROM dept", "SELECT 0"),
+        ("SELECT SUM(NULL) FROM dept", "SELECT NULL"),
+        ("SELECT UPPER(LOWER(name)) FROM dept", "SELECT UPPER(name) FROM dept"),
+        ("SELECT POSITIVE(deptno) FROM dept", "SELECT deptno FROM dept"),
+        ('SELECT CONCAT("a", CONCAT("b", "c")) AS c1 FROM dept', 'SELECT CONCAT("a", "b", "c") AS c1 FROM dept'),
+    ],
+)
+def test_constant_aggregates_and_function_identities(left, right):
+    result = prove_equivalent_algebraic(left, right, schema={"dept": ["deptno", "name"]}, compare_names=False, dialect="mysql")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        ("SELECT COUNT(NULL) FROM dept", "SELECT 1"),
+        ("SELECT COUNT(NULL) FROM dept", "SELECT 0 FROM dept"),  # one row versus one per department
+        ("SELECT LOWER(UPPER(name)) FROM dept", "SELECT UPPER(name) FROM dept"),
+        ("SELECT deptno FROM dept WHERE (deptno, name) IN (SELECT deptno, name FROM dept WHERE deptno > 1)", "SELECT deptno FROM dept WHERE deptno IN (SELECT deptno FROM dept WHERE deptno > 1)"),
+    ],
+)
+def test_constant_aggregate_and_tuple_in_negatives(left, right):
+    result = prove_equivalent_algebraic(left, right, schema={"dept": ["deptno", "name"]}, compare_names=False, dialect="mysql")
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_tuple_in_is_an_existence_test_on_every_column():
+    result = prove_equivalent_algebraic(
+        "SELECT deptno FROM dept WHERE (deptno, name) IN (SELECT deptno, name FROM dept WHERE deptno > 1)",
+        "SELECT deptno FROM dept WHERE EXISTS (SELECT 1 FROM dept d WHERE d.deptno = dept.deptno AND d.name = dept.name AND d.deptno > 1)",
+        schema={"dept": ["deptno", "name"]}, compare_names=False, dialect="mysql",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
