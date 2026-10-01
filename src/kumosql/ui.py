@@ -46,6 +46,8 @@ ASSETS = {
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
+    "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/assets/evidence.js": ("evidence.js", "text/javascript; charset=utf-8"),
@@ -290,7 +292,7 @@ class UIHandler(BaseHTTPRequestHandler):
             elif route == "/api/catalog/datasets":
                 project = _required(query, "project")
                 result = bigquery_catalog.cached(
-                    f"datasets\x1f{project}",
+                    f"datasets\x1fbrowsable\x1f{project}",
                     lambda: bigquery_catalog.list_datasets(project), refresh)
             elif route == "/api/catalog/tables":
                 project, dataset = _required(query, "project"), _required(query, "dataset")
@@ -300,9 +302,17 @@ class UIHandler(BaseHTTPRequestHandler):
             elif route == "/api/catalog/table":
                 project, dataset = _required(query, "project"), _required(query, "dataset")
                 table = _required(query, "table")
-                result = bigquery_catalog.cached(
-                    f"table\x1f{project}\x1f{dataset}\x1f{table}",
-                    lambda: bigquery_catalog.get_table(project, dataset, table), refresh)
+                try:
+                    result = bigquery_catalog.cached(
+                        f"table\x1f{project}\x1f{dataset}\x1f{table}",
+                        lambda: bigquery_catalog.get_table(project, dataset, table), refresh)
+                except bigquery_catalog.CatalogError as exc:
+                    if exc.status not in (403, 404):
+                        raise
+                    # Inaccessible tables are removed from the cached list, and the page hides them.
+                    bigquery_catalog.forget_table(project, dataset, table)
+                    self._json(502, {"error": str(exc), "removed": True})
+                    return
             else:
                 self._json(404, {"error": "not found"})
                 return

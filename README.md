@@ -29,11 +29,11 @@ python -m pip install '.[bigquery]'
 gcloud auth application-default login
 ```
 
-The browser uses the active ADC identity and read-only BigQuery scope. It lists only projects that identity can browse: each project from BigQuery's project list is probed with a one-row dataset listing and hidden if BigQuery denies it (projects where you hold only an unrelated role, or where BigQuery is disabled, do not appear). The probe is a free metadata call and the result is cached like the rest of the catalog; BigQuery permissions still control which datasets, tables, and schemas appear. `gcloud auth login` alone does not configure Application Default Credentials.
+The browser uses the active ADC identity and read-only BigQuery scope. It lists only projects that identity can browse: each project from BigQuery's project list is probed with a one-row dataset listing and hidden if BigQuery denies it (projects where you hold only an unrelated role, or where BigQuery is disabled, do not appear). Datasets get the same treatment with a one-row table listing, and hidden anonymous datasets whose names start with an underscore (cached query results) are never shown, as in the BigQuery console. A table that turns out to be inaccessible when opened (403 or 404) is removed from the list and the saved copy. The probe is a free metadata call and the result is cached like the rest of the catalog; BigQuery permissions still control which datasets, tables, and schemas appear. `gcloud auth login` alone does not configure Application Default Credentials.
 
 **Saved state.** UI preferences (theme, enabled rules and their order), named SQLFluff formatting configurations, and scopes are saved by the local server in one JSON file in the standard per-user data directory (`%APPDATA%\kumosql\state.json` on Windows, `~/Library/Application Support/kumosql/state.json` on macOS, `$XDG_DATA_HOME/kumosql/state.json` or `~/.local/share/kumosql/state.json` on Linux). Set `KUMOSQL_HOME` to use another directory. The CLI and Python API read the same file, so a scope saved in the UI works with `--scope`.
 
-**Formatting and complexity.** The `format_sql` operation formats BigQuery SQL with [sqlfluff](https://sqlfluff.com) and is verified like every other rule. Open *Settings* from the top bar (or press Ctrl/⌘ + , or click the *SQL formatting* link under the pipeline) to set keyword case, comma position, indentation, line length, and which sqlfluff rules to apply. The *Rules* list shows every BigQuery rule in the installed sqlfluff, grouped by category with its description, each with an on/off switch; rules sqlfluff can only lint, not fix, are marked and stay off because they can't change formatted SQL. Settings opens as a panel over the current page and saves changes as you make them, except renaming a configuration, which waits for the *Rename* button. Save multiple named configurations and switch between them; the pipeline shows which one is active, and it is included in the server's persistent local state. The stats bar shows a structural complexity score before and after (hover for the breakdown). The score is a weighted sum of joins, CTEs, subqueries, set operations, `CASE` expressions, window functions, `AND`/`OR` predicates and SELECT nesting depth, banded low (<10), moderate (<25), high (<50) or very high. sqlfluff cannot parse Dataform SQLX, so those inputs are left unformatted and unscored. The same is available in Python: `format_sql(sql)` and `complexity(sql)`.
+**Formatting and complexity.** The `format_sql` operation formats BigQuery SQL with [sqlfluff](https://sqlfluff.com) and is verified like every other rule. Open *Settings* from the bottom of the sidebar (or press Ctrl/⌘ + , or click the *SQL formatting* link under the pipeline) to set keyword case, comma position, indentation, line length, and which sqlfluff rules to apply. The *Rules* list shows every BigQuery rule in the installed sqlfluff, grouped by category with its description, each with an on/off switch; rules sqlfluff can only lint, not fix, are marked and stay off because they can't change formatted SQL. Settings opens as a panel over the current page and saves changes as you make them, except renaming a configuration, which waits for the *Rename* button. Save multiple named configurations and switch between them; the pipeline shows which one is active, and it is included in the server's persistent local state. The stats bar shows a structural complexity score before and after (hover for the breakdown). The score is a weighted sum of joins, CTEs, subqueries, set operations, `CASE` expressions, window functions, `AND`/`OR` predicates and SELECT nesting depth, banded low (<10), moderate (<25), high (<50) or very high. sqlfluff cannot parse Dataform SQLX, so those inputs are left unformatted and unscored. The same is available in Python: `format_sql(sql)` and `complexity(sql)`.
 
 **Scopes.** A scope is a saved, named *rule* that decides which records are "in": models, job-history rows or table profiles. A rule combines conditions on any field with AND, OR and NOT groups that nest, for example `job submitter IN [ana@co.com, bo@co.com]`, or `dataset starts with raw AND NOT project = sandbox`. Build one in *Settings → Scopes* (open Settings from any page, or use the *Manage* link under the Pipeline strip; the rule builder suggests the fields found in the loaded project and job history, and accepts any field name) or from the shell:
 
@@ -254,6 +254,25 @@ prove-sql-smt left.sql right.sql --schema schema.json
 
 `tests/test_smt_fuzz.py` checks the prover against SQLite on random queries and databases: every proof must hold and every counterexample must separate the queries.
 
+## Algebraic prover and SQLSolver (no admin rights)
+
+What makes [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (SIGMOD 2024) strong is that it treats queries as arithmetic over tuple multiplicities: under bag semantics `UNION ALL` is addition, a join is multiplication, and aggregates over a sum split into partial aggregates combined arithmetically. `kumosql.algebraic_equivalence` brings that into KumoSQL in pure Python on top of the existing Z3 prover, so it installs per user with `pip install --user -e ".[smt]"`:
+
+- joins, filters and projections distribute over a derived `UNION ALL`;
+- `COUNT`, `SUM`, `MIN` and `MAX` over a `UNION ALL` equal the same function over per-branch partial aggregates (`COUNT` combines with `SUM`), with or without `GROUP BY`;
+- redundant regrouping of an already-grouped subquery is dropped, and union branches are put in a canonical order and naming so equal shapes compare equal.
+
+`AVG`, `DISTINCT`, outer joins, `LIMIT` and `UNION DISTINCT` are left alone. `tests/test_algebraic_equivalence.py` runs every rewrite on random SQLite databases (empty tables and NULLs included) to check normalization never changes results.
+
+`kumosql.sqlsolver_backend.prove_equivalent(left, right, schema=...)` runs the algebraic prover first and, only when it finds no proof, the real SQLSolver jar if one is installed in a user folder. See [docs/sqlsolver.md](docs/sqlsolver.md) for setup, the translation rules and the rollout plan.
+
+```shell
+prove-sql-sqlsolver left.sql right.sql --schema schema.json   # --backend auto|algebraic|sqlsolver|z3
+prove-sql-sqlsolver --check                                   # is Java + SQLSolver usable here?
+```
+
+The SQLSolver stage needs a schema listing every table with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. It is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
+
 ## Whole-pipeline analysis
 
 `load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
@@ -441,6 +460,7 @@ Every command prints `--help`.
 | `lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
 | `prove-sql-equivalent` | Structural equivalence proof for two queries |
 | `prove-sql-smt` | Z3 equivalence proof for two queries |
+| `prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
 | `kumosql-pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
 | `kumosql-scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`) |
 | `kumosql-compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |

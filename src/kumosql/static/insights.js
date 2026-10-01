@@ -188,13 +188,9 @@ async function start() {
   const name = location.pathname.replace(/^\/+|\/+$/g, "") || "graph";
   const view = VIEWS[name] || VIEWS.graph;
   document.title = `${view.eyebrow} · KumoSQL`;
-  $("brand-sub").textContent = view.eyebrow;
   $("page-eyebrow").textContent = view.eyebrow;
   $("page-title").textContent = view.title;
   $("page-lede").textContent = view.lede;
-  for (const link of document.querySelectorAll(".topnav a[data-view]")) {
-    if (VIEWS[link.dataset.view] === view) link.setAttribute("aria-current", "page");
-  }
   applySavedTheme();
   try {
     await setupScopePicker();

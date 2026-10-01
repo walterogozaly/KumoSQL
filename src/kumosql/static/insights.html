@@ -7,6 +7,8 @@
   <title>KumoSQL</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/shell.css">
+  <script src="/assets/shell.js"></script>
   <link rel="stylesheet" href="/assets/insights.css">
   <script defer src="/assets/evidence.js"></script>
   <script defer src="/assets/scopes.js"></script>
@@ -15,24 +17,6 @@
 </head>
 <body>
   <div class="app insights-app">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">{ }</span>
-        <span class="brand-text"><strong>KumoSQL</strong><span id="brand-sub">Query graph</span></span>
-      </div>
-      <nav class="topnav" aria-label="Main navigation">
-        <a href="/">Workspace</a>
-        <a href="/graph" data-view="graph">Query graph</a>
-        <a href="/cost" data-view="cost">Cost</a>
-        <a href="/changes" data-view="changes">Change reports</a>
-        <a href="/browse">BigQuery</a>
-      </nav>
-      <div class="topbar-actions">
-        <button class="toolbar-button" type="button" data-open-settings title="Settings (Ctrl+,)"><span>Settings</span></button>
-        <span class="local-badge" title="Analysis runs on this computer"><span class="local-dot" aria-hidden="true"></span><span class="local-text">Running locally</span></span>
-      </div>
-    </header>
-
     <main class="insights-main">
       <header class="page-head">
         <div>
