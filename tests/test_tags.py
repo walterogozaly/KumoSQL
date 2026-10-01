@@ -241,3 +241,23 @@ def test_a_failing_query_marks_only_that_rule(monkeypatch):
     ])
     rows = tags.snapshot()["rules"]
     assert rows[0]["matched"] == 0 and "billing project" in rows[0]["error"] and rows[1]["matched"] == 2
+
+
+def test_rule_tags_appear_as_soon_as_a_dataset_is_first_listed(server, monkeypatch):
+    """The explorer reads tags before a dataset is opened, then again after its tables are saved to the catalog."""
+
+    call(server, "PUT", "/api/settings/tag_rules", [retired_rule()])
+    saved = dict(TABLES)
+    del TABLES["tables\x1fp1\x1fRETIRED"]
+    try:
+        assert call(server, "GET", "/api/tags")[1]["objects"] == {}
+    finally:
+        TABLES.update(saved)
+    assert set(call(server, "GET", "/api/tags")[1]["objects"]) == {"p1.retired.legacy_t", "p1.retired.legacy_fn"}
+
+
+def test_the_explorer_rereads_tags_after_loading_a_dataset():
+    from importlib.resources import files
+
+    script = files("kumosql").joinpath("static", "browse.js").read_text(encoding="utf-8")
+    assert script.count("await window.KumoTags?.load()") >= 1 and "KumoTags?.load().then(() => { if (chosenProject" in script

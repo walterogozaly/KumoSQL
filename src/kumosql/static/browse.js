@@ -291,8 +291,12 @@ async function selectDataset(dataset, refresh = false) {
   setStatus(`Loading tables in ${project}.${dataset}…`);
   try {
     const tables = await requestJson(queryUrl("tables", { project, dataset }), "tables", refresh, (fresh) => {
-      if (chosenProject === project && chosenDataset === dataset) fillTables(fresh);
+      // Rule tags are computed from the saved catalog, so read them again now that it has changed.
+      window.KumoTags?.load().then(() => { if (chosenProject === project && chosenDataset === dataset) fillTables(fresh); });
     });
+    if (version !== tableRequest || chosenDataset !== dataset) return;
+    // The list was just saved to the catalog; rules tag its objects from that copy, so tags read earlier are stale.
+    await window.KumoTags?.load();
     if (version !== tableRequest || chosenDataset !== dataset) return;
     fillTables(tables);
     setStatus(tables.length ? `Choose a table in ${project}.${dataset}.` : `No tables found in ${project}.${dataset}.`);
