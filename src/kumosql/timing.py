@@ -1,8 +1,8 @@
 """Per-stage timings for loading and analysing a project.
 
-``stage(name)`` times a block and prints one line to the console (stderr), so a
-slow load can be diagnosed from numbers: ``[kumosql] analyse: 8.82s (5000 models)``.
-Set ``KUMOSQL_TIMING=0`` to silence the console lines. ``recent()`` returns the
+``stage(name)`` times a block and logs one line (console and ``ui.log``, through
+:mod:`kumosql.console`), so a slow load can be diagnosed from numbers:
+``analyse: 8.82s (5000 models)``. Set ``KUMOSQL_TIMING=0`` to silence the console lines. ``recent()`` returns the
 latest timings for the UI and tests. Only counts and durations are recorded,
 never names or SQL.
 """
@@ -13,7 +13,6 @@ from collections import deque
 from contextlib import contextmanager
 from typing import Iterator
 import os
-import sys
 import threading
 import time
 
@@ -24,10 +23,9 @@ _RECENT: deque = deque(maxlen=200)
 def _print(line: str) -> None:
     if os.environ.get("KUMOSQL_TIMING", "1") == "0":
         return
-    try:
-        print(f"[kumosql] {line}", file=sys.stderr, flush=True)
-    except (OSError, ValueError):  # a closed console must never break an analysis
-        pass
+    from . import console
+
+    console.say(line)  # console (stderr) and ui.log, redacted; never raises
 
 
 def _detail(detail: dict) -> str:

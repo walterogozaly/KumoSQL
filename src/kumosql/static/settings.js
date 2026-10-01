@@ -27,6 +27,7 @@
     { id: "repositories", label: "Repositories", icon: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-12 5"/>' },
     { id: "bigquery", label: "BigQuery projects", icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
+    { id: "diagnostics", label: "Diagnostics", icon: '<path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/>' },
     { id: "tagrules", label: "Tag rules", icon: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/>' },
   ];
 
@@ -594,7 +595,34 @@
     window.KumoBqProjects.renderBilling(body, { onStatus: setStatus });
   }
 
-  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes, tagrules: renderTagRules };
+  async function renderDiagnostics(body) {
+    body.append(
+      h("h3", { class: "sp-heading", text: "Diagnostics" }),
+      h("p", { class: "sp-lede", text: "Copy a report to paste into a chat or a bug report. It holds the KumoSQL, Python, git and operating system versions, your settings and the recent log. Repository, project, dataset, table, model and file names, folders, e-mail addresses and your user name are replaced by placeholders such as repo#1 and model#417, SQL text is left out and secrets are hidden. The same name keeps the same placeholder, so the lines can still be followed. The real names behind the placeholders stay in a private file in your local data folder; to look one up, run: python -m kumosql.ui --lookup model#417" }));
+    const preview = h("textarea", { class: "sp-input diag-preview", readonly: "", rows: "14", spellcheck: "false", "aria-label": "Diagnostics report" });
+    const copy = h("button", { type: "button", class: "toolbar-button", text: "Copy diagnostics" });
+    const hint = h("p", { class: "sp-row-hint", text: "Look the report over before sending it. Start KumoSQL with --no-redact only for local debugging: then the log is left out of this report." });
+    copy.addEventListener("click", async () => {
+      setStatus("Collecting…");
+      try {
+        const data = await repoCall("GET", "/api/diagnostics");
+        preview.value = data.text;
+        try {
+          await navigator.clipboard.writeText(data.text);
+        } catch (clipboardError) {
+          preview.focus();
+          preview.select();
+          if (!document.execCommand("copy")) throw clipboardError;
+        }
+        setStatus("Copied to the clipboard");
+      } catch (error) {
+        setStatus(preview.value ? "Select the text below and copy it" : error.message, !preview.value);
+      }
+    });
+    body.append(h("div", { class: "repo-form" }, copy), hint, preview);
+  }
+
+  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes, tagrules: renderTagRules };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -612,6 +640,7 @@
   // Search narrows the sidebar to sections with a matching setting.
   const KEYWORDS = {
     appearance: "appearance theme light dark system colour color mode",
+    diagnostics: "diagnostics copy report log bug support redacted versions version python os paste send help",
     storage: "storage local data folder directory clones cache path appdata home",
     repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
     bigquery: "bigquery projects choose select project catalog browse tab billing project query cache hours lifetime",

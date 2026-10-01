@@ -170,6 +170,10 @@ def _warm(pipeline: Pipeline, state: dict) -> None:
         state["state"] = "done"
     except Exception as exc:  # noqa: BLE001 - the pages fall back to computing it themselves
         state.update(state="failed", error=str(exc))
+        from . import console
+
+        console.error(f"background analysis failed at stage '{state.get('stage') or 'start'}' (the pages compute it themselves)", exc,
+                      code="KS-ANALYSIS")
     state["finished"] = time.time()
     state["event"].set()
 
@@ -224,6 +228,36 @@ def pending_payload(current: dict, scope_name: str | None = None) -> dict | None
             "message": "Looking for repeated work in your models. This runs in the background; the query graph is already available."}
 
 
+def register_names(pipeline: Pipeline, remote: dict | None = None) -> None:
+    """Tell the log redactor which names this project contains, so later log lines show placeholders."""
+
+    from . import console
+
+    try:
+        projects, datasets, names, files = set(), set(), set(), set()
+        for model in pipeline.models.values():
+            projects.add(model.target.database)
+            datasets.add(model.target.schema)
+            names.add(model.target.name)
+            if model.path:
+                files.add(model.path)
+        for target in pipeline.sources.values():
+            projects.add(target.database)
+            datasets.add(target.schema)
+            names.add(target.name)
+        projects.add(pipeline.default_project)
+        datasets.add(pipeline.default_dataset)
+        if remote:
+            console.register("repo", remote.get("url"))
+            console.register("branch", [remote.get("branch"), remote.get("actual")])
+        console.register("project", sorted(p for p in projects if p))
+        console.register("dataset", sorted(d for d in datasets if d))
+        console.register("model", sorted(n for n in names if n))
+        console.register("file", sorted(files))
+    except Exception:  # noqa: BLE001 - naming is a logging nicety
+        pass
+
+
 def set_project(
     pipeline: Pipeline, label: str, observed_reads: Iterable[object] | None = None, remote: dict | None = None
 ) -> None:
@@ -236,6 +270,7 @@ def set_project(
     """
 
     global _LOADED
+    register_names(pipeline, remote)
     with _LOCK:
         _LOADED = {"pipeline": pipeline, "label": label, "remote": remote, "report": None}
         if observed_reads is not None:
@@ -498,7 +533,7 @@ def pipeline_from_files(files: object):
         except Exception as exc:  # loader errors are user-facing
             from . import console
 
-            console.error(f"reading the project ({len(files) if isinstance(files, dict) else 0} files) failed", exc)
+            console.error(f"project parse: reading {len(files) if isinstance(files, dict) else 0} files failed", exc, code="KS-GRAPH-BUILD")
             detail = str(exc) or "project could not be loaded"
             raise ProjectError(detail if isinstance(exc, (ValueError, OSError)) else f"{type(exc).__name__}: {detail}") from exc
     if key:
