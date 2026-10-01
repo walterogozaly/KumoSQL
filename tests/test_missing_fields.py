@@ -85,3 +85,13 @@ def test_one_unreadable_file_is_skipped_and_named(tmp_path, monkeypatch):
     assert len(pipeline.models) == 1
     odd = [d for d in pipeline.diagnostics if d.code == "asset_unreadable"]
     assert len(odd) == 1 and "odd.sqlx" in odd[0].model and "TypeError" in odd[0].message
+
+
+def test_graph_nodes_carry_dataform_tags():
+    from kumosql import live_graph
+
+    files = {f"definitions/{name}.sqlx": f'config {{ type: "table", {tags}schema: "s" }}\nselect 1 as x\n'
+             for name, tags in (("a", 'tags: ["daily", "finance"], '), ("b", "tags: [], "), ("c", ""))}
+    live_graph.load_files(files, "tags")
+    nodes = {node["id"].split(".")[-1]: node["dataform_tags"] for node in live_graph.graph_or_empty()["nodes"]}
+    assert nodes == {"a": ["daily", "finance"], "b": [], "c": []}
