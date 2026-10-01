@@ -217,3 +217,7 @@
 .overlap-check { display: inline-flex; }
 .overlap-item .ev-checks { display: flex; flex-wrap: wrap; gap: 4px; }
 .overlap-change + .overlap-change { margin-top: 16px; }
+.gnode .tag-chips { margin-top: 3px; }
+.detail-tags-edit { margin: 10px 0 14px; }
+.detail-tags-edit .eyebrow { margin: 0 0 6px; }
+.detail-tags-edit .is-error { color: var(--bad-fg); }

@@ -1,14 +1,17 @@
 """Persistent local state shared by the UI, the CLI and the Python API.
 
-State is one JSON file in the platform's per-user data directory (or under
-``$KUMOSQL_HOME`` when set), so UI preferences, saved scopes and formatting
-preferences survive restarts and are shared by every entry point.
+State is one JSON file in the data directory: the local data folder the user
+chose in Settings (recorded by a tiny pointer file in the platform's per-user
+location), else that per-user location (or ``$KUMOSQL_HOME`` when set). UI
+preferences, saved scopes and formatting preferences survive restarts and are
+shared by every entry point.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -25,8 +28,13 @@ STATE_FILENAME = "state.json"
 _LOCK = threading.Lock()
 
 
-def data_dir() -> Path:
-    """The directory KumoSQL keeps its local state in."""
+POINTER_FILENAME = "location.json"
+_MIGRATE_LOCK = threading.RLock()
+_NOT_MOVED = {".state.lock", POINTER_FILENAME, "git-cache"}  # clones are rebuilt, not moved
+
+
+def default_dir() -> Path:
+    """The fixed per-user location. Once a local data folder is chosen it holds only the pointer to it."""
 
     override = os.environ.get("KUMOSQL_HOME")
     if override:
@@ -38,6 +46,113 @@ def data_dir() -> Path:
     else:
         base = os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
     return Path(base) / "kumosql"
+
+
+def pointer_path() -> Path:
+    return default_dir() / POINTER_FILENAME
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def chosen_folder() -> Path | None:
+    """The local data folder the user chose, or ``None``.
+
+    It is recorded in a tiny pointer file in :func:`default_dir`. A folder chosen by an
+    earlier version (saved inside ``state.json``) is moved over to the pointer, with all
+    the other files, the first time it is seen.
+    """
+
+    pointer = _read_json(pointer_path()).get("folder")
+    if isinstance(pointer, str) and pointer:
+        return Path(pointer)
+    legacy = _read_json(default_dir() / STATE_FILENAME).get("storage")
+    folder = legacy.get("folder") if isinstance(legacy, dict) else None
+    if not (isinstance(folder, str) and folder):
+        return None
+    with _MIGRATE_LOCK:
+        try:
+            migrate(default_dir(), Path(folder))
+            set_pointer(Path(folder))
+        except OSError:
+            return None  # cannot reach the old folder now; keep using the default location
+    return Path(folder)
+
+
+def set_pointer(folder: Path) -> None:
+    pointer = pointer_path()
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(json.dumps({"folder": str(folder)}, indent=2), encoding="utf-8")
+
+
+def data_dir() -> Path:
+    """The directory KumoSQL keeps all its local files in: the chosen folder, else the default."""
+
+    return chosen_folder() or default_dir()
+
+
+def data_path(*parts: str) -> Path:
+    """A path inside the data directory, with its parent folder created.
+
+    Every file KumoSQL keeps (settings, caches, logs, a feature's own store) belongs under
+    this, so choosing a local data folder in Settings moves it all together: for example
+    ``state.data_path("tags", "rules.json")``.
+    """
+
+    if not parts:
+        return data_dir()
+    path = data_dir().joinpath(*parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def migrate(source: Path, destination: Path) -> dict:
+    """Move everything KumoSQL keeps from ``source`` to ``destination``; nothing is lost.
+
+    ``state.json`` is merged (a section already in the destination wins); any other file
+    already in the destination is kept and the source copy is left where it is. Clones in
+    ``git-cache`` are not moved: they are fetched again on the next load. Returns
+    ``{"moved": [...], "merged": [...], "kept": [...]}`` (names only).
+    """
+
+    report: dict[str, list[str]] = {"moved": [], "merged": [], "kept": []}
+    if source.resolve() == destination.resolve() or not source.is_dir():
+        return report
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in sorted(source.iterdir()):
+        name = item.name
+        if name in _NOT_MOVED or name.startswith(".state-") or name.startswith(".kumosql-probe"):
+            continue
+        target = destination / name
+        if name == STATE_FILENAME and target.exists():
+            theirs, mine = _read_json(target), _read_json(item)
+            added = [key for key in mine if key not in theirs and key != "storage"]
+            theirs.update({key: mine[key] for key in added})
+            theirs.pop("storage", None)
+            target.write_text(json.dumps(theirs, indent=2, sort_keys=True), encoding="utf-8")
+            item.unlink()
+            report["merged"].append(name)
+        elif target.exists():
+            report["kept"].append(name)
+        elif item.is_dir():
+            shutil.copytree(item, target)
+            shutil.rmtree(item, ignore_errors=True)
+            report["moved"].append(name)
+        else:
+            shutil.copy2(item, target)
+            item.unlink()
+            report["moved"].append(name)
+    moved_state = destination / STATE_FILENAME
+    if moved_state.exists():  # the folder setting now lives in the pointer file
+        data = _read_json(moved_state)
+        if data.pop("storage", None) is not None:
+            moved_state.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    return report
 
 
 def state_path() -> Path:

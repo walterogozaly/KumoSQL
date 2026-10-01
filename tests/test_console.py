@@ -33,3 +33,53 @@ def test_requests_are_logged_not_printed(tmp_path, monkeypatch, capsys):
     assert "GET /api/version" not in captured.err + captured.out
     assert "GET /api/version" in (tmp_path / "ui.log").read_text(encoding="utf-8")
     assert server.daemon_threads
+
+
+def test_task_logs_duration_and_failures(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    with console.task("thing"):
+        pass
+    try:
+        with console.task("broken"):
+            raise ValueError("nope")
+    except ValueError:
+        pass
+    text = (tmp_path / "ui.log").read_text(encoding="utf-8")
+    assert "thing: started" in text and "thing: finished in" in text
+    assert "broken: failed after" in text and "nope" in text
+
+
+def test_error_is_one_line_then_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as exc:
+        console.error("it broke", exc)
+    lines = (tmp_path / "ui.log").read_text(encoding="utf-8").splitlines()
+    assert "ERROR it broke" in lines[0] and any("RuntimeError: boom" in line for line in lines[1:])
+
+
+def test_banner_names_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    text = "\n".join(console.banner("http://127.0.0.1:1/"))
+    for expected in ("KumoSQL", "Python", "git:", "Local data folder", "Settings file", "Log file", "--verbose"):
+        assert expected in text
+
+
+def test_slow_git_is_reported_and_every_git_call_logged(tmp_path, monkeypatch):
+    import sys
+    from kumosql import git_repo
+
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(git_repo, "_SLOW_SECONDS", 0.2)
+    if sys.platform != "win32":
+        import os, stat
+        fake = tmp_path / "bin" / "git"
+        fake.parent.mkdir()
+        fake.write_text("#!/bin/sh\nsleep 1\necho ok\n")
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+        git_repo._git(["fetch"])
+        text = (tmp_path / "ui.log").read_text(encoding="utf-8")
+        assert "git fetch still running after 0.2s" in text and "git fetch in" in text and "exit 0" in text

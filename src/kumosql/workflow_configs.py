@@ -310,12 +310,15 @@ def prefetch(github_url: str) -> threading.Thread:
     """Load schedules in the background after a repository loads; never raises."""
 
     def work() -> None:
+        from . import console
+
         try:
             search = search_for(github_url)
             if search["projects"]:
-                summary(github_url, refresh=bigquery_catalog.peek(_key(github_url, search)) is None)
-        except Exception:  # noqa: BLE001 - a background nicety must not surface anywhere
-            pass
+                with console.task("Dataform schedules (workflow configs) lookup"):
+                    summary(github_url, refresh=bigquery_catalog.peek(_key(github_url, search)) is None)
+        except Exception as exc:  # noqa: BLE001 - a background nicety must not stop anything
+            console.error(f"Dataform schedules lookup failed: {exc}", exc)
 
     thread = threading.Thread(target=work, name="kumosql-workflow-prefetch", daemon=True)
     thread.start()

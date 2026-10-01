@@ -502,8 +502,13 @@ class Pipeline:
             )
         return gaps
 
-    def model_record(self, key: str, profile: object | None = None) -> dict[str, object]:
-        """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own."""
+    def model_record(
+        self, key: str, profile: object | None = None, tags: "Mapping[str, list[str]] | None" = None
+    ) -> dict[str, object]:
+        """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own.
+
+        ``tags`` is :func:`kumosql.tags.tag_lookup` (computed once for many models); ``tag`` is empty without it.
+        """
 
         from .scopes import profile_record
 
@@ -518,6 +523,7 @@ class Pipeline:
             "kind": model.kind,
             "path": model.path,
             "depends_on": [dep.key for dep in model.declared_dependencies],
+            "tag": list((tags or {}).get(key.strip().casefold(), ())),
         }
         if profile is not None:
             record.update(profile_record(profile))
@@ -539,7 +545,12 @@ class Pipeline:
 
             profiles = profile_pipeline(self)
         profiles = profiles or {}
-        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key)))}
+        tags = None
+        if {"tag"} & set(map(str.casefold, scope.fields_used())):
+            from .tags import tag_lookup
+
+            tags = tag_lookup(self)
+        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags))}
 
     def assess_change(
         self,

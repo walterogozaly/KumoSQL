@@ -1,4 +1,4 @@
-"""The local data folder: where KumoSQL keeps working files such as repository clones.
+"""The local data folder: where KumoSQL keeps all its files, such as settings, caches, logs and repository clones.
 
 It is a saved setting, chosen by the user, because the default location can be
 unusable for git: the Microsoft Store build of Python redirects writes under
@@ -23,9 +23,7 @@ class StorageError(ValueError):
 
 
 def saved_folder() -> Path | None:
-    saved = state.get_section(SECTION, {})
-    folder = saved.get("folder") if isinstance(saved, dict) else None
-    return Path(folder) if isinstance(folder, str) and folder else None
+    return state.chosen_folder()
 
 
 def configured() -> bool:
@@ -41,7 +39,7 @@ def suggested() -> str:
 def describe() -> dict:
     folder = saved_folder()
     return {"folder": str(folder) if folder else None, "suggested": suggested(),
-            "configured": configured(), "override": os.environ.get("KUMOSQL_GIT_CACHE") or None}
+            "configured": configured(), "pointer": str(state.pointer_path()), "files": str(state.data_dir()), "override": os.environ.get("KUMOSQL_GIT_CACHE") or None}
 
 
 def _probe(folder: Path) -> None:
@@ -90,12 +88,19 @@ def validate(value: object) -> Path:
 
 
 def save(value: object) -> dict:
-    """Validate and save the folder; clones already made elsewhere stay there and are not moved."""
+    """Validate and save the folder, moving the settings and caches already kept elsewhere into it.
 
-    previous = saved_folder()
+    Only a tiny pointer file stays in the default location. Clones are not moved (they are
+    fetched again on their next load). The result's ``migrated`` says what moved.
+    """
+
     folder = validate(value)
-    state.set_section(SECTION, {"folder": str(folder)})
+    with state._MIGRATE_LOCK:
+        previous = state.data_dir()
+        report = state.migrate(previous, folder) if previous.resolve() != folder else {"moved": [], "merged": [], "kept": []}
+        state.set_pointer(folder)
     result = describe()
-    if previous and previous != folder:
+    result["migrated"] = {**report, "from": str(previous)} if any(report.values()) else None
+    if previous.resolve() != folder:
         result["previous"] = str(previous)
     return result

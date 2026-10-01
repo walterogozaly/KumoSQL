@@ -6,6 +6,7 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
+import sys
 import threading
 import webbrowser
 from urllib.parse import parse_qs, urlsplit
@@ -14,7 +15,7 @@ from . import console, live_graph
 from . import live_insights
 from . import scope_queries
 from . import scopes as scope_store
-from . import state, version
+from . import state, tags, version
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
 from .rewrite import apply_rules, available_rules
 
@@ -46,6 +47,7 @@ ASSETS = {
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
+    "/assets/tags.js": ("tags.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
     "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
@@ -124,16 +126,15 @@ class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def handle_error(self, request, client_address) -> None:
-        import traceback
-
-        console.log(f"error handling {client_address[0]}: {traceback.format_exc().strip()}")
+        exc = sys.exc_info()[1]
+        console.error(f"while answering {client_address[0]}: {exc}", exc)
 
 
 class UIHandler(BaseHTTPRequestHandler):
     """Serve bundled assets and a small same-origin JSON API."""
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature set by the base class
-        console.log(f"{self.address_string()} {format % args}")
+        console.say(f"{self.address_string()} {format % args}", console=console.VERBOSE)
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -181,7 +182,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 "ui": state.get_section("ui", {}),
                 "format": load_preferences().to_json(),
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
+                "tag_rules": tags.list_rules(),
             })
+            return
+        if self.path == "/api/tags":
+            self._json(200, tags.snapshot())
             return
         if self.path == "/api/scope-queries":
             self._json(200, {
@@ -339,8 +344,22 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/catalog/selection":
             self._put_selection()
             return
+        if self.path == "/api/tags":
+            payload = self._read_json(MAX_UI_STATE_BYTES)
+            if payload is None:
+                return
+            try:
+                if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
+                    raise ValueError("send the objects to change as keys")
+                self._json(200, tags.change_manual(
+                    payload["keys"], payload.get("add") or [], payload.get("remove") or []))
+            except (ValueError, TypeError) as exc:
+                self._json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._json(500, {"error": str(exc)})
+            return
         section = self.path.removeprefix("/api/settings/")
-        if section not in ("ui", "format", "scopes", "scope_queries") or section == self.path:
+        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules") or section == self.path:
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
@@ -358,6 +377,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 saved = prefs.to_json()
             elif section == "scope_queries":
                 saved = scope_queries.save_settings(payload).to_json()
+            elif section == "tag_rules":
+                saved = tags.save_rules(payload)
             else:
                 if not isinstance(payload, list):
                     raise ValueError("scopes must be a list")
@@ -426,6 +447,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
+            "/api/tag-rules/preview",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -453,6 +475,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
             elif self.path == "/api/scope-queries":
                 result = _scope_query(payload)
+            elif self.path == "/api/tag-rules/preview":
+                result = tags.preview_rule(payload)
             elif self.path == "/api/storage":
                 from . import storage
 
@@ -548,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
     parser.add_argument("--jobs", metavar="FILE", help="Load a BigQuery job-history export (JSON, JSON lines or CSV) for the cost page and observed edges; needs --project or --git")
     parser.add_argument("--diagnose-repo", metavar="URL", help="Load a repository once and print a report of every git call (for bug reports); does not start the server")
+    parser.add_argument("--verbose", action="store_true", help="Show every request in the console (they are always written to ui.log)")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -576,11 +601,15 @@ def main(argv: list[str] | None = None) -> int:
             live_graph.set_project(load_sqlx_project(args.project), args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
+    defer_autoload = False
     if not (args.project or args.git):
         from . import repositories
 
         # Connected repositories reload in the background; --jobs needs the project now.
-        repositories.autoload(background=not args.jobs)
+        if args.jobs:
+            repositories.autoload(background=False)
+        else:
+            defer_autoload = True
     if args.jobs:
         if not live_graph.loaded():
             parser.error("--jobs needs --project or --git")
@@ -594,9 +623,12 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         parser.error(f"could not start local server: {exc}")
     url = f"http://127.0.0.1:{args.port}/"
+    console.set_verbose(args.verbose)
     console.disable_quick_edit()
-    print(f"KumoSQL UI: {url}", flush=True)
-    print(f"Press Ctrl+C to stop. Requests are logged to {console.log_path()}", flush=True)
+    for line in console.banner(url):
+        print(line, flush=True)
+    if defer_autoload:
+        repositories.autoload(background=True)  # after the banner, so its lines come after it
     if not args.no_browser:
         threading.Timer(0.3, lambda: webbrowser.open(url)).start()
     try:

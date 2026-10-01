@@ -45,3 +45,15 @@
 .panel-refresh.spinning { animation: panel-spin 0.9s linear infinite; }
 @keyframes panel-spin { to { transform: rotate(360deg); } }
 .catalog-toolbar button { white-space: nowrap; }
+.catalog-row { display: flex; align-items: center; gap: 4px; }
+.catalog-row .catalog-item { flex: 1; min-width: 0; flex-wrap: wrap; }
+.catalog-check { flex: none; margin: 0 0 0 4px; accent-color: var(--accent-text); }
+.catalog-item .tag-chips { flex-basis: 100%; padding-left: 25px; }
+.tag-bar { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.tag-bar-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tag-check-all { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.tag-bar select { font: inherit; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 3px 6px; max-width: 150px; }
+.tag-bulk p { margin: 0 0 6px; color: var(--text-muted); }
+.tag-bulk .link-button { margin-left: 6px; }
+.object-tags { margin: 0 8px 14px; }
+.object-tags .schema-title { margin: 0 0 6px; }

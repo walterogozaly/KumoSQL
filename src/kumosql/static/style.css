@@ -663,3 +663,17 @@ select.sp-input { min-width: 200px; }
 .bq-chosen li, .bq-results li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
 .sp-input[hidden] { display: none; }
 .sp-heading + .sp-lede, h4.sp-heading { margin-top: 18px; }
+
+/* Tags: chips on objects, the add/remove editor, and the Tag rules settings */
+.tag-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.tag-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 1px 7px; border: 1px solid var(--accent-border, var(--border-strong)); border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 11px; font-weight: 600; line-height: 1.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tag-chip.is-rule { border-style: dashed; background: transparent; }
+.tag-chip.is-more { background: transparent; color: var(--text-muted); border-color: var(--border); }
+.tag-chip small { font-weight: 500; opacity: .8; }
+.tag-remove { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; line-height: 1; padding: 0 0 0 2px; opacity: .7; }
+.tag-remove:hover { opacity: 1; }
+.tag-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.tag-add { display: flex; gap: 6px; }
+.tag-input { font: inherit; font-size: 12.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 4px 8px; min-width: 0; width: 170px; }
+.scope-item small.is-error { color: var(--bad-fg); white-space: normal; }
+.tags-in-use { margin: 0; }
