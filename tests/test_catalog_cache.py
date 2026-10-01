@@ -26,19 +26,47 @@ def test_second_call_uses_cache_and_refresh_bypasses():
     assert len(calls) == 2
 
 
-def test_cache_survives_restart_and_serves_stale_on_error(monkeypatch):
+def test_cache_survives_restart_and_refresh_failure_keeps_saved_copy(monkeypatch):
     catalog.cached("k", lambda: ["a"])
     catalog._memory.clear()
     monkeypatch.setattr(catalog, "_disk_loaded", False)
-    monkeypatch.setenv("KUMOSQL_CATALOG_TTL", "0")
 
     def boom():
         raise catalog.CatalogError("offline")
 
-    result = catalog.cached("k", boom)
-    assert result["data"] == ["a"] and result["stale"] is True
+    result = catalog.cached("k", boom)  # still fresh: served from disk, no fetch
+    assert result["data"] == ["a"] and result["cached"] and not result["refreshing"]
+    forced = catalog.cached("k", boom, refresh=True)
+    assert forced["data"] == ["a"] and forced["stale"] is True
     with pytest.raises(catalog.CatalogError):
-        catalog.cached("k", boom, refresh=True)
+        catalog.cached("never-saved", boom, refresh=True)
+
+
+def test_expired_entry_is_served_at_once_and_refreshed_in_background():
+    import threading
+
+    catalog.cached("k", lambda: ["old"])
+    catalog.save_settings(cache_hours=0)  # everything saved is now expired
+    done = threading.Event()
+
+    def fetch():
+        done.set()
+        return ["new"]
+
+    served = catalog.cached("k", fetch)
+    assert served["data"] == ["old"] and served["refreshing"] is True
+    assert done.wait(5)
+    for _ in range(100):
+        if "k" not in catalog._refreshing:
+            break
+        threading.Event().wait(0.02)
+    assert catalog._memory["k"]["data"] == ["new"]
+
+
+def test_cache_lifetime_follows_the_hours_setting():
+    assert catalog.ttl_seconds() == 48 * 3600
+    catalog.save_settings(cache_hours=2)
+    assert catalog.ttl_seconds() == 2 * 3600
 
 
 def test_selection_is_empty_until_chosen_and_checks_access(monkeypatch):

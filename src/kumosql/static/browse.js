@@ -50,11 +50,14 @@ function renderFreshness() {
   const oldest = Math.min(...levels.map((level) => level.fetchedAt));
   const stale = levels.some((level) => level.stale);
   const cached = levels.some((level) => level.cached);
-  freshnessLabel.textContent = `${stale ? "Offline, showing saved copy from" : cached ? "Saved copy from" : "Loaded"} ${ago(Date.now() / 1000 - oldest)}`;
+  const updating = levels.some((level) => level.refreshing);
+  freshnessLabel.textContent = `${stale ? "Offline, showing saved copy from" : cached ? "Saved copy from" : "Loaded"} ${ago(Date.now() / 1000 - oldest)}${updating ? ", updating…" : ""}`;
   freshnessLabel.classList.toggle("error", stale);
 }
 
-async function requestJson(url, level, refresh = false) {
+// Saved answers arrive instantly. When one has expired the server returns it at once and
+// refreshes it in the background, so poll briefly and call onUpdate with the new data.
+async function requestJson(url, level, refresh = false, onUpdate = null) {
   const response = await fetch(refresh ? `${url}&refresh=1` : url);
   const payload = await response.json();
   if (!response.ok) {
@@ -64,7 +67,28 @@ async function requestJson(url, level, refresh = false) {
   }
   freshness[level] = payload;
   renderFreshness();
+  if (payload.refreshing && onUpdate) pollForUpdate(url, level, payload.fetchedAt, onUpdate, 8);
   return payload.data;
+}
+
+async function pollForUpdate(url, level, since, onUpdate, tries) {
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  if (freshness[level]?.fetchedAt !== since) return; // the user moved on
+  try {
+    const payload = await (await fetch(url)).json();
+    if (payload.fetchedAt > since) {
+      freshness[level] = payload;
+      renderFreshness();
+      onUpdate(payload.data);
+    } else if (payload.refreshing && tries > 1) {
+      pollForUpdate(url, level, since, onUpdate, tries - 1);
+    } else {
+      freshness[level] = { ...freshness[level], refreshing: false };
+      renderFreshness();
+    }
+  } catch {
+    /* keep showing the saved copy */
+  }
 }
 
 setInterval(renderFreshness, 30000);
@@ -128,6 +152,16 @@ async function loadProjects() {
   }
 }
 
+function fillDatasets(project, datasets) {
+  clearPane(datasetsPane);
+  for (const dataset of datasets) {
+    const button = itemButton(dataset.id, "▤", dataset.location, dataset.id === chosenDataset, () => selectDataset(dataset.id));
+    button.dataset.value = dataset.id;
+    datasetsPane.append(button);
+  }
+  document.getElementById("dataset-count").textContent = String(datasets.length);
+}
+
 async function selectProject(project, refresh = false) {
   chosenProject = project;
   chosenDataset = chosenTable = "";
@@ -140,15 +174,11 @@ async function selectProject(project, refresh = false) {
   const version = ++datasetRequest;
   setStatus(`Loading datasets in ${project}…`);
   try {
-    const datasets = await requestJson(queryUrl("datasets", { project }), "datasets", refresh);
+    const datasets = await requestJson(queryUrl("datasets", { project }), "datasets", refresh, (fresh) => {
+      if (chosenProject === project) fillDatasets(project, fresh);
+    });
     if (version !== datasetRequest || chosenProject !== project) return;
-    clearPane(datasetsPane);
-    for (const dataset of datasets) {
-      const button = itemButton(dataset.id, "▤", dataset.location, false, () => selectDataset(dataset.id));
-      button.dataset.value = dataset.id;
-      datasetsPane.append(button);
-    }
-    document.getElementById("dataset-count").textContent = String(datasets.length);
+    fillDatasets(project, datasets);
     setStatus(datasets.length ? `Choose a dataset in ${project}.` : `No datasets found in ${project}.`);
   } catch (error) {
     if (version !== datasetRequest) return;
@@ -161,6 +191,16 @@ function renderProjectsSelection() {
   for (const button of projectsPane.querySelectorAll("button")) {
     button.setAttribute("aria-current", button.dataset.value === chosenProject ? "true" : "false");
   }
+}
+
+function fillTables(tables) {
+  clearPane(tablesPane);
+  for (const table of tables) {
+    const button = itemButton(table.id, table.type === "VIEW" ? "◫" : "▦", table.type, table.id === chosenTable, () => selectTable(table.id));
+    button.dataset.value = table.id;
+    tablesPane.append(button);
+  }
+  document.getElementById("table-count").textContent = String(tables.length);
 }
 
 async function selectDataset(dataset, refresh = false) {
@@ -176,15 +216,11 @@ async function selectDataset(dataset, refresh = false) {
   const version = ++tableRequest;
   setStatus(`Loading tables in ${project}.${dataset}…`);
   try {
-    const tables = await requestJson(queryUrl("tables", { project, dataset }), "tables", refresh);
+    const tables = await requestJson(queryUrl("tables", { project, dataset }), "tables", refresh, (fresh) => {
+      if (chosenProject === project && chosenDataset === dataset) fillTables(fresh);
+    });
     if (version !== tableRequest || chosenDataset !== dataset) return;
-    clearPane(tablesPane);
-    for (const table of tables) {
-      const button = itemButton(table.id, table.type === "VIEW" ? "◫" : "▦", table.type, false, () => selectTable(table.id));
-      button.dataset.value = table.id;
-      tablesPane.append(button);
-    }
-    document.getElementById("table-count").textContent = String(tables.length);
+    fillTables(tables);
     setStatus(tables.length ? `Choose a table in ${project}.${dataset}.` : `No tables found in ${project}.${dataset}.`);
   } catch (error) {
     if (version !== tableRequest) return;
@@ -211,6 +247,27 @@ function addFields(rows, fields, depth = 0) {
   }
 }
 
+function fillSchema(project, dataset, metadata) {
+  clearPane(schemaPane);
+  const title = document.createElement("p");
+  title.className = "schema-title";
+  title.textContent = `${project}.${dataset}.${metadata.id} · ${metadata.type}${metadata.numRows ? ` · ${Number(metadata.numRows).toLocaleString()} rows` : ""}`;
+  const tableElement = document.createElement("table");
+  tableElement.className = "schema-table";
+  const head = document.createElement("thead");
+  const headingRow = document.createElement("tr");
+  for (const label of ["Field", "Type", "Mode"]) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headingRow.append(th);
+  }
+  head.append(headingRow);
+  const body = document.createElement("tbody");
+  addFields(body, metadata.schema || []);
+  tableElement.append(head, body);
+  schemaPane.append(title, tableElement);
+}
+
 async function selectTable(table, refresh = false) {
   chosenTable = table;
   for (const button of tablesPane.querySelectorAll("button")) {
@@ -222,26 +279,11 @@ async function selectTable(table, refresh = false) {
   const version = ++schemaRequest;
   setStatus(`Loading schema for ${project}.${dataset}.${table}…`);
   try {
-    const metadata = await requestJson(queryUrl("table", { project, dataset, table }), "table", refresh);
+    const metadata = await requestJson(queryUrl("table", { project, dataset, table }), "table", refresh, (fresh) => {
+      if (chosenTable === table && chosenDataset === dataset && chosenProject === project) fillSchema(project, dataset, fresh);
+    });
     if (version !== schemaRequest || chosenTable !== table) return;
-    clearPane(schemaPane);
-    const title = document.createElement("p");
-    title.className = "schema-title";
-    title.textContent = `${project}.${dataset}.${metadata.id} · ${metadata.type}${metadata.numRows ? ` · ${Number(metadata.numRows).toLocaleString()} rows` : ""}`;
-    const tableElement = document.createElement("table");
-    tableElement.className = "schema-table";
-    const head = document.createElement("thead");
-    const headingRow = document.createElement("tr");
-    for (const label of ["Field", "Type", "Mode"]) {
-      const th = document.createElement("th");
-      th.textContent = label;
-      headingRow.append(th);
-    }
-    head.append(headingRow);
-    const body = document.createElement("tbody");
-    addFields(body, metadata.schema || []);
-    tableElement.append(head, body);
-    schemaPane.append(title, tableElement);
+    fillSchema(project, dataset, metadata);
     setStatus(`Showing ${metadata.schema?.length || 0} top-level fields for ${project}.${dataset}.${table}.`);
   } catch (error) {
     if (version !== schemaRequest) return;
@@ -274,6 +316,40 @@ async function refreshAll() {
   } finally {
     button.disabled = false;
   }
+}
+
+// Each column's refresh icon re-reads just that level from BigQuery, for example right
+// after creating a table. The columns to its right are restored from the saved copy.
+async function refreshLevel(level) {
+  const [project, dataset, table] = [chosenProject, chosenDataset, chosenTable];
+  if (level === "projects") {
+    await loadProjects();
+    if (project) await selectProject(project);
+    return;
+  }
+  if (level === "datasets" && project) {
+    await selectProject(project, true);
+    if (dataset) await selectDataset(dataset);
+    if (dataset && table) await selectTable(table);
+  } else if (level === "tables" && dataset) {
+    await selectDataset(dataset, true);
+    if (table) await selectTable(table);
+  } else if (level === "schema" && table) {
+    await selectTable(table, true);
+  }
+}
+
+for (const button of document.querySelectorAll(".panel-refresh")) {
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.classList.add("spinning");
+    try {
+      await refreshLevel(button.dataset.level);
+    } finally {
+      button.disabled = false;
+      button.classList.remove("spinning");
+    }
+  });
 }
 
 document.getElementById("refresh").addEventListener("click", refreshAll);
