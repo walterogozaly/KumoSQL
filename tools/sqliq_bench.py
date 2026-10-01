@@ -5,10 +5,10 @@ queries return identical results on the database described by a schema. Its
 models answer "yes" or "no"; here KumoSQL answers instead, in three steps:
 
 1. **prove**: the algebraic prover (``prove_equivalent_algebraic``) with the
-   schema's keys. Proved means "yes"; a counterexample means "no".
+   schema's keys. Proved means "yes".
 2. **test**: otherwise both queries run on random SQLite databases that respect
-   the schema's keys and are filled from the values the queries mention. A
-   difference means "no" (a real counterexample).
+   the schema's primary and foreign keys and are filled from the values the
+   queries mention. A difference means "no" (a counterexample on a valid database).
 3. **default**: queries that agree on every database but were not proved are
    answered "yes" (``tested``), the only guess made.
 
@@ -48,7 +48,8 @@ from sqlglot import exp
 logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 DATA_FILE = Path("data") / "sql_equ_judge" / "sql_equ_judge.jsonl"
-TRIALS = 60
+TRIALS = 1000
+NULL_RATE = 0.1
 PROVER_TIMEOUT_MS = 3000
 
 
@@ -60,6 +61,7 @@ class Pair:
     tables: dict[str, dict[str, str]]  # lower-case table -> column -> declared type
     keys: dict[str, tuple[str, ...]]  # lower-case table -> primary key columns
     label: str  # "yes" or "no"
+    foreign: tuple = ()  # ((child table, child column, parent table, parent column), ...)
 
 
 def load_pairs(data_dir: Path) -> list[Pair]:
@@ -76,7 +78,14 @@ def load_pairs(data_dir: Path) -> list[Pair]:
                     if table.lower() in tables and column.lower() in tables[table.lower()]:
                         primary.setdefault(table.lower(), []).append(column.lower())
             keys = {t: tuple(dict.fromkeys(c)) for t, c in primary.items()}
-            pairs.append(Pair(row["id"], row["sql1"], row["sql2"], tables, keys, row["semantic equivalence"].lower()))
+            foreign = []
+            for constraint in schema.get("constraint", []):
+                refs = constraint.get("foreign")
+                if refs and len(refs) == 2:
+                    (ct, _, cc), (pt, _, pc) = (r["value"].lower().partition("__") for r in refs)
+                    if cc in tables.get(ct, {}) and pc in tables.get(pt, {}):
+                        foreign.append((ct, cc, pt, pc))
+            pairs.append(Pair(row["id"], row["sql1"], row["sql2"], tables, keys, row["semantic equivalence"].lower(), tuple(foreign)))
     return pairs
 
 
@@ -152,7 +161,7 @@ def _numeric(value: float):
 
 
 def make_domains(pair: Pair, texts: list[str], numbers: list[float]) -> dict[str, list]:
-    numeric = [0, 1, 2, 3]
+    numeric = [0, 1, 2, 3, 4, 5, 6, 7]
     for n in numbers:
         for candidate in (n, n - 1, n + 1):
             numeric.append(_numeric(candidate))
@@ -165,19 +174,41 @@ def _kind(declared: str) -> str:
     return "text" if any(word in declared for word in ("TEXT", "CHAR", "CLOB", "DATE", "TIME")) else "num"
 
 
-def random_rows(pair: Pair, table: str, domains: dict[str, list], rng: random.Random) -> list[list]:
-    columns = list(pair.tables[table].items())
+def table_order(pair: Pair) -> list[str]:
+    """Tables with the ones other tables point to first (cycles broken arbitrarily)."""
+
+    parents = {t: {p for c, _, p, _ in pair.foreign if c == t and p != t} for t in pair.tables}
+    order: list[str] = []
+    while len(order) < len(parents):
+        ready = [t for t in parents if t not in order and parents[t] <= set(order)]
+        order.append((ready or [t for t in parents if t not in order])[0])
+    return order
+
+
+def random_rows(pair: Pair, table: str, domains: dict[str, list], rng: random.Random, made: dict[str, list[list]]) -> list[list]:
+    """Rows shaped like a real database: single-column keys count up, foreign keys point at existing rows."""
+
+    columns = list(pair.tables[table])
     key = pair.keys.get(table, ())
+    references = {c: (p, pc) for ct, c, p, pc in pair.foreign if ct == table and p in made}
     rows, seen = [], set()
-    for _ in range(rng.choice([0, 1, 2, 3, 4, 5])):
+    for number in range(rng.choice([0, 1, 2, 3, 4, 5, 6, 8, 10])):
         row = []
-        for name, declared in columns:
-            value = rng.choice(domains[_kind(declared)])
-            if name not in key and rng.random() < 0.15:
+        for name in columns:
+            declared = pair.tables[table][name]
+            if name in references:
+                parent, parent_column = references[name]
+                options = [r[list(pair.tables[parent]).index(parent_column)] for r in made[parent]]
+                value = rng.choice(options) if options else None
+            elif key == (name,) and _kind(declared) == "num":
+                value = number + 1
+            else:
+                value = rng.choice(domains[_kind(declared)])
+            if name not in key and rng.random() < NULL_RATE:
                 value = None
             row.append(value)
         if key:
-            marker = tuple(row[[n for n, _ in columns].index(k)] for k in key)
+            marker = tuple(row[columns.index(k)] for k in key)
             if marker in seen:
                 continue
             seen.add(marker)
@@ -212,9 +243,11 @@ def test(pair: Pair, trials: int = TRIALS, seed: int = 7) -> str:
         for table, columns in pair.tables.items():
             connection.execute(f'CREATE TABLE "{table}" ({", ".join(f"{chr(34)}{c}{chr(34)} {k}" for c, k in columns.items())})')
         for _ in range(trials):
-            for table, columns in pair.tables.items():
+            made: dict[str, list[list]] = {}
+            for table in table_order(pair):
+                columns = pair.tables[table]
                 connection.execute(f'DELETE FROM "{table}"')
-                rows = random_rows(pair, table, domains, rng)
+                rows = made[table] = random_rows(pair, table, domains, rng, made)
                 if rows:
                     marks = ", ".join("?" * len(columns))
                     connection.executemany(f'INSERT INTO "{table}" VALUES ({marks})', rows)
@@ -237,13 +270,13 @@ def test(pair: Pair, trials: int = TRIALS, seed: int = 7) -> str:
 
 
 def judge(pair: Pair) -> tuple[str, str]:
-    """(answer, how): answer is "yes" or "no"; how is proved, refuted, differs, tested or error."""
+    """(answer, how): answer is "yes" or "no"; how is proved, differs, tested or error."""
 
     outcome = prove(pair)
     if outcome == "proved":
         return "yes", "proved"
-    if outcome == "refuted":
-        return "no", "refuted"
+    # A prover counterexample is only a hint: it may ignore foreign keys, so the
+    # random databases (which respect them) decide.
     result = test(pair)
     if result == "differs":
         return "no", "differs"
