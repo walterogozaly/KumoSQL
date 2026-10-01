@@ -135,17 +135,35 @@ def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
     return "", ""
 
 
-def _parse_ref_args(args: str, default: Target) -> Target:
+def _parse_ref_args(args: str, default: Target, known: dict[str, list[Target]] | None = None) -> Target:
+    """The target a ``ref()`` names.
+
+    Dataform finds ``ref("name")`` by the action's name, wherever its config put
+    it, so a name that ``known`` (every action and declaration by name) holds
+    once resolves to that target; otherwise the project defaults apply.
+    """
+
+    def by_name(name: str, schema: str | None = None) -> Target | None:
+        matches = [
+            target for target in (known or {}).get(name, [])
+            if schema is None or target.schema == schema
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     if args.lstrip().startswith("{"):
         name = _config_value(args, "name") or ""
-        schema = _config_value(args, "schema") or default.schema
-        database = _config_value(args, "database") or default.database
-        return Target(database, schema, name)
+        schema = _config_value(args, "schema")
+        database = _config_value(args, "database")
+        if not database:
+            found = by_name(name, schema)
+            if found is not None:
+                return found
+        return Target(database or default.database, schema or default.schema, name)
     parts = [match.group(2) for match in _STRING_RE.finditer(args)]
     if len(parts) == 1:
-        return Target(default.database, default.schema, parts[0])
+        return by_name(parts[0]) or Target(default.database, default.schema, parts[0])
     if len(parts) == 2:
-        return Target(default.database, parts[0], parts[1])
+        return by_name(parts[1], parts[0]) or Target(default.database, parts[0], parts[1])
     if len(parts) >= 3:
         return Target(parts[0], parts[1], parts[2])
     raise ValueError("unsupported ref() arguments")
@@ -193,21 +211,24 @@ def load_sqlx_project(
             )
         models[model.key] = model
 
-    def load_asset(path: Path) -> None:
+    # Read every asset first: a ref() names an action wherever its config put it.
+    known: dict[str, list[Target]] = {}
+
+    def read_asset(path: Path):
         relative = str(path.relative_to(root))
         text, reason = read_text_or_reason(path)
         if text is None:
             diagnostics.append(PipelineDiagnostic(relative, "read_error", f"{reason}; asset was skipped"))
-            return
+            return None
         if path.suffix == ".sql":
             target = Target(name=path.stem)
             add_model(Model(target, "sql", text, relative))
-            return
+            return None
         try:
             sections = _split_sqlx_sections(text)
         except ValueError as exc:
             diagnostics.append(PipelineDiagnostic(relative, "sqlx_parse_error", str(exc)))
-            return
+            return None
         config = next(
             (body for kind, body in sections if kind == "block" and body.lstrip().startswith("config")),
             "",
@@ -218,15 +239,19 @@ def load_sqlx_project(
             _config_value(config, "schema") or dataset,
             _config_value(config, "name") or path.stem,
         )
+        known.setdefault(target.name, []).append(target)
         if kind == "declaration":
             sources[target.key] = target
-            return
+            return None
+        return relative, sections, config, kind, target
+
+    def load_asset(relative: str, sections, config: str, kind: str, target: Target) -> None:
         default = Target(database, dataset, "")
         body = "".join(section for kind_, section in sections if kind_ == "sql")
         dependencies: list[Target] = []
 
         def substitute(match: re.Match[str]) -> str:
-            ref = _parse_ref_args(match.group("args"), default)
+            ref = _parse_ref_args(match.group("args"), default, known)
             dependencies.append(ref)
             return ref.sql()
 
@@ -246,13 +271,25 @@ def load_sqlx_project(
             tags = ()
         add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags))
 
+    def unreadable(relative: str, exc: Exception) -> None:
+        diagnostics.append(PipelineDiagnostic(
+            relative, "asset_unreadable",
+            f"could not be analyzed ({type(exc).__name__}: {exc}); asset was skipped"))
+
+    pending = []
     for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
         try:
-            load_asset(path)
+            asset = read_asset(path)
         except Exception as exc:  # noqa: BLE001 - one odd file must not fail the whole project
-            diagnostics.append(PipelineDiagnostic(
-                str(path.relative_to(root)), "asset_unreadable",
-                f"could not be analyzed ({type(exc).__name__}: {exc}); asset was skipped"))
+            unreadable(str(path.relative_to(root)), exc)
+            continue
+        if asset is not None:
+            pending.append(asset)
+    for asset in pending:
+        try:
+            load_asset(*asset)
+        except Exception as exc:  # noqa: BLE001 - one odd file must not fail the whole project
+            unreadable(asset[0], exc)
 
     from .pipeline import Pipeline  # deferred: pipeline imports this module
 
