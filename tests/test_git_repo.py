@@ -264,3 +264,17 @@ def test_blocked_ssh_suggests_https(monkeypatch, stderr):
     with pytest.raises(git_repo.GitRepoError) as error:
         git_repo._git(["clone", "x"])
     assert stderr.splitlines()[0] in str(error.value) and "https URL instead" in str(error.value)
+
+
+def test_diagnose_reports_every_git_call(remote, tmp_path):
+    bare, _ = remote
+    report = git_repo.diagnose(str(bare))
+    assert "KumoSQL:" in report and "git calls, in order:" in report and "git clone" in report
+    assert "cwd: " in report and "Result: OK: loaded 3 files" in report
+    assert git_repo._TRACE is None  # tracing is switched off afterwards
+
+
+def test_diagnose_reports_failures_with_the_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    report = git_repo.diagnose(str(tmp_path / "missing.git"))
+    assert "Result: FAILED" in report and "GitRepoError" in report and "exit: 128" in report

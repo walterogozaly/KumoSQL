@@ -502,10 +502,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--branch", help="With --git: branch to load (default: the remote's default branch)")
     parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
     parser.add_argument("--jobs", metavar="FILE", help="Load a BigQuery job-history export (JSON, JSON lines or CSV) for the cost page and observed edges; needs --project or --git")
+    parser.add_argument("--diagnose-repo", metavar="URL", help="Load a repository once and print a report of every git call (for bug reports); does not start the server")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if args.diagnose_repo:
+        from .git_repo import diagnose
+
+        print(diagnose(args.diagnose_repo, args.branch))
+        return 0
 
     if args.git and args.project:
         parser.error("use either --project or --git, not both")
