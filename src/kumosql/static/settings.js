@@ -424,7 +424,7 @@
   async function renderStorage(body) {
     body.append(
       h("h3", { class: "sp-heading", text: "Local data folder" }),
-      h("p", { class: "sp-lede", text: "The folder where KumoSQL keeps working files on this computer, starting with copies of your Dataform repositories. Choose a folder in your home folder, not under AppData: the Microsoft Store build of Python hides AppData from git. KumoSQL checks that the folder exists, is writable, and that git can use it." }));
+      h("p", { class: "sp-lede", text: "The folder where KumoSQL keeps its files on this computer: your settings and saved configurations (formatting rules, scopes, BigQuery projects, repositories), its caches, its log and copies of your Dataform repositories. Only a tiny pointer file stays in the default location. Changing the folder moves the existing files into it. Choose a folder in your home folder, not under AppData: the Microsoft Store build of Python hides AppData from git. KumoSQL checks that the folder exists, is writable, and that git can use it." }));
     const status = h("p", { class: "sp-row-hint" });
     const folder = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Local data folder", autocomplete: "off", required: "" });
     const use = h("button", { type: "button", class: "link-button", text: "Use suggested folder" });
@@ -435,7 +435,7 @@
       folder.value = info.folder || "";
       folder.placeholder = info.suggested;
       status.textContent = info.override ? `Overridden by the KUMOSQL_GIT_CACHE environment variable: ${info.override}`
-        : info.folder ? `Repository clones are kept in ${info.folder}.` : "No folder chosen yet. Connecting a repository needs one.";
+        : info.folder ? `Settings, caches, logs and repository clones are kept in ${info.folder}.` : "No folder chosen yet. Connecting a repository needs one.";
     };
     use.addEventListener("click", () => { folder.value = info.suggested; });
     form.addEventListener("submit", async (event) => {
@@ -445,6 +445,14 @@
         info = await repoCall("POST", "/api/storage", { folder: folder.value.trim() });
         setStatus("Saved");
         draw();
+        const moved = info.migrated;
+        if (moved) {
+          const parts = [];
+          if (moved.moved.length) parts.push(`moved ${moved.moved.join(", ")}`);
+          if (moved.merged.length) parts.push(`merged settings from ${moved.from}`);
+          if (moved.kept.length) parts.push(`kept the copy already here of ${moved.kept.join(", ")} (the old one stays in ${moved.from})`);
+          status.textContent += ` From ${moved.from}: ${parts.join("; ")}.`;
+        }
         if (info.previous) status.textContent += ` Clones in ${info.previous} are not moved; repositories are cloned again here on their next load, and the old folder can be deleted.`;
       } catch (error) {
         setStatus(error.message, true);
