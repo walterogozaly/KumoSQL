@@ -190,12 +190,36 @@ def list_projects() -> list[dict[str, str]]:
     return [item for item, ok in zip(projects, allowed) if ok]
 
 
+def _can_list_tables(project: str, dataset: str) -> bool:
+    """Whether the credentials may list tables in ``dataset`` (same rule as projects)."""
+    try:
+        _get(
+            f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables",
+            {"maxResults": "1"},
+        )
+    except CatalogError as exc:
+        return exc.status not in (403, 404)
+    return True
+
+
 def list_datasets(project: str) -> list[dict[str, str]]:
-    return [
+    """List datasets the credentials can browse.
+
+    Names starting with an underscore are hidden anonymous datasets that hold
+    cached query results (the BigQuery console hides them too); datasets whose
+    table listing BigQuery denies are dropped.
+    """
+    datasets = [
         {"id": item.get("datasetReference", {}).get("datasetId", ""),
          "location": item.get("location", "")}
         for item in _list(f"projects/{quote(project, safe='')}/datasets", "datasets", {"all": "true"})
     ]
+    datasets = [item for item in datasets if not item["id"].startswith("_")]
+    if not datasets:
+        return datasets
+    with ThreadPoolExecutor(max_workers=min(8, len(datasets))) as pool:
+        allowed = list(pool.map(lambda item: _can_list_tables(project, item["id"]), datasets))
+    return [item for item, ok in zip(datasets, allowed) if ok]
 
 
 def list_tables(project: str, dataset: str) -> list[dict[str, str]]:

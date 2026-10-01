@@ -53,3 +53,18 @@ def test_list_projects_hides_projects_without_access(monkeypatch):
 
     monkeypatch.setattr(catalog, "_get", fake_get)
     assert [p["id"] for p in catalog.list_projects()] == ["ok", "flaky"]
+
+
+def test_list_datasets_hides_anonymous_and_denied(monkeypatch):
+    def ds(name):
+        return {"datasetReference": {"datasetId": name}, "location": "US"}
+
+    def fake_get(path, params=None):
+        if path.endswith("/datasets"):
+            return {"datasets": [ds("sales"), ds("_abc123"), ds("locked")]}
+        if "locked" in path:
+            raise catalog.CatalogError("bigquery.tables.list denied", 403)
+        return {}
+
+    monkeypatch.setattr(catalog, "_get", fake_get)
+    assert [d["id"] for d in catalog.list_datasets("p")] == ["sales"]
