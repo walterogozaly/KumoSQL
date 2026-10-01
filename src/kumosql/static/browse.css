@@ -38,16 +38,10 @@
 @media (min-width: 1480px) { .app-shell > footer { margin-left: calc((100% - 1440px) / 2 + 20px); } }
 .catalog-freshness { margin-left: 6px; color: var(--text-muted); font-size: 12px; }
 .catalog-freshness.error { color: var(--bad-fg); }
-.project-picker { margin-bottom: 14px; padding: 14px 18px; }
-.project-picker[hidden] { display: none; }
-.bq-chosen, .bq-results { list-style: none; margin: 0 0 12px; padding: 0; }
-.bq-results { max-height: 260px; overflow: auto; }
-.bq-chosen li, .bq-results li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
-.project-picker .sp-inline, .project-picker .sp-input { margin-bottom: 10px; }
-.project-picker input[hidden] { display: none; }
 .catalog-heading { gap: 8px; }
 .panel-refresh { margin-left: auto; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 4px 7px; }
 .panel-refresh:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .panel-refresh:disabled { cursor: progress; }
 .panel-refresh.spinning { animation: panel-spin 0.9s linear infinite; }
 @keyframes panel-spin { to { transform: rotate(360deg); } }
+.catalog-toolbar button { white-space: nowrap; }

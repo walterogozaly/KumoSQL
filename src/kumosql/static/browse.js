@@ -125,7 +125,12 @@ function renderProjects(projects) {
   document.getElementById("project-count").textContent = projects.length ? String(projects.length) : "";
   if (!projects.length) {
     clearPane(projectsPane, "No projects chosen yet.");
-    document.getElementById("project-picker").hidden = false;
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.className = "primary-button";
+    choose.textContent = "Choose projects";
+    choose.addEventListener("click", openProjectSettings);
+    projectsPane.append(choose);
     setStatus("Choose at least one project to start. Nothing is loaded from BigQuery until you do.");
   }
 }
@@ -367,8 +372,8 @@ window.addEventListener("kumosql:bq-projects", (event) => {
   }
 });
 
-const picker = document.getElementById("project-picker");
-window.KumoBqProjects.render(picker.querySelector(".picker-body"), { onStatus: setStatus });
-document.getElementById("choose-projects").addEventListener("click", () => {
-  picker.hidden = !picker.hidden;
-});
+function openProjectSettings() {
+  window.KumoSettings.open("bigquery");
+}
+
+document.getElementById("choose-projects").addEventListener("click", openProjectSettings);
