@@ -25,7 +25,10 @@ functions are never touched. Normalization only rewrites; it proves nothing.
 
 from __future__ import annotations
 
+import calendar
+import datetime
 import itertools
+import re
 
 import sqlglot
 from sqlglot import exp
@@ -421,6 +424,76 @@ def _key_aggregates(select: exp.Select) -> exp.Expression | None:
     return select if changed else None
 
 
+_DATE_TEXT = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:\s*(?:[+-]\d{2}(?::?\d{2})?|Z))?\s*$")
+
+
+def _date_of(node: exp.Expression) -> datetime.date | None:
+    """The date a constant date expression denotes (a time-zone suffix does not change a DATE)."""
+
+    if isinstance(node, (exp.TsOrDsToDate, exp.Cast)) and isinstance(node.this, exp.Literal) and node.this.is_string:
+        if isinstance(node, exp.Cast) and not node.args["to"].is_type(exp.DataType.Type.DATE):
+            return None
+        match = _DATE_TEXT.match(node.this.this)
+        if match:
+            try:
+                return datetime.date(*(int(g) for g in match.groups()))
+            except ValueError:
+                return None
+    return None
+
+
+def _shift(day: datetime.date, count: int, unit: str) -> datetime.date | None:
+    if unit == "DAY":
+        return day + datetime.timedelta(days=count)
+    if unit == "WEEK":
+        return day + datetime.timedelta(weeks=count)
+    if unit in ("MONTH", "YEAR"):
+        months = day.year * 12 + day.month - 1 + count * (12 if unit == "YEAR" else 1)
+        year, month = divmod(months, 12)
+        if not 1 <= year <= 9999:
+            return None
+        return datetime.date(year, month + 1, min(day.day, calendar.monthrange(year, month + 1)[1]))
+    return None
+
+
+def _fold_dates(tree: exp.Expression) -> exp.Expression:
+    """Constant dates become ``CAST('YYYY-MM-DD' AS DATE)``, including ``DATE('..' )`` with a
+    time-zone suffix and ``date + INTERVAL n DAY/MONTH/YEAR``, so equal dates compare equal."""
+
+    def literal(day: datetime.date) -> exp.Expression:
+        return exp.Cast(this=exp.Literal.string(day.isoformat()), to=exp.DataType.build("DATE"))
+
+    def step(node: exp.Expression) -> exp.Expression:
+        day = _date_of(node)
+        if day is not None:
+            return literal(day)
+        sign = 1
+        if isinstance(node, (exp.Add, exp.Sub)):
+            if isinstance(node, exp.Sub):
+                sign = -1
+            base, interval = node.this, node.expression
+            if isinstance(interval, exp.Interval) and isinstance(interval.this, exp.Literal):
+                count, unit = interval.this.this, interval.unit.name.upper() if interval.unit else ""
+            else:
+                return node
+        elif isinstance(node, (exp.DateAdd, exp.DateSub)):
+            if isinstance(node, exp.DateSub):
+                sign = -1
+            base, amount = node.this, node.expression
+            if not isinstance(amount, exp.Literal):
+                return node
+            count, unit = amount.this, (node.args.get("unit").name.upper() if node.args.get("unit") else "")
+        else:
+            return node
+        base_day = _date_of(base)
+        if base_day is None or not re.fullmatch(r"-?\d+", str(count).strip()):
+            return node
+        shifted = _shift(base_day, sign * int(count), unit)
+        return literal(shifted) if shifted is not None else node
+
+    return tree.transform(step)
+
+
 def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
     """``(SELECT a, b FROM t) AS u`` is ``t AS u`` when every column is passed through.
 
@@ -677,6 +750,7 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
 
     tree = sqlglot.parse_one(sql, read=dialect)
+    tree = _fold_dates(tree)
     tree = _fold_constants(tree)
     tree = _values_to_union(tree)
     if schema:
