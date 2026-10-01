@@ -26,6 +26,7 @@ functions are never touched. Normalization only rewrites; it proves nothing.
 from __future__ import annotations
 
 import calendar
+import dataclasses
 import datetime
 import itertools
 import re
@@ -770,6 +771,12 @@ def _fold_trivia(tree: exp.Expression) -> exp.Expression:
                 and isinstance(inner.expressions[0], (exp.Literal, exp.Boolean))
             ):
                 return inner.expressions[0].copy()
+        for kind, part in ((exp.Year, "YEAR"), (exp.Month, "MONTH"), (exp.Day, "DAY")):
+            if isinstance(node, kind):
+                argument = node.this
+                if isinstance(argument, exp.TsOrDsToDate):
+                    argument = argument.this
+                return exp.Extract(this=exp.var(part), expression=argument.copy())
         if isinstance(node, exp.In) and isinstance(node.args.get("query"), exp.Expression) and _is_empty_select(node.args["query"]):
             return exp.false()
         if isinstance(node, exp.Exists) and _is_empty_select(node.this):
@@ -905,4 +912,23 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
         right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect)
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
-    return prove_equivalent_smt(left, right, **kwargs)
+    from . import scalar_subqueries
+
+    replaced = False
+    try:
+        inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
+
+        def same(a: str, b: str) -> bool:
+            return prove_equivalent_algebraic(a, b, compare_names=False, **inner).proven
+
+        left, right, replaced = scalar_subqueries.unify(
+            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same
+        )
+    except sqlglot.errors.SqlglotError:
+        replaced = False
+    result = prove_equivalent_smt(left, right, **kwargs)
+    if replaced and result.proven:
+        result = dataclasses.replace(
+            result, assumptions=tuple(result.assumptions) + (scalar_subqueries.ASSUMPTION,)
+        )
+    return result
