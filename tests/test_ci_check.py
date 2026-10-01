@@ -1,6 +1,6 @@
 import json
 
-from kumosql import ci_check, preview_data
+from kumosql import ci_check
 
 
 def change(label, complete=True, model="m.a"):
@@ -34,8 +34,16 @@ def test_failure_rules():
     assert ci_check.conclude(rep(change("unproven")), fail_on_unproven=True) == "failure"
 
 
-def test_preview_report_shape_and_comment():
-    report = preview_data.changes()["report"]
+def test_report_shape_and_comment():
+    report = {
+        "title": "t", "base": "main", "head": "feature", "generated_at": "2026-09-29T18:00:00Z",
+        "changes": [
+            change("proven", model="m.a"),
+            change("unproven", complete=False, model="m.b"),
+            {**change("unchanged", model="m.c"), "kind": "unchanged", "cost": {"basis": "unavailable"}},
+        ],
+        "diagnostics": [{"asset": "m.d", "message": "Could not be parsed"}],
+    }
     check = ci_check.build_check(report)
     assert set(check) == {"check_name", "conclusion", "summary"}
     assert check["conclusion"] == "neutral"

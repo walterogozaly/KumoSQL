@@ -10,11 +10,6 @@
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .warn-text { color: var(--warn-fg); }
 
-.preview-banner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 10px 14px; border: 1px dashed var(--info-border); border-radius: 10px; background: color-mix(in srgb, var(--info-bg) 55%, var(--surface)); color: var(--info-fg); font-size: 12.5px; }
-.preview-banner details { flex-basis: 100%; }
-.preview-banner summary { cursor: pointer; font-weight: 600; }
-.preview-banner ul { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0 0; padding: 0; list-style: none; }
-.preview-banner a { color: inherit; font-weight: 650; }
 .load-error { padding: 12px 14px; border: 1px solid var(--bad-border); border-radius: 10px; background: var(--bad-bg); color: var(--bad-fg); }
 .view { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
@@ -188,7 +183,8 @@
 /* Translucent panels over the background photo (see style.css). */
 .card, .coverage, .tile, .graph-detail { background-color: var(--panel, var(--surface)); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
 .coverage.is-partial { background-color: color-mix(in srgb, var(--warn-bg) 40%, var(--panel, var(--surface))); }
-.preview-banner { -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
+.empty-state { -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
+.empty-state p { margin: 4px 0 0; color: var(--text-muted); }
 .insights-app .topbar { position: relative; z-index: 30; }
 .page-head { padding: 14px 18px; border-radius: 12px; background-color: var(--panel, transparent); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
 
