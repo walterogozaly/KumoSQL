@@ -81,27 +81,31 @@ module.exports = { columns };
 
 
 def sql_body(rng: random.Random, parents: list[str], n: int, flavor: int) -> str:
-    """A BigQuery query reading ``parents`` (already rendered as table expressions)."""
+    """A BigQuery query reading ``parents`` (already rendered as table expressions).
+
+    Every model outputs ``id, created_at, amount, items`` so any model can read any other.
+    """
 
     first = parents[0]
     extra = ""
     for k, p in enumerate(parents[1:], start=1):
         extra += f"\nleft join {p} as b{k}\n  on a.id = b{k}.id"
-    cols = f"a.id,\n  a.created_at,\n  coalesce(a.amount, 0) as amount_{n % 7}"
     if flavor == 0:
-        return f"select\n  {cols}\nfrom {first} as a{extra}\nwhere a.created_at >= '2020-01-01'\n"
+        return (f"select\n  a.id,\n  a.created_at,\n  coalesce(a.amount, 0) as amount,\n  a.items\nfrom {first} as a{extra}\n"
+                "where a.created_at >= '2020-01-01'\n")
     if flavor == 1:
-        return (f"with base as (\n  select * from {first}\n),\nagg as (\n  select id, sum(amount) as total, count(*) as n\n"
-                f"  from base\n  group by id\n)\nselect a.id, a.total, a.n, a.total / nullif(a.n, 0) as avg_amount\nfrom agg as a{extra}\n")
+        return (f"with base as (\n  select * from {first}\n),\nagg as (\n  select id, max(created_at) as created_at, sum(amount) as amount,\n"
+                f"    any_value(items) as items, count(*) as n\n  from base\n  group by id\n)\n"
+                f"select a.id, a.created_at, a.amount / nullif(a.n, 0) as amount, a.items\nfrom agg as a{extra}\n")
     if flavor == 2:
-        return (f"select\n  a.id,\n  row_number() over (partition by a.id order by a.created_at desc) as rn,\n"
-                f"  a.created_at\nfrom {first} as a{extra}\nqualify rn = 1\n")
+        return (f"select\n  a.id,\n  a.created_at,\n  a.amount,\n  a.items,\n"
+                f"  row_number() over (partition by a.id order by a.created_at desc) as rn\nfrom {first} as a{extra}\nqualify rn = 1\n")
     if flavor == 3:
-        return (f"select\n  a.id,\n  item.sku,\n  item.qty * item.price as line_total\nfrom {first} as a{extra},\n"
+        return (f"select\n  a.id,\n  a.created_at,\n  item.qty * item.price as amount,\n  a.items\nfrom {first} as a{extra},\n"
                 f"  unnest(a.items) as item\nwhere item.qty > 0\n")
     if flavor == 4:
-        return (f"select\n  date_trunc(a.created_at, month) as month,\n  count(distinct a.id) as ids,\n"
-                f"  safe_cast(sum(a.amount) as numeric) as total\nfrom {first} as a{extra}\ngroup by 1\n")
+        return (f"select\n  a.id,\n  max(a.created_at) as created_at,\n  safe_cast(sum(a.amount) as numeric) as amount,\n"
+                f"  any_value(a.items) as items\nfrom {first} as a{extra}\ngroup by 1\n")
     return (f"select\n  a.*,\n  struct(a.id as id, a.created_at as at) as key,\n"
             f"  format_date('%Y-%m', a.created_at) as period\nfrom {first} as a{extra}\n")
 
@@ -109,13 +113,13 @@ def sql_body(rng: random.Random, parents: list[str], n: int, flavor: int) -> str
 def wide_body(first: str, n: int) -> str:
     """A wide model with a long chain of CTEs, the shape that makes column tracing slow."""
 
-    columns = ",\n  ".join(f"c{i}" for i in range(60))
-    ctes = [f"s0 as (\n  select id, created_at, {columns.replace(chr(10), '')} from {first}\n)"]
+    base = ", ".join(f"a.amount + {i} as c{i}" for i in range(60))
+    ctes = [f"s0 as (\n  select a.id, a.created_at, a.items, {base} from {first} as a\n)"]
     for i in range(1, 16):
         extra = ", ".join(f"c{j} + {i} as c{j}" for j in range(0, 60, 3))
         keep = ", ".join(f"c{j}" for j in range(60) if j % 3)
-        ctes.append(f"s{i} as (\n  select id, created_at, {extra}, {keep} from s{i - 1}\n  where c{i} is not null\n)")
-    return "with " + ",\n".join(ctes) + f"\nselect * from s15\n"
+        ctes.append(f"s{i} as (\n  select id, created_at, items, {extra}, {keep} from s{i - 1}\n  where c{i} is not null\n)")
+    return "with " + ",\n".join(ctes) + "\nselect id, created_at, c0 as amount, items from s15\n"
 
 
 def long_dir(rng: random.Random, depth: int) -> str:
@@ -198,7 +202,7 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
                 else:
                     rendered.append(f'${{ref({{ schema: "{ps}", name: "{pn}" }})}}')
             if rng.random() < 0.01:
-                rendered.append('${ref("model_that_was_deleted")}')  # drift: a broken ref
+                rendered.append('${ref("fx_deleted", "model_that_was_deleted")}')  # drift: a broken ref
             kind = rng.random()
             flavor = rng.randrange(6)
             body = sql_body(rng, rendered, index, flavor)
@@ -216,7 +220,7 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
             elif kind < 0.87:
                 header = (f'config {{\n  type: "incremental",\n  schema: "{schema}",\n  uniqueKey: ["id"],\n'
                           f'  bigquery: {{ partitionBy: "DATE(created_at)", updatePartitionFilter: "created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)" }}\n}}')
-                body = body.rstrip("\n") + "\n${when(incremental(), `where created_at > (select max(created_at) from ${self()})`)}\n"
+                body = "select * from (\n" + body.rstrip("\n") + "\n)\n${when(incremental(), `where 1 = 1`)}\n"
                 post = 'post_operations {\n  grant `roles/bigquery.dataViewer` on table ${self()} to "group:analysts@example.com"\n}\n'
             elif kind < 0.92:
                 header = f'config {{\n  schema: "{schema}"\n}}'  # no type, which Dataform treats as a table
@@ -246,6 +250,8 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
             filename = f"{name}.sqlx"
             if index % deep_every == 0:
                 filename = f"{name}_{'x' * 90}.sqlx"  # a long file name on top of the deep folder
+                if 'name: "' not in text.split("}")[0]:
+                    text = text.replace("config {\n", f'config {{\n  name: "{name}",\n', 1)  # an action is named by its file unless the config says otherwise
             newline = "\r\n" if rng.random() < 0.08 else "\n"
             if rng.random() < 0.02:
                 text = text.replace("\n  ", "\n\t")
@@ -256,9 +262,9 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
             elif flavor_roll < 0.02:
                 latin = text.replace("a.created_at", "a.created_at /* déjà vu */").replace("\n", newline).encode("latin-1")
                 write(path, latin, "sqlx-latin1")
-            elif flavor_roll < 0.022:
-                write(path, "", "sqlx-empty")
             else:
+                if flavor_roll < 0.022:  # a placeholder someone committed and never filled in
+                    write(defs / "placeholders" / f"empty_{index}.sqlx", "", "sqlx-empty")
                 write(path, text.rstrip("\n") if rng.random() < 0.05 else text, "sqlx", newline)
             if not 0.92 <= kind < 0.96:  # a disabled action is never read by others
                 current.append((schema, name))
@@ -284,7 +290,8 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
         if original is None or not original.is_file():
             continue
         text = original.read_bytes().decode("utf-8", "replace")
-        write(original.with_name(f"{name}_v2_final_copy.sqlx"), text.replace("coalesce(a.amount, 0)", "ifnull(a.amount, 0)"), "near-duplicate")
+        copy = text.replace("coalesce(a.amount, 0)", "ifnull(a.amount, 0)").replace(f'name: "{name}"', f'name: "{name}_v2_final_copy"')
+        write(original.with_name(f"{name}_v2_final_copy.sqlx"), copy, "near-duplicate")
     return counts
 
 

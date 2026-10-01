@@ -26,3 +26,14 @@ def test_fixture_is_deterministic(tmp_path):
     fixture.generate(tmp_path / "b", models=120, seed=5)
     names = lambda root: sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
     assert names(tmp_path / "a") == names(tmp_path / "b")
+
+
+def test_byte_order_mark_and_js_comments_do_not_hide_config(tmp_path):
+    (tmp_path / "definitions").mkdir()
+    (tmp_path / "workflow_settings.yaml").write_text("defaultProject: p\ndefaultDataset: scratch\ndefaultAssertionDataset: checks\n")
+    (tmp_path / "definitions" / "a.sqlx").write_bytes(b'\xef\xbb\xbfconfig { type: "table", schema: "marts" }\nselect 1 as id\n')
+    (tmp_path / "definitions" / "b.sqlx").write_text(
+        'config { type: "table", schema: "marts" }\njs {\n  // don\'t lose the config: } {\n  const x = 1;\n}\nselect 2 as id\n')
+    (tmp_path / "definitions" / "c.sqlx").write_text('config { type: "assertion" }\nselect 1 from ${ref("a")} where false\n')
+    keys = set(load_sqlx_project(tmp_path).models)
+    assert {"p.marts.a", "p.marts.b", "p.checks.c"} <= keys, keys

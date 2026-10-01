@@ -60,6 +60,9 @@ def _find_balanced_brace(text: str, opening: int) -> int:
         elif char == "/" and next_char == "*":
             block_comment = True
             index += 1
+        elif char == "/" and next_char == "/":
+            line_comment = True  # a JavaScript comment: its apostrophes and braces are not code
+            index += 1
         elif char in "'\"`":
             quote = char
         elif char == "{":
