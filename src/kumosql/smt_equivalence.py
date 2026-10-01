@@ -80,6 +80,20 @@ class SmtEquivalenceResult:
         return self.status is SmtStatus.PROVEN_EQUIVALENT
 
 
+@dataclass(frozen=True)
+class TableConstraints:
+    """Declared integrity constraints of one table (names lower-case).
+
+    ``not_null`` lists columns that never hold NULL; each tuple in ``keys`` is a
+    set of columns that is unique across rows (a primary key, or a UNIQUE
+    constraint whose columns are also NOT NULL). Rows that agree on every column
+    of a key are the same row.
+    """
+
+    not_null: frozenset = frozenset()
+    keys: tuple = ()
+
+
 BASE_ASSUMPTIONS = (
     "FLOAT64 values are never NaN",
     "runtime errors (division by zero, overflow, failed casts) are not modeled",
@@ -301,9 +315,12 @@ class _Agg:
 class _Union:
     branches: list
     distinct: bool
+    column_names: list | None = None
 
     @property
     def names(self) -> list[str]:
+        if self.column_names is not None:
+            return self.column_names
         return self.branches[0].names
 
 
@@ -376,7 +393,8 @@ class _AggCtx:
 
 
 class _Compiler:
-    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool):
+    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
+        self.dialect = dialect
         self.schema = {
             key.lower(): [c.lower() for c in cols] for key, cols in (schema or {}).items()
         }
@@ -394,7 +412,7 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
+        statements = [s for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
@@ -962,8 +980,9 @@ def _occ_pairs(src: _Occ, dst: _Occ) -> list:
 
 
 class _Prover:
-    def __init__(self, timeout_ms: int):
+    def __init__(self, timeout_ms: int, constraints: dict[str, TableConstraints] | None = None):
         self.timeout_ms = timeout_ms
+        self.constraints = {k.lower(): v for k, v in (constraints or {}).items()}
         self.unknown = False
         self.candidates: list[tuple[object, list[_Occ]]] = []
 
@@ -987,10 +1006,41 @@ class _Prover:
                 )
         return facts
 
+    def _constraint_facts(self, occs: list[_Occ]):
+        """NOT NULL columns, and rows with equal keys being the same row."""
+
+        facts = []
+        if not self.constraints:
+            return facts
+        for occ in occs:
+            constraint = self.constraints.get(occ.table.lower())
+            if constraint is None:
+                continue
+            for name in list(occ.cols):
+                if name in constraint.not_null:
+                    facts.append(z3.Not(occ.cols[name].null))
+        for i, first in enumerate(occs):
+            for second in occs[i + 1:]:
+                constraint = self.constraints.get(first.table.lower())
+                if constraint is None or first.table != second.table or first.opaque or second.opaque:
+                    continue
+                for key in constraint.keys:
+                    same_key = z3.And(
+                        *[
+                            z3.And(z3.Not(first.col(k).null), z3.Not(second.col(k).null), _null_eq(first.col(k), second.col(k)))
+                            for k in key
+                        ]
+                    )
+                    names = sorted(set(first.cols) | set(second.cols))
+                    same_row = z3.And(*[_null_eq(first.col(n), second.col(n)) for n in names])
+                    facts.append(z3.Implies(same_key, same_row))
+        return facts
+
     def valid(self, formula, occs: list[_Occ], facts=()) -> bool:
         solver = z3.Solver()
         solver.set("timeout", self.timeout_ms)
         solver.add(*self._typing(occs))
+        solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
         solver.add(z3.Not(formula))
         result = solver.check()
@@ -1032,10 +1082,101 @@ class _Prover:
         solver = z3.Solver()
         solver.set("timeout", self.timeout_ms)
         solver.add(*self._typing(occs))
+        solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
         solver.add(pred)
         if solver.check() == z3.sat:
             self.candidates.append((self._counterexample(solver, occs), list(occs)))
+
+    def unsatisfiable(self, pred, occs: list[_Occ], facts=()) -> bool:
+        solver = z3.Solver()
+        solver.set("timeout", self.timeout_ms)
+        solver.add(*self._typing(occs))
+        solver.add(*self._constraint_facts(occs))
+        solver.add(*facts)
+        solver.add(pred)
+        return solver.check() == z3.unsat
+
+    def merge_key_occurrences(self, block):
+        """Fold occurrences of one table that a key forces onto the same row.
+
+        If the block's condition makes two occurrences agree on a key, each
+        row of the table pairs with itself exactly once, so the second
+        occurrence adds nothing: the multiplicity is unchanged.
+        """
+
+        if not self.constraints or any(o.opaque for o in block.occs):
+            return block
+        changed = True
+        while changed:
+            changed = False
+            for i, first in enumerate(block.occs):
+                for second in block.occs[i + 1:]:
+                    constraint = self.constraints.get(first.table.lower())
+                    if constraint is None or first.table != second.table:
+                        continue
+                    for key in constraint.keys:
+                        same_key = z3.And(
+                            *[
+                                z3.And(z3.Not(first.col(k).null), z3.Not(second.col(k).null), _null_eq(first.col(k), second.col(k)))
+                                for k in key
+                            ]
+                        )
+                        implied = z3.Implies(block.cond.t, same_key)
+                        saved = len(self.candidates)
+                        if self.valid(implied, block.occs, block.facts):
+                            self._merge(block, first, second)
+                            changed = True
+                            break
+                        del self.candidates[saved:]
+                    if changed:
+                        break
+                if changed:
+                    break
+        return block
+
+    def _merge(self, block, keep: _Occ, drop: _Occ) -> None:
+        pairs = _occ_pairs(drop, keep)
+        block.occs = [o for o in block.occs if o is not drop]
+        block.cond = _Pred(_subst(block.cond.t, pairs), _subst(block.cond.f, pairs))
+        block.outputs = [_subst_val(v, pairs) for v in block.outputs]
+        block.facts = [_subst(f, pairs) for f in block.facts]
+        if isinstance(block, _Agg):
+            block.keys = [_subst_val(k, pairs) for k in block.keys]
+            for call in block.aggs:
+                if call.arg is not None:
+                    call.arg = _subst_val(call.arg, pairs)
+            if block.having is not None:
+                block.having = _Pred(_subst(block.having.t, pairs), _subst(block.having.f, pairs))
+
+    def legal_database(self, db: dict[str, list[dict]]) -> dict[str, list[dict]] | None:
+        """Respect declared constraints: ``None`` if the database cannot satisfy them."""
+
+        if not self.constraints:
+            return db
+        legal = {}
+        for table, rows in db.items():
+            constraint = self.constraints.get(table.lower())
+            if constraint is None:
+                legal[table] = rows
+                continue
+            for row in rows:
+                if any(row.get(c, 1) is None for c in constraint.not_null):
+                    return None
+            if constraint.keys:
+                unique = list({tuple(sorted(r.items(), key=lambda kv: kv[0])): r for r in rows}.values())
+                for key in constraint.keys:
+                    seen = set()
+                    for row in unique:
+                        value = tuple(row.get(k) for k in key)
+                        if any(v is None for v in value):
+                            continue
+                        if value in seen:
+                            return None
+                        seen.add(value)
+                rows = unique
+            legal[table] = rows
+        return legal
 
     # ---- mappings ------------------------------------------------------
 
@@ -1213,13 +1354,52 @@ class _Prover:
         return False
 
 
+_CONST_PAIRS_NULL = ("COUNT", "COUNTIF")
+
+
+def _aggregate_of_nothing(call: _AggCall) -> _Val:
+    """The value of an aggregate over an empty group."""
+
+    V = _value_sort()
+    return _Val(z3.BoolVal(call.func not in _CONST_PAIRS_NULL), V.Num(0))
+
+
+def _prune(prover: "_Prover", union: _Union) -> None:
+    """Drop blocks that cannot return a row; a global aggregate over nothing is one constant row."""
+
+    kept = []
+    for block in union.branches:
+        if block.occs and any(o.opaque for o in block.occs):
+            kept.append(block)
+            continue
+        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
+            kept.append(block)
+            continue
+        if isinstance(block, _Agg) and block.is_global and block.having is None:
+            pairs = []
+            for call in block.aggs:
+                value = _aggregate_of_nothing(call)
+                pairs.extend([(call.var.null, value.null), (call.var.val, value.val)])
+            outputs = [_subst_val(v, pairs) for v in block.outputs]
+            kept.append(_Spj([], _const_pred(True), outputs, block.names, distinct=block.distinct, facts=[]))
+        elif isinstance(block, _Agg) and block.is_global:
+            kept.append(block)  # HAVING over the empty group: leave to the general path
+    union.branches = kept
+
+
 def _is_set(u: _Union) -> bool:
     return u.distinct or (len(u.branches) == 1 and u.branches[0].distinct)
 
 
 def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
-    left.branches = [prover.as_distinct_spj(b) for b in left.branches]
-    right.branches = [prover.as_distinct_spj(b) for b in right.branches]
+    left.column_names, right.column_names = list(left.names), list(right.names)
+    for union in (left, right):
+        _prune(prover, union)
+        union.branches = [prover.merge_key_occurrences(prover.as_distinct_spj(b)) for b in union.branches]
+    if not left.branches and not right.branches:
+        return True, "both queries always return no rows"
+    if not left.branches or not right.branches:
+        return False, "only one query can return rows"
     if _is_set(left) and _is_set(right):
         for a in left.branches:
             if not any(prover.branch_set_contained(a, b) for b in right.branches):
@@ -1406,6 +1586,9 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})
+        db = prover.legal_database(db)
+        if db is None:
+            continue
         try:
             left_rows = _eval_union(left, db, model)
             right_rows = _eval_union(right, db, model)
@@ -1435,8 +1618,15 @@ def prove_equivalent_smt(
     schema: dict[str, list[str]] | None = None,
     exact_arithmetic: bool = False,
     timeout_ms: int = 5000,
+    constraints: dict[str, TableConstraints] | None = None,
+    compare_names: bool = True,
+    dialect: str = "bigquery",
 ) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
+
+    ``constraints`` maps table names to ``TableConstraints`` (NOT NULL columns and
+    keys) the proof may rely on. ``compare_names=False`` ignores output column
+    names, comparing only the rows. ``dialect`` is the sqlglot dialect of the input.
 
     ``schema`` optionally maps table names (as written in the query, e.g.
     ``"project.dataset.table"``) to column lists; it enables ``SELECT *`` and
@@ -1449,7 +1639,7 @@ def prove_equivalent_smt(
         return SmtEquivalenceResult(
             SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install kumosql[smt])"
         )
-    compiler = _Compiler(schema, exact_arithmetic)
+    compiler = _Compiler(schema, exact_arithmetic, dialect)
     try:
         left = compiler.compile(left_sql)
         right = compiler.compile(right_sql)
@@ -1465,14 +1655,14 @@ def prove_equivalent_smt(
             assumptions=assumptions,
         )
     for position, (a, b) in enumerate(zip(left.names, right.names), start=1):
-        if a != b:
+        if compare_names and a != b:
             return SmtEquivalenceResult(
                 SmtStatus.NOT_PROVEN,
                 f"column {position} is named {a or '(unnamed)'} on the left and {b or '(unnamed)'} on the right",
                 assumptions=assumptions,
             )
 
-    prover = _Prover(timeout_ms)
+    prover = _Prover(timeout_ms, constraints)
     proven, reason = _prove(prover, left, right)
     if proven:
         return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=assumptions)

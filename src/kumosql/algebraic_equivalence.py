@@ -60,6 +60,37 @@ def _union_all_branches(node: exp.Expression) -> list[exp.Expression] | None:
     return None
 
 
+def _aligned_branches(source: exp.Subquery) -> list[exp.Select] | None:
+    """Branches of a derived UNION ALL, each naming its columns like the first.
+
+    A union's column names come from its first branch, so a copy of the
+    enclosing select that keeps only one branch must give that branch's
+    columns those names, or ``u.k`` could bind to a different column.
+    """
+
+    branches = _union_all_branches(source)
+    if branches is None:
+        return None
+    first = branches[0]
+    names = [item.alias_or_name for item in first.expressions]
+    if "" in names or len({n.lower() for n in names}) != len(names):
+        return None
+    aligned = []
+    for branch in branches:
+        if len(branch.expressions) != len(names) or any(isinstance(i, exp.Star) for i in branch.expressions):
+            return None
+        copy = branch.copy()
+        copy.set(
+            "expressions",
+            [
+                i.copy() if i.alias_or_name == name else exp.alias_((i.this if isinstance(i, exp.Alias) else i).copy(), name)
+                for i, name in zip(copy.expressions, names)
+            ],
+        )
+        aligned.append(copy)
+    return aligned
+
+
 def _plain_sources(select: exp.Select) -> list[exp.Subquery] | None:
     """The union-valued derived tables in FROM/JOIN, if every join is inner."""
 
@@ -114,7 +145,9 @@ def _distribute(select: exp.Select) -> exp.Expression | None:
     sources = _plain_sources(select)
     if not sources:
         return None
-    branch_lists = [_union_all_branches(s) for s in sources]
+    branch_lists = [_aligned_branches(s) for s in sources]
+    if any(branches is None for branches in branch_lists):
+        return None
     total = 1
     for branches in branch_lists:
         total *= len(branches)
@@ -144,8 +177,8 @@ def _split_aggregates(select: exp.Select) -> exp.Expression | None:
     from_ = select.args.get("from_") or select.args.get("from")
     if select.args.get("joins") or from_.this is not source:
         return None
-    branches = _union_all_branches(source)
-    if len(branches) > MAX_BRANCHES:
+    branches = _aligned_branches(source)
+    if branches is None or len(branches) > MAX_BRANCHES:
         return None
     group = select.args.get("group")
     keys = list(group.expressions) if group else []
@@ -158,11 +191,11 @@ def _split_aggregates(select: exp.Select) -> exp.Expression | None:
     count = 0
     for item in select.expressions:
         inner = item.this if isinstance(item, exp.Alias) else item
-        alias = item.alias if isinstance(item, exp.Alias) else item.output_name
+        alias = item.alias if isinstance(item, exp.Alias) else (item.output_name if isinstance(item, exp.Column) else "")
         if isinstance(inner, exp.Column) and inner.sql() in key_sql:
             partial_items.append(exp.alias_(inner.copy(), alias or inner.name))
             outer_items.append(exp.column(alias or inner.name))
-        elif _is_agg(inner) and isinstance(item, exp.Alias):
+        elif _is_agg(inner):
             if any(isinstance(n, exp.Select) for n in inner.walk()) or any(
                 _is_agg(n) for n in inner.this.walk() if n is not inner
             ):
@@ -171,7 +204,8 @@ def _split_aggregates(select: exp.Select) -> exp.Expression | None:
             count += 1
             partial_items.append(exp.alias_(inner.copy(), name))
             combine = _COMBINE[type(inner)]
-            outer_items.append(exp.alias_(exp.func(combine, exp.column(name)), alias))
+            combined = exp.func(combine, exp.column(name))
+            outer_items.append(exp.alias_(combined, alias) if alias else combined)
         else:
             return None
     if not any(_is_agg(i.this if isinstance(i, exp.Alias) else i) for i in select.expressions):
@@ -270,9 +304,9 @@ def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
         return None
     from_ = inner.args.get("from_") or inner.args.get("from")
     table = from_.this if from_ else None
-    if not isinstance(table, exp.Table) or table.alias:
+    if not isinstance(table, exp.Table):
         return None
-    if any(not isinstance(e, exp.Column) or e.table or e.name == "*" for e in inner.expressions):
+    if any(not isinstance(e, exp.Column) or e.name == "*" or e.table not in {"", table.alias_or_name} for e in inner.expressions):
         return None
     outer = node.find_ancestor(exp.Select)
     if outer is None or any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in outer.find_all(exp.Star)):
@@ -367,10 +401,153 @@ def _canonicalize_union_source(node: exp.Subquery) -> exp.Expression | None:
     return exp.Subquery(this=union, alias=node.args.get("alias"))
 
 
-def normalize(sql: str) -> str:
-    """Rewrite ``sql`` with the bag-semantics identities above (BigQuery in and out)."""
+def _values_to_union(tree: exp.Expression) -> exp.Expression:
+    """``(VALUES (1, 2), (3, 4)) AS t(a, b)`` is ``SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4``.
 
-    tree = sqlglot.parse_one(sql, read="bigquery")
+    A constant relation is a sum of one-row relations. Only done when the
+    column names are declared, so the rewrite never invents names.
+    """
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if not isinstance(node, exp.Values) or not isinstance(node.parent, (exp.From, exp.Join)):
+            return node
+        alias = node.args.get("alias")
+        names = [c.name for c in alias.columns] if alias is not None else []
+        rows = node.expressions
+        if not names or not rows or any(not isinstance(r, exp.Tuple) or len(r.expressions) != len(names) for r in rows):
+            return node
+        selects = []
+        for index, row in enumerate(rows):
+            items = [
+                exp.alias_(value.copy(), name) if index == 0 else value.copy()
+                for value, name in zip(row.expressions, names)
+            ]
+            selects.append(exp.select(*items))
+        body: exp.Expression = selects[0]
+        for select in selects[1:]:
+            body = exp.Union(this=body, expression=select, distinct=False)
+        return exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(alias.name)))
+
+    return tree.transform(step)
+
+
+_EXACT_LIMIT = 2**53
+
+
+def _int_value(node: exp.Expression) -> int | None:
+    if isinstance(node, exp.Paren):
+        return _int_value(node.this)
+    if isinstance(node, exp.Literal) and not node.is_string and node.this.lstrip("-").isdigit():
+        return int(node.this)
+    if isinstance(node, exp.Neg):
+        inner = _int_value(node.this)
+        return None if inner is None else -inner
+    return None
+
+
+def _fold_constants(tree: exp.Expression) -> exp.Expression:
+    """Evaluate integer arithmetic on literals, e.g. ``10 / 2`` to ``5``.
+
+    Only exact results are folded (a division must divide evenly, nothing may
+    leave the range where FLOAT64 and INT64 agree), so INT64 and FLOAT64
+    readings of the expression coincide.
+    """
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if not isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div)):
+            return node
+        a, b = _int_value(node.this), _int_value(node.expression)
+        if a is None or b is None:
+            return node
+        if isinstance(node, exp.Add):
+            value = a + b
+        elif isinstance(node, exp.Sub):
+            value = a - b
+        elif isinstance(node, exp.Mul):
+            value = a * b
+        elif b != 0 and a % b == 0:
+            value = a // b
+        else:
+            return node
+        if abs(value) >= _EXACT_LIMIT:
+            return node
+        return exp.Neg(this=exp.Literal.number(-value)) if value < 0 else exp.Literal.number(value)
+
+    return tree.transform(step)
+
+
+def _select_names(select: exp.Expression) -> list[str] | None:
+    first = select
+    while isinstance(first, exp.Union):
+        first = first.this
+    while isinstance(first, exp.Subquery):
+        first = first.this
+    if not isinstance(first, exp.Select):
+        return None
+    names = [item.alias_or_name.lower() for item in first.expressions]
+    if "" in names or len(set(names)) != len(names) or any(isinstance(i, exp.Star) for i in first.expressions):
+        return None
+    return names
+
+
+def _expand_stars(tree: exp.Expression, schema: dict[str, list[str]]) -> exp.Expression:
+    """Replace ``*`` and ``t.*`` with explicit columns when every source's columns are known."""
+
+    schema = {key.lower(): [c.lower() for c in cols] for key, cols in schema.items()}
+
+    def columns_of(source: exp.Expression) -> list[str] | None:
+        if isinstance(source, exp.Table):
+            parts = [p.name for p in (source.args.get("catalog"), source.args.get("db"), source.this) if p is not None]
+            return schema.get(".".join(parts).lower())
+        if isinstance(source, exp.Subquery):
+            return _select_names(source.this)
+        return None
+
+    for select in list(tree.find_all(exp.Select))[::-1]:  # innermost first
+        if not any(isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star)) for i in select.expressions):
+            continue
+        from_ = select.args.get("from_") or select.args.get("from")
+        if from_ is None:
+            continue
+        sources = [from_.this] + [j.this for j in select.args.get("joins") or []]
+        known = []
+        for source in sources:
+            columns = columns_of(source)
+            if columns is None or not source.alias_or_name:
+                known = None
+                break
+            known.append((source.alias_or_name, columns))
+        if known is None:
+            continue
+        items = []
+        ok = True
+        for item in select.expressions:
+            if isinstance(item, exp.Star):
+                if item.args.get("except_") or item.args.get("except") or item.args.get("replace") or item.args.get("replace_"):
+                    ok = False
+                    break
+                items.extend(exp.column(c, table=a) for a, cols in known for c in cols)
+            elif isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
+                match = [cols for a, cols in known if a.lower() == item.table.lower()]
+                if len(match) != 1:
+                    ok = False
+                    break
+                items.extend(exp.column(c, table=item.table) for c in match[0])
+            else:
+                items.append(item)
+        if ok:
+            select.set("expressions", items)
+    return tree
+
+
+def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: str = "bigquery") -> str:
+    """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
+
+    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = _fold_constants(tree)
+    tree = _values_to_union(tree)
+    if schema:
+        tree = _expand_stars(tree, schema)
 
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Subquery):
@@ -392,14 +569,16 @@ def normalize(sql: str) -> str:
             replacement = _canonicalize_union_source(subquery)
             if replacement is not None:
                 subquery.replace(replacement)
-    return tree.sql(dialect="bigquery")
+    return tree.sql(dialect=dialect)
 
 
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result."""
 
+    dialect = kwargs.get("dialect", "bigquery")
     try:
-        left, right = normalize(left_sql), normalize(right_sql)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect)
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
     return prove_equivalent_smt(left, right, **kwargs)

@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import random
 import logging
-import sqlite3
 import sys
 import time
 
@@ -89,53 +88,86 @@ def to_dialect(sql: str, dialect: str) -> str:
     return sqlglot.transpile(sql, read="mysql", write=dialect)[0]
 
 
-def random_database(tables: dict[str, Table], rng: random.Random):
-    """A SQLite database with small value domains so joins and ties are common."""
+def _duck_type(column: Column) -> str:
+    base = column.type.split("(")[0]
+    if base in {"VARCHAR", "CHAR", "TEXT"}:
+        return "VARCHAR"
+    if base in {"DECIMAL", "DOUBLE", "FLOAT", "NUMERIC"}:
+        return "DOUBLE"
+    return "BIGINT"
 
-    db = sqlite3.connect(":memory:")
+
+def new_database(tables: dict[str, Table]):
+    """An empty DuckDB database holding the schema."""
+
+    import duckdb
+
+    db = duckdb.connect(":memory:")
     for table in tables.values():
-        columns = ", ".join(f'"{c.name}"' for c in table.columns)
+        columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
         db.execute(f'CREATE TABLE "{table.name}" ({columns})')
-        keys = set()
-        for _ in range(rng.choice([0, 0, 1, 2, 3, 4])):
-            row = []
-            for column in table.columns:
-                base = column.type.split("(")[0]
-                if base in {"VARCHAR", "CHAR", "TEXT"}:
-                    domain = ["a", "b", "c"]
-                else:
-                    domain = [0, 1, 2, 3]
-                value = rng.choice(domain)
-                if not column.not_null and rng.random() < 0.25:
-                    value = None
-                row.append(value)
-            if table.primary_key:
-                key = tuple(row[[c.name for c in table.columns].index(k)] for k in table.primary_key)
-                if key in keys:
-                    continue
-                keys.add(key)
-            marks = ", ".join("?" * len(row))
-            db.execute(f'INSERT INTO "{table.name}" VALUES ({marks})', row)
     return db
 
 
-def differ(left: str, right: str, tables: dict[str, Table], trials: int = 60, seed: int = 11):
-    """A database on which the queries differ as bags, else ``None``; ``False`` if SQLite rejects them."""
+def random_rows(table: Table, rng: random.Random) -> list[list]:
+    """A few rows with small value domains so joins and ties are common."""
+
+    rows, keys = [], set()
+    for _ in range(rng.choice([0, 0, 1, 2, 3, 4])):
+        row = []
+        for column in table.columns:
+            domain = ["a", "b", "c"] if _duck_type(column) == "VARCHAR" else [0, 1, 2, 3]
+            value = rng.choice(domain)
+            if not column.not_null and rng.random() < 0.25:
+                value = None
+            row.append(value)
+        key_sets = ([table.primary_key] if table.primary_key else []) + list(table.unique)
+        clash = False
+        for index, key in enumerate(key_sets):
+            value = (index, tuple(row[[c.name for c in table.columns].index(k)] for k in key))
+            if None not in value[1] and value in keys:
+                clash = True
+        if clash:
+            continue
+        for index, key in enumerate(key_sets):
+            keys.add((index, tuple(row[[c.name for c in table.columns].index(k)] for k in key)))
+        rows.append(row)
+    return rows
+
+
+def referenced_tables(*queries: str) -> set[str]:
+    names = set()
+    for query in queries:
+        for table in sqlglot.parse_one(query, read="mysql").find_all(exp.Table):
+            names.add(table.name.lower())
+    return names
+
+
+def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11):
+    """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
+
+    import duckdb
 
     rng = random.Random(seed)
     try:
-        left_sqlite, right_sqlite = to_dialect(left, "sqlite"), to_dialect(right, "sqlite")
+        left_sql, right_sql = to_dialect(left, "duckdb"), to_dialect(right, "duckdb")
+        used = [tables[n] for n in sorted(referenced_tables(left, right)) if n in tables]
     except sqlglot.errors.SqlglotError:
         return False
     for _ in range(trials):
-        db = random_database(tables, rng)
         try:
-            a = Counter(db.execute(left_sqlite).fetchall())
-            b = Counter(db.execute(right_sqlite).fetchall())
-        except sqlite3.Error:
+            for table in used:
+                db.execute(f'DELETE FROM "{table.name}"')
+                rows = random_rows(table, rng)
+                if rows:
+                    marks = ", ".join("?" * len(table.columns))
+                    db.executemany(f'INSERT INTO "{table.name}" VALUES ({marks})', rows)
+            a = Counter(db.execute(left_sql).fetchall())
+            b = Counter(db.execute(right_sql).fetchall())
+        except duckdb.Error:
             return False
         if a != b:
-            return (left_sqlite, right_sqlite, a, b)
+            return (left_sql, right_sql, a, b)
     return None
 
 
@@ -156,6 +188,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     pairs = load_pairs(FIXTURES / pairs_file)[:limit]
     result = SuiteResult(name, total=len(pairs))
     start = time.time()
+    db = new_database(tables)
     for index, (left, right) in enumerate(pairs):
         try:
             proof = prove(left, right, tables)
@@ -167,7 +200,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
             result.unproved.append((index, "not proven"))
             continue
         result.proved += 1
-        counter = differ(left, right, tables, trials)
+        counter = differ(left, right, tables, db, trials)
         if counter is False:
             result.unchecked += 1
         elif counter is not None:
@@ -179,9 +212,18 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
 def default_prove(left: str, right: str, tables: dict[str, Table]) -> bool:
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 
+    from kumosql.smt_equivalence import TableConstraints
+
     schema = {t.name: [c.name for c in t.columns] for t in tables.values()}
+    constraints = {
+        t.name: TableConstraints(
+            not_null=frozenset(c.name for c in t.columns if c.not_null),
+            keys=tuple(k for k in ([t.primary_key] if t.primary_key else []) + list(t.unique)),
+        )
+        for t in tables.values()
+    }
     return prove_equivalent_algebraic(
-        to_dialect(left, "bigquery"), to_dialect(right, "bigquery"), schema=schema
+        left, right, schema=schema, constraints=constraints, compare_names=False, dialect="mysql", exact_arithmetic=True
     ).proven
 
 
