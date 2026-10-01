@@ -573,7 +573,7 @@ def _required(query: dict[str, list[str]], name: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Open the local KumoSQL browser UI")
+    parser = argparse.ArgumentParser(prog="python -m kumosql.ui", description="Open the local KumoSQL browser UI")
     parser.add_argument("--version", action="version", version=f"kumosql {version.describe()}")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
     parser.add_argument("--project", metavar="DIR", help="Load a Dataform or SQL folder into the query graph page")
