@@ -47,3 +47,9 @@ The weights were set by judgment and by checking which simple rules point the ri
 | Date | SQL Judge | Error Classification (exact / detection F1 / unified F1) |
 | --- | ---: | ---: |
 | 2026-10-01 | 1233/1850 (66.65%) | 38.90% / 58.85% / 39.07% |
+
+## Audit of the disputed answers (2026-10-01)
+
+*Proofs the labels call non-equivalent (13).* Each was re-run on 3,000 random databases that respect the schema and 3,000 with no constraints at all (NULLs, duplicates, empty tables): no difference as bags. Twelve also agree row by row; the thirteenth differs only in the order of rows tied on `ORDER BY`. All 13 have an `ORDER BY`, so these are label noise or ordering on real data, not unsound proofs.
+
+*Prover refutations the labels call equivalent (23 of 45).* Counterexamples were loaded into SQLite and both queries run on them. 43 of 45 hold. One depends on SQLite's type affinity (`value > '100'` on a numeric column converts the text to a number, which the prover does not model), so a refutation under the SQLite dialect is a hint rather than a verdict; the harness lets SQLite itself decide. The other was a real prover bug: a counterexample row only listed the columns one query reads, and the other query read the missing key column as NULL, contradicting the declared NOT NULL key (`COUNT(DISTINCT id)` against `COUNT(*)` on a key). Counterexample rows now carry every column either query reads. The false refutation never produced a proof, so proof counts on the other evals are unaffected.

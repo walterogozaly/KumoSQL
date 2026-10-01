@@ -2609,6 +2609,17 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})
+        # A column only the other query reads is still a column of the row: give it the model's
+        # value (never NULL by default) rather than leaving it to read as NULL.
+        other_columns: dict[str, dict] = {}
+        for occ in all_occs:
+            for name, v in occ.cols.items():
+                other_columns.setdefault(occ.table, {}).setdefault(name, v)
+        for table, rows in db.items():
+            for row in rows:
+                for name, v in other_columns.get(table, {}).items():
+                    if name not in row:
+                        row[name] = _cell(model, v)
         db = prover.legal_database(db)
         if db is None:
             continue
