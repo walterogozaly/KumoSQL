@@ -67,4 +67,6 @@ With a declared key on `customers`, `customers JOIN (SELECT customer_id, SUM(x) 
 
 `GROUP BY` or `DISTINCT` over a derived `UNION ALL` that only groups its own columns is rewritten to a set union,.
 
+A `LEFT JOIN` to a derived table that only feeds `ind IS NOT NULL` (the shape decorrelators emit for `IN` and `EXISTS` under `OR`) is read as the `EXISTS` it stands for, when the join matches at most one row: the equated columns cover a declared key of the single table behind the derived table, or every column of its `GROUP BY`. Joined on a non-key column it stays a join, since the repeated rows would change the result.
+
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.
