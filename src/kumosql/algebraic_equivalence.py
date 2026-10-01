@@ -1323,26 +1323,54 @@ def _expand_stars(tree: exp.Expression, schema: dict[str, list[str]]) -> exp.Exp
         known = []
         for source in sources:
             columns = columns_of(source)
-            if columns is None or not source.alias_or_name:
+            # A lone derived table may go without an alias; its columns are then written bare.
+            if columns is None or (not source.alias_or_name and len(sources) != 1):
                 known = None
                 break
-            known.append((source.alias_or_name, columns))
+            known.append((source.alias_or_name or "", columns))
         if known is None:
             continue
         items = []
         ok = True
+
+        def expand(star: exp.Star, columns: list[tuple[str, str]]) -> list[exp.Expression] | None:
+            """``(qualifier, column)`` pairs as items, honoring EXCEPT and REPLACE; ``None`` if not understood."""
+
+            if star.args.get("rename") or star.args.get("ilike"):
+                return None
+            skipped = {c.name.lower() for c in star.args.get("except_") or star.args.get("except") or []}
+            replaced = {}
+            for r in star.args.get("replace") or star.args.get("replace_") or []:
+                if not isinstance(r, exp.Alias):
+                    return None
+                replaced[r.alias.lower()] = r.this
+            produced = []
+            for qualifier, column in columns:
+                if column in skipped:
+                    continue
+                if column in replaced:
+                    produced.append(exp.alias_(replaced[column].copy(), column))
+                else:
+                    produced.append(exp.column(column, table=qualifier or None))
+            return produced
+
         for item in select.expressions:
             if isinstance(item, exp.Star):
-                if item.args.get("except_") or item.args.get("except") or item.args.get("replace") or item.args.get("replace_"):
+                produced = expand(item, [(a, c) for a, cols in known for c in cols])
+                if produced is None:
                     ok = False
                     break
-                items.extend(exp.column(c, table=a) for a, cols in known for c in cols)
+                items.extend(produced)
             elif isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
                 match = [cols for a, cols in known if a.lower() == item.table.lower()]
                 if len(match) != 1:
                     ok = False
                     break
-                items.extend(exp.column(c, table=item.table) for c in match[0])
+                produced = expand(item.this, [(item.table, c) for c in match[0]])
+                if produced is None:
+                    ok = False
+                    break
+                items.extend(produced)
             else:
                 items.append(item)
         if ok:
@@ -1631,6 +1659,140 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _inline_ctes(tree: exp.Expression) -> exp.Expression:
+    """Replace each reference to a WITH table by the table's query as a derived table."""
+
+    for with_ in list(tree.find_all(exp.With)):
+        if with_.args.get("recursive"):
+            continue
+        owner = with_.parent
+        if owner is None:
+            continue
+        bodies: dict[str, exp.Expression] = {}
+        for cte in with_.expressions:
+            name = cte.alias_or_name.lower()
+            if cte.args.get("alias") is not None and cte.args["alias"].args.get("columns"):
+                bodies = {}
+                break
+            bodies[name] = cte.this
+        else:
+            for cte in with_.expressions:
+                name = cte.alias_or_name.lower()
+                body = bodies[name]
+                uses = [
+                    t
+                    for t in owner.find_all(exp.Table)
+                    if not t.db and not t.catalog and t.name.lower() == name and t.find_ancestor(exp.CTE) is not cte
+                    and not any(a is cte for a in _ancestors_of(t, owner))
+                ]
+                for table in uses:
+                    derived = exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name)))
+                    table.replace(derived)
+            owner.set("with_", None)
+            owner.set("with", None)
+    return tree
+
+
+def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> exp.Expression:
+    """``a JOIN b USING (k)`` is ``a JOIN b ON a.k = b.k`` with the merged column ``k`` read from ``a``
+    (from ``b`` for a RIGHT JOIN, ``COALESCE(a.k, b.k)`` for FULL). ``SELECT *`` lists the merged columns first."""
+
+    if not schema:
+        return tree
+    schema = {k.lower(): [c.lower() for c in v] for k, v in schema.items()}
+
+    def columns_of(source: exp.Expression) -> list[str] | None:
+        if isinstance(source, exp.Table):
+            return schema.get(".".join(p.name for p in source.parts).lower())
+        if isinstance(source, exp.Subquery):
+            return _select_names(source.this)
+        return None
+
+    for select in list(tree.find_all(exp.Select))[::-1]:
+        joins = select.args.get("joins") or []
+        if not any(j.args.get("using") is not None for j in joins):
+            continue
+        from_ = select.args.get("from_") or select.args.get("from")
+        sources = [from_.this] + [j.this for j in joins]
+        known = [columns_of(src) for src in sources]
+        aliases = [(src.alias_or_name or "").lower() for src in sources]
+        if from_ is None or any(k is None for k in known) or "" in aliases or len(set(aliases)) != len(aliases):
+            continue
+        stars = [i for i in select.expressions if isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star))]
+        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or stars[0].args.get("except_") or stars[0].args.get("replace") or stars[0].args.get("rename")):
+            continue
+        # The columns of the running result, as (name, expression) pairs, to expand a bare star.
+        running = [(c, exp.column(c, table=exp.to_identifier(aliases[0]))) for c in known[0]]
+        merged: dict[str, exp.Expression] = {}
+        ok = True
+        new_joins = []
+        for index, join in enumerate(joins, start=1):
+            using = join.args.get("using")
+            side = join.args.get("side")
+            if using is None:
+                running += [(c, exp.column(c, table=exp.to_identifier(aliases[index]))) for c in known[index]]
+                new_joins.append(join)
+                continue
+            if join.args.get("kind") in ("SEMI", "ANTI") or join.args.get("method") or join.args.get("on") is not None:
+                ok = False
+                break
+            conditions = []
+            first = []
+            for ident in using:
+                name = ident.name.lower()
+                left = [expr for c, expr in running if c == name]
+                if len(left) != 1 or name not in known[index]:
+                    ok = False
+                    break
+                right = exp.column(name, table=exp.to_identifier(aliases[index]))
+                conditions.append(exp.EQ(this=left[0].copy(), expression=right.copy()))
+                value = {"RIGHT": right, "FULL": exp.Coalesce(this=left[0].copy(), expressions=[right.copy()])}.get(side, left[0])
+                merged[name] = value
+                first.append((name, value))
+            if not ok:
+                break
+            names = {n for n, _ in first}
+            running = first + [(c, e) for c, e in running if c not in names] + [
+                (c, exp.column(c, table=exp.to_identifier(aliases[index]))) for c in known[index] if c not in names
+            ]
+            new_join = join.copy()
+            new_join.set("using", None)
+            new_join.set("on", _and_all(conditions))
+            new_joins.append(new_join)
+        if not ok:
+            continue
+        # Unqualified references to a merged column read the merged value (own scope only).
+        for column in list(select.find_all(exp.Column)):
+            if column.table or isinstance(column.this, exp.Star) or column.find_ancestor(exp.Select) is not select:
+                continue
+            if column.name.lower() in merged:
+                column.replace(merged[column.name.lower()].copy())
+        if stars:
+            select.set(
+                "expressions",
+                [e.copy() if isinstance(e, exp.Column) and e.name.lower() == n else exp.alias_(e.copy(), n) for n, e in running],
+            )
+        select.set("joins", new_joins)
+    return tree
+
+
+def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
+    """``COUNTIF(c)`` is ``COUNT(CASE WHEN c THEN 1 END)``; ``SAFE_DIVIDE(a, b)`` is ``IF(b = 0, NULL, a / b)``."""
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.CountIf):
+            return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this.copy(), true=exp.Literal.number(1))]))
+        if isinstance(node, exp.SafeDivide):
+            zero = exp.EQ(this=node.expression.copy(), expression=exp.Literal.number(0))
+            return exp.Case(
+                ifs=[exp.If(this=zero, true=exp.Null())],
+                default=exp.Div(this=node.this.copy(), expression=node.expression.copy()),
+            )
+        return node
+
+    return tree.transform(step)
+
+
 def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
     """Column names are case-insensitive: ``t.EMPNO`` and ``t.empno`` are the same column.
 
@@ -1654,6 +1816,9 @@ def normalize(
 
     tree = sqlglot.parse_one(sql, read=dialect)
     tree = _lowercase_columns(tree)
+    tree = _inline_ctes(tree)
+    tree = _bigquery_sugar(tree)
+    tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
     tree = _grouped_in_to_derived(tree)
     tree = _fold_dates(tree)
