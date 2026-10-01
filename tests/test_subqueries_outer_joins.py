@@ -164,3 +164,42 @@ def test_proofs_match_expectations_and_execution(left, right, loose, strict):
             assert not _differs(left, right, constraints is not None), "proved but results differ"
         if result.status is SmtStatus.NOT_EQUIVALENT:
             assert _differs(left, right, constraints is not None)
+
+
+def test_having_on_group_keys_equals_where():
+    from kumosql.smt_equivalence import prove_equivalent_smt
+
+    schema = {"dept": ["deptno", "name"]}
+    having = "SELECT name, COUNT(*) FROM dept GROUP BY name HAVING name = 'a'"
+    where = "SELECT name, COUNT(*) FROM dept WHERE name = 'a' GROUP BY name"
+    assert prove_equivalent_smt(having, where, schema=schema).proven
+    # A filter on an aggregate cannot move below the grouping.
+    count = "SELECT name, COUNT(*) FROM dept GROUP BY name HAVING COUNT(*) > 1"
+    assert not prove_equivalent_smt(count, where, schema=schema).proven
+
+
+SEMI_SCHEMA = {"dept": ["deptno", "name"], "emp": ["empno", "deptno", "sal"]}
+
+
+def _semi(left, right):
+    from kumosql.smt_equivalence import prove_equivalent_smt
+
+    return prove_equivalent_smt(left, right, schema=SEMI_SCHEMA, compare_names=False).proven
+
+
+def test_join_to_distinct_source_is_an_existence_test():
+    joined = "SELECT d.name FROM dept d JOIN (SELECT deptno FROM emp WHERE sal > 1 GROUP BY deptno) t ON d.deptno = t.deptno"
+    exists = "SELECT d.name FROM dept d WHERE EXISTS (SELECT 1 FROM emp e WHERE e.sal > 1 AND e.deptno = d.deptno)"
+    distinct = "SELECT d.name FROM dept d JOIN (SELECT DISTINCT deptno FROM emp WHERE sal > 1) t ON d.deptno = t.deptno"
+    assert _semi(joined, exists)
+    assert _semi(distinct, exists)
+
+
+def test_join_to_non_distinct_or_partly_joined_source_is_not_an_existence_test():
+    exists = "SELECT d.name FROM dept d WHERE EXISTS (SELECT 1 FROM emp e WHERE e.deptno = d.deptno)"
+    plain = "SELECT d.name FROM dept d JOIN (SELECT deptno FROM emp) t ON d.deptno = t.deptno"
+    two_columns = (
+        "SELECT d.name FROM dept d JOIN (SELECT DISTINCT deptno, sal FROM emp) t ON d.deptno = t.deptno"
+    )
+    assert not _semi(plain, exists)
+    assert not _semi(two_columns, exists)
