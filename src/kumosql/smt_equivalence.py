@@ -555,6 +555,7 @@ class _Compiler:
         self.semijoin = True
         self.used_setsrc = False
         self.limit_opaque = False
+        self.window_opaque = False
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
         self.string_literals: set[str] = set()
@@ -570,17 +571,22 @@ class _Compiler:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
         self._check_nondeterminism(statement)
+        self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
 
-    def _check_nondeterminism(self, node: exp.Expression) -> None:
+    def _check_nondeterminism(self, node: exp.Expression, allow_windows: bool = False) -> None:
         for sub in node.walk():
             name = type(sub).__name__
             if name in _NONDETERMINISTIC_TYPES:
                 raise Unsupported(f"nondeterministic: {sub.sql(dialect='bigquery')}")
             if isinstance(sub, exp.Anonymous) and (sub.name or "").upper() in _NONDETERMINISTIC_NAMES:
                 raise Unsupported(f"nondeterministic: {sub.sql(dialect='bigquery')}")
-            if isinstance(sub, exp.Window):
-                raise Unsupported(f"{name.upper()} is not modeled")
+            if isinstance(sub, exp.Window) and not allow_windows:
+                # The normalizer isolates window functions in a derived table named kqw*; it is kept whole.
+                owner = sub.find_ancestor(exp.Select)
+                holder = owner.parent if owner is not None else None
+                if not (isinstance(holder, exp.Subquery) and (holder.alias or "").startswith("kqw")):
+                    raise Unsupported(f"{name.upper()} is not modeled")
 
     def _query(self, node: exp.Expression, ctes: dict) -> _Union:
         while isinstance(node, exp.Subquery):
@@ -930,7 +936,8 @@ class _Compiler:
         """A derived relation kept whole: identified by its CTE-expanded SQL."""
 
         body = self._expand_ctes(body.copy(), ctes)
-        self._check_nondeterminism(body)
+        self._check_nondeterminism(body, allow_windows=True)
+        self.window_opaque = self.window_opaque or any(body.find_all(exp.Window))
         if any(isinstance(node, (exp.Limit, exp.Offset)) for node in body.walk()):
             self.limit_opaque = True
         # Kept whole, the relation must not depend on the outer query.
@@ -2620,7 +2627,9 @@ def _prove_core(
             timeout_ms=timeout_ms,
             constraints=constraints,
         )
-        assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ())
+        assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
+            (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
+        )
         extra = compiler.order_facts()
         if extra:
             for union in (left, right):
@@ -2706,6 +2715,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result.proven else 1
 
 
+WINDOW_SOURCE_ASSUMPTION = "window functions over the same input with the same text give the same values (ties in ORDER BY resolve alike)"
 LIMIT_SOURCE_ASSUMPTION = "a LIMIT subquery with the same text returns the same rows each time"
 TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for equal inputs"
 

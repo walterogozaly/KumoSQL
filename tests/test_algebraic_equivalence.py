@@ -593,3 +593,53 @@ def test_an_existence_test_repeated_on_an_equal_column_is_one_test():
         "SELECT o.k FROM o, l WHERE EXISTS (SELECT 1 FROM b WHERE b.k = o.k)", loose, schema=schema, compare_names=False, dialect="mysql"
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+WINDOW_SCHEMA = {"t": ["a", "b", "c"]}
+
+
+def test_window_functions_over_the_same_input_are_proven_equal():
+    left = "SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c) AS n FROM t WHERE a > 1 QUALIFY n = 1"
+    right = "SELECT x.a, x.n FROM (SELECT t0.a, ROW_NUMBER() OVER (PARTITION BY t0.b ORDER BY t0.c) AS n FROM t AS t0 WHERE t0.a > 1) AS x WHERE x.n = 1"
+    result = prove_equivalent_algebraic(left, right, schema=WINDOW_SCHEMA, compare_names=False, dialect="bigquery")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    assert any("window functions" in note for note in result.assumptions)
+
+
+@pytest.mark.parametrize(
+    "right",
+    [
+        # another partition, another order, another function
+        "SELECT a, ROW_NUMBER() OVER (PARTITION BY a ORDER BY c) AS n FROM t WHERE a > 1 QUALIFY n = 1",
+        "SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c DESC) AS n FROM t WHERE a > 1 QUALIFY n = 1",
+        "SELECT a, RANK() OVER (PARTITION BY b ORDER BY c) AS n FROM t WHERE a > 1 QUALIFY n = 1",
+        # a filter applied after the window keeps rows the window already counted
+        "SELECT a, n FROM (SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c) AS n FROM t) AS x WHERE a > 1 AND n = 1",
+        "SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c) AS n FROM t WHERE a > 1 QUALIFY n = 2",
+    ],
+)
+def test_window_functions_that_differ_are_not_proven_equal(right):
+    left = "SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c) AS n FROM t WHERE a > 1 QUALIFY n = 1"
+    result = prove_equivalent_algebraic(left, right, schema=WINDOW_SCHEMA, compare_names=False, dialect="bigquery")
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT a, SUM(c) OVER (PARTITION BY b) AS s FROM t WHERE a > 0",
+        "SELECT a + 1 AS a1, COUNT(*) OVER (PARTITION BY b) AS n, c FROM t WHERE c IS NOT NULL ORDER BY a",
+        "SELECT DISTINCT b, MAX(c) OVER (PARTITION BY b) AS m FROM t",
+        "SELECT a, b FROM t WHERE a IN (SELECT a FROM (SELECT a, SUM(c) OVER (PARTITION BY b) AS s FROM t) AS q WHERE s > 2)",
+    ],
+)
+def test_isolating_windows_preserves_results(sql):
+    rng = random.Random(9)
+    normalized = normalize(sql, schema=WINDOW_SCHEMA, dialect="sqlite")
+    assert "kqw" in normalized
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE t (a INT, b INT, c INT)")
+        for _ in range(rng.choice([0, 1, 4, 7])):
+            db.execute("INSERT INTO t VALUES (?, ?, ?)", [rng.choice([None, 0, 1, 2]) for _ in range(3)])
+        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
