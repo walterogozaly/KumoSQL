@@ -23,9 +23,9 @@
         <p>Explore the projects, datasets, and tables available to your Google Cloud credentials.</p>
       </section>
       <section class="catalog-toolbar" aria-label="Catalog controls">
-        <p>Only the projects you choose are listed. Answers are saved locally for an hour, so revisiting is instant and costs no BigQuery calls. <span id="catalog-freshness" class="catalog-freshness"></span></p>
+        <p>Only the projects you choose are listed. Answers are saved locally for the cache lifetime in Settings (48 hours by default), so they appear instantly and cost no BigQuery calls; use a column's ↻ to refresh it. <span id="catalog-freshness" class="catalog-freshness"></span></p>
         <button id="choose-projects" class="toolbar-button" type="button">Choose projects</button>
-        <button id="refresh" class="primary-button" type="button">Refresh from BigQuery</button>
+        <button id="refresh" class="primary-button" type="button">Refresh all</button>
       </section>
       <section id="project-picker" class="catalog-panel project-picker" aria-label="Choose projects" hidden>
         <div class="catalog-heading"><h2>Choose projects</h2></div>
@@ -34,19 +34,19 @@
       <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">Loading…</div>
       <section class="catalog" aria-label="BigQuery catalog">
         <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Projects</h2><span id="project-count"></span></div>
+          <div class="catalog-heading"><h2>Projects</h2><span id="project-count"></span><button class="panel-refresh" type="button" data-level="projects" title="Refresh projects from BigQuery" aria-label="Refresh projects">↻</button></div>
           <div id="projects" class="catalog-list" aria-label="Projects"></div>
         </div>
         <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Datasets</h2><span id="dataset-count"></span></div>
+          <div class="catalog-heading"><h2>Datasets</h2><span id="dataset-count"></span><button class="panel-refresh" type="button" data-level="datasets" title="Refresh datasets from BigQuery" aria-label="Refresh datasets">↻</button></div>
           <div id="datasets" class="catalog-list" aria-label="Datasets"><p class="empty-state">Choose a project.</p></div>
         </div>
         <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Tables</h2><span id="table-count"></span></div>
+          <div class="catalog-heading"><h2>Tables</h2><span id="table-count"></span><button class="panel-refresh" type="button" data-level="tables" title="Refresh tables from BigQuery" aria-label="Refresh tables">↻</button></div>
           <div id="tables" class="catalog-list" aria-label="Tables"><p class="empty-state">Choose a dataset.</p></div>
         </div>
         <div class="catalog-panel schema-panel">
-          <div class="catalog-heading"><h2>Schema</h2></div>
+          <div class="catalog-heading"><h2>Schema</h2><button class="panel-refresh" type="button" data-level="schema" title="Refresh schema from BigQuery" aria-label="Refresh schema">↻</button></div>
           <div id="schema" class="schema-content"><p class="empty-state">Choose a table to inspect its schema.</p></div>
         </div>
       </section>

@@ -31,7 +31,6 @@ class CatalogError(RuntimeError):
 # Catalog listings and schemas are metadata calls: free, but each is a network
 # round trip and the first also mints an OAuth token. Answers are kept in memory
 # and in a small file so reopening the page or revisiting an item is instant.
-DEFAULT_TTL_SECONDS = 3600
 _TOKEN_SECONDS = 1800
 _lock = threading.Lock()
 _memory: dict[str, dict] = {}
@@ -40,10 +39,8 @@ _disk_loaded = False
 
 
 def ttl_seconds() -> float:
-    try:
-        return max(0.0, float(os.environ.get("KUMOSQL_CATALOG_TTL", DEFAULT_TTL_SECONDS)))
-    except ValueError:
-        return DEFAULT_TTL_SECONDS
+    """Catalog answers live as long as the query cache lifetime setting (default 48 hours)."""
+    return query_cache_seconds()
 
 
 def _cache_path() -> Path:
@@ -88,29 +85,61 @@ def clear_cache() -> None:
             pass
 
 
-def cached(key: str, fetch, refresh: bool = False) -> dict:
-    """Return ``{"data", "fetchedAt", "cached", "stale"}`` for ``key``.
+_refreshing: set[str] = set()
 
-    A fresh entry is served without calling BigQuery. ``refresh`` bypasses it.
-    If BigQuery fails and an older copy exists, that copy is returned marked
-    stale instead of an error.
+
+def _refresh_in_background(key: str, fetch) -> None:
+    """Re-fetch ``key`` on a worker thread; a failure leaves the saved copy in place."""
+
+    def work() -> None:
+        try:
+            data = fetch()
+            with _lock:
+                _memory[key] = {"at": time.time(), "data": data}
+                _save_disk()
+        except (CatalogError, RuntimeError, OSError):
+            pass
+        finally:
+            with _lock:
+                _refreshing.discard(key)
+
+    with _lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+    threading.Thread(target=work, daemon=True).start()
+
+
+def cached(key: str, fetch, refresh: bool = False) -> dict:
+    """Return ``{"data", "fetchedAt", "cached", "stale", "refreshing"}`` for ``key``.
+
+    Saved answers are served instantly. One older than the cache lifetime is
+    still returned at once and re-fetched in the background (``refreshing``);
+    ``refresh`` fetches now instead. If BigQuery fails on a forced refresh and
+    an older copy exists, that copy is returned marked ``stale``.
     """
     with _lock:
         _load_disk()
         entry = _memory.get(key)
+        busy = key in _refreshing
     now = time.time()
-    if entry and not refresh and now - entry["at"] < ttl_seconds():
-        return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True, "stale": False}
+    if entry and not refresh:
+        expired = now - entry["at"] >= ttl_seconds()
+        if expired:
+            _refresh_in_background(key, fetch)
+        return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True,
+                "stale": False, "refreshing": expired or busy}
     try:
         data = fetch()
     except (CatalogError, RuntimeError):
-        if entry and not refresh:
-            return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True, "stale": True}
+        if entry:
+            return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True,
+                    "stale": True, "refreshing": False}
         raise
     with _lock:
         _memory[key] = {"at": now, "data": data}
         _save_disk()
-    return {"data": data, "fetchedAt": now, "cached": False, "stale": False}
+    return {"data": data, "fetchedAt": now, "cached": False, "stale": False, "refreshing": False}
 
 
 def forget_table(project: str, dataset: str, table: str) -> None:
