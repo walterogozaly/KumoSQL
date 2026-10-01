@@ -184,11 +184,13 @@ def _check_rule(rule: Mapping, lookup: Mapping[str, scope_store.Scope]) -> dict:
     banned = [name for name in used if name.casefold().split(".")[0] in RESERVED_FIELDS]
     if banned:
         raise ValueError(f"a tag rule cannot use {banned[0]!r}: tags are what the rule produces")
-    known = {name.casefold() for name in OBJECT_FIELDS}
+    from . import data_sources
+
+    fields = (*OBJECT_FIELDS, *data_sources.tag_fields())
+    known = {name.casefold() for name in fields}
     missing = [name for name in used if name.casefold() not in known]
     if missing:
-        raise ValueError(
-            f"objects have no field {missing[0]!r}. Fields a tag rule can use: {', '.join(OBJECT_FIELDS)}")
+        raise ValueError(f"objects have no field {missing[0]!r}. Fields a tag rule can use: {', '.join(fields)}")
     for name in scope_store.Scope("check", rule=rule, applies_to=("bigquery",)).references():
         target = lookup.get(name.casefold())
         if target is not None and not target.applies_to_domain("bigquery"):
@@ -236,7 +238,10 @@ def describe(rule: Mapping) -> str:
 def evaluate_rule(rule: Mapping, objects: Mapping[str, Mapping], lookup: Mapping[str, scope_store.Scope] | None = None) -> list[str]:
     """Normalized keys of the objects ``rule`` (a ``{"tag", "rule"}`` pair) matches; ``ValueError`` if it cannot run."""
 
+    from . import data_sources
+
     expanded = _check_rule(rule["rule"], _scope_lookup() if lookup is None else lookup)
+    objects = data_sources.enrich_objects(objects)
     return [key for key, record in objects.items() if scope_store.evaluate_rule(expanded, record)]
 
 

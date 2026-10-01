@@ -99,6 +99,16 @@ DOMAINS = {
     "jobs": "Job history",
     "bigquery": "BigQuery tables",
 }
+
+
+def all_domains() -> dict[str, str]:
+    """The built-in domains followed by one ``source:<id>`` domain per saved data source, key -> name."""
+
+    from . import data_sources
+
+    return {**DOMAINS, **data_sources.domains()}
+
+
 _LIST_SPLIT = re.compile(r"[,;\n\r]+")
 
 
@@ -554,15 +564,17 @@ def parse_domains(data: object) -> tuple[str, ...]:
 
     if isinstance(data, str) or not isinstance(data, Iterable):
         raise ValueError('"applies_to" must be a list of data domains')
+    known = all_domains()
     wanted = []
     for item in data:
-        key = item.strip().casefold() if isinstance(item, str) else None
-        if key not in DOMAINS:
-            raise ValueError(f"unknown data domain {item!r}. Choose from: {', '.join(DOMAINS)}")
+        key = item.strip() if isinstance(item, str) else None
+        key = key.casefold() if key and not key.startswith("source:") else key
+        if key not in known:
+            raise ValueError(f"unknown data domain {item!r}. Choose from: {', '.join(known)}")
         wanted.append(key)
     if not wanted:
         raise ValueError("a scope must apply to at least one data domain")
-    return tuple(key for key in DOMAINS if key in wanted)
+    return tuple(key for key in known if key in wanted)
 
 
 def infer_domains(fields: Iterable[str]) -> tuple[str, ...]:
@@ -578,6 +590,13 @@ def infer_domains(fields: Iterable[str]) -> tuple[str, ...]:
         domains.append("jobs")
     if names <= {f.casefold() for f in OBJECT_FIELDS}:
         domains.append("bigquery")
+    from . import data_sources
+
+    for key, columns in data_sources.field_columns().items():
+        if names <= {c.casefold() for c in columns}:
+            domains.append(key)
+            if "jobs" in domains and not names <= job:
+                domains.remove("jobs")
     return tuple(domains) or ("models", "jobs", "bigquery")
 
 
@@ -737,7 +756,8 @@ def plan_scope(scope: Scope, observed_reads: Iterable[object] = ()) -> ScopePlan
     wants_models = scope.applies_to_domain("models")
     wants_jobs = scope.applies_to_domain("jobs")
     if not wants_models and not wants_jobs:
-        names = " and ".join(DOMAINS[key] for key in scope.applies_to)
+        labels = all_domains()
+        names = " and ".join(labels.get(key, key) for key in scope.applies_to)
         return ScopePlan(scope, None, None, f"“{scope.name}” applies to {names} only.")
     job_fields: set[str] = set()
     for row in reads:
@@ -747,6 +767,10 @@ def plan_scope(scope: Scope, observed_reads: Iterable[object] = ()) -> ScopePlan
     job_missing = scope.unknown_fields(job_fields)
     models_ok = wants_models and not model_missing
     jobs_ok = wants_jobs and bool(reads) and not job_missing
+    if not models_ok and not jobs_ok and any(key.startswith("source:") for key in scope.applies_to):
+        labels = all_domains()
+        names = " and ".join(labels.get(key, key) for key in scope.applies_to if key.startswith("source:"))
+        return ScopePlan(scope, None, None, f"“{scope.name}” has nothing to filter here: its fields come from {names}.")
     if not models_ok and not jobs_ok:
         if not reads or not wants_jobs:
             scope.require_fields(model_fields, "pipeline models (no job history is loaded)")
@@ -826,6 +850,24 @@ def save_scopes(scopes: Iterable[Scope]) -> list[Scope]:
     scopes = _with_domains(scopes)
     state.set_section(SECTION, [scope.to_json() for scope in scopes])
     return scopes
+
+
+def drop_domains(keys: Iterable[str]) -> None:
+    """Remove data domains (for example a deleted data source) from every saved scope's ``applies_to``.
+
+    Raises ``ValueError`` naming a scope that would then apply to nothing."""
+
+    gone = set(keys)
+    changed = []
+    for scope in list_scopes():
+        if gone & set(scope.applies_to):
+            left = tuple(k for k in scope.applies_to if k not in gone)
+            if not left:
+                raise ValueError(f"scope {scope.name!r} applies only to this data source; change it first")
+            changed.append(Scope(scope.name, rule=scope.rule, applies_to=left))
+    if changed:
+        by_name = {c.name: c for c in changed}
+        state.set_section(SECTION, [by_name.get(s.name, s).to_json() for s in list_scopes()])
 
 
 def save_scope(scope: Scope) -> None:

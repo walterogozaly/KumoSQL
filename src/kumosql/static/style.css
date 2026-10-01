@@ -685,3 +685,11 @@ select.sp-input { min-width: 200px; }
 .tags-in-use { margin: 0; }
 
 .diag-preview { width: 100%; height: auto; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; white-space: pre; overflow: auto; margin-top: 8px; }
+
+.ds-dialog { width: min(560px, 92vw); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); padding: 18px 20px; }
+.ds-dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+.ds-field { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; font-size: 13px; }
+.ds-field.ds-inline { flex-direction: row; align-items: center; gap: 8px; }
+.ds-field.ds-inline > span:first-child { min-width: 52px; }
+.ds-query { height: auto; padding: 8px 10px; font-family: ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+.ds-dialog .is-error { color: var(--bad-fg); }
