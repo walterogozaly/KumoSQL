@@ -122,7 +122,7 @@ def test_repository_load_builds_the_graph(server, tmp_path, monkeypatch):
             "repository": "repo", "branch": branch or "main", "commit": "abc1234", "files": FILES},
     )
     result = post(server, "/api/project/git", {"url": "git@example.com:org/repo.git", "branch": "dev"})
-    assert result == {"loaded": True, "label": "repo (dev @ abc1234)", "files": 3}
+    assert {k: result[k] for k in ("loaded", "label", "files")} == {"loaded": True, "label": "repo (dev @ abc1234)", "files": 3}
     assert get(server, "/api/graph")["source"]["label"] == "repo (dev @ abc1234)"
 
 

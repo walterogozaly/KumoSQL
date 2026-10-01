@@ -247,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--browser-path", default=os.environ.get("KUMOSQL_SMOKE_BROWSER_PATH"), help="Path to a Chromium-based browser executable (overrides --browser)")
     parser.add_argument("--forbid-dataset", default="fx_scratch", help="Fail if the graph has nodes in this dataset (the fixture's default dataset, where wrongly resolved refs land; default: fx_scratch; empty to disable)")
     parser.add_argument("--allow-ssh", action="store_true", help="Do not block SSH (default: blocked, like a work laptop)")
+    parser.add_argument("--no-second-start", action="store_true", help="Skip restarting the server to time how fast the saved project reappears")
+    parser.add_argument("--second-start-limit", type=float, default=20.0, help="Seconds the saved project may take to appear after a restart (default: 20)")
     parser.add_argument("--no-browser", action="store_true", help="Skip the browser pages (API checks only)")
     args = parser.parse_args(argv)
     if not args.repo:
@@ -350,7 +352,40 @@ def main(argv: list[str] | None = None) -> int:
         session()
     except Exception as exc:  # noqa: BLE001
         report.step('smoke script ran to the end', False, f'{type(exc).__name__}: {exc}')
+    if report.ok and not args.no_second_start:
+        watchdog.stop_event.set()  # the restart itself makes the server unreachable for a moment
+        process = second_start(report, process, env, args.min_nodes, args.second_start_limit, output)
     return finish(report, work, process, watchdog, data_dir, output)
+
+
+def second_start(report: Report, first: subprocess.Popen, env: dict, min_nodes: int, limit: float, output: list[str]) -> subprocess.Popen:
+    """Restart the server on the same data folder: the saved project must show up without waiting for git or the parser."""
+
+    first.terminate()
+    try:
+        first.wait(10)
+    except subprocess.TimeoutExpired:
+        first.kill()
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    started = time.monotonic()
+    process = subprocess.Popen([sys.executable, "-m", "kumosql", "ui", "--port", str(port), "--no-browser"], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=lambda: output.extend(line.rstrip() for line in process.stdout), daemon=True).start()
+    nodes, detail = 0, ""
+    while time.monotonic() - started < max(limit * 3, 60):
+        try:
+            status, body = call(base, "/api/graph", timeout=30)
+            nodes = len(body.get("nodes", [])) if status == 200 and isinstance(body, dict) else 0
+            if nodes >= min_nodes and not body.get("pending"):
+                break
+        except OSError:
+            pass
+        time.sleep(0.5)
+    seconds = time.monotonic() - started
+    report.step("second start shows the saved project quickly", nodes >= min_nodes and seconds <= limit,
+                f"{nodes} nodes after {seconds:.1f}s (limit {limit:.0f}s)", seconds)
+    return process
 
 
 def finish(report: Report, work: Path, process: subprocess.Popen, watchdog: Watchdog, data_dir: Path, output: list[str]) -> int:

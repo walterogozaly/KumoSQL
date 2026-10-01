@@ -456,7 +456,7 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
         fetched = fetch_project(value, branch, refresh)
     label = f"{fetched['repository']} ({fetched['branch']} @ {fetched['commit']})"
     try:
-        live_graph.load_files(
+        pipeline = live_graph.load_files(
             fetched["files"], label,
             remote={"url": parse_remote(value), "branch": parse_branch(branch), "actual": fetched["branch"]})
     except ProjectError as exc:
@@ -468,7 +468,8 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
             f"Reading the SQL files of {label} failed while building the graph "
             f"({type(exc).__name__}: {exc}). The repository was fetched fine; this is a KumoSQL bug, "
             "and the traceback is in ui.log.") from exc
-    result = {"loaded": True, "label": label, "files": len(fetched["files"])}
+    result = {"loaded": True, "label": label, "files": len(fetched["files"]),
+              "content_key": getattr(pipeline, "content_key", None), "actual_branch": fetched["branch"]}
     if fetched.get("note"):
         result["note"] = fetched["note"]
     return result
