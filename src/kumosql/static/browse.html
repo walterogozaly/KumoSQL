@@ -25,7 +25,7 @@
         <p>Explore the projects, datasets, and tables available to your Google Cloud credentials.</p>
       </section>
       <section class="catalog-toolbar" aria-label="Catalog controls">
-        <p>Only the projects you choose are listed. Answers are saved locally for the cache lifetime in Settings (48 hours by default), so they appear instantly and cost no BigQuery calls; use a column's ↻ to refresh it. <span id="catalog-freshness" class="catalog-freshness"></span></p>
+        <p>Answers are saved locally for the cache lifetime in Settings (48 hours by default), so they appear instantly and cost no BigQuery calls; use a column's ↻ to refresh it. <span id="catalog-freshness" class="catalog-freshness"></span></p>
         <button id="choose-projects" class="toolbar-button" type="button">Choose projects</button>
         <button id="refresh" class="toolbar-button" type="button" disabled>Refresh all</button>
       </section>
@@ -37,7 +37,7 @@
         </div>
         <div class="catalog-panel">
           <div class="catalog-heading"><h2>Datasets</h2><span id="dataset-count"></span><button class="panel-refresh" type="button" data-level="datasets" title="Refresh datasets from BigQuery" aria-label="Refresh datasets">↻</button></div>
-          <div id="datasets" class="catalog-list" aria-label="Datasets"><p class="empty-state">Choose a project.</p></div>
+          <div id="datasets" class="catalog-list" aria-label="Datasets"></div>
         </div>
         <div class="catalog-panel">
           <div class="catalog-heading"><h2>Tables &amp; routines</h2><span id="table-count"></span><button class="panel-refresh" type="button" data-level="tables" title="Refresh tables from BigQuery" aria-label="Refresh tables">↻</button></div>
@@ -51,11 +51,11 @@
               <div id="bulk-editor"></div>
             </div>
           </div>
-          <div id="tables" class="catalog-list" aria-label="Tables, views, functions and procedures"><p class="empty-state">Choose a dataset.</p></div>
+          <div id="tables" class="catalog-list" aria-label="Tables, views, functions and procedures"></div>
         </div>
         <div class="catalog-panel schema-panel">
           <div class="catalog-heading"><h2>Schema</h2><button class="panel-refresh" type="button" data-level="schema" title="Refresh schema from BigQuery" aria-label="Refresh schema">↻</button></div>
-          <div id="schema" class="schema-content"><p class="empty-state">Choose a table to inspect its schema.</p></div>
+          <div id="schema" class="schema-content"></div>
         </div>
       </section>
     </main>
