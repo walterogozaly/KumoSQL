@@ -420,7 +420,11 @@ def pipeline_from_files(files: object):
                 pipeline = load_sqlx_project(directory)
             pipeline.completeness()  # analyse now: the folder is deleted on exit
         except Exception as exc:  # loader errors are user-facing
-            raise ProjectError(str(exc) or "project could not be loaded") from exc
+            from . import console
+
+            console.error(f"reading the project ({len(files) if isinstance(files, dict) else 0} files) failed", exc)
+            detail = str(exc) or "project could not be loaded"
+            raise ProjectError(detail if isinstance(exc, (ValueError, OSError)) else f"{type(exc).__name__}: {detail}") from exc
     if key:
         pipeline.content_key = key
         with _LOCK:
