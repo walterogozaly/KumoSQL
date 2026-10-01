@@ -466,13 +466,14 @@
       h("h3", { class: "sp-heading", text: "Repositories" }),
       h("p", { class: "sp-lede", text: "Connect the Dataform repositories you want analysed. They are saved here and reloaded each time KumoSQL starts. Git runs on this computer with your own credentials, so private repositories work with an SSH remote (git@github.com:owner/repo.git), an https URL, or a local path. The active repository feeds the Query graph, Cost and Change reports pages." }));
     const list = h("ul", { class: "repo-list" });
-    const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "git@github.com:owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
+    const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "https://github.com/owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
     const branch = h("input", { type: "text", class: "sp-input", placeholder: "branch (default)", "aria-label": "Branch", autocomplete: "off", size: "14" });
     const form = h("form", { class: "repo-form" }, url, branch, h("button", { type: "submit", class: "toolbar-button", text: "Connect" }));
     const needFolder = h("p", { class: "sp-row-hint is-error", hidden: true });
     const chooseFolder = h("button", { type: "button", class: "link-button", text: "Choose a local data folder", hidden: true });
     chooseFolder.addEventListener("click", () => show("storage"));
-    body.append(list, needFolder, chooseFolder, form);
+    const clearAll = h("button", { type: "button", class: "link-button", text: "Clear all repositories", hidden: true });
+    body.append(list, needFolder, chooseFolder, form, clearAll);
     let data = { repositories: [], active: null };
     repoCall("GET", "/api/storage").then((info) => {
       if (info.configured) return;
@@ -518,6 +519,7 @@
 
     const draw = () => {
       list.replaceChildren();
+      clearAll.hidden = !data.repositories.length;
       if (!data.repositories.length) list.append(h("li", { class: "sp-row-hint", text: "No repositories connected yet." }));
       for (const repo of data.repositories) {
         const isActive = repo.id === data.active;
@@ -563,6 +565,10 @@
       button.disabled = false;
       try { await refreshList(); } catch { /* keep the last list */ }
     }
+    clearAll.addEventListener("click", () => {
+      if (!window.confirm("Remove every connected repository and delete the cached copies, saved schedule lookups and saved analyses? Your other settings stay. This cannot be undone.")) return;
+      run(clearAll, async () => { await repoCall("POST", "/api/repositories/clear", {}); }, "All repositories cleared");
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const button = form.querySelector("button");

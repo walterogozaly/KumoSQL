@@ -455,7 +455,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
             "/api/project/git", "/api/project", "/api/project/clear",
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
-            "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
+            "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview",
         ):
@@ -508,6 +508,8 @@ class UIHandler(BaseHTTPRequestHandler):
 
                 if self.path == "/api/repositories":
                     result = repositories.replace(payload.get("repositories"), payload.get("active"))
+                elif self.path == "/api/repositories/clear":
+                    result = repositories.clear_all()
                 elif self.path == "/api/repositories/activate":
                     result = repositories.activate(payload.get("id"))
                 else:
