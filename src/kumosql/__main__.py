@@ -27,6 +27,7 @@ COMMANDS = {
     "kumosql-ci-check": "kumosql.ci_check:main",
     "kumosql-evidence-summary": "kumosql.cli:evidence_summary_main",
     "kumosql-workflow-configs": "kumosql.workflow_configs:main",
+    "kumosql-smoke": "kumosql.smoke:main",
 }
 
 

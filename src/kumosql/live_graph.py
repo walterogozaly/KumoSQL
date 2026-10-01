@@ -30,8 +30,8 @@ from contextlib import contextmanager
 from .pipeline import Pipeline, load_sqlx_project
 from .timing import stage
 
-MAX_FILES = 500
-MAX_TOTAL_BYTES = 32 * 1024 * 1024
+MAX_FILES = 20_000  # real enterprise Dataform repositories have thousands of files
+MAX_TOTAL_BYTES = 256 * 1024 * 1024
 _CONFIG_FILES = ("workflow_settings.yaml", "workflow_settings.yml", "dataform.json")
 _ALLOWED_SUFFIXES = (".sqlx", ".sql")
 
