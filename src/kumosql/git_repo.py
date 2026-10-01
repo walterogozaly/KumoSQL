@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, ProjectError
@@ -147,6 +148,7 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     if cwd is None:
         cwd = cache_dir()
         cwd.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
     try:
         done = subprocess.run(
             ["git", "-c", "core.longpaths=true", *args], cwd=cwd, env=env, capture_output=True,
@@ -159,7 +161,7 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     if _TRACE is not None:
         _TRACE.append({
             "command": ["git", *args], "cwd": str(cwd), "cwd_exists": Path(cwd).is_dir(),
-            "returncode": done.returncode, "stderr": done.stderr.decode("utf-8", "replace").strip()[:2000],
+            "returncode": done.returncode, "seconds": round(time.monotonic() - started, 2), "stderr": done.stderr.decode("utf-8", "replace").strip()[:2000],
         })
     if done.returncode != 0:
         message = (done.stderr or done.stdout).decode("utf-8", "replace").strip() or f"exit status {done.returncode}"
@@ -373,11 +375,16 @@ def diagnose(value: object, branch: object = None) -> str:
     except Exception:  # noqa: BLE001 - the report is the point
         outcome = "FAILED:\n" + traceback.format_exc()
     trace, _TRACE = _TRACE, None
+    try:
+        sizes = _git(["count-objects", "-vH"], cwd=_cache_path(parse_remote(value), parse_branch(branch)))
+        lines.append("Clone size: " + ", ".join(l.strip() for l in sizes.splitlines() if l.startswith(("size-pack", "count", "in-pack"))))
+    except (GitRepoError, ValueError, OSError):
+        pass
     lines.append("")
     lines.append("git calls, in order:")
     for step, call in enumerate(trace, 1):
         lines.append(f"{step}. {' '.join(call['command'])}")
-        lines.append(f"   cwd: {call['cwd']} (exists: {call['cwd_exists']})  exit: {call['returncode']}")
+        lines.append(f"   cwd: {call['cwd']} (exists: {call['cwd_exists']})  exit: {call['returncode']}  took: {call['seconds']}s")
         if call["stderr"]:
             lines.append("   stderr: " + call["stderr"].replace("\n", "\n           "))
     lines.append("")
