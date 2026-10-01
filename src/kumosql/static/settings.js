@@ -489,10 +489,9 @@
       const info = schedules.repositories[repo.id];
       const box = h("div", { class: "repo-wf" });
       if (!info) return box;
-      const lines = {
-        loaded: `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${info.repositories.join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`,
-      };
-      const text = lines[info.state] || info.message || "";
+      // Only the loaded state has these fields; building the text for the other states would throw.
+      const loadedText = () => `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${info.repositories.join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`;
+      const text = info.state === "loaded" ? loadedText() : info.message || "";
       box.append(h("p", { class: `sp-row-hint${info.state === "error" ? " is-error" : ""}`, text: `Production schedules: ${text}` }));
       for (const warning of info.warnings || []) box.append(h("p", { class: "sp-row-hint is-error", text: warning }));
       const projects = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Google Cloud projects to search", autocomplete: "off",
