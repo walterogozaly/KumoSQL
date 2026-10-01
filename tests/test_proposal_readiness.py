@@ -1,4 +1,3 @@
-from kumosql.preview_data import changes
 from kumosql.proposal_readiness import (
     UNRESOLVED_CONSUMERS,
     ConsumerResult,
@@ -82,6 +81,8 @@ def test_verify_consumers_missing_query_is_unknown_and_blocks_ready():
     assert assess_proposal(proposal, results)["ready"] is False
 
 
-def test_preview_data_agrees_with_gate():
-    for proposal in changes()["proposals"]:
-        assert assess_proposal(proposal)["ready"] == proposal["ready"]
+def test_ready_agrees_with_the_gate():
+    for labels, ready in ((["proven", "proven", "planner_checked", "unknown"], False),
+                          (["proven", "unchanged", "proven"], True)):
+        proposal = {"id": "p", "consumers": [{"node": f"n{i}", "label": label} for i, label in enumerate(labels)]}
+        assert assess_proposal(proposal)["ready"] is ready
