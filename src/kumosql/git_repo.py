@@ -354,6 +354,14 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
             remote={"url": parse_remote(value), "branch": parse_branch(branch), "actual": fetched["branch"]})
     except ProjectError as exc:
         raise GitRepoError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - name the step and the repository instead of a bare TypeError
+        from . import console
+
+        console.error(f"building the graph for {label} failed", exc)
+        raise GitRepoError(
+            f"Reading the SQL files of {label} failed while building the graph "
+            f"({type(exc).__name__}: {exc}). The repository was fetched fine; this is a KumoSQL bug, "
+            "and the traceback is in ui.log.") from exc
     return {"loaded": True, "label": label, "files": len(fetched["files"])}
 
 
