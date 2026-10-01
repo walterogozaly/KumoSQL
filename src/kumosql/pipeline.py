@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
+import gc
 import os
 import re
 import threading
@@ -838,6 +839,20 @@ class _Analysis:
 
     @classmethod
     def run(cls, pipeline: Pipeline) -> "_Analysis":
+        # Every parsed query stays alive for the whole run, so with the default thresholds the
+        # collector keeps re-walking millions of long-lived syntax-tree nodes (seconds per pass
+        # late in a large project). Collect less often, and park what exists in the permanent
+        # generation once reading is done.
+        thresholds = gc.get_threshold()
+        gc.set_threshold(max(thresholds[0], 200_000), 50, 100)
+        try:
+            return cls._run(pipeline)
+        finally:
+            gc.unfreeze()
+            gc.set_threshold(*thresholds)
+
+    @classmethod
+    def _run(cls, pipeline: Pipeline) -> "_Analysis":
         diagnostics: list[PipelineDiagnostic] = []
         parsed: dict[str, exp.Expression] = {}
         upstream: dict[str, set[str]] = {}
@@ -914,6 +929,8 @@ class _Analysis:
                 blind_models.append(key)
             upstream[key] = parents
         reading.finish()
+        gc.collect()
+        gc.freeze()
 
         with stage("order models", models=len(upstream)):
             order = _topological_order(upstream, diagnostics)
@@ -1026,6 +1043,9 @@ class _Analysis:
                         dialect="bigquery",
                         scope=lineage_scope,
                         copy=lineage_scope is None,
+                        # Trimming copies the whole query once per column to print a tidier node
+                        # label; the trace never reads that copy, and for wide models it dominated.
+                        trim_selects=False,
                     )
                     leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union)
                     if reason == "unresolved_column" and lineage_scope is not None:

@@ -135,6 +135,8 @@ class UIServer(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address) -> None:
         exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return  # the browser closed the page or cancelled a request mid-answer; not a server fault
         console.error("request handling failed (the browser got no answer)", exc, code="KS-REQUEST")
 
 

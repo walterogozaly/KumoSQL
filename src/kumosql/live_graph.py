@@ -27,11 +27,12 @@ import time
 from collections import OrderedDict
 from contextlib import contextmanager
 
+from . import console
 from .pipeline import Pipeline, load_sqlx_project
 from .timing import stage
 
-MAX_FILES = 500
-MAX_TOTAL_BYTES = 32 * 1024 * 1024
+MAX_FILES = 20_000  # real enterprise Dataform repositories have thousands of files
+MAX_TOTAL_BYTES = 256 * 1024 * 1024
 _CONFIG_FILES = ("workflow_settings.yaml", "workflow_settings.yml", "dataform.json")
 _ALLOWED_SUFFIXES = (".sqlx", ".sql")
 
@@ -40,7 +41,7 @@ NOT_LOADED = "load a project first"
 
 _LOCK = threading.Lock()
 _LOADED: dict | None = None
-_JOBS: dict = {"records": (), "label": ""}
+_JOBS: dict = {"records": (), "label": "", "restored_from": None}
 
 
 class ProjectError(ValueError):
@@ -274,7 +275,8 @@ def set_project(
         _LOADED = {"pipeline": pipeline, "label": label, "remote": remote, "report": None}
         if observed_reads is not None:
             records = tuple(observed_reads)
-            _JOBS.update(records=records, label="provided records" if records else "")
+            # Records passed in code replace the history for this run only; the saved file is left alone.
+            _JOBS.update(records=records, label="provided records" if records else "", restored_from=str(_jobs_file()))
     start_background_analysis(pipeline)
 
 
@@ -303,6 +305,58 @@ def clear_project() -> None:
     with _LOCK:
         _LOADED = None
         _JOBS.update(records=(), label="")
+        _forget_saved_jobs()
+
+
+# Loaded job history is saved in the data folder, so it survives a restart and
+# applies to whichever repository is loaded; "Remove job history" deletes it.
+def _jobs_file():
+    from . import state
+
+    return state.data_dir() / "job-history" / "jobs.jsonl"
+
+
+def _restore_jobs() -> None:
+    """Read the saved job history once per data folder (call with ``_LOCK`` held)."""
+
+    path = _jobs_file()
+    if _JOBS["restored_from"] == str(path):
+        return
+    _JOBS["restored_from"] = str(path)
+    if _JOBS["records"] or not path.is_file():
+        return
+    try:
+        with path.open(encoding="utf-8") as handle:
+            label = json.loads(handle.readline() or "{}").get("label", "")
+            records = tuple(json.loads(line) for line in handle if line.strip())
+    except (OSError, ValueError, AttributeError) as exc:
+        console.error(f"could not read the saved job history in {path}: {exc}", trace=False)
+        return
+    _JOBS.update(records=records, label=str(label or "saved job history"))
+
+
+def _save_jobs(records: list[dict], label: str) -> None:
+    path = _jobs_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        partial = path.with_suffix(".tmp")
+        with partial.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"label": label}) + "\n")
+            for record in records:
+                handle.write(json.dumps(record, default=str) + "\n")
+        partial.replace(path)
+    except OSError as exc:
+        console.error(f"could not save the job history to {path}: {exc}; it is kept until KumoSQL stops", trace=False)
+    _JOBS["restored_from"] = str(path)
+
+
+def _forget_saved_jobs() -> None:
+    path = _jobs_file()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        console.error(f"could not delete the saved job history {path}: {exc}", trace=False)
+    _JOBS["restored_from"] = str(path)
 
 
 def loaded() -> dict | None:
@@ -311,6 +365,7 @@ def loaded() -> dict | None:
     with _LOCK:
         if _LOADED is None:
             return None
+        _restore_jobs()
         return {**_LOADED, "observed_reads": _JOBS["records"], "jobs_label": _JOBS["label"]}
 
 
@@ -374,12 +429,14 @@ def load_job_history(text: object, filename: object = "") -> int:
             raise ProjectError("load a project before its job history")
         _JOBS.update(records=tuple(records), label=label)
         _LOADED["report"] = None
+        _save_jobs(records, label)
     return len(records)
 
 
 def clear_job_history() -> None:
     with _LOCK:
         _JOBS.update(records=(), label="")
+        _forget_saved_jobs()
 
 
 def source_info() -> dict:
