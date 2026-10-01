@@ -173,3 +173,53 @@ def test_repository_name_handles_every_remote_form(monkeypatch):
     for remote in ["git@github.com:o/repo.git", "https://github.com/o/repo", "C:\\repos\\repo.git", "/srv/repo.git/"]:
         seen[remote] = git_repo.fetch_project(remote)["repository"]
     assert set(seen.values()) == {"repo"}
+
+
+def test_concurrent_loads_of_a_new_remote_do_not_collide(remote):
+    import threading
+
+    bare, _ = remote
+    errors, results = [], []
+
+    def load():
+        try:
+            results.append(git_repo.fetch_project(str(bare)))
+        except Exception as exc:  # noqa: BLE001 - the assertion below reports it
+            errors.append(str(exc))
+
+    threads = [threading.Thread(target=load) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [] and len(results) == 6
+
+
+def test_blank_branch_uses_the_remotes_default_branch(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    bare, work = tmp_path / "r.git", tmp_path / "w"
+    run("init", "--bare", "-b", "trunk", str(bare), cwd=tmp_path)
+    run("clone", str(bare), str(work), cwd=tmp_path)
+    run("checkout", "-b", "trunk", cwd=work)
+    commit(work, FILES, "x")
+    assert git_repo.fetch_project(str(bare), "")["branch"] == "trunk"
+
+
+@pytest.mark.parametrize("stderr", [
+    "fatal: Authentication failed for 'https://github.com/o/r.git/'",
+    "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    "git@github.com: Permission denied (publickey).",
+    "remote: Repository not found.",
+])
+def test_missing_credentials_get_a_sign_in_hint_and_keep_gits_message(monkeypatch, stderr):
+    monkeypatch.setattr(git_repo.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 128, b"", stderr.encode()))
+    with pytest.raises(git_repo.GitRepoError) as error:
+        git_repo._git(["clone", "x"])
+    assert stderr in str(error.value) and "Git Credential Manager" in str(error.value)
+
+
+def test_other_git_errors_get_no_sign_in_hint(monkeypatch):
+    monkeypatch.setattr(git_repo.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 128, b"", b"fatal: disk full"))
+    with pytest.raises(git_repo.GitRepoError) as error:
+        git_repo._git(["clone", "x"])
+    assert "Credential Manager" not in str(error.value)
