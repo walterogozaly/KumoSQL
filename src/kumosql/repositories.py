@@ -18,7 +18,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from . import state, storage, workflow_configs
+from . import console, state, storage, workflow_configs
 from .git_repo import GitRepoError, load_into_graph, parse_branch, parse_remote
 
 SECTION = "repositories"
@@ -116,7 +116,8 @@ def load(repo_id: object, refresh: bool = False) -> dict:
     # git runs without _LOCK held: Settings and every other request only need the saved list.
     try:
         try:
-            result = load_into_graph(url, branch, refresh)
+            with console.task(f"load {url}{f' @ {branch}' if branch else ''} ({'fetching latest' if refresh else 'cached copy if any'})"):
+                result = load_into_graph(url, branch, refresh)
         except (GitRepoError, ValueError) as exc:
             _update(repo_id, error=str(exc), error_at=_now())
             raise
@@ -157,14 +158,19 @@ def autoload(background: bool = True) -> threading.Thread | None:
             active = _read()["active"]
         if not active:
             return
+        with console.task("start-up repository reload"):
+            _autoload(active)
+
+    def _autoload(active: str) -> None:
         try:
             load(active, refresh=True)
         except (GitRepoError, ValueError) as refresh_error:
+            console.error(f"could not fetch the latest commit: {_first_line(refresh_error)}; trying the saved copy", trace=False)
             try:  # remote unreachable or auth expired: the cached clone still works
                 load(active, refresh=False)
                 _record_stale(active, str(refresh_error))
-            except (GitRepoError, ValueError):
-                pass  # the error is already saved on the entry
+            except (GitRepoError, ValueError) as exc:
+                console.error(f"repository not loaded: {_first_line(exc)}", trace=False)  # also saved on the entry
 
     if not background:
         run()
@@ -172,6 +178,10 @@ def autoload(background: bool = True) -> threading.Thread | None:
     thread = threading.Thread(target=run, name="kumosql-repo-autoload", daemon=True)
     thread.start()
     return thread
+
+
+def _first_line(exc: BaseException) -> str:
+    return (str(exc).splitlines() or [type(exc).__name__])[0]
 
 
 def _record_stale(repo_id: str, reason: str) -> None:
