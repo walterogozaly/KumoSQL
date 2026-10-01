@@ -176,7 +176,6 @@
 @media (max-width: 600px) {
   .insights-main { padding: 16px 16px 40px; }
   .page-head h1 { font-size: 19px; }
-  .topbar .local-badge, .topbar .brand-text { display: none; }
   .data-table { min-width: 520px; }
   .tiles { grid-template-columns: minmax(0, 1fr); }
   .coverage-stats.is-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -189,7 +188,6 @@
 .card, .coverage, .tile, .graph-detail { background-color: var(--panel, var(--surface)); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
 .coverage.is-partial { background-color: color-mix(in srgb, var(--warn-bg) 40%, var(--panel, var(--surface))); }
 .preview-banner { -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
-.insights-app .topbar { position: relative; z-index: 30; }
 .page-head { padding: 14px 18px; border-radius: 12px; background-color: var(--panel, transparent); -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none); }
 
 .project-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 12.5px; }

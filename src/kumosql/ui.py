@@ -47,6 +47,8 @@ ASSETS = {
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
+    "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/assets/evidence.js": ("evidence.js", "text/javascript; charset=utf-8"),

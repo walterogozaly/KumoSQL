@@ -6,6 +6,8 @@
   <meta name="color-scheme" content="light dark">
   <title>BigQuery browser · KumoSQL</title>
   <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/shell.css">
+  <script src="/assets/shell.js"></script>
   <link rel="stylesheet" href="/assets/browse.css">
   <script defer src="/assets/browse.js"></script>
   <script defer src="/assets/scopes.js"></script>
@@ -13,12 +15,6 @@
 </head>
 <body>
   <div class="app-shell">
-    <header class="topbar">
-      <div class="brand"><span class="brand-mark">{ }</span><span>KumoSQL</span></div>
-      <nav class="topnav" aria-label="Main navigation"><a href="/">Workspace</a><a href="/graph">Query graph</a><a href="/cost">Cost</a><a href="/changes">Change reports</a><a href="/browse" aria-current="page">BigQuery</a></nav>
-      <button class="toolbar-button" type="button" data-open-settings title="Settings (Ctrl+,)"><span>Settings</span></button>
-      <span class="local-badge"><span class="local-dot"></span>Running locally</span>
-    </header>
     <main>
       <section class="intro" aria-labelledby="page-title">
         <p class="eyebrow">BIGQUERY CATALOG</p>
