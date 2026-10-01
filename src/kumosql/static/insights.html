@@ -33,15 +33,12 @@
         <button type="button" class="link-button" data-open-settings="scopes">Manage scopes</button>
         <span id="scope-note" class="scope-note" role="status"></span>
       </div>
-      <form id="project-form" class="project-form">
+      <div id="project-form" class="project-form">
         <span id="project-source" class="project-source"></span>
-        <input id="project-url" type="text" class="field" placeholder="git@github.com:owner/repository.git or https://…" aria-label="Dataform git repository URL" autocomplete="off" required>
-        <input id="project-branch" type="text" class="field" placeholder="branch (default)" aria-label="Branch" autocomplete="off" size="14">
-        <label class="project-refresh"><input id="project-refresh" type="checkbox"> Fetch latest</label>
-        <button type="submit" class="toolbar-button">Load project</button>
-        <button type="button" id="project-clear" class="toolbar-button" hidden>Clear project</button>
+        <button type="button" id="project-refresh" class="toolbar-button" hidden>Fetch latest</button>
+        <button type="button" class="link-button" data-open-settings="repositories">Manage repositories</button>
         <span id="project-status" class="project-status" role="status"></span>
-      </form>
+      </div>
       <div id="jobs-bar" class="project-form" hidden>
         <span id="jobs-source" class="project-source"></span>
         <label class="toolbar-button" for="jobs-file">Load job history</label>
