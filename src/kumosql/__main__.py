@@ -1,0 +1,65 @@
+"""``python -m kumosql COMMAND ...``: every console command without a launcher.
+
+Locked-down machines may block the ``.exe`` launchers pip creates, and the
+Scripts folder is often not on ``PATH``. This runs the same entry points
+through ``python`` itself, for example ``python -m kumosql ui`` for
+``kumosql-ui``. A command can be given with or without its ``kumosql-`` prefix.
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+
+# Keep in step with [project.scripts] in pyproject.toml (tests/test_main_module.py checks).
+COMMANDS = {
+    "lift-subqueries": "kumosql.cli:main",
+    "prove-sql-equivalent": "kumosql.cli:prove_main",
+    "rewrite-sql": "kumosql.cli:rewrite_main",
+    "kumosql-pipeline-report": "kumosql.cli:pipeline_main",
+    "kumosql-dry-run": "kumosql.cli:dry_run_main",
+    "prove-sql-smt": "kumosql.smt_equivalence:main",
+    "prove-sql-sqlsolver": "kumosql.sqlsolver_backend:main",
+    "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
+    "kumosql-ui": "kumosql.ui:main",
+    "kumosql-scopes": "kumosql.cli:scopes_main",
+    "kumosql-change-report": "kumosql.change_report:change_report_main",
+    "kumosql-ci-check": "kumosql.ci_check:main",
+    "kumosql-evidence-summary": "kumosql.cli:evidence_summary_main",
+}
+
+
+def resolve(name: str) -> str | None:
+    """The entry point for ``name``, accepting the short form without ``kumosql-``."""
+
+    if name in COMMANDS:
+        return COMMANDS[name]
+    return COMMANDS.get(f"kumosql-{name}")
+
+
+def usage() -> str:
+    lines = ["usage: python -m kumosql COMMAND [ARGS...]", "", "commands:"]
+    lines += [f"  {name}" for name in COMMANDS]
+    lines += ["", "Run `python -m kumosql COMMAND --help` for a command's options.",
+              "The kumosql- prefix is optional: `python -m kumosql ui` runs kumosql-ui."]
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        print(usage())
+        return 0
+    target = resolve(args[0])
+    if target is None:
+        print(f"kumosql: unknown command {args[0]!r}\n\n{usage()}", file=sys.stderr)
+        return 2
+    module, _, attribute = target.partition(":")
+    function = getattr(importlib.import_module(module), attribute)
+    sys.argv = [f"kumosql {args[0]}", *args[1:]]
+    result = function()
+    return result if isinstance(result, int) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
