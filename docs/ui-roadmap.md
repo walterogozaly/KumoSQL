@@ -32,6 +32,8 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 
 ## Query graph: `/graph` → `/api/graph`
 
+The graph page has two renderers over the same payload. `static/lineage-view.js` (`KumoLineage.mount(container, {data, onSelect})`) is the self-contained Explorer view: it lays the nodes out in layers itself and draws them with the vendored Cytoscape.js, and the page only tells it the selected node and the highlighted set. `insights.js` keeps the original fixed layout as the Simple view. Screenshots: `docs/images/lineage-explorer/`.
+
 `kumosql.live_graph` holds the project the server has loaded (in memory; it is gone after a restart) and builds the payload from a `Pipeline`. Load one by:
 
 - connecting a repository under Settings → Repositories (saved, reloaded on start; `/api/repositories`), or a one-off load (`POST /api/project/git` with `url`, optional `branch` and `refresh`; `/api/github/load` is an alias) or `kumosql-ui --git URL`; all use the local `git` CLI, so private repositories work,
