@@ -17,49 +17,25 @@
   <script defer src="/assets/settings.js"></script>
 </head>
 <body>
-  <div class="app-shell">
-    <main>
-      <section class="intro" aria-labelledby="page-title">
-        <p class="eyebrow">BIGQUERY CATALOG</p>
-        <h1 id="page-title">Browse your data.</h1>
-        <p>Explore the projects, datasets, and tables available to your Google Cloud credentials.</p>
-      </section>
-      <section class="catalog-toolbar" aria-label="Catalog controls">
-        <p>Answers are saved locally for the cache lifetime in Settings (48 hours by default), so they appear instantly and cost no BigQuery calls; use a column's ↻ to refresh it. <span id="catalog-freshness" class="catalog-freshness"></span></p>
-        <button id="choose-projects" class="toolbar-button" type="button">Choose projects</button>
-        <button id="refresh" class="toolbar-button" type="button" disabled>Refresh all</button>
-      </section>
-      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">Loading…</div>
-      <section class="catalog" aria-label="BigQuery catalog">
-        <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Projects</h2><span id="project-count"></span><button class="panel-refresh" type="button" data-level="projects" title="Refresh projects from BigQuery" aria-label="Refresh projects">↻</button></div>
-          <div id="projects" class="catalog-list" aria-label="Projects"></div>
-        </div>
-        <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Datasets</h2><span id="dataset-count"></span><button class="panel-refresh" type="button" data-level="datasets" title="Refresh datasets from BigQuery" aria-label="Refresh datasets">↻</button></div>
-          <div id="datasets" class="catalog-list" aria-label="Datasets"></div>
-        </div>
-        <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Tables &amp; routines</h2><span id="table-count"></span><button class="panel-refresh" type="button" data-level="tables" title="Refresh tables from BigQuery" aria-label="Refresh tables">↻</button></div>
-          <div id="tag-bar" class="tag-bar" hidden>
-            <div class="tag-bar-row">
-              <label class="tag-check-all"><input type="checkbox" id="check-all" aria-label="Select every object shown"> Select all</label>
-              <select id="tag-filter" aria-label="Show only objects with a tag"></select>
-            </div>
-            <div id="tag-bulk" class="tag-bulk" hidden>
-              <p><strong id="bulk-count"></strong> selected <button id="bulk-clear" type="button" class="link-button">Clear</button></p>
-              <div id="bulk-editor"></div>
-            </div>
-          </div>
-          <div id="tables" class="catalog-list" aria-label="Tables, views, functions and procedures"></div>
-        </div>
-        <div class="catalog-panel schema-panel">
-          <div class="catalog-heading"><h2>Schema</h2><button class="panel-refresh" type="button" data-level="schema" title="Refresh schema from BigQuery" aria-label="Refresh schema">↻</button></div>
-          <div id="schema" class="schema-content"></div>
-        </div>
-      </section>
-    </main>
-    <footer>Catalog metadata is read from BigQuery using your local Google Cloud credentials.</footer>
+  <div class="bq-page">
+    <aside class="bq-explorer" aria-label="Explorer">
+      <div class="bq-explorer-head">
+        <h1>Explorer</h1>
+        <button id="choose-projects" class="panel-refresh bq-add" type="button" title="Choose projects" aria-label="Choose projects">+</button>
+        <button id="refresh" class="panel-refresh" type="button" title="Refresh everything shown from BigQuery" aria-label="Refresh all" disabled>↻</button>
+      </div>
+      <div id="tag-bar" class="tag-bar" hidden>
+        <select id="tag-filter" aria-label="Show only objects with a tag"></select>
+      </div>
+      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite"></div>
+      <div id="catalog-freshness" class="catalog-freshness"></div>
+      <div id="tree" class="bq-tree" role="tree" aria-label="Projects, datasets, tables and columns"></div>
+      <div id="tag-bulk" class="tag-bulk" hidden>
+        <p><strong id="bulk-count"></strong> selected <button id="bulk-clear" type="button" class="link-button">Clear</button></p>
+        <div id="bulk-editor"></div>
+      </div>
+    </aside>
+    <main class="bq-body" aria-label="BigQuery"></main>
   </div>
 </body>
 </html>
