@@ -1,14 +1,12 @@
 "use strict";
 
 /* App shell: the left navigation sidebar shared by every page. Page links sit
-   at the top; Settings and the theme control are pinned at the bottom. On wide
-   screens the sidebar collapses to icons (remembered between visits); on
-   narrow screens it is a drawer opened from a small top bar. */
+   at the top; Settings and the theme control are pinned at the bottom. The
+   sidebar collapses to icons, and the choice is remembered between visits. */
 
 (() => {
   const KEY = "kumosql-sidebar";
   const root = document.documentElement;
-  const NARROW = window.matchMedia("(max-width: 860px)");
   const THEMES = ["system", "light", "dark"];
   const THEME_META = {
     system: { icon: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>', label: "Theme: match system" },
@@ -24,7 +22,6 @@
   ];
   const SETTINGS_ICON = '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>';
   const PANEL_ICON = '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>';
-  const MENU_ICON = '<path d="M4 6h16M4 12h16M4 18h16"/>';
 
   const stored = () => {
     try { return localStorage.getItem(KEY); } catch { return null; }
@@ -48,11 +45,6 @@
       `<a class="rail-link" href="${page.href}" title="${page.label}"${page === active ? ' aria-current="page"' : ""}>${icon(page.icon)}<span class="rail-label">${page.label}</span></a>`
     ).join("");
 
-    const bar = document.createElement("div");
-    bar.className = "rail-bar";
-    bar.innerHTML = `<button class="rail-btn" id="rail-open" type="button" aria-label="Open navigation" aria-controls="rail" aria-expanded="false">${icon(MENU_ICON)}</button>
-      <span class="brand-mark" aria-hidden="true">{ }</span><strong>KumoSQL</strong>`;
-
     const rail = document.createElement("aside");
     rail.id = "rail";
     rail.className = "rail";
@@ -69,43 +61,23 @@
         <button class="rail-link" id="settings-button" type="button" data-open-settings title="Settings (Ctrl+,)">${icon(SETTINGS_ICON)}<span class="rail-label">Settings</span></button>
       </div>`;
 
-    const scrim = document.createElement("div");
-    scrim.className = "rail-scrim";
-    document.body.prepend(bar, rail, scrim);
+    document.body.prepend(rail);
     document.body.classList.add("has-rail");
 
     const toggle = rail.querySelector("#rail-toggle");
-    const opener = bar.querySelector("#rail-open");
     const collapsed = () => root.dataset.sidebar === "collapsed";
 
     function syncToggle() {
-      const drawer = NARROW.matches;
-      const label = drawer ? "Close navigation" : collapsed() ? "Expand sidebar" : "Collapse sidebar";
+      const label = collapsed() ? "Expand sidebar" : "Collapse sidebar";
       toggle.setAttribute("aria-label", label);
       toggle.title = label;
-      toggle.setAttribute("aria-expanded", String(drawer ? root.dataset.drawer === "open" : !collapsed()));
-    }
-    function setDrawer(open) {
-      if (open) root.dataset.drawer = "open"; else delete root.dataset.drawer;
-      opener.setAttribute("aria-expanded", String(open));
-      syncToggle();
-      if (open) toggle.focus(); else if (NARROW.matches) opener.focus();
+      toggle.setAttribute("aria-expanded", String(!collapsed()));
     }
     toggle.addEventListener("click", () => {
-      if (NARROW.matches) return setDrawer(false);
       if (collapsed()) delete root.dataset.sidebar; else root.dataset.sidebar = "collapsed";
       remember(collapsed() ? "collapsed" : "expanded");
       syncToggle();
     });
-    opener.addEventListener("click", () => setDrawer(true));
-    scrim.addEventListener("click", () => setDrawer(false));
-    rail.addEventListener("click", (event) => {
-      if (NARROW.matches && event.target.closest("a, [data-open-settings]")) setDrawer(false);
-    });
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && root.dataset.drawer === "open" && !document.querySelector("dialog[open]")) setDrawer(false);
-    });
-    NARROW.addEventListener("change", () => { delete root.dataset.drawer; syncToggle(); });
     syncToggle();
 
     // Theme: one click cycles system, light, dark; settings.js saves it.

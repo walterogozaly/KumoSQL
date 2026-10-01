@@ -1,13 +1,10 @@
-/* App shell: left navigation sidebar and, on narrow screens, its drawer. Tokens
+/* App shell: left navigation sidebar. Tokens
    come from style.css. */
 
-:root { --rail-w: 244px; --rail-top-h: 0px; }
+:root { --rail-w: 244px; }
 :root[data-sidebar="collapsed"] { --rail-w: 62px; }
-@media (max-width: 860px) {
-  :root, :root[data-sidebar="collapsed"] { --rail-w: 0px; --rail-top-h: 48px; }
-}
 
-body.has-rail { padding-left: var(--rail-w); padding-top: var(--rail-top-h); }
+body.has-rail { padding-left: var(--rail-w); }
 
 .rail { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--rail-w); display: flex; flex-direction: column; gap: 6px; padding: 10px 8px; overflow: hidden auto; border-right: 1px solid var(--border); background-color: color-mix(in srgb, var(--surface) 86%, transparent); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); transition: width .18s ease; }
 .rail-head { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 2px 0 6px; }
@@ -28,24 +25,11 @@ body.has-rail { padding-left: var(--rail-w); padding-top: var(--rail-top-h); }
 .rail-status { display: flex; align-items: center; gap: 11px; height: 30px; padding: 0 15px; color: var(--ok-fg); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .rail-status .local-dot { flex: none; }
 
-/* Collapsed to icons (wide screens only) */
-@media (min-width: 861px) {
+/* Collapsed to icons */
+@media all {
   :root[data-sidebar="collapsed"] .rail-label,
   :root[data-sidebar="collapsed"] .rail-head .brand-mark { display: none; }
   :root[data-sidebar="collapsed"] .rail-head { justify-content: center; padding: 0; }
   :root[data-sidebar="collapsed"] .rail-link { justify-content: center; padding: 0; }
   :root[data-sidebar="collapsed"] .rail-status { justify-content: center; padding: 0; }
 }
-
-.rail-bar, .rail-scrim { display: none; }
-
-/* Narrow screens: a slim top bar and a drawer that slides out */
-@media (max-width: 860px) {
-  .rail-bar { position: fixed; z-index: 35; top: 0; left: 0; right: 0; height: var(--rail-top-h); display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--border); background-color: var(--panel); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur); }
-  .rail-bar strong { font-size: 14px; }
-  .rail { width: min(280px, 84vw); transform: translateX(-102%); transition: transform .2s ease; background-color: var(--surface); box-shadow: var(--shadow-lg); }
-  :root[data-drawer="open"] .rail { transform: none; }
-  .rail-scrim { position: fixed; z-index: 38; inset: 0; background: rgba(8, 14, 26, .45); display: block; opacity: 0; pointer-events: none; transition: opacity .2s; }
-  :root[data-drawer="open"] .rail-scrim { opacity: 1; pointer-events: auto; }
-}
-@media (prefers-reduced-motion: reduce) { .rail, .rail-scrim { transition: none; } }
