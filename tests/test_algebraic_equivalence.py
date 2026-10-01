@@ -880,3 +880,59 @@ def test_select_list_rollup_union_in_and_null_guard_rewrites_preserve_results(sq
                 db.execute(f"INSERT INTO {table} VALUES (?, ?)", [rng.choice([None, 0, 1, 2, 3]) for _ in range(2)])
         runnable = sqlglot.transpile(normalized, read="bigquery", write="sqlite")[0]
         assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), normalized
+
+
+SEMI_SCHEMA = {"p": ["k", "a"], "g": ["k", "x"], "s": ["k"]}
+SEMI_NOT_NULL = {"g": TableConstraints(not_null=frozenset({"x"}))}
+SEMI_OUTER = (
+    "SELECT p.a FROM p JOIN (SELECT k, SUM(x) AS t FROM g GROUP BY k) AS d ON p.k = d.k "
+    "WHERE EXISTS (SELECT 1 FROM s WHERE s.k = p.k) AND p.a > d.t"
+)
+SEMI_PUSHED = (
+    "SELECT p.a FROM p JOIN (SELECT k, SUM(x) AS t FROM g WHERE EXISTS (SELECT 1 FROM s WHERE s.k = g.k) GROUP BY k) AS d "
+    "ON p.k = d.k WHERE EXISTS (SELECT 1 FROM s WHERE s.k = p.k) AND p.a > d.t"
+)
+
+
+def test_exists_repeated_inside_a_grouped_join_partner_is_redundant():
+    result = prove_equivalent_algebraic(SEMI_OUTER, SEMI_PUSHED, schema=SEMI_SCHEMA, constraints=SEMI_NOT_NULL)
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_exists_inside_the_grouped_side_alone_is_not_redundant():
+    without = SEMI_OUTER.replace("EXISTS (SELECT 1 FROM s WHERE s.k = p.k) AND ", "")
+    result = prove_equivalent_algebraic(without, SEMI_PUSHED, schema=SEMI_SCHEMA, constraints=SEMI_NOT_NULL)
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_a_different_exists_inside_the_grouped_side_is_not_redundant():
+    other = SEMI_PUSHED.replace("s.k = g.k)", "s.k = g.k AND s.k > 1)", 1)
+    result = prove_equivalent_algebraic(SEMI_OUTER, other, schema=SEMI_SCHEMA, constraints=SEMI_NOT_NULL)
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_null_guard_on_a_sum_of_a_not_null_column_is_redundant():
+    guarded = "SELECT d.t FROM (SELECT k, 0.5 * SUM(x) AS t FROM g GROUP BY k) AS d WHERE d.t IS NOT NULL"
+    plain = "SELECT 0.5 * SUM(x) AS t FROM g GROUP BY k"
+    assert prove_equivalent_algebraic(guarded, plain, schema=SEMI_SCHEMA, constraints=SEMI_NOT_NULL, compare_names=False).proven
+    assert not prove_equivalent_algebraic(guarded, plain, schema=SEMI_SCHEMA, compare_names=False).proven
+
+
+def test_semi_join_rewrites_preserve_results_on_random_databases():
+    rng = random.Random(9)
+    forms = [SEMI_OUTER, SEMI_PUSHED, "SELECT d.t FROM (SELECT k, 0.5 * SUM(x) AS t FROM g GROUP BY k) AS d WHERE d.t IS NOT NULL"]
+    normalized = [normalize(f, schema=SEMI_SCHEMA, not_null={"g": frozenset({"x"})}) for f in forms]
+    for _ in range(80):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE p (k INT, a INT)")
+        db.execute("CREATE TABLE g (k INT, x INT NOT NULL)")
+        db.execute("CREATE TABLE s (k INT)")
+        for table, width in (("p", 2), ("g", 2), ("s", 1)):
+            for _ in range(rng.choice([0, 1, 3, 5])):
+                row = [rng.choice([None, 0, 1, 2, 3]) for _ in range(width)]
+                if table == "g":
+                    row[1] = rng.choice([0, 1, 2, 3])
+                db.execute(f"INSERT INTO {table} VALUES ({', '.join('?' * width)})", row)
+        for sql, norm in zip(forms, normalized):
+            runnable = sqlglot.transpile(norm, read="bigquery", write="sqlite")[0]
+            assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), norm
