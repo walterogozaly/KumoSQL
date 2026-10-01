@@ -463,3 +463,63 @@ def test_null_guard_removal_keeps_or_precedence():
         schema=LINEITEM, compare_names=False, dialect="mysql",
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+T_SCHEMA = {"a": ["a", "k", "x"], "b": ["a", "k", "x"]}
+DECORRELATE = [
+    "SELECT a.a FROM a WHERE a.x < (SELECT 2 * AVG(b.x) FROM b WHERE b.k = a.k)",
+    "SELECT a.a FROM a WHERE a.x = (SELECT MIN(b.x) FROM b WHERE b.k = a.k AND b.a > 0)",
+    "SELECT a.a FROM a WHERE (SELECT SUM(b.x) FROM b WHERE b.k = a.k) > a.x",
+    "SELECT a.a FROM a WHERE a.x < (SELECT COUNT(*) FROM b WHERE b.k = a.k)",  # COUNT is left alone
+    "SELECT a.a FROM a WHERE a.x < (SELECT MAX(b.x) FROM b WHERE b.k = a.k AND b.x > a.x)",  # not an equality
+]
+
+
+@pytest.mark.parametrize("sql", DECORRELATE)
+def test_decorrelating_a_scalar_aggregate_preserves_results(sql):
+    rng = random.Random(5)
+    normalized = normalize(sql, schema=T_SCHEMA, dialect="sqlite")
+    for _ in range(80):
+        db = sqlite3.connect(":memory:")
+        for table in ("a", "b"):
+            db.execute(f"CREATE TABLE {table} (a INT, k INT, x INT)")
+            for _ in range(rng.choice([0, 1, 3, 5])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [rng.choice([None, 0, 1, 2, 3]) for _ in range(3)])
+        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+def test_a_correlated_scalar_aggregate_equals_its_join_with_a_grouped_table():
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a WHERE a.x < (SELECT 2 * AVG(b.x) FROM b WHERE b.k = a.k)",
+        "SELECT a.a FROM a JOIN (SELECT b.k, 2 * AVG(b.x) AS m FROM b GROUP BY b.k) AS g ON g.k = a.k WHERE a.x < g.m",
+        schema=T_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_a_correlated_count_is_not_a_join():
+    # With no matching rows COUNT reads 0, so the outer row stays; the inner join would drop it.
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a WHERE a.x > (SELECT COUNT(*) FROM b WHERE b.k = a.k)",
+        "SELECT a.a FROM a JOIN (SELECT b.k, COUNT(*) AS m FROM b GROUP BY b.k) AS g ON g.k = a.k WHERE a.x > g.m",
+        schema=T_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_derived_aggregates_that_differ_only_in_names_and_layers_are_one_relation():
+    constraints = {"b": TableConstraints(not_null=frozenset({"k", "x"}))}
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a JOIN (SELECT k, MIN(x) AS m FROM b GROUP BY k) AS g ON g.k = a.k WHERE a.x = g.m",
+        "SELECT a.a FROM a JOIN (SELECT k AS kk, MIN(x) AS lowest FROM (SELECT k, x FROM b WHERE x > 0 OR x <= 0) AS z "
+        "GROUP BY k HAVING MIN(x) IS NOT NULL) AS h ON h.kk = a.k WHERE a.x = h.lowest",
+        schema=T_SCHEMA, constraints=constraints, compare_names=False, dialect="mysql",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # A different aggregate is a different relation.
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a JOIN (SELECT k, MIN(x) AS m FROM b GROUP BY k) AS g ON g.k = a.k WHERE a.x = g.m",
+        "SELECT a.a FROM a JOIN (SELECT k AS kk, MAX(x) AS lowest FROM b GROUP BY k) AS h ON h.kk = a.k WHERE a.x = h.lowest",
+        schema=T_SCHEMA, constraints=constraints, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT

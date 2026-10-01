@@ -549,6 +549,8 @@ class _Compiler:
         # Existence tests (EXISTS, IN) found while compiling the current select.
         self.collector: list = []
         self.ctes: dict = {}
+        # Canonical SQL of each opaque derived relation, by identity key.
+        self.opaque_bodies: dict[str, tuple[str, int]] = {}
         # Read DISTINCT derived tables as sets (existence tests) instead of opaque relations.
         self.semijoin = True
         self.used_setsrc = False
@@ -959,10 +961,25 @@ class _Compiler:
             names.append(item.alias_or_name.lower())
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
-        key = "(" + _canonical_aliases(body, self.schema).sql(dialect="bigquery", normalize_functions="upper") + ")"
+        canonical = _canonical_aliases(body, self.schema)
+        root = canonical
+        while isinstance(root, exp.Subquery):
+            root = root.this
+        if isinstance(root, exp.Select) and len(root.expressions) == len(names):
+            # Columns are identified by position, so two spellings of the output names are one relation,
+            # unless the body refers to its own output names (GROUP BY alias, HAVING alias).
+            in_select = {id(c) for item in root.expressions for c in item.find_all(exp.Column)}
+            outside = {c.name.lower() for c in root.find_all(exp.Column) if not c.table and id(c) not in in_select}
+            if not outside & set(names):
+                root.set(
+                    "expressions",
+                    [exp.alias_((i.this if isinstance(i, exp.Alias) else i).copy(), f"c{n}") for n, i in enumerate(root.expressions)],
+                )
+        key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
-        return _Source(occ=occ)
+        self.opaque_bodies[key] = (key[1:-1], len(names))
+        return _Source(cols={name: occ.col(f"c{i}") for i, name in enumerate(names)}, order=list(names))
 
     def _expand_ctes(self, body, ctes):
         local = dict(ctes)
@@ -2028,6 +2045,31 @@ class _Prover:
             block.facts = block.facts + extra
         return block
 
+    def drop_never_null_having(self, block):
+        """``HAVING MIN(x) IS NOT NULL`` holds for every group when ``x`` is never NULL in the group's rows."""
+
+        if not isinstance(block, _Agg) or block.is_global or block.having is None or block.subs:
+            return block
+        never_null = {
+            c.var.null.get_id()
+            for c in block.aggs
+            if c.func in ("MIN", "MAX", "SUM", "AVG") and not c.distinct and c.arg is not None and c.var.null.decl().kind() == z3.Z3_OP_UNINTERPRETED
+            and self.valid(z3.Implies(block.cond.t, z3.Not(c.arg.null)), block.occs, block.facts)
+        }
+        if not never_null:
+            return block
+        top = block.having.t
+        conjuncts = list(top.children()) if z3.is_and(top) else [top]
+        kept = [c for c in conjuncts if not (z3.is_not(c) and c.arg(0).get_id() in never_null)]
+        if len(kept) == len(conjuncts):
+            return block
+        if kept:
+            rest = z3.And(*kept) if len(kept) > 1 else kept[0]
+            block.having = _Pred(rest, z3.Not(rest))
+        else:
+            block.having = None
+        return block
+
     def push_having(self, block):
         """``HAVING`` on group keys only is a ``WHERE`` filter (every row of a group agrees on it)."""
 
@@ -2191,6 +2233,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
         for b in union.branches:
             b = _constant_global(b)
             b = prover.resolve_set_sources(b)
+            b = prover.drop_never_null_having(b)
             b = prover.push_having(b)
             b = prover.as_distinct_spj(b)
             b = prover.inline_unique_subs(b)
@@ -2414,6 +2457,65 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
 # --------------------------------------------------------------------------
 
 
+_OPAQUE_PROOFS = 6
+_nesting = [0]
+
+
+def _all_occs(unions) -> list[_Occ]:
+    found: list[_Occ] = []
+
+    def from_subs(subs):
+        for sub in subs:
+            found.extend(sub.occs)
+            from_subs(sub.subs)
+
+    for union in unions:
+        for branch in union.branches:
+            found.extend(branch.occs)
+            from_subs(branch.subs)
+    return found
+
+
+def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
+    """Give two differently written derived relations one identity when they are provably equal.
+
+    A derived table kept whole is identified by its text, so a subquery written with another join
+    order, extra IS NOT NULL guards or nested pass-through layers would read as a different relation.
+    The bodies are compared by the prover itself; each proven pair shares one table name.
+    """
+
+    bodies = compiler.opaque_bodies
+    if len(bodies) < 2 or _nesting[0] >= 2:
+        return
+
+    def tables(sql: str) -> frozenset:
+        return frozenset(t.name.lower() for t in sqlglot.parse_one(sql, read="bigquery").find_all(exp.Table))
+
+    representatives: list[str] = []
+    mapping: dict[str, str] = {}
+    budget = _OPAQUE_PROOFS
+    for key, (sql, arity) in bodies.items():
+        for rep in representatives:
+            rep_sql, rep_arity = bodies[rep]
+            if rep_arity != arity or budget <= 0 or tables(rep_sql) != tables(sql):
+                continue
+            budget -= 1
+            _nesting[0] += 1
+            try:
+                result = _prove_core(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
+            finally:
+                _nesting[0] -= 1
+            if result.status is SmtStatus.PROVEN_EQUIVALENT:
+                mapping[key] = rep
+                break
+        else:
+            representatives.append(key)
+    if mapping:
+        for occ in _all_occs(unions):
+            if occ.opaque and occ.table in mapping:
+                occ.table = mapping[occ.table]
+
+
 def _prove_core(
     left_sql: str,
     right_sql: str,
@@ -2454,6 +2556,14 @@ def _prove_core(
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {error}", assumptions=assumptions)
         except sqlglot.errors.ParseError as error:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=assumptions)
+        _unify_opaque(
+            compiler,
+            (left, right),
+            schema=schema,
+            exact_arithmetic=exact_arithmetic,
+            timeout_ms=timeout_ms,
+            constraints=constraints,
+        )
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ())
         extra = compiler.order_facts()
         if extra:
