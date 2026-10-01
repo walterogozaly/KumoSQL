@@ -21,8 +21,10 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
+import os
 import re
 import threading
+import time
 from typing import TYPE_CHECKING, Iterable, Mapping
 
 import sqlglot
@@ -33,7 +35,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
-from .timing import stage
+from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser
 from .resilience import (
     PipelineLoadError,  # noqa: F401
@@ -740,6 +742,16 @@ class Pipeline:
             return self._analysis
 
 
+def _seconds_from_env(name: str, default: float) -> float:
+    """A time budget in seconds from the environment; ``0`` means no limit."""
+
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return max(value, 0.0)
+
+
 def _parse_script(sql: str) -> tuple[exp.Expression | None, int]:
     """The last query of a script, and how many other queries were ignored."""
 
@@ -839,7 +851,9 @@ class _Analysis:
         # for a model keyed by its bare name): its columns must be known there
         # too, or ``SELECT *`` over it cannot be expanded.
         spellings: dict[str, set[str]] = {}
+        reading = Progress("read models", len(pipeline.models))
         for key, model in pipeline.models.items():
+            reading.step(key)
             parents = {
                 resolved
                 for dep in model.declared_dependencies
@@ -899,8 +913,10 @@ class _Analysis:
             if key not in parsed and model.sql.strip() and not model.declared_dependencies:
                 blind_models.append(key)
             upstream[key] = parents
+        reading.finish()
 
-        order = _topological_order(upstream, diagnostics)
+        with stage("order models", models=len(upstream)):
+            order = _topological_order(upstream, diagnostics)
 
         outputs: dict[str, tuple[str, ...]] = {}
         direct: dict[ColumnRef, frozenset[ColumnRef]] = {}
@@ -912,7 +928,15 @@ class _Analysis:
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
 
+        tracing = Progress("trace columns", len(order))
+        # Column tracing copies a model's whole query once per output column, so wide models with
+        # many CTEs can take seconds each. A budget keeps a load bounded: past it, a model keeps
+        # its columns and edges but its column-level lineage is skipped and reported as a gap.
+        model_budget = _seconds_from_env("KUMOSQL_LINEAGE_MODEL_SECONDS", 8.0)
+        total_deadline = _seconds_from_env("KUMOSQL_LINEAGE_SECONDS", 120.0)
+        total_deadline = time.perf_counter() + total_deadline if total_deadline else None
         for key in order:
+            tracing.step(key)
             query = parsed.get(key)
             if query is None:
                 opaque_readers_of.update(upstream.get(key, ()))
@@ -980,8 +1004,18 @@ class _Analysis:
             except Exception:
                 lineage_scope = None
             is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
+            model_deadline = time.perf_counter() + model_budget if model_budget else None
+            skipped_columns = 0
             for name in names:
                 ref = ColumnRef(key, name)
+                now = time.perf_counter()
+                if name != "*" and (
+                    (model_deadline is not None and now > model_deadline)
+                    or (total_deadline is not None and now > total_deadline)
+                ):
+                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_skipped")
+                    skipped_columns += 1
+                    continue
                 if name == "*":
                     records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
                     continue
@@ -1015,7 +1049,18 @@ class _Analysis:
                 else:
                     records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
                 direct[ref] = frozenset(leaves)
+            if skipped_columns:
+                diagnostics.append(
+                    PipelineDiagnostic(
+                        key,
+                        "lineage_skipped",
+                        f"{skipped_columns} of {len(names)} columns were not traced because tracing this model "
+                        "took longer than the time budget (KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
+                        "its reads and readers are still in the graph",
+                    )
+                )
 
+        tracing.finish()
         reverse: dict[ColumnRef, set[ColumnRef]] = defaultdict(set)
         for column, parents in direct.items():
             for parent in parents:

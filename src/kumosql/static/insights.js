@@ -737,7 +737,7 @@ function renderGraph(data, root) {
                 h("span", { class: "muted small", text: item.last_seen ? `last seen ${shortDate(item.last_seen)}` : "not seen in window" }),
                 h("span", { class: "muted small", text: `${depthNote(item)} via ${item.via}` }))))) : null,
           impact.observed.length ? h("p", { class: "muted small", text: "Job history names tables, not columns, so these readers are listed as possibly affected." }) : null,
-          impact.complete ? null : h("p", { class: "callout", text: "This result may miss readers: " + impact.incomplete_reasons.join(", ").replaceAll("_", " ") + "." }),
+          impact.complete ? null : h("p", { class: "callout", text: "This result may miss readers: " + (impact.incomplete_reasons || []).join(", ").replaceAll("_", " ") + "." }),
           h("p", { class: "callout", text: "“Safe to delete” is not offered until graph coverage is complete." }));
       }
     } else if (state.mode === "overlap") {
