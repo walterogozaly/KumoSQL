@@ -115,6 +115,23 @@ def _rmtree(path: Path) -> None:
         shutil.rmtree(path, onerror=retry)
 
 
+_CLONE_NAME = re.compile(r"^[0-9a-f]{20}(?:\.partial-.*)?$")
+
+
+def delete_clones() -> int:
+    """Delete every cached clone (only folders KumoSQL named itself); returns how many."""
+
+    with _LOAD_LOCK:
+        folder = cache_dir()
+        removed = 0
+        if folder.is_dir():
+            for item in folder.iterdir():
+                if item.is_dir() and _CLONE_NAME.match(item.name):
+                    _rmtree(item)
+                    removed += 1
+    return removed
+
+
 def parse_remote(value: object) -> str:
     """Accept HTTPS, SSH (``ssh://`` or ``git@host:path``), git, file and absolute local paths."""
 

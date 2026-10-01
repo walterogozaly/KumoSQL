@@ -135,3 +135,21 @@ def test_a_folder_saved_by_an_older_version_is_moved_over(tmp_path):
     assert state.chosen_folder() == folder
     assert state.get_section("scopes") == {"s": 1} and state.get_section("storage") is None
     assert json.loads(state.pointer_path().read_text())["folder"] == str(folder)
+
+
+def test_clear_endpoint_empties_the_list(tmp_path):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        storage.save(str(tmp_path / "data"))
+        repositories.replace([{"url": "https://example.com/a/b.git", "branch": ""}])
+        request = Request(base + "/api/repositories/clear", data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request) as response:
+            body = json.load(response)
+        assert body["removed"] == 1 and body["repositories"] == [] and body["active"] is None
+        with urlopen(base + "/api/repositories") as response:
+            assert json.load(response)["repositories"] == []
+    finally:
+        server.shutdown()
+        server.server_close()

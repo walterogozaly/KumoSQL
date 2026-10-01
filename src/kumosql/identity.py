@@ -182,6 +182,13 @@ def _reference_parts(reference: object) -> tuple[str, ...] | None:
                 for key in ("projectId", "datasetId", "tableId")
                 if reference.get(key)
             )
+        # INFORMATION_SCHEMA.JOBS exports spell the API's fields in snake case.
+        if all(key in reference for key in ("project_id", "dataset_id", "table_id")):
+            return tuple(
+                str(reference.get(key, ""))
+                for key in ("project_id", "dataset_id", "table_id")
+                if reference.get(key)
+            )
         if all(key in reference for key in ("database", "schema", "name")):
             return tuple(str(reference.get(key, "")) for key in ("database", "schema", "name") if reference.get(key))
         return None

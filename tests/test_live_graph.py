@@ -389,3 +389,15 @@ def test_changes_compare_builds_the_report_from_two_branches(server, monkeypatch
     # Loading another project drops the comparison made for the old one.
     post(server, "/api/project", {"files": FILES})
     assert get(server, "/api/changes")["report"] is None
+
+
+def test_information_schema_job_history_matches_graph_tables(server):
+    # bq exports of INFORMATION_SCHEMA.JOBS name tables as {project_id, dataset_id, table_id}.
+    files = {**FILES, "workflow_settings.yaml": "defaultProject: proj\ndefaultDataset: stg\n"}
+    post(server, "/api/project", {"files": files, "label": "demo"})
+    history = [{**HISTORY[0], "destination_table": {"project_id": "proj", "dataset_id": "marts", "table_id": "fct"}}]
+    post(server, "/api/jobs", {"filename": "jobs.json", "text": json.dumps(history)})
+    graph = get(server, "/api/graph")
+    observed = [edge for edge in graph["edges"] if edge["observed_count"]]
+    assert [(edge["from"], edge["to"]) for edge in observed] == [("proj.stg.stg_orders", "proj.marts.fct")]
+    assert not [gap for gap in graph["gaps"] if gap["asset"] == "job history"]

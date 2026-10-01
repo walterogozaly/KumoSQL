@@ -444,11 +444,11 @@ function renderGraph(data, root) {
   if (tagName) data = onlyTagged(data, tagName);
   const graph = buildGraph(data);
   const firstTraced = data.nodes.find((node) => graph.traced.has(node.id)) || data.nodes[0];
-  const initialNode = graph.nodes.has(params.get("node")) ? params.get("node") : graph.nodes.has("staging.stg_orders") ? "staging.stg_orders" : firstTraced?.id;
+  const initialNode = graph.nodes.has(params.get("node")) ? params.get("node") : firstTraced?.id;
   const initialColumns = graph.nodes.get(initialNode)?.columns || [];
   const state = {
     node: initialNode,
-    column: params.get("column") || (initialColumns.includes("amount_usd") ? "amount_usd" : initialColumns[0] || null),
+    column: initialColumns.includes(params.get("column")) ? params.get("column") : initialColumns[0] || null,
     mode: ["readers", "impact", "lineage", "overlap"].includes(params.get("mode")) ? params.get("mode") : "readers",
     change: "drop",
   };
@@ -488,6 +488,13 @@ function renderGraph(data, root) {
 
   if (tagName && !data.nodes.length) {
     root.append(h("div", { class: "graph-toolbar" }, tagPick, tagNote));
+    return;
+  }
+  if (!data.nodes.length) {
+    // A scope that matches nothing (or a project with no models) leaves nothing to select.
+    root.append(emptyState({ needs: "assets", message: data.scope
+      ? `No asset in the project matches the scope “${data.scope.name}” (${data.scope.rule}). Choose another scope, or edit this one in Settings.`
+      : "The loaded project has no models or declarations to draw." }));
     return;
   }
 

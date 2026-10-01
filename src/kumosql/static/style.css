@@ -537,9 +537,10 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: 
 .sp-nav button[aria-current="true"] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .sp-side-foot { margin: auto 10px 2px; color: var(--text-faint); font-size: 11.5px; }
 .sp-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.sp-top { position: absolute; top: 12px; right: 12px; z-index: 2; display: flex; align-items: center; gap: 10px; }
-.sp-status { color: var(--text-faint); font-size: 12px; font-weight: 600; }
-.sp-status.is-error { color: var(--bad-fg); }
+.sp-top { position: absolute; top: 12px; right: 12px; z-index: 2; display: flex; align-items: flex-start; gap: 10px; }
+/* A long message wraps in its own box instead of running over the section heading. */
+.sp-status { max-width: 360px; color: var(--text-faint); font-size: 12px; font-weight: 600; line-height: 1.4; text-align: right; }
+.sp-status.is-error:not(:empty) { padding: 6px 10px; border: 1px solid var(--bad-border); border-radius: var(--radius-md); background: var(--bad-bg); color: var(--bad-fg); text-align: left; box-shadow: 0 4px 14px rgb(0 0 0 / .12); }
 .sp-close { border-color: transparent; background: transparent; }
 .sp-body { flex: 1; min-height: 0; overflow: auto; padding: 30px 32px 32px; }
 .sp-heading { margin: 0 0 6px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }

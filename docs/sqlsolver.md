@@ -25,7 +25,7 @@ Steps 1–5 need only `pip install --user` (or a venv) for `sqlglot` and `z3-sol
 <home>/jre/bin/java      optional portable JRE 17+, used when no Java is on PATH
 ```
 
-Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `prove-sql-sqlsolver --check` says what is missing. BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite SQL (table names flattened to one identifier, schema as `CREATE TABLE`). Queries using `UNNEST`, `QUALIFY`, windows, arrays, structs, `PIVOT`, `TABLESAMPLE`, nondeterministic functions or tables missing from the schema are refused. SQLSolver answers `EQ` when both queries fail its semantic checks, so each query is also compared with an always-empty wrapper of itself; a control that comes back `EQ` voids the proof. SQLSolver's `NEQ` carries no counterexample, so it is reported as `not_proven`; counterexamples come from the Z3 stage.
+Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `python -m kumosql prove-sql-sqlsolver --check` says what is missing. BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite SQL (table names flattened to one identifier, schema as `CREATE TABLE`). Queries using `UNNEST`, `QUALIFY`, windows, arrays, structs, `PIVOT`, `TABLESAMPLE`, nondeterministic functions or tables missing from the schema are refused. SQLSolver answers `EQ` when both queries fail its semantic checks, so each query is also compared with an always-empty wrapper of itself; a control that comes back `EQ` voids the proof. SQLSolver's `NEQ` carries no counterexample, so it is reported as `not_proven`; counterexamples come from the Z3 stage.
 
 ## Benchmark coverage
 
@@ -35,8 +35,8 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 93 | 139 | 0 | was 53 before constraints, pruning and key-based join merging |
-| Spark SQL | 127 | 86 | 41 | 0 | was 67 |
+| Calcite | 232 | 111 | 121 | 0 | was 93 before EXISTS/IN, outer joins and set operations |
+| Spark SQL | 127 | 95 | 32 | 0 | was 86 |
 | TPC-H | 22 | 1 | 21 | 0 | was 0; mostly LIMIT, date literals, subqueries |
 | TPC-C | 19 | 17 | 2 | 0 | was 17 |
 

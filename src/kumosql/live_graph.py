@@ -277,6 +277,24 @@ def set_project(
     start_background_analysis(pipeline)
 
 
+def forget_project() -> None:
+    """Drop the loaded project, the in-memory parse cache and the saved analyses; job history stays."""
+
+    global _LOADED
+    with _LOCK:
+        _LOADED = None
+        _PROJECT_CACHE.clear()
+    from . import state
+
+    folder = state.data_dir() / "analysis-cache"
+    if folder.is_dir():
+        for item in folder.glob("*"):
+            try:
+                item.unlink()
+            except OSError:
+                pass
+
+
 def clear_project() -> None:
     """Forget the project and its job history."""
 

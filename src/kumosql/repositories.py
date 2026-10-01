@@ -90,6 +90,28 @@ def replace(entries: object, active: object = None) -> dict:
     return {"repositories": data["items"], "active": data["active"]}
 
 
+def clear_all() -> dict:
+    """Remove every connected repository and everything derived from them.
+
+    Deletes the saved list, the loaded project, cached clones, saved schedule lookups, saved
+    analyses and remembered https fallbacks. Settings that are not about a repository (folder,
+    scopes, formatting, BigQuery) and loaded job history are kept.
+    """
+
+    from . import git_repo, live_graph, workflow_configs
+
+    with _LOCK:
+        count = len(_read()["items"])
+        _write({"items": [], "active": None})
+        _LOADING.clear()
+    live_graph.forget_project()
+    clones = git_repo.delete_clones()
+    lookups = workflow_configs.forget_all()
+    state.set_section(git_repo._TRANSPORT_SECTION, {})
+    console.say(f"cleared {count} repositories, {clones} cached clones, {lookups} schedule lookups")
+    return {"removed": count, "clones": clones, "schedule_lookups": lookups, **listing()}
+
+
 def activate(repo_id: object) -> dict:
     with _LOCK:
         data = _read()

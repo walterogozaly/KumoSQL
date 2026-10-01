@@ -326,6 +326,14 @@ def prefetch(github_url: str) -> threading.Thread:
     return thread
 
 
+def forget_all() -> int:
+    """Drop every saved Dataform schedule lookup and remembered error; returns how many lookups."""
+
+    with _ERRORS_LOCK:
+        _errors.clear()
+    return bigquery_catalog.forget_prefix("dataform-workflows:")
+
+
 def cached_rows(github_url: str) -> list[dict] | None:
     """Saved rows (with their selectors) without any network call, or ``None``."""
 
