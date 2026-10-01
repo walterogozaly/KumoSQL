@@ -57,7 +57,11 @@ function renderFreshness() {
 async function requestJson(url, level, refresh = false) {
   const response = await fetch(refresh ? `${url}&refresh=1` : url);
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "BigQuery request failed");
+  if (!response.ok) {
+    const failure = new Error(payload.error || "BigQuery request failed");
+    failure.removed = Boolean(payload.removed);
+    throw failure;
+  }
   freshness[level] = payload;
   renderFreshness();
   return payload.data;
@@ -234,6 +238,15 @@ async function selectTable(table, refresh = false) {
     setStatus(`Showing ${metadata.schema?.length || 0} top-level fields for ${project}.${dataset}.${table}.`);
   } catch (error) {
     if (version !== schemaRequest) return;
+    if (error.removed) {
+      // No access to this table: stop listing it.
+      tablesPane.querySelector(`button[data-value="${CSS.escape(table)}"]`)?.remove();
+      document.getElementById("table-count").textContent = String(tablesPane.querySelectorAll("button").length);
+      chosenTable = "";
+      clearPane(schemaPane, "Choose a table to inspect its schema.");
+      setStatus(`You do not have access to ${table}, so it was removed from the list.`, true);
+      return;
+    }
     clearPane(schemaPane, "Could not load schema.");
     setStatus(error.message, true);
   }
