@@ -2788,6 +2788,32 @@ def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _drop_constant_groupings(tree: exp.Expression) -> exp.Expression:
+    """Calcite reads ``GROUP BY 4, x`` with 4 as a constant: it never splits a group, so it is dropped.
+
+    A grouping made only of constants keeps one group when the input has rows and none when it has
+    none, which is ``GROUP BY TRUE`` (dropping it altogether would make a global aggregate, one row
+    on empty input).
+    """
+
+    for select in list(tree.find_all(exp.Select)):
+        group = select.args.get("group")
+        if not group or group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube"):
+            continue
+        items = group.expressions
+
+        def constant(node: exp.Expression) -> bool:
+            return not any(node.find_all(exp.Column, exp.Subquery, exp.Anonymous, exp.Rand, exp.Window)) and not any(
+                isinstance(n, exp.Func) and not isinstance(n, (exp.Cast, exp.Coalesce)) for n in node.walk()
+            )
+
+        kept = [e for e in items if not constant(e)]
+        if len(kept) == len(items):
+            continue
+        group.set("expressions", kept or [exp.true()])
+    return tree
+
+
 def normalize(
     sql: str,
     *,
@@ -2796,10 +2822,17 @@ def normalize(
     not_null: dict[str, frozenset[str]] | None = None,
     keys: dict[str, list[tuple[str, ...]]] | None = None,
     types: dict[str, dict[str, str]] | None = None,
+    group_by_constants: bool = False,
 ) -> str:
-    """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
+    """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out).
+
+    ``group_by_constants`` reads a literal in ``GROUP BY`` as a constant, as Calcite does, instead of a
+    column ordinal (see ``_drop_constant_groupings``).
+    """
 
     tree = sqlglot.parse_one(sql, read=dialect)
+    if group_by_constants:
+        tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
     tree = _bigquery_sugar(tree)
@@ -2853,12 +2886,13 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
 
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
-    kwargs = {k: v for k, v in kwargs.items() if k != "types"}
+    constants = kwargs.get("group_by_constants", False)
+    kwargs = {k: v for k, v in kwargs.items() if k not in ("types", "group_by_constants")}
     try:
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
     from . import scalar_subqueries
