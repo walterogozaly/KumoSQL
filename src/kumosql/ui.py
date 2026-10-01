@@ -14,7 +14,7 @@ from . import live_graph
 from . import live_insights
 from . import scope_queries
 from . import scopes as scope_store
-from . import state
+from . import state, version
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
 from .rewrite import apply_rules, available_rules
 
@@ -159,6 +159,9 @@ class UIHandler(BaseHTTPRequestHandler):
             return None
 
     def do_GET(self) -> None:
+        if self.path == "/api/version":
+            self._json(200, version.info())
+            return
         if self.path == "/api/settings":
             self._json(200, {
                 "ui": state.get_section("ui", {}),
@@ -492,6 +495,7 @@ def _required(query: dict[str, list[str]], name: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Open the local KumoSQL browser UI")
+    parser.add_argument("--version", action="version", version=f"kumosql {version.describe()}")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
     parser.add_argument("--project", metavar="DIR", help="Load a Dataform or SQL folder into the query graph page")
     parser.add_argument("--git", metavar="URL", help="Load a Dataform repository through the local git CLI (private repositories work with your own credentials)")

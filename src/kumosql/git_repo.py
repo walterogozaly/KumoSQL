@@ -84,6 +84,11 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     env["GIT_ALLOW_PROTOCOL"] = _ALLOWED_PROTOCOLS  # blocks ext:: and other command-running transports
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
     env["LC_ALL"] = "C"
+    # Never inherit the server's working directory: if it was deleted (a temporary or
+    # extracted folder), git fails with "Unable to read current working directory".
+    if cwd is None:
+        cwd = cache_dir()
+        cwd.mkdir(parents=True, exist_ok=True)
     try:
         done = subprocess.run(
             ["git", "-c", "core.longpaths=true", *args], cwd=cwd, env=env, capture_output=True,

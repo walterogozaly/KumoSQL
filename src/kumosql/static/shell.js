@@ -57,6 +57,7 @@
       <nav class="rail-nav" aria-label="Main navigation">${links}</nav>
       <div class="rail-foot">
         <span class="rail-status" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="rail-label">Running locally</span></span>
+        <span class="rail-version rail-label" id="rail-version" title="KumoSQL version"></span>
         <button class="rail-link" id="theme-button" type="button"><span id="theme-icon">${icon(THEME_META.system.icon)}</span><span class="rail-label" id="theme-label"></span></button>
         <button class="rail-link" id="settings-button" type="button" data-open-settings title="Settings (Ctrl+,)">${icon(SETTINGS_ICON)}<span class="rail-label">Settings</span></button>
       </div>`;
@@ -98,6 +99,12 @@
     });
     new MutationObserver(showTheme).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
     showTheme();
+    fetch("/api/version").then((response) => response.json()).then((data) => {
+      const label = data.commit ? `v${data.version} · ${data.commit}` : `v${data.version}`;
+      const node = rail.querySelector("#rail-version");
+      node.textContent = label;
+      node.title = `KumoSQL ${label}`;
+    }).catch(() => { /* version is informational */ });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build);

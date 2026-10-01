@@ -33,3 +33,5 @@ body.has-rail { padding-left: var(--rail-w); }
   :root[data-sidebar="collapsed"] .rail-link { justify-content: center; padding: 0; }
   :root[data-sidebar="collapsed"] .rail-status { justify-content: center; padding: 0; }
 }
+
+.rail-version { display: block; padding: 0 12px 4px; font-size: 11px; color: var(--text-muted); }

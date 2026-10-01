@@ -223,3 +223,16 @@ def test_other_git_errors_get_no_sign_in_hint(monkeypatch):
     with pytest.raises(git_repo.GitRepoError) as error:
         git_repo._git(["clone", "x"])
     assert "Credential Manager" not in str(error.value)
+
+
+def test_git_runs_with_an_existing_directory_even_if_the_servers_is_gone(tmp_path, monkeypatch, remote):
+    import os
+
+    bare, _ = remote
+    doomed = tmp_path / "doomed"
+    doomed.mkdir()
+    monkeypatch.chdir(doomed)
+    doomed.rmdir()  # the server was started from a folder that no longer exists
+    with pytest.raises(FileNotFoundError):
+        os.getcwd()
+    assert git_repo.fetch_project(str(bare))["files"]
