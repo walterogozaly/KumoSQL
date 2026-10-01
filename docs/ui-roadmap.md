@@ -32,13 +32,15 @@ Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupporte
 
 ## Query graph: `/graph` → `/api/graph`
 
+The graph page has two renderers over the same payload. `static/lineage-view.js` (`KumoLineage.mount(container, {data, onSelect})`) is the self-contained Explorer view: it lays the nodes out in layers itself and draws them with the vendored Cytoscape.js, and the page only tells it the selected node and the highlighted set. `insights.js` keeps the original fixed layout as the Simple view. Screenshots: `docs/images/lineage-explorer/`.
+
 `kumosql.live_graph` holds the project the server has loaded (in memory; it is gone after a restart) and builds the payload from a `Pipeline`. Load one by:
 
-- entering a Dataform git remote on the `/graph` page (`POST /api/project/git` with `url`, optional `branch` and `refresh`; uses the local `git` CLI, so private repositories work; `/api/github/load` is an alias), or `kumosql-ui --git URL`,
+- connecting a repository under Settings → Repositories (saved, reloaded on start; `/api/repositories`), or a one-off load (`POST /api/project/git` with `url`, optional `branch` and `refresh`; `/api/github/load` is an alias) or `kumosql-ui --git URL`; all use the local `git` CLI, so private repositories work,
 - `kumosql-ui --project DIR`, or
 - `POST /api/project` with `{"files": {relative path: text}, "label"}` (only `.sqlx`, `.sql` and Dataform config files; relative paths only).
 
-`POST /api/project/clear` (the "Clear project" button) unloads the project and its job history.
+`POST /api/project/clear` unloads the project and its job history.
 
 Payloads carry `source` as above. They add `completeness {complete, views, assets_not_analyzed}` and `blocking` on each gap. Tables the project reads but does not define are `source` nodes; a model that failed to parse is listed as a gap and its node is drawn as "Not analyzed". `coverage.complete` is false whenever a blocking gap exists, so the "Partial graph" strip cannot be missed. Observed edges and last seen need job history (load it on the page); without it they stay empty. `sampled_impact_accuracy` is null and shown as "Not reviewed" until verdicts exist.
 

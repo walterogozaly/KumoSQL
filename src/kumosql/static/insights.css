@@ -49,6 +49,26 @@
 .graph-toolbar .field { width: min(360px, 100%); }
 .graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
 .graph-card { padding: 0; overflow: hidden; }
+.graph-toolbar-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+.lv-host { display: flex; flex-direction: column; }
+.lv-host[hidden], .graph-canvas[hidden], .graph-legend[hidden] { display: none; }
+.lv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); }
+.lv-select { width: auto; max-width: 220px; padding-block: 5px; }
+.lv-btn.is-on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.lv-sep { width: 1px; align-self: stretch; background: var(--border-subtle); }
+.lv-spacer { flex: 1; }
+.lv-status { color: var(--text-muted); font-size: 11.5px; }
+.lv-frame { position: relative; background: var(--code-bg); }
+.lv-stage { position: relative; height: clamp(420px, 70dvh, 820px); }
+.lv-zoom { position: absolute; top: 10px; left: 10px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow-sm); }
+.lv-zbtn { padding: 6px 10px; border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent; color: var(--text); font-size: 15px; line-height: 1; }
+.lv-zbtn:last-child { border-bottom: 0; }
+.lv-zbtn:hover { background: var(--accent-soft); color: var(--accent-text); }
+.lv-fit { font-size: 11px; font-weight: 600; }
+.lv-minimap { position: absolute; right: 10px; bottom: 10px; width: 200px; height: 130px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow-sm); cursor: crosshair; touch-action: none; }
+.lv-tooltip { position: absolute; z-index: 3; transform: translate(-50%, -100%); max-width: 320px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); font: 600 11.5px var(--font-mono); pointer-events: none; }
+.lv-tooltip[hidden] { display: none; }
+@media (max-width: 720px) { .lv-minimap { width: 120px; height: 80px; } }
 .graph-canvas { position: relative; overflow: auto; padding: 18px; background: var(--code-bg); min-height: 380px; }
 .graph-edges { position: absolute; top: 0; left: 0; pointer-events: none; }
 .graph-cols { position: relative; z-index: 1; display: flex; gap: 40px; width: max-content; }

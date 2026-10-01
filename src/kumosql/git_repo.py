@@ -16,12 +16,27 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import threading
 from pathlib import Path
 
 from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, ProjectError
 from .state import data_dir
 
+# One git load at a time: the UI can start several (a double click, the startup
+# reload plus a manual one), and they must not clone into or delete the same cache.
+_LOAD_LOCK = threading.RLock()
 _TIMEOUT_SECONDS = 180
+_AUTH_FAILURES = (
+    "authentication failed", "could not read username", "could not read password",
+    "terminal prompts disabled", "permission denied (publickey", "repository not found",
+    "http basic: access denied", "invalid username or password", "host key verification failed",
+)
+_AUTH_HINT = (
+    "Git could not sign in to this remote. Sign in to git on this computer first, for example "
+    "with Git Credential Manager (installed with Git for Windows), `gh auth login`, or an SSH key "
+    "added to your account, then try again. If the repository URL is wrong, GitHub reports it the same way."
+)
 _ALLOWED_PROTOCOLS = "https:http:ssh:git:file"
 _REMOTE = re.compile(r"^(?:https?://|ssh://|git://|file://|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:|/|[A-Za-z]:[\\/]|\\\\)")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -80,7 +95,8 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
         raise GitRepoError(f"git {args[0]} timed out after {_TIMEOUT_SECONDS} seconds") from exc
     if done.returncode != 0:
         message = (done.stderr or done.stdout).decode("utf-8", "replace").strip() or f"exit status {done.returncode}"
-        raise GitRepoError(f"git {args[0]} failed: {message}")
+        hint = f"\n{_AUTH_HINT}" if any(text in message.lower() for text in _AUTH_FAILURES) else ""
+        raise GitRepoError(f"git {args[0]} failed: {message}{hint}")
     return done.stdout
 
 
@@ -92,6 +108,11 @@ def _cache_path(remote: str, branch: str | None) -> Path:
 def sync(remote: str, branch: str | None = None, refresh: bool = False) -> Path:
     """Clone (shallow) or update the cached checkout and return its path."""
 
+    with _LOAD_LOCK:
+        return _sync(remote, branch, refresh)
+
+
+def _sync(remote: str, branch: str | None, refresh: bool) -> Path:
     path = _cache_path(remote, branch)
     if (path / ".git").is_dir() and not refresh:
         return path
@@ -110,8 +131,7 @@ def sync(remote: str, branch: str | None = None, refresh: bool = False) -> Path:
 
 def _clone(remote: str, branch: str | None, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    partial = path.with_name(path.name + ".partial")
-    shutil.rmtree(partial, ignore_errors=True)
+    partial = Path(tempfile.mkdtemp(prefix=path.name + ".partial-", dir=path.parent))
     # No working tree: files are read from git objects, so path length and
     # reserved names on the local filesystem (Windows' 260-character limit) cannot break a load.
     args = ["clone", "--depth", "1", "--no-tags", "--no-checkout", "--quiet"]
@@ -162,7 +182,12 @@ def fetch_project(value: object, branch: object = None, refresh: bool = False) -
 
     remote = parse_remote(value)
     wanted = parse_branch(branch)
-    checkout = sync(remote, wanted, bool(refresh))
+    with _LOAD_LOCK:  # the cache must not change between the sync and the reads below
+        return _fetch(remote, wanted, bool(refresh))
+
+
+def _fetch(remote: str, wanted: str | None, refresh: bool) -> dict:
+    checkout = sync(remote, wanted, refresh)
     actual = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=checkout).strip()
     commit = _git(["rev-parse", "--short", "HEAD"], cwd=checkout).strip()
     blobs = _tree_blobs(checkout)

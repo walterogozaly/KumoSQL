@@ -56,6 +56,8 @@ ASSETS = {
     "/cost": ("insights.html", "text/html; charset=utf-8"),
     "/changes": ("insights.html", "text/html; charset=utf-8"),
     "/assets/insights.css": ("insights.css", "text/css; charset=utf-8"),
+    "/assets/vendor/cytoscape.min.js": ("vendor/cytoscape.min.js", "text/javascript; charset=utf-8"),
+    "/assets/lineage-view.js": ("lineage-view.js", "text/javascript; charset=utf-8"),
     "/assets/insights.js": ("insights.js", "text/javascript; charset=utf-8"),
     "/assets/browse.css": ("browse.css", "text/css; charset=utf-8"),
     "/assets/bqprojects.js": ("bqprojects.js", "text/javascript; charset=utf-8"),
@@ -171,6 +173,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 "cache_hours": scope_queries.cache_seconds() / 3600,
                 "cached": scope_queries.cached_queries(),
             })
+            return
+        if self.path == "/api/repositories":
+            from . import repositories
+
+            self._json(200, repositories.listing())
             return
         if self.path == "/api/scope-fields":
             self._json(200, self._scope_fields())
@@ -386,6 +393,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
             "/api/project/git", "/api/project", "/api/project/clear",
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
+            "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -413,6 +421,15 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
             elif self.path == "/api/scope-queries":
                 result = _scope_query(payload)
+            elif self.path.startswith("/api/repositories"):
+                from . import repositories
+
+                if self.path == "/api/repositories":
+                    result = repositories.replace(payload.get("repositories"), payload.get("active"))
+                elif self.path == "/api/repositories/activate":
+                    result = repositories.activate(payload.get("id"))
+                else:
+                    result = repositories.load(payload.get("id"), refresh=True)
             elif self.path == "/api/project/clear":
                 live_graph.clear_project()
                 result = {"loaded": False}
@@ -504,6 +521,11 @@ def main(argv: list[str] | None = None) -> int:
             live_graph.set_project(load_sqlx_project(args.project), args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
+    if not (args.project or args.git):
+        from . import repositories
+
+        # Connected repositories reload in the background; --jobs needs the project now.
+        repositories.autoload(background=not args.jobs)
     if args.jobs:
         if not live_graph.loaded():
             parser.error("--jobs needs --project or --git")
