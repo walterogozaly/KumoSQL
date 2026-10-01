@@ -50,6 +50,9 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _QUOTED_PATH = re.compile(r"""(?P<q>['"])(?P<p>(?:[A-Za-z]:[\\/]|\\\\+|/)[^'"\r\n]*)(?P=q)""")
 _POSIX_PATH = re.compile(r"(?<![\w:/.~$#>])(?:~|)/(?:[^\s/'\"`<>:;,()\[\]{}|*?]+/)*[^\s/'\"`<>:;,()\[\]{}|*?]*")
 _WIN_PATH = re.compile(r"""(?<![\w])(?:[A-Za-z]:[\\/]+|\\\\+[^\s\\/]+[\\/]+|~[\\/]+)(?:[^\s\\/'"`<>|:*?]+[\\/]+)*[^\s\\/'"`<>|:*?]*""")
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# sqlglot appends a copy of the SQL around the error after "Line N, Col: M."; keep the position, drop the SQL.
+_SQL_EXCERPT = re.compile(r"(Line \d+, Col: \d+\.?)(?:\s.*)?$", re.S)
 _HOST = re.compile(r"(?i)\b(host(?:name)?\s+)([A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+)")
 _BARE_IDENT = re.compile(r"\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+\.[A-Za-z_]\w*\.[A-Za-z_]\w*\b")
 _QUOTED_IDENT = re.compile(r"`([^`\n]{1,300})`")
@@ -176,6 +179,8 @@ class Redactor:
             return "<log text withheld: redaction failed>"
 
     def _scrub(self, text: str) -> str:
+        text = _ANSI.sub("", text)
+        text = _SQL_EXCERPT.sub(lambda m: m.group(1) + " <SQL excerpt withheld>", text)
         text = _SECRET.sub("secret~", text)
         text = _ASSIGNED_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}secret~", text)
         text = _URL.sub(lambda m: self._url(m.group(0)), text)

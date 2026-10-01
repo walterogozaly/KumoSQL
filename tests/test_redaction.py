@@ -164,3 +164,8 @@ def test_request_log_drops_query_values(tmp_path, monkeypatch):
         server.server_close()
     logged = (tmp_path / "ui.log").read_text(encoding="utf-8")
     assert "acme-prod" not in logged and "?project,table" in logged
+
+
+def test_sql_parse_error_excerpts_keep_only_line_and_column():
+    text = console.scrub("Invalid expression / Unexpected token. Line 3, Col: 14.\n  select a from \x1b[4mcorp_sales.orders\x1b[0m where")
+    assert text == "Invalid expression / Unexpected token. Line 3, Col: 14. <SQL excerpt withheld>"
