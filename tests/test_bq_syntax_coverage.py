@@ -24,7 +24,12 @@ CASE_STAGES = [(case["id"], stage) for case in CASES for stage in coverage.stage
 
 @pytest.fixture(scope="module")
 def results():
-    return coverage.run_all(CASES)
+    mp = pytest.MonkeyPatch()
+    mp.setenv("KUMOSQL_TIMING", "0")
+    try:
+        return coverage.run_all(CASES)
+    finally:
+        mp.undo()
 
 
 def test_manifest_lists_every_fixture_file_once():

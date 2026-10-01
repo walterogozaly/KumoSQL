@@ -21,7 +21,6 @@ import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
-os.environ.setdefault("KUMOSQL_TIMING", "0")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -567,6 +566,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update-known-gaps", action="store_true", help="record current gaps in known_gaps.json")
     parser.add_argument("--failures", action="store_true", help="list every failing case/stage")
     args = parser.parse_args(argv)
+    os.environ.setdefault("KUMOSQL_TIMING", "0")  # no per-stage timing lines for hundreds of tiny projects
     cases = load_manifest()
     results = run_all(cases)
     if args.json:
