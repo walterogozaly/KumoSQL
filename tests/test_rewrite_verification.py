@@ -1,3 +1,5 @@
+from kumosql import prover_context
+import pytest
 from kumosql import (
     RewriteResult,
     VerificationCheck,
@@ -194,3 +196,9 @@ def test_failed_rule_overrides_unchanged_text():
         ("rewrite", "failed"),
     ]
 
+
+@pytest.fixture(autouse=True)
+def predicate_only_solver(monkeypatch):
+    """These tests describe the evidence policy without the general solver; it has its own tests."""
+
+    monkeypatch.setattr(prover_context, "settings", lambda: {"enabled": False, "timeout_ms": 5000})

@@ -1,3 +1,4 @@
+from kumosql import prover_context
 """Opt-in synthetic-data evidence on rewrite results (synthetic tables only)."""
 
 import importlib.util
@@ -195,3 +196,10 @@ def test_cli_requires_schema_and_rejects_orphan_flags(tmp_path):
         rewrite_main([str(source), "-r", "remove_trivial_predicates", "--synthetic-check"])
     with pytest.raises(SystemExit):
         rewrite_main([str(source), "-r", "remove_trivial_predicates", "--synthetic-seeds", "2"])
+
+
+@pytest.fixture(autouse=True)
+def predicate_only_solver(monkeypatch):
+    """These tests describe the evidence policy without the general solver; it has its own tests."""
+
+    monkeypatch.setattr(prover_context, "settings", lambda: {"enabled": False, "timeout_ms": 5000})

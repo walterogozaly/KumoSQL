@@ -139,6 +139,20 @@ def peek(key: str) -> dict | None:
             "stale": False, "refreshing": time.time() - entry["at"] >= ttl_seconds()}
 
 
+def saved_tables() -> list[tuple[str, str, str, dict]]:
+    """``(project, dataset, table, metadata)`` for every table whose schema is saved; calls nothing."""
+
+    with _lock:
+        _load_disk()
+        entries = list(_memory.items())
+    found = []
+    for key, entry in entries:
+        parts = key.split("\x1f") if isinstance(key, str) else []
+        if len(parts) == 4 and parts[0] == "table" and isinstance(entry.get("data"), dict):
+            found.append((parts[1], parts[2], parts[3], entry["data"]))
+    return found
+
+
 def cached(key: str, fetch, refresh: bool = False) -> dict:
     """Return ``{"data", "fetchedAt", "cached", "stale", "refreshing"}`` for ``key``.
 
@@ -485,4 +499,5 @@ def get_table(project: str, dataset: str, table: str) -> dict:
         "type": payload.get("type", "TABLE"),
         "numRows": payload.get("numRows"),
         "schema": payload.get("schema", {}).get("fields", []),
+        "constraints": payload.get("tableConstraints"),
     }

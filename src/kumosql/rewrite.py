@@ -26,6 +26,7 @@ from .ast_utils import parse_statements, top_level_query
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
+from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 
@@ -202,16 +203,26 @@ def _verify_sql(
         if not proof.proven:
             detail = "; ".join(proof.diagnostics)
             message = f"statement {index}: {proof.reason}" + (f" ({detail})" if detail else "")
-            # A change confined to predicates may still be provable with SMT.
-            if _predicate_only_change(old_sql, new_sql):
-                smt = prove_equivalent_smt(old_sql, new_sql, timeout_ms=smt_timeout_ms)
+            # The solver (algebraic rewrites plus SMT, using the project's declared keys and
+            # NOT NULL columns) tries any change; with it off, only a change confined to predicates.
+            solver_on = prover_context.settings()["enabled"]
+            if solver_on or _predicate_only_change(old_sql, new_sql):
+                if solver_on:
+                    smt = prover_context.prove(
+                        old_sql,
+                        new_sql,
+                        timeout_ms=None if smt_timeout_ms == DEFAULT_SMT_TIMEOUT_MS else smt_timeout_ms,
+                    )
+                else:
+                    smt = prove_equivalent_smt(old_sql, new_sql, timeout_ms=smt_timeout_ms)
                 if smt.status is SmtStatus.PROVEN_EQUIVALENT:
                     if smt_checks is not None:
                         smt_checks.append(
                             VerificationCheck(
                                 "smt_proof",
                                 "passed",
-                                f"statement {index}: predicate-only change proven equivalent by SMT",
+                                f"statement {index}: "
+                                + ("change proven equivalent by the solver" if solver_on else "predicate-only change proven equivalent by SMT"),
                                 (("assumptions", tuple(smt.assumptions)),),
                             )
                         )

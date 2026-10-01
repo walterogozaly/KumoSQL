@@ -372,3 +372,20 @@ def test_version_is_reported():
     data = version.info()
     assert data["version"] and "commit" in data
     assert version.describe().startswith(data["version"])
+
+
+def test_ui_solver_settings_round_trip_and_validate(ui_server):
+    def call(method, payload=None):
+        data = None if payload is None else json.dumps(payload).encode()
+        request = Request(ui_server + "/api/prover", data=data, method=method, headers={"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            return json.load(response)
+
+    assert call("GET")["enabled"] is True
+    saved = call("PUT", {"enabled": False, "timeout_ms": 2000})
+    assert (saved["enabled"], saved["timeout_ms"]) == (False, 2000)
+    assert call("GET")["enabled"] is False
+    for bad in ({"enabled": "yes"}, {"timeout_ms": 1}):
+        with pytest.raises(HTTPError) as error:
+            call("PUT", bad)
+        assert error.value.code == 400

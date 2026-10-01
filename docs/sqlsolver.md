@@ -43,3 +43,7 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSolver assumes), output names ignored, NOT NULL and primary keys from the schema, and the input read as MySQL. "Unchecked" proofs (a few pairs that DuckDB itself rejects) are listed in the tool output.
 
 SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.
+
+## Rewrite verification and declared facts
+
+`kumosql.prover_context.prove` is the one entry point the app uses; `verify_rewrite` calls it for any changed statement when the solver is enabled (`prover` section of the saved settings, default on, 5000 ms). The facts it may assume come from `kumosql.prover_schema`: BigQuery `REQUIRED` columns and `tableConstraints.primaryKey` from the saved catalog (`bigquery_catalog.saved_tables`), and Dataform `assertions` read by `pipeline_loading` into `Model.non_null` / `Model.unique_keys`. A table is registered under each spelling (`project.dataset.table`, `dataset.table`, `table`); a bare name shared by two tables is dropped. Proofs that used any declared fact list the assumption "declared keys and NOT NULL columns hold in the data".

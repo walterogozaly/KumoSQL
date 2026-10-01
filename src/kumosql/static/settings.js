@@ -28,6 +28,7 @@
     { id: "bigquery", label: "BigQuery projects", icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
     { id: "diagnostics", label: "Diagnostics", icon: '<path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/>' },
+    { id: "solver", label: "Solver", icon: '<path d="M4 20h16M6 20V9l6-5 6 5v11M10 20v-6h4v6"/>' },
     { id: "tagrules", label: "Tag rules", icon: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/>' },
   ];
 
@@ -595,6 +596,32 @@
     window.KumoBqProjects.renderBilling(body, { onStatus: setStatus });
   }
 
+  async function renderSolver(body) {
+    const enabled = h("input", { type: "checkbox", id: "solver-enabled", "aria-label": "Use the equivalence solver" });
+    const timeout = h("input", { type: "number", class: "sp-input sp-number", min: "500", max: "60000", step: "500", "aria-label": "Time limit in milliseconds" });
+    const facts = h("p", { class: "sp-row-hint" });
+    const draw = (info) => {
+      enabled.checked = info.enabled;
+      timeout.value = info.timeout_ms;
+      if (!info.available) facts.textContent = "z3-solver is not installed, so nothing is proven by the solver.";
+      else if (!info.enabled) facts.textContent = "";
+      else facts.textContent = `${info.tables} tables known, ${info.constrained} with declared keys or NOT NULL columns.`;
+    };
+    const put = async (payload) => {
+      setStatus("Saving…");
+      try { draw(await repoCall("PUT", "/api/prover", payload)); setStatus("Saved"); } catch (error) { setStatus(error.message, true); }
+    };
+    enabled.addEventListener("change", () => put({ enabled: enabled.checked }));
+    timeout.addEventListener("change", () => put({ timeout_ms: Number(timeout.value) }));
+    body.append(
+      h("h3", { class: "sp-heading", text: "Solver" }),
+      h("label", { class: "sp-inline", for: "solver-enabled" }, enabled, h("span", { text: "Prove rewrites equivalent with the solver" })),
+      h("div", { class: "sp-inline" }, timeout, h("span", { text: "ms per check" })),
+      facts,
+    );
+    try { draw(await repoCall("GET", "/api/prover")); } catch (error) { setStatus(error.message, true); }
+  }
+
   async function renderDiagnostics(body) {
     body.append(
       h("h3", { class: "sp-heading", text: "Diagnostics" }),
@@ -622,7 +649,7 @@
     body.append(h("div", { class: "repo-form" }, copy), hint, preview);
   }
 
-  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes, tagrules: renderTagRules };
+  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, solver: renderSolver, scopes: renderScopes, tagrules: renderTagRules };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -645,6 +672,7 @@
     repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
     bigquery: "bigquery projects choose select project catalog browse tab billing project query cache hours lifetime",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
+    solver: "solver prover proof prove equivalent equivalence z3 smt rewrite verification keys not null time limit",
     tagrules: "tag tags rules rule label retired batch tagging dataset schema table view function udf procedure objects",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };
