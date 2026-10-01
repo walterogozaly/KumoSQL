@@ -88,7 +88,9 @@ def _config_tags(config: str) -> tuple[str, ...]:
     match = re.search(r"\btags\s*:\s*(?:\[(?P<list>[^\]]*)\]|(?P<one>['\"`][^'\"`]*['\"`]))", config)
     if not match:
         return ()
-    return tuple(dict.fromkeys(re.findall(r"['\"`]([^'\"`]+)['\"`]", match.group("list") or match.group("one"))))
+    # ``tags: []`` matches the list branch with an empty string; ``or`` would fall through to the unmatched ``one`` (None).
+    listed, single = match.group("list"), match.group("one")
+    return tuple(dict.fromkeys(re.findall(r"['\"`]([^'\"`]+)['\"`]", listed if listed is not None else single or "")))
 
 
 def _read_project_defaults(
@@ -237,7 +239,12 @@ def load_sqlx_project(
         if "${" in body:
             body, restorations = _mask_sqlx_interpolations(body)
             masked = tuple(item.original for item in restorations)
-        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, _config_tags(config)))
+        try:
+            tags = _config_tags(config)
+        except Exception as exc:  # noqa: BLE001 - tags are optional; never lose the model over them
+            diagnostics.append(PipelineDiagnostic(relative, "config_tags_unreadable", f"could not read tags ({type(exc).__name__}: {exc}); the model was kept without tags"))
+            tags = ()
+        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags))
 
     from .pipeline import Pipeline  # deferred: pipeline imports this module
 
