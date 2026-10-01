@@ -1079,3 +1079,110 @@ def test_nested_set_operations_keep_their_shape_in_the_normalized_text():
     tree = sqlglot.parse_one(text, read="mysql")
     assert isinstance(tree, sqlglot.exp.Intersect)
     assert isinstance(tree.expression, sqlglot.exp.Subquery) and isinstance(tree.expression.this, sqlglot.exp.Union)
+
+
+DERIVED_SCHEMA = {"t": ["id", "k", "v"], "u": ["id", "k", "v"]}
+DERIVED_PROVEN = {
+    "filter into distinct": (
+        "SELECT * FROM (SELECT DISTINCT k FROM t) AS d WHERE d.k > 1",
+        "SELECT DISTINCT k FROM t WHERE k > 1",
+    ),
+    "filter on a group key": (
+        "SELECT * FROM (SELECT k, MIN(v) FROM t GROUP BY k) AS d WHERE d.k > 1",
+        "SELECT k, MIN(v) FROM t WHERE k > 1 GROUP BY k",
+    ),
+    "distinct is redundant under count distinct": (
+        "SELECT COUNT(DISTINCT k) FROM (SELECT k FROM t GROUP BY k) AS d",
+        "SELECT COUNT(DISTINCT k) FROM (SELECT k FROM t) AS d",
+    ),
+    "distinct is redundant under max": (
+        "SELECT MAX(k) FROM (SELECT DISTINCT k FROM t) AS d",
+        "SELECT MAX(k) FROM t",
+    ),
+    "except of two filters": (
+        "SELECT * FROM t WHERE id > 0 EXCEPT SELECT * FROM t WHERE id < 10",
+        "SELECT DISTINCT * FROM t WHERE id > 0 AND NOT COALESCE(id < 10, FALSE)",
+    ),
+    "exists as a limit one probe": (
+        "SELECT * FROM t WHERE EXISTS (SELECT k FROM u WHERE v > 1)",
+        "SELECT * FROM t WHERE (SELECT 1 FROM (SELECT k FROM u WHERE v > 1) AS x LIMIT 1) IS NOT NULL",
+    ),
+    "nth value one is first value": (
+        "SELECT FIRST_VALUE(v) OVER (PARTITION BY k ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+        "SELECT NTH_VALUE(v, 1) OVER (PARTITION BY k ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+    ),
+    "unnamed derived column under a star": (
+        "SELECT * FROM (SELECT k, MIN(v) FROM t GROUP BY k) AS d WHERE d.k > 1",
+        "SELECT k, MIN(v) FROM t WHERE k > 1 GROUP BY k",
+    ),
+    "inner lateral is a join": (
+        "SELECT * FROM t INNER JOIN LATERAL (SELECT * FROM u WHERE t.k = u.k) AS x",
+        "SELECT * FROM t INNER JOIN u ON t.k = u.k",
+    ),
+    "left lateral aggregate is a scalar subquery": (
+        "SELECT t.id, (SELECT MAX(u.v) FROM u WHERE t.k = u.k) FROM t",
+        "SELECT t.id, s.m FROM t LEFT JOIN LATERAL (SELECT MAX(u.v) AS m FROM u WHERE t.k = u.k) AS s",
+    ),
+}
+DERIVED_NOT_PROVEN = {
+    "filter on an aggregate is not a group key": (
+        "SELECT * FROM (SELECT k, MIN(v) AS m FROM t GROUP BY k) AS d WHERE d.m > 1",
+        "SELECT k, MIN(v) FROM t WHERE v > 1 GROUP BY k",
+    ),
+    "distinct matters to count": (
+        "SELECT COUNT(k) FROM (SELECT DISTINCT k FROM t) AS d",
+        "SELECT COUNT(k) FROM t",
+    ),
+    "distinct matters to sum": (
+        "SELECT SUM(k) FROM (SELECT k FROM t GROUP BY k) AS d",
+        "SELECT SUM(k) FROM t",
+    ),
+    "except with a subset of the columns": (
+        "SELECT k FROM t WHERE id > 0 EXCEPT SELECT k FROM t WHERE id < 10",
+        "SELECT DISTINCT k FROM t WHERE id > 0 AND NOT COALESCE(id < 10, FALSE)",
+    ),
+    "nth value two is not first value": (
+        "SELECT FIRST_VALUE(v) OVER (PARTITION BY k ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+        "SELECT NTH_VALUE(v, 2) OVER (PARTITION BY k ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+    ),
+    "lateral with a group by repeats rows": (
+        "SELECT t.id, s.m FROM t INNER JOIN LATERAL (SELECT MAX(u.v) AS m FROM u WHERE t.k = u.k GROUP BY u.id) AS s",
+        "SELECT t.id, (SELECT MAX(u.v) FROM u WHERE t.k = u.k) FROM t",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", DERIVED_PROVEN)
+def test_derived_table_rules_prove(name):
+    left, right = DERIVED_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=DERIVED_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", DERIVED_NOT_PROVEN)
+def test_derived_table_rules_keep_their_boundaries(name):
+    left, right = DERIVED_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=DERIVED_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+def test_derived_table_rewrites_preserve_results_on_random_databases():
+    rng = random.Random(77)
+    forms = [pair[0] for pair in DERIVED_PROVEN.values() if "LATERAL" not in pair[0]] + [
+        pair[0] for pair in DERIVED_NOT_PROVEN.values() if "LATERAL" not in pair[0]
+    ]
+    normalized = [normalize(f, schema=DERIVED_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        for table in ("t", "u"):
+            db.execute(f"CREATE TABLE {table} (id INT, k INT, v INT)")
+            for n in range(rng.choice([0, 1, 4, 6])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [rng.choice([None, 1, 2, 3, 4]), rng.choice([None, 0, 1, 2]), rng.choice([None, 0, 2, 5])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            try:
+                expected = Counter(db.execute(plain).fetchall())
+            except sqlite3.OperationalError:
+                continue
+            assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
