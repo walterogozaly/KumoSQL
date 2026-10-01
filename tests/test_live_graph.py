@@ -160,7 +160,7 @@ def test_cli_project_option_loads_a_folder(tmp_path, monkeypatch):
     def boom(*_args, **_kwargs):
         raise Stop
 
-    monkeypatch.setattr(ui, "ThreadingHTTPServer", boom)
+    monkeypatch.setattr(ui, "UIServer", boom)
     with pytest.raises(Stop):
         ui.main(["--project", str(tmp_path), "--no-browser"])
     assert live_graph.loaded()["label"] == str(tmp_path)

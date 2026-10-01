@@ -124,7 +124,7 @@ In Python, `load_sqlx_project("demo")` gives you the same `Pipeline` object, and
 python -m kumosql.ui --project demo      # or: kumosql-ui --project demo
 ```
 
-This starts a local server at `http://127.0.0.1:8765/` and opens your browser. Use `--no-browser` to skip opening it, `--port 8766` to pick another port, and Ctrl+C to stop. The server listens only on `127.0.0.1`, and pasted SQL stays on your computer.
+This starts a local server at `http://127.0.0.1:8765/` and opens your browser. Use `--no-browser` to skip opening it, `--port 8766` to pick another port, and Ctrl+C to stop. Requests are logged to `ui.log` in the KumoSQL data directory, not the console, and Windows QuickEdit is turned off, so clicking in the console window does not freeze the page (if it ever does, press Esc). The server listens only on `127.0.0.1`, and pasted SQL stays on your computer.
 
 - **Sidebar.** Pages (Workspace, Query graph, Cost, Change reports, BigQuery) are listed down the left; **Settings** and the **Theme** button (system, light, dark) are pinned at the bottom. The panel button at the top collapses it to icons and expands it again, and your choice is remembered.
 
