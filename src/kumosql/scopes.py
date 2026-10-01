@@ -64,6 +64,7 @@ OPERATORS = {
     "gte": "is at least",
     "lt": "is less than",
     "lte": "is at most",
+    "in_query": "is returned by SQL query",
     "is_null": "is empty",
     "not_null": "is not empty",
 }
@@ -73,6 +74,7 @@ _ALIASES = {
 }
 _LIST_OPS = {"in", "not_in"}
 _NO_VALUE_OPS = {"is_null", "not_null"}
+_QUERY_OPS = {"in_query"}
 _NEGATED = {"ne", "not_in"}
 
 #: Fields of a pipeline model, and the extra fields a table profile adds.
@@ -138,7 +140,21 @@ def _parse_condition(data: Mapping) -> dict:
     if op not in OPERATORS:
         raise ValueError(f"unknown operator {data.get('op')!r} for {name!r}; use one of {', '.join(OPERATORS)}")
     result: dict = {"field": name, "op": op}
-    if op in _NO_VALUE_OPS:
+    if op in _QUERY_OPS:
+        sql = data.get("query")
+        if not isinstance(sql, str) or not sql.strip():
+            raise ValueError(f"{op} on {name!r} needs a SQL query")
+        if len(sql) > 20_000:
+            raise ValueError(f"the query for {name!r} is longer than 20000 characters")
+        if data.get("value") not in (None, [], ""):
+            raise ValueError(f"{op} on {name!r} takes a query, not a value")
+        result["query"] = sql.strip()
+        column = data.get("column")
+        if column not in (None, ""):
+            if not isinstance(column, str):
+                raise ValueError(f"the column for {name!r} must be text")
+            result["column"] = column.strip()
+    elif op in _NO_VALUE_OPS:
         if data.get("value") not in (None, [], ""):
             raise ValueError(f"{op} on {name!r} takes no value")
     elif op in _LIST_OPS:
@@ -207,6 +223,9 @@ def describe_rule(rule: Mapping, *, _top: bool = True) -> str:
         label = OPERATORS[op]
         if op in _NO_VALUE_OPS:
             return f"{rule['field']} {label}"
+        if op in _QUERY_OPS:
+            snippet = " ".join(rule["query"].split())
+            return f"{rule['field']} {label} “{snippet[:60]}{'…' if len(snippet) > 60 else ''}”"
         value = rule["value"]
         shown = "[" + ", ".join(map(str, value)) + "]" if isinstance(value, list) else str(value)
         return f"{rule['field']} {label} {shown}"
@@ -279,6 +298,11 @@ def _condition_matches(node: Mapping, record: Mapping[str, object]) -> bool:
         return empty if op == "is_null" else not empty
     cs = bool(node.get("case_sensitive"))
     texts = _texts(actual, cs)
+    if op in _QUERY_OPS:
+        from . import scope_queries
+
+        wanted_values = scope_queries.values_for(node, cs)
+        return any(t in wanted_values for t in texts)
     if op in _NEGATED:
         positive = {"ne": "eq", "not_in": "in"}[op]
         return not _condition_matches({**node, "op": positive}, record)

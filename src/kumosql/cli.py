@@ -492,6 +492,14 @@ def scopes_main(argv: list[str] | None = None) -> int:
     add.add_argument("--rule-file", type=Path, help="Read the rule JSON from a file")
     remove = commands.add_parser("remove", help="Delete a scope")
     remove.add_argument("name")
+    refresh = commands.add_parser(
+        "refresh",
+        help="Run or refresh the SQL query conditions of a scope (all scopes if none is named)",
+        description="Runs each 'is returned by SQL query' condition now, ignoring the kept result. "
+        "Queries are capped by the byte limit in Settings; --check only dry-runs them (free).",
+    )
+    refresh.add_argument("name", nargs="?", help="Scope name; every scope with query conditions if omitted")
+    refresh.add_argument("--check", action="store_true", help="Dry-run only: validate and estimate, run nothing")
     fields = commands.add_parser("fields", help="List the fields a rule can use, found in your data")
     fields.add_argument("--root", type=Path, help="Dataform project (or compiled graph) to read model and profile fields from")
     fields.add_argument("--source-schema", type=Path, help="Source schema JSON, as for kumosql-pipeline-report")
@@ -501,6 +509,32 @@ def scopes_main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         for scope in list_scopes():
             print(json.dumps(scope.to_json()))
+    elif args.command == "refresh":
+        from . import scope_queries
+
+        chosen = [get_scope(args.name)] if args.name else list_scopes()
+        if args.name and chosen[0] is None:
+            parser.error(f"no saved scope named {args.name!r}")
+        failed = False
+        for scope in chosen:
+            try:
+                nodes = scope_queries.query_nodes(scope.expanded_rule())
+            except ValueError as exc:
+                parser.error(str(exc))
+            for node in nodes:
+                label = f"{scope.name}: {node['field']}"
+                try:
+                    if args.check:
+                        plan = scope_queries.dry_run(node["query"], node.get("column"))
+                        print(f"{label}: ok, returns {', '.join(plan['columns'])}; about {plan['estimated_bytes']} bytes")
+                    else:
+                        result = scope_queries.result_for(node["query"], node.get("column"), refresh=True)
+                        note = f" (re-run failed, kept the older copy: {result.error})" if result.error else ""
+                        print(f"{label}: {len(result.values)} values{note}")
+                except ValueError as exc:
+                    failed = True
+                    print(f"{label}: {exc}", file=sys.stderr)
+        return 1 if failed else 0
     elif args.command == "fields":
         pipeline = None
         if args.root:
