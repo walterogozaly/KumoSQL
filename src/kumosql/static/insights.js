@@ -461,7 +461,8 @@ function renderGraph(data, root) {
     h("dl", { class: "coverage-stats" },
       stat("Assets analyzed", `${coverage.assets_analyzed} of ${coverage.assets_total}`),
       stat("Statements matched", percent(coverage.statements_matched, coverage.statements_total)),
-      stat("Sampled impact accuracy", coverage.sampled_impact_accuracy == null ? "Not reviewed" : `${Math.round(coverage.sampled_impact_accuracy * 100)}%`, `${coverage.sample_size} sampled reports`),
+      // Shown once reviewed impact reports exist; until then it could only say "Not reviewed".
+      coverage.sampled_impact_accuracy == null ? null : stat("Sampled impact accuracy", `${Math.round(coverage.sampled_impact_accuracy * 100)}%`, `${coverage.sample_size} sampled reports`),
       stat("Job history", data.window?.start || data.window?.end ? windowLabel(data.window) : "None"),
       stat("Gaps", String(data.gaps.length))));
 
