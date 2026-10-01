@@ -373,3 +373,11 @@ def test_pages_ship_the_scope_picker_and_settings_section(ui_server):
     assert "KumoScopes" in script and "renderManager" in script
     with urlopen(ui_server + "/assets/settings.js") as response:
         assert 'id: "scopes"' in response.read().decode()
+
+
+@pytest.mark.parametrize("path", ["/assets/lineage-view.js", "/assets/vendor/cytoscape.min.js"])
+def test_graph_explorer_assets_are_served(ui_server, path):
+    with urlopen(f"{ui_server}{path}") as response:
+        assert response.status == 200
+        assert response.headers["Content-Type"].startswith("text/javascript")
+        assert len(response.read()) > 1000

@@ -95,6 +95,11 @@ class Pipeline:
             identity = NodeIdentity.for_target(target.database, target.schema, target.name)
             self._known_table_nodes.add(identity)
             self._node_kinds.setdefault(identity, "source")
+        # Partial names match on their trailing parts, so index known tables by last part.
+        self._known_by_tail: dict[str, list[NodeIdentity]] = {}
+        for known in self._known_table_nodes:
+            if known.kind == "table" and known.parts:
+                self._known_by_tail.setdefault(known.parts[-1], []).append(known)
         self._analysis: _Analysis | None = None
 
     def resolve(self, table: exp.Table | str) -> str | None:
@@ -172,9 +177,7 @@ class Pipeline:
         if reference.kind != "table" or not reference.parts or len(reference.parts) >= 3:
             return ()
         candidates = []
-        for known in self._known_table_nodes:
-            if known.kind != "table" or not known.parts:
-                continue
+        for known in self._known_by_tail.get(reference.parts[-1], ()):
             short, long = sorted((reference.parts, known.parts), key=len)
             if short == long[-len(short) :]:
                 candidates.append(known)

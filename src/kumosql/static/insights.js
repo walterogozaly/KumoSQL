@@ -399,7 +399,7 @@ function renderGraph(data, root) {
 
   const search = h("input", { type: "search", class: "field", placeholder: "Find an asset or asset.column", list: "asset-options", "aria-label": "Find an asset" });
   const options = h("datalist", { id: "asset-options" },
-    data.nodes.flatMap((node) => [h("option", { value: node.id }), ...node.columns.map((column) => h("option", { value: `${node.id}.${column}` }))]));
+    data.nodes.flatMap((node) => [h("option", { value: node.id }), ...(data.nodes.length > 300 ? [] : node.columns.map((column) => h("option", { value: `${node.id}.${column}` })))]));
   search.addEventListener("change", () => {
     const value = search.value.trim();
     const node = data.nodes.find((item) => value === item.id || value.startsWith(`${item.id}.`));
@@ -413,6 +413,13 @@ function renderGraph(data, root) {
       h("button", { class: "tab", type: "button", role: "tab", "data-mode": mode, onclick: () => { state.mode = mode; update(); } }, label)));
 
   const canvas = h("div", { class: "graph-canvas", tabindex: "0", "aria-label": "Graph of assets and dependencies" });
+  const explorerHost = h("div", { class: "lv-host" });
+  let explorer = null;
+  let view = "explorer";
+  try { view = localStorage.getItem("kumosql.graphView") === "simple" ? "simple" : "explorer"; } catch { /* storage unavailable */ }
+  const viewTabs = h("div", { class: "tabs", role: "group", "aria-label": "Graph view" },
+    ...[["explorer", "Explorer", "Zoom, pan, collapse and focus. Built for large pipelines."], ["simple", "Simple", "Every asset in one fixed layout. Best for small projects."]].map(([key, label, title]) =>
+      h("button", { class: "tab", type: "button", "data-view": key, title, onclick: () => setView(key) }, label)));
   const detail = h("aside", { class: "graph-detail", "aria-live": "polite" });
   const legend = h("div", { class: "graph-legend" },
     ...Object.entries(EDGE_SOURCES).map(([key, [label, title]]) =>
@@ -421,9 +428,9 @@ function renderGraph(data, root) {
 
   root.append(
     coverageStrip,
-    h("div", { class: "graph-toolbar" }, search, options, modeTabs),
+    h("div", { class: "graph-toolbar" }, search, options, h("div", { class: "graph-toolbar-tabs" }, viewTabs, modeTabs)),
     h("div", { class: "graph-layout" },
-      h("div", { class: "card graph-card" }, canvas, legend),
+      h("div", { class: "card graph-card" }, explorerHost, canvas, legend),
       detail),
     gapsPanel(data));
 
@@ -445,6 +452,21 @@ function renderGraph(data, root) {
         h("span", { class: "gnode-name", text: node.name }),
         h("span", { class: "gnode-kind", text: graph.gaps.has(node.id) ? "Not analyzed" : NODE_KINDS[node.kind] || node.kind }))))));
   canvas.append(svg, grid);
+
+  function setView(next) {
+    view = next;
+    try { localStorage.setItem("kumosql.graphView", next); } catch { /* storage unavailable */ }
+    update();
+  }
+  function showView() {
+    for (const tab of viewTabs.children) tab.setAttribute("aria-selected", String(tab.dataset.view === view));
+    canvas.hidden = view !== "simple";
+    explorerHost.hidden = view !== "explorer";
+    legend.hidden = view !== "simple";
+    if (view === "explorer" && !explorer) {
+      explorer = window.KumoLineage?.mount(explorerHost, { data, onSelect: (id) => select(id, null) }) || null;
+    }
+  }
 
   function select(id, column) {
     state.node = id;
@@ -533,7 +555,9 @@ function renderGraph(data, root) {
       button.classList.toggle("is-dim", !lit.has(button.dataset.id));
     }
     for (const tab of modeTabs.children) tab.setAttribute("aria-selected", String(tab.dataset.mode === state.mode));
-    drawEdges(lit);
+    showView();
+    if (view === "explorer") explorer?.update({ selected: state.node, lit });
+    else drawEdges(lit);
     renderDetail();
     const url = new URL(location.href);
     url.searchParams.set("node", state.node);
