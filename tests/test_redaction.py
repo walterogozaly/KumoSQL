@@ -7,11 +7,6 @@ import pytest
 from kumosql import console, redact, ui
 
 
-@pytest.fixture(autouse=True)
-def fresh_redactor(monkeypatch):
-    monkeypatch.setattr(redact, "GLOBAL", redact.Redactor(enabled=True))
-
-
 def test_same_name_gets_the_same_placeholder_and_kinds_count_separately():
     first = console.ref("repo", "git@github.com:acme/finance.git")
     assert first == "repo#1" and console.ref("repo", "git@github.com:acme/finance.git") == first
