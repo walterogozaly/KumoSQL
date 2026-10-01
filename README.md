@@ -304,7 +304,7 @@ python -m kumosql prove-sql-sqlsolver --check                                   
 
 The SQLSolver stage needs a schema listing every table with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. It is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
 
-SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are scored with these provers and hand-written rules and no language model: `python tools/sqliq_bench.py --data <SQL-IQ checkout>` (see [docs/sql-iq.md](docs/sql-iq.md)).
+SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are scored with these provers and hand-written rules and no language model: `python tools/sqliq_bench.py --data <SQL-IQ checkout>` (see [docs/sql-iq.md](docs/sql-iq.md); the SQL Judge and Error Classification rules were tuned on SQL-IQ's own data, so those two scores are tuned-on-test).
 
 ## Whole-pipeline analysis
 
