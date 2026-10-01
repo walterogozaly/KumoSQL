@@ -47,3 +47,33 @@ def test_score_reports_both_classes():
     assert metrics["equivalent_accuracy"] == 1.0
     assert metrics["non_equivalent_accuracy"] == 0.0
     assert metrics["geometric_mean"] == 0.0
+
+
+SCHEMA = """【DB_ID】 shop
+【Schema】
+# Table: main.orders
+[
+(id:INTEGER, id, Primary Key, Examples: [1, 2]),
+(status:TEXT, order status, Examples: [shipped, open]),
+(amount:REAL, order amount, Examples: [9.5])
+]
+"""
+
+
+def test_judge_prefers_the_query_the_question_supports():
+    import sqliq_judge
+
+    question = "How many orders are shipped?"
+    good = "SELECT COUNT(*) FROM orders WHERE status = 'shipped'"
+    bad = "SELECT id, amount FROM orders WHERE status = 'returned' AND amount > 77 LIMIT 5"
+    assert sqliq_judge.judge(question, "", SCHEMA, good, bad) == "A"
+    assert sqliq_judge.judge(question, "", SCHEMA, bad, good) == "B"
+
+
+def test_error_rules_call_a_grounded_query_correct_and_an_invented_column_wrong():
+    import sqliq_errors
+
+    question = "How many orders are shipped?"
+    assert sqliq_errors.classify(question, "", SCHEMA, "SELECT COUNT(*) FROM orders WHERE status = 'shipped'") == []
+    wrong = sqliq_errors.classify(question, "", SCHEMA, "SELECT COUNT(*) FROM orders WHERE state = 'shipped'")
+    assert "Attribute-Related Errors" in wrong
