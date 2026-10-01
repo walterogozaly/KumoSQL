@@ -40,7 +40,7 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 | TPC-H | 22 | 22 | 0 | 0 | was 21 before an EXISTS repeated inside a grouped join partner was read as redundant; 20 before casts that keep every value were dropped by declared column type and grouped derived tables were listed in a fixed column order; 19 before outer-join filters and joins under a grouping were read directly; was 16 before semi/anti joins, `IN` over a grouped subquery and repeated existence tests; 15 before correlated scalar aggregates became joins and derived aggregates were compared by proof; 14 before NULL guards, `1.00 = 1` and folded derived tables made the two spellings of a scalar subquery read alike; 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; all 22 pairs are proved |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |
 
-The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSolver assumes), output names ignored, NOT NULL and primary keys from the schema, and the input read as MySQL. "Unchecked" proofs (a few pairs that DuckDB itself rejects) are listed in the tool output.
+The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSolver assumes), output names ignored, NOT NULL and primary keys from the schema, and the input read as MySQL. The Calcite suite also passes `group_by_constants=True`: Calcite reads a literal in `GROUP BY` as a constant (dropped, or `GROUP BY TRUE` when nothing else is grouped, so an empty input still gives no row), where BigQuery and MySQL read it as a column ordinal. DuckDB checks those pairs with the literals cast to integers. Off by default. "Unchecked" proofs (a few pairs that DuckDB itself rejects) are listed in the tool output.
 
 SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.
 
@@ -64,5 +64,11 @@ With a declared key on `customers`, `customers JOIN (SELECT customer_id, SUM(x) 
 ## Everyday refactors
 
 `tests/test_bigquery_refactors.py` lists everyday BigQuery refactors the prover proves and near misses it refuses. Added in this round: a correlated scalar aggregate in the select list versus a left join to the grouped table (the inner join is refused), the sum of grouped sums versus the plain sum (a sum of grouped counts is refused: it reads NULL for no rows), `IN` over a `UNION ALL` versus an `OR` of the branches, a NULL guard under a global aggregate (refused under a `GROUP BY`), `LOWER(TRIM(x))` versus `TRIM(LOWER(x))` and `||` versus `CONCAT`, and a `LIMIT` inside a derived table that the outer select only projects versus the same `ORDER BY .. LIMIT` at the top.
+
+`GROUP BY` or `DISTINCT` over a derived `UNION ALL` that only groups its own columns is rewritten to a set union,.
+
+A `LEFT JOIN` to a derived table that only feeds `ind IS NOT NULL` (the shape decorrelators emit for `IN` and `EXISTS` under `OR`) is read as the `EXISTS` it stands for, when the join matches at most one row: the equated columns cover a declared key of the single table behind the derived table, or every column of its `GROUP BY`. Joined on a non-key column it stays a join, since the repeated rows would change the result.
+
+A `FULL JOIN` filtered on one side by a comparison (`b.x > 1`) is the `LEFT` or `RIGHT` join that keeps that side, and on both sides an inner join. A `LEFT JOIN` whose derived table or keyed table is never read and matches at most one row is dropped. `VALUES` without column names has columns `expr$0`, `expr$1`, .. (Calcite's names). Nested set operations are re-parenthesized in the normalized text so it reads back with the same shape.
 
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.

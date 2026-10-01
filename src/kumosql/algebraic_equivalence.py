@@ -647,7 +647,9 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
             for inner_column in replacement.find_all(exp.Column):
                 if not inner_column.table or inner_column.table.lower() == qualifier.lower():
                     inner_column.set("table", exp.to_identifier(alias))
-            column.replace(exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement)
+            value = exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement
+            # a select-list item keeps its output name once the column is replaced by a value
+            column.replace(exp.alias_(value, column.name) if column.parent is select and not isinstance(replacement, exp.Column) else value)
         replaced = exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=exp.TableAlias(this=exp.to_identifier(alias)))
         source.replace(replaced)
         changed = True
@@ -1104,7 +1106,7 @@ def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
     wanted = [e.name.lower() for e in select.expressions if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)]
     if names is None or wanted != names or len(wanted) != len(select.expressions):
         return None
-    if any(c.table and c.table.lower() != (source.alias or "").lower() for c in select.find_all(exp.Column)):
+    if any(c.table and c.table.lower() != (source.alias or "").lower() for e in select.expressions for c in e.find_all(exp.Column)):
         return None
     return exp.Union(this=union.this.copy(), expression=union.expression.copy(), distinct=True)
 
@@ -1844,11 +1846,15 @@ def _canonicalize_union_source(node: exp.Subquery) -> exp.Expression | None:
     return exp.Subquery(this=union, alias=node.args.get("alias"))
 
 
+_VALUES_COUNTER = itertools.count()
+
+
 def _values_to_union(tree: exp.Expression) -> exp.Expression:
     """``(VALUES (1, 2), (3, 4)) AS t(a, b)`` is ``SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4``.
 
-    A constant relation is a sum of one-row relations. Only done when the
-    column names are declared, so the rewrite never invents names.
+    A constant relation is a sum of one-row relations. Columns without declared names are called
+    ``expr$0``, ``expr$1``, .. as Calcite does; a query that reads any other default name stays unresolved
+    and is not proven.
     """
 
     def step(node: exp.Expression) -> exp.Expression:
@@ -1857,6 +1863,8 @@ def _values_to_union(tree: exp.Expression) -> exp.Expression:
         alias = node.args.get("alias")
         names = [c.name for c in alias.columns] if alias is not None else []
         rows = node.expressions
+        if not names and rows and isinstance(rows[0], exp.Tuple):
+            names = [f"expr${i}" for i in range(len(rows[0].expressions))]
         if not names or not rows or any(not isinstance(r, exp.Tuple) or len(r.expressions) != len(names) for r in rows):
             return node
         selects = []
@@ -1869,7 +1877,8 @@ def _values_to_union(tree: exp.Expression) -> exp.Expression:
         body: exp.Expression = selects[0]
         for select in selects[1:]:
             body = exp.Union(this=body, expression=select, distinct=False)
-        return exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(alias.name)))
+        name = alias.name if alias is not None and alias.name else f"kqv{next(_VALUES_COUNTER)}"
+        return exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(name)))
 
     return tree.transform(step)
 
@@ -2588,6 +2597,295 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
     return result
 
 
+_INDICATOR_COUNTER = itertools.count()
+
+
+def _left_join_indicator_to_exists(tree: exp.Expression, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression:
+    """``a LEFT JOIN (SELECT k, 1 AS i FROM t WHERE c) AS d ON a.x = d.k WHERE d.i IS NOT NULL OR p`` is
+    ``a WHERE EXISTS (SELECT 1 FROM t WHERE c AND a.x = t.k) OR p``.
+
+    The join is a plain existence test when it matches at most one row of ``d`` (the equated columns
+    cover a key of ``t``, or every column of ``d``'s ``GROUP BY``) and only the indicator column of ``d``
+    is read, always as ``IS NOT NULL``. Then no row of ``a`` is duplicated and the indicator is non-NULL
+    exactly when a row of ``t`` matches.
+    """
+
+    key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
+    for select in list(tree.find_all(exp.Select))[::-1]:
+        for join in list(select.args.get("joins") or []):
+            replaced = _indicator_join(select, join, key_sets)
+            if replaced:
+                break
+    return tree
+
+
+def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list[frozenset[str]]]) -> bool:
+    source = join.this
+    if join.args.get("side") != "LEFT" or join.args.get("kind") or join.args.get("on") is None or not isinstance(source, exp.Subquery):
+        return False
+    inner, alias = source.this, source.alias
+    if not alias or not isinstance(inner, exp.Select) or inner.args.get("joins") or not isinstance(inner.args.get("from_") or inner.args.get("from"), exp.From):
+        return False
+    if any(inner.args.get(k) for k in ("distinct", "having", "limit", "offset", "qualify", "order", "with_", "with")) or any(inner.find_all(exp.Window, exp.Subquery, exp.AggFunc)):
+        return False
+    table = (inner.args.get("from_") or inner.args.get("from")).this
+    if not isinstance(table, exp.Table) or table.args.get("joins"):
+        return False
+    base = table.name.lower()
+    inner_alias = table.alias_or_name.lower()
+    outputs: dict[str, exp.Expression] = {}
+    for item in inner.expressions:
+        if not isinstance(item, exp.Alias) and not isinstance(item, exp.Column):
+            return False
+        outputs[item.alias_or_name.lower()] = item.this if isinstance(item, exp.Alias) else item
+    indicators = {n for n, e in outputs.items() if isinstance(e, exp.Literal) or isinstance(e, exp.Boolean) and e.this}
+    group = inner.args.get("group")
+    group_columns = None
+    if group is not None:
+        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+            return False
+        group_columns = set()
+        for e in group.expressions:
+            if isinstance(e, exp.Column):
+                group_columns.add(e.name.lower())
+            elif not isinstance(e, (exp.Literal, exp.Boolean)):
+                return False
+    elif any(not isinstance(e, (exp.Column, exp.Literal, exp.Boolean)) for e in outputs.values()):
+        return False
+    alias = alias.lower()
+    equated: dict[str, exp.Expression] = {}
+    for part in _conjuncts(join.args["on"]):
+        if not isinstance(part, exp.EQ):
+            return False
+        sides = (part.this, part.expression)
+        mine = [x for x in sides if isinstance(x, exp.Column) and x.table.lower() == alias]
+        if len(mine) != 1:
+            return False
+        other = sides[1] if mine[0] is sides[0] else sides[0]
+        if any(c.table.lower() in ("", alias) for c in other.find_all(exp.Column)) or any(isinstance(n, exp.Subquery) for n in other.walk()):
+            return False
+        column = outputs.get(mine[0].name.lower())
+        if not isinstance(column, exp.Column) or column.table.lower() not in ("", inner_alias):
+            return False
+        equated.setdefault(column.name.lower(), other)
+    if group_columns is not None:
+        if not group_columns <= set(equated):
+            return False
+    elif not any(k <= set(equated) for k in key_sets.get(base, [])):
+        return False
+    # every other reference to the joined relation must be "indicator IS NOT NULL"
+    uses = [c for c in select.find_all(exp.Column) if c.table.lower() == alias and c.find_ancestor(exp.Join) is not join]
+    tests = []
+    for use in uses:
+        parent = use.parent
+        if use.name.lower() not in indicators or not isinstance(parent, exp.Is) or not isinstance(parent.expression, exp.Null) or not isinstance(parent.parent, exp.Not):
+            return False
+        tests.append(parent.parent)
+    if not tests:
+        return False
+    fresh = f"kqj{next(_INDICATOR_COUNTER)}"
+    fresh_table = table.copy()
+    fresh_table.set("alias", exp.TableAlias(this=exp.to_identifier(fresh)))
+    probe = exp.Select(expressions=[exp.Literal.number(1)]).from_(fresh_table)
+    conditions = []
+    if inner.args.get("where") is not None:
+        own = inner.args["where"].this.copy()
+        for column in own.find_all(exp.Column):
+            if column.table.lower() in ("", inner_alias):
+                column.set("table", exp.to_identifier(fresh))
+        conditions.append(own)
+    for name, other in equated.items():
+        conditions.append(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()))
+    where = _and_all(conditions)
+    probe.set("where", exp.Where(this=where))
+    for test in tests:
+        test.replace(exp.Exists(this=probe.copy()))
+    select.set("joins", [j for j in select.args["joins"] if j is not join] or None)
+    return True
+
+
+def _full_join_to_one_sided(select: exp.Select) -> exp.Expression | None:
+    """``a FULL JOIN b ON c WHERE b.x > 1`` is ``a RIGHT JOIN b ON c WHERE b.x > 1``.
+
+    The rows of ``a`` with no match carry NULL for every column of ``b``, and a comparison of such a
+    column with a value rejects them; a test on ``a`` likewise leaves ``a LEFT JOIN b``. Tests on
+    both sides leave an inner join. Only a single join with qualified columns is read this way.
+    """
+
+    joins = select.args.get("joins") or []
+    where = select.args.get("where")
+    from_ = select.args.get("from_") or select.args.get("from")
+    if len(joins) != 1 or where is None or from_ is None or (joins[0].args.get("side") or "").upper() != "FULL" or joins[0].args.get("kind"):
+        return None
+    left, right = (from_.this.alias_or_name or "").lower(), (joins[0].this.alias_or_name or "").lower()
+    if not left or not right or left == right:
+        return None
+    rejects = set()
+    for part in _conjuncts(where.this):
+        if not isinstance(part, _REJECTING) or not all(isinstance(side, (exp.Column, exp.Literal)) for side in (part.this, part.expression)):
+            continue
+        tables = {c.table.lower() for c in part.find_all(exp.Column)}
+        if len(tables) == 1 and tables <= {left, right} and "" not in tables:
+            rejects |= tables
+    if not rejects:
+        return None
+    copy = select.copy()
+    join = copy.args["joins"][0]
+    if rejects == {left, right}:
+        join.set("side", None)
+    else:
+        join.set("side", "RIGHT" if rejects == {right} else "LEFT")
+    return copy
+
+
+def _drop_unused_left_join(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
+    """``a LEFT JOIN (SELECT k FROM t WHERE c GROUP BY k) AS d ON a.x = d.k`` is ``a`` when ``d`` is never read.
+
+    A left join keeps every row of ``a`` once as long as it matches at most one row: the equated
+    columns cover every ``GROUP BY`` column of ``d``, or a declared key of the table behind it.
+    """
+
+    joins = select.args.get("joins") or []
+    key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
+    for index, join in enumerate(joins):
+        source = join.this
+        if (join.args.get("side") or "").upper() != "LEFT" or join.args.get("kind") or join.args.get("on") is None:
+            continue
+        alias = (source.alias_or_name or "").lower()
+        if not alias:
+            continue
+        if any(c.table.lower() == alias for c in select.find_all(exp.Column) if c.find_ancestor(exp.Join) is not join):
+            continue
+        if any(not c.table for c in select.find_all(exp.Column) if c.find_ancestor(exp.Select) is select and c.find_ancestor(exp.Join) is not join) or any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+            continue
+        equated: set[str] = set()
+        ok = True
+        for part in _conjuncts(join.args["on"]):
+            sides = (part.this, part.expression) if isinstance(part, exp.EQ) else ()
+            mine = [x for x in sides if isinstance(x, exp.Column) and x.table.lower() == alias]
+            if len(mine) != 1 or any(c.table.lower() in ("", alias) for x in sides if x is not mine[0] for c in x.find_all(exp.Column)):
+                ok = False
+                break
+            equated.add(mine[0].name.lower())
+        if not ok:
+            continue
+        if isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select):
+            inner = source.this
+            group = inner.args.get("group")
+            if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")) or inner.args.get("having") is not None or inner.args.get("limit") is not None:
+                continue
+            outputs = {e.alias_or_name.lower(): (e.this if isinstance(e, exp.Alias) else e) for e in inner.expressions}
+            mapped = {outputs[name].sql() for name in equated if name in outputs and isinstance(outputs[name], exp.Column)}
+            wanted = {e.sql() for e in group.expressions if not isinstance(e, (exp.Literal, exp.Boolean))}
+            if not wanted or not wanted <= mapped:
+                continue
+        elif isinstance(source, exp.Table):
+            if not any(k <= equated for k in key_sets.get(source.name.lower(), [])):
+                continue
+        else:
+            continue
+        copy = select.copy()
+        remaining = [j for i, j in enumerate(copy.args["joins"]) if i != index]
+        copy.set("joins", remaining or None)
+        return copy
+    return None
+
+
+def _group_by_to_distinct(select: exp.Select) -> exp.Expression | None:
+    """``SELECT a, b FROM (x UNION ALL y) GROUP BY a, b`` (no aggregate, no HAVING) is ``SELECT DISTINCT a, b FROM ..``."""
+
+    group = select.args.get("group")
+    if group is None or select.args.get("having") or select.args.get("distinct") or any(
+        select.args.get(k) for k in ("qualify", "windows", "with_", "with", "limit", "offset", "order")
+    ):
+        return None
+    if group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube") or group.args.get("totals"):
+        return None
+    if any(c.find_ancestor(exp.Select) is select for c in select.find_all(exp.AggFunc)) or any(select.find_all(exp.Window)):
+        return None
+    if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+        return None
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or select.args.get("joins") or not isinstance(from_.this, exp.Subquery) or not isinstance(from_.this.this, exp.Union):
+        return None  # only worth it over a derived union, where DISTINCT reads as UNION
+    keys = {g.sql() for g in group.expressions}
+    values = {(e.this if isinstance(e, exp.Alias) else e).sql() for e in select.expressions}
+    if keys != values or any(isinstance(g, exp.Literal) and not g.is_string for g in group.expressions):
+        return None
+    copy = select.copy()
+    copy.set("group", None)
+    copy.set("distinct", exp.Distinct())
+    return copy
+
+
+def _parenthesize_set_operations(tree: exp.Expression) -> exp.Expression:
+    """Keep the shape of nested set operations through the text the prover re-reads.
+
+    ``a INTERSECT (b UNION ALL c)`` prints without parentheses, and read back it is
+    ``(a INTERSECT b) UNION ALL c``. An operand needs them unless it binds tighter (an INTERSECT under a
+    UNION or EXCEPT), is the left operand of the same operator, or is a UNION on the right of a UNION
+    of the same kind.
+    """
+
+    for node in list(tree.find_all(exp.SetOperation)):
+        for side in ("this", "expression"):
+            child = node.args.get(side)
+            if not isinstance(child, exp.SetOperation):
+                continue
+            same = type(child) is type(node) and bool(child.args.get("distinct")) == bool(node.args.get("distinct"))
+            if isinstance(child, exp.Intersect) and not isinstance(node, exp.Intersect):
+                continue
+            if same and (side == "this" or isinstance(node, (exp.Union, exp.Intersect))):
+                continue
+            child.replace(exp.Subquery(this=child.copy()))
+    return tree
+
+
+def _flatten_unions(tree: exp.Expression) -> exp.Expression:
+    """``(A UNION B) UNION C`` is ``A UNION B UNION C`` (a UNION over any union, a UNION ALL over a UNION ALL),
+    and a select that lists every column of a derived union is that union."""
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if not isinstance(node, exp.Union) or type(node) is not exp.Union:
+            return node
+        changed = False
+        for side in ("this", "expression"):
+            operand = node.args[side]
+            while isinstance(operand, exp.Subquery) and not operand.alias and not operand.args.get("order") and not operand.args.get("limit"):
+                operand = operand.this
+            if isinstance(operand, exp.Select) and not operand.args.get("joins") and not operand.args.get("where") and not any(
+                operand.args.get(k) for k in ("group", "having", "distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")
+            ):
+                from_ = operand.args.get("from_") or operand.args.get("from")
+                source = from_.this if from_ is not None else None
+                if isinstance(source, exp.Subquery) and isinstance(source.this, exp.Union) and type(source.this) is exp.Union:
+                    names = _select_names(source.this)
+                    wanted = [
+                        e.name.lower() for e in operand.expressions
+                        if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)
+                        and (not e.table or e.table.lower() == (source.alias or "").lower())
+                    ]
+                    if names is not None and wanted == names and len(wanted) == len(operand.expressions):
+                        operand = source.this
+            if isinstance(operand, exp.Union) and type(operand) is exp.Union and not operand.args.get("order") and not operand.args.get("limit"):
+                if node.args.get("distinct") or not operand.args.get("distinct"):
+                    if operand is not node.args[side]:
+                        pass
+                    node.set(side, operand.copy())
+                    changed = True
+            elif operand is not node.args[side] and isinstance(operand, exp.Select):
+                pass
+        if changed:
+            # Drop the parentheses a nested union left behind: the operand now is the union itself.
+            for side in ("this", "expression"):
+                operand = node.args[side]
+                if isinstance(operand, exp.Subquery) and isinstance(operand.this, exp.Union) and not operand.alias:
+                    node.set(side, operand.this)
+        return node
+
+    return tree.transform(step)
+
+
 def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
     """``SELECT d.a, d.b FROM (SELECT a, b, c FROM t GROUP BY ..) AS d`` is the derived select with those outputs.
 
@@ -2716,6 +3014,32 @@ def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _drop_constant_groupings(tree: exp.Expression) -> exp.Expression:
+    """Calcite reads ``GROUP BY 4, x`` with 4 as a constant: it never splits a group, so it is dropped.
+
+    A grouping made only of constants keeps one group when the input has rows and none when it has
+    none, which is ``GROUP BY TRUE`` (dropping it altogether would make a global aggregate, one row
+    on empty input).
+    """
+
+    for select in list(tree.find_all(exp.Select)):
+        group = select.args.get("group")
+        if not group or group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube"):
+            continue
+        items = group.expressions
+
+        def constant(node: exp.Expression) -> bool:
+            return not any(node.find_all(exp.Column, exp.Subquery, exp.Anonymous, exp.Rand, exp.Window)) and not any(
+                isinstance(n, exp.Func) and not isinstance(n, (exp.Cast, exp.Coalesce)) for n in node.walk()
+            )
+
+        kept = [e for e in items if not constant(e)]
+        if len(kept) == len(items):
+            continue
+        group.set("expressions", kept or [exp.true()])
+    return tree
+
+
 def normalize(
     sql: str,
     *,
@@ -2724,15 +3048,23 @@ def normalize(
     not_null: dict[str, frozenset[str]] | None = None,
     keys: dict[str, list[tuple[str, ...]]] | None = None,
     types: dict[str, dict[str, str]] | None = None,
+    group_by_constants: bool = False,
 ) -> str:
-    """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
+    """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out).
+
+    ``group_by_constants`` reads a literal in ``GROUP BY`` as a constant, as Calcite does, instead of a
+    column ordinal (see ``_drop_constant_groupings``).
+    """
 
     tree = sqlglot.parse_one(sql, read=dialect)
+    if group_by_constants:
+        tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
     tree = _bigquery_sugar(tree)
     tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
+    tree = _left_join_indicator_to_exists(tree, keys)
     tree = _grouped_in_to_derived(tree)
     tree = _in_over_union(tree)
     tree = _fold_dates(tree)
@@ -2757,7 +3089,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (_full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -2765,7 +3097,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(tree.transform(step)), not_null)
+        tree = _fold_null_guards(_fold_count_coalesce(_flatten_unions(tree.transform(step))), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
@@ -2773,7 +3105,7 @@ def normalize(
             replacement = _canonicalize_union_source(subquery)
             if replacement is not None:
                 subquery.replace(replacement)
-    return tree.sql(dialect=dialect)
+    return _parenthesize_set_operations(tree).sql(dialect=dialect)
 
 
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
@@ -2781,12 +3113,13 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
 
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
-    kwargs = {k: v for k, v in kwargs.items() if k != "types"}
+    constants = kwargs.get("group_by_constants", False)
+    kwargs = {k: v for k, v in kwargs.items() if k not in ("types", "group_by_constants")}
     try:
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
     from . import scalar_subqueries

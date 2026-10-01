@@ -161,15 +161,50 @@ def referenced_tables(*queries: str) -> set[str]:
     return names
 
 
-def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11):
+# Calcite reads a literal in GROUP BY as a constant; BigQuery, MySQL and DuckDB read it as a column ordinal.
+CONSTANT_GROUPING = {"calcite"}
+
+
+def constant_groupings(sql: str) -> str:
+    """Wrap each bare number in a GROUP BY in a cast so DuckDB groups by the constant, not an ordinal."""
+
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    for group in tree.find_all(exp.Group):
+        group.set(
+            "expressions",
+            [exp.cast(e, "int") if isinstance(e, exp.Literal) and not e.is_string else e for e in group.expressions],
+        )
+    return tree.sql(dialect="duckdb")
+
+
+def name_values(sql: str) -> str:
+    """Calcite calls the columns of an unnamed VALUES ``EXPR$0``, ``EXPR$1``, ..; DuckDB calls them ``col0``, .."""
+
+    tree = sqlglot.parse_one(sql, read="mysql")
+    for number, values in enumerate(tree.find_all(exp.Values)):
+        if values.parent is not None and isinstance(values.parent, (exp.From, exp.Join)) and values.expressions and isinstance(values.expressions[0], exp.Tuple):
+            alias = values.args.get("alias")
+            if alias is not None and alias.columns:
+                continue
+            width = len(values.expressions[0].expressions)
+            name = alias.name if alias is not None and alias.name else f"kqv{number}"
+            values.set("alias", exp.TableAlias(this=exp.to_identifier(name), columns=[exp.to_identifier(f"EXPR${i}") for i in range(width)]))
+    return tree.sql(dialect="mysql")
+
+
+def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
     import duckdb
 
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
+    if constants:
+        left, right = name_values(left), name_values(right)
     try:
         left_sql, right_sql = to_dialect(left, "duckdb"), to_dialect(right, "duckdb")
+        if constants:
+            left_sql, right_sql = constant_groupings(left_sql), constant_groupings(right_sql)
         used = [tables[n] for n in sorted(referenced_tables(left, right)) if n in tables]
     except sqlglot.errors.SqlglotError:
         return False
@@ -210,7 +245,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     db = new_database(tables)
     for index, (left, right) in enumerate(pairs):
         try:
-            proof = prove(left, right, tables)
+            proof = prove(left, right, tables, name in CONSTANT_GROUPING) if name in CONSTANT_GROUPING else prove(left, right, tables)
         except Exception as error:  # a crash is a failure to prove, never a proof
             proof = False
             result.unproved.append((index, f"crash: {type(error).__name__}: {error}"))
@@ -219,7 +254,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
             result.unproved.append((index, "not proven"))
             continue
         result.proved += 1
-        counter = differ(left, right, tables, db, trials)
+        counter = differ(left, right, tables, db, trials, constants=name in CONSTANT_GROUPING)
         if counter is False:
             result.unchecked += 1
         elif counter is not None:
@@ -228,7 +263,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     return result
 
 
-def default_prove(left: str, right: str, tables: dict[str, Table]) -> bool:
+def default_prove(left: str, right: str, tables: dict[str, Table], constants: bool = False) -> bool:
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 
     from kumosql.smt_equivalence import TableConstraints
@@ -242,7 +277,7 @@ def default_prove(left: str, right: str, tables: dict[str, Table]) -> bool:
         for t in tables.values()
     }
     return prove_equivalent_algebraic(
-        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True
+        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants
     ).proven
 
 

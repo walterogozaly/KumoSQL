@@ -709,9 +709,12 @@ def discover_fields(
     if pipeline is not None:
         from .tags import tag_lookup
 
+        from . import data_sources
+
         tags = tag_lookup(pipeline)
+        sources = data_sources.join_index()
         for key in pipeline.models:  # type: ignore[attr-defined]
-            note("model", pipeline.model_record(key, tags=tags))  # type: ignore[attr-defined]
+            note("model", pipeline.model_record(key, tags=tags, sources=sources))  # type: ignore[attr-defined]
         for key, profile in (profiles or {}).items():
             note("profile", profile_record(profile))
     for index, row in enumerate(observed_reads):
@@ -762,7 +765,9 @@ def plan_scope(scope: Scope, observed_reads: Iterable[object] = ()) -> ScopePlan
     job_fields: set[str] = set()
     for row in reads:
         job_fields.update(job_record(row))
-    model_fields = (*MODEL_FIELDS, *PROFILE_FIELDS)
+    from . import data_sources
+
+    model_fields = (*MODEL_FIELDS, *PROFILE_FIELDS, *data_sources.joined_columns())
     model_missing = scope.unknown_fields(model_fields)
     job_missing = scope.unknown_fields(job_fields)
     models_ok = wants_models and not model_missing
