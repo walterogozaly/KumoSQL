@@ -41,10 +41,8 @@ def test_cache_survives_restart_and_serves_stale_on_error(monkeypatch):
         catalog.cached("k", boom, refresh=True)
 
 
-def test_list_projects_hides_projects_without_access(monkeypatch):
+def test_selection_is_empty_until_chosen_and_checks_access(monkeypatch):
     def fake_get(path, params=None):
-        if path == "projects":
-            return {"projects": [{"id": "ok"}, {"id": "denied"}, {"id": "flaky"}]}
         if "denied" in path:
             raise catalog.CatalogError("no", 403)
         if "flaky" in path:
@@ -52,7 +50,15 @@ def test_list_projects_hides_projects_without_access(monkeypatch):
         return {}
 
     monkeypatch.setattr(catalog, "_get", fake_get)
-    assert [p["id"] for p in catalog.list_projects()] == ["ok", "flaky"]
+    assert catalog.selected_projects() == []
+    assert catalog.select_projects(["ok", "flaky", "ok"]) == ["ok", "flaky"]
+    assert catalog.selected_projects() == ["ok", "flaky"]
+    with pytest.raises(ValueError, match="denied"):
+        catalog.select_projects(["ok", "denied"])
+    with pytest.raises(ValueError):
+        catalog.select_projects(["bad id!"])
+    assert catalog.selected_projects() == ["ok", "flaky"]
+    assert catalog.select_projects([]) == []
 
 
 def test_list_datasets_hides_anonymous_and_denied(monkeypatch):
