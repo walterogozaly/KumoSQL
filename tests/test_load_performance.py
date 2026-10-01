@@ -160,17 +160,31 @@ def ui_server_url():
 
 
 def test_stage_start_and_progress_lines_show_a_long_stage_is_alive():
-    progress = timing.Progress("demo loop", 3, every=0.0, slow=0.0)
     with timing.stage("demo stage", models=2431):
+        progress = timing.Progress("demo loop", 3, every=0.0, slow=0.0)
         for label in ("alpha", "beta", "gamma"):
             progress.step(label)
         progress.finish()
     err = console.log_path().read_text(encoding="utf-8")
-    assert "demo stage: started (models 2,431)" in err
-    assert "demo loop: started (3 items)" in err and "demo loop: 3/3" in err
-    assert "slow item 1 of 3 took" in err
+    assert "demo stage: started (models 2431)" in err
+    assert "demo stage > demo loop: started (items 3)" in err
+    assert "demo stage > demo loop: finished" in err and "done 3" in err
+    assert "demo loop: slow item model#" in err
     assert "alpha" not in err and "beta" not in err
     assert timing.current_progress() == []
+
+
+def test_a_loop_left_open_by_an_error_does_not_tangle_the_log():
+    try:
+        with timing.stage("outer stage"):
+            timing.Progress("broken loop", 2).step("alpha")
+            raise ValueError("boom")
+    except ValueError:
+        pass
+    assert timing.current_progress() == []
+    with timing.stage("next stage"):
+        pass
+    assert console._stack() == []
 
 
 def test_analysis_logs_each_stage_before_it_finishes(capsys):
