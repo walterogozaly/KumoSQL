@@ -656,3 +656,8 @@ select.sp-input { min-width: 200px; }
 .repo-actions { display: flex; gap: 8px; align-items: center; }
 .repo-form { display: flex; flex-wrap: wrap; gap: 8px; max-width: 640px; }
 .repo-form .sp-text { flex: 1 1 280px; min-width: 0; }
+.bq-chosen, .bq-results { list-style: none; margin: 0 0 12px; padding: 0; }
+.bq-results { max-height: 260px; overflow: auto; }
+.bq-chosen li, .bq-results li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
+.sp-input[hidden] { display: none; }
+.sp-heading + .sp-lede, h4.sp-heading { margin-top: 18px; }
