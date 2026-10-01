@@ -431,9 +431,11 @@ def _fetch(remote: str, wanted: str | None, refresh: bool) -> dict:
     total = 0
     for name, data in _read_blobs(checkout, blobs).items():
         try:
-            text = data.decode("utf-8")
+            text = data.decode("utf-8-sig")  # editors on Windows add a byte-order mark; it hides the config block
         except UnicodeDecodeError:
-            continue
+            # An older code page (Windows-1252). Only comments and strings differ, so read it rather than
+            # silently dropping the model from the graph.
+            text = data.decode("latin-1")
         total += len(data)
         if total > MAX_TOTAL_BYTES:
             raise GitRepoError("Project is too large to load")

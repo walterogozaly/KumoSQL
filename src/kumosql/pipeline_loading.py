@@ -118,10 +118,27 @@ def _read_project_defaults(
         return "", ""
 
 
+def _assertion_dataset(root: Path) -> str:
+    """Where assertions without their own schema live: the project's assertion dataset, else Dataform's default."""
+
+    try:
+        settings = root / "workflow_settings.yaml"
+        if settings.is_file():
+            match = re.search(r"(?m)^\s*defaultAssertionDataset\s*:\s*['\"]?([^'\"\s#]+)", settings.read_text(encoding="utf-8-sig"))
+            return match.group(1) if match else "dataform_assertions"
+        legacy = root / "dataform.json"
+        if legacy.is_file():
+            value = json.loads(legacy.read_text(encoding="utf-8-sig")).get("assertionSchema")
+            return value if isinstance(value, str) and value else "dataform_assertions"
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        pass
+    return "dataform_assertions"
+
+
 def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
     settings = root / "workflow_settings.yaml"
     if settings.is_file():
-        text = settings.read_text(encoding="utf-8")
+        text = settings.read_text(encoding="utf-8-sig")
 
         def value(key: str) -> str:
             match = re.search(rf"(?m)^\s*{key}\s*:\s*['\"]?([^'\"\s#]+)", text)
@@ -130,7 +147,7 @@ def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
         return value("defaultProject"), value("defaultDataset")
     legacy = root / "dataform.json"
     if legacy.is_file():
-        data = json.loads(legacy.read_text(encoding="utf-8"))
+        data = json.loads(legacy.read_text(encoding="utf-8-sig"))
         return data.get("defaultDatabase", ""), data.get("defaultSchema", "")
     return "", ""
 
@@ -187,6 +204,7 @@ def load_sqlx_project(
         raise PipelineLoadError("project folder was not found or is not a directory")
     diagnostics: list[PipelineDiagnostic] = []
     database, dataset = _read_project_defaults(root, diagnostics)
+    assertion_dataset = _assertion_dataset(root)
     search_root = root / "definitions" if (root / "definitions").is_dir() else root
     models: dict[str, Model] = {}
     sources: dict[str, Target] = {}
@@ -236,7 +254,7 @@ def load_sqlx_project(
         kind = _config_value(config, "type") or "table"
         target = Target(
             _config_value(config, "database") or database,
-            _config_value(config, "schema") or dataset,
+            _config_value(config, "schema") or (assertion_dataset if kind == "assertion" else dataset),
             _config_value(config, "name") or path.stem,
         )
         known.setdefault(target.name, []).append(target)

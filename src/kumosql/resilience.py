@@ -93,7 +93,7 @@ def read_text_or_reason(path: Path) -> tuple[str | None, str | None]:
     """Return ``(text, None)`` or ``(None, reason)``; never raises for I/O errors."""
 
     try:
-        return path.read_text(encoding="utf-8"), None
+        return path.read_text(encoding="utf-8-sig"), None  # a byte-order mark would hide a leading config block
     except (OSError, UnicodeError) as exc:
         return None, describe_os_error(exc)
 

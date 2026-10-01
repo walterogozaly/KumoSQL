@@ -237,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-nodes", type=int, default=100, help="Fail if the graph has fewer nodes than this (default: 100)")
     parser.add_argument("--browser", default="auto", choices=["auto", "msedge", "chrome", "chromium"], help="Browser to drive (default: Edge, then Chrome, then bundled Chromium)")
     parser.add_argument("--browser-path", default=os.environ.get("KUMOSQL_SMOKE_BROWSER_PATH"), help="Path to a Chromium-based browser executable (overrides --browser)")
+    parser.add_argument("--forbid-dataset", default="fx_scratch", help="Fail if the graph has nodes in this dataset (the fixture's default dataset, where wrongly resolved refs land; default: fx_scratch; empty to disable)")
     parser.add_argument("--allow-ssh", action="store_true", help="Do not block SSH (default: blocked, like a work laptop)")
     parser.add_argument("--no-browser", action="store_true", help="Skip the browser pages (API checks only)")
     args = parser.parse_args(argv)
@@ -319,7 +320,15 @@ def main(argv: list[str] | None = None) -> int:
             elif path == "/api/graph":
                 graph_nodes = len(body.get("nodes", [])) if isinstance(body, dict) else 0
                 ok = graph_nodes >= args.min_nodes and not (isinstance(body, dict) and body.get("pending"))
-                detail = f"{graph_nodes} nodes, {len(body.get('edges', []))} edges" + ("" if ok else f" (expected at least {args.min_nodes}, or analysis still pending)")
+                gaps = body.get("gaps", []) if isinstance(body, dict) else []
+                ambiguous = [g for g in gaps if "ambiguous mapping" in str(g.get("message", "")).lower()]
+                phantom = [n for n in body.get("nodes", []) if args.forbid_dataset and f".{args.forbid_dataset}." in f".{n.get('id', '')}."] if isinstance(body, dict) else []
+                kinds: dict = {}
+                for g in gaps:
+                    kinds[g.get("kind")] = kinds.get(g.get("kind"), 0) + 1
+                if ambiguous or phantom:
+                    ok = False
+                detail = f"{graph_nodes} nodes, {len(body.get('edges', []))} edges, gaps {kinds or 'none'}" + (f"; {len(ambiguous)} 'Ambiguous mapping' gaps (first: {ambiguous[0]['message'][:120]})" if ambiguous else "") + (f"; {len(phantom)} phantom nodes in {args.forbid_dataset} (first: {phantom[0].get('id')})" if phantom else "") + ("" if ok else f" (expected at least {args.min_nodes}, or analysis still pending)")
             elif path == "/api/repositories":
                 errors = [item.get("error") for item in body.get("repositories", []) if item.get("error")]
                 ok, detail = not errors, "; ".join(errors)[:300]
