@@ -32,6 +32,15 @@ _AUTH_FAILURES = (
     "terminal prompts disabled", "permission denied (publickey", "repository not found",
     "http basic: access denied", "invalid username or password", "host key verification failed",
 )
+_NETWORK_FAILURES = (
+    "connection timed out", "connection refused", "network is unreachable", "no route to host",
+    "could not resolve hostname", "kex_exchange_identification", "connection reset", "operation timed out",
+)
+_NETWORK_HINT = (
+    "Git could not reach the remote over SSH. SSH (port 22) is often blocked on work networks. "
+    "If the repository is on GitHub, use its https URL instead (https://github.com/owner/repo.git); "
+    "KumoSQL uses exactly the URL you enter and never switches between https and SSH by itself."
+)
 _AUTH_HINT = (
     "Git could not sign in to this remote. Sign in to git on this computer first, for example "
     "with Git Credential Manager (installed with Git for Windows), `gh auth login`, or an SSH key "
@@ -100,7 +109,13 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
         raise GitRepoError(f"git {args[0]} timed out after {_TIMEOUT_SECONDS} seconds") from exc
     if done.returncode != 0:
         message = (done.stderr or done.stdout).decode("utf-8", "replace").strip() or f"exit status {done.returncode}"
-        hint = f"\n{_AUTH_HINT}" if any(text in message.lower() for text in _AUTH_FAILURES) else ""
+        lowered = message.lower()
+        if any(text in lowered for text in _NETWORK_FAILURES) and ("ssh" in lowered or "port 22" in lowered):
+            hint = f"\n{_NETWORK_HINT}"
+        elif any(text in lowered for text in _AUTH_FAILURES):
+            hint = f"\n{_AUTH_HINT}"
+        else:
+            hint = ""
         raise GitRepoError(f"git {args[0]} failed: {message}{hint}")
     return done.stdout
 
@@ -117,7 +132,28 @@ def sync(remote: str, branch: str | None = None, refresh: bool = False) -> Path:
         return _sync(remote, branch, refresh)
 
 
+def _scheme(url: str) -> str:
+    if "://" in url:
+        return url.split("://", 1)[0].lower()
+    return "ssh" if re.match(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:", url) else "file"
+
+
+def _refuse_rewritten_transport(remote: str) -> None:
+    """Fail clearly if git's own config (``url.<base>.insteadOf``) would change https to SSH or back."""
+
+    if _scheme(remote) not in ("http", "https", "ssh", "git"):
+        return
+    effective = _git(["ls-remote", "--get-url", "--", remote]).strip()
+    if effective and _scheme(effective) != _scheme(remote):
+        raise GitRepoError(
+            f"Your git configuration rewrites {remote} to {effective} (a url.<base>.insteadOf setting), "
+            "so git would use a different protocol than the one you entered. Remove that setting "
+            "(`git config --global --get-regexp url`), or enter the URL you want git to use."
+        )
+
+
 def _sync(remote: str, branch: str | None, refresh: bool) -> Path:
+    _refuse_rewritten_transport(remote)
     path = _cache_path(remote, branch)
     if (path / ".git").is_dir() and not refresh:
         return path
