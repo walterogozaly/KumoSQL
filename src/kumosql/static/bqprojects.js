@@ -115,5 +115,62 @@
     draw();
   }
 
-  window.KumoBqProjects = { render, loadSelection };
+  // Billing project and query cache lifetime. Other features that run SQL read these
+  // from GET /api/catalog/settings; until a billing project is set they report that one is needed.
+  function renderBilling(container, { onStatus = () => {} } = {}) {
+    const input = h("input", { type: "text", class: "sp-input", list: "bq-billing-options", placeholder: "my-billing-project", spellcheck: "false", "aria-label": "Billing project" });
+    const options = h("datalist", { id: "bq-billing-options" });
+    const hours = h("input", { type: "number", class: "sp-input sp-number", min: "0", max: "8760", step: "1", "aria-label": "Query cache lifetime in hours" });
+    const note = h("p", { class: "sp-row-hint" });
+
+    const put = async (body) => {
+      onStatus("Saving…");
+      try {
+        const saved = await request("/api/catalog/settings", {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        input.value = saved.billingProject;
+        hours.value = saved.queryCacheHours;
+        note.textContent = saved.billingProject ? "" : "No billing project set: anything that runs queries will ask for one.";
+        onStatus("Saved");
+        window.dispatchEvent(new CustomEvent("kumosql:bq-settings", { detail: saved }));
+      } catch (error) {
+        onStatus(error.message, true);
+      }
+    };
+    const save = h("button", { type: "button", class: "toolbar-button", text: "Set billing project", onclick: () => put({ billingProject: input.value }) });
+    const load = h("button", { type: "button", class: "toolbar-button", text: "Browse my projects", onclick: async () => {
+      load.disabled = true;
+      onStatus("Listing your projects…");
+      try {
+        const projects = (await request("/api/catalog/projects")).data;
+        options.replaceChildren(...projects.map((item) => h("option", { value: item.id, label: item.name })));
+        onStatus(`${projects.length} projects found. Pick one from the box.`);
+        input.focus();
+      } catch (error) {
+        onStatus(error.message, true);
+      } finally {
+        load.disabled = false;
+      }
+    } });
+    input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); put({ billingProject: input.value }); } });
+    hours.addEventListener("change", () => put({ queryCacheHours: Number(hours.value) }));
+
+    container.append(
+      h("h4", { class: "sp-heading", text: "Billing project" }),
+      h("p", { class: "sp-lede", text: "Queries KumoSQL runs for you (such as scope rules that use SQL) run and are billed in this project. It needs permission to create BigQuery jobs." }),
+      h("div", { class: "sp-inline" }, input, options, save, load),
+      note,
+      h("h4", { class: "sp-heading", text: "Query cache" }),
+      h("p", { class: "sp-lede", text: "Hours to reuse the result of a query KumoSQL ran before asking BigQuery again. Default 48." }),
+      h("div", { class: "sp-inline" }, hours, h("span", { text: "hours" })),
+    );
+    request("/api/catalog/settings").then((saved) => {
+      input.value = saved.billingProject;
+      hours.value = saved.queryCacheHours;
+      note.textContent = saved.billingProject ? "" : "No billing project set: anything that runs queries will ask for one.";
+    }).catch((error) => onStatus(error.message, true));
+  }
+
+  window.KumoBqProjects = { render, renderBilling, loadSelection };
 })();
