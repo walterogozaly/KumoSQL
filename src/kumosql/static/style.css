@@ -627,6 +627,11 @@ select.sp-input { min-width: 200px; }
 .scope-pick select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 4px 8px; max-width: 240px; }
 .scope-note { color: var(--text-muted); min-width: 0; overflow-wrap: anywhere; }
 .scope-note.is-warn { color: var(--warn-text, var(--text)); }
+.scope-applies { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; white-space: normal; }
+.scope-applies em { font-style: normal; font-size: 11.5px; color: var(--text-muted); margin-right: 2px; }
+.domain-chip { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--accent-text); }
+.domain-picks { display: flex; flex-wrap: wrap; gap: 14px; }
+.domain-pick { display: inline-flex; align-items: center; gap: 6px; }
 .scope-item.is-active { border-color: var(--accent-text); }
 .sp-scope-form { max-width: 620px; display: flex; flex-direction: column; gap: 12px; }
 .sp-scope-label { display: flex; flex-direction: column; gap: 3px; color: var(--text-muted); font-size: 12.5px; font-weight: 500; }

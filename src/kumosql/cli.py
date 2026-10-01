@@ -490,6 +490,12 @@ def scopes_main(argv: list[str] | None = None) -> int:
         'groups are {"all": [...]}, {"any": [...]} and {"not": rule}',
     )
     add.add_argument("--rule-file", type=Path, help="Read the rule JSON from a file")
+    add.add_argument(
+        "--applies-to",
+        nargs="+",
+        metavar="DOMAIN",
+        help="Data domains the scope applies to: models, jobs, bigquery (default: the ones its fields fit)",
+    )
     remove = commands.add_parser("remove", help="Delete a scope")
     remove.add_argument("name")
     refresh = commands.add_parser(
@@ -572,6 +578,8 @@ def scopes_main(argv: list[str] | None = None) -> int:
             else:
                 text = args.rule if args.rule else args.rule_file.read_text(encoding="utf-8")
                 data = {"name": args.name, "rule": json.loads(text)}
+            if args.applies_to:
+                data["applies_to"] = args.applies_to
             save_scope(parse_scope(data))
         except (OSError, json.JSONDecodeError) as exc:
             parser.error(f"could not read the rule: {exc}")

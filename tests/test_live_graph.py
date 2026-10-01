@@ -238,7 +238,7 @@ def test_active_scope_limits_the_graph_to_models_and_job_history(server):
     assert everything["scope"] is None
 
     ana = get(server, "/api/graph?scope=Ana")
-    assert ana["scope"]["applied_to"] == ["job history"] and "models have no" in ana["scope"]["note"]
+    assert ana["scope"]["applied_to"] == ["job history"] and ana["scope"]["note"] is None
     assert sum(e["observed_count"] for e in ana["edges"]) == 1
     assert {n["id"] for n in ana["nodes"]} >= {n["id"] for n in everything["nodes"] if n["kind"] == "model"}
 
