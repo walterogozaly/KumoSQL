@@ -35,7 +35,7 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 163 | 69 | 0 | was 162 before AVG became SUM / COUNT; 160 before window functions were read as a kept-whole derived table; 159 before derived aggregates were compared by proof; 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
+| Calcite | 232 | 165 | 67 | 0 | was 163 before filter-into-HAVING folds, DISTINCT over UNION ALL and hidden ORDER BY keys; 162 before AVG became SUM / COUNT; 160 before window functions were read as a kept-whole derived table; 159 before derived aggregates were compared by proof; 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
 | Spark SQL | 127 | 105 | 22 | 0 | was 99 before constant aggregates and function identities; 86 before |
 | TPC-H | 22 | 19 | 3 | 0 | was 16 before semi/anti joins, `IN` over a grouped subquery and repeated existence tests; 15 before correlated scalar aggregates became joins and derived aggregates were compared by proof; 14 before NULL guards, `1.00 = 1` and folded derived tables made the two spellings of a scalar subquery read alike; 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; the three left need DECIMAL casts that depend on column types and an aggregate over an outer join |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |
@@ -55,3 +55,8 @@ SQLSolver's own proved counts are in its paper; they are not repeated here becau
 `kumosql.pipeline_equivalence.prove_models` compares two models of a pipeline. Models are visited from the sources up; each model's SQL is read with equivalent tables substituted (declarations and earlier lemmas), compared only with models that now read the same tables, and a proved pair becomes a lemma (a positional column mapping) for the layers above. If the final models still differ, both are inlined as derived tables (400,000 characters at most) and the flat queries are compared. At most 300 solver calls are spent on lemmas; the result is `equivalent` only when every step was proven, with the lemmas and declarations used reported.
 
 Everyday BigQuery refactors (CTE inlining, `USING` joins, `* EXCEPT`, `COUNTIF`, `SAFE_DIVIDE`, `QUALIFY` dedupes, `IN` versus `EXISTS`, windows through a CTE) are pinned in `tests/test_bigquery_refactors.py`, with near misses (a moved boundary, `SAFE_DIVIDE` versus plain division, a window ordered the other way) that must stay unproved.
+
+
+## Keyed dimension joined to a grouped fact
+
+With a declared key on `customers`, `customers JOIN (SELECT customer_id, SUM(x) ... GROUP BY customer_id)` is rewritten to the flat join grouped by the key, so a CTE-reuse refactor and its flat form are proved equal. Without the declared key nothing changes.

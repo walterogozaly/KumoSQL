@@ -3,6 +3,7 @@ import sqlite3
 from collections import Counter
 
 import pytest
+import sqlglot
 
 pytest.importorskip("z3")
 
@@ -107,6 +108,7 @@ MISALIGNED = [
 def test_normalization_preserves_results_on_random_databases(sql):
     rng = random.Random(7)
     normalized = normalize(sql)
+    runnable = sqlglot.transpile(normalized, read="bigquery", write="sqlite")[0]
     for _ in range(40):
         db = sqlite3.connect(":memory:")
         for table in ("A", "B", "C"):
@@ -114,7 +116,7 @@ def test_normalization_preserves_results_on_random_databases(sql):
             for _ in range(rng.choice([0, 0, 1, 3, 5])):
                 row = [rng.choice([None, 0, 1, 2, 3]) for _ in range(3)]
                 db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", row)
-        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), normalized
 
 
 def test_distinct_aggregate_regrouping():
@@ -718,3 +720,49 @@ def test_countif_and_safe_divide_have_their_plain_spellings():
         "SELECT SAFE_DIVIDE(amount, k) AS q FROM o", "SELECT amount / k AS q FROM o", schema=schema, compare_names=False
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+PULL_UP_SCHEMA = {"orders": ["order_id", "customer_id", "amount"], "customers": ["customer_id", "name", "country"]}
+PULL_UP_KEYS = {"customers": TableConstraints(keys=(("customer_id",),))}
+PULL_UP_GROUPED = (
+    "SELECT c.name, t.s FROM customers c JOIN "
+    "(SELECT customer_id, SUM(amount) AS s FROM orders GROUP BY customer_id) t "
+    "ON c.customer_id = t.customer_id WHERE t.s > 5 AND c.country = 'US'"
+)
+PULL_UP_FLAT = (
+    "SELECT c.name, SUM(o.amount) AS s FROM customers c JOIN orders o ON c.customer_id = o.customer_id "
+    "WHERE c.country = 'US' GROUP BY c.customer_id, c.name HAVING SUM(o.amount) > 5"
+)
+
+
+def test_keyed_table_joined_to_grouped_fact_is_the_flat_aggregate():
+    result = prove_equivalent_algebraic(
+        PULL_UP_GROUPED, PULL_UP_FLAT, schema=PULL_UP_SCHEMA, constraints=PULL_UP_KEYS
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_pull_up_needs_the_declared_key():
+    result = prove_equivalent_algebraic(PULL_UP_GROUPED, PULL_UP_FLAT, schema=PULL_UP_SCHEMA)
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_pull_up_near_miss_with_different_threshold():
+    result = prove_equivalent_algebraic(
+        PULL_UP_GROUPED, PULL_UP_FLAT.replace("> 5", "> 6"), schema=PULL_UP_SCHEMA, constraints=PULL_UP_KEYS
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_pull_up_preserves_results_on_random_databases():
+    rng = random.Random(11)
+    flat = normalize(PULL_UP_GROUPED, schema=PULL_UP_SCHEMA, keys={"customers": [("customer_id",)]})
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE customers (customer_id INT PRIMARY KEY, name TEXT, country TEXT)")
+        db.execute("CREATE TABLE orders (order_id INT, customer_id INT, amount INT)")
+        for i in range(rng.choice([0, 2, 4])):
+            db.execute("INSERT INTO customers VALUES (?, ?, ?)", (i, rng.choice("ab"), rng.choice(["US", "DE"])))
+        for i in range(rng.choice([0, 3, 8])):
+            db.execute("INSERT INTO orders VALUES (?, ?, ?)", (i, rng.choice([None, 0, 1, 2, 3]), rng.choice([None, 1, 3, 9])))
+        assert Counter(db.execute(PULL_UP_GROUPED).fetchall()) == Counter(db.execute(flat).fetchall()), flat

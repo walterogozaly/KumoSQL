@@ -34,7 +34,7 @@ import re
 import sqlglot
 from sqlglot import exp
 
-from .eager_aggregation import flatten_grouped_join, unnest_grouped_source
+from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -891,6 +891,96 @@ def _ancestors_of(node: exp.Expression, stop: exp.Expression):
 
 def _inside_aggregate(node: exp.Expression, root: exp.Expression) -> bool:
     return any(isinstance(a, exp.AggFunc) for a in _ancestors_of(node, root))
+
+
+def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
+    """``SELECT s FROM (SELECT k, SUM(x) AS s FROM t GROUP BY k) WHERE s > 1`` is ``... HAVING SUM(x) > 1``.
+
+    A select that only filters and projects the output of a grouped derived table reads the groups
+    one by one, so its condition belongs in the grouped select's HAVING.
+    """
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or select.args.get("joins") or not isinstance(from_.this, exp.Subquery):
+        return None
+    # Inside IN / EXISTS the grouped relation stays a derived table: the prover cannot read a HAVING there.
+    if select.find_ancestor(exp.In, exp.Exists) is not None:
+        return None
+    source = from_.this
+    inner = source.this
+    if not isinstance(inner, exp.Select) or not (inner.args.get("group") or any(c.find_ancestor(exp.Select) is inner for c in inner.find_all(exp.AggFunc))):
+        return None
+    banned = ("group", "having", "distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")
+    if any(select.args.get(k) for k in banned) or any(inner.args.get(k) for k in ("distinct", "limit", "offset", "qualify", "windows", "order")):
+        return None
+    if any(n is not source for n in select.find_all(exp.Subquery, exp.Exists)) or any(select.find_all(exp.Window)):
+        return None
+    if any(c.find_ancestor(exp.Select) is select for c in select.find_all(exp.AggFunc)) or any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+        return None
+    alias = (source.alias or "").lower()
+    names = {}
+    for item in inner.expressions:
+        name = item.alias_or_name.lower()
+        if not name or name in names or isinstance(item, exp.Star):
+            return None
+        names[name] = item.this if isinstance(item, exp.Alias) else item
+    columns = [c for c in select.find_all(exp.Column) if c.find_ancestor(exp.Select) is select]
+    if any(c.table and c.table.lower() != alias for c in columns) or any(c.name.lower() not in names for c in columns):
+        return None
+    if any(c.find_ancestor(exp.Window) for c in columns):
+        return None
+
+    def substitute(node: exp.Expression) -> exp.Expression:
+        node = node.copy()
+        holder = exp.Select(expressions=[node])
+        for column in list(holder.find_all(exp.Column)):
+            replacement = names[column.name.lower()].copy()
+            if column is node:
+                node = replacement
+                holder.set("expressions", [node])
+            else:
+                column.replace(exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement)
+        return holder.expressions[0]
+
+    result = inner.copy()
+    outputs = []
+    for item in select.expressions:
+        expression = item.this if isinstance(item, exp.Alias) else item
+        value = substitute(expression)
+        name = item.alias_or_name
+        outputs.append(exp.alias_(value, name) if name and not (isinstance(value, exp.Column) and value.name == name) else value)
+    result.set("expressions", outputs)
+    conditions = []
+    if inner.args.get("having") is not None:
+        conditions.append(inner.args["having"].this.copy())
+    if select.args.get("where") is not None:
+        conditions.append(substitute(select.args["where"].this))
+    if conditions:
+        result.set("having", exp.Having(this=_and_all([c for cond in conditions for c in _conjuncts(cond)])))
+    return result
+
+
+def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
+    """``SELECT DISTINCT a, b FROM (x UNION ALL y)`` is ``x UNION DISTINCT y``."""
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or select.args.get("joins") or not select.args.get("distinct") or select.args["distinct"].args.get("on"):
+        return None
+    if any(select.args.get(k) for k in ("where", "group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with")):
+        return None
+    source = from_.this
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Union) or source.this.args.get("distinct"):
+        return None
+    union = source.this
+    if not isinstance(union, exp.Union) or isinstance(union, (exp.Intersect, exp.Except)) or type(union) is not exp.Union:
+        return None
+    names = _select_names(union)
+    wanted = [e.name.lower() for e in select.expressions if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)]
+    if names is None or wanted != names or len(wanted) != len(select.expressions):
+        return None
+    if any(c.table and c.table.lower() != (source.alias or "").lower() for c in select.find_all(exp.Column)):
+        return None
+    return exp.Union(this=union.this.copy(), expression=union.expression.copy(), distinct=True)
 
 
 def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
@@ -1777,11 +1867,17 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
 
 
 def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
-    """``COUNTIF(c)`` is ``COUNT(CASE WHEN c THEN 1 END)``; ``SAFE_DIVIDE(a, b)`` is ``IF(b = 0, NULL, a / b)``."""
+    """``COUNTIF(c)`` is ``COUNT(CASE WHEN c THEN 1 END)``; ``SAFE_DIVIDE(a, b)`` is ``IF(b = 0, NULL, a / b)``;
+    ``STARTS_WITH(x, 'p')`` is ``x LIKE 'p%'`` (and ``ENDS_WITH`` ``'%p'``) for a pattern without wildcards."""
 
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.CountIf):
             return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this.copy(), true=exp.Literal.number(1))]))
+        if isinstance(node, (exp.StartsWith, exp.EndsWith)):
+            pattern = node.expression
+            if isinstance(pattern, exp.Literal) and pattern.is_string and not set(pattern.name) & set("%_\\"):
+                text = pattern.name + "%" if isinstance(node, exp.StartsWith) else "%" + pattern.name
+                return exp.Like(this=node.this.copy(), expression=exp.Literal.string(text))
         if isinstance(node, exp.SafeDivide):
             zero = exp.EQ(this=node.expression.copy(), expression=exp.Literal.number(0))
             return exp.Case(
@@ -1810,7 +1906,12 @@ def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
 
 
 def normalize(
-    sql: str, *, schema: dict[str, list[str]] | None = None, dialect: str = "bigquery", not_null: dict[str, frozenset[str]] | None = None
+    sql: str,
+    *,
+    schema: dict[str, list[str]] | None = None,
+    dialect: str = "bigquery",
+    not_null: dict[str, frozenset[str]] | None = None,
+    keys: dict[str, list[tuple[str, ...]]] | None = None,
 ) -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
 
@@ -1834,7 +1935,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _merge_spj_source, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -1859,8 +1960,9 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     dialect = kwargs.get("dialect", "bigquery")
     try:
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null)
+        keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys)
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
     from . import scalar_subqueries
