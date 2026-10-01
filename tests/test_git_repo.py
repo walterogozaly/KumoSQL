@@ -319,3 +319,15 @@ def test_replacing_a_stale_clone_with_read_only_files_works(remote):
     # Force the rebuild path: the fetch fails, then a fresh clone replaces the read-only cache.
     (cached / "config").write_text("[remote \"origin\"]\n\turl = /nonexistent\n")
     assert git_repo.fetch_project(str(bare), refresh=True)["files"]
+
+
+def test_git_never_downloads_lfs_objects(monkeypatch):
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"], seen["env"] = command, kwargs["env"]
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr(git_repo.subprocess, "run", fake_run)
+    git_repo._git(["--version"])
+    assert seen["env"]["GIT_LFS_SKIP_SMUDGE"] == "1" and "filter.lfs.required=false" in seen["command"]
