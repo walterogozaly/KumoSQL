@@ -225,8 +225,99 @@ def select_projects(projects: list) -> list[str]:
         denied = [item for item, ok in zip(new, allowed) if not ok]
         if denied:
             raise ValueError(f"No access to BigQuery in {', '.join(denied)}")
-    set_section("bigquery", {"projects": ids})
+    _save({"projects": ids})
     return ids
+
+
+# --- Settings shared with other features (scope rules that run SQL, for example) ---
+
+DEFAULT_QUERY_CACHE_HOURS = 48
+MAX_QUERY_CACHE_HOURS = 24 * 365
+
+
+class BillingProjectRequired(RuntimeError):
+    """Raised by anything that runs a query before a billing project is chosen."""
+
+
+def _stored() -> dict:
+    stored = get_section("bigquery", {})
+    return dict(stored) if isinstance(stored, dict) else {}
+
+
+def _save(changes: dict) -> None:
+    set_section("bigquery", {**_stored(), **changes})
+
+
+def billing_project() -> str:
+    """The project query jobs run and bill in, or "" when none has been chosen."""
+    value = _stored().get("billingProject", "")
+    return value if isinstance(value, str) and _PROJECT_ID.match(value) else ""
+
+
+def require_billing_project() -> str:
+    """Return the billing project, or raise ``BillingProjectRequired`` with a user-facing message."""
+    project = billing_project()
+    if not project:
+        raise BillingProjectRequired(
+            "A billing project is needed to run queries. Choose one under BigQuery projects in Settings."
+        )
+    return project
+
+
+def query_cache_hours() -> float:
+    """How long results of queries KumoSQL runs are reused (default 48 hours)."""
+    value = _stored().get("queryCacheHours", DEFAULT_QUERY_CACHE_HOURS)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_QUERY_CACHE_HOURS:
+        return DEFAULT_QUERY_CACHE_HOURS
+    return value
+
+
+def query_cache_seconds() -> float:
+    return query_cache_hours() * 3600
+
+
+def bigquery_settings() -> dict:
+    return {
+        "projects": selected_projects(),
+        "billingProject": billing_project(),
+        "queryCacheHours": query_cache_hours(),
+    }
+
+
+def save_settings(billing: object = None, cache_hours: object = None) -> dict:
+    """Save the billing project and query cache lifetime; ``None`` leaves a value unchanged.
+
+    A billing project is checked with a free dry run, which also proves the
+    credentials may create jobs there. An empty string clears it.
+    """
+    changes: dict = {}
+    if billing is not None:
+        if not isinstance(billing, str):
+            raise ValueError("billingProject must be a project id")
+        billing = billing.strip()
+        if billing:
+            if not _PROJECT_ID.match(billing):
+                raise ValueError(f"not a project id: {billing}")
+            if billing != billing_project():
+                from .dryrun import dry_run
+
+                try:
+                    check = dry_run("SELECT 1", billing)
+                except RuntimeError as exc:
+                    raise ValueError(str(exc)) from exc
+                if not check.ok:
+                    raise ValueError(
+                        f"Cannot run queries in {billing}: {check.error_message or check.error_reason}"
+                    )
+        changes["billingProject"] = billing
+    if cache_hours is not None:
+        if isinstance(cache_hours, bool) or not isinstance(cache_hours, (int, float)) \
+                or not 0 <= cache_hours <= MAX_QUERY_CACHE_HOURS:
+            raise ValueError(f"query cache hours must be a number from 0 to {MAX_QUERY_CACHE_HOURS}")
+        changes["queryCacheHours"] = cache_hours
+    if changes:
+        _save(changes)
+    return bigquery_settings()
 
 
 def _can_list_tables(project: str, dataset: str) -> bool:
