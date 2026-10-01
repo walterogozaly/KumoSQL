@@ -228,6 +228,7 @@ async function start() {
   applySavedTheme();
   try {
     await setupScopePicker();
+    await window.KumoTags?.load();
     const response = await fetch(withScope(name === "cost" ? withRate(view.endpoint) : view.endpoint));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not load this view");
@@ -407,9 +408,23 @@ function lineageOf(graph, id, column, seen = new Set()) {
   };
 }
 
+/** Keep only the assets carrying ``tag`` (by hand or from a rule), and what connects them. */
+function onlyTagged(data, tagName) {
+  const keep = new Set(data.nodes.filter((node) => window.KumoTags.hasTag(node.id, tagName)).map((node) => node.id));
+  return {
+    ...data,
+    nodes: data.nodes.filter((node) => keep.has(node.id)),
+    edges: data.edges.filter((edge) => keep.has(edge.from) && keep.has(edge.to)),
+    column_lineage: data.column_lineage.filter((item) => keep.has(item.node)),
+    gaps: data.gaps.filter((gap) => keep.has(gap.asset)),
+  };
+}
+
 function renderGraph(data, root) {
-  const graph = buildGraph(data);
   const params = new URLSearchParams(location.search);
+  const tagName = window.KumoTags && params.get("tag") ? params.get("tag") : "";
+  if (tagName) data = onlyTagged(data, tagName);
+  const graph = buildGraph(data);
   const firstTraced = data.nodes.find((node) => graph.traced.has(node.id)) || data.nodes[0];
   const initialNode = graph.nodes.has(params.get("node")) ? params.get("node") : graph.nodes.has("staging.stg_orders") ? "staging.stg_orders" : firstTraced?.id;
   const initialColumns = graph.nodes.get(initialNode)?.columns || [];
@@ -443,6 +458,21 @@ function renderGraph(data, root) {
     search.value = "";
   });
 
+  const tagPick = window.KumoTags ? h("label", { class: "scope-pick" }, h("span", { text: "Tag" }),
+    h("select", { "aria-label": "Show only assets with a tag", onchange: (event) => {
+      const url = new URL(location.href);
+      if (event.target.value) url.searchParams.set("tag", event.target.value); else url.searchParams.delete("tag");
+      url.searchParams.delete("node");
+      location.href = url;
+    } }, h("option", { value: "" }, "All assets"),
+    ...window.KumoTags.names().map((name) => h("option", { value: name, selected: name === tagName }, name)))) : null;
+  const tagNote = tagName ? h("p", { class: "scope-note", text: data.nodes.length ? `Showing only assets tagged “${tagName}”.` : `No asset in this view is tagged “${tagName}”.` }) : null;
+
+  if (tagName && !data.nodes.length) {
+    root.append(h("div", { class: "graph-toolbar" }, tagPick, tagNote));
+    return;
+  }
+
   const modeTabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Graph question" },
     ...[["readers", "Find readers"], ["impact", "Assess a change"], ["lineage", "Explain lineage"], ["overlap", "Already elsewhere"]].map(([mode, label]) =>
       h("button", { class: "tab", type: "button", role: "tab", "data-mode": mode, onclick: () => { state.mode = mode; update(); } }, label)));
@@ -464,7 +494,7 @@ function renderGraph(data, root) {
 
   root.append(
     coverageStrip,
-    h("div", { class: "graph-toolbar" }, search, options, h("div", { class: "graph-toolbar-tabs" }, viewTabs, modeTabs)),
+    h("div", { class: "graph-toolbar" }, search, options, tagPick, tagNote, h("div", { class: "graph-toolbar-tabs" }, viewTabs, modeTabs)),
     h("div", { class: "graph-layout" },
       h("div", { class: "card graph-card" }, explorerHost, canvas, legend),
       detail),
@@ -487,7 +517,8 @@ function renderGraph(data, root) {
         },
         h("span", { class: "gnode-dataset", text: node.dataset }),
         h("span", { class: "gnode-name", text: node.name }),
-        h("span", { class: "gnode-kind", text: graph.gaps.has(node.id) ? "Not analyzed" : NODE_KINDS[node.kind] || node.kind }))))));
+        h("span", { class: "gnode-kind", text: graph.gaps.has(node.id) ? "Not analyzed" : NODE_KINDS[node.kind] || node.kind }),
+        window.KumoTags ? window.KumoTags.chips(node.id, { max: 2 }) : null)))));
   canvas.append(svg, grid);
 
   function setView(next) {
@@ -712,8 +743,22 @@ function renderGraph(data, root) {
         tree ? h("ul", { class: "lineage-tree is-root" }, renderTree(tree)) : null,
         h("p", { class: "muted small", text: "Columns that cannot be traced are marked unknown instead of guessed." }));
     }
-    detail.replaceChildren(head, body);
+    const tagStatus = h("span", { class: "muted small", role: "status" });
+    const tagSection = window.KumoTags ? h("div", { class: "detail-tags-edit" },
+      h("p", { class: "eyebrow", text: "Tags" }),
+      window.KumoTags.editor(() => [node.id], { onStatus: (message, failed) => { tagStatus.textContent = message; tagStatus.classList.toggle("is-error", Boolean(failed)); } }),
+      tagStatus) : null;
+    detail.replaceChildren(head, tagSection, body);
   }
+
+  // A tag changed: refresh the chips on the simple view's boxes (the editor redraws itself).
+  window.KumoTags?.onChange(() => {
+    for (const box of grid.querySelectorAll(".gnode")) {
+      box.querySelector(".tag-chips")?.remove();
+      box.append(window.KumoTags.chips(box.dataset.id, { max: 2 }));
+    }
+    if (view === "simple") drawEdges(highlightSet());
+  });
 
   let resizeTimer;
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(update, 100); });

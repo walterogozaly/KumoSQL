@@ -10,6 +10,7 @@
   <script src="/assets/shell.js"></script>
   <link rel="stylesheet" href="/assets/browse.css">
   <script defer src="/assets/bqprojects.js"></script>
+  <script defer src="/assets/tags.js"></script>
   <script defer src="/assets/browse.js"></script>
   <script defer src="/assets/scopes.js"></script>
   <script defer src="/assets/settings.js"></script>
@@ -38,8 +39,18 @@
           <div id="datasets" class="catalog-list" aria-label="Datasets"><p class="empty-state">Choose a project.</p></div>
         </div>
         <div class="catalog-panel">
-          <div class="catalog-heading"><h2>Tables</h2><span id="table-count"></span><button class="panel-refresh" type="button" data-level="tables" title="Refresh tables from BigQuery" aria-label="Refresh tables">↻</button></div>
-          <div id="tables" class="catalog-list" aria-label="Tables"><p class="empty-state">Choose a dataset.</p></div>
+          <div class="catalog-heading"><h2>Tables &amp; routines</h2><span id="table-count"></span><button class="panel-refresh" type="button" data-level="tables" title="Refresh tables from BigQuery" aria-label="Refresh tables">↻</button></div>
+          <div id="tag-bar" class="tag-bar" hidden>
+            <div class="tag-bar-row">
+              <label class="tag-check-all"><input type="checkbox" id="check-all" aria-label="Select every object shown"> Select all</label>
+              <select id="tag-filter" aria-label="Show only objects with a tag"></select>
+            </div>
+            <div id="tag-bulk" class="tag-bulk" hidden>
+              <p><strong id="bulk-count"></strong> selected <button id="bulk-clear" type="button" class="link-button">Clear</button></p>
+              <div id="bulk-editor"></div>
+            </div>
+          </div>
+          <div id="tables" class="catalog-list" aria-label="Tables, views, functions and procedures"><p class="empty-state">Choose a dataset.</p></div>
         </div>
         <div class="catalog-panel schema-panel">
           <div class="catalog-heading"><h2>Schema</h2><button class="panel-refresh" type="button" data-level="schema" title="Refresh schema from BigQuery" aria-label="Refresh schema">↻</button></div>

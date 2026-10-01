@@ -27,6 +27,7 @@
     { id: "repositories", label: "Repositories", icon: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-12 5"/>' },
     { id: "bigquery", label: "BigQuery projects", icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
+    { id: "tagrules", label: "Tag rules", icon: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/>' },
   ];
 
   let dialog;
@@ -391,6 +392,14 @@
     window.KumoScopes.renderManager(body, { onStatus: setStatus });
   }
 
+  function renderTagRules(body) {
+    if (!window.KumoTags) {
+      body.append(h("p", { class: "sp-lede", text: "Tag rules could not be loaded on this page." }));
+      return;
+    }
+    window.KumoTags.renderRules(body, { onStatus: setStatus });
+  }
+
   /* Connected Dataform repositories: saved on this computer and reloaded on start. */
   let reposChanged = false;
   async function repoCall(method, url, payload) {
@@ -563,7 +572,7 @@
     window.KumoBqProjects.renderBilling(body, { onStatus: setStatus });
   }
 
-  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes };
+  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes, tagrules: renderTagRules };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -585,6 +594,7 @@
     repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
     bigquery: "bigquery projects choose select project catalog browse tab billing project query cache hours lifetime",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
+    tagrules: "tag tags rules rule label retired batch tagging dataset schema table view function udf procedure objects",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };
   function keywordsFor(section) {

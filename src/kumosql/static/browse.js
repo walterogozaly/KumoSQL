@@ -10,6 +10,12 @@ let projectRequest = 0;
 let datasetRequest = 0;
 let tableRequest = 0;
 let schemaRequest = 0;
+let shownTables = [];
+const checked = new Set();
+const tagBar = document.getElementById("tag-bar");
+const tagFilter = document.getElementById("tag-filter");
+const ROUTINE_ICONS = { UDF: "ƒ", TABLE_FUNCTION: "ƒ", AGGREGATE_FUNCTION: "ƒ", PROCEDURE: "⚙" };
+const objectKey = (id) => `${chosenProject}.${chosenDataset}.${id}`;
 
 function setStatus(message, error = false) {
   status.textContent = message;
@@ -198,19 +204,82 @@ function renderProjectsSelection() {
   }
 }
 
+const typeLabel = (type) => type.replaceAll("_", " ").toLowerCase();
+
 function fillTables(tables) {
+  shownTables = tables;
   clearPane(tablesPane);
-  for (const table of tables) {
-    const button = itemButton(table.id, table.type === "VIEW" ? "◫" : "▦", table.type, table.id === chosenTable, () => selectTable(table.id));
+  const wanted = tagFilter.value;
+  const visible = wanted ? tables.filter((table) => window.KumoTags?.hasTag(objectKey(table.id), wanted)) : tables;
+  for (const table of visible) {
+    const icon = ROUTINE_ICONS[table.type] || (table.type === "VIEW" || table.type === "MATERIALIZED_VIEW" ? "◫" : "▦");
+    const button = itemButton(table.id, icon, typeLabel(table.type), table.id === chosenTable, () => selectTable(table.id));
     button.dataset.value = table.id;
-    tablesPane.append(button);
+    const tagged = window.KumoTags?.chips(objectKey(table.id), { max: 3 });
+    if (tagged?.children.length) button.append(tagged);
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "catalog-check";
+    box.checked = checked.has(table.id);
+    box.setAttribute("aria-label", `Select ${table.id} to tag`);
+    box.addEventListener("change", () => {
+      if (box.checked) checked.add(table.id); else checked.delete(table.id);
+      renderTagBar();
+    });
+    const row = document.createElement("div");
+    row.className = "catalog-row";
+    row.append(box, button);
+    tablesPane.append(row);
   }
-  document.getElementById("table-count").textContent = String(tables.length);
+  if (wanted && !visible.length) clearPane(tablesPane, `Nothing in this dataset is tagged “${wanted}”.`);
+  document.getElementById("table-count").textContent = wanted ? `${visible.length} of ${tables.length}` : String(tables.length);
+  renderTagBar();
 }
+
+/* ----- Tags: filter, multi-select tagging, and the editor for the open object ----- */
+
+const bulkEditor = window.KumoTags?.editor(() => [...checked].map(objectKey), { onStatus: setStatus });
+if (bulkEditor) document.getElementById("bulk-editor").append(bulkEditor);
+
+function renderTagBar() {
+  const tags = window.KumoTags;
+  tagBar.hidden = !tags || !shownTables.length;
+  if (tagBar.hidden) return;
+  const current = tagFilter.value;
+  tagFilter.replaceChildren(new Option("All tags", ""), ...tags.names().map((name) => new Option(name, name)));
+  tagFilter.value = tags.names().includes(current) ? current : "";
+  const ids = new Set(shownTables.map((table) => table.id));
+  for (const id of [...checked]) if (!ids.has(id)) checked.delete(id);
+  const box = document.getElementById("check-all");
+  box.checked = checked.size > 0 && tablesPane.querySelectorAll(".catalog-check").length === checked.size;
+  box.indeterminate = checked.size > 0 && !box.checked;
+  document.getElementById("tag-bulk").hidden = checked.size === 0;
+  document.getElementById("bulk-count").textContent = String(checked.size);
+  bulkEditor?.redraw();
+}
+
+tagFilter.addEventListener("change", () => fillTables(shownTables));
+document.getElementById("check-all").addEventListener("change", (event) => {
+  checked.clear();
+  if (event.target.checked) for (const box of tablesPane.querySelectorAll(".catalog-row")) checked.add(box.querySelector("button").dataset.value);
+  fillTables(shownTables);
+});
+document.getElementById("bulk-clear").addEventListener("click", () => {
+  checked.clear();
+  fillTables(shownTables);
+});
+// A tag changed (here, in Settings, or by a rule after a reload): redraw the chips and keep the open schema.
+window.KumoTags?.onChange(() => {
+  if (shownTables.length) fillTables(shownTables);
+});
 
 async function selectDataset(dataset, refresh = false) {
   chosenDataset = dataset;
   chosenTable = "";
+  checked.clear();
+  shownTables = [];
+  tagFilter.value = "";
+  tagBar.hidden = true;
   for (const key of ["tables", "table"]) delete freshness[key];
   for (const button of datasetsPane.querySelectorAll("button")) {
     button.setAttribute("aria-current", button.dataset.value === dataset ? "true" : "false");
@@ -252,11 +321,24 @@ function addFields(rows, fields, depth = 0) {
   }
 }
 
+function objectTags(key) {
+  if (!window.KumoTags) return null;
+  const box = document.createElement("div");
+  box.className = "object-tags";
+  const label = document.createElement("p");
+  label.className = "schema-title";
+  label.textContent = "Tags";
+  box.append(label, window.KumoTags.editor(() => [key], { onStatus: setStatus }));
+  return box;
+}
+
 function fillSchema(project, dataset, metadata) {
   clearPane(schemaPane);
   const title = document.createElement("p");
   title.className = "schema-title";
   title.textContent = `${project}.${dataset}.${metadata.id} · ${metadata.type}${metadata.numRows ? ` · ${Number(metadata.numRows).toLocaleString()} rows` : ""}`;
+  const tags = objectTags(`${project}.${dataset}.${metadata.id}`);
+  if (tags) schemaPane.append(tags);
   const tableElement = document.createElement("table");
   tableElement.className = "schema-table";
   const head = document.createElement("thead");
@@ -278,6 +360,18 @@ async function selectTable(table, refresh = false) {
   for (const button of tablesPane.querySelectorAll("button")) {
     button.setAttribute("aria-current", button.dataset.value === table ? "true" : "false");
   }
+  const routine = shownTables.find((item) => item.id === table && ROUTINE_ICONS[item.type]);
+  if (routine) {
+    // Functions and procedures have no schema to read; they can still be tagged.
+    schemaRequest++;
+    clearPane(schemaPane);
+    const title = document.createElement("p");
+    title.className = "schema-title";
+    title.textContent = `${chosenProject}.${chosenDataset}.${table} · ${typeLabel(routine.type)}`;
+    schemaPane.append(title, objectTags(objectKey(table)) || "");
+    setStatus(`${table} is a ${typeLabel(routine.type)}.`);
+    return;
+  }
   clearPane(schemaPane, "Loading schema…");
   const project = chosenProject;
   const dataset = chosenDataset;
@@ -294,7 +388,9 @@ async function selectTable(table, refresh = false) {
     if (version !== schemaRequest) return;
     if (error.removed) {
       // No access to this table: stop listing it.
-      tablesPane.querySelector(`button[data-value="${CSS.escape(table)}"]`)?.remove();
+      tablesPane.querySelector(`button[data-value="${CSS.escape(table)}"]`)?.closest(".catalog-row")?.remove();
+      shownTables = shownTables.filter((item) => item.id !== table);
+      checked.delete(table);
       document.getElementById("table-count").textContent = String(tablesPane.querySelectorAll("button").length);
       chosenTable = "";
       clearPane(schemaPane, "Choose a table to inspect its schema.");
@@ -302,6 +398,9 @@ async function selectTable(table, refresh = false) {
       return;
     }
     clearPane(schemaPane, "Could not load schema.");
+    // The object can still be tagged without its schema.
+    const tags = objectTags(`${project}.${dataset}.${table}`);
+    if (tags) schemaPane.append(tags);
     setStatus(error.message, true);
   }
 }
@@ -358,6 +457,7 @@ for (const button of document.querySelectorAll(".panel-refresh")) {
 }
 
 document.getElementById("refresh").addEventListener("click", refreshAll);
+window.KumoTags?.load().then(() => { if (shownTables.length) fillTables(shownTables); });
 loadProjects();
 
 // Choosing projects here or in Settings updates the list, keeping the open project if it is still chosen.
