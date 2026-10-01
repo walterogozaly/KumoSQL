@@ -260,7 +260,7 @@ def test_the_explorer_rereads_tags_after_loading_a_dataset():
     from importlib.resources import files
 
     script = files("kumosql").joinpath("static", "browse.js").read_text(encoding="utf-8")
-    assert script.count("await window.KumoTags?.load()") >= 1 and "KumoTags?.load().then(() => { if (chosenProject" in script
+    assert script.count("await window.KumoTags?.load()") >= 1 and "KumoTags?.load().then(() => { if (node.item.isConnected)" in script
 
 
 def test_a_saved_rule_lists_its_tag_even_before_it_matches_and_coverage_is_reported():
