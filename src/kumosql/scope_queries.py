@@ -9,12 +9,14 @@ Running a query costs money, so it is guarded and cached:
 * the query is dry-run first and refused when its estimate is over the byte cap;
 * the real run carries ``maximumBytesBilled`` (BigQuery refuses it past the cap) and a label;
 * it runs in the billing project chosen in Settings, never one guessed from the query;
-* the result (one column of values) is kept for ``cache_hours`` (default 48), in memory and
+* the result (one column of values) is kept for the query cache lifetime (Settings → BigQuery
+  projects, default 48 hours), in memory and
   in ``scope-query-cache.json`` in the KumoSQL data directory, and is reused until it
   expires. An expired result is re-run when next used; if the re-run fails the older copy
   is used and flagged stale. ``refresh`` bypasses the timer.
 
-Settings live in the ``scope_queries`` section of ``state.json``.
+The billing project and the cache lifetime are the BigQuery settings (``bigquery_catalog``);
+the byte cap is this module's own setting, in the ``scope_queries`` section of ``state.json``.
 """
 
 from __future__ import annotations
@@ -35,9 +37,6 @@ from urllib.parse import quote, urlencode
 from . import state
 
 SECTION = "scope_queries"
-DEFAULT_CACHE_HOURS = 48.0
-MIN_CACHE_HOURS = 0.0
-MAX_CACHE_HOURS = 24 * 365.0
 #: BigQuery bills at least 10 MB per query, so a smaller cap could never run anything.
 MIN_BYTES_BILLED = 10 * 1000 * 1000
 DEFAULT_MAX_BYTES_BILLED = 1024**3
@@ -54,11 +53,10 @@ class QueryError(ValueError):
 
 @dataclass(frozen=True)
 class Settings:
-    cache_hours: float = DEFAULT_CACHE_HOURS
     max_bytes_billed: int = DEFAULT_MAX_BYTES_BILLED
 
     def to_json(self) -> dict:
-        return {"cache_hours": self.cache_hours, "max_bytes_billed": self.max_bytes_billed}
+        return {"max_bytes_billed": self.max_bytes_billed}
 
 
 def parse_settings(data: object) -> Settings:
@@ -66,15 +64,12 @@ def parse_settings(data: object) -> Settings:
 
     if not isinstance(data, dict):
         raise ValueError("query settings must be an object")
-    hours = data.get("cache_hours", DEFAULT_CACHE_HOURS)
     cap = data.get("max_bytes_billed", DEFAULT_MAX_BYTES_BILLED)
-    if isinstance(hours, bool) or not isinstance(hours, (int, float)) or not MIN_CACHE_HOURS <= hours <= MAX_CACHE_HOURS:
-        raise ValueError(f"cache_hours must be a number from {MIN_CACHE_HOURS:g} to {MAX_CACHE_HOURS:g}")
     if isinstance(cap, bool) or not isinstance(cap, int) or not MIN_BYTES_BILLED <= cap <= MAX_BYTES_BILLED:
         raise ValueError(
             f"max_bytes_billed must be a whole number of bytes from {MIN_BYTES_BILLED} (10 MB) to {MAX_BYTES_BILLED}"
         )
-    return Settings(float(hours), cap)
+    return Settings(cap)
 
 
 def get_settings() -> Settings:
@@ -91,11 +86,19 @@ def save_settings(data: object) -> Settings:
 
 
 def billing_project() -> str:
-    """The billing project chosen in Settings → BigQuery (empty when none is chosen)."""
+    """The billing project chosen in Settings → BigQuery projects (empty when none is chosen)."""
 
-    section = state.get_section("bigquery", {})
-    value = section.get("billing_project") if isinstance(section, dict) else None
-    return value.strip() if isinstance(value, str) else ""
+    from . import bigquery_catalog
+
+    return bigquery_catalog.billing_project()
+
+
+def cache_seconds() -> float:
+    """How long a result is reused: the query cache lifetime in Settings → BigQuery projects."""
+
+    from . import bigquery_catalog
+
+    return bigquery_catalog.query_cache_seconds()
 
 
 # ------------------------------------------------------------------- running
@@ -141,10 +144,14 @@ def _api_error(status: int, payload: dict) -> QueryError:
 
 
 def _need_project(project: str | None) -> str:
-    project = (project if project is not None else billing_project()).strip()
-    if not project:
-        raise QueryError("Choose a billing project in Settings → BigQuery before using a query condition.")
-    return project
+    if project:
+        return project
+    from . import bigquery_catalog
+
+    try:
+        return bigquery_catalog.require_billing_project()
+    except bigquery_catalog.BillingProjectRequired as exc:
+        raise QueryError(str(exc)) from exc
 
 
 def _pick_column(names: list[str], column: str | None) -> int:
@@ -340,7 +347,7 @@ def peek(sql: str, column: str | None = None) -> Result | None:
     if not entry:
         return None
     now = time.time()
-    ttl = get_settings().cache_hours * 3600
+    ttl = cache_seconds()
     return _result(entry, now, ttl, stale=now - entry["at"] >= ttl)
 
 
@@ -355,7 +362,7 @@ def result_for(sql: str, column: str | None = None, *, refresh: bool = False) ->
         raise QueryError("the query is empty")
     key = cache_key(sql, column)
     settings = get_settings()
-    ttl = settings.cache_hours * 3600
+    ttl = cache_seconds()
     with _lock:
         _load_disk()
         entry = _memory.get(key)
@@ -393,7 +400,7 @@ def values_for(node: dict, case_sensitive: bool = False) -> frozenset[str]:
 def cached_queries() -> list[dict]:
     """What is cached, newest first, for the Settings page."""
 
-    ttl = get_settings().cache_hours * 3600
+    ttl = cache_seconds()
     now = time.time()
     with _lock:
         _load_disk()

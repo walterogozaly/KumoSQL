@@ -168,6 +168,7 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(200, {
                 "settings": scope_queries.get_settings().to_json(),
                 "billing_project": scope_queries.billing_project(),
+                "cache_hours": scope_queries.cache_seconds() / 3600,
                 "cached": scope_queries.cached_queries(),
             })
             return

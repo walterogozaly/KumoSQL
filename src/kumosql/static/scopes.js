@@ -177,6 +177,7 @@
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "The query could not be checked");
+    if (mode === "run" || mode === "refresh") document.dispatchEvent(new Event("kumo-scope-query"));
     return data;
   }
 
@@ -241,7 +242,6 @@
   /** Settings for query conditions: billing project (from BigQuery settings), cache timer, byte cap. */
   function renderQuerySettings(body) {
     const billing = h("p", { class: "sp-row-hint" });
-    const hours = h("input", { type: "number", min: "0", max: "8760", step: "any", "aria-label": "Keep results for (hours)" });
     const cap = h("input", { type: "number", min: "10", step: "any", "aria-label": "Maximum billed per query (MB)" });
     const cached = h("ul", { class: "scope-list" });
     const status = h("p", { class: "sp-row-hint" });
@@ -249,11 +249,11 @@
       h("div", { class: "sp-row-text" }, h("span", { class: "sp-row-label", text: label }), h("p", { class: "sp-row-hint", text: hint })),
       h("div", { class: "sp-row-control" }, control));
     const draw = (info) => {
-      billing.textContent = info.billing_project
-        ? `Queries run in billing project “${info.billing_project}” (chosen in Settings → BigQuery).`
-        : "No billing project is chosen yet. Choose one in Settings → BigQuery; query conditions cannot run without it.";
-      hours.value = info.settings.cache_hours;
-      cap.value = info.settings.max_bytes_billed / 1e6;
+      billing.textContent = (info.billing_project
+        ? `Queries run in billing project “${info.billing_project}”.`
+        : "No billing project is chosen yet; query conditions cannot run without one.")
+        + ` Results are kept for ${info.cache_hours} hours. Both are set under BigQuery projects in Settings.`;
+      cap.value = Math.round(info.settings.max_bytes_billed / 1e6);
       cached.replaceChildren(...info.cached.map((item) => h("li", { class: "scope-item" },
         h("div", {}, h("strong", { text: item.sql || "(query)" }),
           h("small", { text: `${item.count.toLocaleString()} values · last run ${formatTime(item.fetched_at)} · ${item.expired ? "expired" : `kept until ${formatTime(item.expires_at)}`}` })))));
@@ -266,7 +266,7 @@
       try {
         const response = await fetch("/api/settings/scope_queries", {
           method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cache_hours: Number(hours.value), max_bytes_billed: Math.round(Number(cap.value) * 1e6) }),
+          body: JSON.stringify({ max_bytes_billed: Math.round(Number(cap.value) * 1e6) }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Could not save");
@@ -274,16 +274,15 @@
         await refreshInfo();
       } catch (error) { status.textContent = error.message; }
     };
-    hours.addEventListener("change", saveSettings);
     cap.addEventListener("change", saveSettings);
     body.append(
-      h("h4", { class: "sp-subheading", text: "Query conditions" }),
-      h("p", { class: "sp-lede", text: "A condition can be “is returned by SQL query”: the field must be one of the values a BigQuery query returns, for example a team kept in a table. Queries are dry-run first and capped, run in your billing project, and their results are kept so they are not billed again until the timer ends." }),
+      h("h4", { class: "sp-subheading sp-query-heading", text: "Query conditions" }),
+      h("p", { class: "sp-lede", text: "A condition can be “is returned by SQL query”: the field must be one of the values a BigQuery query returns, for example a team kept in a table. Queries are dry-run first and capped, run in your billing project, and their results are kept so they are not billed again until the timer ends (use Refresh now on a condition to run it sooner)." }),
       billing,
       h("div", { class: "sp-group" },
-        row("Keep results for (hours)", "How long a result is reused before the query runs again. Default 48. Use Refresh now on a condition to run it sooner.", hours),
         row("Maximum billed per query (MB)", "A query estimated over this is not run, and BigQuery refuses to bill more. Default 1,074 MB (1 GiB).", cap)),
       h("h4", { class: "sp-subheading", text: "Kept results" }), cached, status);
+    document.addEventListener("kumo-scope-query", refreshInfo);
     refreshInfo();
   }
 

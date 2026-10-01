@@ -21,7 +21,7 @@ SQL = "SELECT user_email FROM `p.d.my_team`"
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
     scope_queries.clear_cache()
-    state.set_section("bigquery", {"billing_project": "billing-p"})
+    state.set_section("bigquery", {"billingProject": "billing-p"})
     calls = []
 
     def runner(sql, column, project, max_bytes):
@@ -72,14 +72,15 @@ def test_results_are_cached_until_the_timer_ends_and_refresh_runs_again(_fresh):
     assert len(_fresh) == 1
     scope_queries.result_for(SQL, refresh=True)
     assert len(_fresh) == 2
-    state.set_section("scope_queries", {"cache_hours": 0.001, "max_bytes_billed": 50_000_000})
+    state.set_section("scope_queries", {"max_bytes_billed": 50_000_000})
+    state.set_section("bigquery", {"billingProject": "billing-p", "queryCacheHours": 0.001})
     time.sleep(3.7)
     scope_queries.result_for(SQL)
     assert len(_fresh) == 3 and _fresh[-1][3] == 50_000_000
 
 
 def test_default_timer_is_48_hours_and_survives_a_restart(_fresh, monkeypatch):
-    assert scope_queries.get_settings().cache_hours == 48
+    assert scope_queries.cache_seconds() == 48 * 3600
     result = scope_queries.result_for(SQL)
     assert result.expires_at - result.fetched_at == 48 * 3600
     monkeypatch.setattr(scope_queries, "_memory", {})
@@ -102,13 +103,13 @@ def test_a_failed_rerun_keeps_the_older_copy_and_says_so(monkeypatch):
 
 def test_a_billing_project_is_required():
     state.set_section("bigquery", {})
-    with pytest.raises(QueryError, match="billing project in Settings → BigQuery"):
+    with pytest.raises(QueryError, match="billing project is needed"):
         team_scope().matches({"user_email": "a"})
 
 
 def test_settings_are_validated():
-    assert scope_queries.save_settings({"cache_hours": 6, "max_bytes_billed": 100_000_000}).cache_hours == 6
-    for bad in ({"cache_hours": -1}, {"cache_hours": "x"}, {"max_bytes_billed": 5}, {"max_bytes_billed": 1.5e9}, []):
+    assert scope_queries.save_settings({"max_bytes_billed": 100_000_000}).max_bytes_billed == 100_000_000
+    for bad in ({"max_bytes_billed": "x"}, {"max_bytes_billed": 5}, {"max_bytes_billed": 1.5e9}, []):
         with pytest.raises(ValueError):
             scope_queries.save_settings(bad)
 
@@ -124,7 +125,7 @@ class FakeBigQuery:
     def post(self, url, headers, body):
         payload = json.loads(body)
         self.posts.append((url, payload))
-        if payload.get("dryRun"):
+        if payload.get("configuration", {}).get("dryRun"):
             return 200, {"statistics": {"totalBytesProcessed": str(self.estimate), "query": {
                 "schema": {"fields": [{"name": "user_email", "type": "STRING"}, {"name": "team", "type": "STRING"}]}}}}
         first = [{"f": [{"v": r[0]}, {"v": "x"}]} for r in self.rows[: len(self.rows) // self.pages or 1]]
@@ -152,7 +153,7 @@ def test_runner_dry_runs_first_then_runs_with_a_byte_cap_in_the_billing_project(
     result = scope_queries.result_for(SQL, "user_email")
     assert result.values == {"ana@co.com", "bo@co.com"} and result.bytes_billed == 10485760
     dry, real = bq.posts
-    assert dry[1]["dryRun"] if "dryRun" in dry[1] else dry[1]["configuration"]["dryRun"]
+    assert dry[1]["configuration"]["dryRun"] is True and "/projects/billing-p/jobs" in dry[0]
     assert "/projects/billing-p/" in real[0] and real[0].endswith("/queries")
     assert real[1]["maximumBytesBilled"] == str(scope_queries.DEFAULT_MAX_BYTES_BILLED)
     assert real[1]["labels"] == {"kumosql": "scope_query"} and real[1]["useQueryCache"] is True
@@ -212,16 +213,16 @@ def test_api_status_run_refresh_settings_and_cache_listing(server, _fresh):
     call(server, "/api/scope-queries", {"mode": "refresh", "query": SQL})
     assert len(_fresh) == 2
     info = call(server, "/api/scope-queries")
-    assert info["billing_project"] == "billing-p" and info["settings"]["cache_hours"] == 48
+    assert info["billing_project"] == "billing-p" and info["cache_hours"] == 48
     assert [c["count"] for c in info["cached"]] == [2]
-    saved = call(server, "/api/settings/scope_queries", {"cache_hours": 12, "max_bytes_billed": 200_000_000}, "PUT")
-    assert saved == {"cache_hours": 12.0, "max_bytes_billed": 200_000_000}
+    saved = call(server, "/api/settings/scope_queries", {"max_bytes_billed": 200_000_000}, "PUT")
+    assert saved == {"max_bytes_billed": 200_000_000}
     for bad in ({"mode": "run", "query": ""}, {"mode": "nope", "query": SQL}):
         with pytest.raises(HTTPError) as error:
             call(server, "/api/scope-queries", bad)
         assert error.value.code == 400
     with pytest.raises(HTTPError) as error:
-        call(server, "/api/settings/scope_queries", {"cache_hours": -5}, "PUT")
+        call(server, "/api/settings/scope_queries", {"max_bytes_billed": -5}, "PUT")
     assert error.value.code == 400
 
 
@@ -229,7 +230,7 @@ def test_api_reports_a_missing_billing_project_clearly(server):
     state.set_section("bigquery", {})
     with pytest.raises(HTTPError) as error:
         call(server, "/api/scope-queries", {"mode": "run", "query": SQL})
-    assert "billing project" in json.load(error.value)["error"]
+    assert "billing project is needed" in json.load(error.value)["error"]
 
 
 def test_cli_refreshes_query_conditions(capsys, _fresh):
