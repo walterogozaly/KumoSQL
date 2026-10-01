@@ -266,7 +266,29 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, {"projects": projects})
 
+    def _put_bigquery_settings(self) -> None:
+        from . import bigquery_catalog
+
+        payload = self._read_json(MAX_UI_STATE_BYTES)
+        if payload is None:
+            return
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("settings must be an object")
+            saved = bigquery_catalog.save_settings(
+                payload.get("billingProject"), payload.get("queryCacheHours"))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except (OSError, RuntimeError) as exc:
+            self._json(502, {"error": str(exc)})
+            return
+        self._json(200, saved)
+
     def do_PUT(self) -> None:
+        if self.path == "/api/catalog/settings":
+            self._put_bigquery_settings()
+            return
         if self.path == "/api/catalog/selection":
             self._put_selection()
             return
@@ -309,6 +331,9 @@ class UIHandler(BaseHTTPRequestHandler):
         try:
             if route == "/api/catalog/selection":
                 self._json(200, {"projects": bigquery_catalog.selected_projects()})
+                return
+            if route == "/api/catalog/settings":
+                self._json(200, bigquery_catalog.bigquery_settings())
                 return
             if route == "/api/catalog/projects":
                 result = bigquery_catalog.cached(

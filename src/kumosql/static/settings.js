@@ -396,6 +396,7 @@
       return;
     }
     window.KumoBqProjects.render(body, { onStatus: setStatus });
+    window.KumoBqProjects.renderBilling(body, { onStatus: setStatus });
   }
 
   const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, bigquery: renderBigQuery, scopes: renderScopes };
@@ -416,7 +417,7 @@
   // Search narrows the sidebar to sections with a matching setting.
   const KEYWORDS = {
     appearance: "appearance theme light dark system colour color mode",
-    bigquery: "bigquery projects choose select project catalog browse tab",
+    bigquery: "bigquery projects choose select project catalog browse tab billing project query cache hours lifetime",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };

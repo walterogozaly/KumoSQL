@@ -80,3 +80,28 @@ def test_forget_table_removes_it_from_cached_list():
     catalog.cached("tables\x1fp\x1fd", lambda: [{"id": "a"}, {"id": "b"}])
     catalog.forget_table("p", "d", "b")
     assert catalog.cached("tables\x1fp\x1fd", lambda: [])["data"] == [{"id": "a"}]
+
+
+def test_billing_project_and_cache_settings(monkeypatch):
+    from kumosql import dryrun
+
+    assert catalog.billing_project() == ""
+    with pytest.raises(catalog.BillingProjectRequired, match="billing project is needed"):
+        catalog.require_billing_project()
+    assert catalog.query_cache_hours() == 48 and catalog.query_cache_seconds() == 48 * 3600
+
+    result = dryrun.DryRunResult(ok=True)
+    monkeypatch.setattr(dryrun, "dry_run", lambda sql, project, **kw: result)
+    saved = catalog.save_settings("bill-proj", 12)
+    assert saved["billingProject"] == "bill-proj" and saved["queryCacheHours"] == 12
+    assert catalog.require_billing_project() == "bill-proj"
+
+    result = dryrun.DryRunResult(ok=False, error_message="denied")
+    with pytest.raises(ValueError, match="denied"):
+        catalog.save_settings("other-proj")
+    with pytest.raises(ValueError):
+        catalog.save_settings(None, -1)
+    assert catalog.billing_project() == "bill-proj"
+    catalog.select_projects([])
+    assert catalog.billing_project() == "bill-proj"  # choosing projects keeps the other settings
+    assert catalog.save_settings("")["billingProject"] == ""
