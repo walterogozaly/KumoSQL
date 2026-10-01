@@ -112,6 +112,16 @@ def cached(key: str, fetch, refresh: bool = False) -> dict:
     return {"data": data, "fetchedAt": now, "cached": False, "stale": False}
 
 
+def forget_table(project: str, dataset: str, table: str) -> None:
+    """Drop ``table`` from the cached table list of its dataset (it turned out to be inaccessible)."""
+    key = "\x1f".join(("tables", project, dataset))
+    with _lock:
+        entry = _memory.get(key)
+        if entry:
+            entry["data"] = [item for item in entry["data"] if item.get("id") != table]
+            _save_disk()
+
+
 def _token_cached() -> str:
     global _token
     if os.environ.get("BQ_ACCESS_TOKEN"):

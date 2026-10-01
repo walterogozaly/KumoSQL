@@ -68,3 +68,9 @@ def test_list_datasets_hides_anonymous_and_denied(monkeypatch):
 
     monkeypatch.setattr(catalog, "_get", fake_get)
     assert [d["id"] for d in catalog.list_datasets("p")] == ["sales"]
+
+
+def test_forget_table_removes_it_from_cached_list():
+    catalog.cached("tables\x1fp\x1fd", lambda: [{"id": "a"}, {"id": "b"}])
+    catalog.forget_table("p", "d", "b")
+    assert catalog.cached("tables\x1fp\x1fd", lambda: [])["data"] == [{"id": "a"}]
