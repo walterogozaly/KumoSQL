@@ -236,3 +236,31 @@ def test_git_runs_with_an_existing_directory_even_if_the_servers_is_gone(tmp_pat
     with pytest.raises(FileNotFoundError):
         os.getcwd()
     assert git_repo.fetch_project(str(bare))["files"]
+
+
+def test_git_config_that_rewrites_https_to_ssh_is_refused(tmp_path, monkeypatch):
+    config = tmp_path / "gitconfig"
+    config.write_text('[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
+    with pytest.raises(git_repo.GitRepoError, match="rewrites https://github.com/o/r.git to git@github.com:o/r.git"):
+        git_repo.fetch_project("https://github.com/o/r.git")
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
+
+
+def test_https_urls_are_used_as_entered(tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "empty"))
+    assert git_repo.parse_remote("https://github.com/o/r.git") == "https://github.com/o/r.git"
+    git_repo._refuse_rewritten_transport("https://github.com/o/r.git")  # no rewrite configured: fine
+
+
+@pytest.mark.parametrize("stderr", [
+    "ssh: connect to host github.com port 22: Connection timed out\nfatal: Could not read from remote repository.",
+    "ssh: connect to host github.com port 22: Network is unreachable",
+    "ssh: Could not resolve hostname github.com: Name or service not known",
+])
+def test_blocked_ssh_suggests_https(monkeypatch, stderr):
+    monkeypatch.setattr(git_repo.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 128, b"", stderr.encode()))
+    with pytest.raises(git_repo.GitRepoError) as error:
+        git_repo._git(["clone", "x"])
+    assert stderr.splitlines()[0] in str(error.value) and "https URL instead" in str(error.value)
