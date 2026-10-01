@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -60,9 +61,46 @@ class GitRepoError(ValueError):
 _TRACE: list[dict] | None = None  # filled by diagnose(); None means no tracing
 
 
+def is_store_python() -> bool:
+    """True for the Microsoft Store build of Python, which redirects writes under AppData."""
+
+    return sys.platform == "win32" and "windowsapps" in (sys.executable or "").lower()
+
+
 def cache_dir() -> Path:
+    """Where clones are cached.
+
+    On Windows this is under the user's home folder, not AppData: the Microsoft Store
+    build of Python silently redirects AppData writes into a private per-package folder
+    that ``git.exe`` cannot see, so git would run in (and clone into) a folder that does
+    not exist for it.
+    """
+
     override = os.environ.get("KUMOSQL_GIT_CACHE")
-    return Path(override) if override else data_dir() / "git-cache"
+    if override:
+        return Path(override)
+    if os.name == "nt" and not os.environ.get("KUMOSQL_HOME"):
+        return Path.home() / ".kumosql" / "git-cache"
+    return data_dir() / "git-cache"
+
+
+def _rmtree(path: Path) -> None:
+    """Delete a folder tree, including git's read-only object files (plain rmtree leaves them on Windows)."""
+
+    def retry(function, target, *_):
+        for item in (target, os.path.dirname(target)):
+            try:
+                os.chmod(item, 0o700)
+            except OSError:
+                pass
+        function(target)
+
+    if not path.exists():
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=retry)
+    else:
+        shutil.rmtree(path, onerror=retry)
 
 
 def parse_remote(value: object) -> str:
@@ -191,8 +229,15 @@ def _clone(remote: str, branch: str | None, path: Path) -> None:
     except GitRepoError:
         shutil.rmtree(partial, ignore_errors=True)
         raise
-    shutil.rmtree(path, ignore_errors=True)
-    partial.rename(path)
+    try:
+        _rmtree(path)
+        partial.rename(path)
+    except OSError as exc:
+        shutil.rmtree(partial, ignore_errors=True)
+        raise GitRepoError(
+            f"Could not replace the cached clone at {path}: {exc}. Close anything using that folder "
+            "and delete it, or set KUMOSQL_GIT_CACHE to another folder."
+        ) from exc
 
 
 def _tree_blobs(checkout: Path) -> dict[str, str]:
@@ -282,7 +327,6 @@ def diagnose(value: object, branch: object = None) -> str:
     """Run a full refresh load while recording every git call; returns a report to paste into a bug report."""
 
     import platform
-    import sys
     import traceback
 
     from . import version
@@ -303,6 +347,9 @@ def diagnose(value: object, branch: object = None) -> str:
         lines.append(f"Working directory: {server_cwd} (exists: {Path(server_cwd).is_dir()})")
     except OSError as exc:
         lines.append(f"Working directory: unreadable ({exc})")
+    if is_store_python():
+        lines.append("WARNING: this is the Microsoft Store build of Python. It redirects writes under AppData, "
+                     "which git cannot see. KumoSQL caches clones under your home folder for that reason.")
     lines.append(f"Cache directory: {cache_dir()} (exists: {cache_dir().is_dir()})")
     lines.append(f"Temp directory: {tempfile.gettempdir()} (exists: {Path(tempfile.gettempdir()).is_dir()})")
     lines.append(f"State directory: {data_dir()} (exists: {data_dir().is_dir()})")
