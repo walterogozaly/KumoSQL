@@ -32,6 +32,7 @@ rests on an uninterpreted function.
 from __future__ import annotations
 
 from collections import Counter
+import dataclasses
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -151,6 +152,12 @@ _DATEISH = re.compile(r"^\s*[+-]?\d{1,5}-\d{1,2}-\d{1,2}")
 _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
+
+
+class _Env(dict):
+    """Alias -> source for one query scope; ``outer`` is the enclosing scope of a subquery."""
+
+    outer: "_Env | None" = None
 
 
 class Unsupported(Exception):
@@ -280,6 +287,37 @@ class _Occ:
 
 
 @dataclass
+class _State:
+    """One way a FROM clause can produce rows (outer joins split into several)."""
+
+    occs: list
+    conds: list
+    env: "_Env"
+    subs: list = field(default_factory=list)
+
+    def cond(self) -> "_Pred":
+        result = _const_pred(True)
+        for c in self.conds:
+            result = _Pred(z3.And(result.t, c.t), z3.Or(result.f, c.f))
+        return result
+
+
+@dataclass
+class _Sub:
+    """An existence test: ``atom`` is TRUE iff some row of ``occs`` satisfies ``guard``.
+
+    ``atom`` is a free Boolean in the formulas that mention it. Two subqueries
+    proved to test the same thing may share an atom; nested tests inside the
+    guard are in ``nested``.
+    """
+
+    atom: object
+    occs: list
+    guard: object
+    nested: list = field(default_factory=list)
+
+
+@dataclass
 class _Spj:
     occs: list[_Occ]
     cond: _Pred
@@ -287,6 +325,7 @@ class _Spj:
     names: list[str]
     distinct: bool = False
     facts: list = field(default_factory=list)
+    subs: list = field(default_factory=list)
 
 
 @dataclass
@@ -309,6 +348,7 @@ class _Agg:
     is_global: bool
     distinct: bool = False
     facts: list = field(default_factory=list)
+    subs: list = field(default_factory=list)
 
 
 @dataclass
@@ -405,6 +445,9 @@ class _Compiler:
         # Hypotheses every valid query satisfies, e.g. arithmetic operands are
         # numbers in exact mode.
         self.facts: list = []
+        # Existence tests (EXISTS, IN) found while compiling the current select.
+        self.collector: list = []
+        self.ctes: dict = {}
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -439,6 +482,8 @@ class _Compiler:
             ctes = dict(ctes)
             for cte in with_clause.expressions:
                 ctes[cte.alias_or_name.lower()] = (cte.this, dict(ctes))
+        if type(node) in (exp.Intersect, exp.Except):
+            return self._set_operation(node, ctes)
         if type(node) is exp.Union:
             if node.args.get("by_name") or node.args.get("side") or node.args.get("kind") or node.args.get("on"):
                 raise Unsupported("UNION variants other than ALL/DISTINCT")
@@ -458,8 +503,43 @@ class _Compiler:
                 raise Unsupported("UNION branches have different widths")
             return _Union(branches, distinct)
         if isinstance(node, exp.Select):
-            return _Union([self._select(node, ctes)], False)
+            result = self._select(node, ctes)
+            return result if isinstance(result, _Union) else _Union([result], False)
         raise Unsupported(f"{type(node).__name__} statements")
+
+    def _set_operation(self, node: exp.Expression, ctes: dict) -> _Union:
+        """``A INTERSECT B`` and ``A EXCEPT B`` (set semantics) as existence tests.
+
+        Each row of ``A`` is kept (INTERSECT) or dropped (EXCEPT) when some row
+        of ``B`` equals it, NULLs comparing equal; the result has no duplicates.
+        """
+
+        if not node.args.get("distinct", True) or node.args.get("by_name") or node.args.get("side"):
+            raise Unsupported(f"{type(node).__name__.upper()} ALL")
+        left = self._query(node.this, ctes)
+        right = self._query(node.expression, ctes)
+        if len(left.names) != len(right.names) or any(
+            len(b.outputs) != len(left.branches[0].outputs) for b in left.branches + right.branches
+        ):
+            raise Unsupported("set operation branches have different widths")
+        if any(not isinstance(b, _Spj) for b in left.branches + right.branches):
+            raise Unsupported("set operation over an aggregate")
+        blocks = []
+        for a in left.branches:
+            subs = list(a.subs)
+            atoms = []
+            for b in right.branches:
+                atom = z3.Bool(f"{self.fresh('ex')}#exists")
+                guard = z3.And(b.cond.t, _rows_eq(a.outputs, b.outputs))
+                subs.append(_Sub(atom, list(b.occs), guard, list(b.subs)))
+                atoms.append(atom)
+            found = z3.Or(*atoms) if atoms else z3.BoolVal(False)
+            keep = found if type(node) is exp.Intersect else z3.Not(found)
+            cond = _Pred(z3.And(a.cond.t, keep), z3.Not(z3.And(a.cond.t, keep)))
+            blocks.append(
+                _Spj(list(a.occs), cond, a.outputs, a.names, distinct=False, facts=a.facts + [f for b in right.branches for f in b.facts], subs=subs)
+            )
+        return _Union(blocks, True, column_names=list(left.names))
 
     def _select(self, node: exp.Select, ctes: dict):
         for key in ("qualify", "laterals", "pivots", "connect", "match", "prewhere", "windows", "into"):
@@ -472,33 +552,125 @@ class _Compiler:
             raise Unsupported("SELECT AS STRUCT/VALUE")
 
         facts_start = len(self.facts)
-        occs: list[_Occ] = []
-        conds: list[_Pred] = []
-        env: dict[str, _Source] = {}
+        outer_collector, self.collector = self.collector, []
+        outer_ctes, self.ctes = self.ctes, ctes
+        try:
+            return self._select_body(node, ctes, distinct_node, facts_start)
+        finally:
+            self.collector = outer_collector
+            self.ctes = outer_ctes
+
+    def _scan(self, node: exp.Select, ctes: dict, outer: "_Env | None" = None) -> list[_State]:
+        """Sources, joins and WHERE of one select, as one state per outer-join case."""
+
+        first = _State([], [], _Env(), [])
+        first.env.outer = outer
+        states = [first]
         from_clause = _from_clause(node)
         items = []
         if from_clause is not None:
             items.append((from_clause.this, None))
             for join in node.args.get("joins") or []:
-                if join.args.get("side") or join.args.get("method") or join.args.get("using"):
-                    raise Unsupported(f"join: {join.sql(dialect='bigquery')}")
                 kind = (join.args.get("kind") or "").upper()
-                if kind not in ("", "INNER", "CROSS"):
-                    raise Unsupported(f"{kind} JOIN")
+                side = (join.args.get("side") or "").upper()
+                if join.args.get("method") or join.args.get("using") or kind not in ("", "INNER", "CROSS", "OUTER"):
+                    raise Unsupported(f"join: {join.sql(dialect='bigquery')}")
+                if side not in ("", "LEFT", "RIGHT", "FULL"):
+                    raise Unsupported(f"join: {join.sql(dialect='bigquery')}")
+                if kind == "OUTER" and not side:
+                    raise Unsupported(f"join: {join.sql(dialect='bigquery')}")
                 items.append((join.this, join))
         for source_node, join in items:
-            alias, source = self._source(source_node, ctes, occs, conds)
-            if alias in env:
-                raise Unsupported(f"duplicate alias {alias}")
-            env[alias] = source
-            if join is not None and join.args.get("on") is not None:
-                conds.append(self._pred(join.args["on"], env, None, None))
-        if node.args.get("where") is not None:
-            conds.append(self._pred(node.args["where"].this, env, None, None))
-        cond = _const_pred(True)
-        for c in conds:
-            cond = _Pred(z3.And(cond.t, c.t), z3.Or(cond.f, c.f))
+            side = (join.args.get("side") or "").upper() if join is not None else ""
+            b_occs: list[_Occ] = []
+            b_conds: list[_Pred] = []
+            b_subs: list = []
+            saved, self.collector = self.collector, b_subs
+            try:
+                alias, source = self._source(source_node, ctes, b_occs, b_conds)
+            finally:
+                self.collector = saved
+            on = join.args.get("on") if join is not None else None
+            new_states: list[_State] = []
+            for st in states:
+                if alias in st.env:
+                    raise Unsupported(f"duplicate alias {alias}")
+                joined_env = _Env(st.env)
+                joined_env.outer = st.env.outer
+                joined_env[alias] = source
+                on_subs: list = []
+                saved, self.collector = self.collector, on_subs
+                try:
+                    c = self._pred(on, joined_env, None, None) if on is not None else _const_pred(True)
+                finally:
+                    self.collector = saved
+                new_states.append(
+                    _State(st.occs + b_occs, st.conds + b_conds + ([c] if on is not None else []), joined_env, st.subs + b_subs + on_subs)
+                )
+                if side in ("LEFT", "FULL"):
+                    atom = z3.Bool(f"{self.fresh('ex')}#exists")
+                    guard = z3.And(*[x.t for x in b_conds], c.t)
+                    anti = _Sub(atom, list(b_occs), guard, b_subs + on_subs)
+                    env2 = _Env(st.env)
+                    env2.outer = st.env.outer
+                    env2[alias] = self._null_source(source)
+                    new_states.append(
+                        _State(list(st.occs), st.conds + [_Pred(z3.Not(atom), atom)], env2, st.subs + [anti])
+                    )
+                if side in ("RIGHT", "FULL"):
+                    atom = z3.Bool(f"{self.fresh('ex')}#exists")
+                    guard = z3.And(*[x.t for x in st.conds], c.t)
+                    anti = _Sub(atom, list(st.occs), guard, st.subs + on_subs)
+                    env2 = self._null_env(st.env)
+                    env2[alias] = source
+                    new_states.append(
+                        _State(list(b_occs), b_conds + [_Pred(z3.Not(atom), atom)], env2, b_subs + [anti])
+                    )
+            states = new_states
+        if len(states) > 1 and outer is not None:
+            raise Unsupported("outer join inside a subquery")
+        for st in states:
+            if node.args.get("where") is not None:
+                saved, self.collector = self.collector, st.subs
+                try:
+                    st.conds.append(self._pred(node.args["where"].this, st.env, None, None))
+                finally:
+                    self.collector = saved
+        return states
 
+    def _null_source(self, source: "_Source") -> "_Source":
+        V = _value_sort()
+        null = _Val(z3.BoolVal(True), V.Num(0))
+        names = [name for name, _ in source.star()]
+        return _Source(cols={name: null for name in names}, order=list(names))
+
+    def _null_env(self, env: "_Env") -> "_Env":
+        """The scope with every source's columns replaced by NULL (the unmatched side of an outer join)."""
+
+        result = _Env()
+        result.outer = env.outer
+        for alias, source in env.items():
+            result[alias] = self._null_source(source)
+        return result
+
+    def _select_body(self, node: exp.Select, ctes: dict, distinct_node, facts_start: int):
+        states = self._scan(node, ctes)
+        blocks = []
+        for st in states:
+            saved, self.collector = self.collector, st.subs
+            try:
+                blocks.append(self._finish_select(node, distinct_node, facts_start, st, len(states) > 1))
+            finally:
+                self.collector = saved
+        if len(blocks) == 1:
+            return blocks[0]
+        union = _Union(blocks, distinct_node is not None)
+        for block in blocks:
+            block.distinct = False
+        return union
+
+    def _finish_select(self, node: exp.Select, distinct_node, facts_start: int, state: _State, split: bool):
+        occs, cond, env = state.occs, state.cond(), state.env
         group = node.args.get("group")
         having = node.args.get("having")
         agg_ctx = _AggCtx(self)
@@ -529,8 +701,13 @@ class _Compiler:
             outputs.append(self._val(expr, env, agg_ctx, None))
 
         is_agg = group is not None or bool(agg_ctx.calls) or having is not None
+        if is_agg and split:
+            raise Unsupported("aggregate over an outer join")
         if not is_agg:
-            return _Spj(occs, cond, outputs, names, distinct=distinct_node is not None, facts=self.facts[facts_start:])
+            return _Spj(
+                occs, cond, outputs, names, distinct=distinct_node is not None, facts=self.facts[facts_start:],
+                subs=state.subs,
+            )
 
         keys: list[_Val] = []
         if group is not None:
@@ -557,6 +734,7 @@ class _Compiler:
             is_global=group is None,
             distinct=distinct_node is not None,
             facts=self.facts[facts_start:],
+            subs=state.subs,
         )
 
     def _source(self, node, ctes, occs, conds) -> tuple[str, _Source]:
@@ -599,6 +777,7 @@ class _Compiler:
                 raise Unsupported("derived table with unnamed or duplicate columns")
             occs.extend(branch.occs)
             conds.append(branch.cond)
+            self.collector.extend(branch.subs)
             return _Source(cols=dict(zip(branch.names, branch.outputs)), order=list(branch.names))
         return self._opaque(body, ctes, occs)
 
@@ -665,14 +844,20 @@ class _Compiler:
         name = col.name.lower()
         table = col.table.lower()
         if table:
-            if table not in env:
-                raise Unsupported(f"unknown or correlated alias {table}")
-            val = env[table].lookup(name)
+            scope = env
+            while scope is not None and table not in scope:
+                scope = getattr(scope, "outer", None)
+            if scope is None:
+                raise Unsupported(f"unknown alias {table}")
+            val = scope[table].lookup(name)
             if val is None:
                 raise Unsupported(f"{table}.{name} is not a column of {table}")
             return val
         definite = [s for s in env.values() if s.may_have(name) is True]
         maybe = [s for s in env.values() if s.may_have(name) is None]
+        outer = getattr(env, "outer", None)
+        if not definite and not maybe and outer is not None:
+            return self._column(col, outer, aliases)
         if aliases is not None and name in aliases:
             alias_expr = aliases[name]
             same_column = isinstance(alias_expr, exp.Column) and alias_expr.name.lower() == name
@@ -721,6 +906,8 @@ class _Compiler:
                 return _Pred(hit, z3.Not(hit))
             raise Unsupported(f"IS {target.sql(dialect='bigquery')}")
         if isinstance(e, exp.In):
+            if e.args.get("query") is not None and e.args.get("unnest") is None and e.args.get("field") is None:
+                return self._in_subquery(e, env, agg, aliases)
             if e.args.get("query") is not None or e.args.get("unnest") is not None or e.args.get("field") is not None:
                 raise Unsupported("IN subquery/UNNEST")
             left = self._val(e.this, env, agg, aliases)
@@ -734,7 +921,10 @@ class _Compiler:
             lo = self._compare(">=", v, self._val(e.args["low"], env, agg, aliases))
             hi = self._compare("<=", v, self._val(e.args["high"], env, agg, aliases))
             return _Pred(z3.And(lo.t, hi.t), z3.Or(lo.f, hi.f))
-        if isinstance(e, (exp.Exists, exp.Subquery, exp.Select)):
+        if isinstance(e, exp.Exists):
+            atom = self._existence(e.this, env)
+            return _Pred(atom, z3.Not(atom))
+        if isinstance(e, (exp.Subquery, exp.Select)):
             raise Unsupported("predicate subqueries")
         v = self._val(e, env, agg, aliases)
         V = _value_sort()
@@ -742,6 +932,64 @@ class _Compiler:
         # a valid query, so they are modeled as neither.
         known = z3.And(z3.Not(v.null), V.is_Bool(v.val))
         return _Pred(z3.And(known, V.bool(v.val)), z3.And(known, z3.Not(V.bool(v.val))))
+
+    def _existence(self, query, env, match=None) -> object:
+        """A Boolean that is TRUE iff the subquery returns a row satisfying ``match``.
+
+        ``match`` maps the subquery's scope to an extra condition (used by IN).
+        Correlated column references resolve through ``env``.
+        """
+
+        node = query
+        while isinstance(node, exp.Subquery):
+            node = node.this
+        if not isinstance(node, exp.Select):
+            raise Unsupported(f"{type(node).__name__} inside a predicate subquery")
+        for key in ("group", "having", "qualify", "windows", "limit", "offset", "laterals", "pivots", "with_", "with"):
+            if node.args.get(key):
+                raise Unsupported(f"{key.upper()} inside a predicate subquery")
+        if node.args.get("kind"):
+            raise Unsupported("subquery shape")
+        outer_collector, self.collector = self.collector, []
+        try:
+            states = self._scan(node, self.ctes, env)
+            if len(states) != 1:
+                raise Unsupported("outer join inside a subquery")
+            occs, cond, inner = states[0].occs, states[0].cond(), states[0].env
+            self.collector.extend(states[0].subs)
+            guard = cond.t if match is None else z3.And(cond.t, match(inner, node))
+            nested = self.collector
+        finally:
+            self.collector = outer_collector
+        atom = z3.Bool(f"{self.fresh('ex')}#exists")
+        self.collector.append(_Sub(atom, occs, guard, nested))
+        return atom
+
+    def _in_subquery(self, e, env, agg, aliases) -> _Pred:
+        """``x IN (SELECT y ...)`` as two existence tests.
+
+        TRUE iff some y equals x; FALSE iff every y compares FALSE with x (so an
+        empty subquery gives FALSE and a NULL on either side gives UNKNOWN).
+        """
+
+        query = e.args["query"]
+        inner_node = query
+        while isinstance(inner_node, exp.Subquery):
+            inner_node = inner_node.this
+        if not isinstance(inner_node, exp.Select) or len(inner_node.expressions) != 1:
+            raise Unsupported("IN subquery shape")
+        if any(isinstance(i, exp.Star) for i in inner_node.expressions) or any(inner_node.find_all(exp.AggFunc)):
+            raise Unsupported("IN subquery shape")
+        left = self._val(e.this, env, agg, aliases)
+
+        def compare(scope, node):
+            item = node.expressions[0]
+            right = self._val(item.this if isinstance(item, exp.Alias) else item, scope, None, None)
+            return self._compare("=", left, right)
+
+        true_atom = self._existence(query, env, lambda scope, node: compare(scope, node).t)
+        unknown_or_true = self._existence(query, env, lambda scope, node: z3.Not(compare(scope, node).f))
+        return _Pred(true_atom, z3.Not(unknown_or_true))
 
     @staticmethod
     def _compare(op: str, a: _Val, b: _Val) -> _Pred:
@@ -970,6 +1218,33 @@ def _subst_val(v: _Val, pairs) -> _Val:
     return _Val(_subst(v.null, pairs), _subst(v.val, pairs))
 
 
+def _with_atoms(block, pairs):
+    """``block`` with its existence atoms replaced (condition and HAVING only)."""
+
+    if not pairs:
+        return block
+    changes = {"cond": _Pred(_subst(block.cond.t, pairs), _subst(block.cond.f, pairs))}
+    if isinstance(block, _Agg) and block.having is not None:
+        changes["having"] = _Pred(_subst(block.having.t, pairs), _subst(block.having.f, pairs))
+    return dataclasses.replace(block, **changes)
+
+
+def _subst_sub(sub: _Sub, pairs) -> _Sub:
+    return _Sub(
+        sub.atom,
+        sub.occs,
+        _subst(sub.guard, pairs),
+        [_subst_sub(n, pairs) for n in sub.nested],
+    )
+
+
+def _atom_copy_pairs(subs: list, tag: str) -> list:
+    """Fresh atoms for a copy of a block: an existence test depends on the row, so a
+    second row cannot share the first row's atoms."""
+
+    return [(sub.atom, z3.Bool(f"{sub.atom}{tag}")) for sub in subs]
+
+
 def _occ_pairs(src: _Occ, dst: _Occ) -> list:
     pairs = []
     for name, v in list(src.cols.items()):
@@ -1088,6 +1363,47 @@ class _Prover:
         if solver.check() == z3.sat:
             self.candidates.append((self._counterexample(solver, occs), list(occs)))
 
+    def unify_subs(self, a_subs: list, b_subs: list, base_pairs: list, scope: list, facts):
+        """Group equivalent existence tests so equal tests share one atom.
+
+        Returns substitutions for ``a``'s atoms and for ``b``'s atoms (after the
+        outer variables of ``b`` are mapped by ``base_pairs``). Tests with no
+        equivalent partner keep their own free atom, which can only make a
+        proof fail, never succeed.
+        """
+
+        moved = [_subst_sub(sb, base_pairs) for sb in b_subs]
+        entries = [(sub, "a") for sub in a_subs] + [(sub, "b") for sub in moved]
+        reps: list[tuple[_Sub, object]] = []
+        a_pairs, b_pairs = [], []
+        for sub, side in entries:
+            rep = None
+            for known, atom in reps:
+                if self._sub_implies(known, sub, scope, facts) and self._sub_implies(sub, known, scope, facts):
+                    rep = atom
+                    break
+            if rep is None:
+                reps.append((sub, sub.atom))
+                rep = sub.atom
+            if not rep.eq(sub.atom):
+                (a_pairs if side == "a" else b_pairs).append((sub.atom, rep))
+        # ``b`` atoms keep their identity in ``b_subs``; moved copies share atoms.
+        return a_pairs, b_pairs
+
+    def _sub_implies(self, sa: _Sub, sb: _Sub, scope: list, facts) -> bool:
+        """Every row satisfying ``sa`` forces some row satisfying ``sb`` (same outer variables)."""
+
+        for mapping in self._homomorphisms(sb.occs, sa.occs):
+            pairs = self._pairs(mapping)
+            a_nested, b_nested = self.unify_subs(sa.nested, sb.nested, pairs, scope + sa.occs, facts)
+            guard_a = _subst(sa.guard, a_nested)
+            target = _subst(sb.guard, pairs + b_nested)
+            saved = len(self.candidates)
+            if self.valid(z3.Implies(guard_a, target), scope + sa.occs + sb.occs, facts):
+                return True
+            del self.candidates[saved:]
+        return False
+
     def unsatisfiable(self, pred, occs: list[_Occ], facts=()) -> bool:
         solver = z3.Solver()
         solver.set("timeout", self.timeout_ms)
@@ -1135,12 +1451,69 @@ class _Prover:
                     break
         return block
 
+    def inline_unique_subs(self, block, require_unique: bool = True):
+        """Turn a required existence test into a join (when it has at most one witness).
+
+        With ``require_unique=False`` (valid only where duplicate rows do not
+        matter, i.e. under DISTINCT) any required existence test becomes a join.
+
+        ``EXISTS (SELECT .. FROM u WHERE u.id = t.id)`` with ``u.id`` a key has
+        at most one matching row per outer row, so it multiplies the block's
+        rows by exactly 1 where it holds: the same as joining ``u`` in.
+        """
+
+        if (require_unique and not self.constraints) or any(o.opaque for o in block.occs):
+            return block
+        for sub in list(block.subs):
+            if any(o.opaque for o in sub.occs) or not sub.occs:
+                continue
+            saved = len(self.candidates)
+            required = self.valid(z3.Implies(block.cond.t, sub.atom), block.occs, block.facts)
+            del self.candidates[saved:]
+            if not required or (require_unique and not self._single_witness(sub, block)):
+                continue
+            guard = sub.guard
+            block.occs = block.occs + sub.occs
+            block.cond = _Pred(
+                z3.And(_subst(block.cond.t, [(sub.atom, z3.BoolVal(True))]), guard),
+                z3.Not(z3.And(_subst(block.cond.t, [(sub.atom, z3.BoolVal(True))]), guard)),
+            )
+            block.subs = [x for x in block.subs if x is not sub] + sub.nested
+        return block
+
+    def _single_witness(self, sub: _Sub, block) -> bool:
+        """Two rows satisfying the guard for the same outer row share a key in every table."""
+
+        copies = [o.copy(o.uid + "'") for o in sub.occs]
+        copy_pairs = _atom_copy_pairs(sub.nested, "'")
+        for o, c in zip(sub.occs, copies):
+            copy_pairs.extend(_occ_pairs(o, c))
+        clauses = []
+        for o, c in zip(sub.occs, copies):
+            constraint = self.constraints.get(o.table.lower())
+            if constraint is None or not constraint.keys:
+                return False
+            clauses.append(
+                z3.Or(
+                    *[
+                        z3.And(*[z3.And(z3.Not(o.col(k).null), _null_eq(o.col(k), c.col(k))) for k in key])
+                        for key in constraint.keys
+                    ]
+                )
+            )
+        both = z3.And(sub.guard, _subst(sub.guard, copy_pairs))
+        saved = len(self.candidates)
+        ok = self.valid(z3.Implies(both, z3.And(*clauses)), block.occs + sub.occs + copies, block.facts)
+        del self.candidates[saved:]
+        return ok
+
     def _merge(self, block, keep: _Occ, drop: _Occ) -> None:
         pairs = _occ_pairs(drop, keep)
         block.occs = [o for o in block.occs if o is not drop]
         block.cond = _Pred(_subst(block.cond.t, pairs), _subst(block.cond.f, pairs))
         block.outputs = [_subst_val(v, pairs) for v in block.outputs]
         block.facts = [_subst(f, pairs) for f in block.facts]
+        block.subs = [_subst_sub(sub, pairs) for sub in block.subs]
         if isinstance(block, _Agg):
             block.keys = [_subst_val(k, pairs) for k in block.keys]
             for call in block.aggs:
@@ -1224,11 +1597,14 @@ class _Prover:
         for mapping in self._bijections(a.occs, b.occs):
             pairs = self._pairs(mapping)
             facts = a.facts + [_subst(f, pairs) for f in b.facts]
+            a_atoms, b_atoms = self.unify_subs(a.subs, b.subs, pairs, a.occs, facts)
+            cond_a = _subst(a.cond.t, a_atoms)
+            pairs = pairs + b_atoms
             cond_b = _subst(b.cond.t, pairs)
             outs_b = [_subst_val(v, pairs) for v in b.outputs]
-            if not self.valid(a.cond.t == cond_b, a.occs, facts):
+            if not self.valid(cond_a == cond_b, a.occs, facts):
                 continue
-            if self.valid(z3.Implies(a.cond.t, _rows_eq(a.outputs, outs_b)), a.occs, facts):
+            if self.valid(z3.Implies(cond_a, _rows_eq(a.outputs, outs_b)), a.occs, facts):
                 return True
         return False
 
@@ -1238,9 +1614,12 @@ class _Prover:
         for mapping in self._homomorphisms(b.occs, a.occs):
             pairs = self._pairs(mapping)
             facts = a.facts + [_subst(f, pairs) for f in b.facts]
+            a_atoms, b_atoms = self.unify_subs(a.subs, b.subs, pairs, a.occs, facts)
+            cond_a = _subst(a.cond.t, a_atoms)
+            pairs = pairs + b_atoms
             cond_b = _subst(b.cond.t, pairs)
             outs_b = [_subst_val(v, pairs) for v in b.outputs]
-            if self.valid(z3.Implies(a.cond.t, z3.And(cond_b, _rows_eq(a.outputs, outs_b))), a.occs, facts):
+            if self.valid(z3.Implies(cond_a, z3.And(cond_b, _rows_eq(a.outputs, outs_b))), a.occs, facts):
                 return True
         return False
 
@@ -1255,12 +1634,15 @@ class _Prover:
     def _agg_equal_under(self, a: _Agg, b: _Agg, mapping) -> bool:
         pairs = self._pairs(mapping)
         facts = a.facts + [_subst(f, pairs) for f in b.facts]
+        a_atoms, b_atoms = self.unify_subs(a.subs, b.subs, pairs, a.occs, facts)
+        a = _with_atoms(a, a_atoms)
+        pairs = pairs + b_atoms
         if not self.valid(a.cond.t == _subst(b.cond.t, pairs), a.occs, facts):
             return False
         keys_b = [_subst_val(k, pairs) for k in b.keys]
         if not a.is_global:
             copies = [o.copy(o.uid + "'") for o in a.occs]
-            copy_pairs = []
+            copy_pairs = _atom_copy_pairs(a.subs, "'")
             for o, c in zip(a.occs, copies):
                 copy_pairs.extend(_occ_pairs(o, c))
 
@@ -1319,7 +1701,7 @@ class _Prover:
         if not isinstance(block, _Agg) or block.aggs or block.having is not None or block.is_global:
             return block
         copies = [o.copy(o.uid + "'") for o in block.occs]
-        copy_pairs = []
+        copy_pairs = _atom_copy_pairs(block.subs, "'")
         for o, c in zip(block.occs, copies):
             copy_pairs.extend(_occ_pairs(o, c))
         other_out = [_subst_val(v, copy_pairs) for v in block.outputs]
@@ -1331,7 +1713,9 @@ class _Prover:
         saved = len(self.candidates)
         facts = block.facts + [_subst(f, copy_pairs) for f in block.facts]
         if self.valid(formula, block.occs + copies, facts):
-            return _Spj(block.occs, block.cond, block.outputs, block.names, distinct=True, facts=block.facts)
+            return _Spj(
+                block.occs, block.cond, block.outputs, block.names, distinct=True, facts=block.facts, subs=block.subs
+            )
         del self.candidates[saved:]
         return block
 
@@ -1395,7 +1779,14 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
     left.column_names, right.column_names = list(left.names), list(right.names)
     for union in (left, right):
         _prune(prover, union)
-        union.branches = [prover.merge_key_occurrences(prover.as_distinct_spj(b)) for b in union.branches]
+        branches = []
+        for b in union.branches:
+            b = prover.as_distinct_spj(b)
+            b = prover.inline_unique_subs(b)
+            if union.distinct or b.distinct:
+                b = prover.inline_unique_subs(b, require_unique=False)
+            branches.append(prover.merge_key_occurrences(b))
+        union.branches = branches
     if not left.branches and not right.branches:
         return True, "both queries always return no rows"
     if not left.branches or not right.branches:
@@ -1576,7 +1967,7 @@ def _export(value):
 def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counterexample | None:
     blocks = list(left.branches) + list(right.branches)
     all_occs = [o for b in blocks for o in b.occs]
-    if any(o.opaque for o in all_occs):
+    if any(o.opaque for o in all_occs) or any(b.subs for b in blocks):
         return None
     for block in blocks:
         prover.witness(block.cond.t, block.occs, block.facts)

@@ -35,8 +35,8 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 93 | 139 | 0 | was 53 before constraints, pruning and key-based join merging |
-| Spark SQL | 127 | 86 | 41 | 0 | was 67 |
+| Calcite | 232 | 111 | 121 | 0 | was 93 before EXISTS/IN, outer joins and set operations |
+| Spark SQL | 127 | 95 | 32 | 0 | was 86 |
 | TPC-H | 22 | 1 | 21 | 0 | was 0; mostly LIMIT, date literals, subqueries |
 | TPC-C | 19 | 17 | 2 | 0 | was 17 |
 
