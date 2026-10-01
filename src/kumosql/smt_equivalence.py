@@ -164,10 +164,11 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
-def _canonical_aliases(body: exp.Expression) -> exp.Expression:
+def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
-    nearest enclosing SELECT that declares its qualifier, so an alias reused in a nested scope is fine."""
+    nearest enclosing SELECT that declares its qualifier, so an alias reused in a nested scope is fine.
+    With a schema, a bare column of a select over one known table is qualified first."""
 
     body = body.copy()
     ctes = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
@@ -189,6 +190,15 @@ def _canonical_aliases(body: exp.Expression) -> exp.Expression:
     renames: list[tuple[exp.Column, str]] = []
     for column in body.find_all(exp.Column):
         qualifier = column.table.lower()
+        if not qualifier and schema:
+            scope = column.find_ancestor(exp.Select)
+            sources = declared(scope) if scope is not None else []
+            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star):
+                key = ".".join(p.name for p in sources[0].parts).lower()
+                known = schema.get(key)
+                if known is not None and column.name.lower() in [c.lower() for c in known]:
+                    qualifier = (sources[0].alias_or_name or "").lower()
+                    column.set("table", exp.to_identifier(sources[0].alias_or_name))
         if not qualifier:
             continue
         scope = column.find_ancestor(exp.Select)
@@ -949,7 +959,7 @@ class _Compiler:
             names.append(item.alias_or_name.lower())
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
-        key = "(" + _canonical_aliases(body).sql(dialect="bigquery", normalize_functions="upper") + ")"
+        key = "(" + _canonical_aliases(body, self.schema).sql(dialect="bigquery", normalize_functions="upper") + ")"
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
         return _Source(occ=occ)

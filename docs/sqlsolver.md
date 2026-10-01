@@ -35,9 +35,9 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 158 | 74 | 0 | was 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
+| Calcite | 232 | 159 | 73 | 0 | was 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
 | Spark SQL | 127 | 105 | 22 | 0 | was 99 before constant aggregates and function identities; 86 before |
-| TPC-H | 22 | 14 | 8 | 0 | was 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; the rest need correlated scalar subqueries, tuple IN, aggregates over outer joins and aggregate pushdown |
+| TPC-H | 22 | 15 | 7 | 0 | was 14 before NULL guards, `1.00 = 1` and folded derived tables made the two spellings of a scalar subquery read alike; 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; the rest need correlated scalar subqueries, tuple IN, aggregates over outer joins and aggregate pushdown |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |
 
 The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSolver assumes), output names ignored, NOT NULL and primary keys from the schema, and the input read as MySQL. "Unchecked" proofs (a few pairs that DuckDB itself rejects) are listed in the tool output.

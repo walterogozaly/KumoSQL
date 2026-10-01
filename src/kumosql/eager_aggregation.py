@@ -53,6 +53,16 @@ def _ancestors(node: exp.Expression):
         node = node.parent
 
 
+def _own(column: exp.Expression, select: exp.Select) -> bool:
+    """Whether the column belongs to ``select`` itself rather than to a select nested inside it.
+
+    A copied fragment (no select above it) counts as belonging to the select it was taken from.
+    """
+
+    owner = column.find_ancestor(exp.Select)
+    return owner is None or owner is select
+
+
 def _own_aggregates(select: exp.Select) -> list[exp.Expression]:
     """Aggregate calls of this select itself, not of the subqueries inside it."""
 
@@ -164,7 +174,7 @@ def _inline(grouped: _Grouped) -> tuple[list[exp.Expression], list[exp.Expressio
         mapping[old.lower()] = f"kumosql_s{next(_counter)}_{old}"
     single = next(iter(mapping.values())) if len(mapping) == 1 else None
     for column in list(inner.find_all(exp.Column)):
-        if column.find_ancestor(exp.Subquery) is not None:
+        if not _own(column, inner):
             continue  # inside a derived source of the grouped table: its own scope
         table = column.table.lower()
         if table:
@@ -203,7 +213,7 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
         return None
     # Unqualified columns could change meaning once the grouped table's sources join in.
     for column in select.find_all(exp.Column):
-        if not column.table and column.find_ancestor(exp.Subquery) is None:
+        if not column.table and _own(column, select):
             return None
     chosen = None
     for position, item in enumerate(items):
@@ -223,7 +233,7 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
         return None
 
     def refs(node: exp.Expression) -> list[exp.Column]:
-        return [c for c in node.find_all(exp.Column) if c.table.lower() == alias and c.find_ancestor(exp.Subquery) is None]
+        return [c for c in node.find_all(exp.Column) if c.table.lower() == alias and _own(c, select)]
 
     inlined = _inline(grouped)
     if inlined is None:
@@ -392,7 +402,7 @@ def flatten_grouped_join(select: exp.Select) -> exp.Expression | None:
     if items is None or len(items) < 2:
         return None
     for column in select.find_all(exp.Column):
-        if not column.table and column.find_ancestor(exp.Subquery) is None:
+        if not column.table and _own(column, select):
             return None
     if any(isinstance(node, exp.Subquery) and node not in items for node in select.find_all(exp.Subquery)) or any(
         select.find_all(exp.Exists)
@@ -416,7 +426,7 @@ def flatten_grouped_join(select: exp.Select) -> exp.Expression | None:
     def ref(column: exp.Column):
         """``(group, name, kind)`` for a column of one of the grouped sources."""
 
-        if column.find_ancestor(exp.Subquery) is not None:
+        if not _own(column, select):
             return None
         group = by_alias.get(column.table.lower())
         if group is None:

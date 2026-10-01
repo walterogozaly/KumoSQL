@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("z3")
 
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
-from kumosql.smt_equivalence import SmtStatus
+from kumosql.smt_equivalence import SmtStatus, TableConstraints
 
 U = "(SELECT a, k FROM A UNION ALL SELECT a, k FROM B)"
 
@@ -418,3 +418,48 @@ def test_tuple_in_is_an_existence_test_on_every_column():
         schema={"dept": ["deptno", "name"]}, compare_names=False, dialect="mysql",
     )
     assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+LINEITEM = {"lineitem": ["l_suppkey", "l_extendedprice", "l_shipdate"]}
+
+
+def test_aggregate_over_grouped_derived_table_in_a_scalar_subquery_keeps_its_grouping():
+    # MAX over per-supplier totals is not a flat aggregate: the derived table must stay grouped.
+    result = prove_equivalent_algebraic(
+        "SELECT (SELECT MAX(t) FROM (SELECT SUM(l_extendedprice) AS t FROM lineitem GROUP BY l_suppkey) AS d) AS m",
+        "SELECT (SELECT MAX(l_extendedprice) FROM lineitem) AS m",
+        schema=LINEITEM, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_filtering_derived_table_under_a_grouping_is_folded_in():
+    result = prove_equivalent_algebraic(
+        "SELECT MAX(t) FROM (SELECT SUM(l_extendedprice) AS t FROM lineitem WHERE l_shipdate >= 5 GROUP BY l_suppkey) AS r",
+        "SELECT MAX(t) FROM (SELECT SUM(l_extendedprice) AS t FROM (SELECT l_suppkey, l_extendedprice FROM lineitem WHERE l_shipdate >= 5) AS z GROUP BY l_suppkey) AS q",
+        schema=LINEITEM, compare_names=False, dialect="mysql",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_null_guards_and_trailing_zeros_do_not_change_a_derived_relation():
+    left = "SELECT MAX(t) FROM (SELECT SUM(l_extendedprice * (1 - l_suppkey)) AS t FROM lineitem WHERE l_shipdate >= 5 GROUP BY l_suppkey) AS r"
+    right = (
+        "SELECT MAX(t) FROM (SELECT SUM(l_extendedprice * (1.00 - l_suppkey)) AS t FROM lineitem "
+        "WHERE l_shipdate IS NOT NULL AND (l_shipdate >= 5) AND l_suppkey IS NOT NULL GROUP BY l_suppkey) AS q"
+    )
+    constraints = {"lineitem": TableConstraints(not_null=frozenset({"l_suppkey"}))}
+    result = prove_equivalent_algebraic(left, right, schema=LINEITEM, constraints=constraints, compare_names=False, dialect="mysql")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # Without the declaration the guard on l_suppkey filters rows, so the queries differ.
+    result = prove_equivalent_algebraic(left, right, schema=LINEITEM, compare_names=False, dialect="mysql")
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_null_guard_removal_keeps_or_precedence():
+    result = prove_equivalent_algebraic(
+        "SELECT l_suppkey FROM lineitem WHERE l_shipdate IS NOT NULL AND (l_shipdate = 1 OR l_suppkey = 2) AND l_extendedprice > 0",
+        "SELECT l_suppkey FROM lineitem WHERE l_shipdate = 1 OR l_suppkey = 2 AND l_extendedprice > 0",
+        schema=LINEITEM, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
