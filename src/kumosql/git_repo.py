@@ -196,7 +196,9 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
     fetched = fetch_project(value, branch, refresh)
     label = f"{fetched['repository']} ({fetched['branch']} @ {fetched['commit']})"
     try:
-        live_graph.load_files(fetched["files"], label)
+        live_graph.load_files(
+            fetched["files"], label,
+            remote={"url": parse_remote(value), "branch": parse_branch(branch), "actual": fetched["branch"]})
     except ProjectError as exc:
         raise GitRepoError(str(exc)) from exc
     return {"loaded": True, "label": label, "files": len(fetched["files"])}

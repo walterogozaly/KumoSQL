@@ -131,7 +131,7 @@ This starts a local server at `http://127.0.0.1:8765/` and opens your browser. U
 - **Query graph.** With `--project demo` this shows your own models, their readers, the impact of a change (**Assess a change**), column lineage, and tables that already provide the same thing (**Already elsewhere**). A strip warns whenever something could not be analyzed. You can also enter a Dataform git remote on the page, or start with `kumosql-ui --git git@github.com:owner/repo.git`; private repositories work through your own git credentials.
 - **Settings** (bottom of the sidebar, or Ctrl/⌘ + `,`). Appearance, and SQL formatting: keyword case, indentation, line length and the full list of sqlfluff rules, with named configurations you can switch between.
 - **Scopes** (*Settings → Scopes*, also linked under the Pipeline strip). Saved rules that limit which models, job rows or tables an analysis covers. Pick the active scope with the *Scope* picker on the Query graph, Cost and Change reports pages.
-- **Cost** and **Change reports** show labeled sample data until you supply job history or a pair of project snapshots (see below).
+- **Cost** lists repeated work in your models; with job history (**Load job history**, or `kumosql-ui --project demo --jobs jobs.json`) it adds measured cost per asset. **Change reports** compare the loaded git project against another branch (**Compare**). Both show what to load instead of example numbers when they have nothing yet.
 
 Preferences and scopes are saved on your computer; the README's *Saved state* paragraph says where and how to change it.
 
