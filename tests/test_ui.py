@@ -364,3 +364,11 @@ def test_graph_explorer_assets_are_served(ui_server, path):
         assert response.status == 200
         assert response.headers["Content-Type"].startswith("text/javascript")
         assert len(response.read()) > 1000
+
+
+def test_version_is_reported():
+    from kumosql import version
+
+    data = version.info()
+    assert data["version"] and "commit" in data
+    assert version.describe().startswith(data["version"])
