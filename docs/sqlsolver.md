@@ -26,3 +26,18 @@ Steps 1–5 need only `pip install --user` (or a venv) for `sqlglot` and `z3-sol
 ```
 
 Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `prove-sql-sqlsolver --check` says what is missing. BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite SQL (table names flattened to one identifier, schema as `CREATE TABLE`). Queries using `UNNEST`, `QUALIFY`, windows, arrays, structs, `PIVOT`, `TABLESAMPLE`, nondeterministic functions or tables missing from the schema are refused. SQLSolver answers `EQ` when both queries fail its semantic checks, so each query is also compared with an always-empty wrapper of itself; a control that comes back `EQ` voids the proof. SQLSolver's `NEQ` carries no counterexample, so it is reported as `not_proven`; counterexamples come from the Z3 stage.
+
+## Benchmark coverage
+
+`tools/sqlsolver_bench.py` runs the benchmark pairs published with SQLSolver (copied to `tests/fixtures/sqlsolver/`, Apache-2.0, LICENSE alongside) through the prover. SQLSolver's authors state every pair is equivalent, so the benchmark measures how many pairs KumoSQL **proves** versus leaves **unknown**; a pair is never reported "not equivalent" just because it was not proved. Each proof is re-checked on 60 random SQLite databases (NULLs, duplicates, empty tables; NOT NULL and primary keys respected) and any disagreement counts as a **wrong** proof. `tests/test_sqlsolver_benchmarks.py` fails on any wrong proof or when a suite falls below its floor.
+
+Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs are read as MySQL and translated to BigQuery for the prover.
+
+| Suite | Pairs | Proved | Unknown | Wrong | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Calcite | 232 | 53 | 179 | 0 | baseline before the multiplicity algebra |
+| Spark SQL | 127 | 67 | 60 | 0 | baseline |
+| TPC-H | 22 | 0 | 22 | 0 | baseline |
+| TPC-C | 19 | 17 | 2 | 0 | baseline |
+
+SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.
