@@ -459,7 +459,8 @@ function renderGraph(data, root) {
   const legend = h("div", { class: "graph-legend" },
     ...Object.entries(EDGE_SOURCES).map(([key, [label, title]]) =>
       h("span", { class: "legend-item", title }, h("span", { class: `legend-line edge-${key}` }), label)),
-    h("span", { class: "legend-item" }, h("span", { class: "legend-node is-gap" }), "Not analyzed"));
+    h("span", { class: "legend-item" }, h("span", { class: "legend-node is-gap" }), "Not analyzed"),
+    h("span", { class: "legend-item" }, h("span", { class: "legend-node is-scheduled" }), "Runs in a production schedule"));
 
   root.append(
     coverageStrip,
@@ -480,7 +481,8 @@ function renderGraph(data, root) {
     columns.map((list) => h("div", { class: "graph-col" },
       list.sort((a, b) => a.id.localeCompare(b.id)).map((node) =>
         h("button", {
-          type: "button", class: `gnode kind-${node.kind}${graph.gaps.has(node.id) ? " is-gap" : ""}`, "data-id": node.id,
+          type: "button", class: `gnode kind-${node.kind}${graph.gaps.has(node.id) ? " is-gap" : ""}${node.schedules ? " is-scheduled" : ""}`, "data-id": node.id,
+          title: node.schedules ? scheduleText(node.schedules) : undefined,
           onclick: () => select(node.id, null),
         },
         h("span", { class: "gnode-dataset", text: node.dataset }),
@@ -620,6 +622,10 @@ function renderGraph(data, root) {
       edge.last_seen ? h("span", { class: "muted small", text: `last seen ${shortDate(edge.last_seen)}` }) : h("span", { class: "muted small", text: "not seen in window" }));
   }
 
+  function scheduleText(schedules) {
+    return "Scheduled by " + schedules.map((item) => `${item.config} (${item.cron}${item.time_zone ? `, ${item.time_zone}` : ""})`).join("; ");
+  }
+
   function renderDetail() {
     const node = graph.nodes.get(state.node);
     const gap = graph.gaps.get(node.id);
@@ -628,7 +634,9 @@ function renderGraph(data, root) {
       h("h2", { class: "detail-title", text: node.id }),
       h("div", { class: "detail-tags" },
         tag(EDGE_SOURCES[node.source]?.[0] || node.source, node.source === "both" ? "ok" : "info", "How this asset's identity was established"),
-        gap ? tag("Not analyzed", "warn") : null),
+        gap ? tag("Not analyzed", "warn") : null,
+        node.schedules ? tag("Runs in production", "ok", scheduleText(node.schedules)) : null),
+      node.schedules ? h("p", { class: "muted small", text: scheduleText(node.schedules) }) : null,
       node.note ? h("p", { class: "muted small", text: node.note }) : null);
     let body;
     if (state.mode === "readers") {

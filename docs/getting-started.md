@@ -159,6 +159,7 @@ gcloud auth application-default login
 
 - `kumosql-dry-run original.sql --rewritten rewritten.sql --project my-project` checks that both statements plan and that their output schemas match, without running them.
 - `rewrite-sql query.sql -r remove_trivial_predicates --planner-project my-project` adds the same check to a rewrite.
+- With a repository connected, **Settings → Repositories** also loads its Dataform workflow configurations (using the same credentials) and the graph marks models that run in a production schedule; see the README section on production schedules.
 - The **BigQuery** page in the UI lists the projects, datasets, tables and schemas your credentials can see.
 
 Only these features contact BigQuery, and only when you ask.

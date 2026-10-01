@@ -373,7 +373,14 @@ def graph_or_empty(scope_name: str | None = None) -> dict:
     if current is None:
         return empty_payload(
             "project", "Load a Dataform project to see its query graph.", scope_name)
-    return graph_payload(current["pipeline"], current["label"], current["observed_reads"], scope_name)
+    payload = graph_payload(current["pipeline"], current["label"], current["observed_reads"], scope_name)
+    try:  # production schedules come from saved Dataform data only; never block or fail the graph
+        from .workflow_configs import annotate
+
+        annotate(payload, current["pipeline"], current.get("remote"))
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
 
 
 _PAGE_CHANGES = {"drop": "drop_column", "rename": "rename_column", "expression": "change_expression"}
