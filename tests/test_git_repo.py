@@ -278,3 +278,44 @@ def test_diagnose_reports_failures_with_the_traceback(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_GIT_CACHE", str(tmp_path / "cache"))
     report = git_repo.diagnose(str(tmp_path / "missing.git"))
     assert "Result: FAILED" in report and "GitRepoError" in report and "exit: 128" in report
+
+
+def test_rmtree_removes_read_only_git_files(tmp_path):
+    tree = tmp_path / "clone" / "objects" / "pack"
+    tree.mkdir(parents=True)
+    (tree / "pack.idx").write_text("x")
+    (tree / "pack.idx").chmod(0o400)
+    tree.chmod(0o500)  # read-only folder, like git's object store on Windows
+    git_repo._rmtree(tmp_path / "clone")
+    assert not (tmp_path / "clone").exists()
+
+
+def test_default_cache_is_outside_appdata_on_windows(monkeypatch, tmp_path):
+    monkeypatch.delenv("KUMOSQL_GIT_CACHE", raising=False)
+    monkeypatch.delenv("KUMOSQL_HOME", raising=False)
+    monkeypatch.setattr(git_repo.os, "name", "nt")
+    monkeypatch.setattr(git_repo.Path, "home", classmethod(lambda cls: tmp_path))
+    assert git_repo.cache_dir() == tmp_path / ".kumosql" / "git-cache"
+
+
+def test_store_python_is_detected(monkeypatch):
+    monkeypatch.setattr(git_repo.sys, "platform", "win32")
+    monkeypatch.setattr(git_repo.sys, "executable", r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_x64\python.exe")
+    assert git_repo.is_store_python()
+    monkeypatch.setattr(git_repo.sys, "executable", r"C:\Python313\python.exe")
+    assert not git_repo.is_store_python()
+
+
+def test_replacing_a_stale_clone_with_read_only_files_works(remote):
+    bare, _ = remote
+    git_repo.fetch_project(str(bare))
+    cached = next(git_repo.cache_dir().iterdir())
+    for item in cached.rglob("*"):
+        if item.is_file():
+            item.chmod(0o400)
+    bare2 = bare.with_name("moved.git")
+    bare.rename(bare2)
+    bare2.rename(bare)
+    # Force the rebuild path: the fetch fails, then a fresh clone replaces the read-only cache.
+    (cached / "config").write_text("[remote \"origin\"]\n\turl = /nonexistent\n")
+    assert git_repo.fetch_project(str(bare), refresh=True)["files"]
