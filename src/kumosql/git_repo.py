@@ -67,19 +67,27 @@ def is_store_python() -> bool:
     return sys.platform == "win32" and "windowsapps" in (sys.executable or "").lower()
 
 
-def cache_dir() -> Path:
-    """Where clones are cached.
+def _is_windows() -> bool:
+    return os.name == "nt"
 
-    On Windows this is under the user's home folder, not AppData: the Microsoft Store
-    build of Python silently redirects AppData writes into a private per-package folder
-    that ``git.exe`` cannot see, so git would run in (and clone into) a folder that does
-    not exist for it.
+
+def cache_dir() -> Path:
+    """Where clones are cached: ``git-cache`` in the chosen local data folder (Settings > Storage).
+
+    ``KUMOSQL_GIT_CACHE`` overrides it. Before a folder is chosen, the default is under the
+    user's home folder on Windows (not AppData: the Microsoft Store build of Python redirects
+    AppData writes where ``git.exe`` cannot see them) and in the data directory elsewhere.
     """
 
     override = os.environ.get("KUMOSQL_GIT_CACHE")
     if override:
         return Path(override)
-    if os.name == "nt" and not os.environ.get("KUMOSQL_HOME"):
+    from . import storage
+
+    chosen = storage.saved_folder()
+    if chosen is not None:
+        return chosen / "git-cache"
+    if _is_windows() and not os.environ.get("KUMOSQL_HOME"):
         return Path.home() / ".kumosql" / "git-cache"
     return data_dir() / "git-cache"
 
@@ -350,6 +358,9 @@ def diagnose(value: object, branch: object = None) -> str:
     if is_store_python():
         lines.append("WARNING: this is the Microsoft Store build of Python. It redirects writes under AppData, "
                      "which git cannot see. KumoSQL caches clones under your home folder for that reason.")
+    from . import storage
+
+    lines.append(f"Local data folder setting: {storage.saved_folder() or 'not set'}")
     lines.append(f"Cache directory: {cache_dir()} (exists: {cache_dir().is_dir()})")
     lines.append(f"Temp directory: {tempfile.gettempdir()} (exists: {Path(tempfile.gettempdir()).is_dir()})")
     lines.append(f"State directory: {data_dir()} (exists: {data_dir().is_dir()})")

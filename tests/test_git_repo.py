@@ -293,7 +293,7 @@ def test_rmtree_removes_read_only_git_files(tmp_path):
 def test_default_cache_is_outside_appdata_on_windows(monkeypatch, tmp_path):
     monkeypatch.delenv("KUMOSQL_GIT_CACHE", raising=False)
     monkeypatch.delenv("KUMOSQL_HOME", raising=False)
-    monkeypatch.setattr(git_repo.os, "name", "nt")
+    monkeypatch.setattr(git_repo, "_is_windows", lambda: True)
     monkeypatch.setattr(git_repo.Path, "home", classmethod(lambda cls: tmp_path))
     assert git_repo.cache_dir() == tmp_path / ".kumosql" / "git-cache"
 

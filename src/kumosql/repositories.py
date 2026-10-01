@@ -18,7 +18,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from . import state
+from . import state, storage
 from .git_repo import GitRepoError, load_into_graph, parse_branch, parse_remote
 
 SECTION = "repositories"
@@ -79,6 +79,9 @@ def replace(entries: object, active: object = None) -> dict:
                 continue
             seen.add(key)
             items.append(current.get(key) or {"id": uuid.uuid4().hex[:12], "url": url, "branch": branch})
+        if any((item["url"], item.get("branch") or "") not in current for item in items) and not storage.configured():
+            raise RepositoryError(
+                "Choose a local data folder first (Settings > Storage). KumoSQL keeps repository clones there.")
         ids = {item["id"] for item in items}
         data = {"items": items, "active": active if active in ids else (items[0]["id"] if items else None)}
         _write(data)

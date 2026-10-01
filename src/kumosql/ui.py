@@ -177,6 +177,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 "cached": scope_queries.cached_queries(),
             })
             return
+        if self.path == "/api/storage":
+            from . import storage
+
+            self._json(200, storage.describe())
+            return
         if self.path == "/api/repositories":
             from . import repositories
 
@@ -397,6 +402,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/project/git", "/api/project", "/api/project/clear",
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
+            "/api/storage",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -424,6 +430,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
             elif self.path == "/api/scope-queries":
                 result = _scope_query(payload)
+            elif self.path == "/api/storage":
+                from . import storage
+
+                result = storage.save(payload.get("folder"))
             elif self.path.startswith("/api/repositories"):
                 from . import repositories
 
