@@ -235,3 +235,9 @@
 .graph-card:fullscreen .lv-frame { flex: 1; min-height: 0; }
 .graph-card:fullscreen .lv-stage { height: 100%; }
 .graph-card:fullscreen .graph-canvas { flex: 1; }
+.dtag-pick { position: relative; }
+.dtag-pick summary { list-style: none; cursor: pointer; }
+.dtag-pick summary::-webkit-details-marker { display: none; }
+.dtag-menu { position: absolute; z-index: 6; top: 34px; right: 0; display: flex; flex-direction: column; gap: 2px; min-width: 180px; max-height: 280px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow); }
+.dtag-option { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+.dtag-option:hover { background: var(--accent-soft); }
