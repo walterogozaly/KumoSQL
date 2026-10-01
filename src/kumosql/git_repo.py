@@ -157,32 +157,23 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     if cwd is None:
         cwd = cache_dir()
         cwd.mkdir(parents=True, exist_ok=True)
-    from . import console
-
     started = time.monotonic()
     label = f"git {args[0]}"
-    watchdog = threading.Timer(
-        _SLOW_SECONDS, lambda: console.say(
-            f"{label} still running after {_SLOW_SECONDS:g}s in {cwd} (large repository, slow network, "
-            "or waiting for credentials; it gives up after "
-            f"{_TIMEOUT_SECONDS}s)"))
-    watchdog.daemon = True
-    watchdog.start()
     try:
-        done = subprocess.run(
-            ["git", "-c", "core.longpaths=true", "-c", "filter.lfs.required=false", *args], cwd=cwd, env=env, capture_output=True,
-            input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL,
-            timeout=_TIMEOUT_SECONDS, check=False,
-        )
-    except FileNotFoundError as exc:
-        console.say(f"{label}: git was not found on PATH")
+        with console.task(label, quiet=True, warn_after=_SLOW_SECONDS, heartbeat_after=_SLOW_SECONDS) as step:
+            done = subprocess.run(
+                ["git", "-c", "core.longpaths=true", "-c", "filter.lfs.required=false", *args], cwd=cwd, env=env, capture_output=True,
+                input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL,
+                timeout=_TIMEOUT_SECONDS, check=False,
+            )
+            step.note(exit=done.returncode)
+    except FileNotFoundError as exc:  # the task has already logged this once, with its code and hint
         raise GitRepoError("git was not found on PATH; install git to load a repository") from exc
     except subprocess.TimeoutExpired as exc:
-        console.say(f"{label} in {cwd}: timed out after {_TIMEOUT_SECONDS}s")
         raise GitRepoError(f"git {args[0]} timed out after {_TIMEOUT_SECONDS} seconds") from exc
-    finally:
-        watchdog.cancel()
-    console.say(f"{label} in {cwd}: exit {done.returncode} in {time.monotonic() - started:.1f}s")
+    if done.returncode != 0:
+        reason = (done.stderr.decode("utf-8", "replace").strip().splitlines() or ["no message"])[-1][:300]
+        console.say(f"{label}: exit {done.returncode} in {time.monotonic() - started:.1f}s: {reason}")
     if _TRACE is not None:
         _TRACE.append({
             "command": ["git", *args], "cwd": str(cwd), "cwd_exists": Path(cwd).is_dir(),
@@ -276,7 +267,7 @@ def _repair_origin(path: Path, remote: str) -> None:
     except GitRepoError:
         current = ""
     if current != remote:
-        console.say(f"cached clone pointed at {current or 'no remote'}; now {remote}")
+        console.say(f"repo load > repair cached clone: origin pointed at {console.ref('repo', current) if current else 'no remote'}; now {console.ref('repo', remote)}")
         _git(["remote", "set-url", "origin", remote], cwd=path)
 
 
@@ -309,13 +300,15 @@ def _clone(remote: str, branch: str | None, path: Path) -> None:
     if branch:
         args += ["--branch", branch]
     try:
-        _git([*args, "--", remote, str(partial)])
+        with console.task("clone", repo=remote, branch=branch or "default"):
+            _git([*args, "--", remote, str(partial)])
     except GitRepoError:
         shutil.rmtree(partial, ignore_errors=True)
         raise
     try:
-        _rmtree(path)
-        partial.rename(path)
+        with console.task("write cached clone", repo=remote):
+            _rmtree(path)
+            partial.rename(path)
     except OSError as exc:
         shutil.rmtree(partial, ignore_errors=True)
         raise GitRepoError(
@@ -391,7 +384,7 @@ def fetch_project(value: object, branch: object = None, refresh: bool = False) -
         except GitRepoError as exc:
             if not https or not _is_ssh_failure(str(exc)):
                 raise
-            console.say(f"SSH failed for {remote}; trying {https}")
+            console.warn(f"repo load: SSH failed for {console.ref('repo', remote)} (KS-GIT-NET); trying https {console.ref('repo', https)}")
             try:
                 result = _fetch(https, wanted, bool(refresh))
             except GitRepoError as second:
@@ -401,10 +394,14 @@ def fetch_project(value: object, branch: object = None, refresh: bool = False) -
 
 
 def _fetch(remote: str, wanted: str | None, refresh: bool) -> dict:
-    checkout = sync(remote, wanted, refresh)
+    with console.task("sync cached clone", repo=remote, mode="fetch latest" if refresh else "use cached copy"):
+        checkout = sync(remote, wanted, refresh)
     actual = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=checkout).strip()
     commit = _git(["rev-parse", "--short", "HEAD"], cwd=checkout).strip()
-    blobs = _tree_blobs(checkout)
+    console.register("branch", actual)
+    with console.task("list SQL files", quiet=True) as step:
+        blobs = _tree_blobs(checkout)
+        step.note(files=len(blobs))
     selected = sorted(blobs)
     if not any(p in _CONFIG_FILES for p in selected) and not any(p.lower().endswith(".sqlx") for p in selected):
         raise GitRepoError("This repository does not appear to contain a Dataform project (no .sqlx files or workflow_settings.yaml)")
@@ -412,7 +409,11 @@ def _fetch(remote: str, wanted: str | None, refresh: bool) -> dict:
         raise GitRepoError(f"Project has {len(selected)} SQL files; loading is limited to {MAX_FILES}")
     files: dict[str, str] = {}
     total = 0
-    for name, data in _read_blobs(checkout, blobs).items():
+    with console.task("read SQL files", files=len(selected)) as step:
+        contents = _read_blobs(checkout, blobs)
+        step.note(megabytes=round(sum(len(d) for d in contents.values()) / 1e6, 1))
+    console.register("file", selected)
+    for name, data in contents.items():
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -442,9 +443,8 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
     except ProjectError as exc:
         raise GitRepoError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - name the step and the repository instead of a bare TypeError
-        from . import console
-
-        console.error(f"building the graph for {label} failed", exc)
+        console.error(f"repo load > build graph for {console.ref('repo', fetched['repository'])} failed after a successful fetch", exc,
+                      code="KS-GRAPH-BUILD")
         raise GitRepoError(
             f"Reading the SQL files of {label} failed while building the graph "
             f"({type(exc).__name__}: {exc}). The repository was fetched fine; this is a KumoSQL bug, "

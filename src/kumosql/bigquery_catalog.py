@@ -11,9 +11,10 @@ import threading
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
 
+from . import console
 from .dryrun import access_token
 from .state import data_dir, get_section, set_section
 
@@ -92,10 +93,11 @@ def _refresh_in_background(key: str, fetch) -> None:
     """Re-fetch ``key`` on a worker thread; a failure leaves the saved copy in place."""
 
     def work() -> None:
-        from . import console
-
+        parts = key.split("\x1f") if isinstance(key, str) else [str(item) for item in key]
+        for kind, value in zip(("project", "dataset", "table"), parts[1:4]):
+            console.register(kind, value)
         try:
-            with console.task(f"BigQuery catalog refresh ({key if isinstance(key, str) else '/'.join(map(str, key))})"):
+            with console.task(f"BigQuery catalog refresh ({parts[0]})", warn_after=30):
                 data = fetch()
                 with _lock:
                     _memory[key] = {"at": time.time(), "data": data}
@@ -177,7 +179,32 @@ def _token_cached() -> str:
     return value
 
 
+def _note_path(path: str) -> None:
+    """Register the project, dataset and table in an API path so the log shows placeholders for them."""
+
+    kinds = {"projects": "project", "datasets": "dataset", "tables": "table"}
+    parts = path.split("/")
+    for index, part in enumerate(parts[:-1]):
+        if part in kinds:
+            console.register(kinds[part], unquote(parts[index + 1]))
+
+
 def _get(path: str, params: dict[str, str] | None = None) -> dict:
+    _note_path(path)
+    started = time.monotonic()
+    try:
+        result = _get_once(path, params)
+    except CatalogError as exc:
+        # A 403 or 404 is how a project the user cannot use is found out, so only other failures are warnings.
+        denied = exc.status in (403, 404)
+        console.say(f"BigQuery request GET {path} failed: HTTP {exc.status or 'none'} after {time.monotonic() - started:.1f}s",
+                    console=not denied, level="INFO" if denied else "WARN")
+        raise
+    console.say(f"BigQuery request GET {path}: ok in {time.monotonic() - started:.1f}s", console=False)
+    return result
+
+
+def _get_once(path: str, params: dict[str, str] | None = None) -> dict:
     token = _token_cached()
     url = f"{_API}/{path}"
     if params:
@@ -247,7 +274,9 @@ def selected_projects() -> list[str]:
     """The project ids chosen for the BigQuery tab (empty until the user picks some)."""
     stored = get_section("bigquery", {})
     items = stored.get("projects", []) if isinstance(stored, dict) else []
-    return [item for item in items if isinstance(item, str) and _PROJECT_ID.match(item)]
+    chosen = [item for item in items if isinstance(item, str) and _PROJECT_ID.match(item)]
+    console.register("project", chosen)
+    return chosen
 
 
 def select_projects(projects: list) -> list[str]:
@@ -294,7 +323,10 @@ def _save(changes: dict) -> None:
 def billing_project() -> str:
     """The project query jobs run and bill in, or "" when none has been chosen."""
     value = _stored().get("billingProject", "")
-    return value if isinstance(value, str) and _PROJECT_ID.match(value) else ""
+    if isinstance(value, str) and _PROJECT_ID.match(value):
+        console.register("project", value)
+        return value
+    return ""
 
 
 def require_billing_project() -> str:

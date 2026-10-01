@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from kumosql import live_graph, live_insights, timing
+from kumosql import console, live_graph, live_insights, timing
 from kumosql.pipeline import Pipeline
 
 FILES = {
@@ -74,13 +74,13 @@ def test_pages_report_progress_while_analysis_runs():
     assert "pending" not in live_graph.graph_or_empty()
 
 
-def test_stages_are_timed(capsys):
+def test_stages_are_timed():
     live_graph.load_files(FILES, "demo")
     wait_done()
     live_graph.graph_or_empty()
     names = {item["stage"] for item in timing.recent()}
     assert {"analyse", "graph report", "graph payload"} <= names
-    assert "[kumosql] graph payload:" in capsys.readouterr().err
+    assert "graph payload:" in console.log_path().read_text(encoding="utf-8")
 
 
 def test_analysis_is_saved_by_content_and_reused_after_a_restart(monkeypatch):

@@ -677,3 +677,5 @@ select.sp-input { min-width: 200px; }
 .tag-input { font: inherit; font-size: 12.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 4px 8px; min-width: 0; width: 170px; }
 .scope-item small.is-error { color: var(--bad-fg); white-space: normal; }
 .tags-in-use { margin: 0; }
+
+.diag-preview { width: 100%; height: auto; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; white-space: pre; overflow: auto; margin-top: 8px; }
