@@ -9,6 +9,8 @@
   let snapshot = { objects: {}, aliases: {}, tags: [], rules: [], known_objects: 0 };
   let loaded = false;
   const listeners = new Set();
+  const errorListeners = new Set();
+  let loadError = "";
 
   const h = (tag, attrs = {}, ...children) => {
     const element = document.createElement(tag);
@@ -41,9 +43,13 @@
   /** Read the tags now. Rule tags are recomputed from whatever is loaded at this moment. */
   async function load() {
     try {
+      loadError = "";
       return adopt(await request("GET", "/api/tags"));
-    } catch {
-      return snapshot; // tags are optional: pages work without them
+    } catch (error) {
+      // Tags are optional, so pages keep working without them, but the failure is shown, never swallowed.
+      loadError = error.message;
+      for (const listener of errorListeners) listener(loadError);
+      return snapshot;
     }
   }
 
@@ -281,5 +287,7 @@
     names: () => snapshot.tags.map((item) => item.tag),
     isLoaded: () => loaded,
     onChange: (listener) => listeners.add(listener),
+    onError: (listener) => errorListeners.add(listener),
+    error: () => loadError,
   };
 })();

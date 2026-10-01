@@ -204,7 +204,10 @@ class UIHandler(BaseHTTPRequestHandler):
             })
             return
         if self.path == "/api/tags":
-            self._json(200, tags.snapshot())
+            try:
+                self._json(200, tags.snapshot())
+            except Exception as exc:  # noqa: BLE001 - the page shows this instead of silently having no tags
+                self._json(500, {"error": f"could not work out tags: {type(exc).__name__}: {exc}"})
             return
         if self.path == "/api/scope-queries":
             self._json(200, {

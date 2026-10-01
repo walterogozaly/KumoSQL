@@ -239,6 +239,7 @@ function fillTables(tables) {
 
 /* ----- Tags: filter, multi-select tagging, and the editor for the open object ----- */
 
+window.KumoTags?.onError((message) => setStatus(`Tags could not be read: ${message}`, true));
 const bulkEditor = window.KumoTags?.editor(() => [...checked].map(objectKey), { onStatus: setStatus });
 if (bulkEditor) document.getElementById("bulk-editor").append(bulkEditor);
 
