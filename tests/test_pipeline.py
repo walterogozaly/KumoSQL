@@ -71,6 +71,26 @@ def test_sqlx_project_builds_model_graph(tmp_path):
     }
 
 
+def test_ref_by_name_finds_a_model_in_its_own_dataset(tmp_path):
+    # Dataform resolves ref("name") by the action's name, not the default dataset.
+    write(tmp_path, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: analytics\n")
+    write(tmp_path, "definitions/raw.sqlx", 'config { type: "declaration", database: "lake", schema: "raw", name: "events" }\n')
+    write(tmp_path, "definitions/stg.sqlx", 'config { type: "table", schema: "staging", name: "stg" }\nSELECT id FROM ${ref("events")}\n')
+    write(tmp_path, "definitions/kpi.sqlx", 'config { type: "table", schema: "marts" }\nSELECT id FROM ${ref("stg")}\n')
+    write(tmp_path, "definitions/obj.sqlx", 'config { type: "table" }\nSELECT id FROM ${ref({name: "kpi"})} JOIN ${ref("staging", "stg")} USING (id)\n')
+    write(tmp_path, "definitions/a/dup.sqlx", 'config { type: "table", schema: "one" }\nSELECT 1 AS id\n')
+    write(tmp_path, "definitions/b/dup.sqlx", 'config { type: "table", schema: "two" }\nSELECT 1 AS id\n')
+    write(tmp_path, "definitions/uses_dup.sqlx", 'config { type: "table" }\nSELECT id FROM ${ref("dup")}\n')
+
+    pipeline = load_sqlx_project(tmp_path)
+
+    assert pipeline.upstream["proj.staging.stg"] == {"lake.raw.events"}
+    assert pipeline.upstream["proj.marts.kpi"] == {"proj.staging.stg"}
+    assert pipeline.upstream["proj.analytics.obj"] == {"proj.marts.kpi", "proj.staging.stg"}
+    # A name two actions share is ambiguous: the project defaults apply, as before.
+    assert [dep.key for dep in pipeline.models["proj.analytics.uses_dup"].declared_dependencies] == ["proj.analytics.dup"]
+
+
 def test_column_lineage_crosses_models_and_ctes(tmp_path):
     pipeline = load_sqlx_project(dataform_project(tmp_path), source_schema=RAW_ORDERS)
 

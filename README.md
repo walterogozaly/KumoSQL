@@ -298,7 +298,7 @@ The SQLSolver stage needs a schema listing every table with columns, optionally 
 
 ## Whole-pipeline analysis
 
-`load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
+`load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. As in Dataform, `${ref("name")}` finds the action or declaration with that name wherever its config puts it (its own `schema` or `database`); the project defaults apply only when no action, or more than one, has the name. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
 
 The result is a `Pipeline` that qualifies every model in dependency order, so each model sees the output columns of the models it reads:
 
