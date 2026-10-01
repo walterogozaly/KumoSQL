@@ -395,7 +395,8 @@
   function renderManager(body, { onStatus } = {}) {
     let tree = newGroup();
     let editing = null;
-    let appliesTo = new Set(domains().map((item) => item.key));
+    const defaultDomains = () => new Set(domains().filter((item) => !item.key.startsWith("source:")).map((item) => item.key));
+    let appliesTo = defaultDomains();
     const datalistId = "scope-field-options";
     const list = h("ul", { class: "scope-list" });
     const name = h("input", { type: "text", name: "name", maxlength: "80", placeholder: "My Team", required: "", "aria-label": "Scope name" });
@@ -433,7 +434,7 @@
     const reset = () => {
       editing = null;
       name.value = "";
-      appliesTo = new Set(domains().map((item) => item.key));
+      appliesTo = defaultDomains();
       drawDomains();
       setTree(newGroup());
       cancel.hidden = true;

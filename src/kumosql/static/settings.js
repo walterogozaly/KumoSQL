@@ -26,6 +26,7 @@
     { id: "storage", label: "Local data folder", icon: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>' },
     { id: "repositories", label: "Repositories", icon: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-12 5"/>' },
     { id: "bigquery", label: "BigQuery projects", icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>' },
+    { id: "datasources", label: "Data sources", icon: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
     { id: "diagnostics", label: "Diagnostics", icon: '<path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/>' },
     { id: "solver", label: "Solver", icon: '<path d="M4 20h16M6 20V9l6-5 6 5v11M10 20v-6h4v6"/>' },
@@ -394,6 +395,14 @@
     window.KumoScopes.renderManager(body, { onStatus: setStatus });
   }
 
+  function renderDataSources(body) {
+    if (!window.KumoDataSources) {
+      body.append(h("p", { class: "sp-lede", text: "Data sources could not be loaded on this page." }));
+      return;
+    }
+    window.KumoDataSources.render(body, { onStatus: setStatus });
+  }
+
   function renderTagRules(body) {
     if (!window.KumoTags) {
       body.append(h("p", { class: "sp-lede", text: "Tag rules could not be loaded on this page." }));
@@ -690,7 +699,7 @@
     body.append(h("div", { class: "repo-form" }, copy), hint, preview);
   }
 
-  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, solver: renderSolver, scopes: renderScopes, tagrules: renderTagRules };
+  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, datasources: renderDataSources, solver: renderSolver, scopes: renderScopes, tagrules: renderTagRules };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -712,6 +721,7 @@
     storage: "storage local data folder directory clones cache path appdata home",
     repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
     bigquery: "bigquery projects choose select project catalog browse tab billing project query cache hours lifetime",
+    datasources: "data sources source query sql bigquery table populate cache fields columns applies to",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
     solver: "solver prover proof prove equivalent equivalence z3 smt rewrite verification keys not null time limit",
     tagrules: "tag tags rules rule label retired batch tagging dataset schema table view function udf procedure objects",

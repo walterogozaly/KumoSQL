@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import console, live_graph, redact
 from . import live_insights
-from . import scope_queries
+from . import bigquery_catalog, data_sources, scope_queries
 from . import scopes as scope_store
 from . import state, tags, version
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
@@ -49,6 +49,7 @@ ASSETS = {
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/tags.js": ("tags.js", "text/javascript; charset=utf-8"),
+    "/assets/datasources.js": ("datasources.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
     "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
@@ -211,6 +212,16 @@ class UIHandler(BaseHTTPRequestHandler):
                 "format": load_preferences().to_json(),
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
                 "tag_rules": tags.list_rules(),
+                "data_sources": [source.to_json() for source in data_sources.list_sources()],
+            })
+            return
+        if self.path == "/api/data-sources":
+            self._json(200, {
+                "types": [{"key": key, "label": label} for key, label in data_sources.TYPES.items()],
+                "sources": data_sources.describe(),
+                "default_cache_hours": bigquery_catalog.query_cache_hours(),
+                "billing_project": scope_queries.billing_project(),
+                "tag_fields": data_sources.tag_fields(),
             })
             return
         if self.path == "/api/tags":
@@ -296,6 +307,13 @@ class UIHandler(BaseHTTPRequestHandler):
             loaded["observed_reads"] if loaded else (),
             _profiles(loaded["pipeline"]) if loaded else None,
         )
+        from . import data_sources
+
+        for source in data_sources.list_sources():
+            rows = data_sources.records(source)
+            for column in data_sources.columns_of(source):
+                examples = tuple(dict.fromkeys(str(r[column]) for r in rows[:200] if r.get(column)))[:5]
+                fields.append(scope_store.FieldInfo(column, source.name, "text", examples))
         known = {info.name.casefold() for info in fields}
         # Fields of saved scopes stay editable even when their data is not loaded.
         for scope in scope_store.list_scopes():
@@ -306,7 +324,7 @@ class UIHandler(BaseHTTPRequestHandler):
         return {
             "fields": [info.to_json() for info in fields],
             "operators": [{"op": op, "label": label} for op, label in scope_store.OPERATORS.items()],
-            "domains": [{"key": key, "label": label} for key, label in scope_store.DOMAINS.items()],
+            "domains": [{"key": key, "label": label} for key, label in scope_store.all_domains().items()],
             "loaded": loaded["label"] if loaded else None,
         }
 
@@ -412,7 +430,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(exc)})
             return
         section = self.path.removeprefix("/api/settings/")
-        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules") or section == self.path:
+        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules", "data_sources") or section == self.path:
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
@@ -432,6 +450,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 saved = scope_queries.save_settings(payload).to_json()
             elif section == "tag_rules":
                 saved = tags.save_rules(payload)
+            elif section == "data_sources":
+                saved = [source.to_json() for source in data_sources.save_sources(payload)]
             else:
                 if not isinstance(payload, list):
                     raise ValueError("scopes must be a list")
@@ -500,7 +520,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
-            "/api/tag-rules/preview", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables",
+            "/api/tag-rules/preview", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -528,6 +548,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
             elif self.path == "/api/scope-queries":
                 result = _scope_query(payload)
+            elif self.path == "/api/data-sources/populate":
+                source = data_sources.get_source(payload.get("id") if isinstance(payload.get("id"), str) else "")
+                if source is None:
+                    raise ValueError("no saved data source with that id")
+                result = {**data_sources.populate(source, refresh=payload.get("refresh") is True).status(), "id": source.id}
             elif self.path == "/api/tag-rules/preview":
                 result = tags.preview_rule(payload)
             elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables"):
