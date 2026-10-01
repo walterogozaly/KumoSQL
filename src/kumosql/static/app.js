@@ -141,6 +141,7 @@ let toastTimer;
 
 let persisted = {};
 let saveTimer;
+let pendingSave = null;
 
 function loadLocalPrefs() {
   try {
@@ -169,13 +170,21 @@ function savePrefs() {
     /* browser storage unavailable; the server copy still persists */
   }
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
+  const send = () => {
+    saveTimer = null;
+    window.removeEventListener("pagehide", send);
+    // keepalive lets the request finish when the change is followed at once by leaving the page.
     fetch("/api/settings/ui", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(prefs),
+      keepalive: true,
     }).catch(() => {});
-  }, 300);
+  };
+  window.removeEventListener("pagehide", pendingSave);
+  pendingSave = send;
+  window.addEventListener("pagehide", send);
+  saveTimer = setTimeout(send, 300);
 }
 
 function profile() {
