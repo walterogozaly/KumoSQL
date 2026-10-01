@@ -14,7 +14,7 @@ def test_fixture_has_the_awkward_parts_and_loads(tmp_path):
     out = tmp_path / "fx"
     counts = fixture.generate(out, models=400, seed=3, config="both")
     assert (out / "workflow_settings.yaml").is_file() and (out / "dataform.json").is_file()
-    assert sum(counts.get(k, 0) for k in ("sqlx-bom", "sqlx-latin1", "sqlx-empty")) > 0
+    assert sum(counts.get(k, 0) for k in ("sqlx-bom", "sqlx-latin1", "sqlx-config-only")) > 0
     assert max(len(str(p.relative_to(out))) for p in out.rglob("*") if p.is_file()) > 260
     assert any(b"\r\n" in p.read_bytes() for p in out.rglob("*.sqlx"))
     pipeline = load_sqlx_project(out)
