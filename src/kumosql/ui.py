@@ -306,6 +306,7 @@ class UIHandler(BaseHTTPRequestHandler):
         return {
             "fields": [info.to_json() for info in fields],
             "operators": [{"op": op, "label": label} for op, label in scope_store.OPERATORS.items()],
+            "domains": [{"key": key, "label": label} for key, label in scope_store.DOMAINS.items()],
             "loaded": loaded["label"] if loaded else None,
         }
 
@@ -435,7 +436,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 if not isinstance(payload, list):
                     raise ValueError("scopes must be a list")
                 parsed = [scope_store.parse_scope(item) for item in payload]
-                scope_store.save_scopes(parsed)
+                parsed = scope_store.save_scopes(parsed)
                 saved = [scope.to_json() for scope in parsed]
         except (ValueError, OSError) as exc:
             self._json(400 if isinstance(exc, ValueError) else 500, {"error": str(exc)})

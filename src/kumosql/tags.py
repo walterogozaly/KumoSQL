@@ -40,7 +40,7 @@ MAX_KEYS_PER_REQUEST = 5000
 #: object type (TABLE, VIEW, MATERIALIZED_VIEW, EXTERNAL, SNAPSHOT, UDF, TABLE_FUNCTION,
 #: AGGREGATE_FUNCTION, PROCEDURE); ``kind`` and ``path`` come from a Dataform model; ``source`` says
 #: where the object is known from (``bigquery``, ``dataform`` or both, as a list).
-OBJECT_FIELDS = ("project", "dataset", "schema", "name", "table", "full_name", "type", "kind", "source", "path", "model")
+OBJECT_FIELDS = scope_store.OBJECT_FIELDS
 RESERVED_FIELDS = ("tag", "tags")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -189,6 +189,10 @@ def _check_rule(rule: Mapping, lookup: Mapping[str, scope_store.Scope]) -> dict:
     if missing:
         raise ValueError(
             f"objects have no field {missing[0]!r}. Fields a tag rule can use: {', '.join(OBJECT_FIELDS)}")
+    for name in scope_store.Scope("check", rule=rule, applies_to=("bigquery",)).references():
+        target = lookup.get(name.casefold())
+        if target is not None and not target.applies_to_domain("bigquery"):
+            raise ValueError(f"scope {target.name!r} does not apply to {scope_store.DOMAINS['bigquery']}")
     return expanded
 
 
