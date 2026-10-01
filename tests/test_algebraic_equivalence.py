@@ -340,3 +340,42 @@ def test_a_constant_set_source_still_needs_the_same_filter():
         schema={"emp": ["empno"]}, compare_names=False, dialect="mysql",
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+OJ_SCHEMA = {"emp": ["ename", "sal", "deptno"], "bonus": ["ename"]}
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        (
+            "SELECT COUNT(*), CASE WHEN emp.sal < 11 THEN -1 * emp.sal ELSE emp.sal END FROM bonus LEFT JOIN emp ON bonus.ename = emp.ename GROUP BY CASE WHEN emp.sal < 11 THEN -1 * emp.sal ELSE emp.sal END",
+            "SELECT COUNT(*), t3.e FROM (SELECT b.ename FROM bonus b) t2 LEFT JOIN (SELECT x.ename, CASE WHEN x.sal < 11 THEN -1 * x.sal ELSE x.sal END AS e FROM emp x) t3 ON t2.ename = t3.ename GROUP BY t3.e",
+        ),
+        (
+            "SELECT COUNT(*), emp.deptno FROM emp FULL JOIN bonus ON emp.ename = bonus.ename GROUP BY emp.deptno",
+            "SELECT COUNT(*), a.deptno FROM emp a FULL JOIN bonus b ON a.ename = b.ename GROUP BY a.deptno",
+        ),
+    ],
+)
+def test_aggregates_over_outer_joins(left, right):
+    result = prove_equivalent_algebraic(left, right, schema=OJ_SCHEMA, compare_names=False, dialect="mysql")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_outer_join_and_inner_join_aggregates_differ():
+    result = prove_equivalent_algebraic(
+        "SELECT COUNT(*), emp.deptno FROM bonus LEFT JOIN emp ON bonus.ename = emp.ename GROUP BY emp.deptno",
+        "SELECT COUNT(*), emp.deptno FROM bonus JOIN emp ON bonus.ename = emp.ename GROUP BY emp.deptno",
+        schema=OJ_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_a_left_join_is_not_a_right_join_in_an_aggregate():
+    result = prove_equivalent_algebraic(
+        "SELECT COUNT(*), emp.deptno FROM bonus LEFT JOIN emp ON bonus.ename = emp.ename GROUP BY emp.deptno",
+        "SELECT COUNT(*), emp.deptno FROM bonus RIGHT JOIN emp ON bonus.ename = emp.ename GROUP BY emp.deptno",
+        schema=OJ_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT

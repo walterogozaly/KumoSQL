@@ -35,7 +35,7 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 147 | 85 | 0 | was 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
+| Calcite | 232 | 158 | 74 | 0 | was 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
 | Spark SQL | 127 | 99 | 28 | 0 | was 86 |
 | TPC-H | 22 | 14 | 8 | 0 | was 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; the rest need correlated scalar subqueries, tuple IN, aggregates over outer joins and aggregate pushdown |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |

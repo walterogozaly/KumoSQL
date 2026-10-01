@@ -556,6 +556,122 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     return True
 
 
+def _sources_of(select: exp.Select) -> list[exp.Expression]:
+    from_ = select.args.get("from_") or select.args.get("from")
+    return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
+
+
+def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
+    """``(SELECT f(a) AS x FROM t) AS d`` joined in: read ``t AS d`` and replace ``d.x`` by ``f(d.a)``.
+
+    A derived table that only computes expressions over one table keeps every row, so it can be
+    folded into the query that uses it, for any join type.
+    """
+
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    changed = False
+    for source in _sources_of(select):
+        if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+            continue
+        inner = source.this
+        if not _no_extras(inner, allow_group=False) or inner.args.get("where") or inner.args.get("joins"):
+            continue
+        from_ = inner.args.get("from_") or inner.args.get("from")
+        table = from_.this if from_ is not None else None
+        if not isinstance(table, exp.Table) or any(
+            isinstance(n, (exp.AggFunc, exp.Subquery, exp.Select, exp.Star, exp.Window)) for e in inner.expressions for n in e.walk()
+        ):
+            continue
+        names = [e.alias_or_name.lower() for e in inner.expressions]
+        if "" in names or len(set(names)) != len(names):
+            continue
+        # Plain passthrough projections are handled (and kept) by _inline_projection.
+        if all(isinstance(e, exp.Column) and e.alias_or_name.lower() == e.name.lower() for e in inner.expressions):
+            continue
+        alias = source.alias
+        qualifier = table.alias_or_name
+        # Columns of the new relation are the table's columns, so every use of ``d.x`` is replaced.
+        by_name = {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, inner.expressions)}
+        uses = [c for c in select.find_all(exp.Column) if c.table.lower() == alias.lower()]
+        if any(c.name.lower() not in by_name for c in uses):
+            continue
+        unqualified = [c for c in select.find_all(exp.Column) if not c.table and c.name.lower() in by_name]
+        if unqualified:
+            continue
+        # Alias clashes with another declared name would capture references.
+        if sum(1 for n in select.walk() if isinstance(n, (exp.Table, exp.Subquery)) and (n.alias_or_name or "").lower() == alias.lower()) != 1:
+            continue
+        for column in uses:
+            replacement = by_name[column.name.lower()].copy()
+            for inner_column in replacement.find_all(exp.Column):
+                if not inner_column.table or inner_column.table.lower() == qualifier.lower():
+                    inner_column.set("table", exp.to_identifier(alias))
+            column.replace(exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement)
+        replaced = exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=exp.TableAlias(this=exp.to_identifier(alias)))
+        source.replace(replaced)
+        changed = True
+    return select if changed else None
+
+
+def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
+    """An aggregate over an outer join reads the join as one derived relation.
+
+    ``SELECT k, COUNT(*) FROM a LEFT JOIN b ON c GROUP BY k`` becomes
+    ``SELECT j.c0, COUNT(*) FROM (SELECT a.k AS c0 FROM a LEFT JOIN b ON c) AS j GROUP BY j.c0``:
+    the same rows, with the join stated once and its columns named by position, so two spellings of
+    the same join (different aliases, expressions folded in) have the same text.
+    """
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    joins = select.args.get("joins") or []
+    if from_ is None or not joins or not any((j.args.get("side") or "").upper() in ("LEFT", "RIGHT", "FULL") for j in joins):
+        return None
+    from .eager_aggregation import _own_aggregates
+
+    if not (select.args.get("group") or _own_aggregates(select)) or not _no_extras(select, allow_group=True):
+        return None
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    sources = _sources_of(select)
+    aliases = [(s.alias_or_name or "").lower() for s in sources]
+    if "" in aliases or len(set(aliases)) != len(aliases):
+        return None
+    # A subquery in the SELECT, WHERE or HAVING could read the join's columns; leave those shapes alone.
+    if any(
+        not isinstance(n.parent, (exp.From, exp.Join))
+        for n in select.find_all(exp.Subquery, exp.Exists)
+        if n.find_ancestor(exp.Join) is None
+    ):
+        return None
+    columns = [
+        c for c in select.find_all(exp.Column)
+        if not isinstance(c.this, exp.Star) and c.find_ancestor(exp.Join) is None and c.find_ancestor(exp.Select) is select
+    ]
+    if any(c.table.lower() not in aliases for c in columns):
+        return None
+    spelled = {(s.alias_or_name or "").lower(): s.alias_or_name for s in sources}
+    keys = [(c.table.lower(), c.name.lower()) for c in columns]
+    positions: dict[tuple[str, str], int] = {}
+    for key in keys:
+        positions.setdefault(key, len(positions))
+    if not positions:
+        return None
+    inner = exp.Select(
+        expressions=[
+            exp.alias_(exp.column(name, table=spelled[table]), f"c{index}") for (table, name), index in positions.items()
+        ]
+    )
+    inner.set("from_" if "from_" in select.args else "from", from_.copy())
+    inner.set("joins", [j.copy() for j in joins])
+    for column, key in zip(columns, keys):
+        column.set("table", exp.to_identifier("kqj"))
+        column.set("this", exp.to_identifier(f"c{positions[key]}"))
+    select.set("joins", None)
+    select.set("from_" if "from_" in select.args else "from", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier("kqj")))))
+    return select
+
+
 def _prune_derived(select: exp.Select) -> exp.Expression | None:
     """Drop the columns of a derived table that the enclosing query never reads.
 
@@ -969,7 +1085,7 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_prune_derived, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, _key_aggregates):
+            for rule in (_inline_expression_projection, _prune_derived, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
