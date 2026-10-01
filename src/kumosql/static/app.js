@@ -596,6 +596,8 @@ function showReport(data) {
   const chainChecks = $("chain-checks");
   chainChecks.replaceChildren();
   if (chain.length) chainChecks.append(checkRow(chain));
+  const assumed = KumoEvidence.assumptions(evidenceChecks(data));
+  if (assumed) chainChecks.append(assumed);
   explain(null, evidenceChecks(data));
   data.steps.forEach((step, index) => {
     const outcome = evidenceLabel(step);

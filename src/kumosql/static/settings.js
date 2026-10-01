@@ -670,6 +670,36 @@
       verdict,
     );
     refresh().catch((error) => setStatus(error.message, true));
+
+    const query = (label) => h("textarea", { class: "sp-input sp-query", rows: "6", spellcheck: "false", "aria-label": label, placeholder: label });
+    const queryA = query("Query A");
+    const queryB = query("Query B");
+    const queryVerdict = h("p", { class: "sp-row-hint" });
+    const queryDetail = h("div", { class: "sp-query-detail" });
+    const prove = async () => {
+      queryVerdict.textContent = "Comparing…";
+      queryDetail.replaceChildren();
+      try {
+        const result = await repoCall("POST", "/api/prove-queries", { left: queryA.value, right: queryB.value });
+        queryVerdict.textContent = result.status === "proven_equivalent" ? "Equivalent."
+          : result.status === "not_equivalent" ? `Different results: ${result.reason}` : `Not proven: ${result.reason}`;
+        if (result.counterexample) {
+          const rows = (items) => items.length ? items.map((row) => row.join(", ")).join(" | ") : "no rows";
+          const tables = Object.entries(result.counterexample.tables).map(([name, items]) => `${name}: ${items.length ? items.map((row) => JSON.stringify(row)).join(" ") : "empty"}`);
+          queryDetail.append(h("pre", { class: "sp-pre", text: [...tables, `A returns: ${rows(result.counterexample.left_rows)}`, `B returns: ${rows(result.counterexample.right_rows)}`].join("\n") }));
+        }
+        if (result.assumptions.length) {
+          queryDetail.append(h("details", { class: "ev-assumptions" }, h("summary", { text: `Assumptions (${result.assumptions.length})` }),
+            h("ul", {}, result.assumptions.map((item) => h("li", { text: item })))));
+        }
+      } catch (error) { queryVerdict.textContent = error.message; }
+    };
+    body.append(
+      h("h4", { class: "sp-heading", text: "Compare queries" }),
+      h("div", { class: "sp-inline sp-queries" }, queryA, queryB),
+      h("div", { class: "sp-inline" }, h("button", { type: "button", class: "toolbar-button", text: "Prove equivalent", onclick: prove })),
+      queryVerdict, queryDetail,
+    );
   }
 
   async function renderDiagnostics(body) {

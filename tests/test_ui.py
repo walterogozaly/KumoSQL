@@ -404,3 +404,32 @@ def test_api_saves_lists_and_removes(ui_server):
     assert [i["right"] for i in call("/api/equivalences")["equivalences"]] == ["p.d.b"]
     assert call("/api/equivalences/remove", {"right": "p.d.b"}) == {"removed": True}
     assert call("/api/equivalences")["equivalences"] == []
+
+
+def test_prove_queries_endpoint(ui_server):
+    pytest.importorskip("z3")
+
+    def prove(left, right):
+        request = Request(
+            f"{ui_server}/api/prove-queries",
+            data=json.dumps({"left": left, "right": right}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=30) as response:
+            return json.load(response)
+
+    same = prove("SELECT a FROM t WHERE a > 1 AND TRUE", "SELECT a FROM t WHERE a > 1")
+    assert same["status"] == "proven_equivalent"
+    assert same["assumptions"]
+    different = prove("SELECT a FROM t WHERE a > 1", "SELECT a FROM t WHERE a > 2")
+    assert different["status"] == "not_equivalent"
+    assert different["counterexample"]["tables"]
+
+    request = Request(
+        f"{ui_server}/api/prove-queries",
+        data=json.dumps({"left": "", "right": "SELECT 1"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(HTTPError) as error:
+        urlopen(request, timeout=10)
+    assert error.value.code == 400
