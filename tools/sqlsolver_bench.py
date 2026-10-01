@@ -177,6 +177,21 @@ def constant_groupings(sql: str) -> str:
     return tree.sql(dialect="duckdb")
 
 
+def name_values(sql: str) -> str:
+    """Calcite calls the columns of an unnamed VALUES ``EXPR$0``, ``EXPR$1``, ..; DuckDB calls them ``col0``, .."""
+
+    tree = sqlglot.parse_one(sql, read="mysql")
+    for number, values in enumerate(tree.find_all(exp.Values)):
+        if values.parent is not None and isinstance(values.parent, (exp.From, exp.Join)) and values.expressions and isinstance(values.expressions[0], exp.Tuple):
+            alias = values.args.get("alias")
+            if alias is not None and alias.columns:
+                continue
+            width = len(values.expressions[0].expressions)
+            name = alias.name if alias is not None and alias.name else f"kqv{number}"
+            values.set("alias", exp.TableAlias(this=exp.to_identifier(name), columns=[exp.to_identifier(f"EXPR${i}") for i in range(width)]))
+    return tree.sql(dialect="mysql")
+
+
 def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
@@ -184,6 +199,8 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
 
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
+    if constants:
+        left, right = name_values(left), name_values(right)
     try:
         left_sql, right_sql = to_dialect(left, "duckdb"), to_dialect(right, "duckdb")
         if constants:

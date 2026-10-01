@@ -1008,3 +1008,74 @@ def test_left_join_indicator_rewrite_preserves_results_on_random_databases():
         for sql, norm in zip(forms, normalized):
             runnable = sqlglot.transpile(norm, read="bigquery", write="sqlite")[0]
             assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), norm
+
+
+def test_unnamed_values_columns_are_expr_n():
+    pairs = [
+        ("SELECT t.expr$0 + t.expr$1 FROM (VALUES (10, 1), (20, 3)) AS t", "SELECT * FROM (VALUES (11), (23)) AS t1"),
+        ("SELECT * FROM (VALUES (10, 'x'), (20, 'y')) AS t WHERE t.expr$0 < 15", "SELECT * FROM (VALUES (10, 'x')) AS t1"),
+        ("SELECT * FROM (VALUES (1), (2)) WHERE expr$0 > 1", "SELECT * FROM (VALUES (2))"),
+    ]
+    for left, right in pairs:
+        assert prove_equivalent_algebraic(left, right, dialect="mysql", compare_names=False, exact_arithmetic=True).proven, left
+    near = prove_equivalent_algebraic(
+        "SELECT * FROM (VALUES (1), (2)) AS t WHERE t.expr$0 > 0", "SELECT * FROM (VALUES (2)) AS t1", dialect="mysql", compare_names=False
+    )
+    assert not near.proven
+
+
+SIMPLIFY_SCHEMA = {"a": ["id", "k", "v"], "b": ["id", "k", "w"]}
+SIMPLIFY_PAIRS = [
+    ("SELECT 1 FROM a FULL JOIN b ON a.k = b.k WHERE b.w > 3", "SELECT 1 FROM a RIGHT JOIN (SELECT * FROM b WHERE w > 3) AS t ON a.k = t.k"),
+    ("SELECT 1 FROM a FULL JOIN b ON a.k = b.k WHERE a.v = 2", "SELECT 1 FROM (SELECT * FROM a WHERE v = 2) AS t LEFT JOIN b ON t.k = b.k"),
+    ("SELECT a.id FROM a LEFT JOIN (SELECT k FROM b WHERE w > 1 GROUP BY k) AS d ON a.k = d.k", "SELECT a.id FROM a"),
+]
+
+
+@pytest.mark.parametrize("left,right", SIMPLIFY_PAIRS)
+def test_full_join_filters_and_unused_grouped_joins(left, right):
+    assert prove_equivalent_algebraic(left, right, schema=SIMPLIFY_SCHEMA, dialect="mysql", compare_names=False).proven
+
+
+def test_outer_join_simplifications_keep_their_boundaries():
+    # an unused left join to a table that is not unique on the join column repeats rows of a
+    assert not prove_equivalent_algebraic(
+        "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k", "SELECT a.id FROM a", schema=SIMPLIFY_SCHEMA, dialect="mysql", compare_names=False
+    ).proven
+    # a null-tolerant test leaves the unmatched rows of both sides
+    assert not prove_equivalent_algebraic(
+        "SELECT 1 FROM a FULL JOIN b ON a.k = b.k WHERE b.w IS NULL", "SELECT 1 FROM a LEFT JOIN b ON a.k = b.k WHERE b.w IS NULL",
+        schema=SIMPLIFY_SCHEMA, dialect="mysql", compare_names=False,
+    ).proven
+
+
+def test_outer_join_simplifications_preserve_results_on_random_databases():
+    rng = random.Random(33)
+    forms = [pair[0] for pair in SIMPLIFY_PAIRS] + ["SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE b.w IS NULL"]
+    normalized = [normalize(f, schema=SIMPLIFY_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE a (id INT, k INT, v INT)")
+        db.execute("CREATE TABLE b (id INT, k INT, w INT)")
+        for table in ("a", "b"):
+            for n in range(rng.choice([0, 1, 3, 5])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [n, rng.choice([None, 0, 1, 2]), rng.choice([None, 0, 2, 4])])
+        for sql, norm in zip(forms, normalized):
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            try:
+                expected = Counter(db.execute(plain).fetchall())
+            except sqlite3.OperationalError:
+                continue  # old SQLite without FULL/RIGHT JOIN
+            assert expected == Counter(db.execute(runnable).fetchall()), norm
+
+
+def test_nested_set_operations_keep_their_shape_in_the_normalized_text():
+    # a bare "a INTERSECT b UNION ALL c" would read back as "(a INTERSECT b) UNION ALL c"
+    schema = {"t": ["a"], "u": ["a"], "v": ["a"]}
+    text = normalize(
+        "SELECT a FROM t INTERSECT SELECT a FROM (SELECT a FROM u UNION ALL SELECT a FROM v) AS d WHERE a > 1", schema=schema, dialect="mysql"
+    )
+    tree = sqlglot.parse_one(text, read="mysql")
+    assert isinstance(tree, sqlglot.exp.Intersect)
+    assert isinstance(tree.expression, sqlglot.exp.Subquery) and isinstance(tree.expression.this, sqlglot.exp.Union)
