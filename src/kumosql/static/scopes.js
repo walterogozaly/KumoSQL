@@ -9,11 +9,12 @@
   const ACTIVE_KEY = "kumosql-active-scope";
   const NO_VALUE_OPS = new Set(["is_null", "not_null"]);
   const LIST_OPS = new Set(["in", "not_in"]);
+  // Same order as the server's list (GET /api/scope-fields), used until it arrives.
   const FALLBACK_OPERATORS = [
-    ["in", "is one of"], ["not_in", "is not one of"], ["eq", "equals"], ["ne", "does not equal"],
+    ["eq", "equals"], ["ne", "does not equal"], ["in", "is one of"], ["not_in", "is not one of"],
     ["prefix", "starts with"], ["suffix", "ends with"], ["contains", "contains"], ["glob", "matches pattern"],
     ["regex", "matches regex"], ["gt", "is greater than"], ["gte", "is at least"], ["lt", "is less than"],
-    ["lte", "is at most"], ["is_null", "is empty"], ["not_null", "is not empty"],
+    ["lte", "is at most"], ["in_query", "is returned by SQL query"], ["is_null", "is empty"], ["not_null", "is not empty"],
   ].map(([op, label]) => ({ op, label }));
 
   let scopes = [];

@@ -247,3 +247,15 @@ def test_the_page_offers_the_query_condition(server):
         script = response.read().decode()
     assert "in_query" in script and "Refresh now" in script
     assert "in_query" in {o["op"] for o in call(server, "/api/scope-fields")["operators"]}
+
+
+def test_fallback_operators_match_the_server_list(server):
+    # Tag rules can open before /api/scope-fields answers; the page's own list must not drop an operator.
+    import re
+
+    with urlopen(server + "/assets/scopes.js") as response:
+        script = response.read().decode()
+    block = script.split("const FALLBACK_OPERATORS = [", 1)[1].split("].map", 1)[0]
+    fallback = re.findall(r'\["(\w+)", "([^"]+)"\]', block)
+    served = [(item["op"], item["label"]) for item in call(server, "/api/scope-fields")["operators"]]
+    assert fallback == served

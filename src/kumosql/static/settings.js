@@ -464,7 +464,7 @@
   async function renderRepositories(body) {
     body.append(
       h("h3", { class: "sp-heading", text: "Repositories" }),
-      h("p", { class: "sp-lede", text: "Connect the Dataform repositories you want analysed. They are saved here and reloaded each time KumoSQL starts. Git runs on this computer with your own credentials, so private repositories work with an SSH remote (git@github.com:owner/repo.git), an https URL, or a local path. The active repository feeds the Query graph, Cost and Change reports pages." }));
+      h("p", { class: "sp-lede", text: "Connect the Dataform repositories you want analysed. They are saved here and reloaded each time KumoSQL starts. Git runs on this computer with your own credentials, so private repositories work with an https URL (https://github.com/owner/repo.git), an SSH remote, or a local path. The active repository feeds the Query graph, Cost and Change reports pages." }));
     const list = h("ul", { class: "repo-list" });
     const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "https://github.com/owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
     const branch = h("input", { type: "text", class: "sp-input", placeholder: "branch (default)", "aria-label": "Branch", autocomplete: "off", size: "14" });
@@ -490,10 +490,10 @@
       const info = schedules.repositories[repo.id];
       const box = h("div", { class: "repo-wf" });
       if (!info) return box;
-      const lines = {
-        loaded: `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${info.repositories.join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`,
-      };
-      const text = lines[info.state] || info.message || "";
+      // Only a loaded lookup has counts; other states (needs_projects, error) carry a message.
+      const text = info.state === "loaded"
+        ? `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${(info.repositories || []).join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`
+        : info.message || "";
       box.append(h("p", { class: `sp-row-hint${info.state === "error" ? " is-error" : ""}`, text: `Production schedules: ${text}` }));
       for (const warning of info.warnings || []) box.append(h("p", { class: "sp-row-hint is-error", text: warning }));
       const projects = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Google Cloud projects to search", autocomplete: "off",
