@@ -297,3 +297,46 @@ def test_an_unresolvable_column_counts_as_correlated():
     node = next(tree.find_all(sqlglot.exp.Subquery))
     assert not scalar_subqueries.is_uncorrelated(node, SCHEMA)
     assert not scalar_subqueries.is_uncorrelated(node, None)
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        # column names are case-insensitive
+        ("SELECT T.EMPNO FROM EMP AS T WHERE T.SAL > 1", "SELECT t.empno FROM EMP AS t WHERE t.sal > 1"),
+        # a UNION ALL source is read only for the columns the query uses, in any order
+        (
+            "SELECT t.ename, AVG(t.empno) FROM (SELECT * FROM emp UNION ALL SELECT * FROM emp) AS t GROUP BY t.ename",
+            "SELECT t.ename, AVG(t.empno) FROM (SELECT ename, empno FROM emp UNION ALL SELECT ename, empno FROM emp) AS t GROUP BY t.ename",
+        ),
+        # a HAVING conjunct on the group key is a WHERE, whatever else the HAVING holds
+        (
+            "SELECT name FROM dept WHERE name > 'b' GROUP BY name HAVING name > 'c' AND (COUNT(*) > 3 OR name < 'z')",
+            "SELECT name FROM dept WHERE name > 'b' AND name > 'c' GROUP BY name HAVING COUNT(*) > 3 OR name < 'z'",
+        ),
+        # GROUP BY TRUE over constants is an existence test
+        (
+            "SELECT e.empno FROM emp e WHERE EXISTS (SELECT 1 FROM emp WHERE empno < 20)",
+            "SELECT e.empno FROM emp e, (SELECT 1 AS i FROM emp WHERE empno < 20 GROUP BY TRUE) AS t",
+        ),
+        # the same derived relation under different aliases is one relation
+        (
+            "SELECT d.deptno FROM dept d RIGHT JOIN (SELECT x.deptno FROM emp x WHERE x.sal > 1 GROUP BY x.deptno) t ON d.deptno = t.deptno",
+            "SELECT d0.deptno FROM dept d0 RIGHT JOIN (SELECT y.deptno FROM emp y WHERE y.sal > 1 GROUP BY y.deptno) u ON d0.deptno = u.deptno",
+        ),
+    ],
+)
+def test_more_shapes_are_proven(left, right):
+    result = prove_equivalent_algebraic(
+        left, right, schema={"emp": ["empno", "ename", "sal", "deptno"], "dept": ["deptno", "name"]}, compare_names=False, dialect="mysql"
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_a_constant_set_source_still_needs_the_same_filter():
+    result = prove_equivalent_algebraic(
+        "SELECT e.empno FROM emp e WHERE EXISTS (SELECT 1 FROM emp WHERE empno < 20)",
+        "SELECT e.empno FROM emp e, (SELECT 1 AS i FROM emp WHERE empno < 21 GROUP BY TRUE) AS t",
+        schema={"emp": ["empno"]}, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT

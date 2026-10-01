@@ -164,6 +164,42 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+def _canonical_aliases(body: exp.Expression) -> exp.Expression:
+    """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
+    so two spellings of the same relation get the same identity."""
+
+    body = body.copy()
+    names: dict[str, str] = {}
+    declared = [n for n in body.walk() if isinstance(n, (exp.Table, exp.Subquery)) and not isinstance(n.parent, exp.Table)]
+    ctes = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
+    for node in declared:
+        old = node.alias_or_name
+        if not old or old.lower() in ctes or (isinstance(node, exp.Table) and not node.args.get("db") and old.lower() in ctes):
+            continue
+        if isinstance(node, exp.Subquery) and not node.alias:
+            continue
+        if old.lower() in names:
+            return body  # one alias used twice (different scopes): keep the text as written
+        names[old.lower()] = f"kq{len(names)}"
+        node.set("alias", exp.TableAlias(this=exp.to_identifier(names[old.lower()])))
+    for column in body.find_all(exp.Column):
+        if column.table and column.table.lower() in names:
+            column.set("table", exp.to_identifier(names[column.table.lower()]))
+    return body
+
+
+def _is_ground(term) -> bool:
+    """Whether a Z3 term mentions no uninterpreted constant (it has one fixed value)."""
+
+    stack = [term]
+    while stack:
+        node = stack.pop()
+        if z3.is_const(node) and node.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+            return False
+        stack.extend(node.children())
+    return True
+
+
 class _SetSourceUnresolved(Exception):
     """A DISTINCT derived table was not joined on all of its columns."""
 
@@ -894,7 +930,7 @@ class _Compiler:
             names.append(item.alias_or_name.lower())
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
-        key = "(" + body.sql(dialect="bigquery", normalize_functions="upper") + ")"
+        key = "(" + _canonical_aliases(body).sql(dialect="bigquery", normalize_functions="upper") + ")"
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
         return _Source(occ=occ)
@@ -1338,7 +1374,11 @@ def _subst_sub(sub: _Sub, pairs) -> _Sub:
 def _pinned_guard(sub: _Sub, pairs, ids) -> object:
     """The guard of a set-source test once its columns are pinned; the pinned outer columns are known non-NULL."""
 
-    known = [z3.Not(z3.Bool(pin.decl().name() + "#null")) for _, pin in pairs]
+    known = [
+        z3.Not(z3.Bool(pin.decl().name() + "#null"))
+        for _, pin in pairs
+        if z3.is_const(pin) and pin.decl().kind() == z3.Z3_OP_UNINTERPRETED
+    ]
     return z3.And(_subst(sub.guard, pairs), *known)
 
 
@@ -1833,7 +1873,11 @@ class _Prover:
             distinct = self.as_distinct_spj(inner)
             if not (isinstance(distinct, _Spj) and distinct.distinct):
                 raise _SetSourceUnresolved
-            for column in columns:
+            for position, column in enumerate(columns):
+                produced = inner.outputs[position] if position < len(inner.outputs) else None
+                if produced is not None and _is_ground(produced.val) and _is_ground(produced.null):
+                    pairs.append((column.val, produced.val))  # a constant column is pinned by what it is
+                    continue
                 for term in conjuncts:
                     if not z3.is_eq(term):
                         continue
@@ -1849,7 +1893,11 @@ class _Prover:
                     raise _SetSourceUnresolved
         # The test already requires the pinned columns to be non-NULL, so the
         # condition need not repeat it (the existence atom is a free Boolean).
-        known = [(z3.Not(z3.Bool(pin.decl().name() + "#null")), z3.BoolVal(True)) for _, pin in pairs]
+        known = [
+            (z3.Not(z3.Bool(pin.decl().name() + "#null")), z3.BoolVal(True))
+            for _, pin in pairs
+            if z3.is_const(pin) and pin.decl().kind() == z3.Z3_OP_UNINTERPRETED
+        ]
         changes = {
             "cond": _Pred(_subst(_subst(block.cond.t, pairs), known), _subst(block.cond.f, pairs)),
             "outputs": [_subst_val(v, pairs) for v in block.outputs],
@@ -1952,12 +2000,21 @@ class _Prover:
         ):
             return block
         agg_terms = {t.get_id() for c in block.aggs for t in (c.var.null, c.var.val) if z3.is_const(t)}
-        stack = [block.having.t]
-        while stack:
-            term = stack.pop()
-            if z3.is_const(term) and term.decl().kind() == z3.Z3_OP_UNINTERPRETED and term.get_id() in agg_terms:
-                return block
-            stack.extend(term.children())
+
+        def has_aggregate(root) -> bool:
+            stack = [root]
+            while stack:
+                term = stack.pop()
+                if z3.is_const(term) and term.decl().kind() == z3.Z3_OP_UNINTERPRETED and term.get_id() in agg_terms:
+                    return True
+                stack.extend(term.children())
+            return False
+
+        top = block.having.t
+        conjuncts = list(top.children()) if z3.is_and(top) else [top]
+        candidates = [c for c in conjuncts if not has_aggregate(c)]
+        if not candidates:
+            return block
         copies = [o.copy(o.uid + "'") for o in block.occs]
         copy_pairs = []
         for o, c in zip(block.occs, copies):
@@ -1965,16 +2022,29 @@ class _Prover:
         keys_same = _rows_eq(block.keys, [_subst_val(k, copy_pairs) for k in block.keys])
         both = z3.And(block.cond.t, _subst(block.cond.t, copy_pairs), keys_same)
         facts = block.facts + [_subst(f, copy_pairs) for f in block.facts]
-        saved = len(self.candidates)
-        ok = self.valid(
-            z3.Implies(both, block.having.t == _subst(block.having.t, copy_pairs)), block.occs + copies, facts
-        )
-        del self.candidates[saved:]
-        if not ok:
+        pushed, kept = [], [c for c in conjuncts if has_aggregate(c)]
+
+        def invariant(term) -> bool:
+            saved = len(self.candidates)
+            ok = self.valid(z3.Implies(both, term == _subst(term, copy_pairs)), block.occs + copies, facts)
+            del self.candidates[saved:]
+            return ok
+
+        together = z3.And(*candidates) if len(candidates) > 1 else candidates[0]
+        if invariant(together):
+            pushed = list(candidates)  # conjuncts can depend on each other (a NULL test guards a comparison)
+        else:
+            for conjunct in candidates:
+                (pushed if invariant(conjunct) else kept).append(conjunct)
+        if not pushed:
             return block
-        t = z3.And(block.cond.t, block.having.t)
+        t = z3.And(block.cond.t, *pushed)
         block.cond = _Pred(t, z3.Not(t))
-        block.having = None
+        if kept:
+            rest = z3.And(*kept) if len(kept) > 1 else kept[0]
+            block.having = _Pred(rest, z3.Not(rest))
+        else:
+            block.having = None
         return block
 
     def as_distinct_spj(self, block):
