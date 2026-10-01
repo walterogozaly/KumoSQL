@@ -125,6 +125,13 @@ class UIServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
+    def __init__(self, *args, **kwargs) -> None:
+        # Analysis is CPU-bound Python. With the default 5 ms switch interval it can hold the
+        # interpreter long enough that a trivial request (Settings, the BigQuery tab) waits
+        # seconds; a shorter interval keeps them under ~50 ms at a cost of about 5% build time.
+        sys.setswitchinterval(min(sys.getswitchinterval(), 0.0005))
+        super().__init__(*args, **kwargs)
+
     def handle_error(self, request, client_address) -> None:
         exc = sys.exc_info()[1]
         console.error(f"while answering {client_address[0]}: {exc}", exc)
@@ -176,6 +183,9 @@ class UIHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/api/version":
             self._json(200, version.info())
+            return
+        if self.path == "/api/status":
+            self._json(200, live_graph.server_status())
             return
         if self.path == "/api/settings":
             self._json(200, {

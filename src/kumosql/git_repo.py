@@ -345,7 +345,8 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
 
     from . import live_graph
 
-    fetched = fetch_project(value, branch, refresh)
+    with live_graph.activity("Fetching repository"):
+        fetched = fetch_project(value, branch, refresh)
     label = f"{fetched['repository']} ({fetched['branch']} @ {fetched['commit']})"
     try:
         live_graph.load_files(
