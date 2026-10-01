@@ -288,3 +288,17 @@ def test_limit_zero_is_empty():
     assert prove_equivalent_smt(
         "(SELECT deptno FROM dept LIMIT 0) UNION ALL (SELECT deptno FROM dept)", "SELECT deptno FROM dept", schema=schema
     ).proven
+
+
+def test_counterexample_does_not_leave_a_key_column_null():
+    """A column only one query reads must not turn NULL in the counterexample (it broke NOT NULL keys)."""
+    from kumosql.smt_equivalence import SmtStatus, TableConstraints, prove_equivalent_smt
+
+    constraints = {"t": TableConstraints(not_null=frozenset({"id"}), keys=(("id",),))}
+    result = prove_equivalent_smt(
+        "SELECT COUNT(DISTINCT id) AS n FROM t",
+        "SELECT COUNT(*) AS n FROM t",
+        schema={"t": ["id", "x"]},
+        constraints=constraints,
+    )
+    assert result.status is not SmtStatus.NOT_EQUIVALENT
