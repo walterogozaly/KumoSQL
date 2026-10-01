@@ -636,3 +636,15 @@ select.sp-input { min-width: 200px; }
 .rule-ref-label { color: var(--text-muted); font-size: 12.5px; }
 .rule-ref select { font: inherit; font-size: 12.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px; min-width: 0; }
 .rule-actions .link-button:disabled { opacity: .45; cursor: not-allowed; text-decoration: none; }
+
+.repo-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; max-width: 640px; }
+.repo-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.repo-item.is-active { border-color: var(--focus); }
+.repo-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; font-size: 13px; word-break: break-all; }
+.repo-branch { color: var(--text-muted); }
+.repo-badge { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--focus) 18%, transparent); font-size: 11px; }
+.repo-item .sp-row-hint { margin: 4px 0 8px; word-break: break-word; }
+.repo-item .sp-row-hint.is-error { color: var(--danger, #c0392b); }
+.repo-actions { display: flex; gap: 8px; align-items: center; }
+.repo-form { display: flex; flex-wrap: wrap; gap: 8px; max-width: 640px; }
+.repo-form .sp-text { flex: 1 1 280px; min-width: 0; }

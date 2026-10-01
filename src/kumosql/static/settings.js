@@ -23,6 +23,7 @@
   const SECTIONS = [
     { id: "appearance", label: "Appearance", icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>' },
     { id: "formatting", label: "SQL formatting", icon: '<path d="M4 6h16M4 12h10M4 18h13"/>' },
+    { id: "repositories", label: "Repositories", icon: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-12 5"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
   ];
 
@@ -388,7 +389,86 @@
     window.KumoScopes.renderManager(body, { onStatus: setStatus });
   }
 
-  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, scopes: renderScopes };
+  /* Connected Dataform repositories: saved on this computer and reloaded on start. */
+  async function repoCall(method, url, payload) {
+    const response = await fetch(url, {
+      method, headers: { "Content-Type": "application/json" }, body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Request failed");
+    return data;
+  }
+
+  function ago(iso) {
+    const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+    if (!Number.isFinite(seconds)) return "";
+    if (seconds < 90) return "just now";
+    if (seconds < 5400) return `${Math.round(seconds / 60)} min ago`;
+    if (seconds < 129600) return `${Math.round(seconds / 3600)} h ago`;
+    return `${Math.round(seconds / 86400)} days ago`;
+  }
+
+  async function renderRepositories(body) {
+    body.append(
+      h("h3", { class: "sp-heading", text: "Repositories" }),
+      h("p", { class: "sp-lede", text: "Connect the Dataform repositories you want analysed. They are saved here and reloaded each time KumoSQL starts. Git runs on this computer with your own credentials, so private repositories work with an SSH remote (git@github.com:owner/repo.git), an https URL, or a local path. The active repository feeds the Query graph, Cost and Change reports pages." }));
+    const list = h("ul", { class: "repo-list" });
+    const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "git@github.com:owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
+    const branch = h("input", { type: "text", class: "sp-input", placeholder: "branch (default)", "aria-label": "Branch", autocomplete: "off", size: "14" });
+    const form = h("form", { class: "repo-form" }, url, branch, h("button", { type: "submit", class: "toolbar-button", text: "Connect" }));
+    body.append(list, form);
+    let data = { repositories: [], active: null };
+
+    const draw = () => {
+      list.replaceChildren();
+      if (!data.repositories.length) list.append(h("li", { class: "sp-row-hint", text: "No repositories connected yet." }));
+      for (const repo of data.repositories) {
+        const isActive = repo.id === data.active;
+        const status = repo.error ? `Failed ${ago(repo.error_at)}: ${repo.error}`
+          : repo.last_loaded ? `${repo.label || "Loaded"} · ${repo.files} files · loaded ${ago(repo.last_loaded)}${repo.stale_reason ? ` · using saved copy, could not fetch: ${repo.stale_reason}` : ""}`
+          : "Not loaded yet";
+        const refresh = h("button", { type: "button", class: "toolbar-button", text: "Refresh" });
+        refresh.addEventListener("click", () => run(refresh, async () => { await repoCall("POST", "/api/repositories/refresh", { id: repo.id }); }, "Loaded"));
+        const use = h("button", { type: "button", class: "toolbar-button", text: "Use", hidden: isActive });
+        use.addEventListener("click", () => run(use, async () => { await repoCall("POST", "/api/repositories/activate", { id: repo.id }); }, "Loaded"));
+        const remove = h("button", { type: "button", class: "link-button", text: "Remove" });
+        remove.addEventListener("click", () => run(remove, async () => {
+          const rest = data.repositories.filter((item) => item.id !== repo.id).map(({ url: u, branch: b }) => ({ url: u, branch: b }));
+          await repoCall("PUT", "/api/repositories", { repositories: rest });
+        }, "Removed"));
+        list.append(h("li", { class: `repo-item${isActive ? " is-active" : ""}` },
+          h("div", { class: "repo-main" },
+            h("strong", { class: "repo-url", text: repo.url }),
+            h("span", { class: "repo-branch", text: repo.branch ? ` @ ${repo.branch}` : "" }),
+            isActive ? h("span", { class: "repo-badge", text: "Active" }) : ""),
+          h("p", { class: `sp-row-hint${repo.error ? " is-error" : ""}`, text: status }),
+          h("div", { class: "repo-actions" }, use, refresh, remove)));
+      }
+    };
+    const refreshList = async () => { data = await repoCall("GET", "/api/repositories"); draw(); };
+    async function run(button, action, done) {
+      button.disabled = true;
+      setStatus("Working with git…");
+      try { await action(); setStatus(done); } catch (error) { setStatus(error.message, true); }
+      button.disabled = false;
+      try { await refreshList(); } catch { /* keep the last list */ }
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const button = form.querySelector("button");
+      run(button, async () => {
+        const current = data.repositories.map(({ url: u, branch: b }) => ({ url: u, branch: b }));
+        const saved = await repoCall("PUT", "/api/repositories", { repositories: [...current, { url: url.value.trim(), branch: branch.value.trim() }] });
+        const added = saved.repositories[saved.repositories.length - 1];
+        url.value = "";
+        branch.value = "";
+        await repoCall("POST", "/api/repositories/activate", { id: added.id });
+      }, "Connected");
+    });
+    try { await refreshList(); } catch (error) { setStatus(error.message, true); }
+  }
+
+  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, repositories: renderRepositories, scopes: renderScopes };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -406,6 +486,7 @@
   // Search narrows the sidebar to sections with a matching setting.
   const KEYWORDS = {
     appearance: "appearance theme light dark system colour color mode",
+    repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };

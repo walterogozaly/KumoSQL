@@ -163,6 +163,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
             })
             return
+        if self.path == "/api/repositories":
+            from . import repositories
+
+            self._json(200, repositories.listing())
+            return
         if self.path == "/api/scope-fields":
             self._json(200, self._scope_fields())
             return
@@ -325,6 +330,7 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path not in (
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
             "/api/project/git", "/api/project", "/api/project/clear",
+            "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -349,6 +355,15 @@ class UIHandler(BaseHTTPRequestHandler):
                 label = payload.get("label")
                 live_graph.load_files(payload.get("files"), label if isinstance(label, str) else "")
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
+            elif self.path.startswith("/api/repositories"):
+                from . import repositories
+
+                if self.path == "/api/repositories":
+                    result = repositories.replace(payload.get("repositories"), payload.get("active"))
+                elif self.path == "/api/repositories/activate":
+                    result = repositories.activate(payload.get("id"))
+                else:
+                    result = repositories.load(payload.get("id"), refresh=True)
             elif self.path == "/api/project/clear":
                 live_graph.clear_project()
                 result = {"loaded": False}
@@ -410,6 +425,10 @@ def main(argv: list[str] | None = None) -> int:
             live_graph.set_project(load_sqlx_project(args.project), args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
+    if not (args.project or args.git):
+        from . import repositories
+
+        repositories.autoload()  # connected repositories reload in the background
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), UIHandler)
     except OSError as exc:
