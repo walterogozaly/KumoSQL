@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT 1 AS id, 10 AS q1, 20 AS q2) UNPIVOT (v FOR q IN (q1, q2))

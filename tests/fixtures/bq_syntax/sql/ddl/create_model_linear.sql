@@ -1,0 +1,1 @@
+CREATE OR REPLACE MODEL `kumosql.kumosql_messy.bq_syntax_m1` OPTIONS (model_type = 'LINEAR_REG', input_label_cols = ['age']) AS SELECT age, id FROM `kumosql.kumosql_messy.raw_users` WHERE age IS NOT NULL

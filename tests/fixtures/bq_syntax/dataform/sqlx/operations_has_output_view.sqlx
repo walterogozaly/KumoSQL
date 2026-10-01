@@ -1,0 +1,2 @@
+config { type: "operations", hasOutput: true }
+CREATE OR REPLACE VIEW ${self()} AS SELECT id FROM ${ref("raw_users")}

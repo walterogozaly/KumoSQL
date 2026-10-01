@@ -1,0 +1,4 @@
+config { type: "table" }
+SELECT id FROM ${ref("raw_users")}
+UNION ALL
+SELECT user_id FROM ${ref("raw_order_items")}

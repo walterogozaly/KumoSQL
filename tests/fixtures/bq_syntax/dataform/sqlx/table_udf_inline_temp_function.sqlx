@@ -1,0 +1,3 @@
+config { type: "table" }
+CREATE TEMP FUNCTION twice(x INT64) AS (x * 2);
+SELECT twice(id) AS d FROM ${ref("raw_users")}

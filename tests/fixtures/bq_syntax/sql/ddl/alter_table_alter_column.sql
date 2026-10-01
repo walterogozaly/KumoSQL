@@ -1,0 +1,1 @@
+ALTER TABLE `kumosql.kumosql_messy.bq_syntax_t1` ALTER COLUMN n SET DATA TYPE NUMERIC(12, 2), ALTER COLUMN name DROP NOT NULL, ALTER COLUMN name SET DEFAULT 'y', ALTER COLUMN name SET OPTIONS (description = 'x')

@@ -1,0 +1,1 @@
+MERGE `kumosql.kumosql_messy.raw_users` AS t USING (SELECT id, state FROM `kumosql.kumosql_messy.raw_users`) AS s ON t.id = s.id WHEN MATCHED AND s.state IS NULL THEN DELETE WHEN MATCHED THEN UPDATE SET t.state = s.state WHEN NOT MATCHED BY TARGET THEN INSERT (id, state) VALUES (s.id, s.state) WHEN NOT MATCHED BY SOURCE THEN DELETE

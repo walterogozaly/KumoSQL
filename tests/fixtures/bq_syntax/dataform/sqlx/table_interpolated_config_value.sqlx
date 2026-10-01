@@ -1,0 +1,2 @@
+config { type: "table", tags: [dataform.projectConfig.vars.tag || "x"], schema: "kumosql_messy" }
+SELECT 1 AS x

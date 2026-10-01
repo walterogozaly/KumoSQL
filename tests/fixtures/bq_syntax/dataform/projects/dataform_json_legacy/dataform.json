@@ -1,0 +1,10 @@
+{
+  "warehouse": "bigquery",
+  "defaultDatabase": "kumosql",
+  "defaultSchema": "kumosql_messy",
+  "defaultLocation": "US",
+  "assertionSchema": "dataform_assertions",
+  "schemaSuffix": "_dev",
+  "tablePrefix": "dev",
+  "vars": { "state": "CA" }
+}

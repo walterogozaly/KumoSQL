@@ -1,0 +1,27 @@
+actions:
+  - table:
+      filename: users_table.sql
+      dependencyTargets:
+        - name: raw_orders
+      tags: [daily]
+      bigquery:
+        partitionBy: DATE(created_at)
+  - view:
+      filename: users_view.sql
+      materialized: true
+  - incrementalTable:
+      filename: users_incr.sql
+      incrementalQuery: SELECT id FROM `kumosql.kumosql_messy.raw_users`
+      uniqueKey: [id]
+  - assertion:
+      filename: users_assert.sql
+  - operation:
+      filename: users_op.sql
+      hasOutput: false
+  - declaration:
+      name: raw_extra
+      dataset: kumosql_messy
+  - notebook:
+      filename: analysis.ipynb
+  - dataPreparation:
+      filename: prep.dataprep.yaml

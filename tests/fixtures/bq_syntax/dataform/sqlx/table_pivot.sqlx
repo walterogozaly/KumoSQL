@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT * FROM (SELECT state, age FROM ${ref("raw_users")}) PIVOT (COUNT(*) FOR state IN ('CA', 'NY'))

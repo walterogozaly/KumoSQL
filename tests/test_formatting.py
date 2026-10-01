@@ -84,3 +84,11 @@ def test_union_is_not_counted_as_extra_nesting():
 def test_format_keeps_the_inputs_trailing_newline_state():
     assert not format_sql("select 1").endswith("\n")
     assert format_sql("select 1\n").endswith("\n")
+
+
+def test_formatting_keeps_backticked_routine_paths_as_written():
+    # BigQuery routine and table paths are case sensitive; sqlfluff upper-cases a quoted function name.
+    sql = "SELECT `proj.ds.my_udf`(age) AS x FROM `proj.ds.t`"
+    out = format_sql(sql)
+    assert "`proj.ds.my_udf`(age)" in out and "`proj.ds.t`" in out
+    assert format_sql("DROP FUNCTION IF EXISTS `proj.ds.my_udf`") == "DROP FUNCTION IF EXISTS `proj.ds.my_udf`"

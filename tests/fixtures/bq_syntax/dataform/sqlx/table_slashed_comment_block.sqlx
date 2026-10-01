@@ -1,0 +1,3 @@
+config { type: "table" }
+/* config { } js { } in a comment */
+SELECT id FROM ${ref("raw_users")}

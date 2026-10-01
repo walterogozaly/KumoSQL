@@ -1,0 +1,3 @@
+config { type: "table" }
+SELECT id FROM ${ref("raw_users")}
+${when(dataform.projectConfig.vars.limit_rows, "LIMIT 10")}

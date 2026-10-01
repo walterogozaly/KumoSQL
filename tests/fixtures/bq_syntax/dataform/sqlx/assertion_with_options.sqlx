@@ -1,0 +1,2 @@
+config { type: "assertion", name: "users_have_ids", schema: "dataform_assertions", description: "Ids are never null", tags: ["quality"], disabled: false }
+SELECT id FROM ${ref("raw_users")} WHERE id IS NULL

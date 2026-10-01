@@ -1,0 +1,1 @@
+SELECT t.s.a FROM (SELECT STRUCT(1 AS a) AS s) AS t

@@ -1,0 +1,1 @@
+SELECT id, SUM(sale_price) OVER (PARTITION BY user_id ORDER BY created_at ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s, AVG(sale_price) OVER (PARTITION BY user_id ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS a FROM `kumosql.kumosql_messy.raw_order_items`

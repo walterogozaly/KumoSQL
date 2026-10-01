@@ -1,0 +1,2 @@
+config { type: "assertion", dependencies: ["raw_orders"] }
+SELECT u.id FROM ${ref("raw_users")} u LEFT JOIN ${ref("raw_order_items")} i ON u.id = i.user_id WHERE u.id IS NULL

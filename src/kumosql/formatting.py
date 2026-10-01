@@ -166,6 +166,24 @@ def sqlfluff_rules() -> list[dict]:
 
 
 _MAX_FORMAT_PASSES = 5
+_QUOTED_RE = re.compile(r"`[^`\n]*`")
+
+
+def _restore_quoted(original: str, formatted: str) -> str:
+    """Put back the exact text of every backtick-quoted name.
+
+    sqlfluff changes the case of a quoted function name (`p.d.f`(x) becomes
+    `P.D.F`(x)), but BigQuery treats routine and table paths as case
+    sensitive. Quoted names are in the same order before and after formatting, so
+    they are restored one for one; if the counts or spellings (ignoring case)
+    differ, the output is left as sqlfluff made it.
+    """
+
+    before, after = _QUOTED_RE.findall(original), _QUOTED_RE.findall(formatted)
+    if len(before) != len(after) or any(a.lower() != b.lower() for a, b in zip(before, after)):
+        return formatted
+    replacements = iter(before)
+    return _QUOTED_RE.sub(lambda _: next(replacements), formatted)
 
 
 def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
@@ -190,7 +208,7 @@ def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.
     if not sql.endswith("\n"):
         formatted = formatted.rstrip("\n")
-    return formatted
+    return _restore_quoted(sql, formatted)
 
 
 @register_rule

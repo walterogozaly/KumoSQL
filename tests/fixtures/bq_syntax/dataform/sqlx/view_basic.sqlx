@@ -1,0 +1,2 @@
+config { type: "view" }
+SELECT id, state FROM ${ref("raw_users")}

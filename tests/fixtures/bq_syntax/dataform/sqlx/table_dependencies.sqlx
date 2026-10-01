@@ -1,0 +1,5 @@
+config {
+  type: "table",
+  dependencies: ["raw_orders", "raw_users"]
+}
+SELECT 1 AS x

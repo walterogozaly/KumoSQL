@@ -1,0 +1,1 @@
+CREATE MODEL `kumosql.kumosql_messy.bq_syntax_m3` TRANSFORM (ML.STANDARD_SCALER(id) OVER () AS id_s, age) OPTIONS (model_type = 'LINEAR_REG', input_label_cols = ['age']) AS SELECT id, age FROM `kumosql.kumosql_messy.raw_users`

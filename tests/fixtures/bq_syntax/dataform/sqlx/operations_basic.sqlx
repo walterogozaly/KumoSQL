@@ -1,0 +1,2 @@
+config { type: "operations" }
+DELETE FROM ${ref("raw_users")} WHERE FALSE

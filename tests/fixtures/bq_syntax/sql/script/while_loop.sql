@@ -1,0 +1,4 @@
+DECLARE i INT64 DEFAULT 0;
+WHILE i < 3 DO
+  SET i = i + 1;
+END WHILE

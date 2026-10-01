@@ -1,0 +1,9 @@
+config { type: "table" }
+pre_operations {
+  DECLARE x INT64 DEFAULT 1;
+  SET @@query_label = 'k:v'
+}
+SELECT id, ${when(true, "1", "2")} AS v FROM ${ref("raw_users")}
+post_operations {
+  GRANT `roles/bigquery.dataViewer` ON TABLE ${self()} TO "user:a@example.com"
+}

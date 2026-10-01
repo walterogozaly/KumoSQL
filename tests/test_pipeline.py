@@ -91,6 +91,24 @@ def test_ref_by_name_finds_a_model_in_its_own_dataset(tmp_path):
     assert [dep.key for dep in pipeline.models["proj.analytics.uses_dup"].declared_dependencies] == ["proj.analytics.dup"]
 
 
+def test_ctx_ref_resolve_and_config_dependencies_are_edges(tmp_path):
+    write(tmp_path, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: analytics\n")
+    write(tmp_path, "definitions/a.sqlx", 'config { type: "declaration", schema: "raw", name: "a" }\n')
+    write(tmp_path, "definitions/b.sqlx", 'config { type: "declaration", schema: "raw", name: "b" }\n')
+    write(tmp_path, "definitions/c.sqlx", 'config { type: "declaration", schema: "raw", name: "c" }\n')
+    write(tmp_path, "definitions/m.sqlx", (
+        'config { type: "table", columns: { name: "Customer name" }, dependencies: ["b", { name: "c", schema: "raw" }] }\n'
+        'SELECT id FROM ${ctx.ref("a")} WHERE FALSE -- ${resolve("a")}\n'
+    ))
+    write(tmp_path, "definitions/single.sqlx", 'config { type: "operations", dependencies: "b" }\nSELECT 1\n')
+
+    pipeline = load_sqlx_project(tmp_path)
+
+    assert pipeline.upstream["proj.analytics.m"] == {"proj.raw.a", "proj.raw.b", "proj.raw.c"}
+    assert pipeline.upstream["proj.analytics.single"] == {"proj.raw.b"}
+    assert "${" not in pipeline.models["proj.analytics.m"].sql
+
+
 def test_column_lineage_crosses_models_and_ctes(tmp_path):
     pipeline = load_sqlx_project(dataform_project(tmp_path), source_schema=RAW_ORDERS)
 
@@ -552,3 +570,17 @@ def test_unattributed_observations_make_the_graph_incomplete(tmp_path):
 
     assert report["completeness"]["complete"] is False
     assert "unattributed_reads" in _gap_codes(report)
+
+
+def test_ctas_view_insert_select_and_export_data_reads_become_edges(tmp_path):
+    write(tmp_path, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: analytics\n")
+    write(tmp_path, "definitions/a.sql", "CREATE OR REPLACE TABLE `proj.analytics.a` AS SELECT id FROM `proj.raw.orders`\n")
+    write(tmp_path, "definitions/b.sql", "CREATE VIEW `proj.analytics.b` AS SELECT id FROM `proj.raw.orders`\n")
+    write(tmp_path, "definitions/c.sql", "INSERT INTO `proj.analytics.c` (id) SELECT id FROM `proj.analytics.a`\n")
+
+    pipeline = load_sqlx_project(tmp_path)
+
+    assert pipeline.upstream["c"] == {"a"}
+    assert not [d for d in pipeline.all_diagnostics() if d.code in {"no_query", "unknown_reads"}]
+    external = {d.model: d.message for d in pipeline.all_diagnostics() if d.code == "external_tables"}
+    assert "proj.raw.orders" in external["a"] and "proj.raw.orders" in external["b"]

@@ -37,7 +37,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from .timing import Progress, stage
-from .ast_utils import quiet_parser as _quiet_parser
+from .ast_utils import quiet_parser as _quiet_parser, top_level_query
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -758,7 +758,19 @@ def _parse_script(sql: str) -> tuple[exp.Expression | None, int]:
 
     with _quiet_parser():
         statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
-    queries = [s for s in statements if isinstance(s, exp.Query)]
+    queries = []
+    for statement in statements:
+        # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` and ``EXPORT DATA ... AS SELECT`` read what their query reads.
+        if isinstance(statement, exp.Query):
+            query = statement
+        elif isinstance(statement, (exp.Create, exp.Insert)):
+            query = top_level_query(statement)
+        elif type(statement).__name__ == "Export":  # EXPORT DATA ... AS SELECT; sqlglot 26 cannot parse it
+            query = statement.this
+        else:
+            query = None
+        if isinstance(query, exp.Query):
+            queries.append(query)
     return (queries[-1] if queries else None), max(len(queries) - 1, 0)
 
 

@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT 'config {' AS a, 'js {' AS b FROM ${ref("raw_users")}

@@ -1,0 +1,3 @@
+config { type: "table" }
+js { const tables = ["raw_users", "raw_orders"]; }
+${tables.map(t => `SELECT '${t}' AS src FROM ${ref(t)}`).join("\nUNION ALL\n")}

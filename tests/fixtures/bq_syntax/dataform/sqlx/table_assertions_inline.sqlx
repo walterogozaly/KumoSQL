@@ -1,0 +1,10 @@
+config {
+  type: "table",
+  assertions: {
+    uniqueKey: ["id"],
+    uniqueKeys: [["id"], ["first_name", "last_name"]],
+    nonNull: ["id", "state"],
+    rowConditions: ["age > 0", "state IS NOT NULL"]
+  }
+}
+SELECT id, state, age, first_name, last_name FROM ${ref("raw_users")}

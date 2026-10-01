@@ -1,0 +1,8 @@
+config { type: "incremental" }
+pre_operations {
+  ${when(incremental(), `DELETE FROM ${self()} WHERE id < 0`)}
+}
+SELECT id FROM ${ref("raw_users")}
+post_operations {
+  ASSERT (SELECT COUNT(*) FROM ${self()}) > 0
+}
