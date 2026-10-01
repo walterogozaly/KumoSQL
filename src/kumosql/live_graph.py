@@ -79,7 +79,8 @@ def server_status() -> dict:
     now = time.time()
     with _LOCK:
         busy = [{"label": item["label"], "elapsed": round(now - item["started"], 1)} for item in _ACTIVITY.values()]
-    return {"busy": busy, "analysis": analysis_status(), "timings": timing.recent()[-12:]}
+    return {"busy": busy, "analysis": analysis_status(), "progress": timing.current_progress(),
+            "timings": timing.recent()[-12:]}
 
 
 def _cache_file(pipeline: Pipeline):

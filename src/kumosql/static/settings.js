@@ -448,9 +448,9 @@
         const moved = info.migrated;
         if (moved) {
           const parts = [];
-          if (moved.moved.length) parts.push(`moved ${moved.moved.join(", ")}`);
+          if (moved.moved?.length) parts.push(`moved ${(moved.moved || []).join(", ")}`);
           if (moved.merged.length) parts.push(`merged settings from ${moved.from}`);
-          if (moved.kept.length) parts.push(`kept the copy already here of ${moved.kept.join(", ")} (the old one stays in ${moved.from})`);
+          if (moved.kept?.length) parts.push(`kept the copy already here of ${(moved.kept || []).join(", ")} (the old one stays in ${moved.from})`);
           status.textContent += ` From ${moved.from}: ${parts.join("; ")}.`;
         }
         if (info.previous) status.textContent += ` Clones in ${info.previous} are not moved; repositories are cloned again here on their next load, and the old folder can be deleted.`;
@@ -497,7 +497,7 @@
       box.append(h("p", { class: `sp-row-hint${info.state === "error" ? " is-error" : ""}`, text: `Production schedules: ${text}` }));
       for (const warning of info.warnings || []) box.append(h("p", { class: "sp-row-hint is-error", text: warning }));
       const projects = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Google Cloud projects to search", autocomplete: "off",
-        placeholder: info.override ? "" : `${(info.projects || []).join(", ") || "projects from BigQuery settings"}`, value: info.override ? info.projects.join(", ") : "" });
+        placeholder: info.override ? "" : `${(info.projects || []).join(", ") || "projects from BigQuery settings"}`, value: info.override ? (info.projects || []).join(", ") : "" });
       const location = h("input", { type: "text", class: "sp-input", "aria-label": "Dataform location", autocomplete: "off", size: "16", placeholder: info.location, value: info.override ? info.location : "" });
       const load = h("button", { type: "button", class: "toolbar-button", text: "Refresh schedules" });
       const save = h("button", { type: "button", class: "link-button", text: "Save search" });

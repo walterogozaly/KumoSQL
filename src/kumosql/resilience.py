@@ -29,6 +29,7 @@ ASSET_FAILURE_CODES = frozenset(
         "no_query",
         "qualify_error",
         "lineage_error",
+        "lineage_skipped",
         "unexpanded_star",
         "section_failed",
         "cycle",
@@ -46,6 +47,7 @@ VIEWS = ("graph", "lineage", "impact", "dead_columns")
 _EFFECTS = {
     "cycle": ("graph", "impact"),
     "external_tables": ("lineage",),
+    "lineage_skipped": ("lineage", "impact", "dead_columns"),
 }
 
 # Kinds shared with the graph page's gaps table; other codes keep their own name.
@@ -60,6 +62,7 @@ _GAP_KINDS = {
     "unsupported_ref": "parse_error",
     "qualify_error": "parse_error",
     "lineage_error": "parse_error",
+    "lineage_skipped": "lineage_skipped",
     "ambiguous_reference": "unmatched_reference",
     "external_tables": "unmatched_reference",
     "unknown_reads": "unattributed_reads",
