@@ -15,6 +15,10 @@ CONSTRAINTS = {
 }
 
 PROVEN = {
+    "group by over a union all is distinct": (
+        "SELECT customer_id FROM (SELECT customer_id FROM orders UNION ALL SELECT customer_id FROM customers) u GROUP BY customer_id",
+        "SELECT customer_id FROM orders UNION DISTINCT SELECT customer_id FROM customers",
+    ),
     "cte inlined": (
         "WITH o AS (SELECT * FROM orders WHERE status = 'paid') SELECT customer_id, SUM(amount) AS total FROM o GROUP BY customer_id",
         "SELECT customer_id, SUM(amount) AS total FROM orders WHERE status = 'paid' GROUP BY customer_id",
@@ -114,6 +118,10 @@ PROVEN = {
 }
 
 NOT_PROVEN = {
+    "group by over a union all keeps aggregates": (
+        "SELECT customer_id, COUNT(*) AS n FROM (SELECT customer_id FROM orders UNION ALL SELECT customer_id FROM customers) u GROUP BY customer_id",
+        "SELECT customer_id, 1 AS n FROM orders UNION DISTINCT SELECT customer_id, 1 FROM customers",
+    ),
     "unnest of a different array": (
         "SELECT order_id FROM orders, UNNEST([1, 2, 3]) AS t",
         "SELECT order_id FROM orders, UNNEST([1, 2]) AS t",
