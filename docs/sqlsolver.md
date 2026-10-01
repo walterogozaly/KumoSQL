@@ -36,7 +36,7 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Calcite | 232 | 138 | 94 | 0 | was 134 before eager-aggregation unnesting; 93 before EXISTS/IN and outer joins |
-| Spark SQL | 127 | 96 | 31 | 0 | was 86 |
+| Spark SQL | 127 | 99 | 28 | 0 | was 86 |
 | TPC-H | 22 | 8 | 14 | 0 | was 1 before date folding and fast string ordering; the rest need scalar subqueries, tuple IN and aggregate pushdown |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |
 

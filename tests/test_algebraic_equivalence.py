@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("z3")
 
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
+from kumosql.smt_equivalence import SmtStatus
 
 U = "(SELECT a, k FROM A UNION ALL SELECT a, k FROM B)"
 
@@ -221,3 +222,27 @@ def test_eager_aggregation_is_proved_equal_to_the_flat_join():
     # Summing the count instead of the sum is a different query.
     other = eager.replace("SUM(p.s * q.c)", "SUM(q.c)")
     assert not prove_equivalent_algebraic(other, flat, schema=schema).proven
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        ("SELECT * FROM dept WHERE (SELECT 1) = 1", "SELECT * FROM dept WHERE 1 = 1"),
+        ("SELECT * FROM dept WHERE deptno IN (SELECT deptno FROM dept WHERE FALSE)", "SELECT * FROM dept WHERE FALSE"),
+        ("SELECT * FROM dept WHERE NOT EXISTS (SELECT 1 FROM dept LIMIT 0)", "SELECT * FROM dept"),
+        ("SELECT COUNT(DISTINCT deptno) FILTER(WHERE 3 > 2) FROM dept", "SELECT COUNT(DISTINCT deptno) FROM dept"),
+        ("SELECT SUM(deptno) FILTER(WHERE deptno > 2) FROM dept", "SELECT SUM(CASE WHEN deptno > 2 THEN deptno END) FROM dept"),
+    ],
+)
+def test_trivial_identities_are_proven(left, right):
+    result = prove_equivalent_algebraic(left, right, schema={"dept": ["deptno", "name"]}, compare_names=False, dialect="mysql")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_filter_on_a_different_condition_is_not_proven():
+    result = prove_equivalent_algebraic(
+        "SELECT SUM(deptno) FILTER(WHERE deptno > 2) FROM dept",
+        "SELECT SUM(deptno) FILTER(WHERE deptno > 3) FROM dept",
+        schema={"dept": ["deptno"]}, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
