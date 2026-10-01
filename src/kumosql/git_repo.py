@@ -143,6 +143,7 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     env["GIT_ALLOW_PROTOCOL"] = _ALLOWED_PROTOCOLS  # blocks ext:: and other command-running transports
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
     env["LC_ALL"] = "C"
+    env["GIT_LFS_SKIP_SMUDGE"] = "1"  # only SQL text is read; an LFS pointer file is text, so never download LFS objects
     # Never inherit the server's working directory: if it was deleted (a temporary or
     # extracted folder), git fails with "Unable to read current working directory".
     if cwd is None:
@@ -151,7 +152,7 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     started = time.monotonic()
     try:
         done = subprocess.run(
-            ["git", "-c", "core.longpaths=true", *args], cwd=cwd, env=env, capture_output=True,
+            ["git", "-c", "core.longpaths=true", "-c", "filter.lfs.required=false", *args], cwd=cwd, env=env, capture_output=True,
             input=stdin, timeout=_TIMEOUT_SECONDS, check=False,
         )
     except FileNotFoundError as exc:
