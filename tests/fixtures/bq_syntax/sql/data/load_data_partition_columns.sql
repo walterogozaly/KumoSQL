@@ -1,0 +1,1 @@
+LOAD DATA INTO `kumosql.kumosql_messy.bq_syntax_load` FROM FILES (format = 'PARQUET', uris = ['gs://some-bucket/in/*'], hive_partition_uri_prefix = 'gs://some-bucket/in') WITH PARTITION COLUMNS (dt DATE)

@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT '${name()}' AS n, '${schema()}' AS s, '${database()}' AS d, id FROM ${ref("raw_users")}

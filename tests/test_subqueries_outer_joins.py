@@ -14,6 +14,7 @@ pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
 from kumosql.smt_equivalence import SmtStatus, TableConstraints, prove_equivalent_smt
+from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 
 SCHEMA = {"t": ["id", "a"], "u": ["id", "b"]}
 STRICT = {
@@ -203,3 +204,19 @@ def test_join_to_non_distinct_or_partly_joined_source_is_not_an_existence_test()
     )
     assert not _semi(plain, exists)
     assert not _semi(two_columns, exists)
+
+
+def test_unread_derived_columns_do_not_matter():
+    schema = {"emp": ["empno", "deptno", "sal"]}
+    with_count = (
+        "SELECT 1 FROM (SELECT deptno, COUNT(*) AS c FROM emp WHERE deptno > 7 GROUP BY deptno) t "
+        "JOIN emp e ON t.deptno = e.deptno"
+    )
+    without = (
+        "SELECT 1 FROM (SELECT deptno FROM emp WHERE deptno > 7 GROUP BY deptno) t JOIN "
+        "(SELECT * FROM emp WHERE deptno > 7) e ON t.deptno = e.deptno"
+    )
+    assert prove_equivalent_algebraic(with_count, without, schema=schema).proven
+    # A column that is read cannot be dropped.
+    used = with_count.replace("SELECT 1 FROM", "SELECT t.c FROM")
+    assert not prove_equivalent_algebraic(used, without.replace("SELECT 1 FROM", "SELECT 1 FROM"), schema=schema).proven

@@ -1,6 +1,8 @@
 from kumosql import apply_rule, count_inline_subqueries, lift_subqueries
 from kumosql.engine import RewriteRule
 
+from kumosql.engine import get_rule
+
 
 def test_lifts_sqlx_query_while_preserving_config_and_ref_interpolations():
     source = '''config {
@@ -123,3 +125,12 @@ def test_malformed_sqlx_block_is_not_claimed_successfully():
     assert not result.success
     assert result.sql == source
     assert any(d.code == "sqlx_parse_error" for d in result.diagnostics)
+
+
+def test_dataform_test_input_blocks_are_preserved_like_config_blocks():
+    from kumosql.sqlx import split_sqlx_sections
+
+    text = 'config { type: "test", dataset: "t" }\ninput "raw_users" {\n  SELECT 1 AS id\n}\nSELECT 1 AS id\n'
+    kinds = [(kind, body.split("{")[0].strip()) for kind, body in split_sqlx_sections(text) if kind == "block"]
+    assert kinds == [("block", "config"), ("block", 'input "raw_users"')]
+    assert get_rule("remove_trivial_predicates").apply(text).success

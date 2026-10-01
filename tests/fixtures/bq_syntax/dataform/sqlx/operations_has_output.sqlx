@@ -1,0 +1,2 @@
+config { type: "operations", hasOutput: true, schema: "kumosql_messy", name: "op_output" }
+CREATE OR REPLACE TABLE ${self()} AS SELECT id FROM ${ref("raw_users")}

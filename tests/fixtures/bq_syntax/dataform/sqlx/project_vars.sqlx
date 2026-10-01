@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT id FROM ${ref("raw_users")} WHERE state = '${dataform.projectConfig.vars.state}'

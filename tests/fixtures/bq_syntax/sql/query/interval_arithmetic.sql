@@ -1,0 +1,1 @@
+SELECT created_at + INTERVAL 1 DAY AS a, created_at - INTERVAL '1:30' HOUR TO MINUTE AS b, MAKE_INTERVAL(1, 2, 3) AS c, EXTRACT(DAY FROM INTERVAL 5 DAY) AS d, JUSTIFY_DAYS(INTERVAL 40 DAY) AS e FROM `kumosql.kumosql_messy.raw_users`

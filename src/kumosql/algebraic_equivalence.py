@@ -25,7 +25,10 @@ functions are never touched. Normalization only rewrites; it proves nothing.
 
 from __future__ import annotations
 
+import calendar
+import datetime
 import itertools
+import re
 
 import sqlglot
 from sqlglot import exp
@@ -364,12 +367,14 @@ def _regroup_distinct(select: exp.Select) -> exp.Expression | None:
                 return None
             items.append(_named(key_outputs[expr.name].copy(), name))
             continue
-        if not _is_agg(expr) or not isinstance(expr.this, exp.Column):
+        if isinstance(expr, exp.Avg) and isinstance(expr.this, exp.Column) and not wrapped:
+            pass  # AVG of the extra key column only (below)
+        elif not _is_agg(expr) or not isinstance(expr.this, exp.Column):
             return None
         column = expr.this.name
         if column == extra_name and not wrapped:
             x = key_outputs[extra_name].copy()
-            if isinstance(expr, (exp.Sum, exp.Count)):
+            if isinstance(expr, (exp.Sum, exp.Count, exp.Avg)):
                 items.append(_named(type(expr)(this=exp.Distinct(expressions=[x])), name))
             elif isinstance(expr, (exp.Min, exp.Max)):
                 items.append(_named(type(expr)(this=x), name))
@@ -417,6 +422,117 @@ def _key_aggregates(select: exp.Select) -> exp.Expression | None:
         if isinstance(node, exp.Sum) and not distinct:
             continue
         node.replace(column.copy())
+        changed = True
+    return select if changed else None
+
+
+_DATE_TEXT = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:\s*(?:[+-]\d{2}(?::?\d{2})?|Z))?\s*$")
+
+
+def _date_of(node: exp.Expression) -> datetime.date | None:
+    """The date a constant date expression denotes (a time-zone suffix does not change a DATE)."""
+
+    if isinstance(node, (exp.TsOrDsToDate, exp.Cast)) and isinstance(node.this, exp.Literal) and node.this.is_string:
+        if isinstance(node, exp.Cast) and not node.args["to"].is_type(exp.DataType.Type.DATE):
+            return None
+        match = _DATE_TEXT.match(node.this.this)
+        if match:
+            try:
+                return datetime.date(*(int(g) for g in match.groups()))
+            except ValueError:
+                return None
+    return None
+
+
+def _shift(day: datetime.date, count: int, unit: str) -> datetime.date | None:
+    if unit == "DAY":
+        return day + datetime.timedelta(days=count)
+    if unit == "WEEK":
+        return day + datetime.timedelta(weeks=count)
+    if unit in ("MONTH", "YEAR"):
+        months = day.year * 12 + day.month - 1 + count * (12 if unit == "YEAR" else 1)
+        year, month = divmod(months, 12)
+        if not 1 <= year <= 9999:
+            return None
+        return datetime.date(year, month + 1, min(day.day, calendar.monthrange(year, month + 1)[1]))
+    return None
+
+
+def _fold_dates(tree: exp.Expression) -> exp.Expression:
+    """Constant dates become ``CAST('YYYY-MM-DD' AS DATE)``, including ``DATE('..' )`` with a
+    time-zone suffix and ``date + INTERVAL n DAY/MONTH/YEAR``, so equal dates compare equal."""
+
+    def literal(day: datetime.date) -> exp.Expression:
+        return exp.Cast(this=exp.Literal.string(day.isoformat()), to=exp.DataType.build("DATE"))
+
+    def step(node: exp.Expression) -> exp.Expression:
+        day = _date_of(node)
+        if day is not None:
+            return literal(day)
+        sign = 1
+        if isinstance(node, (exp.Add, exp.Sub)):
+            if isinstance(node, exp.Sub):
+                sign = -1
+            base, interval = node.this, node.expression
+            if isinstance(interval, exp.Interval) and isinstance(interval.this, exp.Literal):
+                count, unit = interval.this.this, interval.unit.name.upper() if interval.unit else ""
+            else:
+                return node
+        elif isinstance(node, (exp.DateAdd, exp.DateSub)):
+            if isinstance(node, exp.DateSub):
+                sign = -1
+            base, amount = node.this, node.expression
+            if not isinstance(amount, exp.Literal):
+                return node
+            count, unit = amount.this, (node.args.get("unit").name.upper() if node.args.get("unit") else "")
+        else:
+            return node
+        base_day = _date_of(base)
+        if base_day is None or not re.fullmatch(r"-?\d+", str(count).strip()):
+            return node
+        shifted = _shift(base_day, sign * int(count), unit)
+        return literal(shifted) if shifted is not None else node
+
+    return tree.transform(step)
+
+
+def _prune_derived(select: exp.Select) -> exp.Expression | None:
+    """Drop the columns of a derived table that the enclosing query never reads.
+
+    A grouped or plain derived table keeps its rows when an output is removed,
+    so ``SELECT 1 FROM (SELECT k, COUNT(*) FROM t GROUP BY k) AS d`` is the same
+    as ``SELECT 1 FROM (SELECT k FROM t GROUP BY k) AS d``. Not applied under
+    ``DISTINCT`` (removing a column changes which rows collapse) or with a star.
+    """
+
+    if any(
+        isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count)
+        for star in select.find_all(exp.Star)
+    ):
+        return None
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None:
+        return None
+    changed = False
+    for source in [from_.this] + [j.this for j in select.args.get("joins") or []]:
+        if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+            continue
+        inner = source.this
+        if not _no_extras(inner, allow_group=True):
+            continue
+        if inner.args.get("distinct") or any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in inner.expressions):
+            continue
+        used = {
+            c.name.lower()
+            for c in select.find_all(exp.Column)
+            if not c.table or c.table.lower() == source.alias.lower()
+        }
+        keep = [e for e in inner.expressions if e.alias_or_name and e.alias_or_name.lower() in used]
+        if not keep:
+            keep = inner.expressions[:1]
+        if len(keep) == len(inner.expressions):
+            continue
+        inner.set("expressions", [e.copy() for e in keep])
         changed = True
     return select if changed else None
 
@@ -677,6 +793,7 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
 
     tree = sqlglot.parse_one(sql, read=dialect)
+    tree = _fold_dates(tree)
     tree = _fold_constants(tree)
     tree = _values_to_union(tree)
     if schema:
@@ -686,7 +803,7 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, _key_aggregates):
+            for rule in (_prune_derived, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten

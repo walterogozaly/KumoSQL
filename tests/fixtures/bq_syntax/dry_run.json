@@ -1,0 +1,1329 @@
+{
+ "data/export_data": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "data/export_data_connection": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "EXPORT DATA doesn't support using a Connection for the current storage",
+  "category": "needs_mode_or_data"
+ },
+ "data/export_data_pubsub": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Cloud Pub/Sub export format only support continuous query.",
+  "category": "needs_mode_or_data"
+ },
+ "data/export_model": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Model kumosql:kumosql_messy.bq_syntax_m1",
+  "category": "needs_objects"
+ },
+ "data/load_data": {
+  "status": "error",
+  "reason": "accessDenied",
+  "message": "Access Denied: BigQuery BigQuery: Permission denied while globbing file pattern. <account> does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource '//storage.googleapis.com/projects/_/buckets/some-bucket' (or ",
+  "category": "environment"
+ },
+ "data/load_data_overwrite": {
+  "status": "error",
+  "reason": "accessDenied",
+  "message": "Access Denied: BigQuery BigQuery: Permission denied while globbing file pattern. <account> does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource '//storage.googleapis.com/projects/_/buckets/some-bucket' (or ",
+  "category": "environment"
+ },
+ "data/load_data_partition_columns": {
+  "status": "error",
+  "reason": "accessDenied",
+  "message": "Access Denied: BigQuery BigQuery: Permission denied while globbing file pattern. <account> does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource '//storage.googleapis.com/projects/_/buckets/some-bucket' (or ",
+  "category": "environment"
+ },
+ "data/load_data_temp_table": {
+  "status": "error",
+  "reason": "invalid",
+  "message": "Use of LOAD DATA statement with TEMP TABLE requires a script or session",
+  "category": "needs_session"
+ },
+ "dataform/assertion_basic": {
+  "status": "ok"
+ },
+ "dataform/assertion_multiple_refs": {
+  "status": "ok"
+ },
+ "dataform/assertion_with_options": {
+  "status": "ok"
+ },
+ "dataform/declaration_basic": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/declaration_columns": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/incremental_basic": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/incremental_ctx_incremental": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/incremental_if_else": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/incremental_pre_post": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/incremental_unique_key_merge": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/js_block_helper": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/js_block_loop_generated_columns": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/js_block_with_ref_in_helper": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/js_includes_constant": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/js_includes_function": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/operations_basic": {
+  "status": "ok"
+ },
+ "dataform/operations_ddl_script": {
+  "status": "ok"
+ },
+ "dataform/operations_export": {
+  "status": "ok"
+ },
+ "dataform/operations_grant": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "dataform/operations_has_output": {
+  "status": "ok"
+ },
+ "dataform/operations_has_output_view": {
+  "status": "ok"
+ },
+ "dataform/operations_merge": {
+  "status": "ok"
+ },
+ "dataform/operations_multi_statement": {
+  "status": "not_run",
+  "message": "two statements separated by ---; Dataform runs them separately and the second needs the first's temp table"
+ },
+ "dataform/operations_procedure_call": {
+  "status": "error",
+  "category": "needs_objects",
+  "reason": "notFound",
+  "message": "Procedure is not found: bq_syntax_p2"
+ },
+ "dataform/project_vars": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/table_assertions_inline": {
+  "status": "ok"
+ },
+ "dataform/table_basic": {
+  "status": "ok"
+ },
+ "dataform/table_bigquery_options": {
+  "status": "ok"
+ },
+ "dataform/table_columns_descriptions": {
+  "status": "ok"
+ },
+ "dataform/table_ctx_ref": {
+  "status": "ok"
+ },
+ "dataform/table_default_type": {
+  "status": "ok"
+ },
+ "dataform/table_depend_on_dependency_assertions": {
+  "status": "ok"
+ },
+ "dataform/table_dependencies": {
+  "status": "ok"
+ },
+ "dataform/table_disabled_protected": {
+  "status": "ok"
+ },
+ "dataform/table_documented_unicode": {
+  "status": "ok"
+ },
+ "dataform/table_dynamic_dependencies": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/table_for_system_time": {
+  "status": "ok"
+ },
+ "dataform/table_iceberg": {
+  "status": "ok"
+ },
+ "dataform/table_interpolated_config_value": {
+  "status": "ok"
+ },
+ "dataform/table_name_schema_database": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/table_pivot": {
+  "status": "ok"
+ },
+ "dataform/table_pre_operations_multi_statement": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/table_pre_post_operations": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/table_ref_in_string_literal": {
+  "status": "ok"
+ },
+ "dataform/table_ref_object": {
+  "status": "ok"
+ },
+ "dataform/table_ref_three_args": {
+  "status": "ok"
+ },
+ "dataform/table_ref_two_args": {
+  "status": "ok"
+ },
+ "dataform/table_ref_union_all": {
+  "status": "ok"
+ },
+ "dataform/table_resolve": {
+  "status": "ok"
+ },
+ "dataform/table_search_vector": {
+  "status": "ok"
+ },
+ "dataform/table_self": {
+  "status": "error",
+  "category": "needs_objects",
+  "reason": "notFound",
+  "message": "the compiled table is the action's own output, which does not exist yet"
+ },
+ "dataform/table_slashed_comment_block": {
+  "status": "ok"
+ },
+ "dataform/table_sql_comments_and_braces": {
+  "status": "ok"
+ },
+ "dataform/table_sqlx_keyword_in_string": {
+  "status": "ok"
+ },
+ "dataform/table_tags_schema_name": {
+  "status": "ok"
+ },
+ "dataform/table_trivial_body": {
+  "status": "ok"
+ },
+ "dataform/table_udf_inline_temp_function": {
+  "status": "ok"
+ },
+ "dataform/table_where_when": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/table_with_qualify_cte": {
+  "status": "ok"
+ },
+ "dataform/test_basic": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/test_multiple_inputs": {
+  "status": "not_run",
+  "message": "declaration only; no SQL"
+ },
+ "dataform/view_basic": {
+  "status": "ok"
+ },
+ "dataform/view_materialized": {
+  "status": "ok"
+ },
+ "dataform/view_with_columns": {
+  "status": "ok"
+ },
+ "dcl/grant_project": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "dcl/grant_schema": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "dcl/grant_table": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "dcl/revoke_schema": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "dcl/revoke_table": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/alter_materialized_view": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_mv",
+  "category": "needs_objects"
+ },
+ "ddl/alter_model": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/alter_organization": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/alter_project": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/alter_reservation": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/alter_schema": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Dataset kumosql:bq_syntax_ds",
+  "category": "needs_objects"
+ },
+ "ddl/alter_schema_collate": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Dataset kumosql:bq_syntax_ds",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_add_column": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_alter_column": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_constraints": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_drop_column": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_drop_constraint": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_rename_column": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_table_rename_to": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/alter_table_set_options": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_t1",
+  "category": "needs_objects"
+ },
+ "ddl/alter_view_alter_column": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_v1 was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/alter_view_set_options": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.bq_syntax_v1",
+  "category": "needs_objects"
+ },
+ "ddl/create_aggregate_function": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_assignment": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/create_capacity_reservation": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/create_external_table": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_external_table_with_schema": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_function_js": {
+  "status": "ok",
+  "bytes": 145392
+ },
+ "ddl/create_function_js_library": {
+  "status": "error",
+  "reason": "accessDenied",
+  "message": "Access Denied: BigQuery BigQuery: Error getting metadata for external code resource, please verify you have provided a valid path and/or that you have access to the resource: gs://some-bucket/lib.js",
+  "category": "environment"
+ },
+ "ddl/create_function_python": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "The size of the policy is too large. Consider removing or merging some of the bindings or if using conditions remove any lengthy conditions.",
+  "category": "environment"
+ },
+ "ddl/create_function_remote": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Connection some_connection",
+  "category": "needs_objects"
+ },
+ "ddl/create_function_sql": {
+  "status": "ok"
+ },
+ "ddl/create_function_templated": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_materialized_view": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_materialized_view_clustered": {
+  "status": "ok"
+ },
+ "ddl/create_model_linear": {
+  "status": "ok",
+  "bytes": 161840
+ },
+ "ddl/create_model_remote": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Connection some_connection",
+  "category": "needs_objects"
+ },
+ "ddl/create_model_transform": {
+  "status": "ok",
+  "bytes": 161840
+ },
+ "ddl/create_procedure_options": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_procedure_spark": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Not found: Connection some_connection at [1:1]",
+  "category": "needs_objects"
+ },
+ "ddl/create_procedure_sql": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_property_graph": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_reservation": {
+  "status": "not_run",
+  "message": "administrative statement, never submitted"
+ },
+ "ddl/create_row_access_policy": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_schema": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_schema_collate": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_search_index": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_snapshot_table": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_all_types": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_as_select": {
+  "status": "ok",
+  "bytes": 277516
+ },
+ "ddl/create_table_clone": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_collate": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_columns": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_copy": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_function": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_like": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_partition_cluster": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_partition_ingestion_time": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_table_partition_range": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_temp_function": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "ddl/create_temp_table": {
+  "status": "error",
+  "reason": "invalid",
+  "message": "Use of CREATE TEMPORARY TABLE requires a script or session",
+  "category": "needs_session"
+ },
+ "ddl/create_vector_index": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.some_table was not found in location US",
+  "category": "needs_objects"
+ },
+ "ddl/create_view": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/create_view_column_list": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_all_row_access_policies": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_external_table": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_function": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_index": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_materialized_view": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_model": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_procedure": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_row_access_policy": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_schema": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_snapshot_table": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_table": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_table_function": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_vector_index": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/drop_view": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "ddl/undrop_schema": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Dataset kumosql:bq_syntax_ds",
+  "category": "needs_objects"
+ },
+ "dml/delete_basic": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/delete_exists": {
+  "status": "ok",
+  "bytes": 991767
+ },
+ "dml/delete_no_from": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/insert_default_values": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "dml/insert_select": {
+  "status": "ok",
+  "bytes": 162159
+ },
+ "dml/insert_values": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "dml/insert_with_cte": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "dml/merge_cte_source": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/merge_full": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/merge_insert_row": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/merge_not_matched_by_source_update": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/truncate_table": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "dml/update_basic": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/update_from_join": {
+  "status": "ok",
+  "bytes": 1178256
+ },
+ "dml/update_set_default": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "dml/update_subquery": {
+  "status": "ok"
+ },
+ "query/aggregate_filter_modifiers": {
+  "status": "ok",
+  "bytes": 358755
+ },
+ "query/aggregate_functions": {
+  "status": "ok",
+  "bytes": 469534
+ },
+ "query/aggregate_udf_call": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Function not found: `kumosql.kumosql_messy.some_agg_udf` at [1:8]",
+  "category": "needs_objects"
+ },
+ "query/ai_generate": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Connection some_connection",
+  "category": "needs_objects"
+ },
+ "query/anon_differential_privacy": {
+  "status": "ok"
+ },
+ "query/appends_changes_functions": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "query/array_functions": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/array_slice_first_last": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/backtick_dashed_project": {
+  "status": "ok",
+  "bytes": 800000
+ },
+ "query/backtick_dataset_only": {
+  "status": "ok",
+  "bytes": 800000
+ },
+ "query/backtick_whole_path": {
+  "status": "ok",
+  "bytes": 800000
+ },
+ "query/bit_ops_and_operators": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/case_if_ifnull": {
+  "status": "ok",
+  "bytes": 307375
+ },
+ "query/cast_types": {
+  "status": "ok",
+  "bytes": 161840
+ },
+ "query/changes_function": {
+  "status": "error",
+  "reason": "invalid",
+  "message": "Change history is not enabled for table <project-number>:kumosql_messy.raw_users. Please refer to https://cloud.google.com/bigquery/docs/change-history#change_history_functions for more details.",
+  "category": "needs_mode_or_data"
+ },
+ "query/collate": {
+  "status": "ok"
+ },
+ "query/comparison_operators": {
+  "status": "ok",
+  "bytes": 277516
+ },
+ "query/cte_basic": {
+  "status": "ok",
+  "bytes": 115676
+ },
+ "query/cte_chain": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/cte_recursive": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/date_time_functions": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/external_query_federated": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Connection some_connection",
+  "category": "needs_objects"
+ },
+ "query/for_system_time": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/geography_functions": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/graph_gql": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Property graph kumosql:kumosql_messy.some_graph",
+  "category": "needs_objects"
+ },
+ "query/group_by_all": {
+  "status": "ok",
+  "bytes": 216083
+ },
+ "query/group_by_cube": {
+  "status": "ok",
+  "bytes": 146021
+ },
+ "query/group_by_grouping_sets": {
+  "status": "ok",
+  "bytes": 146021
+ },
+ "query/group_by_rollup": {
+  "status": "ok",
+  "bytes": 216083
+ },
+ "query/hash_encryption_functions": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/hints_comments": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/in_unnest": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/information_schema_column_field_paths": {
+  "status": "ok",
+  "bytes": 10485760
+ },
+ "query/information_schema_columns": {
+  "status": "ok",
+  "bytes": 10485760
+ },
+ "query/information_schema_region_jobs": {
+  "status": "ok",
+  "bytes": 437986
+ },
+ "query/information_schema_routines": {
+  "status": "ok",
+  "bytes": 10485760
+ },
+ "query/information_schema_table_storage": {
+  "status": "error",
+  "reason": "accessDenied",
+  "message": "Access Denied: Table kumosql:region-us.INFORMATION_SCHEMA.TABLE_STORAGE: User does not have permission to query table kumosql:region-us.INFORMATION_SCHEMA.TABLE_STORAGE, or perhaps it does not exist.",
+  "category": "environment"
+ },
+ "query/information_schema_tables": {
+  "status": "ok",
+  "bytes": 10485760
+ },
+ "query/information_schema_views": {
+  "status": "ok",
+  "bytes": 10485760
+ },
+ "query/interval_arithmetic": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/join_cross": {
+  "status": "ok",
+  "bytes": 226312
+ },
+ "query/join_cross_comma": {
+  "status": "ok",
+  "bytes": 371704
+ },
+ "query/join_inner_left_right_full": {
+  "status": "ok",
+  "bytes": 371704
+ },
+ "query/join_lateral_correlated_unnest": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/join_using": {
+  "status": "ok",
+  "bytes": 1905216
+ },
+ "query/json_constructors": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/json_functions": {
+  "status": "ok"
+ },
+ "query/json_type_subscript": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/limit_in_subquery_order": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/literals_typed": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/math_functions": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/ml_data_functions_detect_anomalies": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Model kumosql:kumosql_messy.some_model",
+  "category": "needs_objects"
+ },
+ "query/ml_feature_functions": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/ml_forecast_ai": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "column day is not found in the input of AI.FORECAST",
+  "category": "needs_objects"
+ },
+ "query/ml_generate_text": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Model kumosql:kumosql_messy.some_remote_model",
+  "category": "needs_objects"
+ },
+ "query/ml_predict_function": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Model kumosql:kumosql_messy.some_model",
+  "category": "needs_objects"
+ },
+ "query/nested_with_in_subquery": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/net_functions": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/object_table_function": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Table kumosql:kumosql_messy.some_object_table was not found in location US",
+  "category": "needs_objects"
+ },
+ "query/order_by_all": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/partition_pseudo_columns": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Unrecognized name: _PARTITIONTIME at [1:8]",
+  "category": "needs_mode_or_data"
+ },
+ "query/pipe_aggregate_group_alias": {
+  "status": "ok",
+  "bytes": 115676
+ },
+ "query/pipe_as_alias": {
+  "status": "ok",
+  "bytes": 161840
+ },
+ "query/pipe_call_tablesample": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/pipe_distinct": {
+  "status": "ok",
+  "bytes": 115676
+ },
+ "query/pipe_extend_set_drop": {
+  "status": "ok",
+  "bytes": 735596
+ },
+ "query/pipe_from_select": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/pipe_join": {
+  "status": "ok",
+  "bytes": 371704
+ },
+ "query/pipe_pivot_unpivot": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/pipe_select_window_qualify": {
+  "status": "ok",
+  "bytes": 290784
+ },
+ "query/pipe_set_ops": {
+  "status": "ok",
+  "bytes": 371704
+ },
+ "query/pipe_where_aggregate": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/pipe_window": {
+  "status": "ok",
+  "bytes": 436176
+ },
+ "query/pipe_with_cte": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/pivot": {
+  "status": "ok"
+ },
+ "query/positional_parameter": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Positional parameters are not supported at [1:64]",
+  "category": "needs_mode_or_data"
+ },
+ "query/pseudo_columns_row_number": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/qualify": {
+  "status": "ok",
+  "bytes": 277516
+ },
+ "query/query_parameters": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/quoted_identifiers": {
+  "status": "ok",
+  "bytes": 162159
+ },
+ "query/range_type": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/reserved_keyword_alias": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/safe_functions": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/search_function": {
+  "status": "ok"
+ },
+ "query/search_index_column": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "query/select_as_struct": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/select_as_value": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/select_basic": {
+  "status": "ok",
+  "bytes": 243079
+ },
+ "query/select_distinct": {
+  "status": "ok",
+  "bytes": 216083
+ },
+ "query/select_except_replace": {
+  "status": "ok",
+  "bytes": 654044
+ },
+ "query/select_from_table_alias_struct_access": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/select_group_by_alias_ordinal": {
+  "status": "ok",
+  "bytes": 115676
+ },
+ "query/set_by_name": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/set_corresponding": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/set_intersect_except": {
+  "status": "ok",
+  "bytes": 371704
+ },
+ "query/set_left_mode": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/set_strict_corresponding_inner": {
+  "status": "ok",
+  "bytes": 196596
+ },
+ "query/set_union_all": {
+  "status": "ok",
+  "bytes": 226312
+ },
+ "query/set_union_distinct": {
+  "status": "ok",
+  "bytes": 302165
+ },
+ "query/string_functions": {
+  "status": "ok",
+  "bytes": 359387
+ },
+ "query/struct_functions": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/struct_star": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/subquery_array": {
+  "status": "ok"
+ },
+ "query/subquery_derived_table": {
+  "status": "ok",
+  "bytes": 115676
+ },
+ "query/subquery_exists_in": {
+  "status": "ok"
+ },
+ "query/subquery_scalar": {
+  "status": "ok"
+ },
+ "query/system_variables": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/table_alias_implicit": {
+  "status": "ok",
+  "bytes": 469534
+ },
+ "query/table_function_unnest_in_from_chain": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/table_valued_function_call": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Table-valued function not found: `kumosql.kumosql_messy.some_tvf` at [1:15]",
+  "category": "needs_objects"
+ },
+ "query/tablesample": {
+  "status": "ok",
+  "bytes": 80920
+ },
+ "query/tablesample_with_join": {
+  "status": "ok"
+ },
+ "query/templated_function_call_udf": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Function not found: `kumosql.kumosql_messy.some_udf` at [1:8]",
+  "category": "needs_objects"
+ },
+ "query/unnest_generate_array": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unnest_generate_date_array": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unnest_multi_arrays": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unnest_offset": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unnest_struct_array": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unpivot": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unpivot_include_nulls": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unpivot_multi_column": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/unquoted_dashed_project": {
+  "status": "ok",
+  "bytes": 800000
+ },
+ "query/values_array_of_structs": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/vector_distance": {
+  "status": "ok"
+ },
+ "query/vector_search": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "column_to_search argument of VECTOR_SEARCH: age should be of type ARRAY<FLOAT64>, STRING, or ObjectRef.",
+  "category": "needs_mode_or_data"
+ },
+ "query/wildcard_table": {
+  "status": "ok",
+  "bytes": 64640741
+ },
+ "query/wildcard_table_suffix_function": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/window_frames": {
+  "status": "ok",
+  "bytes": 581568
+ },
+ "query/window_named": {
+  "status": "ok",
+  "bytes": 581568
+ },
+ "query/window_ntile_percent": {
+  "status": "ok",
+  "bytes": 290784
+ },
+ "query/with_in_set_operand": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/assert": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/begin_end_block": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/begin_end_with_tempobjects": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/begin_exception": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/call_procedure": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Procedure is not found: `kumosql.kumosql_messy.bq_syntax_p1` at [1:6]",
+  "category": "needs_objects"
+ },
+ "script/call_with_dml": {
+  "status": "error",
+  "reason": "invalidQuery",
+  "message": "Procedure is not found: `kumosql.kumosql_messy.bq_syntax_p2` at [1:6]",
+  "category": "needs_objects"
+ },
+ "script/case_when": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/declare_set": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/declare_struct_array": {
+  "status": "ok"
+ },
+ "script/execute_immediate": {
+  "status": "ok"
+ },
+ "script/execute_immediate_concat": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/execute_immediate_using_positional": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/for_in": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/if_elseif_else": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/labels": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/loop_leave_iterate": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/raise": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/repeat_until": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/return": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/session_system_var": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/set_from_subquery": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "script/while_loop": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "transaction/begin_commit": {
+  "status": "ok",
+  "bytes": 846375
+ },
+ "transaction/begin_rollback": {
+  "status": "ok",
+  "bytes": 846375
+ }
+}

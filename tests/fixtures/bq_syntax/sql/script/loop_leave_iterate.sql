@@ -1,0 +1,10 @@
+DECLARE i INT64 DEFAULT 0;
+LOOP
+  SET i = i + 1;
+  IF i < 3 THEN
+    ITERATE;
+  END IF;
+  IF i > 5 THEN
+    LEAVE;
+  END IF;
+END LOOP

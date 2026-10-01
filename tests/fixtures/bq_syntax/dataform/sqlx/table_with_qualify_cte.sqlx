@@ -1,0 +1,6 @@
+config { type: "table" }
+WITH latest AS (
+  SELECT id, state, created_at FROM ${ref("raw_users")}
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY created_at DESC) = 1
+)
+SELECT * FROM latest

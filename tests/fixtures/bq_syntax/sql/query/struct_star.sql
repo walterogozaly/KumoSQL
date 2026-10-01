@@ -1,0 +1,1 @@
+SELECT s.* FROM (SELECT STRUCT(1 AS a, 2 AS b) AS s)

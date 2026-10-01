@@ -1,0 +1,3041 @@
+{
+ "cases": [
+  {
+   "id": "data/export_data",
+   "kind": "sql",
+   "file": "sql/data/export_data.sql",
+   "tags": [
+    "export"
+   ]
+  },
+  {
+   "id": "data/export_data_connection",
+   "kind": "sql",
+   "file": "sql/data/export_data_connection.sql",
+   "tags": [
+    "export"
+   ]
+  },
+  {
+   "id": "data/export_data_pubsub",
+   "kind": "sql",
+   "file": "sql/data/export_data_pubsub.sql",
+   "tags": [
+    "export"
+   ]
+  },
+  {
+   "id": "data/export_model",
+   "kind": "sql",
+   "file": "sql/data/export_model.sql",
+   "tags": [
+    "export",
+    "ml"
+   ]
+  },
+  {
+   "id": "data/load_data",
+   "kind": "sql",
+   "file": "sql/data/load_data.sql",
+   "tags": [
+    "load"
+   ]
+  },
+  {
+   "id": "data/load_data_overwrite",
+   "kind": "sql",
+   "file": "sql/data/load_data_overwrite.sql",
+   "tags": [
+    "load"
+   ]
+  },
+  {
+   "id": "data/load_data_partition_columns",
+   "kind": "sql",
+   "file": "sql/data/load_data_partition_columns.sql",
+   "tags": [
+    "load"
+   ]
+  },
+  {
+   "id": "data/load_data_temp_table",
+   "kind": "sql",
+   "file": "sql/data/load_data_temp_table.sql",
+   "tags": [
+    "load"
+   ]
+  },
+  {
+   "id": "dataform/assertion_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/assertion_basic.sqlx",
+   "tags": [
+    "dataform",
+    "assertion"
+   ]
+  },
+  {
+   "id": "dataform/assertion_multiple_refs",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/assertion_multiple_refs.sqlx",
+   "tags": [
+    "dataform",
+    "assertion"
+   ]
+  },
+  {
+   "id": "dataform/assertion_with_options",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/assertion_with_options.sqlx",
+   "tags": [
+    "dataform",
+    "assertion",
+    "config"
+   ]
+  },
+  {
+   "id": "dataform/declaration_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/declaration_basic.sqlx",
+   "tags": [
+    "dataform",
+    "declaration"
+   ]
+  },
+  {
+   "id": "dataform/declaration_columns",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/declaration_columns.sqlx",
+   "tags": [
+    "dataform",
+    "declaration",
+    "columns"
+   ]
+  },
+  {
+   "id": "dataform/incremental_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/incremental_basic.sqlx",
+   "tags": [
+    "dataform",
+    "incremental"
+   ]
+  },
+  {
+   "id": "dataform/incremental_ctx_incremental",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/incremental_ctx_incremental.sqlx",
+   "tags": [
+    "dataform",
+    "incremental"
+   ]
+  },
+  {
+   "id": "dataform/incremental_if_else",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/incremental_if_else.sqlx",
+   "tags": [
+    "dataform",
+    "incremental",
+    "js"
+   ]
+  },
+  {
+   "id": "dataform/incremental_pre_post",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/incremental_pre_post.sqlx",
+   "tags": [
+    "dataform",
+    "incremental",
+    "pre-post"
+   ]
+  },
+  {
+   "id": "dataform/incremental_unique_key_merge",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/incremental_unique_key_merge.sqlx",
+   "tags": [
+    "dataform",
+    "incremental",
+    "merge"
+   ]
+  },
+  {
+   "id": "dataform/js_block_helper",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/js_block_helper.sqlx",
+   "tags": [
+    "dataform",
+    "js"
+   ]
+  },
+  {
+   "id": "dataform/js_block_loop_generated_columns",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/js_block_loop_generated_columns.sqlx",
+   "tags": [
+    "dataform",
+    "js"
+   ]
+  },
+  {
+   "id": "dataform/js_block_with_ref_in_helper",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/js_block_with_ref_in_helper.sqlx",
+   "tags": [
+    "dataform",
+    "js",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/js_includes_constant",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/js_includes_constant.sqlx",
+   "tags": [
+    "dataform",
+    "js",
+    "includes"
+   ]
+  },
+  {
+   "id": "dataform/js_includes_function",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/js_includes_function.sqlx",
+   "tags": [
+    "dataform",
+    "js",
+    "includes"
+   ]
+  },
+  {
+   "id": "dataform/operations_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_basic.sqlx",
+   "tags": [
+    "dataform",
+    "operations"
+   ]
+  },
+  {
+   "id": "dataform/operations_ddl_script",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_ddl_script.sqlx",
+   "tags": [
+    "dataform",
+    "operations",
+    "script"
+   ]
+  },
+  {
+   "id": "dataform/operations_export",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_export.sqlx",
+   "tags": [
+    "dataform",
+    "operations",
+    "export"
+   ]
+  },
+  {
+   "id": "dataform/operations_grant",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_grant.sqlx",
+   "tags": [
+    "dataform",
+    "operations",
+    "dcl"
+   ]
+  },
+  {
+   "id": "dataform/operations_has_output",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_has_output.sqlx",
+   "tags": [
+    "dataform",
+    "operations"
+   ]
+  },
+  {
+   "id": "dataform/operations_has_output_view",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_has_output_view.sqlx",
+   "tags": [
+    "dataform",
+    "operations"
+   ]
+  },
+  {
+   "id": "dataform/operations_merge",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_merge.sqlx",
+   "tags": [
+    "dataform",
+    "operations",
+    "merge"
+   ]
+  },
+  {
+   "id": "dataform/operations_multi_statement",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_multi_statement.sqlx",
+   "tags": [
+    "dataform",
+    "operations"
+   ]
+  },
+  {
+   "id": "dataform/operations_procedure_call",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/operations_procedure_call.sqlx",
+   "tags": [
+    "dataform",
+    "operations"
+   ]
+  },
+  {
+   "id": "dataform/project_vars",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/project_vars.sqlx",
+   "tags": [
+    "dataform",
+    "variables"
+   ]
+  },
+  {
+   "id": "dataform/table_assertions_inline",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_assertions_inline.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "assertions"
+   ]
+  },
+  {
+   "id": "dataform/table_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_basic.sqlx",
+   "tags": [
+    "dataform",
+    "table",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/table_bigquery_options",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_bigquery_options.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "bigquery"
+   ]
+  },
+  {
+   "id": "dataform/table_columns_descriptions",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_columns_descriptions.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "columns"
+   ]
+  },
+  {
+   "id": "dataform/table_ctx_ref",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_ctx_ref.sqlx",
+   "tags": [
+    "dataform",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/table_default_type",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_default_type.sqlx",
+   "tags": [
+    "dataform",
+    "table",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/table_depend_on_dependency_assertions",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_depend_on_dependency_assertions.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "assertions"
+   ]
+  },
+  {
+   "id": "dataform/table_dependencies",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_dependencies.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "dependencies"
+   ]
+  },
+  {
+   "id": "dataform/table_disabled_protected",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_disabled_protected.sqlx",
+   "tags": [
+    "dataform",
+    "config"
+   ]
+  },
+  {
+   "id": "dataform/table_documented_unicode",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_documented_unicode.sqlx",
+   "tags": [
+    "dataform",
+    "quirk"
+   ]
+  },
+  {
+   "id": "dataform/table_dynamic_dependencies",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_dynamic_dependencies.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "js"
+   ]
+  },
+  {
+   "id": "dataform/table_for_system_time",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_for_system_time.sqlx",
+   "tags": [
+    "dataform",
+    "sql"
+   ]
+  },
+  {
+   "id": "dataform/table_iceberg",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_iceberg.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "bigquery"
+   ]
+  },
+  {
+   "id": "dataform/table_interpolated_config_value",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_interpolated_config_value.sqlx",
+   "tags": [
+    "dataform",
+    "config",
+    "js"
+   ]
+  },
+  {
+   "id": "dataform/table_name_schema_database",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_name_schema_database.sqlx",
+   "tags": [
+    "dataform",
+    "context"
+   ]
+  },
+  {
+   "id": "dataform/table_pivot",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_pivot.sqlx",
+   "tags": [
+    "dataform",
+    "sql",
+    "pivot"
+   ]
+  },
+  {
+   "id": "dataform/table_pre_operations_multi_statement",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_pre_operations_multi_statement.sqlx",
+   "tags": [
+    "dataform",
+    "operations",
+    "pre-post"
+   ]
+  },
+  {
+   "id": "dataform/table_pre_post_operations",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_pre_post_operations.sqlx",
+   "tags": [
+    "dataform",
+    "operations",
+    "pre-post"
+   ]
+  },
+  {
+   "id": "dataform/table_ref_in_string_literal",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_ref_in_string_literal.sqlx",
+   "tags": [
+    "dataform",
+    "ref",
+    "quirk"
+   ]
+  },
+  {
+   "id": "dataform/table_ref_object",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_ref_object.sqlx",
+   "tags": [
+    "dataform",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/table_ref_three_args",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_ref_three_args.sqlx",
+   "tags": [
+    "dataform",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/table_ref_two_args",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_ref_two_args.sqlx",
+   "tags": [
+    "dataform",
+    "ref"
+   ]
+  },
+  {
+   "id": "dataform/table_ref_union_all",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_ref_union_all.sqlx",
+   "tags": [
+    "dataform",
+    "sql"
+   ]
+  },
+  {
+   "id": "dataform/table_resolve",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_resolve.sqlx",
+   "tags": [
+    "dataform",
+    "resolve"
+   ]
+  },
+  {
+   "id": "dataform/table_search_vector",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_search_vector.sqlx",
+   "tags": [
+    "dataform",
+    "sql",
+    "search"
+   ]
+  },
+  {
+   "id": "dataform/table_self",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_self.sqlx",
+   "tags": [
+    "dataform",
+    "self"
+   ]
+  },
+  {
+   "id": "dataform/table_slashed_comment_block",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_slashed_comment_block.sqlx",
+   "tags": [
+    "dataform",
+    "quirk"
+   ]
+  },
+  {
+   "id": "dataform/table_sql_comments_and_braces",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_sql_comments_and_braces.sqlx",
+   "tags": [
+    "dataform",
+    "sql",
+    "quirk"
+   ]
+  },
+  {
+   "id": "dataform/table_sqlx_keyword_in_string",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_sqlx_keyword_in_string.sqlx",
+   "tags": [
+    "dataform",
+    "quirk"
+   ]
+  },
+  {
+   "id": "dataform/table_tags_schema_name",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_tags_schema_name.sqlx",
+   "tags": [
+    "dataform",
+    "config"
+   ]
+  },
+  {
+   "id": "dataform/table_trivial_body",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_trivial_body.sqlx",
+   "tags": [
+    "dataform",
+    "config"
+   ]
+  },
+  {
+   "id": "dataform/table_udf_inline_temp_function",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_udf_inline_temp_function.sqlx",
+   "tags": [
+    "dataform",
+    "sql",
+    "udf"
+   ]
+  },
+  {
+   "id": "dataform/table_where_when",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_where_when.sqlx",
+   "tags": [
+    "dataform",
+    "sql",
+    "when"
+   ]
+  },
+  {
+   "id": "dataform/table_with_qualify_cte",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/table_with_qualify_cte.sqlx",
+   "tags": [
+    "dataform",
+    "sql"
+   ]
+  },
+  {
+   "id": "dataform/test_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/test_basic.sqlx",
+   "tags": [
+    "dataform",
+    "test"
+   ]
+  },
+  {
+   "id": "dataform/test_multiple_inputs",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/test_multiple_inputs.sqlx",
+   "tags": [
+    "dataform",
+    "test"
+   ]
+  },
+  {
+   "id": "dataform/view_basic",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/view_basic.sqlx",
+   "tags": [
+    "dataform",
+    "view"
+   ]
+  },
+  {
+   "id": "dataform/view_materialized",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/view_materialized.sqlx",
+   "tags": [
+    "dataform",
+    "view",
+    "materialized"
+   ]
+  },
+  {
+   "id": "dataform/view_with_columns",
+   "kind": "sqlx",
+   "file": "dataform/sqlx/view_with_columns.sqlx",
+   "tags": [
+    "dataform",
+    "view",
+    "config"
+   ]
+  },
+  {
+   "id": "dcl/grant_project",
+   "kind": "sql",
+   "file": "sql/dcl/grant_project.sql",
+   "tags": [
+    "dcl",
+    "grant"
+   ]
+  },
+  {
+   "id": "dcl/grant_schema",
+   "kind": "sql",
+   "file": "sql/dcl/grant_schema.sql",
+   "tags": [
+    "dcl",
+    "grant"
+   ]
+  },
+  {
+   "id": "dcl/grant_table",
+   "kind": "sql",
+   "file": "sql/dcl/grant_table.sql",
+   "tags": [
+    "dcl",
+    "grant"
+   ]
+  },
+  {
+   "id": "dcl/revoke_schema",
+   "kind": "sql",
+   "file": "sql/dcl/revoke_schema.sql",
+   "tags": [
+    "dcl",
+    "revoke"
+   ]
+  },
+  {
+   "id": "dcl/revoke_table",
+   "kind": "sql",
+   "file": "sql/dcl/revoke_table.sql",
+   "tags": [
+    "dcl",
+    "revoke"
+   ]
+  },
+  {
+   "id": "ddl/alter_materialized_view",
+   "kind": "sql",
+   "file": "sql/ddl/alter_materialized_view.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "materialized"
+   ]
+  },
+  {
+   "id": "ddl/alter_model",
+   "kind": "sql",
+   "file": "sql/ddl/alter_model.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "ml"
+   ]
+  },
+  {
+   "id": "ddl/alter_organization",
+   "kind": "sql",
+   "file": "sql/ddl/alter_organization.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "organization"
+   ]
+  },
+  {
+   "id": "ddl/alter_project",
+   "kind": "sql",
+   "file": "sql/ddl/alter_project.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "project"
+   ]
+  },
+  {
+   "id": "ddl/alter_reservation",
+   "kind": "sql",
+   "file": "sql/ddl/alter_reservation.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "reservation"
+   ]
+  },
+  {
+   "id": "ddl/alter_schema",
+   "kind": "sql",
+   "file": "sql/ddl/alter_schema.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "schema"
+   ]
+  },
+  {
+   "id": "ddl/alter_schema_collate",
+   "kind": "sql",
+   "file": "sql/ddl/alter_schema_collate.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "schema"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_add_column",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_add_column.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_alter_column",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_alter_column.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_constraints",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_constraints.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_drop_column",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_drop_column.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_drop_constraint",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_drop_constraint.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_rename_column",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_rename_column.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_rename_to",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_rename_to.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_table_set_options",
+   "kind": "sql",
+   "file": "sql/ddl/alter_table_set_options.sql",
+   "tags": [
+    "ddl",
+    "alter"
+   ]
+  },
+  {
+   "id": "ddl/alter_view_alter_column",
+   "kind": "sql",
+   "file": "sql/ddl/alter_view_alter_column.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "view"
+   ]
+  },
+  {
+   "id": "ddl/alter_view_set_options",
+   "kind": "sql",
+   "file": "sql/ddl/alter_view_set_options.sql",
+   "tags": [
+    "ddl",
+    "alter",
+    "view"
+   ]
+  },
+  {
+   "id": "ddl/create_aggregate_function",
+   "kind": "sql",
+   "file": "sql/ddl/create_aggregate_function.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf",
+    "aggregate"
+   ]
+  },
+  {
+   "id": "ddl/create_assignment",
+   "kind": "sql",
+   "file": "sql/ddl/create_assignment.sql",
+   "tags": [
+    "ddl",
+    "reservation"
+   ]
+  },
+  {
+   "id": "ddl/create_capacity_reservation",
+   "kind": "sql",
+   "file": "sql/ddl/create_capacity_reservation.sql",
+   "tags": [
+    "ddl",
+    "reservation"
+   ]
+  },
+  {
+   "id": "ddl/create_external_table",
+   "kind": "sql",
+   "file": "sql/ddl/create_external_table.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "external"
+   ]
+  },
+  {
+   "id": "ddl/create_external_table_with_schema",
+   "kind": "sql",
+   "file": "sql/ddl/create_external_table_with_schema.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "external"
+   ]
+  },
+  {
+   "id": "ddl/create_function_js",
+   "kind": "sql",
+   "file": "sql/ddl/create_function_js.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf",
+    "javascript"
+   ]
+  },
+  {
+   "id": "ddl/create_function_js_library",
+   "kind": "sql",
+   "file": "sql/ddl/create_function_js_library.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf",
+    "javascript"
+   ]
+  },
+  {
+   "id": "ddl/create_function_python",
+   "kind": "sql",
+   "file": "sql/ddl/create_function_python.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf",
+    "python"
+   ]
+  },
+  {
+   "id": "ddl/create_function_remote",
+   "kind": "sql",
+   "file": "sql/ddl/create_function_remote.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf",
+    "remote"
+   ]
+  },
+  {
+   "id": "ddl/create_function_sql",
+   "kind": "sql",
+   "file": "sql/ddl/create_function_sql.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf"
+   ]
+  },
+  {
+   "id": "ddl/create_function_templated",
+   "kind": "sql",
+   "file": "sql/ddl/create_function_templated.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf"
+   ]
+  },
+  {
+   "id": "ddl/create_materialized_view",
+   "kind": "sql",
+   "file": "sql/ddl/create_materialized_view.sql",
+   "tags": [
+    "ddl",
+    "view",
+    "materialized"
+   ]
+  },
+  {
+   "id": "ddl/create_materialized_view_clustered",
+   "kind": "sql",
+   "file": "sql/ddl/create_materialized_view_clustered.sql",
+   "tags": [
+    "ddl",
+    "view",
+    "materialized"
+   ]
+  },
+  {
+   "id": "ddl/create_model_linear",
+   "kind": "sql",
+   "file": "sql/ddl/create_model_linear.sql",
+   "tags": [
+    "ddl",
+    "ml",
+    "model"
+   ]
+  },
+  {
+   "id": "ddl/create_model_remote",
+   "kind": "sql",
+   "file": "sql/ddl/create_model_remote.sql",
+   "tags": [
+    "ddl",
+    "ml",
+    "model",
+    "remote"
+   ]
+  },
+  {
+   "id": "ddl/create_model_transform",
+   "kind": "sql",
+   "file": "sql/ddl/create_model_transform.sql",
+   "tags": [
+    "ddl",
+    "ml",
+    "model"
+   ]
+  },
+  {
+   "id": "ddl/create_procedure_options",
+   "kind": "sql",
+   "file": "sql/ddl/create_procedure_options.sql",
+   "tags": [
+    "ddl",
+    "procedure"
+   ]
+  },
+  {
+   "id": "ddl/create_procedure_spark",
+   "kind": "sql",
+   "file": "sql/ddl/create_procedure_spark.sql",
+   "tags": [
+    "ddl",
+    "procedure",
+    "spark"
+   ]
+  },
+  {
+   "id": "ddl/create_procedure_sql",
+   "kind": "sql",
+   "file": "sql/ddl/create_procedure_sql.sql",
+   "tags": [
+    "ddl",
+    "procedure"
+   ]
+  },
+  {
+   "id": "ddl/create_property_graph",
+   "kind": "sql",
+   "file": "sql/ddl/create_property_graph.sql",
+   "tags": [
+    "ddl",
+    "graph"
+   ]
+  },
+  {
+   "id": "ddl/create_reservation",
+   "kind": "sql",
+   "file": "sql/ddl/create_reservation.sql",
+   "tags": [
+    "ddl",
+    "reservation"
+   ]
+  },
+  {
+   "id": "ddl/create_row_access_policy",
+   "kind": "sql",
+   "file": "sql/ddl/create_row_access_policy.sql",
+   "tags": [
+    "ddl",
+    "policy",
+    "row-access"
+   ]
+  },
+  {
+   "id": "ddl/create_schema",
+   "kind": "sql",
+   "file": "sql/ddl/create_schema.sql",
+   "tags": [
+    "ddl",
+    "schema"
+   ]
+  },
+  {
+   "id": "ddl/create_schema_collate",
+   "kind": "sql",
+   "file": "sql/ddl/create_schema_collate.sql",
+   "tags": [
+    "ddl",
+    "schema"
+   ]
+  },
+  {
+   "id": "ddl/create_search_index",
+   "kind": "sql",
+   "file": "sql/ddl/create_search_index.sql",
+   "tags": [
+    "ddl",
+    "index",
+    "search"
+   ]
+  },
+  {
+   "id": "ddl/create_snapshot_table",
+   "kind": "sql",
+   "file": "sql/ddl/create_snapshot_table.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "snapshot"
+   ]
+  },
+  {
+   "id": "ddl/create_table_all_types",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_all_types.sql",
+   "tags": [
+    "ddl",
+    "types"
+   ]
+  },
+  {
+   "id": "ddl/create_table_as_select",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_as_select.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "ctas"
+   ]
+  },
+  {
+   "id": "ddl/create_table_clone",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_clone.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "clone"
+   ]
+  },
+  {
+   "id": "ddl/create_table_collate",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_collate.sql",
+   "tags": [
+    "ddl",
+    "schema"
+   ]
+  },
+  {
+   "id": "ddl/create_table_columns",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_columns.sql",
+   "tags": [
+    "ddl",
+    "table"
+   ]
+  },
+  {
+   "id": "ddl/create_table_copy",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_copy.sql",
+   "tags": [
+    "ddl",
+    "table"
+   ]
+  },
+  {
+   "id": "ddl/create_table_function",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_function.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "tvf"
+   ]
+  },
+  {
+   "id": "ddl/create_table_like",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_like.sql",
+   "tags": [
+    "ddl",
+    "table"
+   ]
+  },
+  {
+   "id": "ddl/create_table_partition_cluster",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_partition_cluster.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "partition",
+    "cluster"
+   ]
+  },
+  {
+   "id": "ddl/create_table_partition_ingestion_time",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_partition_ingestion_time.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "partition"
+   ]
+  },
+  {
+   "id": "ddl/create_table_partition_range",
+   "kind": "sql",
+   "file": "sql/ddl/create_table_partition_range.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "partition"
+   ]
+  },
+  {
+   "id": "ddl/create_temp_function",
+   "kind": "sql",
+   "file": "sql/ddl/create_temp_function.sql",
+   "tags": [
+    "ddl",
+    "function",
+    "udf",
+    "temp"
+   ]
+  },
+  {
+   "id": "ddl/create_temp_table",
+   "kind": "sql",
+   "file": "sql/ddl/create_temp_table.sql",
+   "tags": [
+    "ddl",
+    "table",
+    "temp"
+   ]
+  },
+  {
+   "id": "ddl/create_vector_index",
+   "kind": "sql",
+   "file": "sql/ddl/create_vector_index.sql",
+   "tags": [
+    "ddl",
+    "index",
+    "vector"
+   ]
+  },
+  {
+   "id": "ddl/create_view",
+   "kind": "sql",
+   "file": "sql/ddl/create_view.sql",
+   "tags": [
+    "ddl",
+    "view"
+   ]
+  },
+  {
+   "id": "ddl/create_view_column_list",
+   "kind": "sql",
+   "file": "sql/ddl/create_view_column_list.sql",
+   "tags": [
+    "ddl",
+    "view"
+   ]
+  },
+  {
+   "id": "ddl/drop_all_row_access_policies",
+   "kind": "sql",
+   "file": "sql/ddl/drop_all_row_access_policies.sql",
+   "tags": [
+    "ddl",
+    "policy",
+    "row-access"
+   ]
+  },
+  {
+   "id": "ddl/drop_external_table",
+   "kind": "sql",
+   "file": "sql/ddl/drop_external_table.sql",
+   "tags": [
+    "ddl",
+    "drop"
+   ]
+  },
+  {
+   "id": "ddl/drop_function",
+   "kind": "sql",
+   "file": "sql/ddl/drop_function.sql",
+   "tags": [
+    "ddl",
+    "drop",
+    "function"
+   ]
+  },
+  {
+   "id": "ddl/drop_index",
+   "kind": "sql",
+   "file": "sql/ddl/drop_index.sql",
+   "tags": [
+    "ddl",
+    "index"
+   ]
+  },
+  {
+   "id": "ddl/drop_materialized_view",
+   "kind": "sql",
+   "file": "sql/ddl/drop_materialized_view.sql",
+   "tags": [
+    "ddl",
+    "drop"
+   ]
+  },
+  {
+   "id": "ddl/drop_model",
+   "kind": "sql",
+   "file": "sql/ddl/drop_model.sql",
+   "tags": [
+    "ddl",
+    "drop",
+    "ml"
+   ]
+  },
+  {
+   "id": "ddl/drop_procedure",
+   "kind": "sql",
+   "file": "sql/ddl/drop_procedure.sql",
+   "tags": [
+    "ddl",
+    "drop",
+    "procedure"
+   ]
+  },
+  {
+   "id": "ddl/drop_row_access_policy",
+   "kind": "sql",
+   "file": "sql/ddl/drop_row_access_policy.sql",
+   "tags": [
+    "ddl",
+    "policy",
+    "row-access"
+   ]
+  },
+  {
+   "id": "ddl/drop_schema",
+   "kind": "sql",
+   "file": "sql/ddl/drop_schema.sql",
+   "tags": [
+    "ddl",
+    "drop",
+    "schema"
+   ]
+  },
+  {
+   "id": "ddl/drop_snapshot_table",
+   "kind": "sql",
+   "file": "sql/ddl/drop_snapshot_table.sql",
+   "tags": [
+    "ddl",
+    "drop"
+   ]
+  },
+  {
+   "id": "ddl/drop_table",
+   "kind": "sql",
+   "file": "sql/ddl/drop_table.sql",
+   "tags": [
+    "ddl",
+    "drop"
+   ]
+  },
+  {
+   "id": "ddl/drop_table_function",
+   "kind": "sql",
+   "file": "sql/ddl/drop_table_function.sql",
+   "tags": [
+    "ddl",
+    "drop",
+    "tvf"
+   ]
+  },
+  {
+   "id": "ddl/drop_vector_index",
+   "kind": "sql",
+   "file": "sql/ddl/drop_vector_index.sql",
+   "tags": [
+    "ddl",
+    "index",
+    "vector"
+   ]
+  },
+  {
+   "id": "ddl/drop_view",
+   "kind": "sql",
+   "file": "sql/ddl/drop_view.sql",
+   "tags": [
+    "ddl",
+    "drop"
+   ]
+  },
+  {
+   "id": "ddl/undrop_schema",
+   "kind": "sql",
+   "file": "sql/ddl/undrop_schema.sql",
+   "tags": [
+    "ddl",
+    "drop",
+    "schema"
+   ]
+  },
+  {
+   "id": "dml/delete_basic",
+   "kind": "sql",
+   "file": "sql/dml/delete_basic.sql",
+   "tags": [
+    "dml",
+    "delete"
+   ]
+  },
+  {
+   "id": "dml/delete_exists",
+   "kind": "sql",
+   "file": "sql/dml/delete_exists.sql",
+   "tags": [
+    "dml",
+    "delete",
+    "subquery"
+   ]
+  },
+  {
+   "id": "dml/delete_no_from",
+   "kind": "sql",
+   "file": "sql/dml/delete_no_from.sql",
+   "tags": [
+    "dml",
+    "delete"
+   ]
+  },
+  {
+   "id": "dml/insert_default_values",
+   "kind": "sql",
+   "file": "sql/dml/insert_default_values.sql",
+   "tags": [
+    "dml",
+    "insert"
+   ]
+  },
+  {
+   "id": "dml/insert_select",
+   "kind": "sql",
+   "file": "sql/dml/insert_select.sql",
+   "tags": [
+    "dml",
+    "insert"
+   ]
+  },
+  {
+   "id": "dml/insert_values",
+   "kind": "sql",
+   "file": "sql/dml/insert_values.sql",
+   "tags": [
+    "dml",
+    "insert"
+   ]
+  },
+  {
+   "id": "dml/insert_with_cte",
+   "kind": "sql",
+   "file": "sql/dml/insert_with_cte.sql",
+   "tags": [
+    "dml",
+    "insert",
+    "cte"
+   ]
+  },
+  {
+   "id": "dml/merge_cte_source",
+   "kind": "sql",
+   "file": "sql/dml/merge_cte_source.sql",
+   "tags": [
+    "dml",
+    "merge",
+    "cte"
+   ]
+  },
+  {
+   "id": "dml/merge_full",
+   "kind": "sql",
+   "file": "sql/dml/merge_full.sql",
+   "tags": [
+    "dml",
+    "merge"
+   ]
+  },
+  {
+   "id": "dml/merge_insert_row",
+   "kind": "sql",
+   "file": "sql/dml/merge_insert_row.sql",
+   "tags": [
+    "dml",
+    "merge"
+   ]
+  },
+  {
+   "id": "dml/merge_not_matched_by_source_update",
+   "kind": "sql",
+   "file": "sql/dml/merge_not_matched_by_source_update.sql",
+   "tags": [
+    "dml",
+    "merge"
+   ]
+  },
+  {
+   "id": "dml/truncate_table",
+   "kind": "sql",
+   "file": "sql/dml/truncate_table.sql",
+   "tags": [
+    "dml",
+    "truncate"
+   ]
+  },
+  {
+   "id": "dml/update_basic",
+   "kind": "sql",
+   "file": "sql/dml/update_basic.sql",
+   "tags": [
+    "dml",
+    "update"
+   ]
+  },
+  {
+   "id": "dml/update_from_join",
+   "kind": "sql",
+   "file": "sql/dml/update_from_join.sql",
+   "tags": [
+    "dml",
+    "update"
+   ]
+  },
+  {
+   "id": "dml/update_set_default",
+   "kind": "sql",
+   "file": "sql/dml/update_set_default.sql",
+   "tags": [
+    "dml",
+    "update",
+    "struct"
+   ]
+  },
+  {
+   "id": "dml/update_subquery",
+   "kind": "sql",
+   "file": "sql/dml/update_subquery.sql",
+   "tags": [
+    "dml",
+    "update",
+    "subquery"
+   ]
+  },
+  {
+   "id": "query/aggregate_filter_modifiers",
+   "kind": "sql",
+   "file": "sql/query/aggregate_filter_modifiers.sql",
+   "tags": [
+    "query",
+    "function",
+    "aggregate"
+   ]
+  },
+  {
+   "id": "query/aggregate_functions",
+   "kind": "sql",
+   "file": "sql/query/aggregate_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "aggregate"
+   ]
+  },
+  {
+   "id": "query/aggregate_udf_call",
+   "kind": "sql",
+   "file": "sql/query/aggregate_udf_call.sql",
+   "tags": [
+    "query",
+    "udf"
+   ]
+  },
+  {
+   "id": "query/ai_generate",
+   "kind": "sql",
+   "file": "sql/query/ai_generate.sql",
+   "tags": [
+    "query",
+    "ai",
+    "function"
+   ]
+  },
+  {
+   "id": "query/anon_differential_privacy",
+   "kind": "sql",
+   "file": "sql/query/anon_differential_privacy.sql",
+   "tags": [
+    "query",
+    "differential-privacy"
+   ]
+  },
+  {
+   "id": "query/appends_changes_functions",
+   "kind": "sql",
+   "file": "sql/query/appends_changes_functions.sql",
+   "tags": [
+    "query",
+    "table-function",
+    "change-history"
+   ]
+  },
+  {
+   "id": "query/array_functions",
+   "kind": "sql",
+   "file": "sql/query/array_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "array"
+   ]
+  },
+  {
+   "id": "query/array_slice_first_last",
+   "kind": "sql",
+   "file": "sql/query/array_slice_first_last.sql",
+   "tags": [
+    "query",
+    "function",
+    "array"
+   ]
+  },
+  {
+   "id": "query/backtick_dashed_project",
+   "kind": "sql",
+   "file": "sql/query/backtick_dashed_project.sql",
+   "tags": [
+    "query",
+    "quoting"
+   ]
+  },
+  {
+   "id": "query/backtick_dataset_only",
+   "kind": "sql",
+   "file": "sql/query/backtick_dataset_only.sql",
+   "tags": [
+    "query",
+    "quoting"
+   ]
+  },
+  {
+   "id": "query/backtick_whole_path",
+   "kind": "sql",
+   "file": "sql/query/backtick_whole_path.sql",
+   "tags": [
+    "query",
+    "quoting"
+   ]
+  },
+  {
+   "id": "query/bit_ops_and_operators",
+   "kind": "sql",
+   "file": "sql/query/bit_ops_and_operators.sql",
+   "tags": [
+    "query",
+    "operator"
+   ]
+  },
+  {
+   "id": "query/case_if_ifnull",
+   "kind": "sql",
+   "file": "sql/query/case_if_ifnull.sql",
+   "tags": [
+    "query",
+    "conditional"
+   ]
+  },
+  {
+   "id": "query/cast_types",
+   "kind": "sql",
+   "file": "sql/query/cast_types.sql",
+   "tags": [
+    "query",
+    "function",
+    "cast"
+   ]
+  },
+  {
+   "id": "query/changes_function",
+   "kind": "sql",
+   "file": "sql/query/changes_function.sql",
+   "tags": [
+    "query",
+    "table-function",
+    "change-history"
+   ]
+  },
+  {
+   "id": "query/collate",
+   "kind": "sql",
+   "file": "sql/query/collate.sql",
+   "tags": [
+    "query",
+    "collate"
+   ]
+  },
+  {
+   "id": "query/comparison_operators",
+   "kind": "sql",
+   "file": "sql/query/comparison_operators.sql",
+   "tags": [
+    "query",
+    "operator"
+   ]
+  },
+  {
+   "id": "query/cte_basic",
+   "kind": "sql",
+   "file": "sql/query/cte_basic.sql",
+   "tags": [
+    "query",
+    "cte"
+   ]
+  },
+  {
+   "id": "query/cte_chain",
+   "kind": "sql",
+   "file": "sql/query/cte_chain.sql",
+   "tags": [
+    "query",
+    "cte"
+   ]
+  },
+  {
+   "id": "query/cte_recursive",
+   "kind": "sql",
+   "file": "sql/query/cte_recursive.sql",
+   "tags": [
+    "query",
+    "cte",
+    "recursive"
+   ]
+  },
+  {
+   "id": "query/date_time_functions",
+   "kind": "sql",
+   "file": "sql/query/date_time_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "date"
+   ]
+  },
+  {
+   "id": "query/external_query_federated",
+   "kind": "sql",
+   "file": "sql/query/external_query_federated.sql",
+   "tags": [
+    "query",
+    "federated"
+   ]
+  },
+  {
+   "id": "query/for_system_time",
+   "kind": "sql",
+   "file": "sql/query/for_system_time.sql",
+   "tags": [
+    "query",
+    "time-travel"
+   ]
+  },
+  {
+   "id": "query/geography_functions",
+   "kind": "sql",
+   "file": "sql/query/geography_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "geography"
+   ]
+  },
+  {
+   "id": "query/graph_gql",
+   "kind": "sql",
+   "file": "sql/query/graph_gql.sql",
+   "tags": [
+    "query",
+    "graph"
+   ]
+  },
+  {
+   "id": "query/group_by_all",
+   "kind": "sql",
+   "file": "sql/query/group_by_all.sql",
+   "tags": [
+    "query",
+    "group-by"
+   ]
+  },
+  {
+   "id": "query/group_by_cube",
+   "kind": "sql",
+   "file": "sql/query/group_by_cube.sql",
+   "tags": [
+    "query",
+    "group-by",
+    "cube"
+   ]
+  },
+  {
+   "id": "query/group_by_grouping_sets",
+   "kind": "sql",
+   "file": "sql/query/group_by_grouping_sets.sql",
+   "tags": [
+    "query",
+    "group-by",
+    "grouping-sets"
+   ]
+  },
+  {
+   "id": "query/group_by_rollup",
+   "kind": "sql",
+   "file": "sql/query/group_by_rollup.sql",
+   "tags": [
+    "query",
+    "group-by",
+    "rollup"
+   ]
+  },
+  {
+   "id": "query/hash_encryption_functions",
+   "kind": "sql",
+   "file": "sql/query/hash_encryption_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "hash"
+   ]
+  },
+  {
+   "id": "query/hints_comments",
+   "kind": "sql",
+   "file": "sql/query/hints_comments.sql",
+   "tags": [
+    "query",
+    "select"
+   ]
+  },
+  {
+   "id": "query/in_unnest",
+   "kind": "sql",
+   "file": "sql/query/in_unnest.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/information_schema_column_field_paths",
+   "kind": "sql",
+   "file": "sql/query/information_schema_column_field_paths.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/information_schema_columns",
+   "kind": "sql",
+   "file": "sql/query/information_schema_columns.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/information_schema_region_jobs",
+   "kind": "sql",
+   "file": "sql/query/information_schema_region_jobs.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/information_schema_routines",
+   "kind": "sql",
+   "file": "sql/query/information_schema_routines.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/information_schema_table_storage",
+   "kind": "sql",
+   "file": "sql/query/information_schema_table_storage.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/information_schema_tables",
+   "kind": "sql",
+   "file": "sql/query/information_schema_tables.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/information_schema_views",
+   "kind": "sql",
+   "file": "sql/query/information_schema_views.sql",
+   "tags": [
+    "query",
+    "information-schema"
+   ]
+  },
+  {
+   "id": "query/interval_arithmetic",
+   "kind": "sql",
+   "file": "sql/query/interval_arithmetic.sql",
+   "tags": [
+    "query",
+    "date",
+    "interval"
+   ]
+  },
+  {
+   "id": "query/join_cross",
+   "kind": "sql",
+   "file": "sql/query/join_cross.sql",
+   "tags": [
+    "query",
+    "join"
+   ]
+  },
+  {
+   "id": "query/join_cross_comma",
+   "kind": "sql",
+   "file": "sql/query/join_cross_comma.sql",
+   "tags": [
+    "query",
+    "join"
+   ]
+  },
+  {
+   "id": "query/join_inner_left_right_full",
+   "kind": "sql",
+   "file": "sql/query/join_inner_left_right_full.sql",
+   "tags": [
+    "query",
+    "join"
+   ]
+  },
+  {
+   "id": "query/join_lateral_correlated_unnest",
+   "kind": "sql",
+   "file": "sql/query/join_lateral_correlated_unnest.sql",
+   "tags": [
+    "query",
+    "join",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/join_using",
+   "kind": "sql",
+   "file": "sql/query/join_using.sql",
+   "tags": [
+    "query",
+    "join"
+   ]
+  },
+  {
+   "id": "query/json_constructors",
+   "kind": "sql",
+   "file": "sql/query/json_constructors.sql",
+   "tags": [
+    "query",
+    "function",
+    "json"
+   ]
+  },
+  {
+   "id": "query/json_functions",
+   "kind": "sql",
+   "file": "sql/query/json_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "json"
+   ]
+  },
+  {
+   "id": "query/json_type_subscript",
+   "kind": "sql",
+   "file": "sql/query/json_type_subscript.sql",
+   "tags": [
+    "query",
+    "function",
+    "json"
+   ]
+  },
+  {
+   "id": "query/limit_in_subquery_order",
+   "kind": "sql",
+   "file": "sql/query/limit_in_subquery_order.sql",
+   "tags": [
+    "query",
+    "limit"
+   ]
+  },
+  {
+   "id": "query/literals_typed",
+   "kind": "sql",
+   "file": "sql/query/literals_typed.sql",
+   "tags": [
+    "query",
+    "literal"
+   ]
+  },
+  {
+   "id": "query/math_functions",
+   "kind": "sql",
+   "file": "sql/query/math_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "math"
+   ]
+  },
+  {
+   "id": "query/ml_data_functions_detect_anomalies",
+   "kind": "sql",
+   "file": "sql/query/ml_data_functions_detect_anomalies.sql",
+   "tags": [
+    "query",
+    "ml",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/ml_feature_functions",
+   "kind": "sql",
+   "file": "sql/query/ml_feature_functions.sql",
+   "tags": [
+    "query",
+    "ml",
+    "function"
+   ]
+  },
+  {
+   "id": "query/ml_forecast_ai",
+   "kind": "sql",
+   "file": "sql/query/ml_forecast_ai.sql",
+   "tags": [
+    "query",
+    "ml",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/ml_generate_text",
+   "kind": "sql",
+   "file": "sql/query/ml_generate_text.sql",
+   "tags": [
+    "query",
+    "ml",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/ml_predict_function",
+   "kind": "sql",
+   "file": "sql/query/ml_predict_function.sql",
+   "tags": [
+    "query",
+    "ml",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/nested_with_in_subquery",
+   "kind": "sql",
+   "file": "sql/query/nested_with_in_subquery.sql",
+   "tags": [
+    "query",
+    "cte",
+    "subquery"
+   ]
+  },
+  {
+   "id": "query/net_functions",
+   "kind": "sql",
+   "file": "sql/query/net_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "net"
+   ]
+  },
+  {
+   "id": "query/object_table_function",
+   "kind": "sql",
+   "file": "sql/query/object_table_function.sql",
+   "tags": [
+    "query",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/order_by_all",
+   "kind": "sql",
+   "file": "sql/query/order_by_all.sql",
+   "tags": [
+    "query",
+    "order-by"
+   ]
+  },
+  {
+   "id": "query/partition_pseudo_columns",
+   "kind": "sql",
+   "file": "sql/query/partition_pseudo_columns.sql",
+   "tags": [
+    "query",
+    "pseudo-column"
+   ]
+  },
+  {
+   "id": "query/pipe_aggregate_group_alias",
+   "kind": "sql",
+   "file": "sql/query/pipe_aggregate_group_alias.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_as_alias",
+   "kind": "sql",
+   "file": "sql/query/pipe_as_alias.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_call_tablesample",
+   "kind": "sql",
+   "file": "sql/query/pipe_call_tablesample.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_distinct",
+   "kind": "sql",
+   "file": "sql/query/pipe_distinct.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_extend_set_drop",
+   "kind": "sql",
+   "file": "sql/query/pipe_extend_set_drop.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_from_select",
+   "kind": "sql",
+   "file": "sql/query/pipe_from_select.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_join",
+   "kind": "sql",
+   "file": "sql/query/pipe_join.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_pivot_unpivot",
+   "kind": "sql",
+   "file": "sql/query/pipe_pivot_unpivot.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_select_window_qualify",
+   "kind": "sql",
+   "file": "sql/query/pipe_select_window_qualify.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_set_ops",
+   "kind": "sql",
+   "file": "sql/query/pipe_set_ops.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_where_aggregate",
+   "kind": "sql",
+   "file": "sql/query/pipe_where_aggregate.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_window",
+   "kind": "sql",
+   "file": "sql/query/pipe_window.sql",
+   "tags": [
+    "query",
+    "pipe"
+   ]
+  },
+  {
+   "id": "query/pipe_with_cte",
+   "kind": "sql",
+   "file": "sql/query/pipe_with_cte.sql",
+   "tags": [
+    "query",
+    "pipe",
+    "cte"
+   ]
+  },
+  {
+   "id": "query/pivot",
+   "kind": "sql",
+   "file": "sql/query/pivot.sql",
+   "tags": [
+    "query",
+    "pivot"
+   ]
+  },
+  {
+   "id": "query/positional_parameter",
+   "kind": "sql",
+   "file": "sql/query/positional_parameter.sql",
+   "tags": [
+    "query",
+    "parameter"
+   ]
+  },
+  {
+   "id": "query/pseudo_columns_row_number",
+   "kind": "sql",
+   "file": "sql/query/pseudo_columns_row_number.sql",
+   "tags": [
+    "query",
+    "window"
+   ]
+  },
+  {
+   "id": "query/qualify",
+   "kind": "sql",
+   "file": "sql/query/qualify.sql",
+   "tags": [
+    "query",
+    "qualify",
+    "window"
+   ]
+  },
+  {
+   "id": "query/query_parameters",
+   "kind": "sql",
+   "file": "sql/query/query_parameters.sql",
+   "tags": [
+    "query",
+    "parameter"
+   ]
+  },
+  {
+   "id": "query/quoted_identifiers",
+   "kind": "sql",
+   "file": "sql/query/quoted_identifiers.sql",
+   "tags": [
+    "query",
+    "quoting"
+   ]
+  },
+  {
+   "id": "query/range_type",
+   "kind": "sql",
+   "file": "sql/query/range_type.sql",
+   "tags": [
+    "query",
+    "range"
+   ]
+  },
+  {
+   "id": "query/reserved_keyword_alias",
+   "kind": "sql",
+   "file": "sql/query/reserved_keyword_alias.sql",
+   "tags": [
+    "query",
+    "quoting"
+   ]
+  },
+  {
+   "id": "query/safe_functions",
+   "kind": "sql",
+   "file": "sql/query/safe_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "safe"
+   ]
+  },
+  {
+   "id": "query/search_function",
+   "kind": "sql",
+   "file": "sql/query/search_function.sql",
+   "tags": [
+    "query",
+    "search"
+   ]
+  },
+  {
+   "id": "query/search_index_column",
+   "kind": "sql",
+   "file": "sql/query/search_index_column.sql",
+   "tags": [
+    "query",
+    "search"
+   ]
+  },
+  {
+   "id": "query/select_as_struct",
+   "kind": "sql",
+   "file": "sql/query/select_as_struct.sql",
+   "tags": [
+    "query",
+    "struct"
+   ]
+  },
+  {
+   "id": "query/select_as_value",
+   "kind": "sql",
+   "file": "sql/query/select_as_value.sql",
+   "tags": [
+    "query",
+    "struct"
+   ]
+  },
+  {
+   "id": "query/select_basic",
+   "kind": "sql",
+   "file": "sql/query/select_basic.sql",
+   "tags": [
+    "query",
+    "select"
+   ]
+  },
+  {
+   "id": "query/select_distinct",
+   "kind": "sql",
+   "file": "sql/query/select_distinct.sql",
+   "tags": [
+    "query",
+    "select"
+   ]
+  },
+  {
+   "id": "query/select_except_replace",
+   "kind": "sql",
+   "file": "sql/query/select_except_replace.sql",
+   "tags": [
+    "query",
+    "select",
+    "star"
+   ]
+  },
+  {
+   "id": "query/select_from_table_alias_struct_access",
+   "kind": "sql",
+   "file": "sql/query/select_from_table_alias_struct_access.sql",
+   "tags": [
+    "query",
+    "struct"
+   ]
+  },
+  {
+   "id": "query/select_group_by_alias_ordinal",
+   "kind": "sql",
+   "file": "sql/query/select_group_by_alias_ordinal.sql",
+   "tags": [
+    "query",
+    "group-by"
+   ]
+  },
+  {
+   "id": "query/set_by_name",
+   "kind": "sql",
+   "file": "sql/query/set_by_name.sql",
+   "tags": [
+    "query",
+    "set-op",
+    "corresponding"
+   ]
+  },
+  {
+   "id": "query/set_corresponding",
+   "kind": "sql",
+   "file": "sql/query/set_corresponding.sql",
+   "tags": [
+    "query",
+    "set-op",
+    "corresponding"
+   ]
+  },
+  {
+   "id": "query/set_intersect_except",
+   "kind": "sql",
+   "file": "sql/query/set_intersect_except.sql",
+   "tags": [
+    "query",
+    "set-op"
+   ]
+  },
+  {
+   "id": "query/set_left_mode",
+   "kind": "sql",
+   "file": "sql/query/set_left_mode.sql",
+   "tags": [
+    "query",
+    "set-op",
+    "corresponding"
+   ]
+  },
+  {
+   "id": "query/set_strict_corresponding_inner",
+   "kind": "sql",
+   "file": "sql/query/set_strict_corresponding_inner.sql",
+   "tags": [
+    "query",
+    "set-op",
+    "corresponding"
+   ]
+  },
+  {
+   "id": "query/set_union_all",
+   "kind": "sql",
+   "file": "sql/query/set_union_all.sql",
+   "tags": [
+    "query",
+    "set-op"
+   ]
+  },
+  {
+   "id": "query/set_union_distinct",
+   "kind": "sql",
+   "file": "sql/query/set_union_distinct.sql",
+   "tags": [
+    "query",
+    "set-op"
+   ]
+  },
+  {
+   "id": "query/string_functions",
+   "kind": "sql",
+   "file": "sql/query/string_functions.sql",
+   "tags": [
+    "query",
+    "function",
+    "string"
+   ]
+  },
+  {
+   "id": "query/struct_functions",
+   "kind": "sql",
+   "file": "sql/query/struct_functions.sql",
+   "tags": [
+    "query",
+    "struct"
+   ]
+  },
+  {
+   "id": "query/struct_star",
+   "kind": "sql",
+   "file": "sql/query/struct_star.sql",
+   "tags": [
+    "query",
+    "struct",
+    "star"
+   ]
+  },
+  {
+   "id": "query/subquery_array",
+   "kind": "sql",
+   "file": "sql/query/subquery_array.sql",
+   "tags": [
+    "query",
+    "subquery",
+    "array"
+   ]
+  },
+  {
+   "id": "query/subquery_derived_table",
+   "kind": "sql",
+   "file": "sql/query/subquery_derived_table.sql",
+   "tags": [
+    "query",
+    "subquery"
+   ]
+  },
+  {
+   "id": "query/subquery_exists_in",
+   "kind": "sql",
+   "file": "sql/query/subquery_exists_in.sql",
+   "tags": [
+    "query",
+    "subquery"
+   ]
+  },
+  {
+   "id": "query/subquery_scalar",
+   "kind": "sql",
+   "file": "sql/query/subquery_scalar.sql",
+   "tags": [
+    "query",
+    "subquery"
+   ]
+  },
+  {
+   "id": "query/system_variables",
+   "kind": "sql",
+   "file": "sql/query/system_variables.sql",
+   "tags": [
+    "query",
+    "system-variable"
+   ]
+  },
+  {
+   "id": "query/table_alias_implicit",
+   "kind": "sql",
+   "file": "sql/query/table_alias_implicit.sql",
+   "tags": [
+    "query",
+    "select"
+   ]
+  },
+  {
+   "id": "query/table_function_unnest_in_from_chain",
+   "kind": "sql",
+   "file": "sql/query/table_function_unnest_in_from_chain.sql",
+   "tags": [
+    "query",
+    "unnest"
+   ]
+  },
+  {
+   "id": "query/table_valued_function_call",
+   "kind": "sql",
+   "file": "sql/query/table_valued_function_call.sql",
+   "tags": [
+    "query",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/tablesample",
+   "kind": "sql",
+   "file": "sql/query/tablesample.sql",
+   "tags": [
+    "query",
+    "tablesample"
+   ]
+  },
+  {
+   "id": "query/tablesample_with_join",
+   "kind": "sql",
+   "file": "sql/query/tablesample_with_join.sql",
+   "tags": [
+    "query",
+    "tablesample"
+   ]
+  },
+  {
+   "id": "query/templated_function_call_udf",
+   "kind": "sql",
+   "file": "sql/query/templated_function_call_udf.sql",
+   "tags": [
+    "query",
+    "udf"
+   ]
+  },
+  {
+   "id": "query/unnest_generate_array",
+   "kind": "sql",
+   "file": "sql/query/unnest_generate_array.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/unnest_generate_date_array",
+   "kind": "sql",
+   "file": "sql/query/unnest_generate_date_array.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array",
+    "date"
+   ]
+  },
+  {
+   "id": "query/unnest_multi_arrays",
+   "kind": "sql",
+   "file": "sql/query/unnest_multi_arrays.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/unnest_offset",
+   "kind": "sql",
+   "file": "sql/query/unnest_offset.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/unnest_struct_array",
+   "kind": "sql",
+   "file": "sql/query/unnest_struct_array.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array",
+    "struct"
+   ]
+  },
+  {
+   "id": "query/unpivot",
+   "kind": "sql",
+   "file": "sql/query/unpivot.sql",
+   "tags": [
+    "query",
+    "unpivot"
+   ]
+  },
+  {
+   "id": "query/unpivot_include_nulls",
+   "kind": "sql",
+   "file": "sql/query/unpivot_include_nulls.sql",
+   "tags": [
+    "query",
+    "unpivot"
+   ]
+  },
+  {
+   "id": "query/unpivot_multi_column",
+   "kind": "sql",
+   "file": "sql/query/unpivot_multi_column.sql",
+   "tags": [
+    "query",
+    "unpivot"
+   ]
+  },
+  {
+   "id": "query/unquoted_dashed_project",
+   "kind": "sql",
+   "file": "sql/query/unquoted_dashed_project.sql",
+   "tags": [
+    "query",
+    "quoting"
+   ]
+  },
+  {
+   "id": "query/values_array_of_structs",
+   "kind": "sql",
+   "file": "sql/query/values_array_of_structs.sql",
+   "tags": [
+    "query",
+    "struct",
+    "array"
+   ]
+  },
+  {
+   "id": "query/vector_distance",
+   "kind": "sql",
+   "file": "sql/query/vector_distance.sql",
+   "tags": [
+    "query",
+    "vector"
+   ]
+  },
+  {
+   "id": "query/vector_search",
+   "kind": "sql",
+   "file": "sql/query/vector_search.sql",
+   "tags": [
+    "query",
+    "vector",
+    "table-function"
+   ]
+  },
+  {
+   "id": "query/wildcard_table",
+   "kind": "sql",
+   "file": "sql/query/wildcard_table.sql",
+   "tags": [
+    "query",
+    "wildcard"
+   ]
+  },
+  {
+   "id": "query/wildcard_table_suffix_function",
+   "kind": "sql",
+   "file": "sql/query/wildcard_table_suffix_function.sql",
+   "tags": [
+    "query",
+    "wildcard"
+   ]
+  },
+  {
+   "id": "query/window_frames",
+   "kind": "sql",
+   "file": "sql/query/window_frames.sql",
+   "tags": [
+    "query",
+    "window",
+    "frame"
+   ]
+  },
+  {
+   "id": "query/window_named",
+   "kind": "sql",
+   "file": "sql/query/window_named.sql",
+   "tags": [
+    "query",
+    "window"
+   ]
+  },
+  {
+   "id": "query/window_ntile_percent",
+   "kind": "sql",
+   "file": "sql/query/window_ntile_percent.sql",
+   "tags": [
+    "query",
+    "window"
+   ]
+  },
+  {
+   "id": "query/with_in_set_operand",
+   "kind": "sql",
+   "file": "sql/query/with_in_set_operand.sql",
+   "tags": [
+    "query",
+    "cte",
+    "set-op"
+   ]
+  },
+  {
+   "id": "script/assert",
+   "kind": "sql",
+   "file": "sql/script/assert.sql",
+   "tags": [
+    "script",
+    "assert"
+   ]
+  },
+  {
+   "id": "script/begin_end_block",
+   "kind": "sql",
+   "file": "sql/script/begin_end_block.sql",
+   "tags": [
+    "script",
+    "control-flow"
+   ]
+  },
+  {
+   "id": "script/begin_end_with_tempobjects",
+   "kind": "sql",
+   "file": "sql/script/begin_end_with_tempobjects.sql",
+   "tags": [
+    "script",
+    "temp"
+   ]
+  },
+  {
+   "id": "script/begin_exception",
+   "kind": "sql",
+   "file": "sql/script/begin_exception.sql",
+   "tags": [
+    "script",
+    "exception"
+   ]
+  },
+  {
+   "id": "script/call_procedure",
+   "kind": "sql",
+   "file": "sql/script/call_procedure.sql",
+   "tags": [
+    "script",
+    "procedure"
+   ]
+  },
+  {
+   "id": "script/call_with_dml",
+   "kind": "sql",
+   "file": "sql/script/call_with_dml.sql",
+   "tags": [
+    "script",
+    "procedure"
+   ]
+  },
+  {
+   "id": "script/case_when",
+   "kind": "sql",
+   "file": "sql/script/case_when.sql",
+   "tags": [
+    "script",
+    "control-flow"
+   ]
+  },
+  {
+   "id": "script/declare_set",
+   "kind": "sql",
+   "file": "sql/script/declare_set.sql",
+   "tags": [
+    "script",
+    "variable"
+   ]
+  },
+  {
+   "id": "script/declare_struct_array",
+   "kind": "sql",
+   "file": "sql/script/declare_struct_array.sql",
+   "tags": [
+    "script",
+    "variable",
+    "struct"
+   ]
+  },
+  {
+   "id": "script/execute_immediate",
+   "kind": "sql",
+   "file": "sql/script/execute_immediate.sql",
+   "tags": [
+    "script",
+    "dynamic-sql"
+   ]
+  },
+  {
+   "id": "script/execute_immediate_concat",
+   "kind": "sql",
+   "file": "sql/script/execute_immediate_concat.sql",
+   "tags": [
+    "script",
+    "dynamic-sql"
+   ]
+  },
+  {
+   "id": "script/execute_immediate_using_positional",
+   "kind": "sql",
+   "file": "sql/script/execute_immediate_using_positional.sql",
+   "tags": [
+    "script",
+    "dynamic-sql"
+   ]
+  },
+  {
+   "id": "script/for_in",
+   "kind": "sql",
+   "file": "sql/script/for_in.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop"
+   ]
+  },
+  {
+   "id": "script/if_elseif_else",
+   "kind": "sql",
+   "file": "sql/script/if_elseif_else.sql",
+   "tags": [
+    "script",
+    "control-flow"
+   ]
+  },
+  {
+   "id": "script/labels",
+   "kind": "sql",
+   "file": "sql/script/labels.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop"
+   ]
+  },
+  {
+   "id": "script/loop_leave_iterate",
+   "kind": "sql",
+   "file": "sql/script/loop_leave_iterate.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop"
+   ]
+  },
+  {
+   "id": "script/raise",
+   "kind": "sql",
+   "file": "sql/script/raise.sql",
+   "tags": [
+    "script",
+    "exception"
+   ]
+  },
+  {
+   "id": "script/repeat_until",
+   "kind": "sql",
+   "file": "sql/script/repeat_until.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop"
+   ]
+  },
+  {
+   "id": "script/return",
+   "kind": "sql",
+   "file": "sql/script/return.sql",
+   "tags": [
+    "script",
+    "control-flow"
+   ]
+  },
+  {
+   "id": "script/session_system_var",
+   "kind": "sql",
+   "file": "sql/script/session_system_var.sql",
+   "tags": [
+    "script",
+    "variable"
+   ]
+  },
+  {
+   "id": "script/set_from_subquery",
+   "kind": "sql",
+   "file": "sql/script/set_from_subquery.sql",
+   "tags": [
+    "script",
+    "variable"
+   ]
+  },
+  {
+   "id": "script/while_loop",
+   "kind": "sql",
+   "file": "sql/script/while_loop.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop"
+   ]
+  },
+  {
+   "id": "transaction/begin_commit",
+   "kind": "sql",
+   "file": "sql/transaction/begin_commit.sql",
+   "tags": [
+    "transaction"
+   ]
+  },
+  {
+   "id": "transaction/begin_rollback",
+   "kind": "sql",
+   "file": "sql/transaction/begin_rollback.sql",
+   "tags": [
+    "transaction"
+   ]
+  }
+ ]
+}

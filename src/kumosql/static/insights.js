@@ -438,8 +438,24 @@ function onlyTagged(data, tagName) {
   };
 }
 
+/** Keep only the assets carrying any of the Dataform ``tags``, and what connects them. */
+function onlyDataformTags(data, names) {
+  const wanted = new Set(names);
+  const keep = new Set(data.nodes.filter((node) => (node.dataform_tags || []).some((name) => wanted.has(name))).map((node) => node.id));
+  return {
+    ...data,
+    nodes: data.nodes.filter((node) => keep.has(node.id)),
+    edges: data.edges.filter((edge) => keep.has(edge.from) && keep.has(edge.to)),
+    column_lineage: data.column_lineage.filter((item) => keep.has(item.node)),
+    gaps: data.gaps.filter((gap) => keep.has(gap.asset)),
+  };
+}
+
 function renderGraph(data, root) {
   const params = new URLSearchParams(location.search);
+  const dataformTags = [...new Set(data.nodes.flatMap((node) => node.dataform_tags || []))].sort((a, b) => a.localeCompare(b));
+  const chosenDataformTags = (params.get("dtag") || "").split(",").filter((name) => dataformTags.includes(name));
+  if (chosenDataformTags.length) data = onlyDataformTags(data, chosenDataformTags);
   const tagName = window.KumoTags && params.get("tag") ? params.get("tag") : "";
   if (tagName) data = onlyTagged(data, tagName);
   const graph = buildGraph(data);
@@ -485,10 +501,21 @@ function renderGraph(data, root) {
       location.href = url;
     } }, h("option", { value: "" }, "All assets"),
     ...window.KumoTags.names().map((name) => h("option", { value: name, selected: name === tagName }, name)))) : null;
+  const dataformTagPick = dataformTags.length ? h("details", { class: "dtag-pick" },
+    h("summary", { class: "toolbar-button", text: chosenDataformTags.length ? `Dataform tags (${chosenDataformTags.length})` : "Dataform tags" }),
+    h("div", { class: "dtag-menu" }, ...dataformTags.map((name) =>
+      h("label", { class: "dtag-option" }, h("input", { type: "checkbox", value: name, checked: chosenDataformTags.includes(name), onchange: (event) => {
+        const next = new Set(chosenDataformTags);
+        if (event.target.checked) next.add(name); else next.delete(name);
+        const url = new URL(location.href);
+        if (next.size) url.searchParams.set("dtag", [...next].join(",")); else url.searchParams.delete("dtag");
+        url.searchParams.delete("node");
+        location.href = url;
+      } }), h("span", { text: name }))))) : null;
   const tagNote = tagName ? h("p", { class: "scope-note", text: data.nodes.length ? `Showing only assets tagged “${tagName}”.` : `No asset in this view is tagged “${tagName}”.` }) : null;
 
   if (tagName && !data.nodes.length) {
-    root.append(h("div", { class: "graph-toolbar" }, tagPick, tagNote));
+    root.append(h("div", { class: "graph-toolbar" }, tagPick, dataformTagPick, tagNote));
     return;
   }
   if (!data.nodes.length) {
@@ -511,6 +538,19 @@ function renderGraph(data, root) {
   const viewTabs = h("div", { class: "tabs", role: "group", "aria-label": "Graph view" },
     ...[["explorer", "Explorer", "Zoom, pan, collapse and focus. Built for large pipelines."], ["simple", "Simple", "Every asset in one fixed layout. Best for small projects."]].map(([key, label, title]) =>
       h("button", { class: "tab", type: "button", "data-view": key, title, onclick: () => setView(key) }, label)));
+  const graphCard = h("div", { class: "card graph-card" }, explorerHost, canvas);
+  const fullscreenButton = h("button", { type: "button", class: "toolbar-button graph-fullscreen", "aria-pressed": "false", onclick: () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else graphCard.requestFullscreen?.().catch(() => {});
+  } });
+  const syncFullscreen = () => {
+    const on = document.fullscreenElement === graphCard;
+    fullscreenButton.textContent = on ? "Exit full screen" : "Full screen";
+    fullscreenButton.setAttribute("aria-pressed", String(on));
+    setTimeout(() => explorer?.fit?.(), 150);
+  };
+  document.addEventListener("fullscreenchange", syncFullscreen);
+  syncFullscreen();
   const detail = h("aside", { class: "graph-detail", "aria-live": "polite" });
   const legend = h("div", { class: "graph-legend" },
     ...Object.entries(EDGE_SOURCES).map(([key, [label, title]]) =>
@@ -520,9 +560,9 @@ function renderGraph(data, root) {
 
   root.append(
     coverageStrip,
-    h("div", { class: "graph-toolbar" }, search, options, tagPick, tagNote, h("div", { class: "graph-toolbar-tabs" }, viewTabs, modeTabs)),
+    h("div", { class: "graph-toolbar" }, search, options, tagPick, dataformTagPick, tagNote, h("div", { class: "graph-toolbar-tabs" }, viewTabs, modeTabs)),
     h("div", { class: "graph-layout" },
-      h("div", { class: "card graph-card" }, explorerHost, canvas, legend),
+      (graphCard.append(legend, fullscreenButton), graphCard),
       detail),
     gapsPanel(data));
 

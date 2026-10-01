@@ -18,6 +18,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 import random
+import re
 import logging
 import sys
 import time
@@ -85,6 +86,8 @@ def load_pairs(path: Path) -> list[tuple[str, str]]:
 
 
 def to_dialect(sql: str, dialect: str) -> str:
+    # Spark writes date('1994-01-01 +08'); the engines under test read the date part.
+    sql = re.sub(r"date\(\s*'(\d{4}-\d{2}-\d{2})\s*[+-]\d{2}(?::?\d{2})?'\s*\)", r"date('\1')", sql, flags=re.I)
     return sqlglot.transpile(sql, read="mysql", write=dialect)[0]
 
 
@@ -94,7 +97,13 @@ def _duck_type(column: Column) -> str:
         return "VARCHAR"
     if base in {"DECIMAL", "DOUBLE", "FLOAT", "NUMERIC"}:
         return "DOUBLE"
+    if base in {"DATE", "TIMESTAMP", "DATETIME"}:
+        return "DATE"
     return "BIGINT"
+
+
+# Around the dates the TPC-H pairs filter on, so range predicates split the rows.
+DATES = ["1993-12-31", "1994-01-01", "1994-09-01", "1994-12-15", "1995-03-21", "1996-06-30", "1997-01-01"]
 
 
 def new_database(tables: dict[str, Table]):
@@ -116,7 +125,8 @@ def random_rows(table: Table, rng: random.Random) -> list[list]:
     for _ in range(rng.choice([0, 0, 1, 2, 3, 4])):
         row = []
         for column in table.columns:
-            domain = ["a", "b", "c"] if _duck_type(column) == "VARCHAR" else [0, 1, 2, 3]
+            kind = _duck_type(column)
+            domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES}.get(kind, [0, 1, 2, 3])
             value = rng.choice(domain)
             if not column.not_null and rng.random() < 0.25:
                 value = None

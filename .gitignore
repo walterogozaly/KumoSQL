@@ -13,6 +13,7 @@ htmlcov/
 
 # Local copies of large/private workbook fixtures.
 data/
+!tests/fixtures/bq_syntax/sql/data/
 *.csv
 !tests/fixtures/
 !tests/fixtures/*.csv

@@ -1,0 +1,6 @@
+config { type: "table" }
+js {
+  const states = ["CA", "NY"];
+  function inList(col, values) { return `${col} IN (${values.map(v => `'${v}'`).join(", ")})`; }
+}
+SELECT id FROM ${ref("raw_users")} WHERE ${inList("state", states)}

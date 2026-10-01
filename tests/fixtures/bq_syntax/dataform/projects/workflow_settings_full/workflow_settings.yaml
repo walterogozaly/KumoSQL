@@ -1,0 +1,11 @@
+defaultProject: kumosql
+defaultLocation: US
+defaultDataset: kumosql_messy
+defaultAssertionDataset: dataform_assertions
+projectSuffix: _dev
+datasetSuffix: _staging
+namePrefix: dev_
+dataformCoreVersion: 3.0.0
+vars:
+  state: CA
+  limit_rows: "10"

@@ -1,0 +1,1 @@
+SELECT id, NTILE(4) OVER (ORDER BY sale_price) AS q, PERCENT_RANK() OVER (ORDER BY sale_price) AS pr, CUME_DIST() OVER (ORDER BY sale_price) AS cd, NTH_VALUE(sale_price, 2) OVER (ORDER BY id) AS second FROM `kumosql.kumosql_messy.raw_order_items`

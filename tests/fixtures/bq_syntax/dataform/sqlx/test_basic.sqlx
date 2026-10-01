@@ -1,0 +1,5 @@
+config { type: "test", dataset: "table_basic" }
+input "raw_users" {
+  SELECT 1 AS id, 'CA' AS state
+}
+SELECT 1 AS id, 'CA' AS state

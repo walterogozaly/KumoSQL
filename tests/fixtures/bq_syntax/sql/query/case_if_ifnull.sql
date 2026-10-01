@@ -1,0 +1,1 @@
+SELECT CASE WHEN age < 18 THEN 'minor' WHEN age < 65 THEN 'adult' ELSE 'senior' END AS g, CASE state WHEN 'CA' THEN 1 ELSE 0 END AS ca, IF(age > 30, 'a', 'b') AS c, IFNULL(city, 'n/a') AS d, COALESCE(city, state, 'z') AS e, NULLIF(state, 'CA') AS f FROM `kumosql.kumosql_messy.raw_users`

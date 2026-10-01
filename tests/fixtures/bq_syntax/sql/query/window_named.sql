@@ -1,0 +1,1 @@
+SELECT id, RANK() OVER w AS r, LAG(sale_price) OVER (w) AS prev, FIRST_VALUE(sale_price) OVER (w ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS f FROM `kumosql.kumosql_messy.raw_order_items` WINDOW w AS (PARTITION BY user_id ORDER BY created_at)

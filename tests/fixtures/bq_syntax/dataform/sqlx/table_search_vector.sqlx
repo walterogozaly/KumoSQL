@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT * FROM ${ref("raw_users")} WHERE SEARCH(${ref("raw_users")}, 'x')

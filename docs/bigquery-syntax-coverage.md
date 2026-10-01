@@ -1,0 +1,122 @@
+# BigQuery and Dataform syntax coverage
+
+`tests/fixtures/bq_syntax/` is a checked-in manifest of small, valid cases, one per construct: every GoogleSQL statement family (query syntax, pipe syntax, DDL, DML, procedural language, transactions, DCL, `EXPORT DATA`/`LOAD DATA`, search and vector functions, JSON, geography, `ML.*`, UDFs, wildcard tables, `FOR SYSTEM_TIME AS OF`, `INFORMATION_SCHEMA`, quoting) and the Dataform action types (table, view, incremental, operations, assertion, declaration, test), their config options, the `ref`/`resolve`/`self`/`when`/`incremental()` helpers, `js` blocks and includes, plus whole-project layouts (`workflow_settings.yaml`, `dataform.json`, `actions.yaml`, the JavaScript API).
+
+```
+tests/fixtures/bq_syntax/
+  manifest.json        every case: id, file, kind (sql or sqlx), feature tags
+  sql/<family>/*.sql   one construct per file (GoogleSQL)
+  dataform/sqlx/*.sqlx one construct per file (Dataform)
+  dataform/projects/   whole-project layouts
+  dry_run.json         BigQuery dry-run result for each case
+  known_gaps.json      the gaps below, one entry per case and stage
+```
+
+SQL cases read the test bed's `raw_users` and `raw_order_items` or public datasets, so they can be dry-run against project `kumosql`; a few name objects that do not exist (a remote model, a connection, a bucket), which only the dry run can tell apart from a typo.
+
+## What each stage means
+
+Each case runs through every stage that applies. A stage is **✅ pass**, **⚪ unsupported** (KumoSQL or sqlglot says so explicitly and nothing is damaged) or **❌ fail** (a crash, a lost reference, a changed meaning). Only ✅ and ⚪ can be committed: a ⚪ must be listed in `known_gaps.json` with who owns it, so a new gap fails the test suite until it is fixed or written down.
+
+| Stage | What is checked |
+|---|---|
+| parse | sqlglot's BigQuery dialect parses the text into a structured statement (not an opaque `Command`) |
+| load | the case loads as a model (`.sql`) or action (`.sqlx`) without a diagnostic |
+| refs | (Dataform) every literal `ref()` and config `dependencies` entry is a graph edge |
+| graph | graph, column lineage and report build without error, and the tables the statement reads appear as reads |
+| fingerprint | (single queries) the output-comparison SQL built around the query is valid |
+| cleanup | the cleanup and rewrite rules run, and their result is proven equivalent or left unchanged |
+| format | `format_sql` neither crashes nor changes meaning; backticked names are untouched; the result is proven equivalent |
+| prover | the SMT prover returns a verdict or "unknown" for the query compared with itself, and never crashes or calls it different |
+| dry run | BigQuery accepts the SQL (`dryRun`, never billed). ✅ accepted; ⚠ parsed, then stopped on something outside the SQL (an object, connection, session or permission the project lacks); ❌ rejected; – not submitted (administrative statements, and Dataform actions that need the Dataform compiler) |
+
+Run it yourself:
+
+```
+python -m pytest tests/test_bq_syntax_coverage.py          # every case x stage
+python tools/bq_syntax_coverage.py --failures              # list failures
+python tools/bq_syntax_coverage.py --markdown out.md       # the table below
+python tools/bq_dry_run_manifest.py --project kumosql      # free dry runs; needs BQ_ACCESS_TOKEN or ADC
+```
+
+After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverage.py --update-known-gaps` under each supported sqlglot version (CI tests 26.0.0 and the latest) and delete the entries that now pass.
+
+## What this found and fixed
+
+- A nested `name:` (a documented column called `name`, a `{ name, schema }` entry in `dependencies`) renamed the action. Config keys are now read at the top level only.
+- `${ctx.ref()}`, `${resolve()}`, `${ctx.self()}` and config `dependencies` were not graph edges.
+- Dataform test `input "x" { ... }` blocks were treated as SQL; they are now preserved like `config`.
+- The formatter upper-cased backticked routine paths (``DROP FUNCTION `p.d.f` `` became `` `P.D.F` ``), and the equivalence check called that proven. Quoted names are now restored exactly.
+- `CREATE TABLE/VIEW ... AS SELECT`, `INSERT ... SELECT` and `EXPORT DATA ... AS SELECT` in `.sql` files had no reads in the graph; they do now.
+- A `.sql` file with a `config { }` block is loaded as an action instead of failing to parse.
+- Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
+
+## Gaps that are not fixed here
+
+- **sqlglot** keeps procedural statements (`DECLARE`, `IF`, `LOOP`, `BEGIN ... END`, `CALL`, `EXECUTE IMMEDIATE`) and many `ALTER`/`DROP`/`CREATE` forms (reservations, indexes, aggregate and remote functions) as opaque commands, and cannot parse `LOAD DATA`, `CHANGES`/`APPENDS`, `UNION ... CORRESPONDING` and some pipe operators. KumoSQL leaves such statements untouched and says so. Which cases fail differs between sqlglot 26.0.0 and the latest, so `known_gaps.json` holds the union of both.
+- **Graph reads of DML and scripts** (`MERGE ... USING`, `UPDATE ... FROM`, `DELETE ... WHERE EXISTS`, scripts) are not extracted, so a model written as a script shows unknown reads.
+- **Cleanup on `BEGIN ... END` and procedure bodies** is refused (`source_splice_error`): the statements cannot be mapped back to their source text, so the file is left as written.
+- **Project layouts**: `projectSuffix`/`datasetSuffix`/`namePrefix` are ignored, the Dataform JavaScript API in `.js` files and `actions.yaml` are not read (`tests/test_bq_syntax_projects.py`, as xfail).
+- **Computed references**: a `ref()` whose argument is computed in JavaScript is reported as unresolved rather than guessed.
+- **Prover** (owned by the SQLSolver work): unknown, never wrong, for `LIMIT`, window functions, `TABLESAMPLE`, unaliased subqueries and nondeterministic aggregates.
+
+## Coverage
+
+<!-- coverage-table:start -->
+| Family | Cases | parse | load | graph | fingerprint | cleanup | format | prover | dry run |
+|---|---:|---|---|---|---|---|---|---|---|
+| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 5 ✅ 3 ⚪ | n/a | 1 ✅ 7 ⚠ |
+| dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 4 ✅ 1 ⚪ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
+| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 71 ✅ 3 ⚪ | n/a | 72 ✅ 2 ⚪ | 44 ✅ 30 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| dml | 16 | 16 ✅ | 16 ✅ | 10 ✅ 6 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
+| query | 131 | 124 ✅ 7 ⚪ | 131 ✅ | 131 ✅ | 123 ✅ | 125 ✅ 6 ⚪ | 111 ✅ 20 ⚪ | 96 ✅ 27 ⚪ | 115 ✅ 16 ⚠ |
+| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 19 ✅ 3 ⚪ | n/a | 16 ✅ 6 ⚪ | 16 ✅ 6 ⚪ | n/a | 20 ✅ 2 ⚠ |
+| transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
+| **all GoogleSQL** | 258 | 200 ✅ 58 ⚪ | 258 ✅ | 245 ✅ 13 ⚪ | 123 ✅ | 244 ✅ 14 ⚪ | 194 ✅ 64 ⚪ | 96 ✅ 27 ⚪ | 202 ✅ 45 ⚠ 11 – |
+
+| Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
+|---|---:|---|---|---|---|---|---|---|
+| SQLX actions | 64 | 60 ✅ | 63 ✅ 1 ⚪ | 55 ✅ 1 ⚪ | 62 ✅ | 60 ✅ 2 ⚪ | 62 ✅ | 40 ✅ 2 ⚠ 22 – |
+
+### Known gaps
+
+| Stage | Owner | Reason | Cases | Examples |
+|---|---|---|---:|---|
+| parse | sqlglot | ParseError: Invalid expression / Unexpected token. | 27 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
+| parse | sqlglot | sqlglot keeps CREATE as an opaque command | 11 | `ddl/create_aggregate_function`, `ddl/create_assignment`, `ddl/create_capacity_reservation` |
+| parse | sqlglot | sqlglot keeps ALTER as an opaque command | 10 | `ddl/alter_materialized_view`, `ddl/alter_model`, `ddl/alter_organization` |
+| parse | sqlglot | ParseError: Expecting ). | 9 | `ddl/create_procedure_sql`, `query/appends_changes_functions`, `query/changes_function` |
+| parse | sqlglot | sqlglot keeps DROP as an opaque command | 6 | `ddl/drop_all_row_access_policies`, `ddl/drop_external_table`, `ddl/drop_index` |
+| parse | sqlglot | sqlglot keeps BEGIN as an opaque command | 5 | `script/begin_end_block`, `script/begin_exception`, `script/raise` |
+| parse | sqlglot | sqlglot keeps DECLARE as an opaque command | 3 | `script/declare_set`, `script/declare_struct_array`, `script/set_from_subquery` |
+| parse | sqlglot | sqlglot keeps EXECUTE as an opaque command | 3 | `script/execute_immediate`, `script/execute_immediate_concat`, `script/execute_immediate_using_positional` |
+| parse | sqlglot | AttributeError: 'NoneType' object has no attribute 'name' | 2 | `data/load_data`, `data/load_data_temp_table` |
+| parse | sqlglot | sqlglot keeps END as an opaque command | 2 | `ddl/create_procedure_options`, `script/for_in` |
+| parse | sqlglot | sqlglot keeps CALL as an opaque command | 2 | `script/call_procedure`, `script/call_with_dml` |
+| parse | sqlglot | ParseError: Required keyword: 'options' missing for <class 'sqlglot.expressions.dml.Export | 1 | `data/export_model` |
+| parse | sqlglot | sqlglot keeps GRANT as an opaque command | 1 | `dcl/grant_project` |
+| parse | sqlglot | ParseError: Unsupported pipe syntax operator: 'SET'.. | 1 | `query/pipe_extend_set_drop` |
+| parse | sqlglot | ParseError: Required keyword: 'expression' missing for <class 'sqlglot.expressions.Union'> | 1 | `query/set_corresponding` |
+| parse | sqlglot | ParseError: Required keyword: 'true' missing for <class 'sqlglot.expressions.functions.If' | 1 | `script/case_when` |
+| parse | sqlglot | sqlglot keeps IF as an opaque command | 1 | `script/if_elseif_else` |
+| parse | sqlglot | sqlglot keeps LOOP as an opaque command | 1 | `script/loop_leave_iterate` |
+| parse | sqlglot | sqlglot keeps WHILE as an opaque command | 1 | `script/while_loop` |
+| load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
+| graph | kumosql | reads of this DML, script or non-query statement are not extracted | 13 | `dcl/revoke_table`, `ddl/create_table_clone`, `ddl/create_table_copy` |
+| cleanup | kumosql | source_splice_error | 7 | `dataform/operations_ddl_script`, `ddl/create_procedure_options`, `script/begin_end_block` |
+| cleanup | kumosql | equivalence could not be proven for every changed statement | 6 | `dataform/table_with_qualify_cte`, `query/pipe_as_alias`, `query/pipe_call_tablesample` |
+| cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
+| cleanup | kumosql | recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_pars | 2 | `ddl/create_procedure_sql`, `script/case_when` |
+| cleanup | kumosql | recovered_parse | 2 | `query/pipe_extend_set_drop`, `query/pipe_with_cte` |
+| cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
+| format | kumosql | equivalence could not be proven for every changed statement | 64 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
+| format | sqlfluff | parse_error | 20 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
+| prover | prover | unsupported: LIMIT is not modeled | 12 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
+| prover | prover | unsupported: WINDOW is not modeled | 8 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pipe_window` |
+| prover | prover | unsupported: unaliased subquery in FROM | 2 | `query/nested_with_in_subquery`, `query/pipe_pivot_unpivot` |
+| prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT) | 2 | `query/pipe_call_tablesample`, `query/tablesample` |
+| prover | prover | unsupported: nondeterministic: ARRAY_AGG(DISTINCT state) | 1 | `query/aggregate_filter_modifiers` |
+| prover | prover | unsupported: nondeterministic: ANY_VALUE(city) | 1 | `query/aggregate_functions` |
+| prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (50 PERCENT) | 1 | `query/tablesample_with_join` |
+| refs | kumosql | ref() inside a js block is not resolved: raw_users | 1 | `dataform/js_block_with_ref_in_helper` |
+<!-- coverage-table:end -->

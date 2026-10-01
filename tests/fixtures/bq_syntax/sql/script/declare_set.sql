@@ -1,0 +1,6 @@
+DECLARE x INT64 DEFAULT 5;
+DECLARE a, b STRING;
+DECLARE d DATE DEFAULT CURRENT_DATE();
+SET x = x + 1;
+SET (a, b) = ('p', 'q');
+SELECT x, a, b, d

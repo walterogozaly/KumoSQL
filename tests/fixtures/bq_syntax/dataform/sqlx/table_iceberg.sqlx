@@ -1,0 +1,5 @@
+config {
+  type: "table",
+  bigquery: { tableFormat: "ICEBERG", fileFormat: "PARQUET", connection: "us.some_connection", storageUri: "gs://some-bucket/iceberg" }
+}
+SELECT id FROM ${ref("raw_users")}

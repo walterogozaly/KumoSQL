@@ -1,0 +1,1 @@
+SELECT a, b FROM UNNEST([1,2,3]) AS a WITH OFFSET o1 JOIN UNNEST(['x','y','z']) AS b WITH OFFSET o2 ON o1 = o2

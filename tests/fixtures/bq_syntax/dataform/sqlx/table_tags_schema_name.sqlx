@@ -1,0 +1,8 @@
+config {
+  type: "table",
+  name: "renamed_users",
+  schema: "other_dataset",
+  database: "kumosql",
+  tags: ["daily", "pii"]
+}
+SELECT id FROM ${ref("raw_users")}

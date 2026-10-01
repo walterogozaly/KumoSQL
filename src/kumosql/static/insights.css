@@ -48,7 +48,9 @@
 .graph-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .graph-toolbar .field { width: min(360px, 100%); }
 .graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
-.graph-card { padding: 0; overflow: hidden; }
+.graph-card { position: relative; padding: 0; overflow: hidden; }
+.graph-fullscreen { position: absolute; top: 10px; right: 10px; z-index: 4; box-shadow: var(--shadow-sm); }
+.graph-card .lv-toolbar { padding-right: 130px; }
 .graph-toolbar-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
 .lv-host { display: flex; flex-direction: column; }
 .lv-host[hidden], .graph-canvas[hidden], .graph-legend[hidden] { display: none; }
@@ -228,3 +230,14 @@
 .detail-tags-edit .eyebrow { margin: 0 0 6px; }
 .detail-tags-edit .is-error { color: var(--bad-fg); }
 .source-panel #rate-form .field { flex: 0 1 140px; }
+.graph-card:fullscreen { display: flex; flex-direction: column; border-radius: 0; background: var(--code-bg); }
+.graph-card:fullscreen .lv-host:not([hidden]) { flex: 1; min-height: 0; }
+.graph-card:fullscreen .lv-frame { flex: 1; min-height: 0; }
+.graph-card:fullscreen .lv-stage { height: 100%; }
+.graph-card:fullscreen .graph-canvas { flex: 1; }
+.dtag-pick { position: relative; }
+.dtag-pick summary { list-style: none; cursor: pointer; }
+.dtag-pick summary::-webkit-details-marker { display: none; }
+.dtag-menu { position: absolute; z-index: 6; top: 34px; right: 0; display: flex; flex-direction: column; gap: 2px; min-width: 180px; max-height: 280px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow); }
+.dtag-option { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+.dtag-option:hover { background: var(--accent-soft); }

@@ -177,6 +177,21 @@ class _Unknown(Exception):
 # --------------------------------------------------------------------------
 
 _VALUE_SORT = None
+_STRING_RANK = None
+
+
+def _string_rank():
+    """An order-embedding of strings into the reals: ``a < b`` iff ``rank(a) < rank(b)``.
+
+    Z3's own string ordering takes seconds even for ``d < '1994-12-01'``. The
+    prover only needs the ordering facts the queries use (see ``order_facts``),
+    which hold in the real ordering, so a proof over the abstraction holds there too.
+    """
+
+    global _STRING_RANK
+    if _STRING_RANK is None:
+        _STRING_RANK = z3.Function("string_rank", z3.StringSort(), z3.RealSort())
+    return _STRING_RANK
 
 
 def _value_sort():
@@ -236,7 +251,7 @@ def _lt(a, b):
         V.num(a) < V.num(b),
         z3.If(
             z3.And(V.is_Str(a), V.is_Str(b)),
-            V.str(a) < V.str(b),
+            _string_rank()(V.str(a)) < _string_rank()(V.str(b)),
             z3.If(
                 z3.And(V.is_Bool(a), V.is_Bool(b)),
                 z3.And(z3.Not(V.bool(a)), V.bool(b)),
@@ -244,6 +259,14 @@ def _lt(a, b):
             ),
         ),
     )
+
+
+def _rank_injective(a, b):
+    """Equal ranks mean equal strings (the ranking is one-to-one), stated for the pair ``a``, ``b``."""
+
+    V, rank = _value_sort(), _string_rank()
+    sa, sb = V.str(a), V.str(b)
+    return z3.Implies(rank(sa) == rank(sb), sa == sb)
 
 
 def _pair_lt(a: _Val, b: _Val):
@@ -410,6 +433,12 @@ def _from_clause(select: exp.Select):
     return select.args.get("from") or select.args.get("from_")
 
 
+def _is_limit_zero(node: exp.Expression) -> bool:
+    limit = node.args.get("limit")
+    value = limit.expression if limit is not None else None
+    return isinstance(value, exp.Literal) and not value.is_string and value.this == "0"
+
+
 def _with_clause(query: exp.Expression):
     return query.args.get("with") or query.args.get("with_")
 
@@ -458,6 +487,10 @@ class _Compiler:
         # Read DISTINCT derived tables as sets (existence tests) instead of opaque relations.
         self.semijoin = True
         self.used_setsrc = False
+        self.limit_opaque = False
+        # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
+        self.ordered = False
+        self.string_literals: set[str] = set()
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -479,12 +512,23 @@ class _Compiler:
                 raise Unsupported(f"nondeterministic: {sub.sql(dialect='bigquery')}")
             if isinstance(sub, exp.Anonymous) and (sub.name or "").upper() in _NONDETERMINISTIC_NAMES:
                 raise Unsupported(f"nondeterministic: {sub.sql(dialect='bigquery')}")
-            if isinstance(sub, (exp.Limit, exp.Offset, exp.Window)):
+            if isinstance(sub, exp.Window):
                 raise Unsupported(f"{name.upper()} is not modeled")
 
     def _query(self, node: exp.Expression, ctes: dict) -> _Union:
         while isinstance(node, exp.Subquery):
             node = node.this
+        if node.args.get("limit") or node.args.get("offset"):
+            if _is_limit_zero(node):
+                # Nothing survives LIMIT 0: the columns, with no rows.
+                bare = node.copy()
+                for key in ("limit", "offset", "order"):
+                    bare.set(key, None)
+                result = self._query(bare, ctes)
+                result.column_names = list(result.names)
+                result.branches = []
+                return result
+            raise Unsupported("LIMIT is not modeled")
         with_clause = _with_clause(node)
         if with_clause is not None:
             if with_clause.args.get("recursive"):
@@ -763,9 +807,7 @@ class _Compiler:
             occs.append(occ)
             return alias, _Source(occ=occ)
         if isinstance(node, exp.Subquery):
-            alias = node.alias_or_name.lower()
-            if not alias:
-                raise Unsupported("unaliased subquery in FROM")
+            alias = node.alias_or_name.lower() or self.fresh("anon")
             return alias, self._derived(node.this, ctes, occs, conds)
         raise Unsupported(f"FROM item {type(node).__name__}")
 
@@ -822,6 +864,8 @@ class _Compiler:
 
         body = self._expand_ctes(body.copy(), ctes)
         self._check_nondeterminism(body)
+        if any(isinstance(node, (exp.Limit, exp.Offset)) for node in body.walk()):
+            self.limit_opaque = True
         # Kept whole, the relation must not depend on the outer query.
         if any(isinstance(node, (exp.Unnest, exp.Lateral)) for node in body.walk()):
             raise Unsupported("UNNEST or LATERAL inside a derived relation")
@@ -1027,8 +1071,11 @@ class _Compiler:
         unknown_or_true = self._existence(query, env, lambda scope, node: z3.Not(compare(scope, node).f))
         return _Pred(true_atom, z3.Not(unknown_or_true))
 
-    @staticmethod
-    def _compare(op: str, a: _Val, b: _Val) -> _Pred:
+    def _compare(self, op: str, a: _Val, b: _Val) -> _Pred:
+        if op not in ("=", "<>"):
+            self.ordered = True
+            # Equal ranks mean equal strings (the ranking is one-to-one); stated for the compared pair.
+            self.facts.append(_rank_injective(a.val, b.val))
         if op == "=":
             r = a.val == b.val
         elif op == "<>":
@@ -1116,6 +1163,8 @@ class _Compiler:
         if isinstance(e, (exp.Add, exp.Mul)):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
             # Commutative: apply the function to the arguments in a canonical order.
+            self.ordered = True
+            self.facts.append(_rank_injective(_canon(a), _canon(b)))
             swap = _pair_lt(b, a)
             first = _Val(z3.If(swap, b.null, a.null), z3.If(swap, b.val, a.val))
             second = _Val(z3.If(swap, a.null, b.null), z3.If(swap, a.val, b.val))
@@ -1153,6 +1202,7 @@ class _Compiler:
         V = _value_sort()
         if e.is_string:
             text = e.this
+            self.string_literals.add(text)
             if _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
                 raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' is modeled)")
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal(text)))
@@ -1160,6 +1210,16 @@ class _Compiler:
         if negate:
             value = -value
         return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{value.numerator}/{value.denominator}")))
+
+    def order_facts(self) -> list:
+        """Facts about the string ordering that the compiled queries may rely on."""
+
+        if not self.ordered or not self.string_literals:
+            return []
+        rank = _string_rank()
+        literals = sorted(self.string_literals)
+        facts = [rank(z3.StringVal(a)) < rank(z3.StringVal(b)) for a, b in zip(literals, literals[1:])]
+        return facts
 
     def _function(self, name: str, arity: int):
         self.uses_uf = True
@@ -1810,6 +1870,76 @@ class _Prover:
                 changes["having"] = _Pred(_subst(block.having.t, pairs), _subst(block.having.f, pairs))
         return dataclasses.replace(block, **changes)
 
+    def sub_consequences(self, block):
+        """Facts ``atom => condition on outer columns`` implied by each existence test.
+
+        A witness row satisfies the guard, so a guard condition over columns that
+        the guard equates to outer columns holds of those outer columns. The atom
+        is otherwise free, so without this a required test would not tell the
+        prover that, e.g., ``d.x = e.x AND e.x > 7`` forces ``d.x > 7``.
+        """
+
+        if not block.subs or any(o.opaque for o in block.occs):
+            return block
+        extra = []
+        for sub in block.subs:
+            if any(o.opaque for o in sub.occs):
+                continue
+            inner_ids = set()
+            for occ in sub.occs:
+                for v in occ.cols.values():
+                    inner_ids.update((v.null.get_id(), v.val.get_id()))
+            conjuncts, stack = [], [sub.guard]
+            while stack:
+                term = stack.pop()
+                if z3.is_and(term):
+                    stack.extend(term.children())
+                else:
+                    conjuncts.append(term)
+
+            def consts(term):
+                found, todo = set(), [term]
+                while todo:
+                    t = todo.pop()
+                    if z3.is_const(t) and t.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+                        found.add(t.get_id())
+                    todo.extend(t.children())
+                return found
+
+            ids = {c.get_id() for c in conjuncts}
+            pairs = []
+            for occ in sub.occs:
+                for v in occ.cols.values():
+                    for term in conjuncts:
+                        if not z3.is_eq(term):
+                            continue
+                        left, right = term.children()
+                        if right.eq(v.val):
+                            left, right = right, left
+                        if not left.eq(v.val) or consts(right) & inner_ids:
+                            continue
+                        # ``right`` is an outer term; the pair is known non-NULL when both sides' flags are.
+                        outer_null = z3.Bool(right.decl().name() + "#null") if z3.is_const(right) else None
+                        if (
+                            outer_null is not None
+                            and z3.Not(v.null).get_id() in ids
+                            and z3.Not(outer_null).get_id() in ids
+                        ):
+                            pairs.append((v.val, right))
+                            pairs.append((v.null, outer_null))
+                            break
+            for term in conjuncts:
+                used = consts(term)
+                if not used:
+                    continue
+                moved = _subst(term, pairs)
+                if consts(moved) & inner_ids:
+                    continue
+                extra.append(z3.Implies(sub.atom, moved))
+        if extra:
+            block.facts = block.facts + extra
+        return block
+
     def push_having(self, block):
         """``HAVING`` on group keys only is a ``WHERE`` filter (every row of a group agrees on it)."""
 
@@ -1938,6 +2068,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             b = prover.push_having(b)
             b = prover.as_distinct_spj(b)
             b = prover.inline_unique_subs(b)
+            b = prover.sub_consequences(b)
             if union.distinct or b.distinct:
                 b = prover.inline_unique_subs(b, require_unique=False)
             branches.append(prover.merge_key_occurrences(b))
@@ -2157,7 +2288,7 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
 # --------------------------------------------------------------------------
 
 
-def prove_equivalent_smt(
+def _prove_core(
     left_sql: str,
     right_sql: str,
     *,
@@ -2197,19 +2328,25 @@ def prove_equivalent_smt(
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {error}", assumptions=assumptions)
         except sqlglot.errors.ParseError as error:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=assumptions)
+        assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ())
+        extra = compiler.order_facts()
+        if extra:
+            for union in (left, right):
+                for block in union.branches:
+                    block.facts = block.facts + extra
 
         if len(left.names) != len(right.names):
             return SmtEquivalenceResult(
                 SmtStatus.NOT_PROVEN,
                 f"different column counts ({len(left.names)} vs {len(right.names)})",
-                assumptions=assumptions,
+                assumptions=assumed,
             )
         for position, (a, b) in enumerate(zip(left.names, right.names), start=1):
             if compare_names and a != b:
                 return SmtEquivalenceResult(
                     SmtStatus.NOT_PROVEN,
                     f"column {position} is named {a or '(unnamed)'} on the left and {b or '(unnamed)'} on the right",
-                    assumptions=assumptions,
+                    assumptions=assumed,
                 )
 
         prover = _Prover(timeout_ms, constraints)
@@ -2219,7 +2356,7 @@ def prove_equivalent_smt(
         except _SetSourceUnresolved:
             proven, reason = False, "a derived table is not joined on all of its columns"
         if proven:
-            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=assumptions)
+            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=assumed)
         if not compiler.uses_uf:
             counterexample = _find_counterexample(prover, left, right)
             if counterexample is not None:
@@ -2227,11 +2364,11 @@ def prove_equivalent_smt(
                     SmtStatus.NOT_EQUIVALENT,
                     "the queries differ on the attached database",
                     counterexample=counterexample,
-                    assumptions=assumptions,
+                    assumptions=assumed,
                 )
         if prover.unknown:
             reason += " (the solver timed out on some checks)"
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumptions)
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumed)
 
     result = attempt(True)
     if result.status is not SmtStatus.NOT_PROVEN or not used[0]:
@@ -2275,3 +2412,110 @@ def main(argv: list[str] | None = None) -> int:
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
     return 0 if result.proven else 1
+
+
+LIMIT_SOURCE_ASSUMPTION = "a LIMIT subquery with the same text returns the same rows each time"
+TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for equal inputs"
+
+
+def _split_limit(sql: str, dialect: str):
+    """``(core_sql, spec)`` for a query ending in ORDER BY .. LIMIT, ``(sql, None)`` without a limit.
+
+    ``spec`` is ``(limit, offset, ordering, covers_all)`` where ``ordering`` lists
+    ``(output position, descending, nulls first)``; ``None`` as the core means the
+    shape is not handled (``spec`` then says why).
+    """
+
+    tree = sqlglot.parse_one(sql, read=dialect)
+    root = tree
+    while isinstance(root, exp.Subquery):
+        root = root.this
+    if not isinstance(root, (exp.Select, exp.Union, exp.Intersect, exp.Except)):
+        return sql, None
+    limit, offset, order = root.args.get("limit"), root.args.get("offset"), root.args.get("order")
+    if (limit is None and offset is None) or _is_limit_zero(root):
+        return sql, None
+    if limit is None or order is None:
+        return None, "LIMIT without ORDER BY or OFFSET without LIMIT picks arbitrary rows"
+    if not isinstance(limit.expression, exp.Literal) or limit.expression.is_string:
+        return None, "LIMIT is not a constant"
+    if offset is not None and (not isinstance(offset.expression, exp.Literal) or offset.expression.is_string):
+        return None, "OFFSET is not a constant"
+    first = root
+    while isinstance(first, (exp.Union, exp.Intersect, exp.Except, exp.Subquery)):
+        first = first.this
+    if not isinstance(first, exp.Select) or any(isinstance(e, exp.Star) for e in first.expressions):
+        return None, "ORDER BY with a star select list"
+    outputs = [(e.alias_or_name.lower(), (e.this if isinstance(e, exp.Alias) else e).sql()) for e in first.expressions]
+    ordering = []
+    for item in order.expressions:
+        if not isinstance(item, exp.Ordered):
+            return None, "ORDER BY item"
+        key = item.this
+        position = None
+        if isinstance(key, exp.Literal) and not key.is_string and 1 <= int(key.this) <= len(outputs):
+            position = int(key.this) - 1
+        else:
+            text = key.sql()
+            matches = [
+                i
+                for i, (name, expr) in enumerate(outputs)
+                if (isinstance(key, exp.Column) and not key.table and key.name.lower() == name) or expr == text
+            ]
+            if len(matches) == 1 or (matches and len({outputs[i] for i in matches}) == 1):
+                position = matches[0]
+        if position is None:
+            return None, "ORDER BY on an expression that is not an output column"
+        desc = bool(item.args.get("desc"))
+        nulls_first = item.args.get("nulls_first")
+        ordering.append((position, desc, (not desc) if nulls_first is None else bool(nulls_first)))
+    covers = {p for p, _, _ in ordering} >= set(range(len(outputs)))
+    core = tree.copy()
+    stripped = core
+    while isinstance(stripped, exp.Subquery):
+        stripped = stripped.this
+    for key in ("limit", "offset", "order"):
+        stripped.set(key, None)
+    spec = (
+        int(limit.expression.this),
+        int(offset.expression.this) if offset is not None else 0,
+        tuple(ordering),
+        covers,
+    )
+    return core.sql(dialect=dialect), spec
+
+
+def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    A query ending in ``ORDER BY .. LIMIT n [OFFSET m]`` is handled when both sides
+    have the same limit, offset and ordering (by output column) and the queries
+    without them are equivalent: equal inputs give equal first rows, up to rows
+    tied on the ordering, which is recorded in the result's assumptions unless the
+    ordering covers every output column.
+
+    See ``_prove_core`` for the options.
+    """
+
+    dialect = kwargs.get("dialect", "bigquery")
+    try:
+        left_core, left_spec = _split_limit(left_sql, dialect)
+        right_core, right_spec = _split_limit(right_sql, dialect)
+    except sqlglot.errors.SqlglotError:
+        return _prove_core(left_sql, right_sql, **kwargs)
+    if left_spec is None and right_spec is None and left_core is not None and right_core is not None:
+        return _prove_core(left_sql, right_sql, **kwargs)
+    if left_core is None or right_core is None:
+        reason = left_spec if left_core is None else right_spec
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {reason}")
+    if left_spec is None or right_spec is None:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
+    if left_spec[:3] != right_spec[:3]:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")
+    result = _prove_core(left_core, right_core, **kwargs)
+    if result.status is SmtStatus.NOT_EQUIVALENT:
+        # The rows before the cut differ, but the first rows may still agree.
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ before the LIMIT", assumptions=result.assumptions)
+    if result.proven and not left_spec[3]:
+        result = dataclasses.replace(result, assumptions=tuple(result.assumptions) + (TIE_ASSUMPTION,))
+    return result

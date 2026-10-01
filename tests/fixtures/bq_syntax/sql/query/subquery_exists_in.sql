@@ -1,0 +1,1 @@
+SELECT u.id FROM `kumosql.kumosql_messy.raw_users` AS u WHERE EXISTS (SELECT 1 FROM `kumosql.kumosql_messy.raw_order_items` AS i WHERE i.user_id = u.id) AND u.id IN (SELECT user_id FROM `kumosql.kumosql_messy.raw_order_items`) AND NOT EXISTS (SELECT 1 FROM `kumosql.kumosql_messy.raw_order_items` AS i WHERE i.user_id = -1)

@@ -691,6 +691,9 @@ def graph_or_empty(scope_name: str | None = None) -> dict:
             "project", "Load a Dataform project to see its query graph.", scope_name)
     with activity("Building graph"), stage("graph payload"):
         payload = graph_payload(current["pipeline"], current["label"], current["observed_reads"], scope_name)
+    models = current["pipeline"].models
+    for node in payload.get("nodes", []):  # Dataform ``tags`` from each action's config block
+        node["dataform_tags"] = sorted({tag for tag in getattr(models.get(node["id"]), "tags", ()) or () if isinstance(tag, str)})
     try:  # production schedules come from saved Dataform data only; never block or fail the graph
         from .workflow_configs import annotate
 

@@ -1,0 +1,2 @@
+config { type: "view", materialized: true, bigquery: { partitionBy: "DATE(created_at)", clusterBy: ["state"] } }
+SELECT state, created_at, COUNT(*) AS n FROM ${ref("raw_users")} GROUP BY state, created_at

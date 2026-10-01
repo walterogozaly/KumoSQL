@@ -1,0 +1,8 @@
+DECLARE n INT64 DEFAULT 1;
+IF n = 1 THEN
+  SELECT 'one';
+ELSEIF n = 2 THEN
+  SELECT 'two';
+ELSE
+  SELECT 'many';
+END IF

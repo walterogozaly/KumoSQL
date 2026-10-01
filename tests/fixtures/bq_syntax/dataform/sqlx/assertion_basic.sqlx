@@ -1,0 +1,2 @@
+config { type: "assertion" }
+SELECT id FROM ${ref("raw_users")} WHERE id IS NULL

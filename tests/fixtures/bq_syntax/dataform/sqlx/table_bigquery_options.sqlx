@@ -1,0 +1,12 @@
+config {
+  type: "table",
+  bigquery: {
+    partitionBy: "DATE(created_at)",
+    clusterBy: ["state", "id"],
+    partitionExpirationDays: 30,
+    requirePartitionFilter: false,
+    labels: { team: "data", env: "dev" },
+    additionalOptions: { friendly_name: "users" }
+  }
+}
+SELECT id, state, created_at FROM ${ref("raw_users")}
