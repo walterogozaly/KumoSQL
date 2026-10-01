@@ -187,6 +187,15 @@ class UIHandler(BaseHTTPRequestHandler):
 
             self._json(200, repositories.listing())
             return
+        if self.path == "/api/workflow-configs":
+            from . import repositories, workflow_configs
+
+            self._json(200, {
+                "default_location": workflow_configs.default_location(),
+                "repositories": {item["id"]: workflow_configs.summary(item["url"])
+                                 for item in repositories.listing()["repositories"]},
+            })
+            return
         if self.path == "/api/scope-fields":
             self._json(200, self._scope_fields())
             return
@@ -402,7 +411,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/project/git", "/api/project", "/api/project/clear",
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
-            "/api/storage",
+            "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -434,6 +443,18 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import storage
 
                 result = storage.save(payload.get("folder"))
+            elif self.path.startswith("/api/workflow-configs/"):
+                from . import repositories, workflow_configs
+
+                item = next((i for i in repositories.listing()["repositories"] if i["id"] == payload.get("id")), None)
+                if item is None:
+                    raise ValueError("unknown repository")
+                if self.path.endswith("/refresh"):
+                    result = workflow_configs.summary(item["url"], refresh=True)
+                else:
+                    workflow_configs.save_settings(
+                        item["url"], payload.get("projects"), payload.get("location"), payload.get("defaultLocation"))
+                    result = workflow_configs.summary(item["url"])
             elif self.path.startswith("/api/repositories"):
                 from . import repositories
 

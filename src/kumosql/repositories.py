@@ -18,7 +18,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from . import state, storage
+from . import state, storage, workflow_configs
 from .git_repo import GitRepoError, load_into_graph, parse_branch, parse_remote
 
 SECTION = "repositories"
@@ -122,6 +122,7 @@ def load(repo_id: object, refresh: bool = False) -> dict:
         item.update(last_loaded=_now(), label=result["label"], files=result["files"])
         data["active"] = repo_id
         _write(data)
+        workflow_configs.prefetch(item["url"])
         return {**result, "id": repo_id, "last_loaded": item["last_loaded"]}
 
 

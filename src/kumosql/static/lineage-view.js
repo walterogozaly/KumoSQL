@@ -171,7 +171,7 @@
         surface: get("--surface", "#fff"), surface2: get("--surface-2", "#f6f8fc"), border: get("--border-strong", "#a7b9d1"),
         text: get("--text", "#172233"), muted: get("--text-muted", "#54627a"), accent: get("--accent", "#1f4fa8"),
         accentSoft: get("--accent-soft", "#e9f0fc"), accentBorder: get("--accent-border", "#8aacde"),
-        warn: get("--warn", "#c7871f"), warnBg: get("--warn-bg", "#fff3dc"), bg: get("--code-bg", "#fafbfe"), edge: get("--border-strong", "#a7b9d1"),
+        warn: get("--warn", "#c7871f"), ok: get("--ok", "#2c8a5a"), warnBg: get("--warn-bg", "#fff3dc"), bg: get("--code-bg", "#fafbfe"), edge: get("--border-strong", "#a7b9d1"),
       };
     }
 
@@ -186,6 +186,7 @@
         { selector: "node.kind-source", style: { "background-color": c.surface2 } },
         { selector: "node.kind-observed", style: { "border-style": "dashed" } },
         { selector: "node.is-gap", style: { "border-style": "dashed", "border-color": c.warn, "background-color": c.warnBg } },
+        { selector: "node.is-scheduled", style: { "border-width": 2, "border-color": c.ok } },
         { selector: "node.is-group", style: { shape: "round-rectangle", width: NODE_W + 14, height: NODE_H + 12, "border-width": 2, "background-color": c.accentSoft, "border-color": c.accentBorder, "font-weight": 700 } },
         { selector: "node.is-lit", style: { "border-color": c.accent, "border-width": 2 } },
         { selector: "node.is-selected", style: { "border-color": c.accent, "border-width": 3, "background-color": c.accentSoft } },
@@ -249,7 +250,7 @@
       for (const [id, info] of visible) {
         const isGroup = id.startsWith(GROUP_PREFIX);
         const node = nodesById.get(id);
-        const classes = isGroup ? "is-group" : `kind-${node.kind}${gaps.has(id) ? " is-gap" : ""}`;
+        const classes = isGroup ? "is-group" : `kind-${node.kind}${gaps.has(id) ? " is-gap" : ""}${node.schedules ? " is-scheduled" : ""}`;
         elements.push({ group: "nodes", data: { id, label: isGroup ? `${id.slice(GROUP_PREFIX.length)} · ${info.members.length}` : node.name, group: isGroup }, position: positions.get(id), classes });
       }
       edges.forEach((edge, i) => elements.push({ group: "edges", data: { id: `e${i}`, source: edge.from, target: edge.to }, classes: `edge-${edge.source}` }));

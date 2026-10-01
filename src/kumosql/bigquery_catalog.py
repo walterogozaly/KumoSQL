@@ -110,6 +110,17 @@ def _refresh_in_background(key: str, fetch) -> None:
     threading.Thread(target=work, daemon=True).start()
 
 
+def peek(key: str) -> dict | None:
+    """The saved answer for ``key`` in ``cached`` form, or ``None``; never calls BigQuery or any other service."""
+    with _lock:
+        _load_disk()
+        entry = _memory.get(key)
+    if entry is None:
+        return None
+    return {"data": entry["data"], "fetchedAt": entry["at"], "cached": True,
+            "stale": False, "refreshing": time.time() - entry["at"] >= ttl_seconds()}
+
+
 def cached(key: str, fetch, refresh: bool = False) -> dict:
     """Return ``{"data", "fetchedAt", "cached", "stale", "refreshing"}`` for ``key``.
 

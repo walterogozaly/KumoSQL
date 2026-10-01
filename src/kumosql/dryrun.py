@@ -141,8 +141,8 @@ def _urllib_transport(url: str, headers: dict[str, str], body: bytes) -> tuple[i
             return exc.code, {"error": {"message": payload.decode("utf-8", "replace")}}
 
 
-def access_token() -> str:
-    """Find credentials in the environment and return an OAuth access token."""
+def access_token(scope: str = _SCOPE) -> str:
+    """Find credentials in the environment and return an OAuth access token for ``scope``."""
 
     token = os.environ.get("BQ_ACCESS_TOKEN")
     if token:
@@ -159,7 +159,7 @@ def access_token() -> str:
                 "pip install 'kumosql[bigquery]'"
             ) from exc
         try:
-            credentials, _ = google.auth.default(scopes=[_SCOPE])
+            credentials, _ = google.auth.default(scopes=[scope])
             if not credentials.valid:
                 credentials.refresh(Request())
         except Exception as exc:
@@ -177,10 +177,10 @@ def access_token() -> str:
         ) from exc
     if raw_key:
         credentials = service_account.Credentials.from_service_account_info(
-            json.loads(raw_key), scopes=[_SCOPE]
+            json.loads(raw_key), scopes=[scope]
         )
     else:
-        credentials = service_account.Credentials.from_service_account_file(key_path, scopes=[_SCOPE])
+        credentials = service_account.Credentials.from_service_account_file(key_path, scopes=[scope])
     if not credentials.valid:
         credentials.refresh(Request())
     return credentials.token

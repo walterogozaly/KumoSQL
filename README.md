@@ -478,6 +478,7 @@ Every command prints `--help`.
 | `kumosql-change-report` | Report changes between two project snapshots |
 | `kumosql-ci-check` | Turn a change report into a check conclusion and comment |
 | `kumosql-evidence-summary` | Anonymized share of changed outputs that have useful evidence |
+| `kumosql-workflow-configs` | Dataform workflow configurations (production schedules) for a git repository (`URL [--project P]... [--location L] [--csv FILE]`) |
 
 ```shell
 lift-subqueries input.sql --output output.sql --report
@@ -486,6 +487,16 @@ lift-subqueries input.sql --output output.sql --report
 ## What's next
 
 KumoSQL is moving toward a query graph that combines declared and observed dependencies with measured cost, backed by the verification engine described above. The graph, cost and change report pages show your loaded project, job history and branch comparisons. Next up is finding proposed queries that duplicate existing tables and turning shared logic into verified refactors, with failed rewrites never mistaken for successful ones. The open work is tracked in the GitHub issues.
+
+### Production schedules (Dataform workflow configurations)
+
+When a repository is connected, KumoSQL looks up the Dataform repository whose git remote matches it and loads that repository's **workflow configurations** from the Dataform API, so the graph can show which models run on a production schedule. A configuration is *active in production* when it has a cron schedule, is not disabled, and uses the release configuration named `production`. A model counts as scheduled when an active configuration selects it by tag (`tags` in its `config` block) or by name, or reaches it through the configuration's include-dependencies / include-dependents flags; a configuration that selects nothing runs everything.
+
+- **Credentials.** The same Google credentials as the BigQuery pages (`gcloud auth application-default login`, a service account, or `BQ_ACCESS_TOKEN`), asked for the `cloud-platform` scope Dataform needs. No extra token to paste. The credentials need to read Dataform repositories and workflow configurations in the projects searched.
+- **Where it looks.** The projects chosen under **Settings → BigQuery projects**, in the default location `us-central1`. Each repository entry under **Settings → Repositories** has a *Production schedules* line with fields to override the projects and location for that repository (an empty field clears the override), plus **Refresh schedules**. Matching ignores case, a trailing `.git` or `/`, a `user@`, and the difference between `https://github.com/org/repo` and `git@github.com:org/repo.git`.
+- **When it loads and refreshes.** After each repository load, in the background. The answer is saved with the catalog cache and lives for the **query cache lifetime** (48 hours by default); an older copy is shown at once and refreshed behind it, and **Refresh schedules** re-reads it now. If Dataform cannot be reached the saved copy stays, marked as such. If no Dataform repository has the remote, or Dataform returns an error, the entry says so; the repository still loads.
+- **On the graph.** Scheduled models get a green edge in both views and a *Runs in production* tag in the detail panel that lists the schedules. `GET /api/graph` adds `schedules` to those nodes and a `workflow` summary.
+- **Export.** `kumosql-workflow-configs https://github.com/org/repo --project my-project --location us-central1 --csv schedules.csv` (or `python -m kumosql workflow-configs ...`) prints or writes one row per configuration with the columns `REPO`, `WORKFLOW_CONFIGURATION`, `TAGS`, `SPECIFIC_ACTIONS`, `INCLUDE_DEPENDENCIES`, `INCLUDE_DEPENDENTS`, `CRON_SCHEDULE`, `TIME_ZONE`, `DISABLED`, `RELEASE_CONFIGURATION`, `ACTIVE_PRODUCTION`, `UPDATED_TS`. The API is `GET /api/workflow-configs`, `POST /api/workflow-configs/refresh` and `POST /api/workflow-configs/settings` with `{"id": ...}`.
 
 ## Connecting a private Dataform repository
 

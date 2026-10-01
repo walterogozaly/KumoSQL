@@ -465,6 +465,40 @@
       chooseFolder.hidden = false;
     }).catch(() => { /* the server will say so when you connect */ });
 
+    let schedules = { repositories: {}, default_location: "" };
+    const when = (seconds) => (seconds ? ago(new Date(seconds * 1000).toISOString()) : "");
+    // Production schedules (Dataform workflow configurations) for one repository.
+    function scheduleBlock(repo) {
+      const info = schedules.repositories[repo.id];
+      const box = h("div", { class: "repo-wf" });
+      if (!info) return box;
+      const lines = {
+        loaded: `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${info.repositories.join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`,
+      };
+      const text = lines[info.state] || info.message || "";
+      box.append(h("p", { class: `sp-row-hint${info.state === "error" ? " is-error" : ""}`, text: `Production schedules: ${text}` }));
+      for (const warning of info.warnings || []) box.append(h("p", { class: "sp-row-hint is-error", text: warning }));
+      const projects = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Google Cloud projects to search", autocomplete: "off",
+        placeholder: info.override ? "" : `${(info.projects || []).join(", ") || "projects from BigQuery settings"}`, value: info.override ? info.projects.join(", ") : "" });
+      const location = h("input", { type: "text", class: "sp-input", "aria-label": "Dataform location", autocomplete: "off", size: "16", placeholder: info.location, value: info.override ? info.location : "" });
+      const load = h("button", { type: "button", class: "toolbar-button", text: "Refresh schedules" });
+      const save = h("button", { type: "button", class: "link-button", text: "Save search" });
+      load.addEventListener("click", () => work(load, async () => { await repoCall("POST", "/api/workflow-configs/refresh", { id: repo.id }); }));
+      save.addEventListener("click", () => work(save, async () => {
+        await repoCall("POST", "/api/workflow-configs/settings", { id: repo.id, projects: projects.value, location: location.value.trim() });
+        await repoCall("POST", "/api/workflow-configs/refresh", { id: repo.id });
+      }));
+      box.append(h("div", { class: "repo-form" }, projects, location, save, load));
+      return box;
+    }
+    async function work(button, action) {
+      button.disabled = true;
+      setStatus("Asking Dataform…");
+      try { await action(); setStatus("Loaded"); } catch (error) { setStatus(error.message, true); }
+      button.disabled = false;
+      try { await refreshList(); } catch { /* keep the last list */ }
+    }
+
     const draw = () => {
       list.replaceChildren();
       if (!data.repositories.length) list.append(h("li", { class: "sp-row-hint", text: "No repositories connected yet." }));
@@ -488,10 +522,15 @@
             h("span", { class: "repo-branch", text: repo.branch ? ` @ ${repo.branch}` : "" }),
             isActive ? h("span", { class: "repo-badge", text: "Active" }) : ""),
           h("p", { class: `sp-row-hint${repo.error ? " is-error" : ""}`, text: status }),
+          scheduleBlock(repo),
           h("div", { class: "repo-actions" }, use, refresh, remove)));
       }
     };
-    const refreshList = async () => { data = await repoCall("GET", "/api/repositories"); draw(); };
+    const refreshList = async () => {
+      data = await repoCall("GET", "/api/repositories");
+      try { schedules = await repoCall("GET", "/api/workflow-configs"); } catch { schedules = { repositories: {} }; }
+      draw();
+    };
     async function run(button, action, done) {
       button.disabled = true;
       setStatus("Working with git…");

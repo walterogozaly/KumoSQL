@@ -78,6 +78,8 @@ class Model:
     declared_dependencies: tuple[Target, ...] = ()
     # Dataform expressions masked out of ``sql``; identifiers in them count as reads.
     masked_expressions: tuple[str, ...] = ()
+    # Dataform tags from the config block; workflow configurations select actions by them.
+    tags: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:

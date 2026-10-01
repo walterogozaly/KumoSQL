@@ -655,6 +655,8 @@ select.sp-input { min-width: 200px; }
 .repo-item .sp-row-hint.is-error { color: var(--danger, #c0392b); }
 .repo-actions { display: flex; gap: 8px; align-items: center; }
 .repo-form { display: flex; flex-wrap: wrap; gap: 8px; max-width: 640px; }
+.repo-wf { margin: 4px 0 8px; }
+.repo-wf .sp-row-hint { margin: 2px 0 6px; }
 .repo-form .sp-text { flex: 1 1 280px; min-width: 0; }
 .bq-chosen, .bq-results { list-style: none; margin: 0 0 12px; padding: 0; }
 .bq-results { max-height: 260px; overflow: auto; }

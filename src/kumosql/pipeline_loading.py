@@ -82,6 +82,15 @@ def _config_value(config: str, key: str) -> str | None:
     return match.group(2) if match else None
 
 
+def _config_tags(config: str) -> tuple[str, ...]:
+    """Tags from a Dataform config block: ``tags: ["a", "b"]`` or ``tags: "a"``."""
+
+    match = re.search(r"\btags\s*:\s*(?:\[(?P<list>[^\]]*)\]|(?P<one>['\"`][^'\"`]*['\"`]))", config)
+    if not match:
+        return ()
+    return tuple(dict.fromkeys(re.findall(r"['\"`]([^'\"`]+)['\"`]", match.group("list") or match.group("one"))))
+
+
 def _read_project_defaults(
     root: Path, diagnostics: list[PipelineDiagnostic] | None = None
 ) -> tuple[str, str]:
@@ -228,7 +237,7 @@ def load_sqlx_project(
         if "${" in body:
             body, restorations = _mask_sqlx_interpolations(body)
             masked = tuple(item.original for item in restorations)
-        add_model(Model(target, kind, body, relative, tuple(dependencies), masked))
+        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, _config_tags(config)))
 
     from .pipeline import Pipeline  # deferred: pipeline imports this module
 
@@ -290,6 +299,7 @@ def load_compiled_graph(
                     sql,
                     file_name if isinstance(file_name, str) else None,
                     tuple(target_of(dep) for dep in item.get("dependencyTargets", [])),
+                    tags=tuple(tag for tag in item.get("tags", []) if isinstance(tag, str)),
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(
