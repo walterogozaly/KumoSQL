@@ -390,12 +390,14 @@
   }
 
   /* Connected Dataform repositories: saved on this computer and reloaded on start. */
+  let reposChanged = false;
   async function repoCall(method, url, payload) {
     const response = await fetch(url, {
       method, headers: { "Content-Type": "application/json" }, body: payload === undefined ? undefined : JSON.stringify(payload),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Request failed");
+    if (method !== "GET") reposChanged = true;
     return data;
   }
 
@@ -538,6 +540,11 @@
           h("button", { type: "button", class: "icon-button sp-close", "aria-label": "Close settings", onclick: () => dialog.close() }, svg('<path d="M6 6l12 12M18 6 6 18"/>'))),
         h("div", { class: "sp-body" })),
     );
+    // Pages that show the connected project reload to pick up a changed repository.
+    dialog.addEventListener("close", () => {
+      if (reposChanged && document.getElementById("project-form")) location.reload();
+      reposChanged = false;
+    });
     // Close when clicking the dimmed backdrop, not the panel.
     dialog.addEventListener("mousedown", (event) => { if (event.target === dialog) dialog.close(); });
     // A focused search box would otherwise swallow Escape.
