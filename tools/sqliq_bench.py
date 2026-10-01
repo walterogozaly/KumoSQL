@@ -20,9 +20,11 @@ of SQL-IQ:
     python tools/sqliq_bench.py --data SQL-IQ            # or set SQLIQ_DIR
     python tools/sqliq_bench.py --data SQL-IQ --limit 100 --jobs 4
 
-The other six SQL-IQ tasks need a language model (a question in English, an
-error taxonomy) or running database servers (SQL Translation), so they are not
-part of this harness.
+Two more tasks are answered by hand-written rules (``sqliq_judge.py``,
+``sqliq_errors.py``); ``--tasks`` picks which to score. Text-to-SQL and
+Conversational SQL must write SQL from English, SQL Debugging runs in BIRD-CRITIC's
+environment and SQL Translation executes on five database servers and the BIRD
+databases, so they are left out.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ import time
 import sqlglot
 from sqlglot import exp
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 DATA_FILE = Path("data") / "sql_equ_judge" / "sql_equ_judge.jsonl"
@@ -320,33 +323,116 @@ def run(pairs: list[Pair], jobs: int = 1) -> tuple[list[tuple[str, str]], float]
     return answers, time.time() - start
 
 
+def score_judge(data_dir: Path) -> dict:
+    import sqliq_judge
+
+    rows = [json.loads(line) for line in open(data_dir / "data" / "sql_judge" / "sql_judge_dev.jsonl", encoding="utf-8")]
+    right = sum(
+        sqliq_judge.judge(r["question"], r["evidence"], r["schema_str"], r["candidate_a"], r["candidate_b"]) == r["correct_answer"]
+        for r in rows
+    )
+    return {"correct": right, "total": len(rows), "accuracy": right / len(rows)}
+
+
+def score_errors(data_dir: Path) -> dict:
+    """SQL-IQ's own metrics for SQL Error Classification (same definitions as its ``evaluate``)."""
+
+    import sqliq_errors
+
+    rows = json.load(open(data_dir / "data" / "sql_err_class" / "err_class.json", encoding="utf-8"))
+    schemas = {}
+    for line in open(data_dir / "data" / "schemas" / "bird_dev.jsonl", encoding="utf-8"):
+        item = json.loads(line)
+        schemas[item["db_name"]] = item["schema"]
+    det = [0, 0, 0]
+    uni = [0, 0, 0]
+    typ = [0, 0, 0]
+    exact = 0
+    for row in rows:
+        predicted = sqliq_errors.classify(row["question"], row["evidence"], schemas[row["db_id"]], row["sql"])
+        truth = set() if row["output_label"] is True else {
+            e["error_type"] if isinstance(e, dict) else e for e in row["error_types"]
+        }
+        predicted_set = set(predicted)
+        p_unified = predicted_set or {"No error"}
+        g_unified = truth or {"No error"}
+        uni[0] += len(p_unified & g_unified)
+        uni[1] += len(p_unified - g_unified)
+        uni[2] += len(g_unified - p_unified)
+        if predicted_set and truth:
+            det[0] += 1
+        elif predicted_set:
+            det[1] += 1
+        elif truth:
+            det[2] += 1
+        typ[0] += len(predicted_set & truth)
+        typ[1] += len(predicted_set - truth)
+        typ[2] += len(truth - predicted_set)
+        exact += predicted_set == truth
+
+    def f1(tp, fp, fn):
+        precision = tp / (tp + fp) if tp + fp else 0.0
+        recall = tp / (tp + fn) if tp + fn else 0.0
+        return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+    return {
+        "correct": exact,
+        "total": len(rows),
+        "accuracy": exact / len(rows),
+        "detection_f1": f1(*det),
+        "classification_f1": f1(*typ),
+        "unified_f1": f1(*uni),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--data", default=os.environ.get("SQLIQ_DIR"), help="a checkout of SQL-IQ (or set SQLIQ_DIR)")
-    parser.add_argument("--limit", type=int, help="score only the first N pairs")
+    parser.add_argument("--tasks", default="sql_equ_judge,sql_judge,sql_err_class", help="comma-separated task names")
+    parser.add_argument("--limit", type=int, help="score only the first N equivalence pairs")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
-    parser.add_argument("--json", help="write the metrics and every answer to this file")
+    parser.add_argument("--json", help="write the equivalence metrics and every answer to this file")
     args = parser.parse_args(argv)
     if not args.data:
         parser.error("pass --data <SQL-IQ checkout> or set SQLIQ_DIR")
-    pairs = load_pairs(Path(args.data))[: args.limit]
-    answers, seconds = run(pairs, args.jobs)
-    metrics = score(pairs, answers)
-    wrong_proofs = sum(1 for p, (a, how) in zip(pairs, answers) if how == "proved" and p.label == "no")
-    print(
-        f"sql_equ_judge {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%}), "
-        f"equivalent {metrics['equivalent_accuracy']:.2%}, non-equivalent {metrics['non_equivalent_accuracy']:.2%}, "
-        f"geometric mean {metrics['geometric_mean']:.2%}, {seconds:.0f}s"
-    )
-    for how, counts in metrics["by_method"].items():
-        print(f"  {how:8} right {counts.get('right', 0):4}  wrong {counts.get('wrong', 0):4}")
-    print(f"  proofs the benchmark labels non-equivalent: {wrong_proofs}")
-    if args.json:
-        record = {
-            "metrics": metrics,
-            "answers": [{"id": p.id, "label": p.label, "answer": a, "how": how} for p, (a, how) in zip(pairs, answers)],
-        }
-        Path(args.json).write_text(json.dumps(record, indent=1), encoding="utf-8")
+    tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    unknown = set(tasks) - {"sql_equ_judge", "sql_judge", "sql_err_class"}
+    if unknown:
+        parser.error(f"unknown tasks {sorted(unknown)}; text2sql, conversational_sql, sql_debugging and sql_trans cannot run without a model or databases")
+    data_dir = Path(args.data)
+    results = {}
+    if "sql_equ_judge" in tasks:
+        pairs = load_pairs(data_dir)[: args.limit]
+        answers, seconds = run(pairs, args.jobs)
+        metrics = score(pairs, answers)
+        results["sql_equ_judge"] = metrics
+        wrong_proofs = sum(1 for p, (a, how) in zip(pairs, answers) if how == "proved" and p.label == "no")
+        print(
+            f"sql_equ_judge {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%}), "
+            f"equivalent {metrics['equivalent_accuracy']:.2%}, non-equivalent {metrics['non_equivalent_accuracy']:.2%}, "
+            f"geometric mean {metrics['geometric_mean']:.2%}, {seconds:.0f}s"
+        )
+        for how, counts in metrics["by_method"].items():
+            print(f"  {how:8} right {counts.get('right', 0):4}  wrong {counts.get('wrong', 0):4}")
+        print(f"  proofs the benchmark labels non-equivalent: {wrong_proofs}")
+        if args.json:
+            record = {
+                "metrics": metrics,
+                "answers": [{"id": p.id, "label": p.label, "answer": a, "how": how} for p, (a, how) in zip(pairs, answers)],
+            }
+            Path(args.json).write_text(json.dumps(record, indent=1), encoding="utf-8")
+    if "sql_judge" in tasks:
+        metrics = score_judge(data_dir)
+        results["sql_judge"] = metrics
+        print(f"sql_judge {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%})")
+    if "sql_err_class" in tasks:
+        metrics = score_errors(data_dir)
+        results["sql_err_class"] = metrics
+        print(
+            f"sql_err_class exact {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%}), "
+            f"detection F1 {metrics['detection_f1']:.2%}, classification F1 {metrics['classification_f1']:.2%}, "
+            f"unified F1 {metrics['unified_f1']:.2%}"
+        )
     return 0
 
 
