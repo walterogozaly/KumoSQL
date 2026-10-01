@@ -195,3 +195,35 @@ def test_no_budget_means_no_skipping(monkeypatch):
     monkeypatch.setenv("KUMOSQL_LINEAGE_SECONDS", "0")
     pipeline = live_graph.pipeline_from_files({**FILES, "definitions/z.sqlx": 'config { type: "table" }\nselect 1 as z'})
     assert all(e["code"] != "lineage_skipped" for e in pipeline.report(include_duplicates=False)["diagnostics"])
+
+
+def test_analysis_leaves_the_garbage_collector_as_it_found_it():
+    import gc
+
+    before = gc.get_threshold()
+    frozen = gc.get_freeze_count()
+    live_graph.pipeline_from_files(FILES)
+    assert gc.get_threshold() == before
+    assert gc.get_freeze_count() == frozen
+
+
+def test_untrimmed_lineage_gives_the_same_columns_as_trimmed(monkeypatch):
+    import kumosql.pipeline as pl
+
+    files = {
+        "definitions/a.sqlx": 'config { type: "table" }\nselect id, name from `p.raw.t`',
+        "definitions/b.sqlx": 'config { type: "table" }\nwith s as (select id, upper(name) as n from ${ref("a")})\nselect id, n as shown, 1 as k from s',
+        "definitions/c.sqlx": 'config { type: "table" }\nselect id from ${ref("a")} union all select id from ${ref("b")}',
+    }
+
+    def lineage_of(trim):
+        original = pl.lineage
+        monkeypatch.setattr(pl, "lineage", lambda *a, **k: original(*a, **{**k, "trim_selects": trim}))
+        try:
+            analysis = live_graph.pipeline_from_files(files)._analyse()
+        finally:
+            monkeypatch.setattr(pl, "lineage", original)
+            live_graph._PROJECT_CACHE.clear()
+        return {str(k): sorted(map(str, v)) for k, v in analysis.lineage.items()}
+
+    assert lineage_of(True) == lineage_of(False)
