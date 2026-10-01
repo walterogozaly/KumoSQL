@@ -1,0 +1,7 @@
+config { type: "table" }
+pre_operations {
+  DECLARE x INT64 DEFAULT 1;
+  ---
+  SET x = 2
+}
+SELECT ${when(true, "1", "2")} AS v

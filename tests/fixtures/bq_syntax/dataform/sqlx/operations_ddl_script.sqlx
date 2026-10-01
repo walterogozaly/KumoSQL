@@ -1,0 +1,8 @@
+config { type: "operations" }
+BEGIN
+  DECLARE n INT64;
+  SET n = (SELECT COUNT(*) FROM ${ref("raw_users")});
+  IF n = 0 THEN
+    RAISE USING MESSAGE = 'empty';
+  END IF;
+END

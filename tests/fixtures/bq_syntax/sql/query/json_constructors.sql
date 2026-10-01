@@ -1,0 +1,1 @@
+SELECT JSON_OBJECT('a', 1, 'b', 'x') AS o, JSON_ARRAY(1, 2, 3) AS a, JSON_SET(JSON '{"a":1}', '$.b', 2) AS s, JSON_REMOVE(JSON '{"a":1,"b":2}', '$.b') AS r, JSON_STRIP_NULLS(JSON '{"a":null}') AS n, INT64(JSON '1') AS i, STRING(JSON '"x"') AS t

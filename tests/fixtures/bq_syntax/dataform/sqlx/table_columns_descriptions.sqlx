@@ -1,0 +1,9 @@
+config {
+  type: "table",
+  description: "Users by state",
+  columns: {
+    id: "User id",
+    state: { description: "State", bigqueryPolicyTags: ["projects/p/locations/us/taxonomies/1/policyTags/2"] }
+  }
+}
+SELECT id, state FROM ${ref("raw_users")}

@@ -1,0 +1,1 @@
+(SELECT id FROM `kumosql.kumosql_messy.raw_users` INTERSECT DISTINCT SELECT user_id FROM `kumosql.kumosql_messy.raw_order_items`) EXCEPT DISTINCT SELECT product_id FROM `kumosql.kumosql_messy.raw_order_items`

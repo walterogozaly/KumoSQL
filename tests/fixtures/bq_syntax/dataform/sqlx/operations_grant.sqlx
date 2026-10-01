@@ -1,0 +1,2 @@
+config { type: "operations" }
+GRANT `roles/bigquery.dataViewer` ON TABLE ${ref("raw_users")} TO "user:a@example.com"

@@ -1,0 +1,1 @@
+SELECT u.id, o.id AS item_id FROM `kumosql.kumosql_messy.raw_users` AS u INNER JOIN `kumosql.kumosql_messy.raw_order_items` AS o ON u.id = o.user_id LEFT JOIN `kumosql.kumosql_messy.raw_order_items` AS o2 ON o2.id = o.id RIGHT JOIN `kumosql.kumosql_messy.raw_users` AS u2 ON u2.id = u.id FULL OUTER JOIN `kumosql.kumosql_messy.raw_order_items` AS o3 ON o3.id = o.id

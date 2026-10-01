@@ -1,0 +1,8 @@
+config {
+  type: "incremental",
+  uniqueKey: ["id"],
+  updatePartitionFilter: "created_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)",
+  onSchemaChange: "EXTEND",
+  bigquery: { partitionBy: "DATE(created_at)" }
+}
+SELECT id, state, created_at FROM ${ref("raw_users")}

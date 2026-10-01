@@ -1,0 +1,1 @@
+CREATE OR REPLACE EXTERNAL TABLE `kumosql.kumosql_messy.bq_syntax_ext2` (id INT64, name STRING) WITH PARTITION COLUMNS (dt DATE) OPTIONS (format = 'PARQUET', uris = ['gs://some-bucket/p/*'], hive_partition_uri_prefix = 'gs://some-bucket/p')

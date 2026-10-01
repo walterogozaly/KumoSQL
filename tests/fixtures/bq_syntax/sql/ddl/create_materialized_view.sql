@@ -1,0 +1,1 @@
+CREATE MATERIALIZED VIEW `kumosql.kumosql_messy.bq_syntax_mv` OPTIONS (enable_refresh = TRUE, refresh_interval_minutes = 60) AS SELECT state, COUNT(*) AS n FROM `kumosql.kumosql_messy.raw_users` GROUP BY state

@@ -72,13 +72,55 @@ def _is_asset_reference(reference: object) -> bool:
     return "/" in normalized or normalized.lower().endswith((".sql", ".sqlx"))
 
 
-_REF_RE = re.compile(r"\$\{\s*ref\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
-_SELF_RE = re.compile(r"\$\{\s*self\(\s*\)\s*\}")
+_REF_RE = re.compile(r"\$\{\s*(?:ctx\.)?ref\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
+_RESOLVE_RE = re.compile(r"\$\{\s*(?:ctx\.)?resolve\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
+_SELF_RE = re.compile(r"\$\{\s*(?:ctx\.)?self\(\s*\)\s*\}")
+_CONFIG_DEPENDENCIES_RE = re.compile(r"\bdependencies\s*:\s*(?:\[(?P<list>[^\]]*)\]|(?P<one>\{[^}]*\}|['\"`][^'\"`]*['\"`]))")
+_DEPENDENCY_ITEM_RE = re.compile(r"\{[^}]*\}|['\"`][^'\"`]*['\"`]")
 _STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""")
 
 
+def _top_level(config: str) -> str:
+    """The text directly inside a config's outer braces, with nested braces, brackets and strings blanked.
+
+    A ``name:`` inside ``columns: {...}`` or a ``dependencies`` object must not be taken
+    for the action's own ``name``.
+    """
+
+    start = config.find("{")
+    if start < 0:
+        return config
+    out: list[str] = []
+    depth = 0
+    quote: str | None = None
+    index = start
+    while index < len(config):
+        char = config[index]
+        if quote:
+            if char == "\\" and index + 1 < len(config):
+                out.append(config[index : index + 2] if depth <= 1 else "  ")
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            out.append(char if depth <= 1 else " ")
+        elif char in "'\"`":
+            quote = char
+            out.append(char if depth <= 1 else " ")
+        elif char in "{[(":
+            out.append(char if depth == 0 else " ")
+            depth += 1
+        elif char in "}])":
+            depth -= 1
+            out.append(char if depth == 0 else " ")
+        else:
+            out.append(char if depth <= 1 else " ")
+        index += 1
+    return "".join(out)
+
+
 def _config_value(config: str, key: str) -> str | None:
-    match = re.search(rf"\b{key}\s*:\s*(['\"`])((?:\\.|(?!\1).)*)\1", config)
+    match = re.search(rf"\b{key}\s*:\s*(['\"`])((?:\\.|(?!\1).)*)\1", _top_level(config))
     return match.group(2) if match else None
 
 
@@ -91,6 +133,16 @@ def _config_tags(config: str) -> tuple[str, ...]:
     # ``tags: []`` matches the list branch with an empty string; ``or`` would fall through to the unmatched ``one`` (None).
     listed, single = match.group("list"), match.group("one")
     return tuple(dict.fromkeys(re.findall(r"['\"`]([^'\"`]+)['\"`]", listed if listed is not None else single or "")))
+
+
+def _config_dependencies(config: str) -> tuple[str, ...]:
+    """Arguments of each entry in a config block's ``dependencies`` (a name or a ``{name, schema}`` object)."""
+
+    match = _CONFIG_DEPENDENCIES_RE.search(config)
+    if not match:
+        return ()
+    listed, single = match.group("list"), match.group("one")
+    return tuple(_DEPENDENCY_ITEM_RE.findall(listed if listed is not None else single or ""))
 
 
 def _read_project_defaults(
@@ -260,6 +312,22 @@ def load_sqlx_project(
         except ValueError as exc:
             diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
         body = _SELF_RE.sub(target.sql(), body)
+
+        def resolve(match: re.Match[str]) -> str:
+            try:
+                return _parse_ref_args(match.group("args"), default, known).sql()
+            except ValueError:
+                return match.group(0)  # computed argument: left masked like any other interpolation
+
+        body = _RESOLVE_RE.sub(resolve, body)
+        for entry in _config_dependencies(config):
+            try:
+                declared = _parse_ref_args(entry, default, known)
+            except ValueError as exc:
+                diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", f"config dependencies: {exc}"))
+                continue
+            if declared not in dependencies:
+                dependencies.append(declared)
         masked: tuple[str, ...] = ()
         if "${" in body:
             body, restorations = _mask_sqlx_interpolations(body)

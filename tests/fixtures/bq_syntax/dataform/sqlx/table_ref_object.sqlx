@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT id FROM ${ref({ name: "raw_users", schema: "kumosql_messy" })}

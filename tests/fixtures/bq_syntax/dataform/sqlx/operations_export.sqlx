@@ -1,0 +1,2 @@
+config { type: "operations" }
+EXPORT DATA OPTIONS (uri = 'gs://some-bucket/exp/*.csv', format = 'CSV') AS SELECT id FROM ${ref("raw_users")}

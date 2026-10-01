@@ -1,0 +1,2 @@
+config { type: "table", disabled: true, protected: true, hermetic: true }
+SELECT id FROM ${ref("raw_users")}

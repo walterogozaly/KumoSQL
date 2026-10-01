@@ -1,0 +1,2 @@
+config { type: "table", description: "Ünïcode — description with `backticks` and \"quotes\"" }
+SELECT id AS `идентификатор` FROM ${ref("raw_users")}

@@ -1,0 +1,5 @@
+config { type: "table" }
+js {
+  const cols = ["a", "b", "c"];
+}
+SELECT id, ${cols.map(c => `1 AS ${c}`).join(", ")} FROM ${ref("raw_users")}

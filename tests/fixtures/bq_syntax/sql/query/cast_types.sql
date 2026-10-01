@@ -1,0 +1,1 @@
+SELECT CAST(age AS STRING) AS a, CAST('1' AS INT64) AS b, CAST(1 AS NUMERIC) AS c, CAST(1 AS BIGNUMERIC) AS d, CAST(1.5 AS FLOAT64) AS e, CAST(created_at AS DATE) AS f, CAST('x' AS BYTES) AS g, CAST(age AS BOOL) AS h FROM `kumosql.kumosql_messy.raw_users`

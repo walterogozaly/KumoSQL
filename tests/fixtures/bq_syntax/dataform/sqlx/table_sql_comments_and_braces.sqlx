@@ -1,0 +1,3 @@
+config { type: "table" }
+-- ${ref("raw_orders")} inside a comment still counts as a dependency in Dataform
+SELECT id, '{not interpolation}' AS braces, "}" AS closing FROM ${ref("raw_users")}

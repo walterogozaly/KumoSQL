@@ -1,8 +1,8 @@
 """Dataform SQLX handling shared by every rewrite rule.
 
 SQLX files are split into ``config``/``js``/``pre_operations``/
-``post_operations`` blocks, which are preserved byte-for-byte, and SQL
-sections. ``${...}`` interpolations inside SQL sections are masked with
+``post_operations`` blocks (and the ``input "name"`` blocks of a Dataform
+test), which are preserved byte-for-byte, and SQL sections. ``${...}`` interpolations inside SQL sections are masked with
 SQL-safe sentinels during parsing and restored afterward.
 """
 
@@ -14,7 +14,7 @@ import re
 
 
 _SQLX_BLOCK_RE = re.compile(
-    r"(?im)^[ \t]*(?:config|js|pre_operations|post_operations)\s*\{"
+    r"""(?im)^[ \t]*(?:(?:config|js|pre_operations|post_operations)|input\s+(?:"[^"\n]*"|'[^'\n]*'))\s*\{"""
 )
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"__sqlx_token_\d+__")

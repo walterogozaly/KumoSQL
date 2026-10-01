@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT id FROM ${ctx.ref("raw_users")}

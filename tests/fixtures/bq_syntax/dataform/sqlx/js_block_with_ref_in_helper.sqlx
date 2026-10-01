@@ -1,0 +1,5 @@
+config { type: "table" }
+js {
+  const src = ctx => ctx.ref("raw_users");
+}
+SELECT id FROM ${src(ctx)}

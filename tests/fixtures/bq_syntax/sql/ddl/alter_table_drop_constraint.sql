@@ -1,0 +1,1 @@
+ALTER TABLE `kumosql.kumosql_messy.bq_syntax_t1` DROP PRIMARY KEY IF EXISTS, DROP CONSTRAINT IF EXISTS fk

@@ -1,0 +1,3 @@
+config { type: "incremental" }
+SELECT id FROM ${ref("raw_users")}
+${ incremental() ? `WHERE id > (SELECT MAX(id) FROM ${self()})` : "" }

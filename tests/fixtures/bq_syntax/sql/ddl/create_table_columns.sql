@@ -1,0 +1,1 @@
+CREATE OR REPLACE TABLE `kumosql.kumosql_messy.bq_syntax_t1` (id INT64 NOT NULL, name STRING DEFAULT 'x' OPTIONS (description = 'n'), tags ARRAY<STRING>, s STRUCT<a INT64, b STRING>, n NUMERIC(10, 2), PRIMARY KEY (id) NOT ENFORCED) OPTIONS (description = 'd', labels = [('k', 'v')])

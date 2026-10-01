@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT id FROM ${ref("raw_users")} FOR SYSTEM_TIME AS OF TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)

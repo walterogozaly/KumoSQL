@@ -1,0 +1,1 @@
+WITH a AS (SELECT 1 AS x), b AS (SELECT x + 1 AS x FROM a), c AS (SELECT x * 2 AS x FROM b) SELECT * FROM c

@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS `kumosql.kumosql_messy.bq_syntax_t2` (id INT64, ts TIMESTAMP, state STRING) PARTITION BY DATE(ts) CLUSTER BY state, id OPTIONS (partition_expiration_days = 30, require_partition_filter = FALSE)

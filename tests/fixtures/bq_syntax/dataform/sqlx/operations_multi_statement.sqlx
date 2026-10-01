@@ -1,0 +1,4 @@
+config { type: "operations" }
+CREATE TEMP TABLE t AS SELECT id FROM ${ref("raw_users")};
+---
+INSERT INTO ${ref("raw_order_items")} (id) SELECT id FROM t

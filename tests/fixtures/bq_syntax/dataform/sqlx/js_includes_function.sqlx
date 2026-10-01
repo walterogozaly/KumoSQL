@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT ${helpers.upperCol("state")} AS state FROM ${ref("raw_users")}

@@ -1,0 +1,2 @@
+config { type: "table" }
+SELECT id, ${constants.MAX_AGE} AS max_age FROM ${ref("raw_users")} WHERE age < ${constants.MAX_AGE}
