@@ -254,7 +254,7 @@ def get_settings(base_url):
 def test_ui_settings_persist_across_server_restarts(ui_server):
     assert get_settings(ui_server)["ui"] == {}
     put_json(ui_server, "ui", {"theme": "dark", "enabled": ["format_sql"]})
-    scopes = [{"name": "My Team", "rule": {"field": "author", "op": "in", "value": ["ana@co.com"]}}]
+    scopes = [{"name": "My Team", "rule": {"field": "author", "op": "in", "value": ["ana@co.com"]}, "applies_to": ["jobs"]}]
     assert put_json(ui_server, "scopes", scopes) == scopes
     legacy = [{"name": "Old", "fields": {"author": ["ana@co.com"]}}]
     assert put_json(ui_server, "scopes", legacy)[0]["rule"]["op"] == "in"

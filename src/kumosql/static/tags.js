@@ -180,6 +180,9 @@
     const saveButton = h("button", { type: "submit", class: "toolbar-button", text: "Save rule" });
     const previewButton = h("button", { type: "button", class: "toolbar-button", text: "Preview matches" });
     const cancel = h("button", { type: "button", class: "link-button", text: "Cancel", hidden: "" });
+    fetch("/api/data-sources").then((r) => r.json()).then((info) => {
+      for (const name of info.tag_fields || []) datalist.append(Object.assign(new Option(name), { label: "data source column" }));
+    }).catch(() => {});
     const draw = () => kit.renderBuilder(builder, tree, preview, datalistId, () => (window.KumoScopes.list() || []).map((scope) => scope.name));
     draw();
 

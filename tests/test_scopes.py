@@ -193,7 +193,7 @@ def test_legacy_scopes_migrate_to_single_condition_rules():
 def test_stored_legacy_scopes_are_rewritten_as_rules():
     state.set_section("scopes", [{"name": "Old", "fields": {"author": ["ana"]}}])
     assert list_scopes()[0].rule == cond("author", "in", ["ana"])
-    assert state.get_section("scopes", []) == [{"name": "Old", "rule": cond("author", "in", ["ana"])}]
+    assert state.get_section("scopes", []) == [{"name": "Old", "rule": cond("author", "in", ["ana"]), "applies_to": ["jobs"]}]
 
 
 def test_unknown_fields_are_reported_with_suggestions():
@@ -376,3 +376,49 @@ def test_cli_scope_from_scopes_and_unknown_field_inside_reference(tmp_path, caps
     with pytest.raises(SystemExit):
         pipeline_main([str(root), "--scope", "Dept"])
     assert "user_email" in capsys.readouterr().err  # models have no such field, named clearly
+
+
+def test_scopes_carry_an_applies_to_list_and_migrate_to_what_they_effectively_applied_to(monkeypatch, tmp_path):
+    from kumosql import state
+
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    state.set_section("scopes", [
+        {"name": "Models", "rule": {"field": "dataset", "op": "eq", "value": "raw"}},
+        {"name": "Team", "rule": {"field": "user_email", "op": "in", "value": ["a@x.com"]}},
+        {"name": "Explicit", "rule": {"field": "dataset", "op": "eq", "value": "raw"}, "applies_to": ["jobs"]},
+    ])
+    by_name = {s.name: s for s in list_scopes()}
+    assert by_name["Models"].applies_to == ("models", "bigquery")
+    assert by_name["Team"].applies_to == ("jobs",)
+    assert by_name["Explicit"].applies_to == ("jobs",)
+    assert all("applies_to" in item for item in state.get_section("scopes", []))
+
+
+def test_applies_to_is_validated_and_ordered():
+    scope = parse_scope({"name": "s", "rule": {"field": "a", "op": "eq", "value": "x"}, "applies_to": ["bigquery", "models"]})
+    assert scope.to_json()["applies_to"] == ["models", "bigquery"]
+    for bad in ([], ["nope"], "models"):
+        with pytest.raises(ValueError):
+            parse_scope({"name": "s", "rule": {"field": "a", "op": "eq", "value": "x"}, "applies_to": bad})
+
+
+def test_plan_applies_a_scope_only_to_the_domains_it_lists():
+    from kumosql.scopes import plan_scope
+
+    reads = [{"job_id": "1", "user_email": "a@x.com", "referenced_tables": []}]
+    rule = {"field": "project", "op": "eq", "value": "p"}
+    both = plan_scope(Scope("s", rule=rule, applies_to=("models", "jobs")), reads)
+    assert both.models is not None
+    only_models = plan_scope(Scope("s", rule=rule, applies_to=("models",)), reads)
+    assert only_models.models is not None and only_models.jobs is None and only_models.note is None
+    bq_only = plan_scope(Scope("s", rule=rule, applies_to=("bigquery",)), reads)
+    assert bq_only.models is None and bq_only.jobs is None and "BigQuery tables" in bq_only.note
+
+
+def test_tag_rules_refuse_a_scope_that_does_not_apply_to_bigquery(monkeypatch, tmp_path):
+    from kumosql import tags
+
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    save_scope(Scope("jobs_only", rule={"field": "name", "op": "eq", "value": "x"}, applies_to=("jobs",)))
+    with pytest.raises(ValueError, match="does not apply"):
+        tags.save_rules([{"tag": "T", "rule": {"scope": "jobs_only"}}])

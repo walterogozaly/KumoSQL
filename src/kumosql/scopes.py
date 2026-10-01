@@ -91,6 +91,24 @@ JOBS_VIEW_COLUMNS = (
     ("total_bytes_billed", "number"), ("total_bytes_processed", "number"), ("total_slot_ms", "number"),
     ("creation_time", "time"), ("start_time", "time"), ("end_time", "time"),
 )
+#: Fields of the objects inside BigQuery datasets that tags are set on (see :mod:`kumosql.tags`).
+OBJECT_FIELDS = ("project", "dataset", "schema", "name", "table", "full_name", "type", "kind", "source", "path", "model")
+#: The data domains a scope can apply to: key, then the name shown in Settings.
+DOMAINS = {
+    "models": "Dataform models",
+    "jobs": "Job history",
+    "bigquery": "BigQuery tables",
+}
+
+
+def all_domains() -> dict[str, str]:
+    """The built-in domains followed by one ``source:<id>`` domain per saved data source, key -> name."""
+
+    from . import data_sources
+
+    return {**DOMAINS, **data_sources.domains()}
+
+
 _LIST_SPLIT = re.compile(r"[,;\n\r]+")
 
 
@@ -402,11 +420,19 @@ def rule_from_fields(fields: Mapping[str, Iterable[str]]) -> dict:
 class Scope:
     """A named rule. ``Scope(name, fields)`` still builds one from ``{field: values}``."""
 
-    __slots__ = ("name", "rule", "_expanded")
+    __slots__ = ("name", "rule", "_applies_to", "_expanded")
 
-    def __init__(self, name: str, fields: Mapping[str, Iterable[str]] | None = None, *, rule: Mapping | None = None):
+    def __init__(
+        self,
+        name: str,
+        fields: Mapping[str, Iterable[str]] | None = None,
+        *,
+        rule: Mapping | None = None,
+        applies_to: Iterable[str] | None = None,
+    ):
         if (fields is None) == (rule is None):
             raise ValueError("give a scope either a rule or fields")
+        object.__setattr__(self, "_applies_to", parse_domains(applies_to) if applies_to is not None else None)
         object.__setattr__(self, "name", name)
         object.__setattr__(
             self, "rule", parse_rule(rule) if rule is not None else rule_from_fields(fields)  # type: ignore[arg-type]
@@ -417,13 +443,30 @@ class Scope:
         raise AttributeError("scopes are immutable")
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Scope) and (self.name, self.rule) == (other.name, other.rule)
+        return isinstance(other, Scope) and (self.name, self.rule, self.applies_to) == (other.name, other.rule, other.applies_to)
 
     def __hash__(self) -> int:
         return hash(self.name)
 
     def __repr__(self) -> str:
         return f"Scope({self.name!r}, rule={self.rule!r})"
+
+    @property
+    def applies_to(self) -> tuple[str, ...]:
+        """The data domains this scope applies to (keys of :data:`DOMAINS`).
+
+        A scope saved without the list applies to the domains its rule's fields can be
+        evaluated on, which is what it effectively applied to before the list existed."""
+
+        if self._applies_to is not None:
+            return self._applies_to
+        try:
+            return infer_domains(self.fields_used())
+        except ValueError:  # refers to a scope that is not saved (yet)
+            return tuple(DOMAINS)
+
+    def applies_to_domain(self, domain: str) -> bool:
+        return domain in self.applies_to
 
     @property
     def fields(self) -> dict[str, tuple[str, ...]]:
@@ -513,7 +556,48 @@ class Scope:
         )
 
     def to_json(self) -> dict:
-        return {"name": self.name, "rule": self.rule}
+        return {"name": self.name, "rule": self.rule, "applies_to": list(self.applies_to)}
+
+
+def parse_domains(data: object) -> tuple[str, ...]:
+    """Validate a list of domain keys; returns them in the order of :data:`DOMAINS`."""
+
+    if isinstance(data, str) or not isinstance(data, Iterable):
+        raise ValueError('"applies_to" must be a list of data domains')
+    known = all_domains()
+    wanted = []
+    for item in data:
+        key = item.strip() if isinstance(item, str) else None
+        key = key.casefold() if key and not key.startswith("source:") else key
+        if key not in known:
+            raise ValueError(f"unknown data domain {item!r}. Choose from: {', '.join(known)}")
+        wanted.append(key)
+    if not wanted:
+        raise ValueError("a scope must apply to at least one data domain")
+    return tuple(key for key in known if key in wanted)
+
+
+def infer_domains(fields: Iterable[str]) -> tuple[str, ...]:
+    """The domains a rule over ``fields`` can be evaluated on (how scopes applied before ``applies_to``)."""
+
+    names = {name.casefold().split(".")[0] for name in fields}
+    model = {*(f.casefold() for f in (*MODEL_FIELDS, *PROFILE_FIELDS))}
+    job = {*(f.casefold() for f in JOB_FIELDS), *(c.casefold() for c, _ in JOBS_VIEW_COLUMNS)}
+    domains = []
+    if names <= model:
+        domains.append("models")
+    if names <= job or not names <= model:
+        domains.append("jobs")
+    if names <= {f.casefold() for f in OBJECT_FIELDS}:
+        domains.append("bigquery")
+    from . import data_sources
+
+    for key, columns in data_sources.field_columns().items():
+        if names <= {c.casefold() for c in columns}:
+            domains.append(key)
+            if "jobs" in domains and not names <= job:
+                domains.remove("jobs")
+    return tuple(domains) or ("models", "jobs", "bigquery")
 
 
 def parse_scope(data: object) -> Scope:
@@ -526,9 +610,10 @@ def parse_scope(data: object) -> Scope:
         raise ValueError("a scope needs a name")
     if ("rule" in data) == ("fields" in data):
         raise ValueError('a scope needs exactly one of "rule" or "fields"')
+    applies_to = data.get("applies_to")
     if "rule" in data:
-        return Scope(name.strip(), rule=data["rule"])
-    return Scope(name.strip(), rule=rule_from_fields(data["fields"]))
+        return Scope(name.strip(), rule=data["rule"], applies_to=applies_to)
+    return Scope(name.strip(), rule=rule_from_fields(data["fields"]), applies_to=applies_to)
 
 
 # ------------------------------------------------------------ field discovery
@@ -668,16 +753,26 @@ def plan_scope(scope: Scope, observed_reads: Iterable[object] = ()) -> ScopePlan
     """
 
     reads = list(observed_reads)
+    wants_models = scope.applies_to_domain("models")
+    wants_jobs = scope.applies_to_domain("jobs")
+    if not wants_models and not wants_jobs:
+        labels = all_domains()
+        names = " and ".join(labels.get(key, key) for key in scope.applies_to)
+        return ScopePlan(scope, None, None, f"“{scope.name}” applies to {names} only.")
     job_fields: set[str] = set()
     for row in reads:
         job_fields.update(job_record(row))
     model_fields = (*MODEL_FIELDS, *PROFILE_FIELDS)
     model_missing = scope.unknown_fields(model_fields)
     job_missing = scope.unknown_fields(job_fields)
-    models_ok = not model_missing
-    jobs_ok = bool(reads) and not job_missing
+    models_ok = wants_models and not model_missing
+    jobs_ok = wants_jobs and bool(reads) and not job_missing
+    if not models_ok and not jobs_ok and any(key.startswith("source:") for key in scope.applies_to):
+        labels = all_domains()
+        names = " and ".join(labels.get(key, key) for key in scope.applies_to if key.startswith("source:"))
+        return ScopePlan(scope, None, None, f"“{scope.name}” has nothing to filter here: its fields come from {names}.")
     if not models_ok and not jobs_ok:
-        if not reads:
+        if not reads or not wants_jobs:
             scope.require_fields(model_fields, "pipeline models (no job history is loaded)")
         raise UnknownFieldError(
             f"scope {scope.name!r} cannot be applied: pipeline models have no "
@@ -685,14 +780,30 @@ def plan_scope(scope: Scope, observed_reads: Iterable[object] = ()) -> ScopePlan
             f"Model fields: {', '.join(model_fields)}. Job fields: {', '.join(sorted(job_fields, key=str.casefold)) or 'none loaded'}"
         )
     note = None
-    if models_ok and not jobs_ok and reads:
+    if models_ok and not jobs_ok and reads and wants_jobs:
         note = f"Job history was not filtered: it has no {', '.join(map(repr, job_missing))}."
-    elif jobs_ok and not models_ok:
+    elif jobs_ok and not models_ok and wants_models:
         note = f"Applied to job history only: models have no {', '.join(map(repr, model_missing))}."
     return ScopePlan(scope, scope if models_ok else None, scope if jobs_ok else None, note)
 
 
 # ------------------------------------------------------------------- storage
+
+
+def _with_domains(scopes: list[Scope]) -> list[Scope]:
+    """``scopes`` with every missing ``applies_to`` filled in from what its (expanded) rule can be evaluated on."""
+
+    lookup = {scope.name.casefold(): scope for scope in scopes}
+    resolved = []
+    for scope in scopes:
+        if scope._applies_to is None:
+            try:
+                domains = infer_domains(rule_fields(scope.expanded_rule(lookup)))
+            except ValueError:
+                domains = tuple(DOMAINS)
+            scope = Scope(scope.name, rule=scope.rule, applies_to=domains)
+        resolved.append(scope)
+    return resolved
 
 
 def list_scopes() -> list[Scope]:
@@ -706,8 +817,9 @@ def list_scopes() -> list[Scope]:
             scopes.append(parse_scope(item))
         except ValueError:
             continue
-        migrated = migrated or "rule" not in item
+        migrated = migrated or "rule" not in item or "applies_to" not in item
     if migrated:
+        scopes = _with_domains(scopes)
         try:
             state.set_section(SECTION, [scope.to_json() for scope in scopes])
         except OSError:
@@ -720,7 +832,9 @@ def get_scope(name: str) -> Scope | None:
     return next((scope for scope in list_scopes() if scope.name.casefold() == key), None)
 
 
-def save_scopes(scopes: Iterable[Scope]) -> None:
+def save_scopes(scopes: Iterable[Scope]) -> list[Scope]:
+    """Save ``scopes`` and return them as stored (with ``applies_to`` filled in)."""
+
     scopes = list(scopes)
     if len(scopes) > MAX_SCOPES:
         raise ValueError(f"at most {MAX_SCOPES} scopes can be saved")
@@ -733,7 +847,27 @@ def save_scopes(scopes: Iterable[Scope]) -> None:
             scope.expanded_rule(lookup)
         except ValueError as exc:
             raise ValueError(f"scope {scope.name!r}: {exc}") from exc
+    scopes = _with_domains(scopes)
     state.set_section(SECTION, [scope.to_json() for scope in scopes])
+    return scopes
+
+
+def drop_domains(keys: Iterable[str]) -> None:
+    """Remove data domains (for example a deleted data source) from every saved scope's ``applies_to``.
+
+    Raises ``ValueError`` naming a scope that would then apply to nothing."""
+
+    gone = set(keys)
+    changed = []
+    for scope in list_scopes():
+        if gone & set(scope.applies_to):
+            left = tuple(k for k in scope.applies_to if k not in gone)
+            if not left:
+                raise ValueError(f"scope {scope.name!r} applies only to this data source; change it first")
+            changed.append(Scope(scope.name, rule=scope.rule, applies_to=left))
+    if changed:
+        by_name = {c.name: c for c in changed}
+        state.set_section(SECTION, [by_name.get(s.name, s).to_json() for s in list_scopes()])
 
 
 def save_scope(scope: Scope) -> None:

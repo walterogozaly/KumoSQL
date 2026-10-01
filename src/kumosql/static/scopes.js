@@ -17,9 +17,15 @@
     ["lte", "is at most"], ["in_query", "is returned by SQL query"], ["is_null", "is empty"], ["not_null", "is not empty"],
   ].map(([op, label]) => ({ op, label }));
 
+  const FALLBACK_DOMAINS = [
+    { key: "models", label: "Dataform models" }, { key: "jobs", label: "Job history" }, { key: "bigquery", label: "BigQuery tables" },
+  ];
+  const domains = () => (fieldInfo.domains?.length ? fieldInfo.domains : FALLBACK_DOMAINS);
+  const domainLabel = (key) => domains().find((item) => item.key === key)?.label || key;
+
   let scopes = [];
   let scopesLoaded = false;
-  let fieldInfo = { fields: [], operators: [], loaded: null };
+  let fieldInfo = { fields: [], operators: [], domains: [], loaded: null };
   const listeners = new Set();
   const listListeners = new Set();
 
@@ -389,6 +395,8 @@
   function renderManager(body, { onStatus } = {}) {
     let tree = newGroup();
     let editing = null;
+    const defaultDomains = () => new Set(domains().filter((item) => !item.key.startsWith("source:")).map((item) => item.key));
+    let appliesTo = defaultDomains();
     const datalistId = "scope-field-options";
     const list = h("ul", { class: "scope-list" });
     const name = h("input", { type: "text", name: "name", maxlength: "80", placeholder: "My Team", required: "", "aria-label": "Scope name" });
@@ -399,6 +407,12 @@
     const saveButton = h("button", { type: "submit", class: "toolbar-button", text: "Save scope" });
     const cancel = h("button", { type: "button", class: "link-button", text: "Cancel", hidden: "" });
     const empty = h("p", { class: "sp-row-hint", text: "No scopes yet. Create one below." });
+    const domainBox = h("div", { class: "domain-picks" });
+    const drawDomains = () => domainBox.replaceChildren(...domains().map((item) => {
+      const box = h("input", { type: "checkbox", name: "applies_to", value: item.key, checked: appliesTo.has(item.key) });
+      box.addEventListener("change", () => { if (box.checked) appliesTo.add(item.key); else appliesTo.delete(item.key); });
+      return h("label", { class: "domain-pick" }, box, h("span", { text: item.label }));
+    }));
     const scopeChoices = () => scopes.filter((item) => item.name !== editing).map((item) => item.name);
     let redraw = renderBuilder(builder, tree, preview, datalistId, scopeChoices);
 
@@ -420,6 +434,8 @@
     const reset = () => {
       editing = null;
       name.value = "";
+      appliesTo = defaultDomains();
+      drawDomains();
       setTree(newGroup());
       cancel.hidden = true;
       saveButton.textContent = "Save scope";
@@ -432,7 +448,12 @@
       for (const scope of scopes) {
         const isActive = scope.name === active;
         const item = h("li", { class: "scope-item", "data-name": scope.name },
-          h("div", {}, h("strong", { text: scope.name }), h("small", { text: safeDescribe(scope), title: safeDescribe(scope) })),
+          h("div", {},
+            h("strong", { text: scope.name }),
+            h("small", { text: safeDescribe(scope), title: safeDescribe(scope) }),
+            h("span", { class: "scope-applies" },
+              h("em", { text: "Applies to" }),
+              ...(scope.applies_to || []).map((key) => h("span", { class: "domain-chip", text: domainLabel(key) })))),
           linkButton(isActive ? "Active ✓" : "Use", "use"), linkButton("Edit", "edit"), linkButton("Delete", "delete"));
         if (isActive) item.classList.add("is-active");
         list.append(item);
@@ -452,6 +473,8 @@
         } else if (action === "edit") {
           editing = scope.name;
           name.value = scope.name;
+          appliesTo = new Set(scope.applies_to || domains().map((item) => item.key));
+          drawDomains();
           let next = ruleToTree(scope.rule);
           if (next.type === "cond") next = { type: "group", mode: "all", negate: false, children: [next] };
           setTree(next);
@@ -476,12 +499,14 @@
     const form = h("form", { class: "sp-scope-form", autocomplete: "off" },
       h("label", { class: "sp-scope-label" }, h("span", { text: "Name" }), name),
       h("div", { class: "rule-field" }, h("span", { text: "Include when" }), builder, datalist, preview, hint),
+      h("div", { class: "rule-field" }, h("span", { text: "Applies to" }), domainBox),
       h("div", { class: "settings-actions" }, saveButton, cancel));
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
         const scopeName = name.value.trim();
-        const scope = { name: scopeName, rule: treeToRule(tree) };
+        if (!appliesTo.size) throw new Error("Pick at least one data domain");
+        const scope = { name: scopeName, rule: treeToRule(tree), applies_to: domains().map((item) => item.key).filter((key) => appliesTo.has(key)) };
         const key = (editing ?? scopeName).toLowerCase();
         if (scopes.some((item) => item.name.toLowerCase() === scopeName.toLowerCase() && item.name.toLowerCase() !== key)) {
           throw new Error(`A scope named “${scopeName}” already exists`);
@@ -506,8 +531,9 @@
       form);
     renderQuerySettings(body);
     renderList();
-    Promise.all([load(), loadFields()]).then(() => { renderList(); fillFields(); redraw(); });
+    Promise.all([load(), loadFields()]).then(() => { renderList(); fillFields(); drawDomains(); redraw(); });
     fillFields();
+    drawDomains();
   }
 
   /* ---------- Active-scope picker ---------- */
