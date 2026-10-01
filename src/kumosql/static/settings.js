@@ -24,6 +24,7 @@
     { id: "appearance", label: "Appearance", icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>' },
     { id: "formatting", label: "SQL formatting", icon: '<path d="M4 6h16M4 12h10M4 18h13"/>' },
     { id: "repositories", label: "Repositories", icon: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-12 5"/>' },
+    { id: "bigquery", label: "BigQuery projects", icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>' },
     { id: "scopes", label: "Scopes", icon: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>' },
   ];
 
@@ -470,7 +471,16 @@
     try { await refreshList(); } catch (error) { setStatus(error.message, true); }
   }
 
-  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, repositories: renderRepositories, scopes: renderScopes };
+  function renderBigQuery(body) {
+    body.append(h("h3", { class: "sp-heading", text: "BigQuery projects" }));
+    if (!window.KumoBqProjects) {
+      body.append(h("p", { class: "sp-lede", text: "The project picker could not be loaded on this page." }));
+      return;
+    }
+    window.KumoBqProjects.render(body, { onStatus: setStatus });
+  }
+
+  const RENDERERS = { appearance: renderAppearance, formatting: renderFormatting, repositories: renderRepositories, bigquery: renderBigQuery, scopes: renderScopes };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -489,6 +499,7 @@
   const KEYWORDS = {
     appearance: "appearance theme light dark system colour color mode",
     repositories: "repositories repository dataform git connect ssh https branch refresh private remote url project",
+    bigquery: "bigquery projects choose select project catalog browse tab",
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };

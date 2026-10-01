@@ -91,32 +91,39 @@ function itemButton(label, icon, detail, selected, onClick) {
   return button;
 }
 
-async function loadProjects(refresh = false) {
+function renderProjects(projects) {
+  clearPane(projectsPane);
+  for (const id of projects) {
+    const button = itemButton(id, "▣", "", id === chosenProject, () => selectProject(id));
+    button.dataset.value = id;
+    projectsPane.append(button);
+  }
+  document.getElementById("project-count").textContent = projects.length ? String(projects.length) : "";
+  if (!projects.length) {
+    clearPane(projectsPane, "No projects chosen yet.");
+    document.getElementById("project-picker").hidden = false;
+    setStatus("Choose at least one project to start. Nothing is loaded from BigQuery until you do.");
+  }
+}
+
+// The project list is the user's saved choice, read locally; BigQuery is only
+// contacted when a project is opened.
+async function loadProjects() {
   const version = ++projectRequest;
   chosenProject = chosenDataset = chosenTable = "";
   for (const key of Object.keys(freshness)) delete freshness[key];
-  clearPane(projectsPane, "Loading projects…");
   clearPane(datasetsPane, "Choose a project.");
   clearPane(tablesPane, "Choose a dataset.");
   clearPane(schemaPane, "Choose a table to inspect its schema.");
-  document.getElementById("project-count").textContent = "";
-  document.getElementById("dataset-count").textContent = "";
-  document.getElementById("table-count").textContent = "";
-  setStatus("Loading projects…");
+  for (const id of ["dataset-count", "table-count"]) document.getElementById(id).textContent = "";
   try {
-    const projects = await requestJson("/api/catalog/projects?", "projects", refresh);
+    const projects = await window.KumoBqProjects.loadSelection();
     if (version !== projectRequest) return;
-    clearPane(projectsPane);
-    for (const project of projects) {
-      const button = itemButton(project.name, "▣", project.id !== project.name ? project.id : "", false, () => selectProject(project.id));
-      button.dataset.value = project.id;
-      projectsPane.append(button);
-    }
-    document.getElementById("project-count").textContent = String(projects.length);
-    setStatus(projects.length ? "Choose a project to see its datasets." : "No accessible projects were found.");
+    renderProjects(projects);
+    if (projects.length) setStatus("Choose a project to see its datasets.");
   } catch (error) {
     if (version !== projectRequest) return;
-    clearPane(projectsPane, "Could not load projects.");
+    clearPane(projectsPane, "Could not load your project choice.");
     setStatus(error.message, true);
   }
 }
@@ -258,7 +265,7 @@ async function refreshAll() {
   const button = document.getElementById("refresh");
   button.disabled = true;
   try {
-    await loadProjects(true);
+    await loadProjects();
     if (!project) return;
     await selectProject(project, true);
     if (!dataset) return;
@@ -271,3 +278,21 @@ async function refreshAll() {
 
 document.getElementById("refresh").addEventListener("click", refreshAll);
 loadProjects();
+
+// Choosing projects here or in Settings updates the list, keeping the open project if it is still chosen.
+window.addEventListener("kumosql:bq-projects", (event) => {
+  const projects = event.detail || [];
+  renderProjects(projects);
+  if (chosenProject && !projects.includes(chosenProject)) {
+    chosenProject = chosenDataset = chosenTable = "";
+    clearPane(datasetsPane, "Choose a project.");
+    clearPane(tablesPane, "Choose a dataset.");
+    clearPane(schemaPane, "Choose a table to inspect its schema.");
+  }
+});
+
+const picker = document.getElementById("project-picker");
+window.KumoBqProjects.render(picker.querySelector(".picker-body"), { onStatus: setStatus });
+document.getElementById("choose-projects").addEventListener("click", () => {
+  picker.hidden = !picker.hidden;
+});

@@ -57,6 +57,7 @@ ASSETS = {
     "/assets/insights.css": ("insights.css", "text/css; charset=utf-8"),
     "/assets/insights.js": ("insights.js", "text/javascript; charset=utf-8"),
     "/assets/browse.css": ("browse.css", "text/css; charset=utf-8"),
+    "/assets/bqprojects.js": ("bqprojects.js", "text/javascript; charset=utf-8"),
     "/assets/browse.js": ("browse.js", "text/javascript; charset=utf-8"),
     "/assets/background.jpg": ("background.jpg", "image/jpeg"),
 }
@@ -253,7 +254,27 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, payload)
 
+    def _put_selection(self) -> None:
+        from . import bigquery_catalog
+
+        payload = self._read_json(MAX_UI_STATE_BYTES)
+        if payload is None:
+            return
+        try:
+            projects = bigquery_catalog.select_projects(
+                payload.get("projects") if isinstance(payload, dict) else None)
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except (OSError, RuntimeError) as exc:
+            self._json(502, {"error": str(exc)})
+            return
+        self._json(200, {"projects": projects})
+
     def do_PUT(self) -> None:
+        if self.path == "/api/catalog/selection":
+            self._put_selection()
+            return
         section = self.path.removeprefix("/api/settings/")
         if section not in ("ui", "format", "scopes") or section == self.path:
             self._json(404, {"error": "not found"})
@@ -291,9 +312,12 @@ class UIHandler(BaseHTTPRequestHandler):
         query = parse_qs(urlsplit(self.path).query)
         refresh = query.get("refresh", [""])[0] == "1"
         try:
+            if route == "/api/catalog/selection":
+                self._json(200, {"projects": bigquery_catalog.selected_projects()})
+                return
             if route == "/api/catalog/projects":
                 result = bigquery_catalog.cached(
-                    "projects\x1fbrowsable", bigquery_catalog.list_projects, refresh)
+                    "projects\x1fall", bigquery_catalog.list_projects, refresh)
             elif route == "/api/catalog/datasets":
                 project = _required(query, "project")
                 result = bigquery_catalog.cached(
