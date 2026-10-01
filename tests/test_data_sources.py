@@ -169,3 +169,31 @@ def test_the_bigquery_runner_returns_every_column(monkeypatch):
     run = data_sources._bq_runner(source, "bill-proj", 10**9)
     assert run.columns == ["a", "b"] and run.rows == [["1", None], ["2", '["x"]']] and run.bytes_billed == 10485760
     assert b"maximumBytesBilled" in sent[0]
+
+
+FILES = {
+    "dataform.json": '{"defaultSchema": "d", "defaultDatabase": "p"}',
+    "definitions/orders.sqlx": 'config { type: "table" }\nSELECT id FROM `p.raw.src`',
+    "definitions/users.sqlx": 'config { type: "view" }\nSELECT id FROM ${ref("orders")}',
+    "definitions/other.sqlx": 'config { type: "view" }\nSELECT id FROM ${ref("orders")}',
+}
+
+
+def test_a_scope_over_source_columns_filters_dataform_models_by_their_target_table():
+    from kumosql import live_graph
+
+    live_graph.clear_project()
+    live_graph.load_files(FILES, "demo")
+    pipeline = live_graph.loaded()["pipeline"]
+    data_sources.populate(make())  # full_name p.d.orders / p.d.orders / p.d.users, owners ana, bo, cy
+    scopes.save_scope(scopes.Scope("Ana", rule={"field": "owner", "op": "eq", "value": "ana"}, applies_to=("models", "source:owners")))
+    keys = pipeline.scope_keys(scopes.get_scope("Ana"))
+    assert keys == {"p.d.orders"}
+    plan = scopes.plan_scope(scopes.get_scope("Ana"), [])
+    assert plan.models is not None and plan.note is None
+    record = pipeline.model_record("p.d.users")
+    assert record["full_name"] == "p.d.users" and record["email"] == "cy@co.com"
+    graph = live_graph.graph_payload(pipeline, "demo", (), "Ana")
+    assert graph["scope"]["applied_to"] == ["models"]
+    ids = {n["id"] for n in graph["nodes"]}
+    assert "p.d.orders" in ids and "p.d.users" not in ids and "p.d.other" not in ids
