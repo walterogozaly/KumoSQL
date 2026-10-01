@@ -1,10 +1,12 @@
-# SQLSolver backend
+# Algebraic prover and SQLSolver backend
 
-KumoSQL can use [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) as a second equivalence prover next to the Z3 prover in `smt_equivalence.py`. SQLSolver (SIGMOD 2024) proves bag-equivalence with linear integer arithmetic and handles shapes the Z3 prover rejects.
+The core idea taken from SQLSolver is the arithmetic view of bag-semantics queries; `algebraic_equivalence.py` implements it in Python (distribution of joins and filters over `UNION ALL`, splitting `COUNT`/`SUM`/`MIN`/`MAX` over unions into partial aggregates, canonical union shapes) on top of the Z3 prover. It needs no Java and no admin rights. Not yet taken: SQLSolver's LIA* reduction for aggregates over joins and nested subqueries, which is the next algebraic step.
+
+KumoSQL can also use [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) as a second equivalence prover next to the Z3 prover in `smt_equivalence.py`. SQLSolver (SIGMOD 2024) proves bag-equivalence with linear integer arithmetic and handles shapes the Z3 prover rejects.
 
 ## Design rules
 
-- **Additive.** SQLSolver can only turn `not_proven` into `proven_equivalent`. Missing runtime, untranslatable SQL, `NEQ`, `UNKNOWN`, `TIMEOUT` and any failure fall back to `prove_equivalent_smt`. SQLSolver's `NEQ` has no counterexample, so it is never reported as `not_equivalent`; the Z3 fallback supplies counterexamples.
+- **Additive.** In `auto` mode SQLSolver runs only after the algebraic prover finds no proof, and can only turn `not_proven` into `proven_equivalent`. Missing runtime, untranslatable SQL, `NEQ`, `UNKNOWN`, `TIMEOUT` and any failure fall back to the algebraic/Z3 result. SQLSolver's `NEQ` has no counterexample, so it is never reported as `not_equivalent`; the Z3 fallback supplies counterexamples.
 - **No admin rights.** Nothing is installed system-wide and no PATH or registry edits are needed. The runtime lives in one user folder: `KUMOSQL_SQLSOLVER_HOME`, default `%LOCALAPPDATA%\kumosql\sqlsolver` on Windows and `~/.local/share/kumosql/sqlsolver` elsewhere.
 - **License.** SQLSolver is Apache-2.0, which permits redistribution with its LICENSE and NOTICE. This repo does not vendor it yet; it is built or downloaded into the user folder.
 
@@ -26,8 +28,10 @@ SQLSolver answers `EQ` when both queries fail its semantic checks. To stop a mis
 
 ## Rollout
 
-1. **Adapter and fallback** (this change): translation, runtime discovery, `prove_equivalent`, `prove-sql-sqlsolver`, tests against a stub Java.
-2. **Real-engine validation:** build the jar, run the corpus used by `test_smt_fuzz.py` and `test_safety_corpus.py` through it, and record where it disagrees with Z3. Do this on Linux and on a Windows laptop with no admin rights.
-3. **Setup command:** `kumosql-sqlsolver-setup` downloads a portable JRE and the Z3 natives into the user folder and fetches or builds the jar, with checksums.
-4. **Pipeline integration:** Dataform declarations and BigQuery table metadata supply schemas automatically; `prove_equivalent` is used by rewrite verification and the equivalent-work reports.
-5. **UI:** a Settings toggle and a status line showing which backend produced each proof.
+0. **Algebraic prover** (done): union distribution, aggregate splitting, canonical shapes, SQLite-checked.
+1. **Adapter and fallback** (done): translation, runtime discovery, `prove_equivalent`, `prove-sql-sqlsolver`, tests against a stub Java.
+2. **LIA* step:** aggregates over joins and nested subqueries via a linear-integer-arithmetic encoding of group cardinalities.
+3. **Real-engine validation:** build the jar, run the corpus used by `test_smt_fuzz.py` and `test_safety_corpus.py` through it, and record where it disagrees with Z3. Do this on Linux and on a Windows laptop with no admin rights.
+4. **Setup command:** `kumosql-sqlsolver-setup` downloads a portable JRE and the Z3 natives into the user folder and fetches or builds the jar, with checksums.
+5. **Pipeline integration:** Dataform declarations and BigQuery table metadata supply schemas automatically; `prove_equivalent` is used by rewrite verification and the equivalent-work reports.
+6. **UI:** a Settings toggle and a status line showing which backend produced each proof.
