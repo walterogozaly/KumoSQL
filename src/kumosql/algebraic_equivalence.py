@@ -1443,6 +1443,97 @@ def _fold_null_guards(tree: exp.Expression, not_null: dict[str, frozenset[str]] 
     return tree
 
 
+def _semi_joins_to_exists(tree: exp.Expression) -> exp.Expression:
+    """``a LEFT SEMI JOIN b ON c`` keeps the rows of ``a`` for which some row of ``b`` satisfies ``c``:
+    ``a WHERE EXISTS (SELECT 1 FROM b WHERE c)`` (``LEFT ANTI JOIN`` is ``NOT EXISTS``)."""
+
+    for select in list(tree.find_all(exp.Select))[::-1]:
+        joins = select.args.get("joins") or []
+        kept, tests = [], []
+        for join in joins:
+            if join.args.get("side") == "LEFT" and join.args.get("kind") in ("SEMI", "ANTI") and join.args.get("on") is not None:
+                source = join.this.copy()
+                probe = exp.Select(expressions=[exp.Literal.number(1)]).from_(source)
+                probe.set("where", exp.Where(this=join.args["on"].copy()))
+                test = exp.Exists(this=probe)
+                tests.append(test if join.args.get("kind") == "SEMI" else exp.Not(this=test))
+            else:
+                kept.append(join)
+        if not tests:
+            continue
+        select.set("joins", kept or None)
+        where = select.args.get("where")
+        parts = ([where.this] if where is not None else []) + tests
+        select.set("where", exp.Where(this=_and_all(parts)))
+    return tree
+
+
+_HAVING_COUNTER = itertools.count()
+
+
+def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
+    """``x IN (SELECT k FROM t GROUP BY k HAVING f(agg))`` reads the groups as a derived relation.
+
+    ``IN (SELECT g.k FROM (SELECT k, agg AS a FROM t GROUP BY k) AS g WHERE f(a))``: the aggregate
+    values live in the derived table, and the HAVING becomes an ordinary condition on them.
+    """
+
+    for node in list(tree.find_all(exp.In)):
+        query = node.args.get("query")
+        inner = query.this if isinstance(query, exp.Subquery) else query
+        if not isinstance(inner, exp.Select) or not inner.args.get("group") or inner.args.get("having") is None:
+            continue
+        if any(inner.args.get(k) for k in ("distinct", "limit", "offset", "qualify", "order", "with_", "with")) or any(inner.find_all(exp.Window)):
+            continue
+        group = inner.args["group"]
+        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+            continue
+        keys = [k.sql() for k in group.expressions]
+        outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in inner.expressions]
+        if not outputs or any(o.sql() not in keys or any(o.find_all(exp.AggFunc)) for o in outputs):
+            continue
+        having = inner.args["having"].this.copy()
+        aggregates: dict[str, str] = {}
+        ok = True
+        for call in list(having.find_all(exp.AggFunc)):
+            if any(a is not call for a in call.find_all(exp.AggFunc)) or any(isinstance(n, (exp.Subquery, exp.Window)) for n in call.walk()):
+                ok = False
+                break
+        if not ok or any(isinstance(n, (exp.Subquery, exp.Exists)) for n in having.walk()):
+            continue
+        counter = next(_HAVING_COUNTER)
+        key_names = {k: f"kqk{counter}_{i}" for i, k in enumerate(keys)}
+        alias = f"kqg{counter}"
+
+        def lift(piece: exp.Expression) -> exp.Expression:
+            if isinstance(piece, exp.AggFunc):
+                name = aggregates.setdefault(piece.sql(), f"kqa{counter}_{len(aggregates)}")
+                return exp.column(name, table=alias)
+            if piece.sql() in key_names:
+                return exp.column(key_names[piece.sql()], table=alias)
+            return piece
+
+        calls = {call.sql(): call.copy() for call in having.find_all(exp.AggFunc)}
+        lifted = having.transform(lift)
+        if any(isinstance(c, exp.Column) and c.table != alias for c in lifted.find_all(exp.Column)):
+            continue  # HAVING reads something that is neither a key nor an aggregate
+        derived = exp.Select(
+            expressions=[exp.alias_(k.copy(), key_names[k.sql()]) for k in group.expressions]
+            + [exp.alias_(calls[sql].copy(), name) for sql, name in aggregates.items()]
+        )
+        derived.set("from_", (inner.args.get("from_") or inner.args.get("from")).copy())
+        if inner.args.get("joins"):
+            derived.set("joins", [j.copy() for j in inner.args["joins"]])
+        if inner.args.get("where") is not None:
+            derived.set("where", inner.args["where"].copy())
+        derived.set("group", group.copy())
+        outer = exp.Select(expressions=[exp.column(key_names[o.sql()], table=alias) for o in outputs])
+        outer = outer.from_(exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias))))
+        outer.set("where", exp.Where(this=lifted))
+        node.set("query", exp.Subquery(this=outer))
+    return tree
+
+
 def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
     """Column names are case-insensitive: ``t.EMPNO`` and ``t.empno`` are the same column.
 
@@ -1466,6 +1557,8 @@ def normalize(
 
     tree = sqlglot.parse_one(sql, read=dialect)
     tree = _lowercase_columns(tree)
+    tree = _semi_joins_to_exists(tree)
+    tree = _grouped_in_to_derived(tree)
     tree = _fold_dates(tree)
     tree = _fold_constants(tree)
     tree = _fold_trivia(tree)

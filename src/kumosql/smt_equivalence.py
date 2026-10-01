@@ -1141,7 +1141,9 @@ class _Compiler:
         lefts = list(e.this.expressions) if isinstance(e.this, exp.Tuple) else [e.this]
         if not isinstance(inner_node, exp.Select) or len(inner_node.expressions) != len(lefts):
             raise Unsupported("IN subquery shape")
-        if any(isinstance(i, exp.Star) for i in inner_node.expressions) or any(inner_node.find_all(exp.AggFunc)):
+        if any(isinstance(i, exp.Star) for i in inner_node.expressions) or any(
+            call.find_ancestor(exp.Select) is inner_node for call in inner_node.find_all(exp.AggFunc)
+        ):
             raise Unsupported("IN subquery shape")
         left_values = [self._val(item, env, agg, aliases) for item in lefts]
 
@@ -2045,6 +2047,59 @@ class _Prover:
             block.facts = block.facts + extra
         return block
 
+    def merge_equivalent_subs(self, block):
+        """Two existence tests of one block that agree under its plain conditions share one atom.
+
+        ``o.k = l.k AND EXISTS(.. b.k = o.k) AND EXISTS(.. b.k = l.k)`` tests the same thing twice: the
+        conditions that mention no existence atom make the two guards equal, so both atoms mean the same.
+        """
+
+        subs = [sub for sub in block.subs if sub.setsrc is None]
+        if len(block.subs) < 2 or len(subs) < 2:
+            return block
+        atoms = set()
+
+        def collect(items):
+            for sub in items:
+                atoms.add(sub.atom.get_id())
+                collect(sub.nested)
+
+        collect(block.subs)
+
+        def mentions_atom(term) -> bool:
+            stack = [term]
+            while stack:
+                t = stack.pop()
+                if z3.is_const(t) and t.get_id() in atoms:
+                    return True
+                stack.extend(t.children())
+            return False
+
+        conjuncts, todo = [], [block.cond.t]
+        while todo:
+            term = todo.pop()
+            if z3.is_and(term):
+                todo.extend(term.children())
+            else:
+                conjuncts.append(term)
+        plain = [c for c in conjuncts if not mentions_atom(c)]
+        facts = block.facts + plain
+        pairs, dropped = [], set()
+        for i, first in enumerate(subs):
+            if id(first) in dropped:
+                continue
+            for second in subs[i + 1:]:
+                if id(second) in dropped:
+                    continue
+                if self._sub_implies(first, second, block.occs, facts) and self._sub_implies(second, first, block.occs, facts):
+                    pairs.append((second.atom, first.atom))
+                    dropped.add(id(second))
+        if not pairs:
+            return block
+        block = _with_atoms(block, pairs)
+        block.subs = [sub for sub in block.subs if id(sub) not in dropped]
+        return block
+
     def drop_never_null_having(self, block):
         """``HAVING MIN(x) IS NOT NULL`` holds for every group when ``x`` is never NULL in the group's rows."""
 
@@ -2237,6 +2292,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             b = prover.push_having(b)
             b = prover.as_distinct_spj(b)
             b = prover.inline_unique_subs(b)
+            b = prover.merge_equivalent_subs(b)
             b = prover.sub_consequences(b)
             if union.distinct or b.distinct:
                 b = prover.inline_unique_subs(b, require_unique=False)

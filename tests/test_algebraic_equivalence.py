@@ -523,3 +523,73 @@ def test_derived_aggregates_that_differ_only_in_names_and_layers_are_one_relatio
         schema=T_SCHEMA, constraints=constraints, compare_names=False, dialect="mysql",
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def _random_ab(rng):
+    db = sqlite3.connect(":memory:")
+    for table in ("a", "b"):
+        db.execute(f"CREATE TABLE {table} (a INT, k INT, x INT)")
+        for _ in range(rng.choice([0, 1, 3, 6])):
+            db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [rng.choice([None, 0, 1, 2, 3]) for _ in range(3)])
+    return db
+
+
+@pytest.mark.parametrize(
+    "spark, reference",
+    [
+        (
+            "SELECT a.a FROM a LEFT SEMI JOIN b ON a.k = b.k",
+            "SELECT a.a FROM a WHERE EXISTS (SELECT 1 FROM b WHERE a.k = b.k)",
+        ),
+        (
+            "SELECT a.a FROM a LEFT ANTI JOIN b ON a.k = b.k",
+            "SELECT a.a FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE a.k = b.k)",
+        ),
+        (
+            "SELECT a.a FROM a WHERE a.k IN (SELECT k FROM b GROUP BY k HAVING SUM(x) > 2 AND COUNT(*) < 4)",
+            "SELECT a.a FROM a WHERE a.k IN (SELECT g.k FROM (SELECT k, SUM(x) AS s, COUNT(*) AS c FROM b GROUP BY k) AS g WHERE g.s > 2 AND g.c < 4)",
+        ),
+    ],
+)
+def test_semi_joins_and_grouped_in_keep_their_results(spark, reference):
+    rng = random.Random(3)
+    normalized = normalize(spark, schema=T_SCHEMA, dialect="mysql")
+    for _ in range(80):
+        db = _random_ab(rng)
+        assert Counter(db.execute(reference).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+def test_semi_join_and_in_over_a_grouped_table_are_proven_equal_to_their_plain_forms():
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a LEFT SEMI JOIN b ON a.k = b.k",
+        "SELECT a.a FROM a WHERE EXISTS (SELECT 1 FROM b WHERE a.k = b.k)",
+        schema=T_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a WHERE a.k IN (SELECT k FROM b GROUP BY k HAVING SUM(x) > 2)",
+        "SELECT a.a FROM a LEFT SEMI JOIN (SELECT k FROM (SELECT k, SUM(x) AS s FROM b GROUP BY k) AS t WHERE s IS NOT NULL AND s > 2) AS u ON a.k = u.k",
+        schema=T_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # A different threshold is a different relation.
+    result = prove_equivalent_algebraic(
+        "SELECT a.a FROM a WHERE a.k IN (SELECT k FROM b GROUP BY k HAVING SUM(x) > 2)",
+        "SELECT a.a FROM a WHERE a.k IN (SELECT k FROM b GROUP BY k HAVING SUM(x) > 3)",
+        schema=T_SCHEMA, compare_names=False, dialect="mysql",
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_an_existence_test_repeated_on_an_equal_column_is_one_test():
+    schema = {"o": ["k", "v"], "l": ["k", "q"], "b": ["k", "x"]}
+    once = "SELECT o.k FROM o, l WHERE o.k = l.k AND EXISTS (SELECT 1 FROM b WHERE b.k = o.k)"
+    twice = once + " AND EXISTS (SELECT 1 FROM b WHERE b.k = l.k)"
+    result = prove_equivalent_algebraic(once, twice, schema=schema, compare_names=False, dialect="mysql")
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # Without the join condition the second test is about a different column.
+    loose = "SELECT o.k FROM o, l WHERE EXISTS (SELECT 1 FROM b WHERE b.k = o.k) AND EXISTS (SELECT 1 FROM b WHERE b.k = l.k)"
+    result = prove_equivalent_algebraic(
+        "SELECT o.k FROM o, l WHERE EXISTS (SELECT 1 FROM b WHERE b.k = o.k)", loose, schema=schema, compare_names=False, dialect="mysql"
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
