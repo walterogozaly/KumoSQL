@@ -401,3 +401,14 @@ def test_information_schema_job_history_matches_graph_tables(server):
     observed = [edge for edge in graph["edges"] if edge["observed_count"]]
     assert [(edge["from"], edge["to"]) for edge in observed] == [("proj.stg.stg_orders", "proj.marts.fct")]
     assert not [gap for gap in graph["gaps"] if gap["asset"] == "job history"]
+
+
+def test_job_history_survives_a_restart_until_removed(server):
+    post(server, "/api/project", {"files": FILES, "label": "demo"})
+    post(server, "/api/jobs", {"filename": "jobs.json", "text": json.dumps(HISTORY)})
+    # A restart: the in-memory history is gone, the saved copy is read back.
+    live_graph._JOBS.update(records=(), label="", restored_from=None)
+    assert get(server, "/api/graph")["source"]["jobs"] == {"label": "jobs.json", "count": 1}
+    post(server, "/api/jobs/clear", {})
+    live_graph._JOBS.update(records=(), label="", restored_from=None)
+    assert get(server, "/api/graph")["source"]["jobs"] is None

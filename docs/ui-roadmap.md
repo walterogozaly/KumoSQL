@@ -42,7 +42,7 @@ The graph page has two renderers over the same payload. `static/lineage-view.js`
 
 `POST /api/project/clear` unloads the project and its job history.
 
-Payloads carry `source` as above. They add `completeness {complete, views, assets_not_analyzed}` and `blocking` on each gap. Tables the project reads but does not define are `source` nodes; a model that failed to parse is listed as a gap and its node is drawn as "Not analyzed". `coverage.complete` is false whenever a blocking gap exists, so the "Partial graph" strip cannot be missed. Observed edges and last seen need job history (load it on the page); without it they stay empty. `sampled_impact_accuracy` is null and shown as "Not reviewed" until verdicts exist.
+Payloads carry `source` as above. They add `completeness {complete, views, assets_not_analyzed}` and `blocking` on each gap. Tables the project reads but does not define are `source` nodes; a model that failed to parse is listed as a gap and its node is drawn as "Not analyzed". `coverage.complete` is false whenever a blocking gap exists, so the "Partial graph" strip cannot be missed. Observed edges and last seen need job history (load it on the page); without it they stay empty. `sampled_impact_accuracy` is null until verdicts exist, and the strip leaves it out until then.
 
 | UI area | Issue | Fields |
 | --- | --- | --- |
