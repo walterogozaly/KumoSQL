@@ -57,6 +57,9 @@ class GitRepoError(ValueError):
     """The repository could not be cloned, updated or read."""
 
 
+_TRACE: list[dict] | None = None  # filled by diagnose(); None means no tracing
+
+
 def cache_dir() -> Path:
     override = os.environ.get("KUMOSQL_GIT_CACHE")
     return Path(override) if override else data_dir() / "git-cache"
@@ -107,6 +110,11 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
         raise GitRepoError("git was not found on PATH; install git to load a repository") from exc
     except subprocess.TimeoutExpired as exc:
         raise GitRepoError(f"git {args[0]} timed out after {_TIMEOUT_SECONDS} seconds") from exc
+    if _TRACE is not None:
+        _TRACE.append({
+            "command": ["git", *args], "cwd": str(cwd), "cwd_exists": Path(cwd).is_dir(),
+            "returncode": done.returncode, "stderr": done.stderr.decode("utf-8", "replace").strip()[:2000],
+        })
     if done.returncode != 0:
         message = (done.stderr or done.stdout).decode("utf-8", "replace").strip() or f"exit status {done.returncode}"
         lowered = message.lower()
@@ -268,3 +276,52 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
     except ProjectError as exc:
         raise GitRepoError(str(exc)) from exc
     return {"loaded": True, "label": label, "files": len(fetched["files"])}
+
+
+def diagnose(value: object, branch: object = None) -> str:
+    """Run a full refresh load while recording every git call; returns a report to paste into a bug report."""
+
+    import platform
+    import sys
+    import traceback
+
+    from . import version
+
+    global _TRACE
+    lines = [
+        f"KumoSQL: {version.describe()}",
+        f"Python: {sys.version.split()[0]} ({sys.executable})",
+        f"OS: {platform.platform()}",
+    ]
+    try:
+        lines.append("git: " + _git(["--version"]).strip())
+        lines.append("git config url rewrites: " + (_git(["config", "--get-regexp", r"^url\."]).strip() or "none"))
+    except GitRepoError as exc:
+        lines.append(f"git: {exc}")
+    try:
+        server_cwd = os.getcwd()
+        lines.append(f"Working directory: {server_cwd} (exists: {Path(server_cwd).is_dir()})")
+    except OSError as exc:
+        lines.append(f"Working directory: unreadable ({exc})")
+    lines.append(f"Cache directory: {cache_dir()} (exists: {cache_dir().is_dir()})")
+    lines.append(f"Temp directory: {tempfile.gettempdir()} (exists: {Path(tempfile.gettempdir()).is_dir()})")
+    lines.append(f"State directory: {data_dir()} (exists: {data_dir().is_dir()})")
+    lines.append(f"Remote: {value!r}   Branch: {branch!r}")
+    _TRACE = []
+    outcome = "OK"
+    try:
+        result = fetch_project(value, branch, refresh=True)
+        outcome = f"OK: loaded {len(result['files'])} files from {result['repository']} ({result['branch']} @ {result['commit']})"
+    except Exception:  # noqa: BLE001 - the report is the point
+        outcome = "FAILED:\n" + traceback.format_exc()
+    trace, _TRACE = _TRACE, None
+    lines.append("")
+    lines.append("git calls, in order:")
+    for step, call in enumerate(trace, 1):
+        lines.append(f"{step}. {' '.join(call['command'])}")
+        lines.append(f"   cwd: {call['cwd']} (exists: {call['cwd_exists']})  exit: {call['returncode']}")
+        if call["stderr"]:
+            lines.append("   stderr: " + call["stderr"].replace("\n", "\n           "))
+    lines.append("")
+    lines.append("Result: " + outcome)
+    return "\n".join(lines)
