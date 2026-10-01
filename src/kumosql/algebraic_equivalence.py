@@ -273,19 +273,152 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
     for item in select.expressions:
         expr = item.this if isinstance(item, exp.Alias) else item
         name = item.alias or item.output_name
+        if (
+            isinstance(expr, (exp.Sum, exp.Min, exp.Max))
+            and isinstance(expr.this, exp.Distinct)
+            and len(expr.this.expressions) == 1
+        ):
+            # One inner row per group: DISTINCT changes nothing.
+            expr = type(expr)(this=expr.this.expressions[0].copy())
         if isinstance(expr, exp.Column) and expr.name in key_outputs:
-            items.append(exp.alias_(key_outputs[expr.name].copy(), name))
+            items.append(_named(key_outputs[expr.name].copy(), name))
+        elif isinstance(expr, (exp.Sum, exp.Min, exp.Max)) and isinstance(expr.this, exp.Column) and expr.this.name in key_outputs:
+            items.append(_named(key_outputs[expr.this.name].copy(), name))
         elif _is_agg(expr) and isinstance(expr.this, exp.Column) and expr.this.name in agg_outputs:
             inner_agg = agg_outputs[expr.this.name]
             ok = isinstance(inner_agg, (exp.Sum, exp.Count)) if isinstance(expr, exp.Sum) else type(expr) is type(inner_agg)
-            if not ok or not name:
+            if not ok:
                 return None
-            items.append(exp.alias_(inner_agg.copy(), name))
+            items.append(_named(inner_agg.copy(), name))
         else:
             return None
     result = inner.copy()
     result.set("expressions", items)
     return result
+
+
+def _named(expr: exp.Expression, name: str) -> exp.Expression:
+    return exp.alias_(expr, name) if name else expr
+
+
+def _regroup_distinct(select: exp.Select) -> exp.Expression | None:
+    """Fold a regrouping that finishes a DISTINCT aggregate back into one grouped query.
+
+    ``SELECT k, SUM(p), SUM(x) FROM (SELECT k, x, SUM(c) AS p FROM t GROUP BY k, x)
+    GROUP BY k`` is ``SELECT k, SUM(c), SUM(DISTINCT x) FROM t GROUP BY k``: the
+    inner query has one row per ``(k, x)``, so SUM or COUNT of ``x`` over those
+    rows sees each value once (NULLs are ignored by both), and SUM, MIN or MAX of
+    a partial result over the groups is that aggregate over all rows. A count that
+    is summed (and possibly wrapped in ``COALESCE(.., 0)``) is the count: the
+    groups of the outer query are never empty.
+    """
+
+    if not _no_extras(select, allow_group=True) or select.args.get("having"):
+        return None
+    if select.args.get("where") or select.args.get("joins") or not select.args.get("group"):
+        return None
+    from_ = select.args.get("from_") or select.args.get("from")
+    source = from_.this if from_ else None
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select):
+        return None
+    inner = source.this
+    if not _no_extras(inner, allow_group=True) or not inner.args.get("group") or inner.args.get("having"):
+        return None
+    inner_keys = list(inner.args["group"].expressions)
+    if any(not isinstance(k, exp.Column) for k in inner_keys):
+        return None
+    inner_key_sql = {k.sql() for k in inner_keys}
+    key_outputs: dict[str, exp.Expression] = {}
+    agg_outputs: dict[str, exp.Expression] = {}
+    for item in inner.expressions:
+        expr = item.this if isinstance(item, exp.Alias) else item
+        name = item.alias_or_name
+        if not name:
+            return None
+        if _is_agg(expr):
+            agg_outputs[name] = expr
+        elif isinstance(expr, exp.Column) and expr.sql() in inner_key_sql:
+            key_outputs[name] = expr
+        else:
+            return None
+    outer_keys = list(select.args["group"].expressions)
+    if any(not isinstance(k, exp.Column) or k.name not in key_outputs for k in outer_keys):
+        return None
+    extra = inner_key_sql - {key_outputs[k.name].sql() for k in outer_keys}
+    if len(extra) != 1:
+        return None
+    extra_names = [n for n, e in key_outputs.items() if e.sql() in extra]
+    if len(extra_names) != 1:
+        return None
+    extra_name = extra_names[0]
+
+    items: list[exp.Expression] = []
+    for item in select.expressions:
+        expr = item.this if isinstance(item, exp.Alias) else item
+        name = item.alias or item.output_name
+        wrapped = False
+        if isinstance(expr, exp.Coalesce) and len(expr.expressions) == 1 and expr.expressions[0].sql() == "0":
+            expr, wrapped = expr.this, True
+        if isinstance(expr, exp.Column) and not wrapped:
+            if expr.name not in key_outputs or key_outputs[expr.name].sql() in extra:
+                return None
+            items.append(_named(key_outputs[expr.name].copy(), name))
+            continue
+        if not _is_agg(expr) or not isinstance(expr.this, exp.Column):
+            return None
+        column = expr.this.name
+        if column == extra_name and not wrapped:
+            x = key_outputs[extra_name].copy()
+            if isinstance(expr, (exp.Sum, exp.Count)):
+                items.append(_named(type(expr)(this=exp.Distinct(expressions=[x])), name))
+            elif isinstance(expr, (exp.Min, exp.Max)):
+                items.append(_named(type(expr)(this=x), name))
+            else:
+                return None
+        elif column in agg_outputs:
+            partial = agg_outputs[column]
+            if wrapped:
+                if not (isinstance(expr, exp.Sum) and isinstance(partial, exp.Count)):
+                    return None
+            elif not (
+                (isinstance(expr, exp.Sum) and isinstance(partial, (exp.Sum, exp.Count)))
+                or (isinstance(expr, (exp.Min, exp.Max)) and type(partial) is type(expr))
+            ):
+                return None
+            items.append(_named(partial.copy(), name))
+        else:
+            return None
+    result = inner.copy()
+    result.set("expressions", items)
+    result.set("group", exp.Group(expressions=[key_outputs[k.name].copy() for k in outer_keys]))
+    return result
+
+
+def _key_aggregates(select: exp.Select) -> exp.Expression | None:
+    """``MIN(k)``, ``MAX(k)`` and ``SUM(DISTINCT k)`` of a group key are the key itself.
+
+    Every row of a group holds the same ``k`` (NULLs form one group and the
+    aggregates ignore them, so a group of NULLs gives NULL, the key).
+    """
+
+    group = select.args.get("group")
+    if not group or any(select.args.get(k) for k in ("having", "qualify")):
+        return None
+    keys = {k.sql() for k in group.expressions if isinstance(k, exp.Column)}
+    changed = False
+    for node in list(select.find_all(exp.Sum, exp.Min, exp.Max)):
+        if node.find_ancestor(exp.Select) is not select:
+            continue
+        arg = node.this
+        distinct = isinstance(arg, exp.Distinct) and len(arg.expressions) == 1
+        column = arg.expressions[0] if distinct else arg
+        if not isinstance(column, exp.Column) or column.sql() not in keys:
+            continue
+        if isinstance(node, exp.Sum) and not distinct:
+            continue
+        node.replace(column.copy())
+        changed = True
+    return select if changed else None
 
 
 def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
@@ -553,7 +686,7 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_collapse_aggregate, _split_aggregates, _distribute):
+            for rule in (_collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
