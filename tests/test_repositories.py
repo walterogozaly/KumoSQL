@@ -115,3 +115,32 @@ def test_http_endpoints(server, bare):
     with pytest.raises(HTTPError) as error:
         call(server, "/api/repositories/refresh", {"id": "nope"})
     assert error.value.code == 400
+
+
+def test_clear_all_removes_repositories_clones_and_caches(tmp_path, monkeypatch):
+    from kumosql import git_repo, live_graph, state, storage, workflow_configs
+
+    storage.save(str(tmp_path / "data"))
+    saved = repositories.replace([{"url": "https://example.com/a/b.git", "branch": ""},
+                                  {"url": "https://example.com/c/d.git", "branch": "dev"}])
+    assert len(saved["repositories"]) == 2
+    clones = git_repo.cache_dir()
+    (clones / ("a" * 20)).mkdir(parents=True)
+    (clones / ("a" * 20) / "x").write_text("clone")
+    (clones / "keep-me").mkdir()
+    state.set_section(git_repo._TRANSPORT_SECTION, {"git@x:y/z": "https://x/y/z"})
+    state.set_section("scopes", {"mine": 1})
+    live_graph.load_files({"definitions/a.sqlx": "select 1 as a", "workflow_settings.yaml": "defaultProject: p\n"}, "x")
+    from kumosql import bigquery_catalog
+
+    key = "dataform-workflows:example.com/a/b:p:us"
+    bigquery_catalog.cached(key, lambda: {"configs": []}, refresh=True)
+    result = repositories.clear_all()
+    assert result["removed"] == 2 and result["clones"] == 1 and result["schedule_lookups"] == 1
+    assert repositories.listing() == {"repositories": [], "active": None}
+    assert live_graph.loaded() is None
+    assert not (clones / ("a" * 20)).exists() and (clones / "keep-me").exists()
+    assert bigquery_catalog.peek(key) is None
+    assert state.get_section(git_repo._TRANSPORT_SECTION) == {}
+    assert state.get_section("scopes") == {"mine": 1}  # unrelated settings stay
+    assert repositories.clear_all()["removed"] == 0  # idempotent

@@ -455,7 +455,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
             "/api/project/git", "/api/project", "/api/project/clear",
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
-            "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
+            "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview",
         ):
@@ -508,6 +508,8 @@ class UIHandler(BaseHTTPRequestHandler):
 
                 if self.path == "/api/repositories":
                     result = repositories.replace(payload.get("repositories"), payload.get("active"))
+                elif self.path == "/api/repositories/clear":
+                    result = repositories.clear_all()
                 elif self.path == "/api/repositories/activate":
                     result = repositories.activate(payload.get("id"))
                 else:
@@ -573,7 +575,7 @@ def _required(query: dict[str, list[str]], name: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Open the local KumoSQL browser UI")
+    parser = argparse.ArgumentParser(prog="python -m kumosql.ui", description="Open the local KumoSQL browser UI")
     parser.add_argument("--version", action="version", version=f"kumosql {version.describe()}")
     parser.add_argument("--port", type=int, default=8765, help="Local port (default: 8765)")
     parser.add_argument("--project", metavar="DIR", help="Load a Dataform or SQL folder into the query graph page")

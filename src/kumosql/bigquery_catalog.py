@@ -85,6 +85,19 @@ def clear_cache() -> None:
             pass
 
 
+def forget_prefix(prefix: str) -> int:
+    """Drop saved answers whose key starts with ``prefix`` (memory and disk); returns how many."""
+
+    _load_disk()
+    with _lock:
+        keys = [key for key in _memory if isinstance(key, str) and key.startswith(prefix)]
+        for key in keys:
+            del _memory[key]
+        if keys:
+            _save_disk()
+    return len(keys)
+
+
 _refreshing: set[str] = set()
 
 

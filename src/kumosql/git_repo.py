@@ -21,8 +21,10 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, ProjectError
+from . import console, state
 from .state import data_dir
 
 # One git load at a time: the UI can start several (a double click, the startup
@@ -41,8 +43,8 @@ _NETWORK_FAILURES = (
 )
 _NETWORK_HINT = (
     "Git could not reach the remote over SSH. SSH (port 22) is often blocked on work networks. "
-    "If the repository is on GitHub, use its https URL instead (https://github.com/owner/repo.git); "
-    "KumoSQL uses exactly the URL you enter and never switches between https and SSH by itself."
+    "Use the repository's https URL instead (for GitHub: https://github.com/owner/repo.git). "
+    "KumoSQL tries https for you when an SSH remote fails, but never turns an https URL into SSH."
 )
 _AUTH_HINT = (
     "Git could not sign in to this remote. Sign in to git on this computer first, for example "
@@ -111,6 +113,23 @@ def _rmtree(path: Path) -> None:
         shutil.rmtree(path, onexc=retry)
     else:
         shutil.rmtree(path, onerror=retry)
+
+
+_CLONE_NAME = re.compile(r"^[0-9a-f]{20}(?:\.partial-.*)?$")
+
+
+def delete_clones() -> int:
+    """Delete every cached clone (only folders KumoSQL named itself); returns how many."""
+
+    with _LOAD_LOCK:
+        folder = cache_dir()
+        removed = 0
+        if folder.is_dir():
+            for item in folder.iterdir():
+                if item.is_dir() and _CLONE_NAME.match(item.name):
+                    _rmtree(item)
+                    removed += 1
+    return removed
 
 
 def parse_remote(value: object) -> str:
@@ -208,7 +227,12 @@ def sync(remote: str, branch: str | None = None, refresh: bool = False) -> Path:
     """Clone (shallow) or update the cached checkout and return its path."""
 
     with _LOAD_LOCK:
-        return _sync(remote, branch, refresh)
+        try:
+            return _sync(remote, branch, refresh)
+        except GitRepoError as exc:
+            if remote in str(exc):
+                raise
+            raise GitRepoError(f"{exc}\nRemote: {remote}") from exc
 
 
 def _scheme(url: str) -> str:
@@ -231,9 +255,53 @@ def _refuse_rewritten_transport(remote: str) -> None:
         )
 
 
+_SCP = re.compile(r"^(?:[A-Za-z0-9._-]+@)?(?P<host>[A-Za-z0-9._-]+):(?!//)(?P<path>.+)$")
+_SSH_FAILURES = (
+    "could not read from remote repository", "permission denied (publickey", "connection timed out",
+    "connection refused", "network is unreachable", "no route to host", "could not resolve hostname",
+    "kex_exchange_identification", "connection reset", "operation timed out", "host key verification failed",
+    "ssh: connect to host", "banner exchange",
+)
+
+
+def https_equivalent(remote: str) -> str | None:
+    """``https://host/owner/repo`` for ``git@host:owner/repo`` and ``ssh://git@host/owner/repo``; else None."""
+
+    if remote.lower().startswith("ssh://"):
+        parsed = urlsplit(remote)
+        if not parsed.hostname or not parsed.path.strip("/"):
+            return None
+        return f"https://{parsed.hostname}/{parsed.path.lstrip('/')}"
+    if "://" in remote or re.match(r"^[A-Za-z]:[\\/]", remote) or remote.startswith(("/", "\\\\")):
+        return None
+    match = _SCP.match(remote) if "@" in remote.split(":", 1)[0] else None
+    if not match:
+        return None
+    return f"https://{match.group('host')}/{match.group('path').lstrip('/')}"
+
+
+def _is_ssh_failure(message: str) -> bool:
+    lowered = message.lower()
+    return any(text in lowered for text in _SSH_FAILURES)
+
+
+def _repair_origin(path: Path, remote: str) -> None:
+    """A cached clone must point at the URL saved for it (an old clone may carry another one)."""
+
+    try:
+        current = _git(["remote", "get-url", "origin"], cwd=path).strip()
+    except GitRepoError:
+        current = ""
+    if current != remote:
+        console.say(f"cached clone pointed at {current or 'no remote'}; now {remote}")
+        _git(["remote", "set-url", "origin", remote], cwd=path)
+
+
 def _sync(remote: str, branch: str | None, refresh: bool) -> Path:
     _refuse_rewritten_transport(remote)
     path = _cache_path(remote, branch)
+    if (path / ".git").is_dir():
+        _repair_origin(path, remote)
     if (path / ".git").is_dir() and not refresh:
         return path
     if (path / ".git").is_dir():
@@ -304,13 +372,49 @@ def _read_blobs(checkout: Path, blobs: dict[str, str]) -> dict[str, bytes]:
     return result
 
 
+_TRANSPORT_SECTION = "git_transport"
+
+
+def _remembered_https(remote: str) -> str | None:
+    saved = state.get_section(_TRANSPORT_SECTION, {})
+    value = saved.get(remote) if isinstance(saved, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def _remember_https(remote: str, https: str) -> None:
+    saved = state.get_section(_TRANSPORT_SECTION, {})
+    saved = dict(saved) if isinstance(saved, dict) else {}
+    saved[remote] = https
+    state.set_section(_TRANSPORT_SECTION, saved)
+
+
 def fetch_project(value: object, branch: object = None, refresh: bool = False) -> dict:
-    """Return ``{"repository", "branch", "commit", "files": {path: text}}`` for a remote."""
+    """Return ``{"repository", "branch", "commit", "files": {path: text}}`` for a remote.
+
+    An SSH remote (``git@host:owner/repo``) whose SSH connection fails is retried over the
+    equivalent https URL; the result then says so in ``note`` and the choice is remembered, so
+    machines without SSH go straight to https. An https URL is never turned into SSH.
+    """
 
     remote = parse_remote(value)
     wanted = parse_branch(branch)
     with _LOAD_LOCK:  # the cache must not change between the sync and the reads below
-        return _fetch(remote, wanted, bool(refresh))
+        https = https_equivalent(remote)
+        if https and _remembered_https(remote) == https:
+            result = _fetch(https, wanted, bool(refresh))
+            return {**result, "note": f"Loaded over https ({https}) because SSH did not work for {remote}."}
+        try:
+            return _fetch(remote, wanted, bool(refresh))
+        except GitRepoError as exc:
+            if not https or not _is_ssh_failure(str(exc)):
+                raise
+            console.say(f"SSH failed for {remote}; trying {https}")
+            try:
+                result = _fetch(https, wanted, bool(refresh))
+            except GitRepoError as second:
+                raise GitRepoError(f"{exc}\n\nAlso tried over https ({https}): {second}") from second
+            _remember_https(remote, https)
+            return {**result, "note": f"Loaded over https ({https}) because SSH did not work for {remote}."}
 
 
 def _fetch(remote: str, wanted: str | None, refresh: bool) -> dict:
@@ -362,7 +466,10 @@ def load_into_graph(value: object, branch: object = None, refresh: bool = False)
             f"Reading the SQL files of {label} failed while building the graph "
             f"({type(exc).__name__}: {exc}). The repository was fetched fine; this is a KumoSQL bug, "
             "and the traceback is in ui.log.") from exc
-    return {"loaded": True, "label": label, "files": len(fetched["files"])}
+    result = {"loaded": True, "label": label, "files": len(fetched["files"])}
+    if fetched.get("note"):
+        result["note"] = fetched["note"]
+    return result
 
 
 def diagnose(value: object, branch: object = None) -> str:

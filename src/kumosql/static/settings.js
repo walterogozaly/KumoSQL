@@ -464,15 +464,16 @@
   async function renderRepositories(body) {
     body.append(
       h("h3", { class: "sp-heading", text: "Repositories" }),
-      h("p", { class: "sp-lede", text: "Connect the Dataform repositories you want analysed. They are saved here and reloaded each time KumoSQL starts. Git runs on this computer with your own credentials, so private repositories work with an SSH remote (git@github.com:owner/repo.git), an https URL, or a local path. The active repository feeds the Query graph, Cost and Change reports pages." }));
+      h("p", { class: "sp-lede", text: "Connect the Dataform repositories you want analysed. They are saved here and reloaded each time KumoSQL starts. Git runs on this computer with your own credentials, so private repositories work with an https URL (https://github.com/owner/repo.git), an SSH remote, or a local path. The active repository feeds the Query graph, Cost and Change reports pages." }));
     const list = h("ul", { class: "repo-list" });
-    const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "git@github.com:owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
+    const url = h("input", { type: "text", class: "sp-input sp-text", placeholder: "https://github.com/owner/repository.git", "aria-label": "Repository URL", autocomplete: "off", required: "" });
     const branch = h("input", { type: "text", class: "sp-input", placeholder: "branch (default)", "aria-label": "Branch", autocomplete: "off", size: "14" });
     const form = h("form", { class: "repo-form" }, url, branch, h("button", { type: "submit", class: "toolbar-button", text: "Connect" }));
     const needFolder = h("p", { class: "sp-row-hint is-error", hidden: true });
     const chooseFolder = h("button", { type: "button", class: "link-button", text: "Choose a local data folder", hidden: true });
     chooseFolder.addEventListener("click", () => show("storage"));
-    body.append(list, needFolder, chooseFolder, form);
+    const clearAll = h("button", { type: "button", class: "link-button", text: "Clear all repositories", hidden: true });
+    body.append(list, needFolder, chooseFolder, form, clearAll);
     let data = { repositories: [], active: null };
     repoCall("GET", "/api/storage").then((info) => {
       if (info.configured) return;
@@ -489,11 +490,10 @@
       const info = schedules.repositories[repo.id];
       const box = h("div", { class: "repo-wf" });
       if (!info) return box;
-      // Lazy: a template here runs for every state, and only a loaded one has a repositories list.
-      const lines = {
-        loaded: () => `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${(info.repositories || []).join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`,
-      };
-      const text = lines[info.state]?.() || info.message || "";
+      // Only a loaded lookup has counts; other states (needs_projects, error) carry a message.
+      const text = info.state === "loaded"
+        ? `${info.configs} workflow configuration${info.configs === 1 ? "" : "s"} in Dataform (${(info.repositories || []).join(", ")}), ${info.active_production} active in production · refreshed ${when(info.fetched_at)}${info.stale ? " · could not refresh, showing the saved copy" : ""}${info.refreshing ? " · refreshing" : ""}`
+        : info.message || "";
       box.append(h("p", { class: `sp-row-hint${info.state === "error" ? " is-error" : ""}`, text: `Production schedules: ${text}` }));
       for (const warning of info.warnings || []) box.append(h("p", { class: "sp-row-hint is-error", text: warning }));
       const projects = h("input", { type: "text", class: "sp-input sp-text", "aria-label": "Google Cloud projects to search", autocomplete: "off",
@@ -519,6 +519,7 @@
 
     const draw = () => {
       list.replaceChildren();
+      clearAll.hidden = !data.repositories.length;
       if (!data.repositories.length) list.append(h("li", { class: "sp-row-hint", text: "No repositories connected yet." }));
       for (const repo of data.repositories) {
         const isActive = repo.id === data.active;
@@ -541,6 +542,7 @@
             h("span", { class: "repo-branch", text: repo.branch ? ` @ ${repo.branch}` : "" }),
             isActive ? h("span", { class: "repo-badge", text: "Active" }) : ""),
           h("p", { class: `sp-row-hint${repo.error ? " is-error" : ""}`, text: status }),
+          repo.note && !repo.error ? h("p", { class: "sp-row-hint", text: repo.note }) : "",
           scheduleBlock(repo),
           h("div", { class: "repo-actions" }, use, refresh, remove)));
       }
@@ -563,6 +565,10 @@
       button.disabled = false;
       try { await refreshList(); } catch { /* keep the last list */ }
     }
+    clearAll.addEventListener("click", () => {
+      if (!window.confirm("Remove every connected repository and delete the cached copies, saved schedule lookups and saved analyses? Your other settings stay. This cannot be undone.")) return;
+      run(clearAll, async () => { await repoCall("POST", "/api/repositories/clear", {}); }, "All repositories cleared");
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const button = form.querySelector("button");

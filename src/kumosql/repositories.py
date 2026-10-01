@@ -90,6 +90,28 @@ def replace(entries: object, active: object = None) -> dict:
     return {"repositories": data["items"], "active": data["active"]}
 
 
+def clear_all() -> dict:
+    """Remove every connected repository and everything derived from them.
+
+    Deletes the saved list, the loaded project, cached clones, saved schedule lookups, saved
+    analyses and remembered https fallbacks. Settings that are not about a repository (folder,
+    scopes, formatting, BigQuery) and loaded job history are kept.
+    """
+
+    from . import git_repo, live_graph, workflow_configs
+
+    with _LOCK:
+        count = len(_read()["items"])
+        _write({"items": [], "active": None})
+        _LOADING.clear()
+    live_graph.forget_project()
+    clones = git_repo.delete_clones()
+    lookups = workflow_configs.forget_all()
+    state.set_section(git_repo._TRANSPORT_SECTION, {})
+    console.say(f"cleared {count} repositories, {clones} cached clones, {lookups} schedule lookups")
+    return {"removed": count, "clones": clones, "schedule_lookups": lookups, **listing()}
+
+
 def activate(repo_id: object) -> dict:
     with _LOCK:
         data = _read()
@@ -121,8 +143,9 @@ def load(repo_id: object, refresh: bool = False) -> dict:
         except (GitRepoError, ValueError) as exc:
             _update(repo_id, error=str(exc), error_at=_now())
             raise
-        _update(repo_id, drop=("error", "error_at", "stale_reason"),
-                last_loaded=_now(), label=result["label"], files=result["files"], activate=True)
+        _update(repo_id, drop=("error", "error_at", "stale_reason") + (() if result.get("note") else ("note",)),
+                last_loaded=_now(), label=result["label"], files=result["files"], activate=True,
+                **({"note": result["note"]} if result.get("note") else {}))
     finally:
         with _LOCK:
             _LOADING.discard(repo_id)
