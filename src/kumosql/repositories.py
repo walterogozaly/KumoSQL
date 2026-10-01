@@ -121,8 +121,9 @@ def load(repo_id: object, refresh: bool = False) -> dict:
         except (GitRepoError, ValueError) as exc:
             _update(repo_id, error=str(exc), error_at=_now())
             raise
-        _update(repo_id, drop=("error", "error_at", "stale_reason"),
-                last_loaded=_now(), label=result["label"], files=result["files"], activate=True)
+        _update(repo_id, drop=("error", "error_at", "stale_reason") + (() if result.get("note") else ("note",)),
+                last_loaded=_now(), label=result["label"], files=result["files"], activate=True,
+                **({"note": result["note"]} if result.get("note") else {}))
     finally:
         with _LOCK:
             _LOADING.discard(repo_id)
