@@ -955,6 +955,20 @@ def _fold_trivia(tree: exp.Expression) -> exp.Expression:
                 node.set("group", None)
                 node.set("distinct", exp.Distinct())
                 return node
+        if isinstance(node, (exp.Upper, exp.Lower)) and isinstance(node.this, (exp.Upper, exp.Lower)):
+            return type(node)(this=node.this.this.copy())  # the outer case wins whatever the inner one did
+        if isinstance(node, exp.Anonymous) and node.name.upper() == "POSITIVE" and len(node.expressions) == 1:
+            return node.expressions[0].copy()
+        if isinstance(node, exp.Concat) and any(isinstance(e, exp.Concat) for e in node.expressions):
+            flat = []
+            for item in node.expressions:
+                if isinstance(item, exp.Concat) and item.args.get("safe") == node.args.get("safe") and item.args.get("coalesce") == node.args.get("coalesce"):
+                    flat.extend(i.copy() for i in item.expressions)
+                else:
+                    flat.append(item.copy())
+            rebuilt = node.copy()
+            rebuilt.set("expressions", flat)
+            return rebuilt
         for kind, part in ((exp.Year, "YEAR"), (exp.Month, "MONTH"), (exp.Day, "DAY")):
             if isinstance(node, kind):
                 argument = node.this
