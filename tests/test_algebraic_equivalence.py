@@ -766,3 +766,40 @@ def test_pull_up_preserves_results_on_random_databases():
         for i in range(rng.choice([0, 3, 8])):
             db.execute("INSERT INTO orders VALUES (?, ?, ?)", (i, rng.choice([None, 0, 1, 2, 3]), rng.choice([None, 1, 3, 9])))
         assert Counter(db.execute(PULL_UP_GROUPED).fetchall()) == Counter(db.execute(flat).fetchall()), flat
+
+
+OUTER_SCHEMA = {"customers": ["cid", "name"], "orders": ["oid", "ocid", "note"]}
+OUTER_COUNTS = "SELECT cid, COUNT(oid) AS n FROM customers LEFT JOIN orders ON cid = ocid AND note <> 'x' GROUP BY cid"
+OUTER_COUNTS_DERIVED = (
+    "SELECT cid, COUNT(oid) AS n FROM (SELECT c.cid, o.oid FROM customers AS c LEFT JOIN "
+    "(SELECT oid, ocid FROM orders WHERE note <> 'x') AS o ON c.cid = o.ocid) AS j GROUP BY cid"
+)
+
+
+def test_filter_in_derived_right_side_of_left_join_is_the_on_clause():
+    result = prove_equivalent_algebraic(OUTER_COUNTS, OUTER_COUNTS_DERIVED, schema=OUTER_SCHEMA)
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_filter_moved_to_where_after_left_join_is_not_the_on_clause():
+    where_form = (
+        "SELECT cid, COUNT(oid) AS n FROM customers LEFT JOIN orders ON cid = ocid "
+        "WHERE note <> 'x' GROUP BY cid"
+    )
+    result = prove_equivalent_algebraic(OUTER_COUNTS, where_form, schema=OUTER_SCHEMA)
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_outer_join_rewrites_preserve_results_on_random_databases():
+    rng = random.Random(5)
+    for sql in (OUTER_COUNTS, OUTER_COUNTS_DERIVED):
+        normalized = normalize(sql, schema=OUTER_SCHEMA)
+        for _ in range(60):
+            db = sqlite3.connect(":memory:")
+            db.execute("CREATE TABLE customers (cid INT, name TEXT)")
+            db.execute("CREATE TABLE orders (oid INT, ocid INT, note TEXT)")
+            for i in range(rng.choice([0, 2, 4])):
+                db.execute("INSERT INTO customers VALUES (?, ?)", (rng.choice([None, 1, 2, 3]), "n"))
+            for i in range(rng.choice([0, 3, 6])):
+                db.execute("INSERT INTO orders VALUES (?, ?, ?)", (i, rng.choice([None, 1, 2, 3]), rng.choice([None, "x", "y"])))
+            assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized

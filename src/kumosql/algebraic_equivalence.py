@@ -983,6 +983,152 @@ def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
     return exp.Union(this=union.this.copy(), expression=union.expression.copy(), distinct=True)
 
 
+def _merge_outer_right_filter(select: exp.Select) -> exp.Expression | None:
+    """``a LEFT JOIN (SELECT x, y FROM t WHERE w) AS d ON c`` is ``a LEFT JOIN t AS d ON c AND w``.
+
+    A filter on the null-extended side of a left join belongs in its ON clause: rows of ``a``
+    with no surviving match are padded either way. Only a derived table that projects plain
+    columns of one table is read this way.
+    """
+
+    joins = select.args.get("joins") or []
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    for index, join in enumerate(joins):
+        source = join.this
+        if (join.args.get("side") or "").upper() != "LEFT" or join.args.get("kind") in ("SEMI", "ANTI") or join.args.get("on") is None:
+            continue
+        if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+            continue
+        inner = source.this
+        if not _no_extras(inner, allow_group=False) or inner.args.get("joins") or inner.args.get("where") is None:
+            continue
+        from_ = inner.args.get("from_") or inner.args.get("from")
+        table = from_.this if from_ is not None else None
+        if not isinstance(table, exp.Table) or table.args.get("joins") or table.args.get("pivots") or table.args.get("laterals"):
+            continue
+        if not all(isinstance(e, exp.Column) and not isinstance(e.this, exp.Star) for e in inner.expressions):
+            continue
+        if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select)) for n in inner.args["where"].walk()):
+            continue
+        t_name = (table.alias_or_name or "").lower()
+        if any(c.table and c.table.lower() != t_name for c in inner.find_all(exp.Column)):
+            continue
+        alias = source.alias
+        condition = inner.args["where"].this.copy()
+        for column in condition.find_all(exp.Column):
+            column.set("table", exp.to_identifier(alias))
+        merged = table.copy()
+        merged.set("alias", exp.TableAlias(this=exp.to_identifier(alias)))
+        copy = select.copy()
+        target = copy.args["joins"][index]
+        target.set("this", merged)
+        target.set("on", exp.And(this=exp.Paren(this=target.args["on"]) if isinstance(target.args["on"], exp.Or) else target.args["on"], expression=exp.Paren(this=condition) if isinstance(condition, exp.Or) else condition))
+        return copy
+    return None
+
+
+def _flatten_join_source(select: exp.Select) -> exp.Expression | None:
+    """``SELECT k, COUNT(x) FROM (SELECT k, x FROM a LEFT JOIN b ON c) AS d GROUP BY k`` reads the join directly.
+
+    A derived table that only projects columns of a join (outer joins included) keeps each row of
+    the join, so the grouped select above it can read the join itself.
+    """
+
+    from .eager_aggregation import _own_aggregates
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or select.args.get("joins") or not (select.args.get("group") or _own_aggregates(select)):
+        return None
+    source = from_.this
+    if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+        return None
+    inner = source.this
+    if not _no_extras(inner, allow_group=False) or inner.args.get("where") is not None or not inner.args.get("joins"):
+        return None
+    if not all(isinstance(e, exp.Column) and not isinstance(e.this, exp.Star) for e in inner.expressions):
+        return None
+    if any(isinstance(n, (exp.Subquery, exp.Exists)) for n in inner.walk() if n is not source.this and n.find_ancestor(exp.Select) is not None and n.find_ancestor(exp.Select) is inner):
+        return None
+    names = [e.alias_or_name.lower() for e in inner.expressions]
+    if len(set(names)) != len(names):
+        return None
+    inner_sources = _sources_of(inner)
+    if any(not (isinstance(i, (exp.Table, exp.Subquery)) and i.alias_or_name) for i in inner_sources):
+        return None
+    if any(isinstance(i, exp.Table) and (i.args.get("pivots") or i.args.get("laterals") or i.args.get("joins")) for i in inner_sources):
+        return None
+    if any(j.args.get("using") is not None or j.args.get("method") for j in inner.args["joins"]):
+        return None
+    alias = source.alias.lower()
+    if alias in {i.alias_or_name.lower() for i in inner_sources}:
+        return None
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    if any(isinstance(n, (exp.Subquery, exp.Exists)) and n is not source for n in select.walk() if n.find_ancestor(exp.Select) is select):
+        return None
+    by_name = {n: e for n, e in zip(names, inner.expressions)}
+    copy = select.copy()
+    for column in list(copy.find_all(exp.Column)):
+        if column.find_ancestor(exp.Select) is not copy:
+            continue
+        if column.table and column.table.lower() != alias:
+            return None
+        origin = by_name.get(column.name.lower())
+        if origin is None:
+            return None
+        column.replace(origin.copy() if not isinstance(origin, exp.Alias) else origin.this.copy())
+    new_inner = inner.copy()
+    copy.set("from_" if "from_" in copy.args else "from", new_inner.args.get("from_") or new_inner.args.get("from"))
+    copy.set("joins", new_inner.args.get("joins"))
+    return copy
+
+
+def _qualify_outer_join_columns(tree: exp.Expression, schema: dict[str, list[str]]) -> exp.Expression:
+    """Write ``a.x`` for a bare ``x`` in a grouped select over an outer join when one source has ``x``.
+
+    The rewrites that read an outer join as a unit need every column to name its source.
+    """
+
+    from .eager_aggregation import _own_aggregates
+
+    schema = {key.lower(): [c.lower() for c in cols] for key, cols in schema.items()}
+    for select in list(tree.find_all(exp.Select)):
+        joins = select.args.get("joins") or []
+        if not any((j.args.get("side") or "").upper() in ("LEFT", "RIGHT", "FULL") for j in joins):
+            continue
+        if not (select.args.get("group") or _own_aggregates(select)):
+            continue
+        sources = _sources_of(select)
+        owners: dict[str, list[str]] = {}
+        complete = True
+        for source in sources:
+            alias = source.alias_or_name
+            if isinstance(source, exp.Table):
+                parts = [p.name for p in (source.args.get("catalog"), source.args.get("db"), source.this) if p is not None]
+                columns = schema.get(".".join(parts).lower())
+            elif isinstance(source, exp.Subquery):
+                columns = _select_names(source.this)
+            else:
+                columns = None
+            if columns is None or not alias:
+                complete = False
+                break
+            for column in columns:
+                owners.setdefault(column, []).append(alias)
+        if not complete:
+            continue
+        outputs = {e.alias.lower() for e in select.expressions if isinstance(e, exp.Alias)}
+        for column in select.find_all(exp.Column):
+            if column.table or isinstance(column.this, exp.Star) or column.find_ancestor(exp.Select) is not select:
+                continue
+            name = column.name.lower()
+            if name in outputs or len(owners.get(name, [])) != 1:
+                continue
+            column.set("table", exp.to_identifier(owners[name][0]))
+    return tree
+
+
 def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
     """An aggregate over an outer join reads the join as one derived relation.
 
@@ -1931,11 +2077,18 @@ def normalize(
         tree = _expand_stars(tree, schema)
     tree = _isolate_windows(tree)
 
+    def qualify(select: exp.Select) -> exp.Expression | None:
+        if not schema:
+            return None
+        copy = select.copy()
+        _qualify_outer_join_columns(copy, schema)
+        return copy if copy.sql() != select.sql() else None
+
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
