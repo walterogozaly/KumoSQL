@@ -290,7 +290,7 @@
 
   const linkButton = (label, action) => h("button", { type: "button", class: "link-button", "data-action": action, text: label });
 
-  function renderBuilder(container, tree, preview, datalistId, scopeChoices = () => []) {
+  function renderBuilder(container, tree, preview, datalistId, scopeChoices = () => [], hiddenOps = []) {
     const redraw = () => {
       container.replaceChildren(renderGroup(tree, null));
       showPreview();
@@ -309,7 +309,7 @@
       const field = h("input", { type: "text", list: datalistId, placeholder: "field", "aria-label": "Field", value: node.field });
       field.addEventListener("input", () => { node.field = field.value; showPreview(); });
       const op = h("select", { "aria-label": "Operator" });
-      for (const item of operators()) op.append(new Option(item.label, item.op, false, item.op === node.op));
+      for (const item of operators().filter((candidate) => !hiddenOps.includes(candidate.op) || candidate.op === node.op)) op.append(new Option(item.label, item.op, false, item.op === node.op));
       const value = h("input", { type: "text", "aria-label": "Value", value: node.value });
       // A list takes a pasted block: commas, semicolons or one value per line.
       const listValue = h("textarea", { rows: "3", "aria-label": "Values", spellcheck: "false", placeholder: "Paste values: one per line, or separated by commas" });
@@ -530,6 +530,8 @@
 
   window.KumoScopes = {
     load, loadFields, save, getActive, setActive, renderManager, mountPicker, describeRule,
+    /** The rule builder, for other pages that edit rules (tag rules). */
+    builder: { newGroup, treeToRule, ruleToTree, renderBuilder },
     list: () => scopes,
     describe: safeDescribe,
     onActiveChange: (listener) => listeners.add(listener),

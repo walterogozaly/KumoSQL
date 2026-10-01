@@ -15,7 +15,7 @@ from . import console, live_graph
 from . import live_insights
 from . import scope_queries
 from . import scopes as scope_store
-from . import state, version
+from . import state, tags, version
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
 from .rewrite import apply_rules, available_rules
 
@@ -47,6 +47,7 @@ ASSETS = {
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
+    "/assets/tags.js": ("tags.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
     "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
@@ -181,7 +182,11 @@ class UIHandler(BaseHTTPRequestHandler):
                 "ui": state.get_section("ui", {}),
                 "format": load_preferences().to_json(),
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
+                "tag_rules": tags.list_rules(),
             })
+            return
+        if self.path == "/api/tags":
+            self._json(200, tags.snapshot())
             return
         if self.path == "/api/scope-queries":
             self._json(200, {
@@ -339,8 +344,22 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/catalog/selection":
             self._put_selection()
             return
+        if self.path == "/api/tags":
+            payload = self._read_json(MAX_UI_STATE_BYTES)
+            if payload is None:
+                return
+            try:
+                if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
+                    raise ValueError("send the objects to change as keys")
+                self._json(200, tags.change_manual(
+                    payload["keys"], payload.get("add") or [], payload.get("remove") or []))
+            except (ValueError, TypeError) as exc:
+                self._json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._json(500, {"error": str(exc)})
+            return
         section = self.path.removeprefix("/api/settings/")
-        if section not in ("ui", "format", "scopes", "scope_queries") or section == self.path:
+        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules") or section == self.path:
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
@@ -358,6 +377,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 saved = prefs.to_json()
             elif section == "scope_queries":
                 saved = scope_queries.save_settings(payload).to_json()
+            elif section == "tag_rules":
+                saved = tags.save_rules(payload)
             else:
                 if not isinstance(payload, list):
                     raise ValueError("scopes must be a list")
@@ -426,6 +447,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
+            "/api/tag-rules/preview",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -453,6 +475,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
             elif self.path == "/api/scope-queries":
                 result = _scope_query(payload)
+            elif self.path == "/api/tag-rules/preview":
+                result = tags.preview_rule(payload)
             elif self.path == "/api/storage":
                 from . import storage
 

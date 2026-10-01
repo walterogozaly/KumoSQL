@@ -395,14 +395,38 @@ def list_datasets(project: str) -> list[dict[str, str]]:
     return [item for item, ok in zip(datasets, allowed) if ok]
 
 
+#: BigQuery's routine types, as shown in the explorer and used by tag rules (``type``).
+ROUTINE_TYPES = {
+    "SCALAR_FUNCTION": "UDF", "TABLE_VALUED_FUNCTION": "TABLE_FUNCTION",
+    "AGGREGATE_FUNCTION": "AGGREGATE_FUNCTION", "PROCEDURE": "PROCEDURE",
+}
+
+
+def is_routine(object_type: str) -> bool:
+    return object_type in ROUTINE_TYPES.values()
+
+
 def list_tables(project: str, dataset: str) -> list[dict[str, str]]:
-    return [
+    """Everything inside the dataset: tables, views and materialized views, then functions and procedures.
+
+    Routines come from a second call; if BigQuery refuses it, the tables are still returned.
+    """
+    base = f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}"
+    items = [
         {"id": item.get("tableReference", {}).get("tableId", ""),
          "type": item.get("type", "TABLE")}
-        for item in _list(
-            f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables", "tables"
-        )
+        for item in _list(f"{base}/tables", "tables")
     ]
+    try:
+        routines = _list(f"{base}/routines", "routines")
+    except CatalogError:
+        routines = []
+    items.extend(
+        {"id": item.get("routineReference", {}).get("routineId", ""),
+         "type": ROUTINE_TYPES.get(item.get("routineType", ""), "UDF")}
+        for item in routines
+    )
+    return items
 
 
 def get_table(project: str, dataset: str, table: str) -> dict:
