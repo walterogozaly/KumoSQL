@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 import os
+import re
 import tempfile
 import threading
 import time
@@ -14,7 +15,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .dryrun import access_token
-from .state import data_dir
+from .state import data_dir, get_section, set_section
 
 _API = "https://bigquery.googleapis.com/bigquery/v2"
 
@@ -166,7 +167,7 @@ def _list(path: str, key: str, params: dict[str, str] | None = None) -> list[dic
         query["pageToken"] = token
 
 
-def _can_browse(project: str) -> bool:
+def can_browse(project: str) -> bool:
     """Whether the credentials may list datasets in ``project``.
 
     Only a definite denial (403 or 404, which includes BigQuery being disabled
@@ -180,24 +181,52 @@ def _can_browse(project: str) -> bool:
 
 
 def list_projects() -> list[dict[str, str]]:
-    """List projects the active Google credentials can actually browse.
+    """List every project the credentials hold some role on.
 
-    ``projects.list`` also returns projects the identity holds some unrelated
-    role on, so each is probed with a one-row dataset listing and dropped if
-    BigQuery denies it.
+    This can be long (it is not the console's starred list) and is not probed
+    for BigQuery access, so it is only requested while choosing projects.
+    ``can_browse`` checks the ones actually chosen.
     """
-    projects = [
+    return [
         {
             "id": item.get("id", ""),
             "name": item.get("friendlyName") or item.get("name") or item.get("id", ""),
         }
         for item in _list("projects", "projects")
     ]
-    if not projects:
-        return projects
-    with ThreadPoolExecutor(max_workers=min(8, len(projects))) as pool:
-        allowed = list(pool.map(lambda item: _can_browse(item["id"]), projects))
-    return [item for item, ok in zip(projects, allowed) if ok]
+
+
+_PROJECT_ID = re.compile(r"^[A-Za-z][A-Za-z0-9.:_-]{0,99}$")
+MAX_SELECTED = 100
+
+
+def selected_projects() -> list[str]:
+    """The project ids chosen for the BigQuery tab (empty until the user picks some)."""
+    stored = get_section("bigquery", {})
+    items = stored.get("projects", []) if isinstance(stored, dict) else []
+    return [item for item in items if isinstance(item, str) and _PROJECT_ID.match(item)]
+
+
+def select_projects(projects: list) -> list[str]:
+    """Validate and save the chosen projects; refuses ids BigQuery denies access to."""
+    if not isinstance(projects, list) or not all(isinstance(item, str) for item in projects):
+        raise ValueError("projects must be a list of project ids")
+    ids = list(dict.fromkeys(item.strip() for item in projects if item.strip()))
+    if len(ids) > MAX_SELECTED:
+        raise ValueError(f"choose at most {MAX_SELECTED} projects")
+    bad = [item for item in ids if not _PROJECT_ID.match(item)]
+    if bad:
+        raise ValueError(f"not a project id: {bad[0]}")
+    previous = set(selected_projects())
+    new = [item for item in ids if item not in previous]
+    if new:
+        with ThreadPoolExecutor(max_workers=min(8, len(new))) as pool:
+            allowed = list(pool.map(can_browse, new))
+        denied = [item for item, ok in zip(new, allowed) if not ok]
+        if denied:
+            raise ValueError(f"No access to BigQuery in {', '.join(denied)}")
+    set_section("bigquery", {"projects": ids})
+    return ids
 
 
 def _can_list_tables(project: str, dataset: str) -> bool:
