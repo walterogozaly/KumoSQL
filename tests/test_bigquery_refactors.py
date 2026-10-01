@@ -79,9 +79,45 @@ PROVEN = {
         "SELECT order_id, SUM(amount) OVER (PARTITION BY customer_id ORDER BY created_at) AS run FROM orders",
         "WITH base AS (SELECT * FROM orders) SELECT order_id, SUM(amount) OVER (PARTITION BY customer_id ORDER BY created_at) AS run FROM base",
     ),
+    "select-list scalar aggregate and left join": (
+        "SELECT c.customer_id, (SELECT SUM(o.amount) FROM orders o WHERE o.customer_id = c.customer_id) AS t FROM customers c",
+        "SELECT c.customer_id, g.s AS t FROM customers c LEFT JOIN (SELECT customer_id, SUM(amount) AS s FROM orders GROUP BY customer_id) g ON c.customer_id = g.customer_id",
+    ),
+    "sum of grouped sums": (
+        "WITH t AS (SELECT customer_id, SUM(amount) AS s FROM orders GROUP BY customer_id) SELECT SUM(s) AS total FROM t",
+        "SELECT SUM(amount) AS total FROM orders",
+    ),
+    "in over a union all": (
+        "SELECT order_id FROM orders WHERE customer_id IN (SELECT customer_id FROM customers UNION ALL SELECT order_id FROM orders)",
+        "SELECT order_id FROM orders WHERE customer_id IN (SELECT customer_id FROM customers) OR customer_id IN (SELECT order_id FROM orders)",
+    ),
+    "min and count with a null guard": (
+        "SELECT MIN(region) AS m, COUNT(*) AS n FROM orders WHERE region IS NOT NULL",
+        "SELECT MIN(region) AS m, COUNT(region) AS n FROM orders",
+    ),
+    "trim and lower commute, || is concat": (
+        "SELECT LOWER(TRIM(status)) || region AS x FROM orders",
+        "SELECT CONCAT(TRIM(LOWER(status)), region) AS x FROM orders",
+    ),
 }
 
 NOT_PROVEN = {
+    "inner join is not a left join to the grouped table": (
+        "SELECT c.customer_id, (SELECT SUM(o.amount) FROM orders o WHERE o.customer_id = c.customer_id) AS t FROM customers c",
+        "SELECT c.customer_id, g.s AS t FROM customers c JOIN (SELECT customer_id, SUM(amount) AS s FROM orders GROUP BY customer_id) g ON c.customer_id = g.customer_id",
+    ),
+    "sum of grouped counts reads NULL for no rows": (
+        "SELECT SUM(n) AS total FROM (SELECT customer_id, COUNT(*) AS n FROM orders GROUP BY customer_id)",
+        "SELECT COUNT(*) AS total FROM orders",
+    ),
+    "null guard under a group by drops groups": (
+        "SELECT customer_id, COUNT(*) AS n FROM orders WHERE region IS NOT NULL GROUP BY customer_id",
+        "SELECT customer_id, COUNT(region) AS n FROM orders GROUP BY customer_id",
+    ),
+    "in over a union is not in over one branch": (
+        "SELECT order_id FROM orders WHERE customer_id IN (SELECT customer_id FROM customers UNION ALL SELECT order_id FROM orders)",
+        "SELECT order_id FROM orders WHERE customer_id IN (SELECT customer_id FROM customers)",
+    ),
     "boundary changed": ("SELECT order_id FROM orders WHERE amount > 5", "SELECT order_id FROM orders WHERE amount >= 5"),
     "safe_divide is not plain division": (
         "SELECT SAFE_DIVIDE(amount, customer_id) AS h FROM orders",
