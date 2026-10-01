@@ -16,19 +16,22 @@ from __future__ import annotations
 import argparse
 import random
 import shutil
+import sys
 from pathlib import Path
 
 DOMAINS = ["sales", "finance", "growth", "ops", "risk", "supply", "people", "product", "support", "marketing", "ml", "audit"]
 LAYERS = ["staging", "intermediate", "core", "marts", "reporting"]
 SOURCE_DATASETS = ["raw_app", "raw_billing", "raw_crm", "raw_events", "raw_ledger", "raw_inventory"]
-PROJECT = "fixture-analytics"
+PROJECT = "kumosql"
+PREFIX = "fx_"  # every dataset this project would create is prefixed, so it never collides with real ones
+MESSY_TABLES = ["raw_orders", "raw_order_items", "raw_products", "raw_users", "stg_orders", "stg_order_items", "stg_products", "stg_users", "dim_customer", "fct_orders"]
 
 WORKFLOW_SETTINGS = """\
 # Dataform workflow settings (fixture)
-defaultProject: fixture-analytics
-defaultDataset: dataform_scratch
+defaultProject: kumosql
+defaultDataset: fx_scratch
 defaultLocation: EU
-defaultAssertionDataset: dataform_assertions
+defaultAssertionDataset: fx_assertions
 dataformCoreVersion: 3.0.0
 vars:
   lookback_days: "30"
@@ -39,9 +42,9 @@ vars:
 DATAFORM_JSON = """\
 {
   "warehouse": "bigquery",
-  "defaultSchema": "dataform_scratch",
-  "assertionSchema": "dataform_assertions",
-  "defaultDatabase": "fixture-analytics",
+  "defaultSchema": "fx_scratch",
+  "assertionSchema": "fx_assertions",
+  "defaultDatabase": "kumosql",
   "defaultLocation": "EU",
   "vars": { "lookback_days": "30", "env": "prod" }
 }
@@ -103,6 +106,18 @@ def sql_body(rng: random.Random, parents: list[str], n: int, flavor: int) -> str
             f"  format_date('%Y-%m', a.created_at) as period\nfrom {first} as a{extra}\n")
 
 
+def wide_body(first: str, n: int) -> str:
+    """A wide model with a long chain of CTEs, the shape that makes column tracing slow."""
+
+    columns = ",\n  ".join(f"c{i}" for i in range(60))
+    ctes = [f"s0 as (\n  select id, created_at, {columns.replace(chr(10), '')} from {first}\n)"]
+    for i in range(1, 16):
+        extra = ", ".join(f"c{j} + {i} as c{j}" for j in range(0, 60, 3))
+        keep = ", ".join(f"c{j}" for j in range(60) if j % 3)
+        ctes.append(f"s{i} as (\n  select id, created_at, {extra}, {keep} from s{i - 1}\n  where c{i} is not null\n)")
+    return "with " + ",\n".join(ctes) + f"\nselect * from s15\n"
+
+
 def long_dir(rng: random.Random, depth: int) -> str:
     parts = []
     for _ in range(depth):
@@ -113,6 +128,8 @@ def long_dir(rng: random.Random, depth: int) -> str:
 
 def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
     rng = random.Random(seed)
+    if sys.platform == "win32":
+        out = Path("\\\\?\\" + str(out.resolve()))  # extended-length path: lets paths pass 260 characters without admin rights
     if out.exists():
         shutil.rmtree(out)
     (out / "includes").mkdir(parents=True)
@@ -147,6 +164,10 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
             write(defs / "sources" / ds / f"{name}.sqlx",
                   f'config {{\n  type: "declaration",\n  schema: "{ds}",\n  name: "{name}",\n  columns: {{ id: "key", created_at: "ts" }}\n}}\n',
                   "declaration")
+    for name in MESSY_TABLES:  # real tables in the KumoSQL BigQuery test bed
+        declared.append(("kumosql_messy", name))
+        write(defs / "sources" / "kumosql_messy" / f"{name}.sqlx",
+              f'config {{\n  type: "declaration",\n  database: "{PROJECT}",\n  schema: "kumosql_messy",\n  name: "{name}"\n}}\n', "declaration")
     write(defs / "sources" / "declarations.js", 'declare({ schema: "raw_misc", name: "javascript_declared" });\n', "js")
 
     # Layered models. Each layer reads earlier layers, so the graph is deep and wide.
@@ -160,7 +181,7 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
         for i in range(per_layer):
             index += 1
             domain = DOMAINS[(index * 7 + layer_number) % len(DOMAINS)]
-            schema = f"{layer}_{domain}"
+            schema = f"{PREFIX}{layer}_{domain}"
             name = f"{domain}_{layer}_{i}"
             n_parents = 1 if layer_number == 0 else rng.randint(1, 3)
             pool = previous if rng.random() < 0.85 or not built else built
@@ -181,6 +202,8 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
             kind = rng.random()
             flavor = rng.randrange(6)
             body = sql_body(rng, rendered, index, flavor)
+            if index % 97 == 0:
+                body = wide_body(rendered[0], index)
             header: str
             pre = post = js = ""
             if kind < 0.62:
@@ -273,7 +296,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", choices=["yaml", "json", "both"], default="yaml")
     args = parser.parse_args(argv)
     counts = generate(args.out, args.models, args.seed, args.config)
-    longest = max((len(str(p.relative_to(args.out))) for p in args.out.rglob("*") if p.is_file()), default=0)
+    root = Path("\\\\?\\" + str(args.out.resolve())) if sys.platform == "win32" else args.out
+    longest = max((len(str(p.relative_to(root))) for p in root.rglob("*") if p.is_file()), default=0)
     print(f"Wrote {sum(counts.values())} files to {args.out} (longest path {longest} characters): {counts}")
     return 0
 
