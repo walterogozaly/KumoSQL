@@ -72,3 +72,7 @@ A `LEFT JOIN` to a derived table that only feeds `ind IS NOT NULL` (the shape de
 A `FULL JOIN` filtered on one side by a comparison (`b.x > 1`) is the `LEFT` or `RIGHT` join that keeps that side, and on both sides an inner join. A `LEFT JOIN` whose derived table or keyed table is never read and matches at most one row is dropped. `VALUES` without column names has columns `expr$0`, `expr$1`, .. (Calcite's names). Nested set operations are re-parenthesized in the normalized text so it reads back with the same shape.
 
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.
+
+## R-Bot's Calcite pairs
+
+`python tools/rbot_bench.py` scores the 45 (query, Calcite-rewrite) pairs shipped with [R-Bot](https://github.com/curtis-sun/LLM4Rewrite) (Apache-2.0, copied with its LICENSE to `tests/fixtures/rbot/`). Each pair is reported as `proved`, `different` (the prover failed and a random DuckDB database shows the queries disagree), `unknown`, or `wrong` (proved, yet a counterexample exists; must stay 0). R-Bot's TPC-H and DSB folders hold only template instances (same query, different constants), not rewrites, so they have nothing to score. `tests/test_rbot_benchmarks.py` holds the floor.
