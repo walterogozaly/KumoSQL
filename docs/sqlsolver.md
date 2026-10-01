@@ -65,4 +65,6 @@ With a declared key on `customers`, `customers JOIN (SELECT customer_id, SUM(x) 
 
 `tests/test_bigquery_refactors.py` lists everyday BigQuery refactors the prover proves and near misses it refuses. Added in this round: a correlated scalar aggregate in the select list versus a left join to the grouped table (the inner join is refused), the sum of grouped sums versus the plain sum (a sum of grouped counts is refused: it reads NULL for no rows), `IN` over a `UNION ALL` versus an `OR` of the branches, a NULL guard under a global aggregate (refused under a `GROUP BY`), `LOWER(TRIM(x))` versus `TRIM(LOWER(x))` and `||` versus `CONCAT`, and a `LIMIT` inside a derived table that the outer select only projects versus the same `ORDER BY .. LIMIT` at the top.
 
+`GROUP BY` or `DISTINCT` over a derived `UNION ALL` that only groups its own columns is rewritten to a set union,.
+
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.

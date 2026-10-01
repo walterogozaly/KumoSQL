@@ -1104,7 +1104,7 @@ def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
     wanted = [e.name.lower() for e in select.expressions if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)]
     if names is None or wanted != names or len(wanted) != len(select.expressions):
         return None
-    if any(c.table and c.table.lower() != (source.alias or "").lower() for c in select.find_all(exp.Column)):
+    if any(c.table and c.table.lower() != (source.alias or "").lower() for e in select.expressions for c in e.find_all(exp.Column)):
         return None
     return exp.Union(this=union.this.copy(), expression=union.expression.copy(), distinct=True)
 
@@ -2588,6 +2588,78 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
     return result
 
 
+def _group_by_to_distinct(select: exp.Select) -> exp.Expression | None:
+    """``SELECT a, b FROM (x UNION ALL y) GROUP BY a, b`` (no aggregate, no HAVING) is ``SELECT DISTINCT a, b FROM ..``."""
+
+    group = select.args.get("group")
+    if group is None or select.args.get("having") or select.args.get("distinct") or any(
+        select.args.get(k) for k in ("qualify", "windows", "with_", "with", "limit", "offset", "order")
+    ):
+        return None
+    if group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube") or group.args.get("totals"):
+        return None
+    if any(c.find_ancestor(exp.Select) is select for c in select.find_all(exp.AggFunc)) or any(select.find_all(exp.Window)):
+        return None
+    if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+        return None
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or select.args.get("joins") or not isinstance(from_.this, exp.Subquery) or not isinstance(from_.this.this, exp.Union):
+        return None  # only worth it over a derived union, where DISTINCT reads as UNION
+    keys = {g.sql() for g in group.expressions}
+    values = {(e.this if isinstance(e, exp.Alias) else e).sql() for e in select.expressions}
+    if keys != values or any(isinstance(g, exp.Literal) and not g.is_string for g in group.expressions):
+        return None
+    copy = select.copy()
+    copy.set("group", None)
+    copy.set("distinct", exp.Distinct())
+    return copy
+
+
+def _flatten_unions(tree: exp.Expression) -> exp.Expression:
+    """``(A UNION B) UNION C`` is ``A UNION B UNION C`` (a UNION over any union, a UNION ALL over a UNION ALL),
+    and a select that lists every column of a derived union is that union."""
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if not isinstance(node, exp.Union) or type(node) is not exp.Union:
+            return node
+        changed = False
+        for side in ("this", "expression"):
+            operand = node.args[side]
+            while isinstance(operand, exp.Subquery) and not operand.alias and not operand.args.get("order") and not operand.args.get("limit"):
+                operand = operand.this
+            if isinstance(operand, exp.Select) and not operand.args.get("joins") and not operand.args.get("where") and not any(
+                operand.args.get(k) for k in ("group", "having", "distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")
+            ):
+                from_ = operand.args.get("from_") or operand.args.get("from")
+                source = from_.this if from_ is not None else None
+                if isinstance(source, exp.Subquery) and isinstance(source.this, exp.Union) and type(source.this) is exp.Union:
+                    names = _select_names(source.this)
+                    wanted = [
+                        e.name.lower() for e in operand.expressions
+                        if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)
+                        and (not e.table or e.table.lower() == (source.alias or "").lower())
+                    ]
+                    if names is not None and wanted == names and len(wanted) == len(operand.expressions):
+                        operand = source.this
+            if isinstance(operand, exp.Union) and type(operand) is exp.Union and not operand.args.get("order") and not operand.args.get("limit"):
+                if node.args.get("distinct") or not operand.args.get("distinct"):
+                    if operand is not node.args[side]:
+                        pass
+                    node.set(side, operand.copy())
+                    changed = True
+            elif operand is not node.args[side] and isinstance(operand, exp.Select):
+                pass
+        if changed:
+            # Drop the parentheses a nested union left behind: the operand now is the union itself.
+            for side in ("this", "expression"):
+                operand = node.args[side]
+                if isinstance(operand, exp.Subquery) and isinstance(operand.this, exp.Union) and not operand.alias:
+                    node.set(side, operand.this)
+        return node
+
+    return tree.transform(step)
+
+
 def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
     """``SELECT d.a, d.b FROM (SELECT a, b, c FROM t GROUP BY ..) AS d`` is the derived select with those outputs.
 
@@ -2757,7 +2829,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -2765,7 +2837,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(tree.transform(step)), not_null)
+        tree = _fold_null_guards(_fold_count_coalesce(_flatten_unions(tree.transform(step))), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
