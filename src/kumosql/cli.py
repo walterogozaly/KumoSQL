@@ -290,7 +290,7 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         default=0.7,
         help="Smallest tree similarity (0-1) for SELECTs to be reported as near-duplicates",
     )
-    parser.add_argument("--scope", help="Limit the report to a saved scope (see kumosql-scopes)")
+    parser.add_argument("--scope", help="Limit the report to a saved scope (see python -m kumosql scopes)")
     parser.add_argument(
         "--assess",
         choices=("drop_column", "rename_column", "change_expression", "drop_table"),
@@ -502,7 +502,7 @@ def scopes_main(argv: list[str] | None = None) -> int:
     refresh.add_argument("--check", action="store_true", help="Dry-run only: validate and estimate, run nothing")
     fields = commands.add_parser("fields", help="List the fields a rule can use, found in your data")
     fields.add_argument("--root", type=Path, help="Dataform project (or compiled graph) to read model and profile fields from")
-    fields.add_argument("--source-schema", type=Path, help="Source schema JSON, as for kumosql-pipeline-report")
+    fields.add_argument("--source-schema", type=Path, help="Source schema JSON, as for python -m kumosql pipeline-report")
     fields.add_argument("--observed-reads", type=Path, help="Job-history JSON list to read job fields from")
     args = parser.parse_args(argv)
 

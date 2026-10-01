@@ -7,7 +7,7 @@ The browser UI already has the pages the roadmap needs. The graph, cost and chan
 - `src/kumosql/live_graph.py` holds what the server has loaded: the project, its job history and the last change comparison (all in memory), and builds `/api/graph`. `src/kumosql/live_insights.py` builds `/api/cost` and `/api/changes`. `src/kumosql/ui.py` serves them (see `INSIGHTS`).
 - `src/kumosql/static/insights.js` renders `/graph`, `/cost` and `/changes`.
 - No sample data is served. With nothing to show, a payload is `{"empty": true, "needs": "project", "message", "source", "scope"}` and the page shows `message`. `source` is `{kind: "none" | "project", label, git, jobs {label, count} | null}` on every payload.
-- Load a project as described under Query graph. Load job history with `POST /api/jobs` `{"filename", "text"}` (JSON array, JSON lines or CSV; `destination_table` is read as the destination; tables may be written as `project.dataset.table`, as `{projectId, datasetId, tableId}` or as the `{project_id, dataset_id, table_id}` of `INFORMATION_SCHEMA.JOBS`), `POST /api/jobs/clear`, or `kumosql-ui --jobs FILE`. A project loaded from git remembers its remote, so `POST /api/changes/compare` `{"base": BRANCH, "refresh"?, "scope"?}` can compare it with another branch.
+- Load a project as described under Query graph. Load job history with `POST /api/jobs` `{"filename", "text"}` (JSON array, JSON lines or CSV; `destination_table` is read as the destination; tables may be written as `project.dataset.table`, as `{projectId, datasetId, tableId}` or as the `{project_id, dataset_id, table_id}` of `INFORMATION_SCHEMA.JOBS`), `POST /api/jobs/clear`, or `python -m kumosql.ui --jobs FILE`. A project loaded from git remembers its remote, so `POST /api/changes/compare` `{"base": BRANCH, "refresh"?, "scope"?}` can compare it with another branch.
 
 The field lists below are the contract. If a view needs a different shape, change the builder and the renderer in the same PR.
 
@@ -24,7 +24,7 @@ The labels and check chips are defined once in `static/evidence.js` (`KumoEviden
 | Planner (dry run) chip, and the "Planner checked: not proven" verdict | #16 | check `kind: "planner"` |
 | "Unchanged text kept" chip | #17 | check `kind: "source_spans"` |
 | Idempotence chip | #18 | check `kind: "idempotence"` |
-| Structural proof, SMT proof and synthetic-results chips | #19, #20, #21 | check kinds `structural_proof`, `smt` and `synthetic_results`. An `inconclusive` outcome covers a baseline that differs from itself. `synthetic_results` is emitted by `kumosql.attach_synthetic_check` (`rewrite-sql --synthetic-check`), outcomes `passed`/`failed`/`inconclusive`/`not_run`, evidence `seeds`, `seeds_checked`, `failing_seed`, `rows_per_table`, `null_rate`, `engine`. A pass never changes the label or trust; a failure shows the counterexample by seed and counts (no query text) and demotes the result to `unproven`. |
+| Structural proof, SMT proof and synthetic-results chips | #19, #20, #21 | check kinds `structural_proof`, `smt` and `synthetic_results`. An `inconclusive` outcome covers a baseline that differs from itself. `synthetic_results` is emitted by `kumosql.attach_synthetic_check` (`python -m kumosql rewrite-sql --synthetic-check`), outcomes `passed`/`failed`/`inconclusive`/`not_run`, evidence `seeds`, `seeds_checked`, `failing_seed`, `rows_per_table`, `null_rate`, `engine`. A pass never changes the label or trust; a failure shows the counterexample by seed and counts (no query text) and demotes the result to `unproven`. |
 
 Check outcomes are `passed`, `failed`, `not_proven`, `inconclusive`, `unsupported` and `not_run`. A new kind or outcome only needs an entry in `CHECKS` or `OUTCOMES` in `evidence.js`; unknown kinds still render under their raw name. Proof kinds and planner checks are always separate chips.
 
@@ -36,8 +36,8 @@ The graph page has two renderers over the same payload. `static/lineage-view.js`
 
 `kumosql.live_graph` holds the project the server has loaded (in memory; it is gone after a restart) and builds the payload from a `Pipeline`. Load one by:
 
-- connecting a repository under Settings → Repositories (saved, reloaded on start; `/api/repositories`), or a one-off load (`POST /api/project/git` with `url`, optional `branch` and `refresh`; `/api/github/load` is an alias) or `kumosql-ui --git URL`; all use the local `git` CLI, so private repositories work,
-- `kumosql-ui --project DIR`, or
+- connecting a repository under Settings → Repositories (saved, reloaded on start; `/api/repositories`), or a one-off load (`POST /api/project/git` with `url`, optional `branch` and `refresh`; `/api/github/load` is an alias) or `python -m kumosql.ui --git URL`; all use the local `git` CLI, so private repositories work,
+- `python -m kumosql.ui --project DIR`, or
 - `POST /api/project` with `{"files": {relative path: text}, "label"}` (only `.sqlx`, `.sql` and Dataform config files; relative paths only).
 
 `POST /api/project/clear` unloads the project and its job history.
@@ -74,16 +74,16 @@ The traversals for readers and lineage run in the browser, which is fine at MVP 
 
 | UI area | Issue | Fields |
 | --- | --- | --- |
-| Evidence coverage bar (proof and planner reported separately) | #22 | `evidence_coverage {changed, proven, planner_checked, unproven, failed, synthetic_agreed, useful_evidence}`; headline "Useful evidence" is `useful_evidence / changed` (proof plus synthetic agreement, each output once); built from `kumosql.summarize_evidence(results).to_json()` or `kumosql-evidence-summary` (labels and counts only). `/api/changes` computes it over the changed models of the comparison (labels and counts only) |
+| Evidence coverage bar (proof and planner reported separately) | #22 | `evidence_coverage {changed, proven, planner_checked, unproven, failed, synthetic_agreed, useful_evidence}`; headline "Useful evidence" is `useful_evidence / changed` (proof plus synthetic agreement, each output once); built from `kumosql.summarize_evidence(results).to_json()` or `python -m kumosql evidence-summary` (labels and counts only). `/api/changes` computes it over the changed models of the comparison (labels and counts only) |
 | Change report table: behavior, cost and consumers side by side | #36 | `report {title, base, head, generated_at, changes[]}`; each change has `model`, `kind`, `verification {label, reason, checks[]}`, `cost {basis, before?, after?}`, `consumers {models[], complete}` |
 | "Already done elsewhere": ranked matches with match kind, `lineage`/`grain`/`row_scope` checks, role and evidence, unknown comparisons, and a coverage line | #83 | `report.changes[].overlaps {status, summary, compared, skipped{}, candidates_in_scope, matches[] {rank, table, kind, confidence, checks[], role {role, confidence, evidence[]}, reason, retiring, in_this_change}, unknown[], rollups[]}` on added and modified models; built by `OverlapChecker.section`. Advisory in the CI comment; never changes `ci.conclusion`. `status` is `unavailable` when the comparison failed, and the rest of the report is unaffected (#39) |
-| Code review check preview | #37 | `ci {check_name, conclusion, summary}`; built by `kumosql.ci_check` from a change report (`kumosql-ci-check`); example workflow in `docs/change-report-workflow.example.yml` |
+| Code review check preview | #37 | `ci {check_name, conclusion, summary}`; built by `kumosql.ci_check` from a change report (`python -m kumosql ci-check`); example workflow in `docs/change-report-workflow.example.yml` |
 | Query sources list | #38 | `sources[] {name, kind, state, matched}`; `state` is `connected`, `not_enabled` or `error`, `matched` is a 0-1 fraction or null. Built by `query_sources.SourceRegistry.to_json(pipeline)`, which also adds `assets_total`, `assets_matched`, `assets_unmatched`. `/api/changes` lists the loaded project and, when loaded, the job history |
 | "N assets could not be analyzed. The rest of this report is complete." | #39 | `report.diagnostics[] {asset, message}` |
 | Guided refactors with a result for every consumer, including Unknown, and Ready or Not ready | #40, #41, #42 | `proposals[] {id, kind, title, cost_rationale, consumers[] {node, label}, ready}` |
 
 `kumosql.shared_logic.propose_shared_logic` (#40) builds the `shared_logic` proposals with this shape plus `consumers_complete`, `incomplete_reasons` and a consumer `role`. `cost_rationale` is `unknown` and `ready` is false until #41 and #42 fill them. `/api/changes` serves `propose_shared_logic` for the loaded project and its job history.
-`kumosql.change_report.build_change_report` (and the `kumosql-change-report BASE HEAD [--cost FILE]` command) produces `report` from two project snapshots. `POST /api/changes/compare` runs it between a base branch and the loaded project (both read through git) and keeps the result for `GET /api/changes`, which adds `evidence_coverage` and `ci` for it. `report` is null until a comparison is made.
+`kumosql.change_report.build_change_report` (and the `python -m kumosql change-report BASE HEAD [--cost FILE]` command) produces `report` from two project snapshots. `POST /api/changes/compare` runs it between a base branch and the loaded project (both read through git) and keeps the result for `GET /api/changes`, which adds `evidence_coverage` and `ci` for it. `report` is null until a comparison is made.
 
 `ready` is true only when every consumer is `proven` or `unchanged`. This is the strictest reading of #42; relax it in `proposal_readiness` and in the "need a proof" message if planner checked should count.
 

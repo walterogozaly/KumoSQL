@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     module, _, attribute = target.partition(":")
     function = getattr(importlib.import_module(module), attribute)
-    sys.argv = [f"kumosql {args[0]}", *args[1:]]
+    sys.argv = [f"python -m kumosql {args[0]}", *args[1:]]
     result = function()
     return result if isinstance(result, int) else 0
 

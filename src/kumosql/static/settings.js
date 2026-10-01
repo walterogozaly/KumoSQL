@@ -540,6 +540,7 @@
             h("span", { class: "repo-branch", text: repo.branch ? ` @ ${repo.branch}` : "" }),
             isActive ? h("span", { class: "repo-badge", text: "Active" }) : ""),
           h("p", { class: `sp-row-hint${repo.error ? " is-error" : ""}`, text: status }),
+          repo.note && !repo.error ? h("p", { class: "sp-row-hint", text: repo.note }) : "",
           scheduleBlock(repo),
           h("div", { class: "repo-actions" }, use, refresh, remove)));
       }

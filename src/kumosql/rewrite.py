@@ -747,7 +747,7 @@ def check_idempotence(
     """Apply ``names`` to ``sql``, then again to the output, and compare the text.
 
     The comparison is on exact text so formatting oscillation is caught. Running
-    the rules twice doubles the work, so this is opt in (``rewrite-sql
+    the rules twice doubles the work, so this is opt in (``python -m kumosql rewrite-sql
     --check-idempotence``) rather than part of ``apply_rules``.
     """
 

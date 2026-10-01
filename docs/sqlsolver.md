@@ -25,7 +25,7 @@ Steps 1–5 need only `pip install --user` (or a venv) for `sqlglot` and `z3-sol
 <home>/jre/bin/java      optional portable JRE 17+, used when no Java is on PATH
 ```
 
-Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `prove-sql-sqlsolver --check` says what is missing. BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite SQL (table names flattened to one identifier, schema as `CREATE TABLE`). Queries using `UNNEST`, `QUALIFY`, windows, arrays, structs, `PIVOT`, `TABLESAMPLE`, nondeterministic functions or tables missing from the schema are refused. SQLSolver answers `EQ` when both queries fail its semantic checks, so each query is also compared with an always-empty wrapper of itself; a control that comes back `EQ` voids the proof. SQLSolver's `NEQ` carries no counterexample, so it is reported as `not_proven`; counterexamples come from the Z3 stage.
+Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `python -m kumosql prove-sql-sqlsolver --check` says what is missing. BigQuery SQL is parsed with sqlglot and re-emitted as one line of Calcite SQL (table names flattened to one identifier, schema as `CREATE TABLE`). Queries using `UNNEST`, `QUALIFY`, windows, arrays, structs, `PIVOT`, `TABLESAMPLE`, nondeterministic functions or tables missing from the schema are refused. SQLSolver answers `EQ` when both queries fail its semantic checks, so each query is also compared with an always-empty wrapper of itself; a control that comes back `EQ` voids the proof. SQLSolver's `NEQ` carries no counterexample, so it is reported as `not_proven`; counterexamples come from the Z3 stage.
 
 ## Benchmark coverage
 
