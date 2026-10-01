@@ -83,12 +83,20 @@ class Watchdog(threading.Thread):
     def run(self) -> None:
         while not self.stop_event.wait(1.0):
             started = time.monotonic()
-            try:
-                status, _ = call(self.base, "/api/version", timeout=SLOW_REQUEST_SECONDS * 3)
-                if status != 200:
-                    self.failures.append(f"/api/version answered {status}")
-            except Exception as exc:  # noqa: BLE001
-                self.failures.append(f"/api/version failed: {exc}")
+            for attempt in (1, 2):
+                try:
+                    status, _ = call(self.base, "/api/version", timeout=SLOW_REQUEST_SECONDS * 3)
+                    if status != 200:
+                        self.failures.append(f"/api/version answered {status}")
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    # Windows sometimes resets a fresh local connection (WinError 10054) while the server
+                    # is busy; that is not a hang. Only a second reset in a row counts.
+                    reset = isinstance(exc, ConnectionResetError) or isinstance(getattr(exc, "reason", None), ConnectionResetError)
+                    if reset and attempt == 1:
+                        continue
+                    self.failures.append(f"/api/version failed{' twice' if reset else ''}: {exc}")
+                    break
             self.slowest = max(self.slowest, time.monotonic() - started)
 
 
