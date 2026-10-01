@@ -1095,9 +1095,7 @@ def _qualify_outer_join_columns(tree: exp.Expression, schema: dict[str, list[str
     schema = {key.lower(): [c.lower() for c in cols] for key, cols in schema.items()}
     for select in list(tree.find_all(exp.Select)):
         joins = select.args.get("joins") or []
-        if not any((j.args.get("side") or "").upper() in ("LEFT", "RIGHT", "FULL") for j in joins):
-            continue
-        if not (select.args.get("group") or _own_aggregates(select)):
+        if not joins:
             continue
         sources = _sources_of(select)
         owners: dict[str, list[str]] = {}
@@ -1127,6 +1125,130 @@ def _qualify_outer_join_columns(tree: exp.Expression, schema: dict[str, list[str
                 continue
             column.set("table", exp.to_identifier(owners[name][0]))
     return tree
+
+
+_INTEGER_DIGITS = {"TINYINT": 3, "SMALLINT": 5, "INT": 10, "INTEGER": 10, "MEDIUMINT": 8, "BIGINT": 19, "INT64": 19}
+
+
+def _decimal_shape(type_sql: str) -> tuple[int, int] | None:
+    """``(integer digits, scale)`` of an exact numeric type, else ``None``."""
+
+    try:
+        parsed = sqlglot.exp.DataType.build(type_sql, dialect="mysql")
+    except (sqlglot.errors.SqlglotError, ValueError):
+        return None
+    return _datatype_shape(parsed)
+
+
+def _datatype_shape(parsed: exp.DataType, bare: tuple[int, int] = (10, 0)) -> tuple[int, int] | None:
+    name = parsed.this.name if isinstance(parsed.this, exp.DataType.Type) else str(parsed.this)
+    name = name.upper()
+    if name in _INTEGER_DIGITS:
+        return _INTEGER_DIGITS[name], 0
+    if name in ("DECIMAL", "NUMERIC"):
+        sizes = [e.this.this for e in parsed.expressions if isinstance(e, exp.DataTypeParam) and isinstance(e.this, exp.Literal)]
+        try:
+            precision = int(sizes[0]) if sizes else bare[0] + bare[1]
+            scale = int(sizes[1]) if len(sizes) > 1 else 0 if sizes else bare[1]
+        except ValueError:
+            return None
+        return precision - scale, scale
+    return None
+
+
+def _origin_type(select: exp.Select, column: exp.Column, types: dict[str, dict[str, str]], depth: int = 0) -> str | None:
+    """Declared type of the table column that ``column`` reads, followed through plain derived tables."""
+
+    if depth > 6:
+        return None
+    sources = _sources_of(select)
+    name = column.name.lower()
+    candidates = []
+    for source in sources:
+        if column.table and (source.alias_or_name or "").lower() != column.table.lower():
+            continue
+        if isinstance(source, exp.Table):
+            parts = [p.name for p in (source.args.get("catalog"), source.args.get("db"), source.this) if p is not None]
+            declared = types.get(".".join(parts).lower())
+            if declared is None:
+                return None if column.table else None
+            if name in declared:
+                candidates.append(declared[name])
+        elif isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select):
+            inner = source.this
+            for item in inner.expressions:
+                if item.alias_or_name.lower() == name:
+                    value = item.this if isinstance(item, exp.Alias) else item
+                    if isinstance(value, exp.Column) and not isinstance(value.this, exp.Star):
+                        found = _origin_type(inner, value, types, depth + 1)
+                        if found is not None:
+                            candidates.append(found)
+                        else:
+                            return None
+                    else:
+                        return None
+        else:
+            return None
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], dialect: str = "bigquery") -> exp.Expression | None:
+    """``CAST(x AS DECIMAL(p, s))`` is ``x`` when ``x``'s declared type already fits it.
+
+    A ``DECIMAL(15, 2)`` or ``INT`` column cast to a wider exact type keeps every value, so the
+    cast only changes the type the engine reports.
+    """
+
+    casts = [c for c in select.find_all(exp.Cast) if c.find_ancestor(exp.Select) is select and isinstance(c.this, exp.Column) and isinstance(c.args.get("to"), exp.DataType)]
+    if not casts:
+        return None
+    copy = select.copy()
+    changed = False
+    for cast in [c for c in copy.find_all(exp.Cast) if c.find_ancestor(exp.Select) is copy and isinstance(c.this, exp.Column) and isinstance(c.args.get("to"), exp.DataType)]:
+        target = _datatype_shape(cast.args["to"], (29, 9) if dialect == "bigquery" else (10, 0))
+        if target is None or isinstance(cast, exp.TryCast):
+            continue
+        declared = _origin_type(copy, cast.this, types)
+        have = _decimal_shape(declared) if declared else None
+        if have is not None and target[1] >= have[1] and target[0] >= have[0]:
+            cast.replace(cast.this.copy())
+            changed = True
+    return copy if changed else None
+
+
+def _order_grouped_columns(select: exp.Select) -> exp.Expression | None:
+    """List a grouped derived table's group keys first, then its aggregates, each in a fixed order.
+
+    The outputs of a derived table are read by name, so their order carries no meaning, but two
+    spellings of the same grouped relation must list them alike to be recognized as one relation.
+    """
+
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    copy = select.copy()
+    changed = False
+    for source in _sources_of(copy):
+        if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+            continue
+        inner = source.this
+        if inner.args.get("order") or inner.args.get("limit") or inner.args.get("distinct") or not inner.args.get("group"):
+            continue
+        names = [e.alias_or_name.lower() for e in inner.expressions]
+        if "" in names or len(set(names)) != len(names):
+            continue
+
+        def key(item: exp.Expression) -> tuple[int, str]:
+            value = item.this if isinstance(item, exp.Alias) else item
+            plain = value.copy()
+            for column in plain.find_all(exp.Column):
+                column.set("table", None)
+            return (1 if any(isinstance(n, exp.AggFunc) for n in value.walk()) else 0, plain.sql().lower())
+
+        ordered = sorted(inner.expressions, key=key)
+        if [id(e) for e in ordered] != [id(e) for e in inner.expressions]:
+            inner.set("expressions", [e.copy() for e in ordered])
+            changed = True
+    return copy if changed else None
 
 
 def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
@@ -1697,6 +1819,9 @@ def _fold_null_guards(tree: exp.Expression, not_null: dict[str, frozenset[str]] 
         if isinstance(holder, exp.Having) and holder.parent is not None and holder.parent.args.get("group"):
             # A group is never empty, so MIN/MAX/SUM/AVG of a NOT NULL column is never NULL.
             kept = [part for part in kept if not _aggregate_guard(part, declared)]
+        if not kept and isinstance(holder, (exp.Where, exp.Having)) and len(parts) > 0 and holder.parent is not None:
+            holder.pop()
+            continue
         if not kept or (len(kept) == len(parts) and not any(isinstance(p, exp.Paren) for p in condition.find_all(exp.Paren) if isinstance(p.parent, exp.And) or p is condition)):
             continue
         rebuilt = _and_all(kept)
@@ -2058,6 +2183,7 @@ def normalize(
     dialect: str = "bigquery",
     not_null: dict[str, frozenset[str]] | None = None,
     keys: dict[str, list[tuple[str, ...]]] | None = None,
+    types: dict[str, dict[str, str]] | None = None,
 ) -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
 
@@ -2077,6 +2203,8 @@ def normalize(
         tree = _expand_stars(tree, schema)
     tree = _isolate_windows(tree)
 
+    types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
+
     def qualify(select: exp.Select) -> exp.Expression | None:
         if not schema:
             return None
@@ -2088,7 +2216,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _collapse_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -2111,11 +2239,13 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     """Normalize both queries algebraically, then run the SMT prover on the result."""
 
     dialect = kwargs.get("dialect", "bigquery")
+    types = kwargs.get("types")
+    kwargs = {k: v for k, v in kwargs.items() if k != "types"}
     try:
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types)
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
     from . import scalar_subqueries
@@ -2125,7 +2255,7 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
         inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
 
         def same(a: str, b: str) -> bool:
-            return prove_equivalent_algebraic(a, b, compare_names=False, **inner).proven
+            return prove_equivalent_algebraic(a, b, compare_names=False, types=types, **inner).proven
 
         left, right, replaced = scalar_subqueries.unify(
             left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same

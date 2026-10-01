@@ -41,6 +41,8 @@ class ProverSchema:
 
     columns: dict[str, list[str]] = field(default_factory=dict)
     constraints: dict[str, TableConstraints] = field(default_factory=dict)
+    # Declared column types per table spelling, for casts that change nothing.
+    types: dict[str, dict[str, str]] = field(default_factory=dict)
     # Distinct tables with columns / with at least one declared fact.
     table_count: int = 0
     constrained_count: int = 0
@@ -68,6 +70,7 @@ class _Builder:
         self.columns: dict[str, list[str]] = {}
         self.not_null: dict[str, set[str]] = {}
         self.keys: dict[str, list[tuple[str, ...]]] = {}
+        self.types: dict[str, dict[str, str]] = {}
         self.sources: set[str] = set()
 
     def add(
@@ -77,6 +80,7 @@ class _Builder:
         not_null: Iterable[str] = (),
         keys: Iterable[Iterable[str]] = (),
         source: str = "",
+        types: Mapping[str, str] | None = None,
     ) -> None:
         name = name.strip("`").lower()
         if not name:
@@ -89,6 +93,8 @@ class _Builder:
             key = tuple(c.lower() for c in key)
             if key and key not in self.keys.setdefault(name, []):
                 self.keys[name].append(key)
+        if types:
+            self.types.setdefault(name, {}).update({c.lower(): t for c, t in types.items()})
         if source:
             self.sources.add(source)
 
@@ -106,6 +112,8 @@ class _Builder:
             owner = next(iter(owners))
             if owner in self.columns:
                 schema.columns[spelling] = list(self.columns[owner])
+            if self.types.get(owner):
+                schema.types[spelling] = dict(self.types[owner])
             facts = TableConstraints(
                 not_null=frozenset(self.not_null.get(owner, ())),
                 keys=tuple(self.keys.get(owner, ())),
@@ -129,8 +137,10 @@ def _add_bigquery(builder: _Builder, project: str, dataset: str, table: str, dat
         if primary:
             keys.append(primary)
             not_null = not_null + list(primary)
+    exact = {"INTEGER": "BIGINT", "INT64": "BIGINT", "NUMERIC": "DECIMAL(38, 9)", "DECIMAL": "DECIMAL(38, 9)"}
+    types = {f["name"]: exact[str(f.get("type", "")).upper()] for f in fields if str(f.get("type", "")).upper() in exact}
     builder.add(
-        f"{project}.{dataset}.{table}", [f["name"] for f in fields], not_null, keys, source="bigquery"
+        f"{project}.{dataset}.{table}", [f["name"] for f in fields], not_null, keys, source="bigquery", types=types
     )
 
 

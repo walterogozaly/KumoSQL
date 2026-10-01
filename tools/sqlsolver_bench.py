@@ -242,7 +242,7 @@ def default_prove(left: str, right: str, tables: dict[str, Table]) -> bool:
         for t in tables.values()
     }
     return prove_equivalent_algebraic(
-        spark_days(left), spark_days(right), schema=schema, constraints=constraints, compare_names=False, dialect="mysql", exact_arithmetic=True
+        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True
     ).proven
 
 

@@ -803,3 +803,52 @@ def test_outer_join_rewrites_preserve_results_on_random_databases():
             for i in range(rng.choice([0, 3, 6])):
                 db.execute("INSERT INTO orders VALUES (?, ?, ?)", (i, rng.choice([None, 1, 2, 3]), rng.choice([None, "x", "y"])))
             assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+CAST_SCHEMA = {"t": ["id", "price", "qty"], "u": ["id", "limit_price"]}
+CAST_TYPES = {"t": {"id": "INT", "price": "DECIMAL(15, 2)", "qty": "INT"}}
+
+
+def test_cast_to_a_wider_decimal_is_dropped_when_the_declared_type_fits():
+    plain = "SELECT t.id FROM t WHERE t.price < 5"
+    cast = "SELECT t.id FROM t WHERE CAST(t.price AS DECIMAL(21, 7)) < 5"
+    result = prove_equivalent_algebraic(plain, cast, schema=CAST_SCHEMA, types=CAST_TYPES)
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    assert prove_equivalent_algebraic(plain, cast, schema=CAST_SCHEMA).status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_cast_to_a_narrower_decimal_is_kept():
+    plain = "SELECT t.id FROM t WHERE t.price < 5"
+    narrow = "SELECT t.id FROM t WHERE CAST(t.price AS DECIMAL(15, 1)) < 5"
+    result = prove_equivalent_algebraic(plain, narrow, schema=CAST_SCHEMA, types=CAST_TYPES)
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_integer_cast_to_decimal_needs_enough_digits():
+    plain = "SELECT t.id FROM t WHERE t.qty > 1"
+    assert prove_equivalent_algebraic(
+        plain, "SELECT t.id FROM t WHERE CAST(t.qty AS DECIMAL(27, 3)) > 1", schema=CAST_SCHEMA, types=CAST_TYPES
+    ).proven
+    assert not prove_equivalent_algebraic(
+        plain, "SELECT t.id FROM t WHERE CAST(t.qty AS DECIMAL(5, 0)) > 1", schema=CAST_SCHEMA, types=CAST_TYPES
+    ).proven
+
+
+def test_grouped_derived_table_columns_may_be_listed_in_any_order():
+    a = "SELECT t.id FROM t JOIN (SELECT id AS k, SUM(qty) AS s FROM t GROUP BY id) g ON t.id = g.k AND t.qty < g.s"
+    b = "SELECT t.id FROM t JOIN (SELECT SUM(qty) AS s, id AS k FROM t GROUP BY id) g ON t.id = g.k AND t.qty < g.s"
+    assert prove_equivalent_algebraic(a, b, schema=CAST_SCHEMA).proven
+
+
+def test_bigquery_column_types_make_a_widening_cast_free():
+    from kumosql.prover_schema import from_bigquery
+
+    facts = from_bigquery([("p", "d", "t", {"schema": [{"name": "id", "type": "INTEGER"}, {"name": "amt", "type": "NUMERIC"}]})])
+    plain = "SELECT id FROM d.t WHERE id > 1"
+    cast = "SELECT id FROM d.t WHERE CAST(id AS NUMERIC) > 1"
+    with_types = prove_equivalent_algebraic(plain, cast, schema=facts.columns, constraints=facts.constraints, types=facts.types)
+    assert with_types.status is SmtStatus.PROVEN_EQUIVALENT
+    narrow = "SELECT id FROM d.t WHERE CAST(amt AS NUMERIC(10, 2)) > 1"
+    assert not prove_equivalent_algebraic(
+        "SELECT id FROM d.t WHERE amt > 1", narrow, schema=facts.columns, types=facts.types
+    ).proven
