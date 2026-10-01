@@ -69,4 +69,6 @@ With a declared key on `customers`, `customers JOIN (SELECT customer_id, SUM(x) 
 
 A `LEFT JOIN` to a derived table that only feeds `ind IS NOT NULL` (the shape decorrelators emit for `IN` and `EXISTS` under `OR`) is read as the `EXISTS` it stands for, when the join matches at most one row: the equated columns cover a declared key of the single table behind the derived table, or every column of its `GROUP BY`. Joined on a non-key column it stays a join, since the repeated rows would change the result.
 
+A `FULL JOIN` filtered on one side by a comparison (`b.x > 1`) is the `LEFT` or `RIGHT` join that keeps that side, and on both sides an inner join. A `LEFT JOIN` whose derived table or keyed table is never read and matches at most one row is dropped. `VALUES` without column names has columns `expr$0`, `expr$1`, .. (Calcite's names). Nested set operations are re-parenthesized in the normalized text so it reads back with the same shape.
+
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.
