@@ -304,6 +304,8 @@ python -m kumosql prove-sql-sqlsolver --check                                   
 
 The SQLSolver stage needs a schema listing every table with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. It is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
 
+SQL-IQ's SQL Equivalence Judge is scored with these provers and no language model: `python tools/sqliq_bench.py --data <SQL-IQ checkout>` (see [docs/sql-iq.md](docs/sql-iq.md)).
+
 ## Whole-pipeline analysis
 
 `load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. As in Dataform, `${ref("name")}` finds the action or declaration with that name wherever its config puts it (its own `schema` or `database`); the project defaults apply only when no action, or more than one, has the name. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
