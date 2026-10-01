@@ -47,3 +47,10 @@ SQLSolver's own proved counts are in its paper; they are not repeated here becau
 ## Rewrite verification and declared facts
 
 `kumosql.prover_context.prove` is the one entry point the app uses; `verify_rewrite` calls it for any changed statement when the solver is enabled (`prover` section of the saved settings, default on, 5000 ms). The facts it may assume come from `kumosql.prover_schema`: BigQuery `REQUIRED` columns and `tableConstraints.primaryKey` from the saved catalog (`bigquery_catalog.saved_tables`), and Dataform `assertions` read by `pipeline_loading` into `Model.non_null` / `Model.unique_keys`. A table is registered under each spelling (`project.dataset.table`, `dataset.table`, `table`); a bare name shared by two tables is dropped. Proofs that used any declared fact list the assumption "declared keys and NOT NULL columns hold in the data".
+
+## Saved equivalences and pipeline comparison
+
+`kumosql.equivalences` stores declarations (`left`, `right`, `columns` pairs, `whole`) in `equivalences.json` in the data folder, one per `right` table and never cyclic. A declaration is an assumption on base relations: each reference to `right` is rewritten to `(SELECT left.x AS y, ... FROM left)`, so the solver sees one relation and keys, joins and aggregates reason over it unchanged. A columns-only declaration provides only the listed columns, so a query that reads another column of `right` fails to compile and stays unknown. Proofs that used a declaration list it in their assumptions.
+
+`kumosql.pipeline_equivalence.prove_models` compares two models of a pipeline. Models are visited from the sources up; each model's SQL is read with equivalent tables substituted (declarations and earlier lemmas), compared only with models that now read the same tables, and a proved pair becomes a lemma (a positional column mapping) for the layers above. If the final models still differ, both are inlined as derived tables (400,000 characters at most) and the flat queries are compared. At most 300 solver calls are spent on lemmas; the result is `equivalent` only when every step was proven, with the lemmas and declarations used reported.
+

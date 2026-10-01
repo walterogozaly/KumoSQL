@@ -389,3 +389,18 @@ def test_ui_solver_settings_round_trip_and_validate(ui_server):
         with pytest.raises(HTTPError) as error:
             call("PUT", bad)
         assert error.value.code == 400
+
+
+def test_api_saves_lists_and_removes(ui_server):
+    def call(path, payload=None):
+        data = None if payload is None else json.dumps(payload).encode()
+        request = Request(ui_server + path, data=data, method="GET" if payload is None else "POST",
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            return json.load(response)
+
+    body = {"left": "p.d.a", "right": "p.d.b", "columns": [["x", "y"]]}
+    assert call("/api/equivalences", body)["added"]["right"] == "p.d.b"
+    assert [i["right"] for i in call("/api/equivalences")["equivalences"]] == ["p.d.b"]
+    assert call("/api/equivalences/remove", {"right": "p.d.b"}) == {"removed": True}
+    assert call("/api/equivalences")["equivalences"] == []

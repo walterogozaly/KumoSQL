@@ -620,6 +620,47 @@
       facts,
     );
     try { draw(await repoCall("GET", "/api/prover")); } catch (error) { setStatus(error.message, true); }
+
+    const list = h("div", { class: "sp-list" });
+    const field = (placeholder, label) => h("input", { type: "text", class: "sp-input", placeholder, spellcheck: "false", "aria-label": label });
+    const left = field("project.dataset.table_a", "Table A");
+    const right = field("project.dataset.table_b", "Table B");
+    const pairs = field("x = y, amount = total", "Columns of A = columns of B");
+    const whole = h("input", { type: "checkbox", id: "equivalence-whole", "aria-label": "Same rows in every column" });
+    const drawList = (items) => list.replaceChildren(...items.map((item) => h("div", { class: "sp-row" },
+      h("span", { text: `${item.left} ≡ ${item.right}${item.columns.length ? ` (${item.columns.map((p) => p.join(" = ")).join(", ")})` : ""}${item.whole ? ", whole table" : ""}` }),
+      h("button", { type: "button", class: "toolbar-button", text: "Remove", onclick: async () => {
+        try { await repoCall("POST", "/api/equivalences/remove", { right: item.right }); await refresh(); } catch (error) { setStatus(error.message, true); }
+      } }))));
+    const refresh = async () => drawList((await repoCall("GET", "/api/equivalences")).equivalences);
+    const save = async () => {
+      const columns = pairs.value.split(",").map((part) => part.split("=").map((name) => name.trim())).filter((pair) => pair.some(Boolean));
+      try {
+        await repoCall("POST", "/api/equivalences", { left: left.value, right: right.value, columns, whole: whole.checked });
+        left.value = right.value = pairs.value = ""; whole.checked = false; setStatus("Saved"); await refresh();
+      } catch (error) { setStatus(error.message, true); }
+    };
+    const verdict = h("p", { class: "sp-row-hint" });
+    const compare = async () => {
+      verdict.textContent = "Comparing…";
+      try {
+        const result = await repoCall("POST", "/api/prove-tables", { left: left.value, right: right.value });
+        verdict.textContent = result.status === "equivalent"
+          ? `Equivalent (${result.method}${result.lemmas.length ? `, ${result.lemmas.length} layers matched` : ""}). ${result.assumptions.filter((a) => a.startsWith("declared")).join(" ")}`
+          : `Not proven: ${result.reason}`;
+      } catch (error) { verdict.textContent = error.message; }
+    };
+    body.append(
+      h("h4", { class: "sp-heading", text: "Equivalent columns" }),
+      list,
+      h("div", { class: "sp-inline" }, left, right),
+      h("div", { class: "sp-inline" }, pairs, h("label", { for: "equivalence-whole" }, whole, h("span", { text: "same rows" }))),
+      h("div", { class: "sp-inline" },
+        h("button", { type: "button", class: "toolbar-button", text: "Save", onclick: save }),
+        h("button", { type: "button", class: "toolbar-button", text: "Compare tables", onclick: compare })),
+      verdict,
+    );
+    refresh().catch((error) => setStatus(error.message, true));
   }
 
   async function renderDiagnostics(body) {
