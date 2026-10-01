@@ -29,6 +29,7 @@ from .state import data_dir
 # reload plus a manual one), and they must not clone into or delete the same cache.
 _LOAD_LOCK = threading.RLock()
 _TIMEOUT_SECONDS = 180
+_SLOW_SECONDS = 10.0
 _AUTH_FAILURES = (
     "authentication failed", "could not read username", "could not read password",
     "terminal prompts disabled", "permission denied (publickey", "repository not found",
@@ -143,22 +144,43 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     env["GIT_ALLOW_PROTOCOL"] = _ALLOWED_PROTOCOLS  # blocks ext:: and other command-running transports
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
     env["LC_ALL"] = "C"
+    # Nothing may wait for a person at the console: no credential helper window or askpass program.
+    env["GCM_INTERACTIVE"] = "never"
+    env["GIT_ASKPASS"] = ""
+    env["SSH_ASKPASS"] = ""
+    env.pop("SSH_ASKPASS_REQUIRE", None)
     env["GIT_LFS_SKIP_SMUDGE"] = "1"  # only SQL text is read; an LFS pointer file is text, so never download LFS objects
     # Never inherit the server's working directory: if it was deleted (a temporary or
     # extracted folder), git fails with "Unable to read current working directory".
     if cwd is None:
         cwd = cache_dir()
         cwd.mkdir(parents=True, exist_ok=True)
+    from . import console
+
     started = time.monotonic()
+    label = f"git {args[0]}"
+    watchdog = threading.Timer(
+        _SLOW_SECONDS, lambda: console.say(
+            f"{label} still running after {_SLOW_SECONDS:g}s in {cwd} (large repository, slow network, "
+            "or waiting for credentials; it gives up after "
+            f"{_TIMEOUT_SECONDS}s)"))
+    watchdog.daemon = True
+    watchdog.start()
     try:
         done = subprocess.run(
             ["git", "-c", "core.longpaths=true", "-c", "filter.lfs.required=false", *args], cwd=cwd, env=env, capture_output=True,
-            input=stdin, timeout=_TIMEOUT_SECONDS, check=False,
+            input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL,
+            timeout=_TIMEOUT_SECONDS, check=False,
         )
     except FileNotFoundError as exc:
+        console.say(f"{label}: git was not found on PATH")
         raise GitRepoError("git was not found on PATH; install git to load a repository") from exc
     except subprocess.TimeoutExpired as exc:
+        console.say(f"{label} in {cwd}: timed out after {_TIMEOUT_SECONDS}s")
         raise GitRepoError(f"git {args[0]} timed out after {_TIMEOUT_SECONDS} seconds") from exc
+    finally:
+        watchdog.cancel()
+    console.say(f"{label} in {cwd}: exit {done.returncode} in {time.monotonic() - started:.1f}s")
     if _TRACE is not None:
         _TRACE.append({
             "command": ["git", *args], "cwd": str(cwd), "cwd_exists": Path(cwd).is_dir(),

@@ -513,7 +513,8 @@
       if (!data.repositories.length) list.append(h("li", { class: "sp-row-hint", text: "No repositories connected yet." }));
       for (const repo of data.repositories) {
         const isActive = repo.id === data.active;
-        const status = repo.error ? `Failed ${ago(repo.error_at)}: ${repo.error}`
+        const status = repo.loading ? "Loading with git… this can take a while for a large repository. You can keep using KumoSQL."
+          : repo.error ? `Failed ${ago(repo.error_at)}: ${repo.error}`
           : repo.last_loaded ? `${repo.label || "Loaded"} · ${repo.files} files · loaded ${ago(repo.last_loaded)}${repo.stale_reason ? ` · using saved copy, could not fetch: ${repo.stale_reason}` : ""}`
           : "Not loaded yet";
         const refresh = h("button", { type: "button", class: "toolbar-button", text: "Refresh" });
@@ -535,8 +536,14 @@
           h("div", { class: "repo-actions" }, use, refresh, remove)));
       }
     };
+    let poll = null;
     const refreshList = async () => {
+      clearTimeout(poll);
       data = await repoCall("GET", "/api/repositories");
+      // A load runs in the background (at start-up, or started elsewhere): keep the status current.
+      if (data.repositories.some((repo) => repo.loading)) {
+        poll = setTimeout(() => { if (body.isConnected) refreshList().catch(() => {}); }, 2000);
+      }
       try { schedules = await repoCall("GET", "/api/workflow-configs"); } catch { schedules = { repositories: {} }; }
       draw();
     };

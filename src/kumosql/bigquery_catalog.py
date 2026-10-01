@@ -92,13 +92,16 @@ def _refresh_in_background(key: str, fetch) -> None:
     """Re-fetch ``key`` on a worker thread; a failure leaves the saved copy in place."""
 
     def work() -> None:
+        from . import console
+
         try:
-            data = fetch()
-            with _lock:
-                _memory[key] = {"at": time.time(), "data": data}
-                _save_disk()
+            with console.task(f"BigQuery catalog refresh ({key if isinstance(key, str) else '/'.join(map(str, key))})"):
+                data = fetch()
+                with _lock:
+                    _memory[key] = {"at": time.time(), "data": data}
+                    _save_disk()
         except (CatalogError, RuntimeError, OSError):
-            pass
+            pass  # task() already logged the reason
         finally:
             with _lock:
                 _refreshing.discard(key)

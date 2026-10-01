@@ -18,12 +18,13 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from . import state, storage, workflow_configs
+from . import console, state, storage, workflow_configs
 from .git_repo import GitRepoError, load_into_graph, parse_branch, parse_remote
 
 SECTION = "repositories"
 MAX_REPOSITORIES = 20
 _LOCK = threading.RLock()
+_LOADING: set[str] = set()  # ids being loaded right now; in memory only
 
 
 class RepositoryError(ValueError):
@@ -56,7 +57,8 @@ def listing() -> dict:
 
     with _LOCK:
         data = _read()
-    return {"repositories": data["items"], "active": data["active"]}
+        items = [{**item, "loading": True} if item["id"] in _LOADING else item for item in data["items"]]
+    return {"repositories": items, "active": data["active"]}
 
 
 def replace(entries: object, active: object = None) -> dict:
@@ -106,24 +108,46 @@ def load(repo_id: object, refresh: bool = False) -> dict:
     """
 
     with _LOCK:
-        data = _read()
-        item = next((i for i in data["items"] if i["id"] == repo_id), None)
+        item = next((i for i in _read()["items"] if i["id"] == repo_id), None)
         if item is None:
             raise RepositoryError("unknown repository")
+        url, branch = item["url"], item.get("branch")
+        _LOADING.add(repo_id)
+    # git runs without _LOCK held: Settings and every other request only need the saved list.
+    try:
         try:
-            result = load_into_graph(item["url"], item.get("branch"), refresh)
+            with console.task(f"load {url}{f' @ {branch}' if branch else ''} ({'fetching latest' if refresh else 'cached copy if any'})"):
+                result = load_into_graph(url, branch, refresh)
         except (GitRepoError, ValueError) as exc:
-            item["error"] = str(exc)
-            item["error_at"] = _now()
-            _write(data)
+            _update(repo_id, error=str(exc), error_at=_now())
             raise
-        for key in ("error", "error_at", "stale_reason"):
-            item.pop(key, None)
-        item.update(last_loaded=_now(), label=result["label"], files=result["files"])
-        data["active"] = repo_id
-        _write(data)
-        workflow_configs.prefetch(item["url"])
-        return {**result, "id": repo_id, "last_loaded": item["last_loaded"]}
+        _update(repo_id, drop=("error", "error_at", "stale_reason"),
+                last_loaded=_now(), label=result["label"], files=result["files"], activate=True)
+    finally:
+        with _LOCK:
+            _LOADING.discard(repo_id)
+    return {**result, "id": repo_id, "last_loaded": _read_item(repo_id).get("last_loaded")}
+
+
+def _read_item(repo_id: str) -> dict:
+    with _LOCK:
+        return next((i for i in _read()["items"] if i["id"] == repo_id), {})
+
+
+def _update(repo_id: str, drop: tuple = (), activate: bool = False, **fields: object) -> None:
+    """Change one saved entry (re-read first: the list may have been edited while git ran)."""
+
+    with _LOCK:
+        data = _read()
+        for item in data["items"]:
+            if item["id"] == repo_id:
+                for key in drop:
+                    item.pop(key, None)
+                item.update(fields)
+                if activate:
+                    data["active"] = repo_id
+                _write(data)
+                return
 
 
 def autoload(background: bool = True) -> threading.Thread | None:
@@ -134,14 +158,19 @@ def autoload(background: bool = True) -> threading.Thread | None:
             active = _read()["active"]
         if not active:
             return
+        with console.task("start-up repository reload"):
+            _autoload(active)
+
+    def _autoload(active: str) -> None:
         try:
             load(active, refresh=True)
         except (GitRepoError, ValueError) as refresh_error:
+            console.error(f"could not fetch the latest commit: {_first_line(refresh_error)}; trying the saved copy", trace=False)
             try:  # remote unreachable or auth expired: the cached clone still works
                 load(active, refresh=False)
                 _record_stale(active, str(refresh_error))
-            except (GitRepoError, ValueError):
-                pass  # the error is already saved on the entry
+            except (GitRepoError, ValueError) as exc:
+                console.error(f"repository not loaded: {_first_line(exc)}", trace=False)  # also saved on the entry
 
     if not background:
         run()
@@ -151,12 +180,11 @@ def autoload(background: bool = True) -> threading.Thread | None:
     return thread
 
 
+def _first_line(exc: BaseException) -> str:
+    return (str(exc).splitlines() or [type(exc).__name__])[0]
+
+
 def _record_stale(repo_id: str, reason: str) -> None:
     """After a fallback to the cached clone, keep the refresh error visible."""
 
-    with _LOCK:
-        data = _read()
-        for item in data["items"]:
-            if item["id"] == repo_id:
-                item["stale_reason"] = reason
-        _write(data)
+    _update(repo_id, stale_reason=reason)

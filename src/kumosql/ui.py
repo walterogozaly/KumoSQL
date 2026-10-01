@@ -6,6 +6,7 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
+import sys
 import threading
 import webbrowser
 from urllib.parse import parse_qs, urlsplit
@@ -125,16 +126,15 @@ class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def handle_error(self, request, client_address) -> None:
-        import traceback
-
-        console.log(f"error handling {client_address[0]}: {traceback.format_exc().strip()}")
+        exc = sys.exc_info()[1]
+        console.error(f"while answering {client_address[0]}: {exc}", exc)
 
 
 class UIHandler(BaseHTTPRequestHandler):
     """Serve bundled assets and a small same-origin JSON API."""
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature set by the base class
-        console.log(f"{self.address_string()} {format % args}")
+        console.say(f"{self.address_string()} {format % args}", console=console.VERBOSE)
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -572,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
     parser.add_argument("--jobs", metavar="FILE", help="Load a BigQuery job-history export (JSON, JSON lines or CSV) for the cost page and observed edges; needs --project or --git")
     parser.add_argument("--diagnose-repo", metavar="URL", help="Load a repository once and print a report of every git call (for bug reports); does not start the server")
+    parser.add_argument("--verbose", action="store_true", help="Show every request in the console (they are always written to ui.log)")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -600,11 +601,15 @@ def main(argv: list[str] | None = None) -> int:
             live_graph.set_project(load_sqlx_project(args.project), args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
+    defer_autoload = False
     if not (args.project or args.git):
         from . import repositories
 
         # Connected repositories reload in the background; --jobs needs the project now.
-        repositories.autoload(background=not args.jobs)
+        if args.jobs:
+            repositories.autoload(background=False)
+        else:
+            defer_autoload = True
     if args.jobs:
         if not live_graph.loaded():
             parser.error("--jobs needs --project or --git")
@@ -618,9 +623,12 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         parser.error(f"could not start local server: {exc}")
     url = f"http://127.0.0.1:{args.port}/"
+    console.set_verbose(args.verbose)
     console.disable_quick_edit()
-    print(f"KumoSQL UI: {url}", flush=True)
-    print(f"Press Ctrl+C to stop. Requests are logged to {console.log_path()}", flush=True)
+    for line in console.banner(url):
+        print(line, flush=True)
+    if defer_autoload:
+        repositories.autoload(background=True)  # after the banner, so its lines come after it
     if not args.no_browser:
         threading.Timer(0.3, lambda: webbrowser.open(url)).start()
     try:
