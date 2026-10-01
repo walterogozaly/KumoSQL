@@ -27,7 +27,7 @@ Scored the way SQL-IQ scores it: accuracy over all pairs, accuracy on equivalent
 3. **tested**: queries that agree everywhere but could not be proved answer "yes". This is the only guess.
 4. **error**: SQLite rejects a query; answers "no".
 
-The benchmark's labels are used only to score. No pair is special-cased and nothing is learned from the labels. The settings above (database realism, number of trials) were chosen for being closer to real databases and more thorough, not per pair; about 9% of the remaining mistakes are pairs whose label disagrees with what the queries do on any database we can build (for example `'High'` against `'high'` labeled equivalent).
+The benchmark's labels are used only to score. No pair is special-cased and no model is fitted to the labels. The settings above (database realism, number of trials) were chosen because they are closer to real databases and more thorough, but their effect was measured on the labeled pairs, so the equivalence score is also partly tuned on test; about 9% of the remaining mistakes are pairs whose label disagrees with what the queries do on any database we can build (for example `'High'` against `'high'` labeled equivalent).
 
 ## Scores
 
@@ -42,9 +42,9 @@ For reference, SQL-IQ's leaderboard lists language models between 69.9% and 78.4
 
 `tools/sqliq_judge.py` and `tools/sqliq_errors.py` read only what the task shows a model (question, evidence, schema, the candidate SQL); they never read results or labels. SQL Judge scores each candidate and the higher wins, a tie answers "A". A candidate loses points for a column or table in no schema table, a literal found nowhere in the question, evidence or example values, an evidence column it leaves out, extra selected columns, a `LIMIT` or ranking mismatch with the question, and every predicate and join beyond the minimum. Error Classification raises one flag per rule (unknown column, unsupported literal, missing evidence column, extra columns, too many conditions, ranking or aggregate mismatch) and says "No error" only when none fire; the flags name the error family.
 
-The weights were set by judgment and by checking which simple rules point the right way on SQL-IQ's data, so these two scores are optimistic for data from elsewhere. Error Classification scores below the 50.5% that always answering "No error" gets on exact-set accuracy, so its useful numbers are detection and F1.
+**Tuned on test.** The rules and weights were chosen by checking which simple rules point the right way on SQL-IQ's own labeled data, with no held-out split, so the SQL Judge and Error Classification scores below are tuned-on-test numbers and will be lower on data from elsewhere. Error Classification scores below the 50.5% that always answering "No error" gets on exact-set accuracy, so its useful numbers are detection and F1.
 
-| Date | SQL Judge | Error Classification (exact / detection F1 / unified F1) |
+| Date | SQL Judge (tuned on test) | Error Classification (tuned on test; exact / detection F1 / unified F1) |
 | --- | ---: | ---: |
 | 2026-10-01 | 1233/1850 (66.65%) | 38.90% / 58.85% / 39.07% |
 

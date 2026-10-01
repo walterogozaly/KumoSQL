@@ -424,12 +424,12 @@ def main(argv: list[str] | None = None) -> int:
     if "sql_judge" in tasks:
         metrics = score_judge(data_dir)
         results["sql_judge"] = metrics
-        print(f"sql_judge {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%})")
+        print(f"sql_judge (rules tuned on this data) {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%})")
     if "sql_err_class" in tasks:
         metrics = score_errors(data_dir)
         results["sql_err_class"] = metrics
         print(
-            f"sql_err_class exact {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%}), "
+            f"sql_err_class (rules tuned on this data) exact {metrics['correct']}/{metrics['total']} ({metrics['accuracy']:.2%}), "
             f"detection F1 {metrics['detection_f1']:.2%}, classification F1 {metrics['classification_f1']:.2%}, "
             f"unified F1 {metrics['unified_f1']:.2%}"
         )
