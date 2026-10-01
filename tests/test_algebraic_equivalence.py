@@ -952,3 +952,59 @@ def test_group_by_constants_reads_literals_as_calcite_does():
         "SELECT MAX(mgr) FROM emp GROUP BY 4", "SELECT MAX(mgr) FROM emp", schema=schema, dialect="mysql", compare_names=False, group_by_constants=True
     )
     assert not off.proven
+
+
+INDICATOR_SCHEMA = {"p": ["id", "k", "a"], "q": ["id", "k", "b"]}
+INDICATOR_KEYS = {"q": [("id",)], "p": [("id",)]}
+INDICATOR_KEYED = (
+    "SELECT p.id FROM p LEFT JOIN (SELECT id, 1 AS i FROM q WHERE b < 3) AS d ON p.id = d.id WHERE d.i IS NOT NULL OR p.a < 2"
+)
+INDICATOR_GROUPED = (
+    "SELECT p.id FROM p LEFT JOIN (SELECT k, TRUE AS i FROM q WHERE b < 3 GROUP BY k, TRUE) AS d ON p.k = d.k WHERE d.i IS NOT NULL OR p.a < 2"
+)
+INDICATOR_DUPLICATING = (
+    "SELECT p.id FROM p LEFT JOIN (SELECT k, 1 AS i FROM q WHERE b < 3) AS d ON p.k = d.k WHERE d.i IS NOT NULL"
+)
+
+
+def test_left_join_indicator_becomes_an_existence_test():
+    exists = (
+        "SELECT p.id FROM p WHERE EXISTS (SELECT 1 FROM q WHERE b < 3 AND q.id = p.id) OR p.a < 2",
+        "SELECT p.id FROM p WHERE EXISTS (SELECT 1 FROM q WHERE b < 3 AND q.k = p.k) OR p.a < 2",
+    )
+    for joined, probe in zip((INDICATOR_KEYED, INDICATOR_GROUPED), exists):
+        result = prove_equivalent_algebraic(
+            joined, probe, schema=INDICATOR_SCHEMA, dialect="bigquery", compare_names=False, constraints={
+                t: TableConstraints(keys=tuple(k)) for t, k in INDICATOR_KEYS.items()
+            }
+        )
+        assert result.proven, result.reason
+
+
+def test_left_join_indicator_needs_a_matching_key():
+    # q.k is not a key, so the join repeats p rows and the existence test would drop the repeats
+    result = prove_equivalent_algebraic(
+        INDICATOR_DUPLICATING,
+        "SELECT p.id FROM p WHERE EXISTS (SELECT 1 FROM q WHERE b < 3 AND q.k = p.k)",
+        schema=INDICATOR_SCHEMA,
+        dialect="bigquery",
+        compare_names=False,
+        constraints={"q": TableConstraints(keys=(("id",),))},
+    )
+    assert not result.proven
+
+
+def test_left_join_indicator_rewrite_preserves_results_on_random_databases():
+    rng = random.Random(21)
+    forms = [INDICATOR_KEYED, INDICATOR_GROUPED, INDICATOR_DUPLICATING]
+    normalized = [normalize(f, schema=INDICATOR_SCHEMA, keys=INDICATOR_KEYS) for f in forms]
+    for _ in range(80):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE p (id INT, k INT, a INT)")
+        db.execute("CREATE TABLE q (id INT, k INT, b INT)")
+        for table in ("p", "q"):
+            for n in range(rng.choice([0, 1, 3, 5])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [n, rng.choice([None, 0, 1, 2]), rng.choice([None, 0, 1, 2, 3])])
+        for sql, norm in zip(forms, normalized):
+            runnable = sqlglot.transpile(norm, read="bigquery", write="sqlite")[0]
+            assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), norm

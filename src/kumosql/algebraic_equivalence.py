@@ -2588,6 +2588,113 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
     return result
 
 
+_INDICATOR_COUNTER = itertools.count()
+
+
+def _left_join_indicator_to_exists(tree: exp.Expression, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression:
+    """``a LEFT JOIN (SELECT k, 1 AS i FROM t WHERE c) AS d ON a.x = d.k WHERE d.i IS NOT NULL OR p`` is
+    ``a WHERE EXISTS (SELECT 1 FROM t WHERE c AND a.x = t.k) OR p``.
+
+    The join is a plain existence test when it matches at most one row of ``d`` (the equated columns
+    cover a key of ``t``, or every column of ``d``'s ``GROUP BY``) and only the indicator column of ``d``
+    is read, always as ``IS NOT NULL``. Then no row of ``a`` is duplicated and the indicator is non-NULL
+    exactly when a row of ``t`` matches.
+    """
+
+    key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
+    for select in list(tree.find_all(exp.Select))[::-1]:
+        for join in list(select.args.get("joins") or []):
+            replaced = _indicator_join(select, join, key_sets)
+            if replaced:
+                break
+    return tree
+
+
+def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list[frozenset[str]]]) -> bool:
+    source = join.this
+    if join.args.get("side") != "LEFT" or join.args.get("kind") or join.args.get("on") is None or not isinstance(source, exp.Subquery):
+        return False
+    inner, alias = source.this, source.alias
+    if not alias or not isinstance(inner, exp.Select) or inner.args.get("joins") or not isinstance(inner.args.get("from_") or inner.args.get("from"), exp.From):
+        return False
+    if any(inner.args.get(k) for k in ("distinct", "having", "limit", "offset", "qualify", "order", "with_", "with")) or any(inner.find_all(exp.Window, exp.Subquery, exp.AggFunc)):
+        return False
+    table = (inner.args.get("from_") or inner.args.get("from")).this
+    if not isinstance(table, exp.Table) or table.args.get("joins"):
+        return False
+    base = table.name.lower()
+    inner_alias = table.alias_or_name.lower()
+    outputs: dict[str, exp.Expression] = {}
+    for item in inner.expressions:
+        if not isinstance(item, exp.Alias) and not isinstance(item, exp.Column):
+            return False
+        outputs[item.alias_or_name.lower()] = item.this if isinstance(item, exp.Alias) else item
+    indicators = {n for n, e in outputs.items() if isinstance(e, exp.Literal) or isinstance(e, exp.Boolean) and e.this}
+    group = inner.args.get("group")
+    group_columns = None
+    if group is not None:
+        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+            return False
+        group_columns = set()
+        for e in group.expressions:
+            if isinstance(e, exp.Column):
+                group_columns.add(e.name.lower())
+            elif not isinstance(e, (exp.Literal, exp.Boolean)):
+                return False
+    elif any(not isinstance(e, (exp.Column, exp.Literal, exp.Boolean)) for e in outputs.values()):
+        return False
+    alias = alias.lower()
+    equated: dict[str, exp.Expression] = {}
+    for part in _conjuncts(join.args["on"]):
+        if not isinstance(part, exp.EQ):
+            return False
+        sides = (part.this, part.expression)
+        mine = [x for x in sides if isinstance(x, exp.Column) and x.table.lower() == alias]
+        if len(mine) != 1:
+            return False
+        other = sides[1] if mine[0] is sides[0] else sides[0]
+        if any(c.table.lower() in ("", alias) for c in other.find_all(exp.Column)) or any(isinstance(n, exp.Subquery) for n in other.walk()):
+            return False
+        column = outputs.get(mine[0].name.lower())
+        if not isinstance(column, exp.Column) or column.table.lower() not in ("", inner_alias):
+            return False
+        equated.setdefault(column.name.lower(), other)
+    if group_columns is not None:
+        if not group_columns <= set(equated):
+            return False
+    elif not any(k <= set(equated) for k in key_sets.get(base, [])):
+        return False
+    # every other reference to the joined relation must be "indicator IS NOT NULL"
+    uses = [c for c in select.find_all(exp.Column) if c.table.lower() == alias and c.find_ancestor(exp.Join) is not join]
+    tests = []
+    for use in uses:
+        parent = use.parent
+        if use.name.lower() not in indicators or not isinstance(parent, exp.Is) or not isinstance(parent.expression, exp.Null) or not isinstance(parent.parent, exp.Not):
+            return False
+        tests.append(parent.parent)
+    if not tests:
+        return False
+    fresh = f"kqj{next(_INDICATOR_COUNTER)}"
+    fresh_table = table.copy()
+    fresh_table.set("alias", exp.TableAlias(this=exp.to_identifier(fresh)))
+    probe = exp.Select(expressions=[exp.Literal.number(1)]).from_(fresh_table)
+    conditions = []
+    if inner.args.get("where") is not None:
+        own = inner.args["where"].this.copy()
+        for column in own.find_all(exp.Column):
+            if column.table.lower() in ("", inner_alias):
+                column.set("table", exp.to_identifier(fresh))
+        conditions.append(own)
+    for name, other in equated.items():
+        conditions.append(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()))
+    where = _and_all(conditions)
+    probe.set("where", exp.Where(this=where))
+    for test in tests:
+        test.replace(exp.Exists(this=probe.copy()))
+    select.set("joins", [j for j in select.args["joins"] if j is not join] or None)
+    return True
+
+
 def _group_by_to_distinct(select: exp.Select) -> exp.Expression | None:
     """``SELECT a, b FROM (x UNION ALL y) GROUP BY a, b`` (no aggregate, no HAVING) is ``SELECT DISTINCT a, b FROM ..``."""
 
@@ -2838,6 +2945,7 @@ def normalize(
     tree = _bigquery_sugar(tree)
     tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
+    tree = _left_join_indicator_to_exists(tree, keys)
     tree = _grouped_in_to_derived(tree)
     tree = _in_over_union(tree)
     tree = _fold_dates(tree)
