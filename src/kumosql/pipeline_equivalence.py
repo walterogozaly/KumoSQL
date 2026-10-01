@@ -99,7 +99,7 @@ def prove_models(
     def prove(left: str, right: str, names: bool = False):
         calls[0] += 1
         return prove_equivalent_algebraic(
-            left, right, schema=columns, constraints=facts.constraints or None,
+            left, right, schema=columns, constraints=facts.constraints or None, types=facts.types or None,
             compare_names=names, timeout_ms=timeout_ms,
         )
 

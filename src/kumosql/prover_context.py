@@ -113,6 +113,7 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
         new_sql,
         schema=facts.columns or None,
         constraints=facts.constraints or None,
+        types=facts.types or None,
         timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
     )
     if (facts.notes or used) and result.status is SmtStatus.PROVEN_EQUIVALENT:
