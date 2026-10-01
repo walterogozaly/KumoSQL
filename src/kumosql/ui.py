@@ -6,12 +6,13 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
+import re
 import sys
 import threading
 import webbrowser
 from urllib.parse import parse_qs, urlsplit
 
-from . import console, live_graph
+from . import console, live_graph, redact
 from . import live_insights
 from . import scope_queries
 from . import scopes as scope_store
@@ -136,14 +137,16 @@ class UIServer(ThreadingHTTPServer):
         exc = sys.exc_info()[1]
         if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
             return  # the browser closed the page or cancelled a request mid-answer; not a server fault
-        console.error(f"while answering {client_address[0]}: {exc}", exc)
+        console.error("request handling failed (the browser got no answer)", exc, code="KS-REQUEST")
 
 
 class UIHandler(BaseHTTPRequestHandler):
     """Serve bundled assets and a small same-origin JSON API."""
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature set by the base class
-        console.say(f"{self.address_string()} {format % args}", console=console.VERBOSE)
+        # Query values can hold names (a project, a table); only their keys are logged.
+        text = re.sub(r"\?\S*", lambda m: "?" + ",".join(part.split("=")[0] for part in m.group(0)[1:].split("&")), format % args)
+        console.say(f"{self.address_string()} {text}", console=console.VERBOSE)
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
@@ -185,6 +188,9 @@ class UIHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/api/version":
             self._json(200, version.info())
+            return
+        if self.path == "/api/diagnostics":
+            self._json(200, {"text": console.diagnostics(), "redacted": True})
             return
         if self.path == "/api/status":
             self._json(200, live_graph.server_status())
@@ -586,15 +592,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh", action="store_true", help="With --git: fetch the latest commit instead of reusing the cached clone")
     parser.add_argument("--jobs", metavar="FILE", help="Load a BigQuery job-history export (JSON, JSON lines or CSV) for the cost page and observed edges; needs --project or --git")
     parser.add_argument("--diagnose-repo", metavar="URL", help="Load a repository once and print a report of every git call (for bug reports); does not start the server")
+    parser.add_argument("--no-redact", action="store_true", help="Log real repository, project, table, model and file names instead of placeholders (local debugging only; never paste such a log)")
+    parser.add_argument("--lookup", metavar="PLACEHOLDER", help="Print the real name behind a placeholder from the log, for example repo#1 or model#417 (read from the private map on this computer); does not start the server")
     parser.add_argument("--verbose", action="store_true", help="Show every request in the console (they are always written to ui.log)")
     parser.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    console.set_redaction(not args.no_redact and redact.enabled_by_default())
+    if args.lookup:
+        found = redact.lookup(args.lookup)
+        for session, token, value in found:
+            print(f"{token}  =  {value}   (session {session})")
+        if not found:
+            print(f"No saved name for {args.lookup}. Placeholders are only saved while redaction is on, for the last {redact.KEEP_SESSIONS} sessions.")
+        return 0 if found else 1
     if args.diagnose_repo:
         from .git_repo import diagnose
 
-        print(diagnose(args.diagnose_repo, args.branch))
+        print(console.scrub(diagnose(args.diagnose_repo, args.branch)))  # names are replaced so the report can be pasted
         return 0
 
     if args.git and args.project:
@@ -605,9 +621,9 @@ def main(argv: list[str] | None = None) -> int:
         from .git_repo import GitRepoError, load_into_graph
 
         try:
-            print(f"Loaded {load_into_graph(args.git, args.branch, args.refresh)['label']}", flush=True)
+            console.say(f"Loaded {load_into_graph(args.git, args.branch, args.refresh)['label']}")
         except GitRepoError as exc:
-            parser.error(str(exc))
+            parser.error(console.scrub(str(exc)))
     if args.project:
         from .pipeline import load_sqlx_project
 
@@ -629,7 +645,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--jobs needs --project or --git")
         try:
             with open(args.jobs, encoding="utf-8") as handle:
-                print(f"Loaded {live_graph.load_job_history(handle.read(), args.jobs)} jobs", flush=True)
+                console.say(f"Loaded {live_graph.load_job_history(handle.read(), args.jobs)} jobs")
         except (OSError, ValueError) as exc:
             parser.error(f"could not load --jobs: {exc}")
     try:
@@ -639,8 +655,7 @@ def main(argv: list[str] | None = None) -> int:
     url = f"http://127.0.0.1:{args.port}/"
     console.set_verbose(args.verbose)
     console.disable_quick_edit()
-    for line in console.banner(url):
-        print(line, flush=True)
+    console.announce(url)
     if defer_autoload:
         repositories.autoload(background=True)  # after the banner, so its lines come after it
     if not args.no_browser:

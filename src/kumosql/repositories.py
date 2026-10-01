@@ -138,7 +138,7 @@ def load(repo_id: object, refresh: bool = False) -> dict:
     # git runs without _LOCK held: Settings and every other request only need the saved list.
     try:
         try:
-            with console.task(f"load {url}{f' @ {branch}' if branch else ''} ({'fetching latest' if refresh else 'cached copy if any'})"):
+            with console.task("repo load", repo=url, branch=branch or "default", mode="fetch latest" if refresh else "cached copy if any", warn_after=60):
                 result = load_into_graph(url, branch, refresh)
         except (GitRepoError, ValueError) as exc:
             _update(repo_id, error=str(exc), error_at=_now())
@@ -188,12 +188,12 @@ def autoload(background: bool = True) -> threading.Thread | None:
         try:
             load(active, refresh=True)
         except (GitRepoError, ValueError) as refresh_error:
-            console.error(f"could not fetch the latest commit: {_first_line(refresh_error)}; trying the saved copy", trace=False)
+            console.warn("start-up repository reload: could not fetch the latest commit (details above); trying the saved copy")
             try:  # remote unreachable or auth expired: the cached clone still works
                 load(active, refresh=False)
                 _record_stale(active, str(refresh_error))
             except (GitRepoError, ValueError) as exc:
-                console.error(f"repository not loaded: {_first_line(exc)}", trace=False)  # also saved on the entry
+                console.warn("start-up repository reload: repository not loaded (details above; the message is also saved on the entry)")
 
     if not background:
         run()

@@ -315,10 +315,11 @@ def prefetch(github_url: str) -> threading.Thread:
         try:
             search = search_for(github_url)
             if search["projects"]:
-                with console.task("Dataform schedules (workflow configs) lookup"):
+                console.register("project", search["projects"])
+                with console.task("Dataform schedules lookup", repo=github_url, warn_after=60):
                     summary(github_url, refresh=bigquery_catalog.peek(_key(github_url, search)) is None)
         except Exception as exc:  # noqa: BLE001 - a background nicety must not stop anything
-            console.error(f"Dataform schedules lookup failed: {exc}", exc)
+            console.error("Dataform schedules lookup failed (the schedules view stays empty)", exc, code="KS-DATAFORM")
 
     thread = threading.Thread(target=work, name="kumosql-workflow-prefetch", daemon=True)
     thread.start()

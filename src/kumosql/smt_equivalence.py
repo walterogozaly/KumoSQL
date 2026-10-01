@@ -164,6 +164,10 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+class _SetSourceUnresolved(Exception):
+    """A DISTINCT derived table was not joined on all of its columns."""
+
+
 class _Unknown(Exception):
     """The solver timed out."""
 
@@ -315,6 +319,9 @@ class _Sub:
     occs: list
     guard: object
     nested: list = field(default_factory=list)
+    # (block, [column values]) for a DISTINCT derived table read as a set: the
+    # columns are free until the join pins them (see ``resolve_set_sources``).
+    setsrc: object = None
 
 
 @dataclass
@@ -448,6 +455,9 @@ class _Compiler:
         # Existence tests (EXISTS, IN) found while compiling the current select.
         self.collector: list = []
         self.ctes: dict = {}
+        # Read DISTINCT derived tables as sets (existence tests) instead of opaque relations.
+        self.semijoin = True
+        self.used_setsrc = False
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -779,7 +789,33 @@ class _Compiler:
             conds.append(branch.cond)
             self.collector.extend(branch.subs)
             return _Source(cols=dict(zip(branch.names, branch.outputs)), order=list(branch.names))
+        if self.semijoin and len(sub.branches) == 1 and not sub.distinct:
+            branch = sub.branches[0]
+            is_set = isinstance(branch, _Spj) and branch.distinct
+            is_set = is_set or (isinstance(branch, _Agg) and not branch.aggs and branch.having is None and not branch.is_global)
+            names = list(branch.names)
+            if is_set and names and len(set(names)) == len(names) and "" not in names:
+                return self._set_source(branch, names, conds)
         return self._opaque(body, ctes, occs)
+
+    def _set_source(self, branch, names, conds) -> _Source:
+        """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
+
+        Its columns are free values; the atom says some row of the table has
+        exactly those values. Joined on all of its columns, each outer row matches
+        at most one row, so the join is that test (``resolve_set_sources``).
+        """
+
+        V = _value_sort()
+        uid = self.fresh("set")
+        columns = [_Val(z3.BoolVal(False), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
+        match = [z3.And(z3.Not(o.null), o.val == c.val) for o, c in zip(branch.outputs, columns)]
+        atom = z3.Bool(f"{self.fresh('ex')}#exists")
+        guard = z3.And(branch.cond.t, *match)
+        self.collector.append(_Sub(atom, list(branch.occs), guard, list(branch.subs), setsrc=(branch, columns)))
+        conds.append(_Pred(atom, z3.Not(atom)))
+        self.used_setsrc = True
+        return _Source(cols=dict(zip(names, columns)), order=list(names))
 
     def _opaque(self, body, ctes, occs) -> _Source:
         """A derived relation kept whole: identified by its CTE-expanded SQL."""
@@ -1235,7 +1271,15 @@ def _subst_sub(sub: _Sub, pairs) -> _Sub:
         sub.occs,
         _subst(sub.guard, pairs),
         [_subst_sub(n, pairs) for n in sub.nested],
+        sub.setsrc,
     )
+
+
+def _pinned_guard(sub: _Sub, pairs, ids) -> object:
+    """The guard of a set-source test once its columns are pinned; the pinned outer columns are known non-NULL."""
+
+    known = [z3.Not(z3.Bool(pin.decl().name() + "#null")) for _, pin in pairs]
+    return z3.And(_subst(sub.guard, pairs), *known)
 
 
 def _atom_copy_pairs(subs: list, tag: str) -> list:
@@ -1694,6 +1738,115 @@ class _Prover:
             return True
         return self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts)
 
+    def resolve_set_sources(self, block):
+        """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
+
+        Each such table is, per outer row, either matched by exactly one row or
+        not at all, so the join is an existence test. Raises ``_SetSourceUnresolved``
+        when some column is not pinned to a column that cannot be NULL.
+        """
+
+        def walk(subs):
+            for sub in subs:
+                yield sub
+                yield from walk(sub.nested)
+
+        if not any(sub.setsrc for sub in walk(block.subs)):
+            return block
+        if not isinstance(block, (_Spj, _Agg)) or any(o.opaque for o in block.occs):
+            raise _SetSourceUnresolved
+        conjuncts, stack = [], [block.cond.t]
+        while stack:
+            term = stack.pop()
+            if z3.is_and(term):
+                stack.extend(term.children())
+            else:
+                conjuncts.append(term)
+        ids = {c.get_id() for c in conjuncts}
+        pairs = []
+        for sub in block.subs:
+            if not sub.setsrc:
+                continue
+            inner, columns = sub.setsrc
+            if sub.atom.get_id() not in ids or any(x.setsrc for x in walk(sub.nested)):
+                raise _SetSourceUnresolved
+            distinct = self.as_distinct_spj(inner)
+            if not (isinstance(distinct, _Spj) and distinct.distinct):
+                raise _SetSourceUnresolved
+            for column in columns:
+                for term in conjuncts:
+                    if not z3.is_eq(term):
+                        continue
+                    left, right = term.children()
+                    if right.eq(column.val):
+                        left, right = right, left
+                    if not left.eq(column.val) or not z3.is_const(right) or right.decl().kind() != z3.Z3_OP_UNINTERPRETED:
+                        continue
+                    if z3.Not(z3.Bool(right.decl().name() + "#null")).get_id() in ids:
+                        pairs.append((column.val, right))
+                        break
+                else:
+                    raise _SetSourceUnresolved
+        # The test already requires the pinned columns to be non-NULL, so the
+        # condition need not repeat it (the existence atom is a free Boolean).
+        known = [(z3.Not(z3.Bool(pin.decl().name() + "#null")), z3.BoolVal(True)) for _, pin in pairs]
+        changes = {
+            "cond": _Pred(_subst(_subst(block.cond.t, pairs), known), _subst(block.cond.f, pairs)),
+            "outputs": [_subst_val(v, pairs) for v in block.outputs],
+            "subs": [
+                dataclasses.replace(_subst_sub(sub, pairs), setsrc=None, guard=_pinned_guard(sub, pairs, ids))
+                if sub.setsrc
+                else _subst_sub(sub, pairs)
+                for sub in block.subs
+            ],
+        }
+        if isinstance(block, _Agg):
+            changes["keys"] = [_subst_val(k, pairs) for k in block.keys]
+            changes["aggs"] = [
+                _AggCall(c.func, c.distinct, _subst_val(c.arg, pairs) if c.arg is not None else None, c.var)
+                for c in block.aggs
+            ]
+            if block.having is not None:
+                changes["having"] = _Pred(_subst(block.having.t, pairs), _subst(block.having.f, pairs))
+        return dataclasses.replace(block, **changes)
+
+    def push_having(self, block):
+        """``HAVING`` on group keys only is a ``WHERE`` filter (every row of a group agrees on it)."""
+
+        if (
+            not isinstance(block, _Agg)
+            or block.is_global
+            or block.having is None
+            or block.subs
+            or any(o.opaque for o in block.occs)
+        ):
+            return block
+        agg_terms = {t.get_id() for c in block.aggs for t in (c.var.null, c.var.val) if z3.is_const(t)}
+        stack = [block.having.t]
+        while stack:
+            term = stack.pop()
+            if z3.is_const(term) and term.decl().kind() == z3.Z3_OP_UNINTERPRETED and term.get_id() in agg_terms:
+                return block
+            stack.extend(term.children())
+        copies = [o.copy(o.uid + "'") for o in block.occs]
+        copy_pairs = []
+        for o, c in zip(block.occs, copies):
+            copy_pairs.extend(_occ_pairs(o, c))
+        keys_same = _rows_eq(block.keys, [_subst_val(k, copy_pairs) for k in block.keys])
+        both = z3.And(block.cond.t, _subst(block.cond.t, copy_pairs), keys_same)
+        facts = block.facts + [_subst(f, copy_pairs) for f in block.facts]
+        saved = len(self.candidates)
+        ok = self.valid(
+            z3.Implies(both, block.having.t == _subst(block.having.t, copy_pairs)), block.occs + copies, facts
+        )
+        del self.candidates[saved:]
+        if not ok:
+            return block
+        t = z3.And(block.cond.t, block.having.t)
+        block.cond = _Pred(t, z3.Not(t))
+        block.having = None
+        return block
+
     def as_distinct_spj(self, block):
         """``GROUP BY`` with no aggregates is ``SELECT DISTINCT`` when the
         output determines the group key."""
@@ -1781,6 +1934,8 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
         _prune(prover, union)
         branches = []
         for b in union.branches:
+            b = prover.resolve_set_sources(b)
+            b = prover.push_having(b)
             b = prover.as_distinct_spj(b)
             b = prover.inline_unique_subs(b)
             if union.distinct or b.distinct:
@@ -2030,45 +2185,61 @@ def prove_equivalent_smt(
         return SmtEquivalenceResult(
             SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install kumosql[smt])"
         )
-    compiler = _Compiler(schema, exact_arithmetic, dialect)
-    try:
-        left = compiler.compile(left_sql)
-        right = compiler.compile(right_sql)
-    except Unsupported as error:
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {error}", assumptions=assumptions)
-    except sqlglot.errors.ParseError as error:
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=assumptions)
+    used = [False]
 
-    if len(left.names) != len(right.names):
-        return SmtEquivalenceResult(
-            SmtStatus.NOT_PROVEN,
-            f"different column counts ({len(left.names)} vs {len(right.names)})",
-            assumptions=assumptions,
-        )
-    for position, (a, b) in enumerate(zip(left.names, right.names), start=1):
-        if compare_names and a != b:
+    def attempt(semijoin: bool) -> SmtEquivalenceResult:
+        compiler = _Compiler(schema, exact_arithmetic, dialect)
+        compiler.semijoin = semijoin
+        try:
+            left = compiler.compile(left_sql)
+            right = compiler.compile(right_sql)
+        except Unsupported as error:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {error}", assumptions=assumptions)
+        except sqlglot.errors.ParseError as error:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=assumptions)
+
+        if len(left.names) != len(right.names):
             return SmtEquivalenceResult(
                 SmtStatus.NOT_PROVEN,
-                f"column {position} is named {a or '(unnamed)'} on the left and {b or '(unnamed)'} on the right",
+                f"different column counts ({len(left.names)} vs {len(right.names)})",
                 assumptions=assumptions,
             )
+        for position, (a, b) in enumerate(zip(left.names, right.names), start=1):
+            if compare_names and a != b:
+                return SmtEquivalenceResult(
+                    SmtStatus.NOT_PROVEN,
+                    f"column {position} is named {a or '(unnamed)'} on the left and {b or '(unnamed)'} on the right",
+                    assumptions=assumptions,
+                )
 
-    prover = _Prover(timeout_ms, constraints)
-    proven, reason = _prove(prover, left, right)
-    if proven:
-        return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=assumptions)
-    if not compiler.uses_uf:
-        counterexample = _find_counterexample(prover, left, right)
-        if counterexample is not None:
-            return SmtEquivalenceResult(
-                SmtStatus.NOT_EQUIVALENT,
-                "the queries differ on the attached database",
-                counterexample=counterexample,
-                assumptions=assumptions,
-            )
-    if prover.unknown:
-        reason += " (the solver timed out on some checks)"
-    return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumptions)
+        prover = _Prover(timeout_ms, constraints)
+        used[0] = compiler.used_setsrc
+        try:
+            proven, reason = _prove(prover, left, right)
+        except _SetSourceUnresolved:
+            proven, reason = False, "a derived table is not joined on all of its columns"
+        if proven:
+            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=assumptions)
+        if not compiler.uses_uf:
+            counterexample = _find_counterexample(prover, left, right)
+            if counterexample is not None:
+                return SmtEquivalenceResult(
+                    SmtStatus.NOT_EQUIVALENT,
+                    "the queries differ on the attached database",
+                    counterexample=counterexample,
+                    assumptions=assumptions,
+                )
+        if prover.unknown:
+            reason += " (the solver timed out on some checks)"
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumptions)
+
+    result = attempt(True)
+    if result.status is not SmtStatus.NOT_PROVEN or not used[0]:
+        return result
+    # A DISTINCT derived table read as a set can fail to match what the opaque
+    # reading would; try that reading too before giving up.
+    fallback = attempt(False)
+    return fallback if fallback.status is not SmtStatus.NOT_PROVEN else result
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from kumosql import live_graph, live_insights, timing
+from kumosql import console, live_graph, live_insights, timing
 from kumosql.pipeline import Pipeline
 
 FILES = {
@@ -74,13 +74,13 @@ def test_pages_report_progress_while_analysis_runs():
     assert "pending" not in live_graph.graph_or_empty()
 
 
-def test_stages_are_timed(capsys):
+def test_stages_are_timed():
     live_graph.load_files(FILES, "demo")
     wait_done()
     live_graph.graph_or_empty()
     names = {item["stage"] for item in timing.recent()}
     assert {"analyse", "graph report", "graph payload"} <= names
-    assert "[kumosql] graph payload:" in capsys.readouterr().err
+    assert "graph payload:" in console.log_path().read_text(encoding="utf-8")
 
 
 def test_analysis_is_saved_by_content_and_reused_after_a_restart(monkeypatch):
@@ -159,18 +159,32 @@ def ui_server_url():
         thread.join(timeout=2)
 
 
-def test_stage_start_and_progress_lines_show_a_long_stage_is_alive(capsys):
-    progress = timing.Progress("demo loop", 3, every=0.0, slow=0.0)
+def test_stage_start_and_progress_lines_show_a_long_stage_is_alive():
     with timing.stage("demo stage", models=2431):
+        progress = timing.Progress("demo loop", 3, every=0.0, slow=0.0)
         for label in ("alpha", "beta", "gamma"):
             progress.step(label)
         progress.finish()
-    err = capsys.readouterr().err
-    assert "[kumosql] demo stage: started (models 2,431)" in err
-    assert "demo loop: started (3 items)" in err and "demo loop: 3/3" in err
-    assert "slow item 1 of 3 took" in err
+    err = console.log_path().read_text(encoding="utf-8")
+    assert "demo stage: started (models 2431)" in err
+    assert "demo stage > demo loop: started (items 3)" in err
+    assert "demo stage > demo loop: finished" in err and "done 3" in err
+    assert "demo loop: slow item model#" in err
     assert "alpha" not in err and "beta" not in err
     assert timing.current_progress() == []
+
+
+def test_a_loop_left_open_by_an_error_does_not_tangle_the_log():
+    try:
+        with timing.stage("outer stage"):
+            timing.Progress("broken loop", 2).step("alpha")
+            raise ValueError("boom")
+    except ValueError:
+        pass
+    assert timing.current_progress() == []
+    with timing.stage("next stage"):
+        pass
+    assert console._stack() == []
 
 
 def test_analysis_logs_each_stage_before_it_finishes(capsys):

@@ -46,7 +46,7 @@ def test_task_logs_duration_and_failures(tmp_path, monkeypatch):
         pass
     text = (tmp_path / "ui.log").read_text(encoding="utf-8")
     assert "thing: started" in text and "thing: finished in" in text
-    assert "broken: failed after" in text and "nope" in text
+    assert "broken: failed (ValueError)" in text and "nope" in text
 
 
 def test_error_is_one_line_then_traceback(tmp_path, monkeypatch):
@@ -56,7 +56,7 @@ def test_error_is_one_line_then_traceback(tmp_path, monkeypatch):
     except RuntimeError as exc:
         console.error("it broke", exc)
     lines = (tmp_path / "ui.log").read_text(encoding="utf-8").splitlines()
-    assert "ERROR it broke" in lines[0] and any("RuntimeError: boom" in line for line in lines[1:])
+    assert "ERROR [KS-INTERNAL] it broke" in lines[0] and any("RuntimeError: boom" in line for line in lines[1:])
 
 
 def test_banner_names_the_environment(tmp_path, monkeypatch):
@@ -77,9 +77,9 @@ def test_slow_git_is_reported_and_every_git_call_logged(tmp_path, monkeypatch):
         import os, stat
         fake = tmp_path / "bin" / "git"
         fake.parent.mkdir()
-        fake.write_text("#!/bin/sh\nsleep 1\necho ok\n")
+        fake.write_text("#!/bin/sh\nsleep 2\necho ok\n")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
         git_repo._git(["fetch"])
         text = (tmp_path / "ui.log").read_text(encoding="utf-8")
-        assert "git fetch still running after 0.2s" in text and "git fetch in" in text and "exit 0" in text
+        assert "git fetch: still running after" in text and "slower than expected" in text and "git fetch: finished in" in text and "exit 0" in text
