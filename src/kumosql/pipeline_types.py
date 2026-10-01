@@ -80,6 +80,10 @@ class Model:
     masked_expressions: tuple[str, ...] = ()
     # Dataform tags from the config block; workflow configurations select actions by them.
     tags: tuple[str, ...] = ()
+    # Dataform ``assertions`` of the config block: columns that are never NULL and
+    # sets of columns that are unique. Declared by the project, checked when its assertions run.
+    non_null: tuple[str, ...] = ()
+    unique_keys: tuple[tuple[str, ...], ...] = ()
 
     @property
     def key(self) -> str:

@@ -136,6 +136,54 @@ def _config_tags(config: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(re.findall(r"['\"`]([^'\"`]+)['\"`]", listed if listed is not None else single or "")))
 
 
+def _braced(text: str, start: int) -> str:
+    """The text of the ``{...}`` block opening at ``start`` (strings skipped); empty if unbalanced."""
+
+    depth, index, quote = 0, start, ""
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+        index += 1
+    return ""
+
+
+def _name_list(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"['\"`]([^'\"`]+)['\"`]", text))
+
+
+def _config_assertions(config: str) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    """``(non_null columns, unique keys)`` from ``assertions: {nonNull, uniqueKey, uniqueKeys}``."""
+
+    match = re.search(r"\bassertions\s*:\s*\{", config)
+    if not match:
+        return (), ()
+    block = _braced(config, match.end() - 1)
+    non_null: tuple[str, ...] = ()
+    keys: list[tuple[str, ...]] = []
+    found = re.search(r"\bnonNull\s*:\s*(\[[^\]]*\]|['\"`][^'\"`]*['\"`])", block)
+    if found:
+        non_null = _name_list(found.group(1))
+    found = re.search(r"\buniqueKey\s*:\s*(\[[^\]]*\]|['\"`][^'\"`]*['\"`])", block)
+    if found and _name_list(found.group(1)):
+        keys.append(_name_list(found.group(1)))
+    found = re.search(r"\buniqueKeys\s*:\s*\[((?:\s*\[[^\]]*\]\s*,?)+)\]", block)
+    if found:
+        keys.extend(_name_list(group) for group in re.findall(r"\[([^\]]*)\]", found.group(1)) if _name_list(group))
+    return non_null, tuple(dict.fromkeys(keys))
+
+
 def _config_dependencies(config: str) -> tuple[str, ...]:
     """Arguments of each entry in a config block's ``dependencies`` (a name or a ``{name, schema}`` object)."""
 
@@ -356,7 +404,11 @@ def load_sqlx_project(
         except Exception as exc:  # noqa: BLE001 - tags are optional; never lose the model over them
             diagnostics.append(PipelineDiagnostic(relative, "config_tags_unreadable", f"could not read tags ({type(exc).__name__}: {exc}); the model was kept without tags"))
             tags = ()
-        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags))
+        try:
+            non_null, unique_keys = _config_assertions(config)
+        except Exception:  # noqa: BLE001 - assertions are optional evidence
+            non_null, unique_keys = (), ()
+        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys))
 
     def unreadable(relative: str, exc: Exception) -> None:
         diagnostics.append(PipelineDiagnostic(
@@ -432,6 +484,17 @@ def load_compiled_graph(
                     raise ValueError("query is not text")
                 kind = item.get("type", default_kind) if kind_key == "tables" else default_kind
                 file_name = item.get("fileName")
+                asserted = item.get("assertions") if isinstance(item.get("assertions"), dict) else {}
+                non_null = asserted.get("nonNull", [])
+                non_null = (non_null,) if isinstance(non_null, str) else tuple(c for c in non_null if isinstance(c, str))
+                unique = []
+                if isinstance(asserted.get("uniqueKey"), list):
+                    unique.append(tuple(c for c in asserted["uniqueKey"] if isinstance(c, str)))
+                if isinstance(asserted.get("uniqueKeys"), list):
+                    for entry in asserted["uniqueKeys"]:
+                        columns = entry.get("uniqueKey") if isinstance(entry, dict) else entry
+                        if isinstance(columns, list):
+                            unique.append(tuple(c for c in columns if isinstance(c, str)))
                 model = Model(
                     target,
                     str(kind),
@@ -439,6 +502,8 @@ def load_compiled_graph(
                     file_name if isinstance(file_name, str) else None,
                     tuple(target_of(dep) for dep in item.get("dependencyTargets", [])),
                     tags=tuple(tag for tag in item.get("tags", []) if isinstance(tag, str)),
+                    non_null=non_null,
+                    unique_keys=tuple(dict.fromkeys(k for k in unique if k)),
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(

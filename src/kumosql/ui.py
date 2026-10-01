@@ -195,6 +195,11 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             self._json(200, live_graph.server_status())
             return
+        if self.path == "/api/prover":
+            from . import prover_context
+
+            self._json(200, prover_context.status())
+            return
         if self.path == "/api/settings":
             self._json(200, {
                 "ui": state.get_section("ui", {}),
@@ -358,7 +363,28 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, saved)
 
+    def _put_prover(self) -> None:
+        from . import prover_context
+
+        payload = self._read_json(MAX_UI_STATE_BYTES)
+        if payload is None:
+            return
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("settings must be an object")
+            prover_context.save_settings(payload.get("enabled"), payload.get("timeout_ms"))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except OSError as exc:
+            self._json(500, {"error": str(exc)})
+            return
+        self._json(200, prover_context.status())
+
     def do_PUT(self) -> None:
+        if self.path == "/api/prover":
+            self._put_prover()
+            return
         if self.path == "/api/catalog/settings":
             self._put_bigquery_settings()
             return
