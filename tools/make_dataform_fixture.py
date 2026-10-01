@@ -7,7 +7,7 @@ have broken loading on locked-down machines: thousands of ``.sqlx`` files, paths
 characters, ``workflow_settings.yaml`` or ``dataform.json`` (or both), ``includes/`` JavaScript,
 declarations, assertions, operations, incremental tables, ``tags: []`` and missing config fields,
 ``js`` blocks, pre and post operations, copy-pasted near-duplicates, broken refs, and files with a
-byte-order mark, CRLF or tab indentation, a non-UTF-8 encoding, or no content at all.
+byte-order mark, CRLF or tab indentation, a non-UTF-8 encoding, or a config and no query.
 Names are generic; nothing here resembles a real project. The output is deterministic per seed.
 """
 
@@ -263,8 +263,8 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
                 latin = text.replace("a.created_at", "a.created_at /* déjà vu */").replace("\n", newline).encode("latin-1")
                 write(path, latin, "sqlx-latin1")
             else:
-                if flavor_roll < 0.022:  # a placeholder someone committed and never filled in
-                    write(defs / "placeholders" / f"empty_{index}.sqlx", "", "sqlx-empty")
+                if flavor_roll < 0.022:  # a stub with a config and no query, as left behind by an unfinished change
+                    write(defs / "placeholders" / f"stub_{index}.sqlx", f'config {{ type: "table", schema: "{PREFIX}placeholders" }}\n', "sqlx-config-only")
                 write(path, text.rstrip("\n") if rng.random() < 0.05 else text, "sqlx", newline)
             if not 0.92 <= kind < 0.96:  # a disabled action is never read by others
                 current.append((schema, name))
