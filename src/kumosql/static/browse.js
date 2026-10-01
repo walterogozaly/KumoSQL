@@ -148,15 +148,15 @@ async function loadProjects() {
   const version = ++projectRequest;
   chosenProject = chosenDataset = chosenTable = "";
   for (const key of Object.keys(freshness)) delete freshness[key];
-  clearPane(datasetsPane, "Choose a project.");
-  clearPane(tablesPane, "Choose a dataset.");
-  clearPane(schemaPane, "Choose a table to inspect its schema.");
+  clearPane(datasetsPane);
+  clearPane(tablesPane);
+  clearPane(schemaPane);
   for (const id of ["dataset-count", "table-count"]) document.getElementById(id).textContent = "";
   try {
     const projects = await window.KumoBqProjects.loadSelection();
     if (version !== projectRequest) return;
     renderProjects(projects);
-    if (projects.length) setStatus("Choose a project to see its datasets.");
+    if (projects.length) setStatus("");
   } catch (error) {
     if (version !== projectRequest) return;
     clearPane(projectsPane, "Could not load your project choice.");
@@ -180,8 +180,8 @@ async function selectProject(project, refresh = false) {
   for (const key of ["datasets", "tables", "table"]) delete freshness[key];
   renderProjectsSelection();
   clearPane(datasetsPane, "Loading datasets…");
-  clearPane(tablesPane, "Choose a dataset.");
-  clearPane(schemaPane, "Choose a table to inspect its schema.");
+  clearPane(tablesPane);
+  clearPane(schemaPane);
   document.getElementById("table-count").textContent = "";
   const version = ++datasetRequest;
   setStatus(`Loading datasets in ${project}…`);
@@ -191,7 +191,7 @@ async function selectProject(project, refresh = false) {
     });
     if (version !== datasetRequest || chosenProject !== project) return;
     fillDatasets(project, datasets);
-    setStatus(datasets.length ? `Choose a dataset in ${project}.` : `No datasets found in ${project}.`);
+    setStatus(datasets.length ? "" : `No datasets found in ${project}.`);
   } catch (error) {
     if (version !== datasetRequest) return;
     clearPane(datasetsPane, "Could not load datasets.");
@@ -287,7 +287,7 @@ async function selectDataset(dataset, refresh = false) {
     button.setAttribute("aria-current", button.dataset.value === dataset ? "true" : "false");
   }
   clearPane(tablesPane, "Loading tables…");
-  clearPane(schemaPane, "Choose a table to inspect its schema.");
+  clearPane(schemaPane);
   const project = chosenProject;
   const version = ++tableRequest;
   setStatus(`Loading tables in ${project}.${dataset}…`);
@@ -301,7 +301,7 @@ async function selectDataset(dataset, refresh = false) {
     await window.KumoTags?.load();
     if (version !== tableRequest || chosenDataset !== dataset) return;
     fillTables(tables);
-    setStatus(tables.length ? `Choose a table in ${project}.${dataset}.` : `No tables found in ${project}.${dataset}.`);
+    setStatus(tables.length ? "" : `No tables found in ${project}.${dataset}.`);
   } catch (error) {
     if (version !== tableRequest) return;
     clearPane(tablesPane, "Could not load tables.");
@@ -399,7 +399,7 @@ async function selectTable(table, refresh = false) {
       checked.delete(table);
       document.getElementById("table-count").textContent = String(tablesPane.querySelectorAll("button").length);
       chosenTable = "";
-      clearPane(schemaPane, "Choose a table to inspect its schema.");
+      clearPane(schemaPane);
       setStatus(`You do not have access to ${table}, so it was removed from the list.`, true);
       return;
     }
@@ -470,13 +470,13 @@ loadProjects();
 window.addEventListener("kumosql:bq-projects", (event) => {
   const projects = event.detail || [];
   renderProjects(projects);
-  if (projects.length && !chosenProject) setStatus("Choose a project to see its datasets.");
+  if (projects.length && !chosenProject) setStatus("");
   if (chosenProject && !projects.includes(chosenProject)) {
     chosenProject = chosenDataset = chosenTable = "";
-    clearPane(datasetsPane, "Choose a project.");
-    clearPane(tablesPane, "Choose a dataset.");
-    clearPane(schemaPane, "Choose a table to inspect its schema.");
-    setStatus(projects.length ? "Choose a project to see its datasets." : status.textContent);
+    clearPane(datasetsPane);
+    clearPane(tablesPane);
+    clearPane(schemaPane);
+    setStatus(projects.length ? "" : status.textContent);
   }
 });
 
