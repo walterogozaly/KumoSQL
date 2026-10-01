@@ -257,3 +257,34 @@ def test_counterexample_falls_back_when_no_integral_one_exists():
     result = prove_equivalent_smt("SELECT x FROM t WHERE x >= 1", "SELECT x FROM t WHERE x > 0")
     assert result.status is SmtStatus.NOT_EQUIVALENT
     assert result.counterexample is not None
+
+
+def test_order_by_limit_compares_cores_and_ordering():
+    schema = {"dept": ["deptno", "name"]}
+    base = "SELECT deptno, name FROM dept WHERE deptno > 1 ORDER BY deptno, name LIMIT 3"
+    same = "SELECT d.deptno, d.name FROM dept d WHERE d.deptno > 1 AND TRUE ORDER BY 1, 2 LIMIT 3"
+    assert prove_equivalent_smt(base, same, schema=schema).proven
+    for other in (
+        base.replace("LIMIT 3", "LIMIT 4"),
+        base.replace("deptno, name LIMIT", "deptno DESC, name LIMIT"),
+        base.replace("deptno > 1", "deptno > 2"),
+        "SELECT deptno, name FROM dept WHERE deptno > 1 ORDER BY deptno, name",
+    ):
+        assert not prove_equivalent_smt(base, other, schema=schema).proven
+    # Ordering by a subset of the columns leaves ties: the proof records that assumption.
+    partial = prove_equivalent_smt(
+        "SELECT deptno, name FROM dept ORDER BY deptno LIMIT 2",
+        "SELECT deptno, name FROM dept d ORDER BY deptno LIMIT 2",
+        schema=schema,
+    )
+    assert partial.proven and any("tied" in a for a in partial.assumptions)
+    # Without ORDER BY the rows are arbitrary: nothing is proved.
+    assert not prove_equivalent_smt("SELECT deptno FROM dept LIMIT 2", "SELECT deptno FROM dept LIMIT 2", schema=schema).proven
+
+
+def test_limit_zero_is_empty():
+    schema = {"dept": ["deptno", "name"]}
+    assert prove_equivalent_smt("SELECT * FROM dept LIMIT 0", "SELECT * FROM dept WHERE 1 = 0", schema=schema).proven
+    assert prove_equivalent_smt(
+        "(SELECT deptno FROM dept LIMIT 0) UNION ALL (SELECT deptno FROM dept)", "SELECT deptno FROM dept", schema=schema
+    ).proven
