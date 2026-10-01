@@ -29,7 +29,7 @@ def test_a_rewrite_is_proved():
 def test_a_changed_literal_is_found_by_testing():
     answer, how = bench.judge(pair("SELECT id FROM t WHERE name = 'x'", "SELECT id FROM t WHERE name = 'X'", "no"))
     assert answer == "no"
-    assert how in {"refuted", "differs"}
+    assert how == "differs"
 
 
 def test_output_names_do_not_matter():
