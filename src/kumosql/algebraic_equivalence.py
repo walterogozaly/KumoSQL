@@ -514,6 +514,48 @@ def _fold_dates(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+def _union_all_branches(node: exp.Expression) -> list[exp.Select] | None:
+    """The SELECTs of a (nested) UNION ALL, or ``None`` for any other shape."""
+
+    if isinstance(node, exp.Subquery):
+        return _union_all_branches(node.this)
+    if isinstance(node, exp.Select):
+        return [node]
+    if isinstance(node, exp.Union) and not node.args.get("distinct") and not any(
+        node.args.get(k) for k in ("order", "limit", "offset")
+    ):
+        left, right = _union_all_branches(node.this), _union_all_branches(node.expression)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
+    """Drop, in every branch of a UNION ALL, the columns (by position) nothing reads."""
+
+    branches = _union_all_branches(union)
+    if not branches:
+        return False
+    first = branches[0].expressions
+    width = len(first)
+    for branch in branches:
+        if len(branch.expressions) != width or not _no_extras(branch, allow_group=True) or branch.args.get("distinct"):
+            return False
+        if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in branch.expressions):
+            return False
+    if any(not e.alias_or_name for e in first):
+        return False
+    names = [e.alias_or_name.lower() for e in first]
+    if len(set(names)) != width:
+        return False
+    keep = [i for i in range(width) if names[i] in used] or [0]
+    keep.sort(key=lambda i: names[i])  # the enclosing query reads by name, so the order is free
+    if keep == list(range(width)):
+        return False
+    for branch in branches:
+        branch.set("expressions", [branch.expressions[i].copy() for i in keep])
+    return True
+
+
 def _prune_derived(select: exp.Select) -> exp.Expression | None:
     """Drop the columns of a derived table that the enclosing query never reads.
 
@@ -533,6 +575,15 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
         return None
     changed = False
     for source in [from_.this] + [j.this for j in select.args.get("joins") or []]:
+        if isinstance(source, exp.Subquery) and source.alias and isinstance(source.this, exp.Union):
+            used = {
+                c.name.lower()
+                for c in select.find_all(exp.Column)
+                if not c.table or c.table.lower() == source.alias.lower()
+            }
+            if _prune_union_all(source.this, used):
+                changed = True
+            continue
         if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
             continue
         inner = source.this
@@ -771,6 +822,23 @@ def _fold_trivia(tree: exp.Expression) -> exp.Expression:
                 and isinstance(inner.expressions[0], (exp.Literal, exp.Boolean))
             ):
                 return inner.expressions[0].copy()
+        if isinstance(node, exp.Select):
+            group = node.args.get("group")
+            if (
+                group is not None
+                and len(group.expressions) == 1
+                and isinstance(group.expressions[0], exp.Boolean)
+                and not node.args.get("having")
+                and not node.args.get("distinct")
+                and not any(node.find_all(exp.AggFunc))
+                and node.expressions
+                and all(isinstance(item.unalias(), exp.Literal) for item in node.expressions)
+                and not any(isinstance(item.unalias(), exp.Star) for item in node.expressions)
+            ):
+                # One group holding every row: a constant row exists iff the source has a row.
+                node.set("group", None)
+                node.set("distinct", exp.Distinct())
+                return node
         for kind, part in ((exp.Year, "YEAR"), (exp.Month, "MONTH"), (exp.Day, "DAY")):
             if isinstance(node, kind):
                 argument = node.this
@@ -869,10 +937,27 @@ def _expand_stars(tree: exp.Expression, schema: dict[str, list[str]]) -> exp.Exp
     return tree
 
 
+def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
+    """Column names are case-insensitive: ``t.EMPNO`` and ``t.empno`` are the same column.
+
+    A name that is also an output alias somewhere keeps its spelling, because aliases are
+    compared as written when output names matter.
+    """
+
+    aliases = {a.alias.lower() for a in tree.find_all(exp.Alias) if a.alias}
+    aliases |= {t.alias.lower() for t in tree.find_all(exp.TableAlias) if t.name}
+    for column in tree.find_all(exp.Column):
+        identifier = column.this
+        if isinstance(identifier, exp.Identifier) and identifier.name.lower() not in aliases and identifier.name != identifier.name.lower():
+            column.set("this", exp.Identifier(this=identifier.name.lower(), quoted=identifier.args.get("quoted")))
+    return tree
+
+
 def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: str = "bigquery") -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out)."""
 
     tree = sqlglot.parse_one(sql, read=dialect)
+    tree = _lowercase_columns(tree)
     tree = _fold_dates(tree)
     tree = _fold_constants(tree)
     tree = _fold_trivia(tree)
