@@ -436,7 +436,7 @@
         const remove = h("button", { type: "button", class: "link-button", text: "Remove" });
         remove.addEventListener("click", () => run(remove, async () => {
           const rest = data.repositories.filter((item) => item.id !== repo.id).map(({ url: u, branch: b }) => ({ url: u, branch: b }));
-          await repoCall("PUT", "/api/repositories", { repositories: rest });
+          await repoCall("POST", "/api/repositories", { repositories: rest });
         }, "Removed"));
         list.append(h("li", { class: `repo-item${isActive ? " is-active" : ""}` },
           h("div", { class: "repo-main" },
@@ -460,7 +460,7 @@
       const button = form.querySelector("button");
       run(button, async () => {
         const current = data.repositories.map(({ url: u, branch: b }) => ({ url: u, branch: b }));
-        const saved = await repoCall("PUT", "/api/repositories", { repositories: [...current, { url: url.value.trim(), branch: branch.value.trim() }] });
+        const saved = await repoCall("POST", "/api/repositories", { repositories: [...current, { url: url.value.trim(), branch: branch.value.trim() }] });
         const added = saved.repositories[saved.repositories.length - 1];
         url.value = "";
         branch.value = "";

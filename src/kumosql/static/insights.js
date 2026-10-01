@@ -181,7 +181,9 @@ function emptyState(data) {
       return;
     }
     try { sessionStorage.setItem("kumosql-repo-wait", String(tries + 1)); } catch { /* no storage */ }
-    setTimeout(() => location.reload(), 2500);
+    // Never reload under an open Settings dialog; the user may be typing in it.
+    const again = () => (document.querySelector("dialog[open]") ? setTimeout(again, 2500) : location.reload());
+    setTimeout(again, 2500);
   });
   return card;
 }
