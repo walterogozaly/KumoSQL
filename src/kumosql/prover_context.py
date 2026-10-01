@@ -91,12 +91,23 @@ def status() -> dict:
     }
 
 
-def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None) -> SmtEquivalenceResult:
+def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True) -> SmtEquivalenceResult:
     """Prove two queries return the same rows, using the project's declared facts."""
 
+    from . import equivalences
     from .algebraic_equivalence import prove_equivalent_algebraic
 
     facts = schema if schema is not None else current_schema()
+    declared = equivalences.load() if equivalences_enabled else []
+    used: list = []
+    if declared:
+        try:
+            rewritten_old, used_old = equivalences.rewrite_sql(old_sql, declared, facts.columns or None)
+            rewritten_new, used_new = equivalences.rewrite_sql(new_sql, declared, facts.columns or None)
+            old_sql, new_sql = rewritten_old, rewritten_new
+            used = [*used_old, *(i for i in used_new if i not in used_old)]
+        except Exception:  # noqa: BLE001 - an unreadable query is the prover's to report
+            used = []
     result = prove_equivalent_algebraic(
         old_sql,
         new_sql,
@@ -104,8 +115,11 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
         constraints=facts.constraints or None,
         timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
     )
-    if facts.notes and result.status is SmtStatus.PROVEN_EQUIVALENT:
-        extra = tuple(n for n in facts.notes if n not in result.assumptions)
+    if (facts.notes or used) and result.status is SmtStatus.PROVEN_EQUIVALENT:
+        wanted = [*facts.notes]
+        if used:
+            wanted.append("declared equivalences hold in the data: " + "; ".join(i.label for i in used))
+        extra = tuple(n for n in wanted if n not in result.assumptions)
         if extra:
             import dataclasses
 

@@ -45,6 +45,8 @@ kumosql-ci-check = "kumosql.ci_check:main"
 kumosql-evidence-summary = "kumosql.cli:evidence_summary_main"
 kumosql-workflow-configs = "kumosql.workflow_configs:main"
 kumosql-smoke = "kumosql.smoke:main"
+prove-tables = "kumosql.pipeline_equivalence:main"
+kumosql-equivalence = "kumosql.pipeline_equivalence:equivalence_main"
 
 [build-system]
 requires = ["setuptools>=68"]

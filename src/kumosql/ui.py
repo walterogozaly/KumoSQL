@@ -195,6 +195,11 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             self._json(200, live_graph.server_status())
             return
+        if self.path == "/api/equivalences":
+            from . import equivalences
+
+            self._json(200, {"equivalences": [item.to_json() for item in equivalences.load()]})
+            return
         if self.path == "/api/prover":
             from . import prover_context
 
@@ -494,7 +499,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
-            "/api/tag-rules/preview",
+            "/api/tag-rules/preview", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -524,6 +529,15 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = _scope_query(payload)
             elif self.path == "/api/tag-rules/preview":
                 result = tags.preview_rule(payload)
+            elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables"):
+                from . import equivalences, pipeline_equivalence
+
+                if self.path == "/api/equivalences":
+                    result = {"added": equivalences.add(payload).to_json()}
+                elif self.path == "/api/equivalences/remove":
+                    result = {"removed": equivalences.remove(payload.get("right"))}
+                else:
+                    result = pipeline_equivalence.prove_loaded(payload.get("left"), payload.get("right"))
             elif self.path == "/api/storage":
                 from . import storage
 

@@ -277,6 +277,8 @@ python -m kumosql prove-sql-smt left.sql right.sql --schema schema.json
 
 **Solver in rewrite verification.** `verify_rewrite` also hands any changed statement to the algebraic prover (the section below), so a rewrite beyond predicates (a removed self-join, a pushed-down aggregate) can be `proven`. The solver is on by default; **Settings → Solver** (or `GET`/`PUT /api/prover`) turns it off and sets the time limit per check (500 to 60000 ms, default 5000). It assumes only what is declared: `REQUIRED` columns and a primary key from the saved BigQuery catalog, and the `assertions` (`nonNull`, `uniqueKey`, `uniqueKeys`) of the loaded Dataform project, plus the columns of each model's SELECT. Neither BigQuery nor Dataform enforces these when data is written, so a proof that used them lists that as an assumption.
 
+**Saved equivalences across layers.** Tell KumoSQL that two tables hold the same data under different names ("column `amt` of `raw.orders` is column `amount` of `raw.orders_v2`") and the proofs use it, including many layers down a pipeline. In **Settings → Solver → Equivalent columns**, or with `python -m kumosql equivalence add raw.orders raw.orders_v2 amt=amount id=order_id --whole`, save the pair; list columns only (the listed columns hold the same rows, so it applies to queries that read nothing else from the second table) or tick *same rows* for the whole table. They are stored in the data folder (`equivalences.json`), never written to BigQuery, and used as an assumption that proofs list. Rewrite verification applies them automatically. **Compare tables** in the same page, `POST /api/prove-tables` and `python -m kumosql prove-tables LEFT RIGHT --project DIR` prove two models of a pipeline equivalent: models are matched layer by layer from the sources up, each match becoming a lemma for the layers above (so one declaration on a source ripples up through every layer built on it), and when the pipelines are cut at different places the models are inlined as derived tables and the flat queries compared.
+
 ## Algebraic prover and SQLSolver (no admin rights)
 
 What makes [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (SIGMOD 2024) strong is that it treats queries as arithmetic over tuple multiplicities: under bag semantics `UNION ALL` is addition, a join is multiplication, and aggregates over a sum split into partial aggregates combined arithmetically. `kumosql.algebraic_equivalence` brings that into KumoSQL in pure Python on top of the existing Z3 prover, so it installs per user with `pip install --user -e ".[smt]"`:
@@ -492,6 +494,8 @@ Every command prints `--help`.
 | `python -m kumosql prove-sql-equivalent` | Structural equivalence proof for two queries |
 | `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries |
 | `python -m kumosql prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
+| `python -m kumosql prove-tables LEFT RIGHT --project DIR` | Prove two models of a Dataform project equivalent, layer by layer, using saved equivalences |
+| `python -m kumosql equivalence list\|add\|remove` | Saved "column X of table A is column Y of table B" declarations |
 | `python -m kumosql pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
 | `python -m kumosql scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`, `refresh`) |
 | `python -m kumosql compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |

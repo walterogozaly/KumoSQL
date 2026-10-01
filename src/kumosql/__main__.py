@@ -20,6 +20,8 @@ COMMANDS = {
     "kumosql-dry-run": "kumosql.cli:dry_run_main",
     "prove-sql-smt": "kumosql.smt_equivalence:main",
     "prove-sql-sqlsolver": "kumosql.sqlsolver_backend:main",
+    "prove-tables": "kumosql.pipeline_equivalence:main",
+    "kumosql-equivalence": "kumosql.pipeline_equivalence:equivalence_main",
     "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
     "kumosql-ui": "kumosql.ui:main",
     "kumosql-scopes": "kumosql.cli:scopes_main",
