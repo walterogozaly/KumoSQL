@@ -657,3 +657,64 @@ def test_avg_is_a_sum_divided_by_a_count():
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
     result = prove_equivalent_algebraic(avg, "SELECT name, SUM(deptno) / COUNT(DISTINCT deptno) FROM dept GROUP BY name", schema=schema, constraints=constraints, compare_names=False, dialect="mysql")
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+JOIN_SCHEMA = {"o": ["id", "k", "amount"], "c": ["k", "name"], "d": ["k", "tag"]}
+
+
+def _random_ocd(rng):
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE o (id INT, k INT, amount INT)")
+    db.execute("CREATE TABLE c (k INT, name INT)")
+    db.execute("CREATE TABLE d (k INT, tag INT)")
+    for table in ("o", "c", "d"):
+        for _ in range(rng.choice([0, 1, 3, 5])):
+            width = 3 if table == "o" else 2
+            db.execute(f"INSERT INTO {table} VALUES ({', '.join('?' * width)})", [rng.choice([None, 0, 1, 2]) for _ in range(width)])
+    return db
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT o.id, c.name FROM o JOIN c USING (k)",
+        "SELECT id, k, name FROM o JOIN c USING (k) WHERE k > 0",
+        "SELECT o.id, k FROM o LEFT JOIN c USING (k)",
+        "SELECT id, name, tag FROM o JOIN c USING (k) JOIN d USING (k)",
+        "WITH x AS (SELECT * FROM o WHERE amount > 0), y AS (SELECT k, id FROM x) SELECT y.id, c.name FROM y JOIN c ON y.k = c.k",
+        "WITH x AS (SELECT k, amount FROM o) SELECT a.k, b.amount FROM x a JOIN x b ON a.k = b.k",
+    ],
+)
+def test_using_and_with_rewrites_keep_their_results(sql):
+    rng = random.Random(21)
+    normalized = normalize(sql, schema=JOIN_SCHEMA, dialect="sqlite")
+    assert "USING" not in normalized and "WITH" not in normalized
+    for _ in range(80):
+        db = _random_ocd(rng)
+        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+def test_star_after_using_lists_the_merged_column_first_and_except_drops_columns():
+    merged = normalize("SELECT * FROM o JOIN c USING (k)", schema=JOIN_SCHEMA, dialect="bigquery")
+    explicit = normalize(
+        "SELECT o.k, o.id, o.amount, c.name FROM o JOIN c ON o.k = c.k", schema=JOIN_SCHEMA, dialect="bigquery"
+    )
+    assert merged == explicit
+    result = prove_equivalent_algebraic(
+        "SELECT * EXCEPT (amount) REPLACE (k + 1 AS k) FROM o", "SELECT id, k + 1 AS k FROM o", schema=JOIN_SCHEMA, compare_names=False
+    )
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+
+
+def test_countif_and_safe_divide_have_their_plain_spellings():
+    schema = {"o": ["id", "k", "amount"]}
+    for left, right in [
+        ("SELECT k, COUNTIF(amount > 1) AS n FROM o GROUP BY k", "SELECT k, COUNT(CASE WHEN amount > 1 THEN 1 END) AS n FROM o GROUP BY k"),
+        ("SELECT SAFE_DIVIDE(amount, k) AS q FROM o", "SELECT IF(k = 0, NULL, amount / k) AS q FROM o"),
+    ]:
+        result = prove_equivalent_algebraic(left, right, schema=schema, compare_names=False)
+        assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    result = prove_equivalent_algebraic(
+        "SELECT SAFE_DIVIDE(amount, k) AS q FROM o", "SELECT amount / k AS q FROM o", schema=schema, compare_names=False
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
