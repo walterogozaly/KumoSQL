@@ -114,3 +114,35 @@ def test_normalization_preserves_results_on_random_databases(sql):
                 row = [rng.choice([None, 0, 1, 2, 3]) for _ in range(3)]
                 db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", row)
         assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+def test_distinct_aggregate_regrouping():
+    schema = {"emp": ["deptno", "sal", "comm"]}
+    flat = "SELECT deptno, SUM(comm), SUM(DISTINCT sal), COUNT(DISTINCT sal) FROM emp GROUP BY deptno"
+    staged = (
+        "SELECT deptno, SUM(s), SUM(sal), COUNT(sal) FROM "
+        "(SELECT deptno, sal, SUM(comm) AS s FROM emp GROUP BY deptno, sal) t GROUP BY deptno"
+    )
+    assert prove_equivalent_algebraic(flat, staged, schema=schema, compare_names=False).proven
+    # COUNT(*) of the staged rows counts NULL values of sal as a group: not COUNT(DISTINCT sal).
+    wrong = "SELECT deptno, COUNT(*) FROM (SELECT deptno, sal FROM emp GROUP BY deptno, sal) t GROUP BY deptno"
+    count = "SELECT deptno, COUNT(DISTINCT sal) FROM emp GROUP BY deptno"
+    assert not prove_equivalent_algebraic(count, wrong, schema=schema, compare_names=False).proven
+    # SUM of a staged MIN is not a SUM.
+    bad = (
+        "SELECT deptno, SUM(s) FROM (SELECT deptno, sal, MIN(comm) AS s FROM emp GROUP BY deptno, sal) t GROUP BY deptno"
+    )
+    assert not prove_equivalent_algebraic(
+        "SELECT deptno, SUM(comm) FROM emp GROUP BY deptno", bad, schema=schema, compare_names=False
+    ).proven
+
+
+def test_aggregates_of_group_keys():
+    schema = {"emp": ["deptno", "sal"]}
+    left = "SELECT sal, MIN(sal), SUM(DISTINCT sal) FROM emp GROUP BY sal"
+    right = "SELECT sal, sal, sal FROM emp GROUP BY sal"
+    assert prove_equivalent_algebraic(left, right, schema=schema, compare_names=False).proven
+    # SUM(sal) without DISTINCT adds each row's value: not the key.
+    assert not prove_equivalent_algebraic(
+        "SELECT sal, SUM(sal) FROM emp GROUP BY sal", right.replace("sal, sal, sal", "sal, sal"), schema=schema, compare_names=False
+    ).proven
