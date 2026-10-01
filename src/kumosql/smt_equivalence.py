@@ -554,6 +554,8 @@ class _Compiler:
         self.ctes: dict = {}
         # Canonical SQL of each opaque derived relation, by identity key.
         self.opaque_bodies: dict[str, tuple[str, int]] = {}
+        # Opaque derived relations that are sets (DISTINCT, or grouped on exactly their outputs).
+        self.opaque_sets: set[str] = set()
         # Read DISTINCT derived tables as sets (existence tests) instead of opaque relations.
         self.semijoin = True
         self.used_setsrc = False
@@ -1021,6 +1023,8 @@ class _Compiler:
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
         self.opaque_bodies[key] = (key[1:-1], len(names))
+        if isinstance(inner, exp.Select) and _selects_a_set(inner):
+            self.opaque_sets.add(key)
         return _Source(cols={name: occ.col(f"c{i}") for i, name in enumerate(names)}, order=list(names))
 
     def _expand_ctes(self, body, ctes):
@@ -1232,6 +1236,10 @@ class _Compiler:
             return resolved
         if isinstance(e, exp.Literal):
             return self._literal(e, negate=False)
+        if isinstance(e, exp.Exists):
+            # EXISTS is never UNKNOWN: a Boolean value built on the existence atom
+            atom = self._existence(e.this, env)
+            return _Val(z3.BoolVal(False), V.Bool(atom))
         if isinstance(e, exp.Array) and not any(isinstance(n, exp.Column) for n in e.walk()):
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal("\x00array:" + e.sql(dialect="bigquery"))))
         if isinstance(e, exp.Null):
@@ -1515,6 +1523,7 @@ class _Prover:
         # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
+        self.opaque_sets: set[str] = set()
         self.candidates: list[tuple[object, list[_Occ]]] = []
 
     @staticmethod
@@ -2273,6 +2282,47 @@ class _Prover:
             return a.distinct == b.distinct and self.agg_equal(a, b)
         return False
 
+    def branch_unique(self, a) -> bool:
+        """No two rows of this select are equal: equal outputs force the same row of every table.
+
+        Needs a declared key for every table occurrence. Two copies of the block are checked: if both
+        satisfy the condition and agree on the outputs, each pair of occurrences agrees on a key.
+        """
+
+        if not isinstance(a, _Spj) or a.distinct or not a.occs or any(o.opaque and o.table not in self.opaque_sets for o in a.occs):
+            return False
+        if not self.constraints and not any(o.opaque for o in a.occs):
+            return False
+        copies = [o.copy(o.uid + "'") for o in a.occs]
+        pairs: list = _atom_copy_pairs(a.subs, "'")
+        for o, c in zip(a.occs, copies):
+            pairs.extend(_occ_pairs(o, c))
+        same = []
+        for o, c in zip(a.occs, copies):
+            if o.opaque:
+                names = [f"c{i}" for i in range(len(o.columns or []))]
+                same.append(_rows_eq([o.col(n) for n in names], [c.col(n) for n in names]))
+                continue
+            constraint = (self.constraints or {}).get(o.table.lower())
+            if constraint is None or not constraint.keys:
+                return False
+            same.append(
+                z3.Or(
+                    *[
+                        z3.And(*[z3.And(z3.Not(o.col(k).null), z3.Not(c.col(k).null), _null_eq(o.col(k), c.col(k))) for k in key])
+                        for key in constraint.keys
+                    ]
+                )
+            )
+        other_cond = _subst(a.cond.t, pairs)
+        other_outs = [_subst_val(v, pairs) for v in a.outputs]
+        claim = z3.Implies(z3.And(a.cond.t, other_cond, _rows_eq(a.outputs, other_outs)), z3.And(*same))
+        facts = a.facts + [_subst(f, pairs) for f in a.facts]
+        saved = len(self.candidates)
+        result = self.valid(claim, a.occs + copies, facts)
+        del self.candidates[saved:]
+        return result
+
     def branch_set_contained(self, a, b) -> bool:
         if isinstance(a, _Spj) and isinstance(b, _Spj):
             return self.spj_set_contained(a, b)
@@ -2329,6 +2379,20 @@ def _constant_global(block):
     return block
 
 
+def _selects_a_set(select: exp.Select) -> bool:
+    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row."""
+
+    if select.args.get("distinct") and not select.args.get("group"):
+        return not any(select.find_all(exp.Window))
+    group = select.args.get("group")
+    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        return False
+    outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in select.expressions]
+    if any(isinstance(n, (exp.AggFunc, exp.Window)) for o in outputs for n in o.walk()):
+        return False
+    return {o.sql() for o in outputs} == {g.sql() for g in group.expressions}
+
+
 def _is_set(u: _Union) -> bool:
     return u.distinct or (len(u.branches) == 1 and u.branches[0].distinct)
 
@@ -2355,6 +2419,10 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
         return True, "both queries always return no rows"
     if not left.branches or not right.branches:
         return False, "only one query can return rows"
+    for keep, other in ((left, right), (right, left)):
+        # A side whose rows are provably distinct (by keys) is as good as a DISTINCT one.
+        if _is_set(keep) and not _is_set(other) and len(other.branches) == 1 and prover.branch_unique(other.branches[0]):
+            other.branches = [dataclasses.replace(other.branches[0], distinct=True)]
     if _is_set(left) and _is_set(right):
         for a in left.branches:
             if not any(prover.branch_set_contained(a, b) for b in right.branches):
@@ -2697,6 +2765,7 @@ def _prove_core(
                 )
 
         prover = _Prover(timeout_ms, constraints)
+        prover.opaque_sets = compiler.opaque_sets
         used[0] = compiler.used_setsrc
         try:
             proven, reason = _prove(prover, left, right)
