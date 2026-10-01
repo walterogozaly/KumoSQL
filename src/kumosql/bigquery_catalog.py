@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 import os
+import re
 import tempfile
 import threading
 import time
@@ -14,7 +15,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .dryrun import access_token
-from .state import data_dir
+from .state import data_dir, get_section, set_section
 
 _API = "https://bigquery.googleapis.com/bigquery/v2"
 
@@ -166,7 +167,7 @@ def _list(path: str, key: str, params: dict[str, str] | None = None) -> list[dic
         query["pageToken"] = token
 
 
-def _can_browse(project: str) -> bool:
+def can_browse(project: str) -> bool:
     """Whether the credentials may list datasets in ``project``.
 
     Only a definite denial (403 or 404, which includes BigQuery being disabled
@@ -180,24 +181,143 @@ def _can_browse(project: str) -> bool:
 
 
 def list_projects() -> list[dict[str, str]]:
-    """List projects the active Google credentials can actually browse.
+    """List every project the credentials hold some role on.
 
-    ``projects.list`` also returns projects the identity holds some unrelated
-    role on, so each is probed with a one-row dataset listing and dropped if
-    BigQuery denies it.
+    This can be long (it is not the console's starred list) and is not probed
+    for BigQuery access, so it is only requested while choosing projects.
+    ``can_browse`` checks the ones actually chosen.
     """
-    projects = [
+    return [
         {
             "id": item.get("id", ""),
             "name": item.get("friendlyName") or item.get("name") or item.get("id", ""),
         }
         for item in _list("projects", "projects")
     ]
-    if not projects:
-        return projects
-    with ThreadPoolExecutor(max_workers=min(8, len(projects))) as pool:
-        allowed = list(pool.map(lambda item: _can_browse(item["id"]), projects))
-    return [item for item, ok in zip(projects, allowed) if ok]
+
+
+_PROJECT_ID = re.compile(r"^[A-Za-z][A-Za-z0-9.:_-]{0,99}$")
+MAX_SELECTED = 100
+
+
+def selected_projects() -> list[str]:
+    """The project ids chosen for the BigQuery tab (empty until the user picks some)."""
+    stored = get_section("bigquery", {})
+    items = stored.get("projects", []) if isinstance(stored, dict) else []
+    return [item for item in items if isinstance(item, str) and _PROJECT_ID.match(item)]
+
+
+def select_projects(projects: list) -> list[str]:
+    """Validate and save the chosen projects; refuses ids BigQuery denies access to."""
+    if not isinstance(projects, list) or not all(isinstance(item, str) for item in projects):
+        raise ValueError("projects must be a list of project ids")
+    ids = list(dict.fromkeys(item.strip() for item in projects if item.strip()))
+    if len(ids) > MAX_SELECTED:
+        raise ValueError(f"choose at most {MAX_SELECTED} projects")
+    bad = [item for item in ids if not _PROJECT_ID.match(item)]
+    if bad:
+        raise ValueError(f"not a project id: {bad[0]}")
+    previous = set(selected_projects())
+    new = [item for item in ids if item not in previous]
+    if new:
+        with ThreadPoolExecutor(max_workers=min(8, len(new))) as pool:
+            allowed = list(pool.map(can_browse, new))
+        denied = [item for item, ok in zip(new, allowed) if not ok]
+        if denied:
+            raise ValueError(f"No access to BigQuery in {', '.join(denied)}")
+    _save({"projects": ids})
+    return ids
+
+
+# --- Settings shared with other features (scope rules that run SQL, for example) ---
+
+DEFAULT_QUERY_CACHE_HOURS = 48
+MAX_QUERY_CACHE_HOURS = 24 * 365
+
+
+class BillingProjectRequired(RuntimeError):
+    """Raised by anything that runs a query before a billing project is chosen."""
+
+
+def _stored() -> dict:
+    stored = get_section("bigquery", {})
+    return dict(stored) if isinstance(stored, dict) else {}
+
+
+def _save(changes: dict) -> None:
+    set_section("bigquery", {**_stored(), **changes})
+
+
+def billing_project() -> str:
+    """The project query jobs run and bill in, or "" when none has been chosen."""
+    value = _stored().get("billingProject", "")
+    return value if isinstance(value, str) and _PROJECT_ID.match(value) else ""
+
+
+def require_billing_project() -> str:
+    """Return the billing project, or raise ``BillingProjectRequired`` with a user-facing message."""
+    project = billing_project()
+    if not project:
+        raise BillingProjectRequired(
+            "A billing project is needed to run queries. Choose one under BigQuery projects in Settings."
+        )
+    return project
+
+
+def query_cache_hours() -> float:
+    """How long results of queries KumoSQL runs are reused (default 48 hours)."""
+    value = _stored().get("queryCacheHours", DEFAULT_QUERY_CACHE_HOURS)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_QUERY_CACHE_HOURS:
+        return DEFAULT_QUERY_CACHE_HOURS
+    return value
+
+
+def query_cache_seconds() -> float:
+    return query_cache_hours() * 3600
+
+
+def bigquery_settings() -> dict:
+    return {
+        "projects": selected_projects(),
+        "billingProject": billing_project(),
+        "queryCacheHours": query_cache_hours(),
+    }
+
+
+def save_settings(billing: object = None, cache_hours: object = None) -> dict:
+    """Save the billing project and query cache lifetime; ``None`` leaves a value unchanged.
+
+    A billing project is checked with a free dry run, which also proves the
+    credentials may create jobs there. An empty string clears it.
+    """
+    changes: dict = {}
+    if billing is not None:
+        if not isinstance(billing, str):
+            raise ValueError("billingProject must be a project id")
+        billing = billing.strip()
+        if billing:
+            if not _PROJECT_ID.match(billing):
+                raise ValueError(f"not a project id: {billing}")
+            if billing != billing_project():
+                from .dryrun import dry_run
+
+                try:
+                    check = dry_run("SELECT 1", billing)
+                except RuntimeError as exc:
+                    raise ValueError(str(exc)) from exc
+                if not check.ok:
+                    raise ValueError(
+                        f"Cannot run queries in {billing}: {check.error_message or check.error_reason}"
+                    )
+        changes["billingProject"] = billing
+    if cache_hours is not None:
+        if isinstance(cache_hours, bool) or not isinstance(cache_hours, (int, float)) \
+                or not 0 <= cache_hours <= MAX_QUERY_CACHE_HOURS:
+            raise ValueError(f"query cache hours must be a number from 0 to {MAX_QUERY_CACHE_HOURS}")
+        changes["queryCacheHours"] = cache_hours
+    if changes:
+        _save(changes)
+    return bigquery_settings()
 
 
 def _can_list_tables(project: str, dataset: str) -> bool:

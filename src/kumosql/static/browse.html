@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/assets/shell.css">
   <script src="/assets/shell.js"></script>
   <link rel="stylesheet" href="/assets/browse.css">
+  <script defer src="/assets/bqprojects.js"></script>
   <script defer src="/assets/browse.js"></script>
   <script defer src="/assets/scopes.js"></script>
   <script defer src="/assets/settings.js"></script>
@@ -22,10 +23,15 @@
         <p>Explore the projects, datasets, and tables available to your Google Cloud credentials.</p>
       </section>
       <section class="catalog-toolbar" aria-label="Catalog controls">
-        <p>Answers are saved locally for an hour, so revisiting is instant and costs no BigQuery calls. <span id="catalog-freshness" class="catalog-freshness"></span></p>
+        <p>Only the projects you choose are listed. Answers are saved locally for an hour, so revisiting is instant and costs no BigQuery calls. <span id="catalog-freshness" class="catalog-freshness"></span></p>
+        <button id="choose-projects" class="toolbar-button" type="button">Choose projects</button>
         <button id="refresh" class="primary-button" type="button">Refresh from BigQuery</button>
       </section>
-      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">Loading projects…</div>
+      <section id="project-picker" class="catalog-panel project-picker" aria-label="Choose projects" hidden>
+        <div class="catalog-heading"><h2>Choose projects</h2></div>
+        <div class="picker-body"></div>
+      </section>
+      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">Loading…</div>
       <section class="catalog" aria-label="BigQuery catalog">
         <div class="catalog-panel">
           <div class="catalog-heading"><h2>Projects</h2><span id="project-count"></span></div>

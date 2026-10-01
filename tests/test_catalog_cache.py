@@ -41,10 +41,8 @@ def test_cache_survives_restart_and_serves_stale_on_error(monkeypatch):
         catalog.cached("k", boom, refresh=True)
 
 
-def test_list_projects_hides_projects_without_access(monkeypatch):
+def test_selection_is_empty_until_chosen_and_checks_access(monkeypatch):
     def fake_get(path, params=None):
-        if path == "projects":
-            return {"projects": [{"id": "ok"}, {"id": "denied"}, {"id": "flaky"}]}
         if "denied" in path:
             raise catalog.CatalogError("no", 403)
         if "flaky" in path:
@@ -52,7 +50,15 @@ def test_list_projects_hides_projects_without_access(monkeypatch):
         return {}
 
     monkeypatch.setattr(catalog, "_get", fake_get)
-    assert [p["id"] for p in catalog.list_projects()] == ["ok", "flaky"]
+    assert catalog.selected_projects() == []
+    assert catalog.select_projects(["ok", "flaky", "ok"]) == ["ok", "flaky"]
+    assert catalog.selected_projects() == ["ok", "flaky"]
+    with pytest.raises(ValueError, match="denied"):
+        catalog.select_projects(["ok", "denied"])
+    with pytest.raises(ValueError):
+        catalog.select_projects(["bad id!"])
+    assert catalog.selected_projects() == ["ok", "flaky"]
+    assert catalog.select_projects([]) == []
 
 
 def test_list_datasets_hides_anonymous_and_denied(monkeypatch):
@@ -74,3 +80,28 @@ def test_forget_table_removes_it_from_cached_list():
     catalog.cached("tables\x1fp\x1fd", lambda: [{"id": "a"}, {"id": "b"}])
     catalog.forget_table("p", "d", "b")
     assert catalog.cached("tables\x1fp\x1fd", lambda: [])["data"] == [{"id": "a"}]
+
+
+def test_billing_project_and_cache_settings(monkeypatch):
+    from kumosql import dryrun
+
+    assert catalog.billing_project() == ""
+    with pytest.raises(catalog.BillingProjectRequired, match="billing project is needed"):
+        catalog.require_billing_project()
+    assert catalog.query_cache_hours() == 48 and catalog.query_cache_seconds() == 48 * 3600
+
+    result = dryrun.DryRunResult(ok=True)
+    monkeypatch.setattr(dryrun, "dry_run", lambda sql, project, **kw: result)
+    saved = catalog.save_settings("bill-proj", 12)
+    assert saved["billingProject"] == "bill-proj" and saved["queryCacheHours"] == 12
+    assert catalog.require_billing_project() == "bill-proj"
+
+    result = dryrun.DryRunResult(ok=False, error_message="denied")
+    with pytest.raises(ValueError, match="denied"):
+        catalog.save_settings("other-proj")
+    with pytest.raises(ValueError):
+        catalog.save_settings(None, -1)
+    assert catalog.billing_project() == "bill-proj"
+    catalog.select_projects([])
+    assert catalog.billing_project() == "bill-proj"  # choosing projects keeps the other settings
+    assert catalog.save_settings("")["billingProject"] == ""
