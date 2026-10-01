@@ -350,13 +350,40 @@ def snapshot(pipeline: object | None = None) -> dict:
         for name in dict.fromkeys([*slot["manual"], *slot["rules"]]):
             entry = counts.setdefault(name.casefold(), {"tag": name, "count": 0})
             entry["count"] += 1
+    # A saved rule's tag is listed (for the filter) even before it matches anything.
+    for item in list_rules():
+        counts.setdefault(item["tag"].casefold(), {"tag": item["tag"], "count": 0})
     return {
         "objects": {key: slot for key, slot in assigned.items() if slot["manual"] or slot["rules"]},
         "aliases": {alias: key for key, record in objects.items() for alias in record["_aliases"]},
         "tags": sorted(counts.values(), key=lambda item: item["tag"].casefold()),
         "rules": status,
         "known_objects": len(objects),
+        "catalog": catalog_coverage(),
     }
+
+
+def catalog_coverage() -> list[dict]:
+    """What the saved BigQuery catalog holds per chosen project, which is all that rules can see.
+
+    ``datasets_without_tables`` are datasets whose table list has not been saved yet (never opened).
+    """
+
+    from . import bigquery_catalog as bq
+
+    report = []
+    for project in bq.selected_projects():
+        datasets = (bq.peek(f"datasets\x1fbrowsable\x1f{project}") or {}).get("data")
+        row = {"project": project, "datasets": None if datasets is None else len(datasets), "tables": 0,
+               "datasets_without_tables": []}
+        for dataset in datasets or []:
+            tables = bq.peek(f"tables\x1f{project}\x1f{dataset['id']}")
+            if tables is None:
+                row["datasets_without_tables"].append(dataset["id"])
+            else:
+                row["tables"] += len(tables["data"])
+        report.append(row)
+    return report
 
 
 def tag_lookup(pipeline: object | None = None) -> dict[str, list[str]]:
