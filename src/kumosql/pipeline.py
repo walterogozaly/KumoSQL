@@ -526,13 +526,17 @@ class Pipeline:
         return gaps
 
     def model_record(
-        self, key: str, profile: object | None = None, tags: "Mapping[str, list[str]] | None" = None
+        self, key: str, profile: object | None = None, tags: "Mapping[str, list[str]] | None" = None,
+        sources: "list | None" = None,
     ) -> dict[str, object]:
         """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own.
 
         ``tags`` is :func:`kumosql.tags.tag_lookup` (computed once for many models); ``tag`` is empty without it.
+        ``sources`` is :func:`kumosql.data_sources.join_index` (built once for many models): the columns of data
+        sources with a ``full_name`` column join the model's own ``project.dataset.name``.
         """
 
+        from . import data_sources
         from .scopes import profile_record
 
         model = self.models[key]
@@ -550,6 +554,13 @@ class Pipeline:
         }
         if profile is not None:
             record.update(profile_record(profile))
+        index = data_sources.join_index() if sources is None else sources
+        if index:
+            full_name = ".".join(
+                part for part in (target.database or getattr(self, "default_project", ""),
+                                  target.schema or getattr(self, "default_dataset", ""), target.name) if part)
+            record["full_name"] = full_name
+            record.update(data_sources.extra_fields(index, full_name, record))
         return record
 
     def scope_keys(self, scope: "SavedScope", profiles: "Mapping[str, object] | None" = None) -> set[str]:
@@ -560,9 +571,10 @@ class Pipeline:
         Table-profile fields are computed on demand, or taken from ``profiles``.
         """
 
+        from . import data_sources
         from .scopes import MODEL_FIELDS, PROFILE_FIELDS
 
-        scope.require_fields((*MODEL_FIELDS, *PROFILE_FIELDS), "pipeline models")
+        scope.require_fields((*MODEL_FIELDS, *PROFILE_FIELDS, *data_sources.joined_columns()), "pipeline models")
         if profiles is None and set(map(str.casefold, scope.fields_used())) & set(PROFILE_FIELDS):
             from .table_profile import profile_pipeline
 
@@ -573,7 +585,8 @@ class Pipeline:
             from .tags import tag_lookup
 
             tags = tag_lookup(self)
-        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags))}
+        index = data_sources.join_index()
+        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index))}
 
     def assess_change(
         self,

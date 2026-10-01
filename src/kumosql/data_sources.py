@@ -358,12 +358,10 @@ def records(source: Source) -> list[dict[str, str | None]]:
     return table.records() if table else []
 
 
-def enrich_objects(objects: Mapping[str, Mapping]) -> Mapping[str, Mapping]:
-    """Objects joined, by ``full_name``, to the rows of every populated source that has such a column.
+def join_index() -> list[tuple[str, dict[str, list[dict[str, str | None]]]]]:
+    """Rows of every populated source that has a ``full_name`` column, by lower-cased full name.
 
-    The source's other columns become fields of the matching objects (a list when several rows match);
-    a field an object already has is kept. Nothing changes when no source has a ``full_name`` column.
-    """
+    Build it once and pass it to :func:`extra_fields` when joining many objects."""
 
     joins: list[tuple[str, dict[str, list[dict[str, str | None]]]]] = []
     for source in list_sources():
@@ -376,22 +374,52 @@ def enrich_objects(objects: Mapping[str, Mapping]) -> Mapping[str, Mapping]:
             if row.get(key):
                 by_name.setdefault(str(row[key]).casefold().replace("`", ""), []).append(row)
         joins.append((key, by_name))
-    if not joins:
+    return joins
+
+
+def extra_fields(index: list, full_name: str, record: Mapping) -> dict[str, object]:
+    """The source columns that join to the object ``full_name`` and that ``record`` does not already have.
+
+    A column with several matching rows is a list (a rule matches when any element does)."""
+
+    extra: dict[str, list] = {}
+    for key, by_name in index:
+        for row in by_name.get(full_name.casefold().replace("`", ""), ()):
+            for column, value in row.items():
+                if column == key or column in record or value is None:
+                    continue
+                seen = extra.setdefault(column, [])
+                if value not in seen:
+                    seen.append(value)
+    return {column: values[0] if len(values) == 1 else values for column, values in extra.items()}
+
+
+def enrich_objects(objects: Mapping[str, Mapping]) -> Mapping[str, Mapping]:
+    """Objects joined, by ``full_name``, to the rows of every populated source that has such a column.
+
+    The source's other columns become fields of the matching objects; a field an object already has is
+    kept. Nothing changes when no source has a ``full_name`` column.
+    """
+
+    index = join_index()
+    if not index:
         return objects
     enriched: dict[str, Mapping] = {}
     for name, record in objects.items():
-        extra: dict[str, object] = {}
-        for key, by_name in joins:
-            rows = by_name.get(str(record.get(JOIN_FIELD) or name).casefold())
-            for row in rows or ():
-                for column, value in row.items():
-                    if column == key or column in record or value is None:
-                        continue
-                    seen = extra.setdefault(column, [])
-                    if value not in seen:
-                        seen.append(value)  # type: ignore[union-attr]
-        enriched[name] = {**record, **{c: v[0] if len(v) == 1 else v for c, v in extra.items()}} if extra else record  # type: ignore[index]
+        extra = extra_fields(index, str(record.get(JOIN_FIELD) or name), record)
+        enriched[name] = {**record, **extra} if extra else record
     return enriched
+
+
+def joined_columns() -> list[str]:
+    """Every column of the sources joined to objects by ``full_name`` (the join column included)."""
+
+    found: list[str] = []
+    for source in list_sources():
+        columns = columns_of(source)
+        if any(c.casefold() == JOIN_FIELD for c in columns):
+            found.extend(c for c in columns if c not in found)
+    return found
 
 
 def tag_fields() -> list[str]:
