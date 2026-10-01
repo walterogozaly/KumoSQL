@@ -24,6 +24,8 @@ py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
 & "$env:LOCALAPPDATA\kumosql\Scripts\Activate.ps1"
 ```
 
+pip may warn that the scripts (`kumosql-ui.exe` and others) are installed in a folder that is not on `PATH`. That is harmless: on a locked-down Windows machine where `.exe` files are blocked, skip the launchers and run everything through Python, always as `python -m kumosql COMMAND` (the `kumosql-` prefix is optional): `python -m kumosql ui`, `python -m kumosql rewrite-sql query.sql`, `python -m kumosql pipeline-report demo`. The UI also starts with `python -m kumosql.ui`. This guide writes the launcher names (`kumosql-ui`, `rewrite-sql`, ...), which do the same thing; use whichever form works on your machine. Use the same Python you installed with, for example `& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m kumosql ui`, or `py -3.11 -m kumosql ui` when you installed without a virtual environment.
+
 To install a local checkout instead, run `python -m pip install .` from the repository root. The distribution and the Python import package are both named `kumosql`.
 
 Optional extras add capabilities; install them the same way, for example `python -m pip install "kumosql[smt,execution]"`:
@@ -119,7 +121,7 @@ In Python, `load_sqlx_project("demo")` gives you the same `Pipeline` object, and
 ## 4. Use the browser UI
 
 ```shell
-kumosql-ui --project demo
+python -m kumosql.ui --project demo      # or: kumosql-ui --project demo
 ```
 
 This starts a local server at `http://127.0.0.1:8765/` and opens your browser. Use `--no-browser` to skip opening it, `--port 8766` to pick another port, and Ctrl+C to stop. The server listens only on `127.0.0.1`, and pasted SQL stays on your computer.
