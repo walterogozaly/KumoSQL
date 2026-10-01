@@ -386,7 +386,12 @@ def _render(node: exp.Expression) -> str:
     canonical = node.copy()
     for item in canonical.walk():
         item.comments = None
-    return canonical.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
+    try:
+        return canonical.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
+    except AssertionError:
+        # A nested query replaced by a token inside ``FROM (...) AS s`` is not a source sqlglot's
+        # BigQuery generator can scope; the text is only compared, so any consistent rendering does.
+        return canonical.sql(normalize=True, normalize_functions="upper", comments=False)
 
 
 def _conjuncts(condition: exp.Expression | None) -> list[exp.Expression]:
