@@ -361,6 +361,11 @@ class Pipeline:
 
         return any(key[0] == name for key in list(self._memo))
 
+    def has_cached(self, prefix: str) -> bool:
+        """Whether a saved-by-commit result whose name starts with ``prefix`` is ready."""
+
+        return any(key[0] == "cached" and key[1].startswith(prefix) for key in list(self._memo))
+
     def _remembered(self, key: tuple, compute):
         """Compute once per pipeline: the project is immutable, so repeats (and the other pages) reuse it."""
 

@@ -39,6 +39,34 @@
     return PAGES.find((page) => page.href === path) || PAGES[0];
   };
 
+  /** Show what the server is busy with (parsing, analysis) in the sidebar; it never blocks anything. */
+  function watchActivity(rail) {
+    const box = rail.querySelector("#rail-activity");
+    const text = rail.querySelector("#rail-activity-text");
+    let timer = 0;
+    async function poll() {
+      let delay = 5000;
+      try {
+        const response = await fetch("/api/status", { cache: "no-store" });
+        const status = await response.json();
+        const busy = status.busy[0];
+        const background = status.analysis && status.analysis.state === "running" ? status.analysis : null;
+        const item = busy || (background && { label: `Analyzing ${background.stage || "models"}`, elapsed: background.elapsed });
+        if (item) {
+          text.textContent = `${item.label}… ${Math.round(item.elapsed)}s`;
+          box.title = "KumoSQL is working in the background. You can keep using the app.";
+          box.hidden = false;
+          delay = 1500;
+        } else {
+          box.hidden = true;
+        }
+      } catch { box.hidden = true; }
+      timer = setTimeout(poll, document.hidden ? 15000 : delay);
+    }
+    poll();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTimeout(timer); poll(); } });
+  }
+
   function build() {
     const active = currentPage();
     const links = PAGES.map((page) =>
@@ -57,12 +85,14 @@
       <nav class="rail-nav" aria-label="Main navigation">${links}</nav>
       <div class="rail-foot">
         <span class="rail-status" title="SQL is processed on this computer and never sent to BigQuery"><span class="local-dot" aria-hidden="true"></span><span class="rail-label">Running locally</span></span>
+        <span class="rail-activity" id="rail-activity" role="status" aria-live="polite" hidden><span class="rail-spinner" aria-hidden="true"></span><span class="rail-label" id="rail-activity-text"></span></span>
         <span class="rail-version rail-label" id="rail-version" title="KumoSQL version"></span>
         <button class="rail-link" id="theme-button" type="button"><span id="theme-icon">${icon(THEME_META.system.icon)}</span><span class="rail-label" id="theme-label"></span></button>
         <button class="rail-link" id="settings-button" type="button" data-open-settings title="Settings (Ctrl+,)">${icon(SETTINGS_ICON)}<span class="rail-label">Settings</span></button>
       </div>`;
 
     document.body.prepend(rail);
+    watchActivity(rail);
     document.body.classList.add("has-rail");
 
     const toggle = rail.querySelector("#rail-toggle");

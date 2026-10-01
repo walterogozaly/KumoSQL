@@ -25,6 +25,7 @@ import hashlib
 import threading
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 
 from .pipeline import Pipeline, load_sqlx_project
 from .timing import stage
@@ -49,7 +50,94 @@ class ProjectError(ValueError):
 # Projects already analysed, by content: reloading the same commit reuses the whole analysis.
 _PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
 _PROJECT_CACHE_SIZE = 3
+_ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
+_ACTIVITY_IDS = iter(range(1, 1 << 62))
+_CACHE_VERSION = "1"
+_CACHE_KEEP = 12
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
+
+
+@contextmanager
+def activity(label: str):
+    """Mark ``label`` as running while the block runs; the sidebar shows it."""
+
+    token = next(_ACTIVITY_IDS)
+    with _LOCK:
+        _ACTIVITY[token] = {"label": label, "started": time.time()}
+    try:
+        yield
+    finally:
+        with _LOCK:
+            _ACTIVITY.pop(token, None)
+
+
+def server_status() -> dict:
+    """``GET /api/status``: what is running now (never waits on a build) and the latest stage timings."""
+
+    from . import timing
+
+    now = time.time()
+    with _LOCK:
+        busy = [{"label": item["label"], "elapsed": round(now - item["started"], 1)} for item in _ACTIVITY.values()]
+    return {"busy": busy, "analysis": analysis_status(), "timings": timing.recent()[-12:]}
+
+
+def _cache_file(pipeline: Pipeline):
+    key = getattr(pipeline, "content_key", None)
+    if not key:
+        return None
+    from . import state
+
+    try:
+        import sqlglot
+
+        from . import __version__
+        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{key}".encode()).hexdigest()[:32]
+        return state.data_path("analysis-cache", f"{tag}.json")
+    except OSError:
+        return None
+
+
+def cached_result(pipeline: Pipeline, name: str, compute, persist: bool = True):
+    """``compute()`` once per project, also saved by content (commit) in the data folder.
+
+    The saved copy is plain JSON, so reloading the same commit after a restart skips
+    the slow search. A missing, unreadable or stale file is just recomputed.
+    """
+
+    def load_or_compute():
+        path = _cache_file(pipeline) if persist else None
+        stored: dict = {}
+        if path is not None and path.is_file():
+            try:
+                stored = json.loads(path.read_text(encoding="utf-8"))
+                if name in stored:
+                    with stage("analysis cache hit", result=name):
+                        return stored[name]
+            except (OSError, ValueError):
+                stored = {}
+        value = compute()
+        if path is not None:
+            try:
+                stored[name] = value
+                temp = path.with_suffix(".tmp")
+                temp.write_text(json.dumps(stored), encoding="utf-8")
+                os.replace(temp, path)
+                _prune_cache(path.parent)
+            except (OSError, TypeError, ValueError):
+                pass  # the cache is an optimisation; never fail an analysis over it
+        return value
+
+    return pipeline._remembered(("cached", name), load_or_compute)
+
+
+def _prune_cache(folder) -> None:
+    files = sorted((f for f in folder.glob("*.json")), key=lambda f: f.stat().st_mtime, reverse=True)
+    for old in files[_CACHE_KEEP:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def _content_key(files: dict) -> str:
@@ -63,18 +151,20 @@ def _warm(pipeline: Pipeline, state: dict) -> None:
     """Run the slow searches (identical and similar SELECTs) in the background.
 
     The graph does not need them; the Cost and Change reports pages do, and show
-    progress until they are done. Results are kept on the pipeline.
+    progress until they are done. Results are kept on the pipeline and, by commit,
+    on disk.
     """
 
     try:
-        state["stage"] = "identical queries"
-        pipeline.duplicate_selects(min_nodes=12)
-        state["stage"] = "similar queries"
-        pipeline.near_duplicate_selects(min_nodes=12, threshold=0.7)
-        state["stage"] = "repeated work"
-        from .repeated_work import repeated_work_report
+        with activity("Analyzing repeated work"):
+            state["stage"] = "repeated work"
+            from .repeated_work import repeated_work_report
 
-        pipeline._remembered(("repeated_work",), lambda: repeated_work_report(pipeline))
+            cached_result(pipeline, "repeated_work", lambda: repeated_work_report(pipeline))
+            state["stage"] = "shared logic"
+            from .live_insights import shared_logic_proposals
+
+            shared_logic_proposals(pipeline, _JOBS["records"])
         state["state"] = "done"
     except Exception as exc:  # noqa: BLE001 - the pages fall back to computing it themselves
         state.update(state="failed", error=str(exc))
@@ -88,7 +178,7 @@ def start_background_analysis(pipeline: Pipeline) -> None:
     with _LOCK:
         if id(pipeline) in _ANALYSIS:
             return
-        done = all(pipeline.has_remembered(name) for name in ("duplicates", "near_duplicates", "repeated_work"))
+        done = pipeline.has_cached("repeated_work") and pipeline.has_cached("shared_logic")
         state = {"state": "done" if done else "running", "stage": "", "started": time.time(), "pipeline": pipeline,
                  "event": threading.Event()}
         if done:
@@ -322,7 +412,7 @@ def pipeline_from_files(files: object):
     if cached is not None:
         with stage("project cache hit", files=len(files)):
             return cached
-    with _Checkout() as directory:
+    with activity("Parsing project"), _Checkout() as directory:
         with stage("write files", files=len(files) if isinstance(files, dict) else 0):
             _write_files(files, directory)
         try:
@@ -332,6 +422,7 @@ def pipeline_from_files(files: object):
         except Exception as exc:  # loader errors are user-facing
             raise ProjectError(str(exc) or "project could not be loaded") from exc
     if key:
+        pipeline.content_key = key
         with _LOCK:
             _PROJECT_CACHE[key] = pipeline
             while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:
@@ -483,7 +574,7 @@ def graph_or_empty(scope_name: str | None = None) -> dict:
     if current is None:
         return empty_payload(
             "project", "Load a Dataform project to see its query graph.", scope_name)
-    with stage("graph payload"):
+    with activity("Building graph"), stage("graph payload"):
         payload = graph_payload(current["pipeline"], current["label"], current["observed_reads"], scope_name)
     try:  # production schedules come from saved Dataform data only; never block or fail the graph
         from .workflow_configs import annotate

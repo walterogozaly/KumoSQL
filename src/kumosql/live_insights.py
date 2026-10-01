@@ -81,7 +81,7 @@ def _opportunities(pipeline, reads: list, nodes: dict[str, dict], window: dict |
     from .repeated_work import repeated_work_report
 
     with stage("repeated work"):
-        found = pipeline._remembered(("repeated_work",), lambda: repeated_work_report(pipeline))["opportunities"]
+        found = live_graph.cached_result(pipeline, "repeated_work", lambda: repeated_work_report(pipeline))["opportunities"]
     names = _model_names(pipeline)
     graph = build_query_graph(pipeline, reads) if found else None
     days = _window_days(window)
@@ -194,16 +194,21 @@ def _sources(current: dict) -> list[dict]:
     return sources
 
 
-def _proposals(current: dict) -> list[dict]:
+def shared_logic_proposals(pipeline, reads) -> list[dict]:
+    """Guided shared-logic refactors as JSON, computed once; saved by commit when there is no job history."""
+
     from .shared_logic import propose_shared_logic
 
+    reads = tuple(reads)
+    name = "shared_logic" if not reads else f"shared_logic:{len(reads)}:{id(reads)}"
+    with stage("shared logic proposals"):
+        return live_graph.cached_result(
+            pipeline, name, lambda: [p.to_json() for p in propose_shared_logic(pipeline, reads)], persist=not reads)
+
+
+def _proposals(current: dict) -> list[dict]:
     try:
-        pipeline = current["pipeline"]
-        reads = current["observed_reads"]
-        with stage("shared logic proposals"):
-            return pipeline._remembered(
-                ("shared_logic", id(reads), len(reads)),
-                lambda: [p.to_json() for p in propose_shared_logic(pipeline, reads)])
+        return shared_logic_proposals(current["pipeline"], current["observed_reads"])
     except Exception:  # noqa: BLE001 - proposals are advisory; the rest of the page must still load
         return []
 

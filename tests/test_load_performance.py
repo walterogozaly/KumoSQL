@@ -1,5 +1,6 @@
 """Graph first, slow analysis later: the graph never waits for the duplicate searches."""
 
+import threading
 import time
 
 import pytest
@@ -80,3 +81,79 @@ def test_stages_are_timed(capsys):
     names = {item["stage"] for item in timing.recent()}
     assert {"analyse", "graph report", "graph payload"} <= names
     assert "[kumosql] graph payload:" in capsys.readouterr().err
+
+
+def test_analysis_is_saved_by_content_and_reused_after_a_restart(monkeypatch):
+    live_graph.load_files(FILES, "demo")
+    wait_done()
+    # A restart forgets everything in memory; the saved copy is found by content.
+    live_graph._PROJECT_CACHE.clear()
+    live_graph._ANALYSIS.clear()
+    live_graph.clear_project()
+    from kumosql import repeated_work
+
+    monkeypatch.setattr(repeated_work, "repeated_work_report", lambda *a, **k: pytest.fail("recomputed"))
+    live_graph.load_files(FILES, "demo")
+    wait_done()
+    assert live_graph.analysis_status()["state"] == "done"
+    assert "opportunities" in live_graph.cached_result(live_graph.loaded()["pipeline"], "repeated_work", lambda: pytest.fail("x"))
+    assert any(item["stage"] == "analysis cache hit" for item in timing.recent())
+
+
+def test_changed_content_is_not_served_from_the_saved_analysis():
+    live_graph.load_files(FILES, "demo")
+    wait_done()
+    first = live_graph.cached_result(live_graph.loaded()["pipeline"], "repeated_work", lambda: {})
+    live_graph.load_files({**FILES, "definitions/c.sqlx": 'config { type: "table" }\nselect 1 as x'}, "demo")
+    wait_done()
+    second = live_graph.loaded()["pipeline"]
+    assert second.content_key != live_graph.pipeline_from_files(FILES).content_key
+    assert second.has_cached("repeated_work") and first is not None
+
+
+def test_status_lists_what_is_running():
+    with live_graph.activity("Parsing project"):
+        status = live_graph.server_status()
+    assert status["busy"][0]["label"] == "Parsing project"
+    assert live_graph.server_status()["busy"] == []
+
+
+def test_other_requests_stay_fast_while_analysis_burns_cpu(ui_server_url):
+    import threading
+    from urllib.request import urlopen
+
+    stop = threading.Event()
+
+    def burn():
+        while not stop.is_set():
+            sum(i * i for i in range(20000))
+
+    worker = threading.Thread(target=burn, daemon=True)
+    worker.start()
+    try:
+        worst = 0.0
+        for path in ("/api/settings", "/api/status", "/favicon.svg"):
+            for _ in range(5):
+                start = time.perf_counter()
+                urlopen(f"{ui_server_url}{path}").read()
+                worst = max(worst, time.perf_counter() - start)
+    finally:
+        stop.set()
+        worker.join(timeout=2)
+    assert worst < 0.5
+
+
+@pytest.fixture
+def ui_server_url():
+    from http.server import ThreadingHTTPServer  # noqa: F401
+    from kumosql.ui import UIHandler, UIServer
+
+    server = UIServer(("127.0.0.1", 0), UIHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
