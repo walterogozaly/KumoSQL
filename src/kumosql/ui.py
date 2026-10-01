@@ -290,7 +290,7 @@ class UIHandler(BaseHTTPRequestHandler):
             elif route == "/api/catalog/datasets":
                 project = _required(query, "project")
                 result = bigquery_catalog.cached(
-                    f"datasets\x1f{project}",
+                    f"datasets\x1fbrowsable\x1f{project}",
                     lambda: bigquery_catalog.list_datasets(project), refresh)
             elif route == "/api/catalog/tables":
                 project, dataset = _required(query, "project"), _required(query, "dataset")
