@@ -19,6 +19,7 @@ import csv
 import io
 import json
 import os
+import pickle
 import shutil
 import tempfile
 import hashlib
@@ -55,6 +56,7 @@ _ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
 _ACTIVITY_IDS = iter(range(1, 1 << 62))
 _CACHE_VERSION = "1"
 _CACHE_KEEP = 12
+_SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
 
 
@@ -140,6 +142,70 @@ def _prune_cache(folder) -> None:
             old.unlink()
         except OSError:
             pass
+
+
+def _snapshot_file(key: str):
+    """Where the parsed project for ``key`` is saved in the data folder (None when it cannot be)."""
+
+    from . import state
+
+    try:
+        import sqlglot
+
+        from . import __version__
+        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{key}".encode()).hexdigest()[:32]
+        return state.data_path("parse-cache", f"{tag}.pkl")
+    except OSError:
+        return None
+
+
+def _load_snapshot(key: str):
+    path = _snapshot_file(key)
+    if path is None or not path.is_file():
+        return None
+    try:
+        with stage("parse cache hit", file=path.name):
+            pipeline = pickle.loads(path.read_bytes())
+    except Exception:  # noqa: BLE001 - a damaged or older snapshot is just a miss
+        return None
+    if not isinstance(pipeline, Pipeline):
+        return None
+    pipeline.content_key = key
+    return pipeline
+
+
+def _save_snapshot(pipeline: Pipeline, key: str) -> None:
+    path = _snapshot_file(key)
+    if path is None:
+        return
+    try:
+        pipeline._analyse()
+        temp = path.with_suffix(".tmp")
+        temp.write_bytes(pickle.dumps(pipeline, protocol=pickle.HIGHEST_PROTOCOL))
+        os.replace(temp, path)
+        files = sorted(path.parent.glob("*.pkl"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for old in files[_SNAPSHOT_KEEP:]:
+            old.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 - the snapshot is an optimisation; never fail a load over it
+        pass
+
+
+def restore_snapshot(key: object, label: str, remote: dict | None = None) -> bool:
+    """Show a previously parsed project straight from the data folder, without git or parsing."""
+
+    if not isinstance(key, str) or not key:
+        return False
+    with _LOCK:
+        cached = _PROJECT_CACHE.get(key)
+    pipeline = cached or _load_snapshot(key)
+    if pipeline is None:
+        return False
+    with _LOCK:  # the reload that follows finds the same commit here instead of reading the file again
+        _PROJECT_CACHE[key] = pipeline
+        while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:
+            _PROJECT_CACHE.popitem(last=False)
+    set_project(pipeline, label, remote=remote)
+    return True
 
 
 def _content_key(files: dict) -> str:
@@ -289,13 +355,14 @@ def forget_project() -> None:
         _PROJECT_CACHE.clear()
     from . import state
 
-    folder = state.data_dir() / "analysis-cache"
-    if folder.is_dir():
-        for item in folder.glob("*"):
-            try:
-                item.unlink()
-            except OSError:
-                pass
+    for name in ("analysis-cache", "parse-cache"):
+        folder = state.data_dir() / name
+        if folder.is_dir():
+            for item in folder.glob("*"):
+                try:
+                    item.unlink()
+                except OSError:
+                    pass
 
 
 def clear_project() -> None:
@@ -523,6 +590,14 @@ def pipeline_from_files(files: object):
     if cached is not None:
         with stage("project cache hit", files=len(files)):
             return cached
+    if key:
+        saved = _load_snapshot(key)
+        if saved is not None:
+            with _LOCK:
+                _PROJECT_CACHE[key] = saved
+                while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:
+                    _PROJECT_CACHE.popitem(last=False)
+            return saved
     with activity("Parsing project"), _Checkout() as directory:
         with stage("write files", files=len(files) if isinstance(files, dict) else 0):
             _write_files(files, directory)
@@ -538,6 +613,7 @@ def pipeline_from_files(files: object):
             raise ProjectError(detail if isinstance(exc, (ValueError, OSError)) else f"{type(exc).__name__}: {detail}") from exc
     if key:
         pipeline.content_key = key
+        _save_snapshot(pipeline, key)
         with _LOCK:
             _PROJECT_CACHE[key] = pipeline
             while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:

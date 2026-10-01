@@ -145,6 +145,7 @@ def load(repo_id: object, refresh: bool = False) -> dict:
             raise
         _update(repo_id, drop=("error", "error_at", "stale_reason") + (() if result.get("note") else ("note",)),
                 last_loaded=_now(), label=result["label"], files=result["files"], activate=True,
+                content_key=result.get("content_key"), actual_branch=result.get("actual_branch"),
                 **({"note": result["note"]} if result.get("note") else {}))
     finally:
         with _LOCK:
@@ -182,7 +183,21 @@ def autoload(background: bool = True) -> threading.Thread | None:
         if not active:
             return
         with console.task("start-up repository reload"):
+            _restore_saved(active)
             _autoload(active)
+
+    def _restore_saved(active: str) -> None:
+        """Show the project parsed last time at once; the fetch below only replaces it if the commit moved."""
+
+        from . import live_graph
+
+        item = _read_item(active)
+        remote = {"url": item.get("url"), "branch": item.get("branch"), "actual": item.get("actual_branch")}
+        try:
+            if live_graph.restore_snapshot(item.get("content_key"), item.get("label") or "", remote):
+                console.say("start-up repository reload > showing the saved copy while the latest commit is checked")
+        except Exception as exc:  # noqa: BLE001 - the normal load below still runs
+            console.warn(f"start-up repository reload: saved copy not used ({_first_line(exc)})")
 
     def _autoload(active: str) -> None:
         try:

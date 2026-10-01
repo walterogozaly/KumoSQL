@@ -111,6 +111,21 @@ class Pipeline:
         self._memo_guard = threading.Lock()
         self._analysis_lock = threading.Lock()
 
+    def __getstate__(self) -> dict:
+        """Everything except locks and per-run memos, so a parsed project can be saved and reopened."""
+
+        state = self.__dict__.copy()
+        for key in ("_memo", "_memo_locks", "_memo_guard", "_analysis_lock"):
+            state.pop(key, None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._memo = {}
+        self._memo_locks = {}
+        self._memo_guard = threading.Lock()
+        self._analysis_lock = threading.Lock()
+
     def resolve(self, table: exp.Table | str) -> str | None:
         """Map a table reference to a model or declared source key."""
 

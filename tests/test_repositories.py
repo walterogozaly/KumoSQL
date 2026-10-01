@@ -144,3 +144,34 @@ def test_clear_all_removes_repositories_clones_and_caches(tmp_path, monkeypatch)
     assert state.get_section(git_repo._TRANSPORT_SECTION) == {}
     assert state.get_section("scopes") == {"mine": 1}  # unrelated settings stay
     assert repositories.clear_all()["removed"] == 0  # idempotent
+
+
+def test_restart_shows_the_saved_project_without_git_or_parsing(bare, monkeypatch):
+    url = str(bare[0])
+    repo_id = repositories.replace([{"url": url, "branch": "main"}])["repositories"][0]["id"]
+    repositories.load(repo_id)
+    item = repositories._read_item(repo_id)
+    assert item["content_key"]
+
+    # A restart: nothing in memory, and neither git nor the parser may run.
+    live_graph._PROJECT_CACHE.clear()
+    live_graph.clear_project()
+    monkeypatch.setattr(live_graph, "load_sqlx_project", lambda *a, **k: pytest.fail("reparsed"))
+    assert live_graph.restore_snapshot(item["content_key"], item["label"], {"url": url, "branch": "main", "actual": "main"})
+    loaded = live_graph.loaded()
+    assert loaded["label"] == item["label"]
+    assert len(loaded["pipeline"].models) == 2 or loaded["pipeline"].models
+
+    # Loading the same commit again after a restart reads the saved parse instead of parsing.
+    live_graph._PROJECT_CACHE.clear()
+    repositories.load(repo_id, refresh=True)
+    assert live_graph.loaded()["label"] == item["label"]
+
+
+def test_missing_or_damaged_snapshot_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path / "h"))
+    assert not live_graph.restore_snapshot("nope", "x")
+    assert not live_graph.restore_snapshot(None, "x")
+    path = live_graph._snapshot_file("bad")
+    path.write_bytes(b"not a pickle")
+    assert not live_graph.restore_snapshot("bad", "x")
