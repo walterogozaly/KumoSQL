@@ -254,6 +254,17 @@ prove-sql-smt left.sql right.sql --schema schema.json
 
 `tests/test_smt_fuzz.py` checks the prover against SQLite on random queries and databases: every proof must hold and every counterexample must separate the queries.
 
+## SQLSolver backend (optional, no admin rights)
+
+[SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (Apache-2.0) is a Java prover for query equivalence. `kumosql.sqlsolver_backend.prove_equivalent(left, right, schema=...)` asks it first and falls back to the Z3 prover when SQLSolver is missing, cannot translate the query, times out, or answers anything but "equivalent". It only ever adds proofs. See [docs/sqlsolver.md](docs/sqlsolver.md) for setup, the translation rules and the rollout plan.
+
+```shell
+prove-sql-sqlsolver left.sql right.sql --schema schema.json   # --backend auto|sqlsolver|z3
+prove-sql-sqlsolver --check                                   # is Java + SQLSolver usable here?
+```
+
+The schema must list every table (as written in the query) with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. Everything is read from a user folder (`KUMOSQL_SQLSOLVER_HOME`), so nothing needs installing system-wide. Status: the adapter is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
+
 ## Whole-pipeline analysis
 
 `load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
@@ -441,6 +452,7 @@ Every command prints `--help`.
 | `lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
 | `prove-sql-equivalent` | Structural equivalence proof for two queries |
 | `prove-sql-smt` | Z3 equivalence proof for two queries |
+| `prove-sql-sqlsolver` | SQLSolver equivalence proof with Z3 fallback (`--check` tests the setup) |
 | `kumosql-pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
 | `kumosql-scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`) |
 | `kumosql-compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |
