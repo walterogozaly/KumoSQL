@@ -604,3 +604,148 @@ def flatten_grouped_join(select: exp.Select) -> exp.Expression | None:
     result.set("where", exp.Where(this=condition) if condition is not None else None)
     result.set("group", exp.Group(expressions=group_by))
     return result
+
+
+def pull_up_aggregate(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
+    """A keyed table joined to a pre-aggregated one is the aggregate over the flat join.
+
+    ``SELECT c.name, g.s FROM customers c JOIN (SELECT k, SUM(x) AS s FROM orders GROUP BY k) g ON c.id = g.k``
+    with ``id`` a declared key of ``customers`` is
+    ``SELECT c.name, SUM(o.x) FROM customers c JOIN orders o ON c.id = o.k GROUP BY c.id, c.name``:
+    each ``customers`` row is its own group, and it meets exactly the rows of ``orders`` its
+    pre-aggregated row summarized. Only inner joins, one keyed table and one grouped table.
+    """
+
+    if not keys or not _plain(select, grouped=False) or select.args.get("group") or select.args.get("order"):
+        return None
+    if _own_aggregates(select):
+        return None
+    items = _sources(select)
+    if items is None or len(items) != 2:
+        return None
+    tables = [i for i in items if isinstance(i, exp.Table) and i.alias_or_name]
+    derived = [i for i in items if isinstance(i, exp.Subquery)]
+    if len(tables) != 1 or len(derived) != 1:
+        return None
+    table, source = tables[0], derived[0]
+    declared = keys.get(".".join(p.name for p in table.parts).lower()) or []
+    if not declared or table.args.get("joins") or table.args.get("pivots") or table.args.get("laterals"):
+        return None
+    if any(isinstance(n, exp.Subquery) and n is not source for n in select.find_all(exp.Subquery)) or any(select.find_all(exp.Exists)):
+        return None
+    grouped = _Grouped(source)
+    if not grouped.ok or not grouped.aggs or any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+        return None
+    t_alias, g_alias = table.alias_or_name.lower(), grouped.alias.lower()
+    if t_alias == g_alias:
+        return None
+    # Every column is qualified (an unqualified one could belong to either side).
+    own = [c for c in select.find_all(exp.Column) if _own(c, select)]
+    if any(not c.table or c.table.lower() not in (t_alias, g_alias) for c in own):
+        return None
+    if any(c.table.lower() == g_alias and c.name.lower() not in grouped.keys and c.name.lower() not in grouped.aggs for c in own):
+        return None
+    conditions: list[exp.Expression] = []
+    for join in select.args.get("joins") or []:
+        if join.args.get("on") is not None:
+            conditions.extend(_conjuncts(join.args["on"]))
+    if select.args.get("where") is not None:
+        conditions.extend(_conjuncts(select.args["where"].this))
+    # One equality per group key, tying it to a column of the keyed table.
+    tie: dict[str, exp.Expression] = {}
+    rest: list[exp.Expression] = []
+    for condition in conditions:
+        if isinstance(condition, exp.EQ):
+            a, b = condition.this, condition.expression
+            for g_side, t_side in ((a, b), (b, a)):
+                if (
+                    isinstance(g_side, exp.Column)
+                    and g_side.table.lower() == g_alias
+                    and g_side.name.lower() in grouped.keys
+                    and g_side.name.lower() not in tie
+                    and isinstance(t_side, exp.Column)
+                    and t_side.table.lower() == t_alias
+                ):
+                    tie[g_side.name.lower()] = t_side
+                    break
+            else:
+                rest.append(condition)
+            continue
+        rest.append(condition)
+    if set(tie) != set(grouped.keys):
+        return None
+    if not any(set(k) <= {c.name.lower() for c in own if c.table.lower() == t_alias} | {t.name.lower() for t in tie.values()} for k in declared) and not any(
+        set(k) <= {t.name.lower() for t in tie.values()} for k in declared
+    ):
+        pass  # the key columns are added to the grouping below, whether or not the query mentions them
+    inlined = _inline(grouped)
+    if inlined is None:
+        return None
+    new_items, source_conditions, mapping, single = inlined
+    key_exprs = _renamed_keys(grouped, mapping, single)
+    if key_exprs is None:
+        return None
+    # Conditions that read an aggregate column become HAVING; the others filter rows.
+    where_parts: list[exp.Expression] = [c.copy() for c in source_conditions]
+    having_parts: list[exp.Expression] = []
+    for name, t_column in tie.items():
+        where_parts.append(exp.EQ(this=t_column.copy(), expression=key_exprs[name].copy()))
+
+    def convert(node: exp.Expression) -> exp.Expression | None:
+        """Read the grouped table's columns off the flat join."""
+
+        node = node.copy()
+        holder = exp.Select(expressions=[node])
+        for column in list(holder.find_all(exp.Column)):
+            if column.table.lower() != g_alias:
+                continue
+            name = column.name.lower()
+            if name in tie:
+                replacement = tie[name].copy()
+            else:
+                inner_arg = _rename(grouped.aggs[name], mapping, single)
+                if inner_arg is None:
+                    return None
+                replacement = inner_arg
+            if column is node:
+                node = replacement
+                holder.set("expressions", [node])
+            else:
+                column.replace(exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement)
+        return holder.expressions[0]
+
+    for condition in rest:
+        reads_aggregate = any(c.table.lower() == g_alias and c.name.lower() in grouped.aggs for c in condition.find_all(exp.Column))
+        converted = convert(condition)
+        if converted is None:
+            return None
+        (having_parts if reads_aggregate else where_parts).append(converted)
+    outputs = []
+    for item in select.expressions:
+        value = convert(item.this if isinstance(item, exp.Alias) else item)
+        if value is None:
+            return None
+        name = item.alias_or_name
+        outputs.append(exp.alias_(value, name) if name and not (isinstance(value, exp.Column) and value.name == name) else value)
+    key_columns = sorted({c for k in declared[:1] for c in k})
+    group_by = [exp.column(c, table=table.alias_or_name) for c in key_columns]
+    seen = {g.sql().lower() for g in group_by}
+    for column in own:
+        if column.table.lower() == t_alias and column.sql().lower() not in seen:
+            seen.add(column.sql().lower())
+            group_by.append(column.copy())
+    result = exp.Select(expressions=outputs)
+    result.set("from_", exp.From(this=table.copy()))
+    result.set("joins", [exp.Join(this=i) for i in new_items])
+    result.set("where", exp.Where(this=_product_and(where_parts)) if where_parts else None)
+    result.set("group", exp.Group(expressions=group_by))
+    if having_parts:
+        result.set("having", exp.Having(this=_product_and(having_parts)))
+    return result
+
+
+def _product_and(parts: list[exp.Expression]) -> exp.Expression:
+    result = None
+    for part in parts:
+        result = part if result is None else exp.And(this=result, expression=part)
+    return result

@@ -2757,6 +2757,7 @@ def _split_limit(sql: str, dialect: str):
         return None, "ORDER BY with a star select list"
     outputs = [(e.alias_or_name.lower(), (e.this if isinstance(e, exp.Alias) else e).sql()) for e in first.expressions]
     ordering = []
+    hidden: list[exp.Expression] = []  # order keys that are not output columns, read as extra columns
     for item in order.expressions:
         if not isinstance(item, exp.Ordered):
             return None, "ORDER BY item"
@@ -2773,6 +2774,9 @@ def _split_limit(sql: str, dialect: str):
             ]
             if len(matches) == 1 or (matches and len({outputs[i] for i in matches}) == 1):
                 position = matches[0]
+        if position is None and root is first and not first.args.get("distinct") and not any(key.find_all(exp.Subquery, exp.Window)):
+            hidden.append(key.copy())
+            position = len(outputs) + len(hidden) - 1
         if position is None:
             return None, "ORDER BY on an expression that is not an output column"
         desc = bool(item.args.get("desc"))
@@ -2785,6 +2789,8 @@ def _split_limit(sql: str, dialect: str):
         stripped = stripped.this
     for key in ("limit", "offset", "order"):
         stripped.set(key, None)
+    for index, key in enumerate(hidden):
+        stripped.set("expressions", list(stripped.expressions) + [exp.alias_(key, f"kq_ord{index}")])
     spec = (
         int(limit.expression.this),
         int(offset.expression.this) if offset is not None else 0,
