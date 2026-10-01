@@ -35,7 +35,7 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 160 | 72 | 0 | was 159 before derived aggregates were compared by proof; 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
+| Calcite | 232 | 162 | 70 | 0 | was 160 before window functions were read as a kept-whole derived table; 159 before derived aggregates were compared by proof; 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
 | Spark SQL | 127 | 105 | 22 | 0 | was 99 before constant aggregates and function identities; 86 before |
 | TPC-H | 22 | 19 | 3 | 0 | was 16 before semi/anti joins, `IN` over a grouped subquery and repeated existence tests; 15 before correlated scalar aggregates became joins and derived aggregates were compared by proof; 14 before NULL guards, `1.00 = 1` and folded derived tables made the two spellings of a scalar subquery read alike; 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; the three left need DECIMAL casts that depend on column types and an aggregate over an outer join |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |

@@ -1534,6 +1534,103 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+_WINDOW_COUNTER = itertools.count()
+
+
+def _isolate_windows(tree: exp.Expression) -> exp.Expression:
+    """Compute a select's window functions in a derived table over its FROM and WHERE.
+
+    ``SELECT a, ROW_NUMBER() OVER (...) AS n FROM t WHERE c QUALIFY n = 1`` becomes
+    ``SELECT d.a, d.n FROM (SELECT a AS c0, ROW_NUMBER() OVER (...) AS w0 FROM t WHERE c) AS d WHERE d.w0 = 1``:
+    a window sees the rows left after WHERE, so the derived table is the window's input, and the
+    outer select is plain. The prover keeps that derived table whole (see ``_opaque``), so two queries
+    agree when their window computations read alike.
+    """
+
+    for select in list(tree.find_all(exp.Select))[::-1]:
+        windows = [w for w in select.find_all(exp.Window) if w.find_ancestor(exp.Select) is select]
+        if not windows or select.args.get("group") or select.args.get("having") or select.args.get("windows"):
+            continue
+        parent = select.parent
+        if isinstance(parent, exp.Subquery) and (parent.alias or "").startswith("kqw"):
+            continue
+        own_calls = [c for c in select.find_all(exp.AggFunc) if c.find_ancestor(exp.Select) is select and c.find_ancestor(exp.Window) is None]
+        if own_calls or select.args.get("distinct") and select.args["distinct"].args.get("on"):
+            continue
+        if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+            continue
+        from_ = select.args.get("from_") or select.args.get("from")
+        if from_ is None:
+            continue
+        qualify = select.args.get("qualify")
+        aliases = {i.alias.lower() for i in select.expressions if isinstance(i, exp.Alias)}
+        outer_parts = list(select.expressions) + ([qualify.this] if qualify is not None else []) + [
+            o for o in (select.args.get("order").expressions if select.args.get("order") else [])
+        ]
+
+        def outside_window(column: exp.Column) -> bool:
+            return column.find_ancestor(exp.Window) is None and column.find_ancestor(exp.Select) is select
+
+        columns: dict[str, exp.Column] = {}
+        for part in outer_parts:
+            for column in part.find_all(exp.Column):
+                if not outside_window(column) or (not column.table and column.name.lower() in aliases):
+                    continue
+                columns.setdefault(column.sql(), column)
+        calls = {w.sql(): w for w in windows}
+        counter = next(_WINDOW_COUNTER)
+        alias = f"kqw{counter}"
+        column_names = {sql: f"kqc{i}" for i, sql in enumerate(sorted(columns))}
+        window_names = {sql: f"kqv{i}" for i, sql in enumerate(sorted(calls))}
+
+        def swap(piece: exp.Expression) -> exp.Expression:
+            if isinstance(piece, exp.Window) and piece.sql() in window_names:
+                return exp.column(window_names[piece.sql()], table=alias)
+            if isinstance(piece, exp.Column) and piece.sql() in column_names and piece.find_ancestor(exp.Window) is None:
+                return exp.column(column_names[piece.sql()], table=alias)
+            return piece
+
+        inner = exp.Select(
+            expressions=[exp.alias_(columns[sql].copy(), name) for sql, name in sorted(column_names.items())]
+            + [exp.alias_(calls[sql].copy(), name) for sql, name in sorted(window_names.items())]
+        )
+        inner.set("from_", from_.copy())
+        if select.args.get("joins"):
+            inner.set("joins", [j.copy() for j in select.args["joins"]])
+        if select.args.get("where") is not None:
+            inner.set("where", select.args["where"].copy())
+        outer_items = [item.transform(swap) for item in select.expressions]
+        # An output named by the source column keeps its name after the swap.
+        for old, new in zip(select.expressions, outer_items):
+            if isinstance(old, exp.Column) and not isinstance(new, exp.Alias):
+                outer_items[outer_items.index(new)] = exp.alias_(new, old.name)
+        outer = exp.Select(expressions=outer_items)
+        outer.set("from_", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+        if qualify is not None:
+            named = {
+                i.alias.lower(): outer_items[n].this.copy()
+                for n, i in enumerate(select.expressions)
+                if isinstance(i, exp.Alias) and isinstance(outer_items[n], exp.Alias)
+            }
+            lifted = qualify.this.transform(swap)
+            lifted = lifted.transform(
+                lambda c: named[c.name.lower()].copy() if isinstance(c, exp.Column) and not c.table and c.name.lower() in named else c
+            )
+            outer.set("where", exp.Where(this=lifted))
+        if select.args.get("distinct"):
+            outer.set("distinct", select.args["distinct"].copy())
+        if select.args.get("order"):
+            outer.set("order", select.args["order"].transform(swap))
+        for key in ("limit", "offset"):
+            if select.args.get(key):
+                outer.set(key, select.args[key].copy())
+        if select is tree:
+            tree = outer
+        else:
+            select.replace(outer)
+    return tree
+
+
 def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
     """Column names are case-insensitive: ``t.EMPNO`` and ``t.empno`` are the same column.
 
@@ -1566,6 +1663,7 @@ def normalize(
     tree = _values_to_union(tree)
     if schema:
         tree = _expand_stars(tree, schema)
+    tree = _isolate_windows(tree)
 
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Subquery):
