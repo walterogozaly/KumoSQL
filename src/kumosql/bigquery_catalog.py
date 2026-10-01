@@ -454,6 +454,14 @@ def list_datasets(project: str) -> list[dict[str, str]]:
     return [item for item, ok in zip(datasets, allowed) if ok]
 
 
+def datasets_key(project: str) -> str:
+    return f"datasets\x1fbrowsable\x1f{project}"
+
+
+def tables_key(project: str, dataset: str) -> str:
+    return f"tables\x1f{project}\x1f{dataset}"
+
+
 #: BigQuery's routine types, as shown in the explorer and used by tag rules (``type``).
 ROUTINE_TYPES = {
     "SCALAR_FUNCTION": "UDF", "TABLE_VALUED_FUNCTION": "TABLE_FUNCTION",

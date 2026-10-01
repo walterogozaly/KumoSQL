@@ -22,6 +22,8 @@ itself cannot use ``tag``, its own output.
 from __future__ import annotations
 
 import re
+import threading
+import time
 from typing import Iterable, Mapping
 
 from . import scopes as scope_store
@@ -122,9 +124,9 @@ def collect_objects(pipeline: object | None = None, *, catalog: bool = True) -> 
         from . import bigquery_catalog as bq
 
         for project in bq.selected_projects():
-            datasets = bq.peek(f"datasets\x1fbrowsable\x1f{project}")
+            datasets = bq.peek(bq.datasets_key(project))
             for dataset in (datasets or {}).get("data", []):
-                tables = bq.peek(f"tables\x1f{project}\x1f{dataset['id']}")
+                tables = bq.peek(bq.tables_key(project, dataset["id"]))
                 for item in (tables or {}).get("data", []):
                     add(_join(project, dataset["id"], item["id"]),
                         _record(project, dataset["id"], item["id"], type=item.get("type", "TABLE"),
@@ -343,6 +345,7 @@ def snapshot(pipeline: object | None = None) -> dict:
     ``aliases`` maps other names of the same object (a Dataform model key) to that name.
     """
 
+    sync = inventory_status()  # first: if it says "done", the objects read next include everything it saved
     objects = collect_objects(pipeline)
     assigned, status = _assign(objects)
     counts: dict[str, dict] = {}
@@ -360,7 +363,102 @@ def snapshot(pipeline: object | None = None) -> dict:
         "rules": status,
         "known_objects": len(objects),
         "catalog": catalog_coverage(),
+        **sync,
     }
+
+
+# ----------------------------------------------------------------- inventory
+#
+# A rule such as "dataset is ARCHIVE" must tag every table in a chosen project, including datasets
+# nobody has opened. Listing is free metadata (no query, no billing), so the saved catalog is filled
+# in the background for every chosen project: datasets first, then each dataset's tables and routines.
+
+_INVENTORY_LOCK = threading.Lock()
+_inventory: dict = {"running": False, "errors": {}, "failed_at": {}}
+RETRY_SECONDS = 300
+INVENTORY_WORKERS = 8
+
+
+def _missing_lists() -> tuple[list[str], list[tuple[str, str]]]:
+    """Chosen projects with no dataset list saved, and (project, dataset) pairs with no table list saved."""
+
+    from . import bigquery_catalog as bq
+
+    projects, pairs = [], []
+    for row in catalog_coverage():
+        if row["datasets"] is None:
+            projects.append(row["project"])
+        pairs.extend((row["project"], name) for name in row["datasets_without_tables"])
+    return projects, pairs
+
+
+def _run_inventory() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from . import bigquery_catalog as bq
+
+    def note(key: str, error: Exception | None) -> None:
+        with _INVENTORY_LOCK:
+            if error is None:
+                _inventory["errors"].pop(key, None)
+                _inventory["failed_at"].pop(key, None)
+            else:
+                _inventory["errors"][key] = str(error)
+                _inventory["failed_at"][key] = time.time()
+
+    try:
+        for project in _missing_lists()[0]:
+            try:
+                bq.cached(bq.datasets_key(project), lambda project=project: bq.list_datasets(project))
+                note(project, None)
+            except Exception as exc:  # noqa: BLE001 - no credentials, no access: report, never crash the page
+                note(project, exc)
+
+        def fill(pair: tuple[str, str]) -> None:
+            project, dataset = pair
+            try:
+                bq.cached(bq.tables_key(project, dataset), lambda: bq.list_tables(project, dataset))
+                note(f"{project}.{dataset}", None)
+            except Exception as exc:  # noqa: BLE001
+                note(f"{project}.{dataset}", exc)
+
+        pairs = _missing_lists()[1]
+        if pairs:
+            with ThreadPoolExecutor(max_workers=min(INVENTORY_WORKERS, len(pairs))) as pool:
+                list(pool.map(fill, pairs))
+    finally:
+        with _INVENTORY_LOCK:
+            _inventory["running"] = False
+
+
+def start_inventory() -> bool:
+    """Fill in whatever the saved catalog lacks for the chosen projects, in the background.
+
+    Does nothing when nothing is missing, when a fill is already running, or for lists that failed
+    in the last few minutes (no credentials, no access). Returns whether a fill is now running.
+    """
+
+    projects, pairs = _missing_lists()
+    now = time.time()
+    with _INVENTORY_LOCK:
+        if _inventory["running"]:
+            return True
+        failed = _inventory["failed_at"]
+        wanted = [p for p in projects if now - failed.get(p, 0) >= RETRY_SECONDS]
+        wanted_pairs = [pair for pair in pairs if now - failed.get(".".join(pair), 0) >= RETRY_SECONDS]
+        if not wanted and not wanted_pairs:
+            return False
+        _inventory["running"] = True
+    threading.Thread(target=_run_inventory, daemon=True, name="tag-inventory").start()
+    return True
+
+
+def inventory_status() -> dict:
+    """``syncing`` while the catalog is being filled in, and what could not be listed."""
+
+    running = start_inventory()
+    with _INVENTORY_LOCK:
+        return {"syncing": running, "sync_errors": dict(_inventory["errors"])}
 
 
 def catalog_coverage() -> list[dict]:
@@ -373,11 +471,11 @@ def catalog_coverage() -> list[dict]:
 
     report = []
     for project in bq.selected_projects():
-        datasets = (bq.peek(f"datasets\x1fbrowsable\x1f{project}") or {}).get("data")
+        datasets = (bq.peek(bq.datasets_key(project)) or {}).get("data")
         row = {"project": project, "datasets": None if datasets is None else len(datasets), "tables": 0,
                "datasets_without_tables": []}
         for dataset in datasets or []:
-            tables = bq.peek(f"tables\x1f{project}\x1f{dataset['id']}")
+            tables = bq.peek(bq.tables_key(project, dataset["id"]))
             if tables is None:
                 row["datasets_without_tables"].append(dataset["id"])
             else:
