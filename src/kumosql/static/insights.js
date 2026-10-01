@@ -511,6 +511,19 @@ function renderGraph(data, root) {
   const viewTabs = h("div", { class: "tabs", role: "group", "aria-label": "Graph view" },
     ...[["explorer", "Explorer", "Zoom, pan, collapse and focus. Built for large pipelines."], ["simple", "Simple", "Every asset in one fixed layout. Best for small projects."]].map(([key, label, title]) =>
       h("button", { class: "tab", type: "button", "data-view": key, title, onclick: () => setView(key) }, label)));
+  const graphCard = h("div", { class: "card graph-card" }, explorerHost, canvas);
+  const fullscreenButton = h("button", { type: "button", class: "toolbar-button graph-fullscreen", "aria-pressed": "false", onclick: () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else graphCard.requestFullscreen?.().catch(() => {});
+  } });
+  const syncFullscreen = () => {
+    const on = document.fullscreenElement === graphCard;
+    fullscreenButton.textContent = on ? "Exit full screen" : "Full screen";
+    fullscreenButton.setAttribute("aria-pressed", String(on));
+    setTimeout(() => explorer?.fit?.(), 150);
+  };
+  document.addEventListener("fullscreenchange", syncFullscreen);
+  syncFullscreen();
   const detail = h("aside", { class: "graph-detail", "aria-live": "polite" });
   const legend = h("div", { class: "graph-legend" },
     ...Object.entries(EDGE_SOURCES).map(([key, [label, title]]) =>
@@ -522,7 +535,7 @@ function renderGraph(data, root) {
     coverageStrip,
     h("div", { class: "graph-toolbar" }, search, options, tagPick, tagNote, h("div", { class: "graph-toolbar-tabs" }, viewTabs, modeTabs)),
     h("div", { class: "graph-layout" },
-      h("div", { class: "card graph-card" }, explorerHost, canvas, legend),
+      (graphCard.append(legend, fullscreenButton), graphCard),
       detail),
     gapsPanel(data));
 

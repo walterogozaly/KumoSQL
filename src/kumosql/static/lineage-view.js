@@ -408,7 +408,7 @@
         document.head.append(el("meta", { id: "__________cytoscape_stylesheet" }));
       }
       cy = window.cytoscape({
-        container: stage, elements: [], style: stylesheet(false), minZoom: 0.02, maxZoom: 3,
+        container: stage, elements: [], style: stylesheet(false), minZoom: 0.02, maxZoom: 3, wheelSensitivity: 2.5,
         textureOnViewport: true, hideEdgesOnViewport: data.edges.length > 1500, motionBlur: false, pixelRatio: "auto", boxSelectionEnabled: false,
       });
       cy.on("tap", "node", (event) => {
