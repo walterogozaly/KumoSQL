@@ -166,25 +166,44 @@ class Unsupported(Exception):
 
 def _canonical_aliases(body: exp.Expression) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
-    so two spellings of the same relation get the same identity."""
+    so two spellings of the same relation get the same identity. A column is renamed through the
+    nearest enclosing SELECT that declares its qualifier, so an alias reused in a nested scope is fine."""
 
     body = body.copy()
-    names: dict[str, str] = {}
-    declared = [n for n in body.walk() if isinstance(n, (exp.Table, exp.Subquery)) and not isinstance(n.parent, exp.Table)]
     ctes = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
-    for node in declared:
+    fresh: dict[int, str] = {}
+    for node in body.walk():
+        if not isinstance(node, (exp.Table, exp.Subquery)) or isinstance(node.parent, exp.Table):
+            continue
+        if not node.parent or not isinstance(node.parent, (exp.From, exp.Join)):
+            continue
         old = node.alias_or_name
-        if not old or old.lower() in ctes or (isinstance(node, exp.Table) and not node.args.get("db") and old.lower() in ctes):
+        if not old or old.lower() in ctes or (isinstance(node, exp.Subquery) and not node.alias):
             continue
-        if isinstance(node, exp.Subquery) and not node.alias:
-            continue
-        if old.lower() in names:
-            return body  # one alias used twice (different scopes): keep the text as written
-        names[old.lower()] = f"kq{len(names)}"
-        node.set("alias", exp.TableAlias(this=exp.to_identifier(names[old.lower()])))
+        fresh[id(node)] = f"kq{len(fresh)}"
+
+    def declared(select: exp.Select) -> list[exp.Expression]:
+        from_ = select.args.get("from_") or select.args.get("from")
+        return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
+
+    renames: list[tuple[exp.Column, str]] = []
     for column in body.find_all(exp.Column):
-        if column.table and column.table.lower() in names:
-            column.set("table", exp.to_identifier(names[column.table.lower()]))
+        qualifier = column.table.lower()
+        if not qualifier:
+            continue
+        scope = column.find_ancestor(exp.Select)
+        while scope is not None:
+            hit = next((n for n in declared(scope) if (n.alias_or_name or "").lower() == qualifier), None)
+            if hit is not None:
+                if id(hit) in fresh:
+                    renames.append((column, fresh[id(hit)]))
+                break
+            scope = scope.find_ancestor(exp.Select)
+    for column, name in renames:
+        column.set("table", exp.to_identifier(name))
+    for node in body.walk():
+        if id(node) in fresh:
+            node.set("alias", exp.TableAlias(this=exp.to_identifier(fresh[id(node)])))
     return body
 
 

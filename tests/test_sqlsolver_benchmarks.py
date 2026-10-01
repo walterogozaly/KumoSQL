@@ -20,7 +20,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["sqlsolver_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {"calcite": 147, "spark": 99, "tpch": 14, "tpcc": 19}
+FLOORS = {"calcite": 158, "spark": 99, "tpch": 14, "tpcc": 19}
 
 
 @pytest.mark.parametrize(
