@@ -91,10 +91,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 2, Col: 19."
  },
- "dataform/table_backtick_ref_inside_sql::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Invalid expression / Unexpected token. Line 2, Col: 25."
- },
  "dataform/table_dynamic_dependencies::load": {
   "owner": "kumosql",
   "reason": "ref() with a computed argument is not resolved"
@@ -256,10 +252,6 @@
   "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_function_remote::format": {
-  "owner": "sqlfluff",
-  "reason": "parse_error"
- },
- "ddl/create_function_sql::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
@@ -470,10 +462,6 @@
  "query/changes_function::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 61."
- },
- "query/collate::format": {
-  "owner": "sqlfluff",
-  "reason": "parse_error"
  },
  "query/graph_gql::format": {
   "owner": "sqlfluff",
@@ -874,10 +862,6 @@
  "script/declare_set::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps DECLARE as an opaque command"
- },
- "script/declare_struct_array::format": {
-  "owner": "sqlfluff",
-  "reason": "parse_error"
  },
  "script/declare_struct_array::parse": {
   "owner": "sqlglot",

@@ -43,10 +43,12 @@ def sql_for(case: dict) -> tuple[str | None, str]:
     files = dict(coverage.PREAMBLE)
     files["definitions/case.sqlx"] = text
     pipeline = coverage._load(files)
-    models = [m for m in pipeline.models.values() if m.path == "definitions/case.sqlx"]
+    models = [m for m in pipeline.models.values() if (m.path or "").replace("\\", "/") == "definitions/case.sqlx"]
     if not models:
         return None, "declaration only; no SQL"
     model = models[0]
+    if "\n---\n" in model.sql:
+        return None, "several statements separated by ---; Dataform runs them separately"
     if model.kind in ("test", "incremental") or model.masked_expressions or not model.sql.strip():
         return None, "needs the Dataform compiler (JavaScript interpolation, incremental or test)"
     return model.sql, ""

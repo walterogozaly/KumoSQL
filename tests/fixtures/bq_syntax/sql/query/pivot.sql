@@ -1,1 +1,1 @@
-SELECT * FROM (SELECT state, status, sale_price FROM `kumosql.kumosql_messy.raw_order_items` JOIN `kumosql.kumosql_messy.raw_users` ON raw_order_items.user_id = raw_users.id) PIVOT (SUM(sale_price) AS total, COUNT(*) AS cnt FOR status IN ('Complete', 'Cancelled', 'Returned'))
+SELECT * FROM (SELECT state, status, sale_price FROM `kumosql.kumosql_messy.raw_order_items` AS i JOIN `kumosql.kumosql_messy.raw_users` AS u ON i.user_id = u.id) PIVOT (SUM(sale_price) AS total, COUNT(*) AS cnt FOR status IN ('Complete', 'Cancelled', 'Returned'))

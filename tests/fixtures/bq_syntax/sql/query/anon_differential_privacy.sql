@@ -1,1 +1,1 @@
-SELECT WITH DIFFERENTIAL_PRIVACY OPTIONS (epsilon = 10, delta = 0.01, max_groups_contributed = 1) state, COUNT(*, contribution_bounds_per_group => (0, 1)) AS n FROM `kumosql.kumosql_messy.raw_users` GROUP BY state
+SELECT WITH DIFFERENTIAL_PRIVACY OPTIONS (epsilon = 10, delta = 0.01, max_groups_contributed = 1, privacy_unit_column = id) state, COUNT(*) AS n FROM `kumosql.kumosql_messy.raw_users` GROUP BY state

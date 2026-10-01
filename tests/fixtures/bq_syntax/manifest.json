@@ -313,16 +313,6 @@
    ]
   },
   {
-   "id": "dataform/table_backtick_ref_inside_sql",
-   "kind": "sqlx",
-   "file": "dataform/sqlx/table_backtick_ref_inside_sql.sqlx",
-   "tags": [
-    "dataform",
-    "ref",
-    "quirk"
-   ]
-  },
-  {
    "id": "dataform/table_basic",
    "kind": "sqlx",
    "file": "dataform/sqlx/table_basic.sqlx",
@@ -1014,9 +1004,9 @@
    ]
   },
   {
-   "id": "ddl/create_materialized_view_partitioned",
+   "id": "ddl/create_materialized_view_clustered",
    "kind": "sql",
-   "file": "sql/ddl/create_materialized_view_partitioned.sql",
+   "file": "sql/ddl/create_materialized_view_clustered.sql",
    "tags": [
     "ddl",
     "view",

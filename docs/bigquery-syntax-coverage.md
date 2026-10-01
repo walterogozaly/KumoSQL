@@ -28,7 +28,7 @@ Each case runs through every stage that applies. A stage is **✅ pass**, **⚪ 
 | cleanup | the cleanup and rewrite rules run, and their result is proven equivalent or left unchanged |
 | format | `format_sql` neither crashes nor changes meaning; backticked names are untouched; the result is proven equivalent |
 | prover | the SMT prover returns a verdict or "unknown" for the query compared with itself, and never crashes or calls it different |
-| dry run | BigQuery accepts the SQL (`dryRun`, never billed) |
+| dry run | BigQuery accepts the SQL (`dryRun`, never billed). ✅ accepted; ⚠ parsed, then stopped on something outside the SQL (an object, connection, session or permission the project lacks); ❌ rejected; – not submitted (administrative statements, and Dataform actions that need the Dataform compiler) |
 
 Run it yourself:
 
@@ -41,29 +41,48 @@ python tools/bq_dry_run_manifest.py --project kumosql      # free dry runs; need
 
 After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverage.py --update-known-gaps` under each supported sqlglot version (CI tests 26.0.0 and the latest) and delete the entries that now pass.
 
+## What this found and fixed
+
+- A nested `name:` (a documented column called `name`, a `{ name, schema }` entry in `dependencies`) renamed the action. Config keys are now read at the top level only.
+- `${ctx.ref()}`, `${resolve()}`, `${ctx.self()}` and config `dependencies` were not graph edges.
+- Dataform test `input "x" { ... }` blocks were treated as SQL; they are now preserved like `config`.
+- The formatter upper-cased backticked routine paths (``DROP FUNCTION `p.d.f` `` became `` `P.D.F` ``), and the equivalence check called that proven. Quoted names are now restored exactly.
+- `CREATE TABLE/VIEW ... AS SELECT`, `INSERT ... SELECT` and `EXPORT DATA ... AS SELECT` in `.sql` files had no reads in the graph; they do now.
+- A `.sql` file with a `config { }` block is loaded as an action instead of failing to parse.
+- Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
+
+## Gaps that are not fixed here
+
+- **sqlglot** keeps procedural statements (`DECLARE`, `IF`, `LOOP`, `BEGIN ... END`, `CALL`, `EXECUTE IMMEDIATE`) and many `ALTER`/`DROP`/`CREATE` forms (reservations, indexes, aggregate and remote functions) as opaque commands, and cannot parse `LOAD DATA`, `CHANGES`/`APPENDS`, `UNION ... CORRESPONDING` and some pipe operators. KumoSQL leaves such statements untouched and says so. Which cases fail differs between sqlglot 26.0.0 and the latest, so `known_gaps.json` holds the union of both.
+- **Graph reads of DML and scripts** (`MERGE ... USING`, `UPDATE ... FROM`, `DELETE ... WHERE EXISTS`, scripts) are not extracted, so a model written as a script shows unknown reads.
+- **Cleanup on `BEGIN ... END` and procedure bodies** is refused (`source_splice_error`): the statements cannot be mapped back to their source text, so the file is left as written.
+- **Project layouts**: `projectSuffix`/`datasetSuffix`/`namePrefix` are ignored, the Dataform JavaScript API in `.js` files and `actions.yaml` are not read (`tests/test_bq_syntax_projects.py`, as xfail).
+- **Computed references**: a `ref()` whose argument is computed in JavaScript is reported as unresolved rather than guessed.
+- **Prover** (owned by the SQLSolver work): unknown, never wrong, for `LIMIT`, window functions, `TABLESAMPLE`, unaliased subqueries and nondeterministic aggregates.
+
 ## Coverage
 
 <!-- coverage-table:start -->
 | Family | Cases | parse | load | graph | fingerprint | cleanup | format | prover | dry run |
 |---|---:|---|---|---|---|---|---|---|---|
-| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 5 ✅ 3 ⚪ | n/a | – |
-| dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 4 ✅ 1 ⚪ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | – |
-| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 71 ✅ 3 ⚪ | n/a | 72 ✅ 2 ⚪ | 43 ✅ 31 ⚪ | n/a | – |
-| dml | 16 | 16 ✅ | 16 ✅ | 10 ✅ 6 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | – |
-| query | 131 | 124 ✅ 7 ⚪ | 131 ✅ | 131 ✅ | 123 ✅ | 125 ✅ 6 ⚪ | 110 ✅ 21 ⚪ | 96 ✅ 27 ⚪ | – |
-| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 19 ✅ 3 ⚪ | n/a | 16 ✅ 6 ⚪ | 15 ✅ 7 ⚪ | n/a | – |
-| transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | – |
-| **all GoogleSQL** | 258 | 200 ✅ 58 ⚪ | 258 ✅ | 245 ✅ 13 ⚪ | 123 ✅ | 244 ✅ 14 ⚪ | 191 ✅ 67 ⚪ | 96 ✅ 27 ⚪ | – |
+| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 5 ✅ 3 ⚪ | n/a | 1 ✅ 7 ⚠ |
+| dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 4 ✅ 1 ⚪ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
+| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 71 ✅ 3 ⚪ | n/a | 72 ✅ 2 ⚪ | 44 ✅ 30 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| dml | 16 | 16 ✅ | 16 ✅ | 10 ✅ 6 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
+| query | 131 | 124 ✅ 7 ⚪ | 131 ✅ | 131 ✅ | 123 ✅ | 125 ✅ 6 ⚪ | 111 ✅ 20 ⚪ | 96 ✅ 27 ⚪ | 115 ✅ 16 ⚠ |
+| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 19 ✅ 3 ⚪ | n/a | 16 ✅ 6 ⚪ | 16 ✅ 6 ⚪ | n/a | 20 ✅ 2 ⚠ |
+| transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
+| **all GoogleSQL** | 258 | 200 ✅ 58 ⚪ | 258 ✅ | 245 ✅ 13 ⚪ | 123 ✅ | 244 ✅ 14 ⚪ | 194 ✅ 64 ⚪ | 96 ✅ 27 ⚪ | 202 ✅ 45 ⚠ 11 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
-| SQLX actions | 65 | 60 ✅ 1 ⚪ | 64 ✅ 1 ⚪ | 56 ✅ 1 ⚪ | 63 ✅ | 61 ✅ 2 ⚪ | 63 ✅ | – |
+| SQLX actions | 64 | 60 ✅ | 63 ✅ 1 ⚪ | 55 ✅ 1 ⚪ | 62 ✅ | 60 ✅ 2 ⚪ | 62 ✅ | 40 ✅ 2 ⚠ 22 – |
 
 ### Known gaps
 
 | Stage | Owner | Reason | Cases | Examples |
 |---|---|---|---:|---|
-| parse | sqlglot | ParseError: Invalid expression / Unexpected token. | 28 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
+| parse | sqlglot | ParseError: Invalid expression / Unexpected token. | 27 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
 | parse | sqlglot | sqlglot keeps CREATE as an opaque command | 11 | `ddl/create_aggregate_function`, `ddl/create_assignment`, `ddl/create_capacity_reservation` |
 | parse | sqlglot | sqlglot keeps ALTER as an opaque command | 10 | `ddl/alter_materialized_view`, `ddl/alter_model`, `ddl/alter_organization` |
 | parse | sqlglot | ParseError: Expecting ). | 9 | `ddl/create_procedure_sql`, `query/appends_changes_functions`, `query/changes_function` |
@@ -91,7 +110,7 @@ After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverag
 | cleanup | kumosql | recovered_parse | 2 | `query/pipe_extend_set_drop`, `query/pipe_with_cte` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
 | format | kumosql | equivalence could not be proven for every changed statement | 64 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
-| format | sqlfluff | parse_error | 23 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
+| format | sqlfluff | parse_error | 20 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
 | prover | prover | unsupported: LIMIT is not modeled | 12 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
 | prover | prover | unsupported: WINDOW is not modeled | 8 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pipe_window` |
 | prover | prover | unsupported: unaliased subquery in FROM | 2 | `query/nested_with_in_subquery`, `query/pipe_pivot_unpivot` |

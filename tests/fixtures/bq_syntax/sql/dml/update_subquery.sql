@@ -1,1 +1,1 @@
-UPDATE `kumosql.kumosql_messy.raw_users` SET age = (SELECT MAX(sale_price) FROM `kumosql.kumosql_messy.raw_order_items` WHERE user_id = raw_users.id) WHERE id IN (SELECT user_id FROM `kumosql.kumosql_messy.raw_order_items`)
+UPDATE `kumosql.kumosql_messy.raw_users` AS u SET age = (SELECT CAST(MAX(i.sale_price) AS INT64) FROM `kumosql.kumosql_messy.raw_order_items` AS i WHERE i.user_id = u.id) WHERE u.id IN (SELECT user_id FROM `kumosql.kumosql_messy.raw_order_items`)

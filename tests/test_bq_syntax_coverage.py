@@ -57,6 +57,9 @@ def test_dry_run_results_cover_the_manifest_when_recorded():
         pytest.skip("no dry-run results recorded")
     assert set(recorded) <= {case["id"] for case in CASES}
     assert all(value["status"] in {"ok", "error", "not_run"} for value in recorded.values())
+    # BigQuery may stop on a missing object, session or permission; it must never reject the SQL itself.
+    rejected = [case_id for case_id, value in recorded.items() if value["status"] == "error" and "category" not in value]
+    assert not rejected, rejected
 
 
 @pytest.mark.parametrize("case_id,stage", CASE_STAGES, ids=[f"{c}::{s}" for c, s in CASE_STAGES])

@@ -1,4 +1,4 @@
 DECLARE s STRUCT<a INT64, b STRING> DEFAULT (1, 'x');
 DECLARE arr ARRAY<INT64> DEFAULT [1, 2, 3];
-SET s.a = 2;
+SET s = (2, 'y');
 SELECT s.a, arr[OFFSET(0)]

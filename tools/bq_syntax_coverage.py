@@ -345,7 +345,7 @@ def run_sqlx_case(case: dict) -> dict[str, tuple[str, str]]:
         out["load"] = (FAIL, _error(exc))
         return out
     bad = [d for d in pipeline.all_diagnostics() if d.code in {"read_error", "asset_unreadable", "sqlx_parse_error", "unsupported_ref"}]
-    loaded = [m for m in pipeline.models.values() if m.path == "definitions/case.sqlx"]
+    loaded = [m for m in pipeline.models.values() if (m.path or "").replace("\\", "/") == "definitions/case.sqlx"]
     is_declaration = bool(re.search(r"type:\s*[\"']declaration[\"']", text))
     if any(d.code == "unsupported_ref" for d in bad):
         out["load"] = (UNSUPPORTED, "ref() with a computed argument is not resolved")
@@ -439,14 +439,23 @@ def load_dry_runs() -> dict[str, dict]:
 
 
 def _dry_cell(ids, dry_runs) -> str:
+    """✅ accepted; ⚠ BigQuery parsed it and stopped on something outside the SQL (a missing object, a
+    session, access); ❌ rejected the SQL itself; – not submitted."""
+
     if not dry_runs:
         return "–"
-    counts = Counter(dry_runs.get(i, {}).get("status", "not_run") for i in ids)
-    parts = [f"{counts['ok']} ✅"]
-    if counts["error"]:
-        parts.append(f"{counts['error']} ❌")
-    if counts["not_run"]:
-        parts.append(f"{counts['not_run']} –")
+    entries = [dry_runs.get(i, {"status": "not_run"}) for i in ids]
+    ok = sum(e["status"] == "ok" for e in entries)
+    precondition = sum(e["status"] == "error" and "category" in e for e in entries)
+    bad = sum(e["status"] == "error" and "category" not in e for e in entries)
+    skipped = sum(e["status"] == "not_run" for e in entries)
+    parts = [f"{ok} ✅"]
+    if precondition:
+        parts.append(f"{precondition} ⚠")
+    if bad:
+        parts.append(f"{bad} ❌")
+    if skipped:
+        parts.append(f"{skipped} –")
     return " ".join(parts)
 
 

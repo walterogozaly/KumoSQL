@@ -1,1 +1,0 @@
-CREATE MATERIALIZED VIEW `kumosql.kumosql_messy.bq_syntax_mv2` PARTITION BY DATE(created_at) CLUSTER BY state AS SELECT created_at, state, COUNT(*) AS n FROM `kumosql.kumosql_messy.raw_users` GROUP BY created_at, state

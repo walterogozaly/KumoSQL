@@ -1,1 +1,1 @@
-SELECT * FROM `kumosql.kumosql_messy.raw_users` WHERE SEARCH(raw_users, 'alice')
+SELECT * FROM `kumosql.kumosql_messy.raw_users` AS u WHERE SEARCH(u, 'alice')
