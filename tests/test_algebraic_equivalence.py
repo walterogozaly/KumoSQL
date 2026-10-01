@@ -1186,3 +1186,113 @@ def test_derived_table_rewrites_preserve_results_on_random_databases():
             except sqlite3.OperationalError:
                 continue
             assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+GROUPED_JOIN_SCHEMA = {"e": ["id", "k", "v"], "d": ["k", "name"]}
+GROUPED_JOIN_KEYS = {"e": TableConstraints(keys=(("id",),)), "d": TableConstraints(keys=(("k",),))}
+GROUPED_JOIN_PROVEN = [
+    (
+        "SELECT e.k FROM e INNER JOIN d ON e.k = d.k GROUP BY e.k",
+        "SELECT t.k FROM (SELECT k FROM e GROUP BY k) AS t INNER JOIN d ON t.k = d.k",
+    ),
+    (
+        "SELECT e.k, d.k AS k2 FROM e INNER JOIN d ON e.k = d.k GROUP BY e.k, d.k",
+        "SELECT t.k, d.k AS k2 FROM (SELECT k FROM e GROUP BY k) AS t INNER JOIN d ON t.k = d.k",
+    ),
+    (
+        "SELECT t.v, d.name FROM (SELECT * FROM e WHERE e.id = 10) AS t INNER JOIN d ON t.v = d.name GROUP BY t.v, d.name",
+        "SELECT a.v, b.name FROM (SELECT v FROM e WHERE id = 10 GROUP BY v) AS a INNER JOIN (SELECT name FROM d GROUP BY name) AS b ON a.v = b.name",
+    ),
+]
+
+
+@pytest.mark.parametrize("left,right", GROUPED_JOIN_PROVEN)
+def test_distinct_pushed_into_join_sources(left, right):
+    result = prove_equivalent_algebraic(left, right, schema=GROUPED_JOIN_SCHEMA, constraints=GROUPED_JOIN_KEYS, dialect="mysql", compare_names=False)
+    assert result.proven, result.reason
+
+
+def test_distinct_pushed_into_join_sources_needs_a_key():
+    # d.k is not a key here, so the pushed-down form repeats a row of e once per matching row of d
+    result = prove_equivalent_algebraic(
+        GROUPED_JOIN_PROVEN[0][0],
+        GROUPED_JOIN_PROVEN[0][1],
+        schema=GROUPED_JOIN_SCHEMA,
+        constraints={"e": TableConstraints(keys=(("id",),))},
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert not result.proven
+
+
+def test_distinct_pushed_into_join_sources_preserves_results_on_random_databases():
+    rng = random.Random(55)
+    forms = [pair[0] for pair in GROUPED_JOIN_PROVEN]
+    normalized = [normalize(f, schema=GROUPED_JOIN_SCHEMA, dialect="mysql", keys={"e": [("id",)], "d": [("k",)]}) for f in forms]
+    for _ in range(80):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE e (id INT, k INT, v INT)")
+        db.execute("CREATE TABLE d (k INT, name INT)")
+        for n in range(rng.choice([0, 2, 5, 8])):
+            db.execute("INSERT INTO e VALUES (?, ?, ?)", [rng.choice([10, 10, n]), rng.choice([None, 0, 1, 2]), rng.choice([None, 1, 2])])
+        for n in range(rng.choice([0, 2, 4])):
+            db.execute("INSERT INTO d VALUES (?, ?)", [n, rng.choice([None, 1, 2])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            assert Counter(db.execute(plain).fetchall()) == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+IN_LIST_SCHEMA = {"p": ["id", "k", "a"], "q": ["id", "k", "b"]}
+IN_LIST_NOT_NULL = {"p": TableConstraints(not_null=frozenset({"id", "k"})), "q": TableConstraints(not_null=frozenset({"id", "k"}))}
+
+
+def test_select_list_in_is_exists_when_both_sides_are_not_null():
+    result = prove_equivalent_algebraic(
+        "SELECT p.id, p.k IN (SELECT q.k FROM q WHERE q.id < 20) AS hit FROM p",
+        "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM q WHERE q.id < 20 AND q.k = p.k) THEN TRUE ELSE FALSE END AS hit FROM p",
+        schema=IN_LIST_SCHEMA,
+        constraints=IN_LIST_NOT_NULL,
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert result.proven, result.reason
+
+
+def test_select_list_in_keeps_unknown_when_a_side_may_be_null():
+    # p.a may be NULL: IN is then UNKNOWN, not FALSE, so it is not the EXISTS
+    result = prove_equivalent_algebraic(
+        "SELECT p.id, p.a IN (SELECT q.k FROM q) AS hit FROM p",
+        "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM q WHERE q.k = p.a) THEN TRUE ELSE FALSE END AS hit FROM p",
+        schema=IN_LIST_SCHEMA,
+        constraints=IN_LIST_NOT_NULL,
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert not result.proven
+
+
+def test_left_join_to_a_constant_set_is_an_exists_flag():
+    result = prove_equivalent_algebraic(
+        "SELECT p.id, EXISTS (SELECT * FROM q WHERE q.id < 20) AS hit FROM p",
+        "SELECT p.id, CASE WHEN d.i IS NOT NULL THEN TRUE ELSE FALSE END AS hit FROM p LEFT JOIN (SELECT DISTINCT 1 AS i FROM q WHERE q.id < 20) AS d ON TRUE",
+        schema=IN_LIST_SCHEMA,
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert result.proven, result.reason
+
+
+def test_select_list_tuple_in_is_exists_when_all_columns_are_not_null():
+    result = prove_equivalent_algebraic(
+        "SELECT p.id, (p.id, p.k) IN (SELECT q.id, q.k FROM q WHERE q.id < 20) AS hit FROM p",
+        "SELECT p.id, CASE WHEN t.i IS NOT NULL THEN TRUE ELSE FALSE END AS hit FROM p LEFT JOIN (SELECT q.id, q.k, 1 AS i FROM q WHERE q.id < 20) AS t ON p.id = t.id AND p.k = t.k",
+        schema=IN_LIST_SCHEMA,
+        constraints={
+            "p": TableConstraints(not_null=frozenset({"id", "k"}), keys=(("id",),)),
+            "q": TableConstraints(not_null=frozenset({"id", "k"}), keys=(("id",),)),
+        },
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert result.proven, result.reason
