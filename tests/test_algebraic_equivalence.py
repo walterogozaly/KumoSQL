@@ -936,3 +936,19 @@ def test_semi_join_rewrites_preserve_results_on_random_databases():
         for sql, norm in zip(forms, normalized):
             runnable = sqlglot.transpile(norm, read="bigquery", write="sqlite")[0]
             assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(runnable).fetchall()), norm
+
+
+def test_group_by_constants_reads_literals_as_calcite_does():
+    schema = {"emp": ["empno", "deptno", "mgr"]}
+    pairs = [
+        ("SELECT deptno, MAX(mgr) FROM emp GROUP BY deptno, 4", "SELECT deptno, MAX(mgr) FROM emp GROUP BY deptno"),
+        ("SELECT 4, MAX(5) FROM emp GROUP BY 4, 2 + 3", "SELECT 4, MAX(5) FROM emp GROUP BY 4"),
+    ]
+    for left, right in pairs:
+        on = prove_equivalent_algebraic(left, right, schema=schema, dialect="mysql", compare_names=False, group_by_constants=True)
+        assert on.proven
+    # constants-only grouping is not a global aggregate: an empty input gives no row, not one
+    off = prove_equivalent_algebraic(
+        "SELECT MAX(mgr) FROM emp GROUP BY 4", "SELECT MAX(mgr) FROM emp", schema=schema, dialect="mysql", compare_names=False, group_by_constants=True
+    )
+    assert not off.proven

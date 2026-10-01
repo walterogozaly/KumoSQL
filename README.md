@@ -271,7 +271,7 @@ result = prove_equivalent_smt(
 assert result.proven
 ```
 
-Pass `schema={"t": ["id", "a"]}` to enable `SELECT *` and unqualified columns in joins, and `exact_arithmetic=True` to reason about `+`, `-` and `*` exactly (right for INT64 and NUMERIC, not FLOAT64). The CLI prints JSON and exits 0 only on a proof:
+Pass `schema={"t": ["id", "a"]}` to enable `SELECT *` and unqualified columns in joins, and `exact_arithmetic=True` to reason about `+`, `-` and `*` exactly (right for INT64 and NUMERIC, not FLOAT64). `group_by_constants=True` reads a literal in `GROUP BY` as a constant (Calcite's rule) instead of a column ordinal. The CLI prints JSON and exits 0 only on a proof:
 
 ```shell
 python -m kumosql prove-sql-smt left.sql right.sql --schema schema.json
