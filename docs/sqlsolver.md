@@ -29,15 +29,17 @@ Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `prov
 
 ## Benchmark coverage
 
-`tools/sqlsolver_bench.py` runs the benchmark pairs published with SQLSolver (copied to `tests/fixtures/sqlsolver/`, Apache-2.0, LICENSE alongside) through the prover. SQLSolver's authors state every pair is equivalent, so the benchmark measures how many pairs KumoSQL **proves** versus leaves **unknown**; a pair is never reported "not equivalent" just because it was not proved. Each proof is re-checked on 60 random SQLite databases (NULLs, duplicates, empty tables; NOT NULL and primary keys respected) and any disagreement counts as a **wrong** proof. `tests/test_sqlsolver_benchmarks.py` fails on any wrong proof or when a suite falls below its floor.
+`tools/sqlsolver_bench.py` runs the benchmark pairs published with SQLSolver (copied to `tests/fixtures/sqlsolver/`, Apache-2.0, LICENSE alongside) through the prover. SQLSolver's authors state every pair is equivalent, so the benchmark measures how many pairs KumoSQL **proves** versus leaves **unknown**; a pair is never reported "not equivalent" just because it was not proved. Each proof is re-checked on 60 random DuckDB databases (NULLs, duplicates, empty tables; NOT NULL and primary keys respected) and any disagreement counts as a **wrong** proof. `tests/test_sqlsolver_benchmarks.py` fails on any wrong proof or when a suite falls below its floor.
 
 Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs are read as MySQL and translated to BigQuery for the prover.
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 53 | 179 | 0 | baseline before the multiplicity algebra |
-| Spark SQL | 127 | 67 | 60 | 0 | baseline |
-| TPC-H | 22 | 0 | 22 | 0 | baseline |
-| TPC-C | 19 | 17 | 2 | 0 | baseline |
+| Calcite | 232 | 93 | 139 | 0 | was 53 before constraints, pruning and key-based join merging |
+| Spark SQL | 127 | 86 | 41 | 0 | was 67 |
+| TPC-H | 22 | 1 | 21 | 0 | was 0; mostly LIMIT, date literals, subqueries |
+| TPC-C | 19 | 17 | 2 | 0 | was 17 |
+
+The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSolver assumes), output names ignored, NOT NULL and primary keys from the schema, and the input read as MySQL. "Unchecked" proofs (a few pairs that DuckDB itself rejects) are listed in the tool output.
 
 SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.

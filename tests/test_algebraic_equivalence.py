@@ -90,7 +90,19 @@ def test_normalize_is_idempotent():
             assert normalize(once) == once
 
 
-@pytest.mark.parametrize("sql", [v for case in PROVEN + NOT_PROVEN for v in case.values])
+# Union branches that name their columns differently: copies of the outer select
+# must still read the first branch's names positionally.
+MISALIGNED = [
+    "SELECT u.a FROM (SELECT a, k FROM A UNION ALL SELECT k, a FROM A) AS u",
+    "SELECT u.a, COUNT(*) AS n FROM (SELECT a, k FROM A UNION ALL SELECT k AS b, a AS c FROM B) AS u GROUP BY u.a",
+    "SELECT SUM(u.k) AS s FROM (SELECT a, k FROM A UNION ALL SELECT k, a FROM B) AS u WHERE u.a > 0",
+    "SELECT u.x, c.x FROM (SELECT a AS x, k FROM A UNION ALL SELECT k, a FROM B) AS u JOIN C AS c ON u.k = c.k",
+]
+
+
+@pytest.mark.parametrize(
+    "sql", [v for case in PROVEN + NOT_PROVEN for v in case.values] + MISALIGNED
+)
 def test_normalization_preserves_results_on_random_databases(sql):
     rng = random.Random(7)
     normalized = normalize(sql)

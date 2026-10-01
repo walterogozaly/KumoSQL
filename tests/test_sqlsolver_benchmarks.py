@@ -1,6 +1,6 @@
 """SQLSolver's published benchmark pairs: coverage floors and zero wrong proofs.
 
-Every proof is re-checked by running both queries on random SQLite databases that
+Every proof is re-checked by running both queries on random DuckDB databases that
 respect the schema's constraints. ``FLOORS`` only ever goes up: a drop means a
 regression in proving power, a wrong proof means a soundness bug.
 """
@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("z3")
+pytest.importorskip("duckdb")
 
 _path = Path(__file__).resolve().parent.parent / "tools" / "sqlsolver_bench.py"
 _spec = importlib.util.spec_from_file_location("sqlsolver_bench", _path)
@@ -19,7 +20,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["sqlsolver_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {"calcite": 50, "spark": 64, "tpch": 0, "tpcc": 16}
+FLOORS = {"calcite": 90, "spark": 84, "tpch": 1, "tpcc": 16}
 
 
 @pytest.mark.parametrize(
