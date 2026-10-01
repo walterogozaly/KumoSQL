@@ -170,3 +170,54 @@ def test_string_and_date_ordering_is_fast_and_exact():
     assert not prove_equivalent_algebraic(
         base, "SELECT a FROM t WHERE d > DATE '1994-08-31' AND d < DATE '1994-12-01'", schema=schema
     ).proven
+
+
+# Pre-aggregated tables joined and re-aggregated: the flat form must give the same rows.
+EAGER = [
+    "SELECT COALESCE(SUM(p.c * q.c), 0) AS n FROM (SELECT k, COUNT(*) AS c FROM A GROUP BY k) AS p "
+    "JOIN (SELECT k, COUNT(*) AS c FROM B GROUP BY k) AS q ON p.k = q.k",
+    "SELECT p.k, SUM(p.s * q.c) AS t FROM (SELECT k, SUM(x) AS s FROM A GROUP BY k) AS p "
+    "JOIN (SELECT k, COUNT(*) AS c FROM B GROUP BY k) AS q ON p.k = q.k GROUP BY p.k",
+    "SELECT q.k, MIN(p.m) AS lo, MAX(p.m) AS hi, SUM(p.c) AS n FROM "
+    "(SELECT k, MIN(x) AS m, COUNT(*) AS c FROM A WHERE a > 0 GROUP BY k) AS p JOIN C AS q ON p.k = q.k GROUP BY q.k",
+    "SELECT q.a, SUM(p.s) AS t FROM (SELECT k, SUM(x) AS s FROM A GROUP BY k) AS p JOIN C AS q ON p.k = q.k GROUP BY q.a",
+    # A join of grouped tables read off by arithmetic.
+    "SELECT p.k, q.k AS k2, p.s * q.c AS t, p.c * q.c AS n, p.m FROM "
+    "(SELECT k, SUM(x) AS s, COUNT(*) AS c, MIN(x) AS m FROM A GROUP BY k) AS p "
+    "JOIN (SELECT k, COUNT(*) AS c FROM B GROUP BY k) AS q ON p.k <= q.k",
+    "SELECT q.k, p.s, p.c FROM (SELECT k, SUM(x) AS s, COUNT(*) AS c FROM A GROUP BY k) AS p "
+    "JOIN (SELECT k FROM B GROUP BY k) AS q ON p.k = q.k",
+    "SELECT p.k, p.s + 1 AS t FROM (SELECT k, SUM(x) AS s FROM A GROUP BY k) AS p "
+    "JOIN (SELECT k, COUNT(*) AS c FROM B GROUP BY k) AS q ON p.k = q.k",
+    # Not rewritable: these would change how many times a group is counted.
+    "SELECT COUNT(*) AS n FROM (SELECT k, COUNT(*) AS c FROM A GROUP BY k) AS p JOIN C AS q ON p.k = q.k",
+    "SELECT SUM(q.x) AS n FROM (SELECT k, COUNT(*) AS c FROM A GROUP BY k) AS p JOIN C AS q ON p.k = q.k",
+    "SELECT p.k, SUM(p.s + 1) AS n FROM (SELECT k, SUM(x) AS s FROM A GROUP BY k) AS p GROUP BY p.k",
+]
+
+
+@pytest.mark.parametrize("sql", EAGER)
+def test_eager_aggregation_unnesting_preserves_results(sql):
+    rng = random.Random(11)
+    normalized = normalize(sql)
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        for table in ("A", "B", "C"):
+            db.execute(f"CREATE TABLE {table} (a INT, k INT, x INT)")
+            for _ in range(rng.choice([0, 1, 2, 4, 6])):
+                row = [rng.choice([None, 0, 1, 2]) for _ in range(3)]
+                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", row)
+        assert Counter(db.execute(sql).fetchall()) == Counter(db.execute(normalized).fetchall()), normalized
+
+
+def test_eager_aggregation_is_proved_equal_to_the_flat_join():
+    schema = {"a": ["a", "k", "x"], "b": ["a", "k", "x"]}
+    eager = (
+        "SELECT p.k, SUM(p.s * q.c) AS t FROM (SELECT k, SUM(x) AS s FROM a GROUP BY k) AS p "
+        "JOIN (SELECT k, COUNT(*) AS c FROM b GROUP BY k) AS q ON p.k = q.k GROUP BY p.k"
+    )
+    flat = "SELECT a.k, SUM(a.x) AS t FROM a JOIN b ON a.k = b.k GROUP BY a.k"
+    assert prove_equivalent_algebraic(eager, flat, schema=schema).proven
+    # Summing the count instead of the sum is a different query.
+    other = eager.replace("SUM(p.s * q.c)", "SUM(q.c)")
+    assert not prove_equivalent_algebraic(other, flat, schema=schema).proven
