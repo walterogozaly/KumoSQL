@@ -636,3 +636,9 @@ select.sp-input { min-width: 200px; }
 .rule-ref-label { color: var(--text-muted); font-size: 12.5px; }
 .rule-ref select { font: inherit; font-size: 12.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px; min-width: 0; }
 .rule-actions .link-button:disabled { opacity: .45; cursor: not-allowed; text-decoration: none; }
+.rule-query { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+.rule-sql { font: inherit; font-size: 12px; font-family: var(--font-mono); color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 8px; resize: vertical; min-width: 0; }
+.rule-query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.rule-query-row input { flex: 1 1 180px; min-width: 0; }
+.rule-query-status { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.rule-query-status.is-error { color: var(--danger-text, #b3261e); }

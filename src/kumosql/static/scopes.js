@@ -99,7 +99,8 @@
 
   const operators = () => (fieldInfo.operators.length ? fieldInfo.operators : FALLBACK_OPERATORS);
   const operatorLabel = (op) => operators().find((item) => item.op === op)?.label || op;
-  const newCondition = () => ({ type: "cond", field: "", op: "in", value: "" });
+  const QUERY_OPS = new Set(["in_query"]);
+  const newCondition = () => ({ type: "cond", field: "", op: "in", value: "", query: "", column: "" });
   const newGroup = (mode = "all") => ({ type: "group", mode, negate: false, children: [newCondition()] });
 
   function treeToRule(node) {
@@ -111,6 +112,10 @@
       const field = node.field.trim();
       if (!field) throw new Error("Pick a field for every condition");
       if (NO_VALUE_OPS.has(node.op)) return { field, op: node.op };
+      if (QUERY_OPS.has(node.op)) {
+        if (!node.query.trim()) throw new Error(`Write the SQL query for “${field}”`);
+        return { field, op: node.op, query: node.query.trim(), ...(node.column.trim() ? { column: node.column.trim() } : {}) };
+      }
       const text = String(node.value).trim();
       if (!text) throw new Error(`Add a value for “${field}”`);
       return { field, op: node.op, value: LIST_OPS.has(node.op) ? text.split(/[,;\n\r]+/).map((v) => v.trim()).filter(Boolean) : text };
@@ -125,7 +130,7 @@
     if (rule.scope !== undefined) return { type: "ref", name: rule.scope };
     if (rule.field !== undefined) {
       const value = Array.isArray(rule.value) ? rule.value.join(", ") : rule.value === undefined ? "" : String(rule.value);
-      return { type: "cond", field: rule.field, op: rule.op, value };
+      return { type: "cond", field: rule.field, op: rule.op, value, query: rule.query || "", column: rule.column || "" };
     }
     if (rule.not !== undefined) {
       const inner = ruleToTree(rule.not);
@@ -141,6 +146,10 @@
     if (rule.field !== undefined) {
       const label = operatorLabel(rule.op);
       if (NO_VALUE_OPS.has(rule.op)) return `${rule.field} ${label}`;
+      if (QUERY_OPS.has(rule.op)) {
+        const text = rule.query.split(/\s+/).join(" ");
+        return `${rule.field} ${label} “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`;
+      }
       const value = Array.isArray(rule.value) ? `[${rule.value.join(", ")}]` : rule.value;
       return `${rule.field} ${label} ${value}`;
     }
@@ -156,6 +165,126 @@
     } catch {
       return "";
     }
+  }
+
+  /* ---------- Query conditions ---------- */
+
+  async function queryCall(mode, node) {
+    const response = await fetch("/api/scope-queries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, query: node.query, column: node.column || null }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "The query could not be checked");
+    return data;
+  }
+
+  const formatBytes = (bytes) => {
+    if (bytes == null) return "unknown size";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit += 1; }
+    return `${unit ? value.toFixed(1) : value} ${units[unit]}`;
+  };
+  const formatTime = (seconds) => new Date(seconds * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+  function describeResult(result) {
+    if (!result) return "Not run yet. Check is free; Run executes the query once and keeps the result.";
+    const parts = [`${result.count.toLocaleString()} value${result.count === 1 ? "" : "s"} from “${result.column}”`,
+      `last run ${formatTime(result.fetched_at)}`,
+      result.stale ? "expired, will re-run when used" : `kept until ${formatTime(result.expires_at)}`];
+    if (result.bytes_billed != null) parts.push(`${formatBytes(result.bytes_billed)} billed`);
+    if (result.sample.length) parts.push(`e.g. ${result.sample.slice(0, 3).join(", ")}`);
+    return parts.join(" · ") + (result.error ? `. The last re-run failed: ${result.error}` : "");
+  }
+
+  /** The SQL box of an "is returned by SQL query" condition, with Check, Run and Refresh. */
+  function renderQueryBox(node, showPreview) {
+    const sql = h("textarea", { rows: "5", spellcheck: "false", "aria-label": "SQL query", class: "rule-sql",
+      placeholder: "SELECT user_email FROM `project.dataset.my_team`\n-- returns the values this field must be in" });
+    sql.value = node.query;
+    const column = h("input", { type: "text", "aria-label": "Column", placeholder: "column (default: the first)", value: node.column });
+    const status = h("p", { class: "rule-query-status", "aria-live": "polite" });
+    const check = h("button", { type: "button", class: "link-button", text: "Check (free)", title: "Dry run: validates the query and estimates its cost without running it" });
+    const run = h("button", { type: "button", class: "link-button", text: "Run and keep", title: "Run it (or reuse the kept result) and show what it returns" });
+    const refresh = h("button", { type: "button", class: "link-button", text: "Refresh now", title: "Run it again now, ignoring the kept result" });
+    const busy = (text) => { status.textContent = text; status.classList.remove("is-error"); };
+    const fail = (error) => { status.textContent = error.message; status.classList.add("is-error"); };
+    const load = async () => {
+      if (!node.query.trim()) { status.textContent = ""; return; }
+      try { status.textContent = describeResult((await queryCall("status", node)).result); status.classList.remove("is-error"); } catch (error) { fail(error); }
+    };
+    sql.addEventListener("input", () => { node.query = sql.value; showPreview(); });
+    sql.addEventListener("change", load);
+    column.addEventListener("input", () => { node.column = column.value; });
+    column.addEventListener("change", load);
+    check.addEventListener("click", async () => {
+      busy("Checking…");
+      try {
+        const { plan } = await queryCall("check", node);
+        status.textContent = `OK: returns ${plan.columns.join(", ")}; would process about ${formatBytes(plan.estimated_bytes)} (cap ${formatBytes(plan.max_bytes_billed)}). Nothing was run or billed.`;
+      } catch (error) { fail(error); }
+    });
+    for (const [button, mode, label] of [[run, "run", "Running…"], [refresh, "refresh", "Refreshing…"]]) {
+      button.addEventListener("click", async () => {
+        busy(label);
+        try { status.textContent = describeResult((await queryCall(mode, node)).result); } catch (error) { fail(error); }
+      });
+    }
+    const box = h("div", { class: "rule-query" }, sql, h("div", { class: "rule-query-row" }, column, check, run, refresh), status);
+    if (node.query.trim()) load();
+    return box;
+  }
+
+  /** Settings for query conditions: billing project (from BigQuery settings), cache timer, byte cap. */
+  function renderQuerySettings(body) {
+    const billing = h("p", { class: "sp-row-hint" });
+    const hours = h("input", { type: "number", min: "0", max: "8760", step: "any", "aria-label": "Keep results for (hours)" });
+    const cap = h("input", { type: "number", min: "10", step: "any", "aria-label": "Maximum billed per query (MB)" });
+    const cached = h("ul", { class: "scope-list" });
+    const status = h("p", { class: "sp-row-hint" });
+    const row = (label, hint, control) => h("div", { class: "sp-row" },
+      h("div", { class: "sp-row-text" }, h("span", { class: "sp-row-label", text: label }), h("p", { class: "sp-row-hint", text: hint })),
+      h("div", { class: "sp-row-control" }, control));
+    const draw = (info) => {
+      billing.textContent = info.billing_project
+        ? `Queries run in billing project “${info.billing_project}” (chosen in Settings → BigQuery).`
+        : "No billing project is chosen yet. Choose one in Settings → BigQuery; query conditions cannot run without it.";
+      hours.value = info.settings.cache_hours;
+      cap.value = info.settings.max_bytes_billed / 1e6;
+      cached.replaceChildren(...info.cached.map((item) => h("li", { class: "scope-item" },
+        h("div", {}, h("strong", { text: item.sql || "(query)" }),
+          h("small", { text: `${item.count.toLocaleString()} values · last run ${formatTime(item.fetched_at)} · ${item.expired ? "expired" : `kept until ${formatTime(item.expires_at)}`}` })))));
+      status.textContent = info.cached.length ? "" : "No query results are kept yet.";
+    };
+    const refreshInfo = async () => {
+      try { const response = await fetch("/api/scope-queries"); if (response.ok) draw(await response.json()); } catch { /* leave as is */ }
+    };
+    const saveSettings = async () => {
+      try {
+        const response = await fetch("/api/settings/scope_queries", {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cache_hours: Number(hours.value), max_bytes_billed: Math.round(Number(cap.value) * 1e6) }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not save");
+        status.textContent = "Saved.";
+        await refreshInfo();
+      } catch (error) { status.textContent = error.message; }
+    };
+    hours.addEventListener("change", saveSettings);
+    cap.addEventListener("change", saveSettings);
+    body.append(
+      h("h4", { class: "sp-subheading", text: "Query conditions" }),
+      h("p", { class: "sp-lede", text: "A condition can be “is returned by SQL query”: the field must be one of the values a BigQuery query returns, for example a team kept in a table. Queries are dry-run first and capped, run in your billing project, and their results are kept so they are not billed again until the timer ends." }),
+      billing,
+      h("div", { class: "sp-group" },
+        row("Keep results for (hours)", "How long a result is reused before the query runs again. Default 48. Use Refresh now on a condition to run it sooner.", hours),
+        row("Maximum billed per query (MB)", "A query estimated over this is not run, and BigQuery refuses to bill more. Default 1,074 MB (1 GiB).", cap)),
+      h("h4", { class: "sp-subheading", text: "Kept results" }), cached, status);
+    refreshInfo();
   }
 
   /* ---------- Rule builder ---------- */
@@ -186,9 +315,11 @@
       // A list takes a pasted block: commas, semicolons or one value per line.
       const listValue = h("textarea", { rows: "3", "aria-label": "Values", spellcheck: "false", placeholder: "Paste values: one per line, or separated by commas" });
       listValue.value = node.value;
+      const queryBox = renderQueryBox(node, showPreview);
       const syncValue = () => {
-        value.hidden = NO_VALUE_OPS.has(node.op) || LIST_OPS.has(node.op);
+        value.hidden = NO_VALUE_OPS.has(node.op) || LIST_OPS.has(node.op) || QUERY_OPS.has(node.op);
         listValue.hidden = !LIST_OPS.has(node.op);
+        queryBox.hidden = !QUERY_OPS.has(node.op);
         value.placeholder = "value";
       };
       value.addEventListener("input", () => { node.value = value.value; listValue.value = value.value; showPreview(); });
@@ -200,7 +331,7 @@
       remove.title = "Remove condition";
       remove.setAttribute("aria-label", "Remove condition");
       remove.addEventListener("click", () => { parent.children.splice(parent.children.indexOf(node), 1); redraw(); });
-      return h("div", { class: "rule-condition" }, field, op, value, listValue, remove);
+      return h("div", { class: "rule-condition" }, field, op, value, listValue, queryBox, remove);
     };
 
     const renderRef = (node, parent) => {
@@ -373,6 +504,7 @@
       h("div", { class: "sp-group" }, list, empty),
       h("h4", { class: "sp-subheading", text: "New scope" }),
       form);
+    renderQuerySettings(body);
     renderList();
     Promise.all([load(), loadFields()]).then(() => { renderList(); fillFields(); redraw(); });
     fillFields();

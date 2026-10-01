@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import live_graph
 from . import live_insights
+from . import scope_queries
 from . import scopes as scope_store
 from . import state
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
@@ -162,6 +163,13 @@ class UIHandler(BaseHTTPRequestHandler):
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
             })
             return
+        if self.path == "/api/scope-queries":
+            self._json(200, {
+                "settings": scope_queries.get_settings().to_json(),
+                "billing_project": scope_queries.billing_project(),
+                "cached": scope_queries.cached_queries(),
+            })
+            return
         if self.path == "/api/scope-fields":
             self._json(200, self._scope_fields())
             return
@@ -250,7 +258,7 @@ class UIHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         section = self.path.removeprefix("/api/settings/")
-        if section not in ("ui", "format", "scopes") or section == self.path:
+        if section not in ("ui", "format", "scopes", "scope_queries") or section == self.path:
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
@@ -266,6 +274,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 prefs = parse_preferences(payload)
                 save_preferences(prefs)
                 saved = prefs.to_json()
+            elif section == "scope_queries":
+                saved = scope_queries.save_settings(payload).to_json()
             else:
                 if not isinstance(payload, list):
                     raise ValueError("scopes must be a list")
@@ -325,7 +335,7 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path not in (
             "/api/transform", "/api/github/connect", "/api/github/file", "/api/github/load",
             "/api/project/git", "/api/project", "/api/project/clear",
-            "/api/jobs", "/api/jobs/clear", "/api/changes/compare",
+            "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -351,6 +361,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 label = payload.get("label")
                 live_graph.load_files(payload.get("files"), label if isinstance(label, str) else "")
                 result = {"loaded": True, "label": live_graph.loaded()["label"], "files": len(payload["files"])}
+            elif self.path == "/api/scope-queries":
+                result = _scope_query(payload)
             elif self.path == "/api/project/clear":
                 live_graph.clear_project()
                 result = {"loaded": False}
@@ -373,6 +385,26 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
             return
         self._json(200, result)
+
+
+def _scope_query(payload: dict) -> dict:
+    """Check, look up or run one scope query. ``mode`` is ``status`` (the saved result, if any),
+    ``check`` (a free dry run), ``run`` (use the cache while fresh) or ``refresh`` (run now)."""
+
+    sql, column = payload.get("query"), payload.get("column") or None
+    if not isinstance(sql, str) or not sql.strip():
+        raise ValueError("write the SQL query first")
+    if column is not None and not isinstance(column, str):
+        raise ValueError("column must be text")
+    mode = payload.get("mode", "status")
+    if mode == "status":
+        saved = scope_queries.peek(sql, column)
+        return {"result": saved.to_json() if saved else None}
+    if mode == "check":
+        return {"plan": scope_queries.dry_run(sql, column)}
+    if mode in ("run", "refresh"):
+        return {"result": scope_queries.result_for(sql, column, refresh=mode == "refresh").to_json()}
+    raise ValueError("mode must be status, check, run or refresh")
 
 
 def _profiles(pipeline) -> dict | None:
