@@ -99,9 +99,17 @@ PROVEN = {
         "SELECT LOWER(TRIM(status)) || region AS x FROM orders",
         "SELECT CONCAT(TRIM(LOWER(status)), region) AS x FROM orders",
     ),
+    "limit in a derived table": (
+        "SELECT order_id FROM (SELECT order_id, amount FROM orders ORDER BY amount, order_id LIMIT 5)",
+        "SELECT order_id FROM orders ORDER BY amount, order_id LIMIT 5",
+    ),
 }
 
 NOT_PROVEN = {
+    "limit in a derived table, ordered the other way": (
+        "SELECT order_id FROM (SELECT order_id, amount FROM orders ORDER BY amount, order_id LIMIT 5)",
+        "SELECT order_id FROM orders ORDER BY amount DESC, order_id LIMIT 5",
+    ),
     "inner join is not a left join to the grouped table": (
         "SELECT c.customer_id, (SELECT SUM(o.amount) FROM orders o WHERE o.customer_id = c.customer_id) AS t FROM customers c",
         "SELECT c.customer_id, g.s AS t FROM customers c JOIN (SELECT customer_id, SUM(amount) AS s FROM orders GROUP BY customer_id) g ON c.customer_id = g.customer_id",

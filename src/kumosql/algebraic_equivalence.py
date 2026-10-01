@@ -2274,6 +2274,53 @@ def _drop_global_null_filter(select: exp.Select) -> exp.Expression | None:
     return None
 
 
+def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
+    """``SELECT id FROM (SELECT id, x FROM t ORDER BY x LIMIT 5)`` is ``SELECT id FROM t ORDER BY x LIMIT 5``.
+
+    A select that only lists columns of a derived table keeps its rows, so the derived table's
+    ``ORDER BY .. LIMIT`` can sit at the top, which the prover reads as a limit query.
+    """
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or select.args.get("joins") or any(
+        select.args.get(k) for k in ("where", "group", "having", "distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")
+    ):
+        return None
+    source = from_.this
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select) or select.find_ancestor(exp.Select) is not None:
+        return None
+    inner = source.this
+    if inner.args.get("limit") is None or inner.args.get("order") is None or any(inner.args.get(k) for k in ("distinct", "qualify", "with_", "with")):
+        return None
+    if any(isinstance(e, exp.Star) for e in inner.expressions):
+        return None
+    alias = (source.alias or "").lower()
+    by_name = {}
+    for item in inner.expressions:
+        name = item.alias_or_name.lower()
+        if not name or name in by_name:
+            return None
+        by_name[name] = item
+    items = []
+    for item in select.expressions:
+        column = item.this if isinstance(item, exp.Alias) else item
+        if not isinstance(column, exp.Column) or isinstance(column.this, exp.Star) or (column.table and column.table.lower() != alias):
+            return None
+        origin = by_name.get(column.name.lower())
+        if origin is None:
+            return None
+        value = origin.this if isinstance(origin, exp.Alias) else origin
+        name = item.alias_or_name
+        items.append(exp.alias_(value.copy(), name) if name else value.copy())
+    kept = {item.alias_or_name.lower() for item in items}
+    aliased = {n for n, item in by_name.items() if isinstance(item, exp.Alias)}
+    if any(c.name.lower() in aliased and not c.table and c.name.lower() not in kept for c in inner.args["order"].find_all(exp.Column)):
+        return None
+    result = inner.copy()
+    result.set("expressions", items)
+    return result
+
+
 def _in_over_union(tree: exp.Expression) -> exp.Expression:
     """``x IN (SELECT a FROM p UNION ALL SELECT b FROM q)`` is ``x IN (SELECT a FROM p) OR x IN (SELECT b FROM q)``.
 
@@ -2396,7 +2443,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
