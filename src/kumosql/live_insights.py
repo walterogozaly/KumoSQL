@@ -14,6 +14,7 @@ from typing import Iterable
 
 from . import live_graph
 from .live_graph import ProjectError, empty_payload, source_info
+from .timing import stage
 
 MAX_OPPORTUNITIES = 50
 
@@ -79,7 +80,8 @@ def _opportunities(pipeline, reads: list, nodes: dict[str, dict], window: dict |
     from .opportunities import OpportunityInput, rank_opportunities
     from .repeated_work import repeated_work_report
 
-    found = repeated_work_report(pipeline)["opportunities"]
+    with stage("repeated work"):
+        found = pipeline._remembered(("repeated_work",), lambda: repeated_work_report(pipeline))["opportunities"]
     names = _model_names(pipeline)
     graph = build_query_graph(pipeline, reads) if found else None
     days = _window_days(window)
@@ -121,6 +123,9 @@ def cost_payload(scope_name: str | None = None, rate: float | None = None) -> di
     current = live_graph.loaded()
     if current is None:
         return empty_payload("project", "Load a Dataform project to see where the same work repeats.", scope_name)
+    waiting = live_graph.pending_payload(current, scope_name)
+    if waiting:
+        return waiting
     pipeline = current["pipeline"]
     plan, reads, keep = _filtered(current, scope_name)
     if rate is not None and not 0 < rate < 1e6:
@@ -193,7 +198,12 @@ def _proposals(current: dict) -> list[dict]:
     from .shared_logic import propose_shared_logic
 
     try:
-        return [p.to_json() for p in propose_shared_logic(current["pipeline"], current["observed_reads"])]
+        pipeline = current["pipeline"]
+        reads = current["observed_reads"]
+        with stage("shared logic proposals"):
+            return pipeline._remembered(
+                ("shared_logic", id(reads), len(reads)),
+                lambda: [p.to_json() for p in propose_shared_logic(pipeline, reads)])
     except Exception:  # noqa: BLE001 - proposals are advisory; the rest of the page must still load
         return []
 
@@ -211,6 +221,9 @@ def changes_payload(scope_name: str | None = None) -> dict:
     current = live_graph.loaded()
     if current is None:
         return empty_payload("project", "Load a Dataform git repository to compare branches.", scope_name)
+    waiting = live_graph.pending_payload(current, scope_name)
+    if waiting:
+        return waiting
     plan = live_graph._plan(scope_name, current["observed_reads"])
     report = current.get("report")
     payload: dict = {

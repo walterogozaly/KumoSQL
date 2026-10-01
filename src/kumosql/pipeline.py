@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 import re
+import threading
 from typing import TYPE_CHECKING, Iterable, Mapping
 
 import sqlglot
@@ -32,6 +33,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
+from .timing import stage
 from .ast_utils import quiet_parser as _quiet_parser
 from .resilience import (
     PipelineLoadError,  # noqa: F401
@@ -101,6 +103,10 @@ class Pipeline:
             if known.kind == "table" and known.parts:
                 self._known_by_tail.setdefault(known.parts[-1], []).append(known)
         self._analysis: _Analysis | None = None
+        self._memo: dict = {}
+        self._memo_locks: dict = {}
+        self._memo_guard = threading.Lock()
+        self._analysis_lock = threading.Lock()
 
     def resolve(self, table: exp.Table | str) -> str | None:
         """Map a table reference to a model or declared source key."""
@@ -326,7 +332,12 @@ class Pipeline:
         occurrence sits inside an occurrence of a larger reported group.
         """
 
-        return _find_duplicates(self._analyse().parsed, min_nodes=min_nodes)
+        def compute():
+            parsed = self._analyse().parsed
+            with stage("duplicates", models=len(parsed)):
+                return _find_duplicates(parsed, min_nodes=min_nodes)
+
+        return self._remembered(("duplicates", min_nodes), compute)
 
     def near_duplicate_selects(
         self, *, min_nodes: int = 12, threshold: float = 0.7
@@ -338,7 +349,27 @@ class Pipeline:
 
         from .near_duplicates import find_near_duplicates
 
-        return find_near_duplicates(self._analyse().parsed, min_nodes=min_nodes, threshold=threshold)
+        def compute():
+            parsed = self._analyse().parsed
+            with stage("near_duplicates", models=len(parsed)):
+                return find_near_duplicates(parsed, min_nodes=min_nodes, threshold=threshold)
+
+        return self._remembered(("near_duplicates", min_nodes, threshold), compute)
+
+    def has_remembered(self, name: str) -> bool:
+        """Whether an expensive result (``duplicates`` or ``near_duplicates``) is already computed."""
+
+        return any(key[0] == name for key in list(self._memo))
+
+    def _remembered(self, key: tuple, compute):
+        """Compute once per pipeline: the project is immutable, so repeats (and the other pages) reuse it."""
+
+        with self._memo_guard:
+            lock = self._memo_locks.setdefault(key, threading.Lock())
+        with lock:  # one lock per result, so a long search never blocks the graph or other results
+            if key not in self._memo:
+                self._memo[key] = compute()
+            return self._memo[key]
 
     def all_diagnostics(self) -> list[PipelineDiagnostic]:
         return [*self.diagnostics, *self._analyse().diagnostics]
@@ -368,8 +399,13 @@ class Pipeline:
         verdicts: "Mapping[str, Mapping[str, int]] | None" = None,
         window: "Mapping[str, str | None] | None" = None,
         thresholds: "Thresholds | None" = None,
+        include_duplicates: bool = True,
     ) -> dict:
         """A JSON-serialisable summary of the whole-pipeline analysis.
+
+        ``include_duplicates=False`` skips the duplicate and near-duplicate
+        searches (``duplicates`` and ``near_duplicates`` are then empty); they
+        are the slowest part and the graph does not need them.
 
         With a ``scope`` the report is limited to models whose target matches
         it (fields ``project``, ``dataset``, ``name`` and ``table``; any other
@@ -381,7 +417,7 @@ class Pipeline:
         ``coverage["gate"]``.
         """
 
-        report = self._full_report(min_nodes=min_nodes, similarity=similarity)
+        report = self._full_report(min_nodes=min_nodes, similarity=similarity, include_duplicates=include_duplicates)
         from .graph import build_query_graph
 
         graph, error = guarded(
@@ -620,7 +656,7 @@ class Pipeline:
         ]
         return graph
 
-    def _full_report(self, *, min_nodes: int, similarity: float) -> dict:
+    def _full_report(self, *, min_nodes: int, similarity: float, include_duplicates: bool = True) -> dict:
         failed: list[PipelineDiagnostic] = []
 
         def section(name: str, default, action):
@@ -637,7 +673,7 @@ class Pipeline:
         duplicates = section(
             "duplicates",
             [],
-            lambda: [
+            lambda: [] if not include_duplicates else [
                 {
                     "fingerprint": group.fingerprint,
                     "node_count": group.node_count,
@@ -650,7 +686,7 @@ class Pipeline:
         near = section(
             "near_duplicates",
             [],
-            lambda: [
+            lambda: [] if not include_duplicates else [
                 cluster.to_json()
                 for cluster in self.near_duplicate_selects(min_nodes=min_nodes, threshold=similarity)
             ],
@@ -681,9 +717,11 @@ class Pipeline:
         }
 
     def _analyse(self) -> "_Analysis":
-        if self._analysis is None:
-            self._analysis = _Analysis.run(self)
-        return self._analysis
+        with self._analysis_lock:
+            if self._analysis is None:
+                with stage("analyse", models=len(self.models)):
+                    self._analysis = _Analysis.run(self)
+            return self._analysis
 
 
 def _parse_script(sql: str) -> tuple[exp.Expression | None, int]:
