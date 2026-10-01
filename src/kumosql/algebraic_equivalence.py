@@ -742,6 +742,62 @@ def _fold_constants(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+def _is_empty_select(node: exp.Expression) -> bool:
+    """A SELECT whose WHERE is literally FALSE (or that has LIMIT 0) returns no rows."""
+
+    while isinstance(node, exp.Subquery):
+        node = node.this
+    if not isinstance(node, exp.Select) or node.args.get("group") or node.args.get("having"):
+        return False
+    where = node.args.get("where")
+    if where is not None and isinstance(where.this, exp.Boolean) and not where.this.this:
+        return True
+    limit = node.args.get("limit")
+    return limit is not None and isinstance(limit.expression, exp.Literal) and limit.expression.name == "0"
+
+
+def _fold_trivia(tree: exp.Expression) -> exp.Expression:
+    """Small exact identities: ``(SELECT 1)`` is ``1``, ``IN``/``EXISTS`` over an empty subquery
+    is FALSE, and ``agg(x) FILTER (WHERE c)`` is ``agg(CASE WHEN c THEN x END)``."""
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.Subquery) and isinstance(node.parent, exp.Binary):
+            inner = node.this
+            if (
+                isinstance(inner, exp.Select)
+                and len(inner.expressions) == 1
+                and not any(inner.args.get(k) for k in ("from_", "from", "where", "group", "having", "joins", "limit", "distinct"))
+                and isinstance(inner.expressions[0], (exp.Literal, exp.Boolean))
+            ):
+                return inner.expressions[0].copy()
+        if isinstance(node, exp.In) and isinstance(node.args.get("query"), exp.Expression) and _is_empty_select(node.args["query"]):
+            return exp.false()
+        if isinstance(node, exp.Exists) and _is_empty_select(node.this):
+            return exp.false()
+        if isinstance(node, exp.Filter) and isinstance(node.this, (exp.Count, exp.Sum, exp.Min, exp.Max, exp.Avg)):
+            condition = node.expression.this if isinstance(node.expression, exp.Where) else None
+            aggregate = node.this
+            if condition is None:
+                return node
+            argument = aggregate.this
+            distinct = isinstance(argument, exp.Distinct)
+            if distinct:
+                if len(argument.expressions) != 1:
+                    return node
+                argument = argument.expressions[0]
+            if isinstance(argument, exp.Star):
+                argument = exp.Literal.number(1)
+            guarded = exp.Case(ifs=[exp.If(this=condition.copy(), true=argument.copy())])
+            if distinct:
+                guarded = exp.Distinct(expressions=[guarded])
+            rebuilt = aggregate.copy()
+            rebuilt.set("this", guarded)
+            return rebuilt
+        return node
+
+    return tree.transform(step)
+
+
 def _select_names(select: exp.Expression) -> list[str] | None:
     first = select
     while isinstance(first, exp.Union):
@@ -812,6 +868,7 @@ def normalize(sql: str, *, schema: dict[str, list[str]] | None = None, dialect: 
     tree = sqlglot.parse_one(sql, read=dialect)
     tree = _fold_dates(tree)
     tree = _fold_constants(tree)
+    tree = _fold_trivia(tree)
     tree = _values_to_union(tree)
     if schema:
         tree = _expand_stars(tree, schema)
