@@ -168,7 +168,8 @@ def test_stage_start_and_progress_lines_show_a_long_stage_is_alive(capsys):
     err = capsys.readouterr().err
     assert "[kumosql] demo stage: started (models 2,431)" in err
     assert "demo loop: started (3 items)" in err and "demo loop: 3/3" in err
-    assert "slow item alpha" in err
+    assert "slow item 1 of 3 took" in err
+    assert "alpha" not in err and "beta" not in err
     assert timing.current_progress() == []
 
 

@@ -51,11 +51,10 @@ _PROGRESS: dict[str, dict] = {}
 
 
 class Progress:
-    """Progress and the slowest items of a long loop: call ``step(label)`` at the top of each iteration and ``finish()`` after it.
+    """Progress and the slowest items of a long loop: call ``step()`` at the top of each iteration and ``finish()`` after it.
 
     Prints a line every ``every`` seconds, a line at once for any item slower than ``slow``
-    seconds, and the slowest few at the end. Labels are model names; they appear only in
-    this console output, so remove them before sharing a log.
+    seconds, and the slowest few at the end, all by position ("407 of 2,400"), never by name.
     """
 
     def __init__(self, name: str, total: int, *, every: float = 5.0, slow: float = 3.0) -> None:
@@ -67,11 +66,13 @@ class Progress:
         _PROGRESS[name] = {"done": 0, "total": total}
         _print(f"{name}: started ({total:,} items)")
 
-    def step(self, label: str) -> None:
+    def step(self, label: str = "") -> None:
         """Call at the top of each loop iteration: it closes the previous item and opens this one."""
 
         self._close()
-        self._open = (label, time.perf_counter())
+        # The label is accepted so callers can say what they are doing, but it is never printed:
+        # items are identified by position only, so a log carries no model, table or file names.
+        self._open = (f"{self.done + 1:,} of {self.total:,}", time.perf_counter())
 
     def _close(self) -> None:
         if self._open is None:
