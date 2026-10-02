@@ -1858,6 +1858,20 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
     return select
 
 
+def _reads_of(select: exp.Select, alias: str, *, inside: bool = False) -> set[str]:
+    """The names ``select`` may read from its source ``alias``.
+
+    Columns inside derived-table bodies belong to those bodies' own sources, so they are left out unless ``inside``.
+    """
+
+    bodies = [] if inside else [s for s in _sources_of(select) if isinstance(s, exp.Subquery)]
+    return {
+        c.name.lower()
+        for c in select.find_all(exp.Column)
+        if (not c.table or c.table.lower() == alias.lower()) and not any(_within(c, body) for body in bodies)
+    }
+
+
 def _prune_derived(select: exp.Select) -> exp.Expression | None:
     """Drop the columns of a derived table that the enclosing query never reads.
 
@@ -1878,11 +1892,9 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
     changed = False
     for source in [from_.this] + [j.this for j in select.args.get("joins") or []]:
         if isinstance(source, exp.Subquery) and source.alias and isinstance(source.this, exp.Union):
-            used = {
-                c.name.lower()
-                for c in select.find_all(exp.Column)
-                if not c.table or c.table.lower() == source.alias.lower()
-            }
+            # a grouped branch keeps its key columns visible: the regrouping rules match on them
+            grouped = any(b.args.get("group") for b in source.this.find_all(exp.Select))
+            used = _reads_of(select, source.alias, inside=grouped)
             if _prune_union_all(source.this, used):
                 changed = True
             continue

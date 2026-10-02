@@ -143,3 +143,13 @@ def test_weighted_sum_of_a_count_of_nulls_is_zero():
     right = "SELECT u.k, SUM(CASE WHEN NOT t.x IS NULL THEN u.w ELSE 0 * u.w END) AS s FROM u JOIN t ON t.k = u.k GROUP BY u.k"
     assert not prove_equivalent_algebraic(left, wrong, schema=schema, dialect="mysql").proven
     assert prove_equivalent_algebraic(left, right, schema=schema, dialect="mysql").proven
+
+
+def test_rollup_over_a_union_of_named_columns_prunes_like_a_star():
+    # the derived table's own column names are not reads of it, so unused union columns drop on both sides
+    left = "SELECT deptno, job, AVG(empno) FROM (SELECT * FROM emp UNION ALL SELECT * FROM emp) AS t1 GROUP BY ROLLUP(deptno, job)"
+    right = (
+        "SELECT deptno, job, AVG(empno) FROM (SELECT deptno, job, empno FROM emp UNION ALL SELECT deptno, job, empno FROM emp) AS t6 "
+        "GROUP BY ROLLUP(deptno, job)"
+    )
+    assert _proven(left, right)
