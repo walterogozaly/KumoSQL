@@ -1,9 +1,6 @@
 {
  "note": "Development cases the prover does not prove yet (label: equivalent). Kept as regression cases: the floor test fails if one starts being proved without this list being updated, and never if it stays unknown.",
  "unproved": [
-  "rollup/average_from_sum_count/1",
-  "rollup/average_from_sum_count/3",
-  "rollup/average_from_sum_count/6",
   "join_staging/left_left/1",
   "join_staging/left_left/3",
   "join_staging/left_left/6"
