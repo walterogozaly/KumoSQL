@@ -227,6 +227,8 @@ Tags are labels on anything that lives inside a dataset: tables, views, material
 
 HTTP: `GET /api/tags` (tags per object, tags in use, and how many objects each rule matched), `PUT /api/tags` (`{"keys": [...], "add": [...], "remove": [...]}`), `PUT /api/settings/tag_rules` (a list of `{"tag", "rule"}`), `POST /api/tag-rules/preview`. In Python: `kumosql.tags.snapshot()`, `change_manual()`, `save_rules()`, and `Pipeline.model_record(...)["tag"]`. Writing tags to BigQuery as labels is not done; it could be added later as an explicit option.
 
+**Catalogs.** Saved rules for what a team owns, including BigQuery objects written outside Dataform (*Settings → Catalogs*); the active ones decide what the graph, impact and Cost pages treat as yours. Details in [docs/ui.md](docs/ui.md#catalogs).
+
 ## Rewrite rules
 
 Each transformation is a rule in a registry. A rule only says how to rewrite one parsed statement; a shared driver handles SQLX blocks and `${...}` interpolations, strict parsing with a visible recovery fallback, formatting, byte-for-byte no-ops, and CTE dependency checks.

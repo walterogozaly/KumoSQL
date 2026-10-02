@@ -29,6 +29,11 @@ def _filtered(current: dict, scope_name: str | None):
 
         reads = [row for row in reads if plan.jobs.matches(job_record(row))]
     keep = current["pipeline"].scope_keys(plan.models) if plan and plan.models is not None else None
+    from . import catalogs
+
+    mine = catalogs.model_keys(current["pipeline"])
+    if mine is not None:
+        keep = mine if keep is None else keep & mine
     return plan, reads, keep
 
 
