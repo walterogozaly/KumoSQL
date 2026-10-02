@@ -9,7 +9,7 @@ Everything is deterministic Python: `kumosql.counterexample` (a constraint-respe
 | Verdict | Evidence | Meaning |
 | --- | --- | --- |
 | `equivalent` | **unbounded proof** | The z3 prover proved the result bags equal on every database that satisfies the declared keys and NOT NULL columns. After a proof, 1,000 more random databases (a different seed) must still agree, or the case counts as `wrong`. |
-| `different` | **executed counterexample** | A database satisfying every constraint was built and both queries were run on it with different result bags. The difference has to survive three row-order shuffles, so it never rests on `LIMIT` ties or on MySQL's arbitrary pick for a non-grouped column. |
+| `different` | **executed counterexample** | A database satisfying every constraint was built and both queries were run on it with different result bags. The difference has to survive three row-order shuffles, so it never rests on `LIMIT` ties or on MySQL's arbitrary pick for a non-grouped column, and it has to show with DuckDB's optimizer switched off (`PRAGMA disable_optimizer`), because the optimizer has returned wrong rows for some correlated subqueries. Re-checking the full LeetCode run this way dropped 3 of 5,519 refutations; Calcite and Literature did not change. |
 | `agrees` | **executed datasets only** | Not proven, and 600 random databases (200, then 400 more for pairs that are not proven) showed no difference. This is not a proof and not bounded verification. |
 | `unknown` | none | The pair could not be run (a query DuckDB rejects, unreadable constraints). |
 | `wrong` | | An `equivalent` verdict contradicted by a counterexample (our own second search, or VeriEQL's published counterexample replayed on DuckDB). Must stay 0. |
@@ -40,7 +40,7 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Literature | 64 | 10 | 22 | 21 | 11 | 0 |
-| Calcite-397 | 397 | 210 | 15 | 76 | 96 | 0 |
-| LeetCode (all pairs) | 23,994 | 4,380 | 5,519 | 12,172 | 1,923 | 0 |
+| Calcite-397 | 397 | 213 | 15 | 73 | 96 | 0 |
+| LeetCode (all pairs) | 23,994 | 4,380 | 5,516 | 12,175 | 1,923 | 0 |
 
-On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute 2,286 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax). Calcite-397 was 197 proven before derived tables holding an outer join were flattened and their computed columns lifted (`docs/sqlsolver.md`); the 13 gained pairs were among those agreeing on random databases.
+On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,283 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax). Calcite-397 was 197 proven before derived tables holding an outer join were flattened and their computed columns lifted (`docs/sqlsolver.md`); the 16 gained pairs were among those agreeing on random databases.
