@@ -1,0 +1,20 @@
+{
+  "suite": "BigQuery edge cases",
+  "order": 61,
+  "size": 967,
+  "score": "434/967 rewritten and result-identical, 0 wrong",
+  "metric": "Custom BigQuery edge cases (three-valued logic, precedence, CTEs, DISTINCT, QUALIFY, SAFE_, casts, UNNEST, PIVOT) plus seeded fuzz cases; accepted rewrites are executed in DuckDB before and after and compared.",
+  "docs": "docs/bigquery-behavior-eval.md",
+  "command": "python tools/bq_behavior_eval.py --corpus edge --pipeline lift",
+  "date": "2026-10-02",
+  "caveats": "All cases are custom (379 hand-written, 588 seeded fuzz), none from a public benchmark. Held-out: 662 fresh-seed fuzz cases, 421 rewritten, 0 wrong. Baseline before fixes: 1 wrong (lifting dropped UNPIVOT, and the prover called it equivalent). A rewrite suite can pass by changing nothing; 539 declined (533 with lifting). Literal folds spot-checked on real BigQuery.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing accepted rewrites; checked by executing both versions in DuckDB",
+  "coverage": {
+    "proven": 434,
+    "unknown": 533,
+    "unsupported": 0,
+    "error": 0
+  },
+  "held_out": "421/662 rewritten, 0 wrong (fresh-seed fuzz)"
+}

@@ -78,9 +78,13 @@ def extract(directory: Path):
     return out
 
 
-def load_edge():
-    data = json.loads(EDGE_CASES.read_text(encoding="utf-8"))
-    return [dict(case, setup=data["setup"]) for case in data["cases"]]
+HELDOUT_CASES = EDGE_CASES.with_name("heldout.json")
+
+
+def load_edge(path: Path = EDGE_CASES):
+    setup = json.loads(EDGE_CASES.read_text(encoding="utf-8"))["setup"]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [dict(case, setup=setup) for case in data["cases"]]
 
 
 def load_googlesql():
@@ -182,6 +186,7 @@ def summarize(results: list[dict]) -> dict:
         "error": c.get("error", 0),
         "not_executable": c.get("not_executable", 0),
         "unproven_changes_that_differ": sum(1 for r in results if r.get("unproven_but_wrong")),
+        "changed": c.get("handled", 0) + wrong + sum(1 for r in results if r.get("after") and r["class"] == "declined" and r.get("detail") != "layout only"),
         "rewritten_and_checked": c.get("handled", 0) + wrong,
     }
 
@@ -200,7 +205,7 @@ def run_corpus(cases, pipeline: str):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--googlesql", type=Path, help="directory of GoogleSQL compliance .test files: write the corpus")
-    ap.add_argument("--corpus", choices=["googlesql", "edge", "all"], default="all")
+    ap.add_argument("--corpus", choices=["googlesql", "edge", "heldout", "all"], default="all")
     ap.add_argument("--pipeline", choices=sorted(PIPELINES), default="semantic")
     ap.add_argument("--details", action="store_true", help="list not-executable and unsupported cases")
     ap.add_argument("--failures", action="store_true")
@@ -213,8 +218,8 @@ def main(argv=None) -> int:
         print(f"wrote {len(cases)} queries to {GOOGLESQL_CORPUS}")
         return 0
     bad = 0
-    for name, loader in (("googlesql", load_googlesql), ("edge", load_edge)):
-        if args.corpus not in (name, "all") or not Path(GOOGLESQL_CORPUS if name == "googlesql" else EDGE_CASES).exists():
+    for name, loader in (("googlesql", load_googlesql), ("edge", load_edge), ("heldout", lambda: load_edge(HELDOUT_CASES))):
+        if args.corpus not in (name, "all") or not {"googlesql": GOOGLESQL_CORPUS, "edge": EDGE_CASES, "heldout": HELDOUT_CASES}[name].exists():
             continue
         results, secs = run_corpus(loader(), args.pipeline)
         s = summarize(results)
