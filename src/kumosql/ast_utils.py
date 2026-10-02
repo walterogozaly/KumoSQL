@@ -30,6 +30,12 @@ _scope_filter = _UnknownSubqueryScope()
 logging.getLogger("sqlglot.lineage").addFilter(_scope_filter)
 
 
+def is_function_table(table: exp.Table) -> bool:
+    """``FROM dataset.fn(...)``: a table-valued function call, whose name is not a table."""
+
+    return table.this is not None and isinstance(table.this, exp.Func)
+
+
 @contextmanager
 def quiet_parser():
     logger = logging.getLogger("sqlglot")

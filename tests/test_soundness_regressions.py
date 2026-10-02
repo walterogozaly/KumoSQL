@@ -103,7 +103,31 @@ WRONG_PROOFS = [
         {"dept": [(7, "a")]},
         id="mysql-boolean-cast-is-not-an-integer-cast",
     ),
+    pytest.param(
+        "SELECT empno, deptno IN (SELECT deptno FROM emp WHERE empno < 20) AS d FROM emp",
+        "SELECT empno, EXISTS(SELECT 1 FROM emp WHERE empno < 20) AS d FROM emp",
+        CALCITE,
+        CALCITE_KEYS,
+        CALCITE_DDL,
+        {"emp": [(1, "a", "j", 1, 10), (30, "b", "j", 1, 20)]},
+        id="in-to-exists-keeps-the-outer-column-outside",
+    ),
+    pytest.param(
+        "SELECT e.empno, e.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.empno < 20) AS d FROM emp AS e",
+        "SELECT e.empno, EXISTS(SELECT 1 FROM emp AS e WHERE e.empno < 20) AS d FROM emp AS e",
+        CALCITE,
+        CALCITE_KEYS,
+        CALCITE_DDL,
+        {"emp": [(1, "a", "j", 1, 10), (30, "b", "j", 1, 20)]},
+        id="in-to-exists-keeps-a-shadowed-alias-outside",
+    ),
 ]
+
+
+def test_in_to_exists_still_proves_the_correlated_form():
+    left = "SELECT empno, deptno IN (SELECT deptno FROM emp WHERE empno < 20) AS d FROM emp"
+    right = "SELECT o.empno, EXISTS(SELECT 1 FROM emp AS i WHERE i.empno < 20 AND i.deptno = o.deptno) AS d FROM emp AS o"
+    assert prove_equivalent_algebraic(left, right, schema=CALCITE, dialect="mysql", constraints=CALCITE_KEYS, compare_names=False).proven
 
 
 @pytest.mark.parametrize("left,right,schema,constraints,ddl,rows", WRONG_PROOFS)
@@ -225,3 +249,12 @@ def test_a_comparison_followed_by_is_without_parentheses_is_declined():
     for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
         assert not prove(left, right, schema=STILL_SCHEMA, dialect="mysql").proven
     assert prove_equivalent_algebraic(right, "SELECT * FROM s WHERE (b IS TRUE) = a", schema=STILL_SCHEMA, dialect="mysql").proven
+
+
+def test_a_bare_column_keeps_its_source_when_a_derived_table_is_read_as_its_base_table():
+    schema = {"t": ["k", "a", "b"], "u": ["k", "a", "c"]}
+    left = "SELECT a FROM t JOIN (SELECT k, a + 1 AS y FROM u) AS g ON g.k = t.k"
+    # reading g as u would put a second column a in scope; the bare a stays t's
+    assert normalize(left, schema=schema, dialect="mysql").startswith("SELECT t.a ")
+    assert prove_equivalent_algebraic(left, "SELECT t.a FROM t JOIN u AS g ON g.k = t.k", schema=schema, dialect="mysql").proven
+    assert not prove_equivalent_algebraic(left, "SELECT g.a FROM t JOIN u AS g ON g.k = t.k", schema=schema, dialect="mysql").proven

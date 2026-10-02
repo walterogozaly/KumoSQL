@@ -224,3 +224,12 @@ def test_row_number_ties_do_not_hide_a_difference():
         "select distinct a from (select a, row_number() over (partition by a order by a) as n from t) x where n > 1",
     )
     assert result.status is BoundedStatus.DIFFERENT
+
+
+def test_sqlite_offers_counterexamples_but_no_equivalence_claim():
+    s = BoundedSchema({"t": BTable("t", [BColumn("a", "INT64", True), BColumn("b", "INT64")])})
+    same = check_bounded("select a from t where a > 1", "select a from t where a >= 2", s, rows=2, dialect="sqlite", replay=be.SQLiteReplay(s, "select a from t where a > 1", "select a from t where a >= 2"))
+    assert same.status is BoundedStatus.UNKNOWN and not same.bounded_equivalent
+    left, right = "select a from t where a > 1", "select a from t where a > 2"
+    result = check_bounded(left, right, s, rows=2, dialect="sqlite", replay=be.SQLiteReplay(s, left, right))
+    assert result.status is BoundedStatus.DIFFERENT

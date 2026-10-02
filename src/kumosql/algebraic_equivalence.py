@@ -3598,6 +3598,42 @@ def _push_distinct_into_sources(select: exp.Select, schema: dict[str, list[str]]
     return copy
 
 
+def _qualified_outer_columns(columns: list[exp.Column], outer: exp.Select, probe: exp.Select, declared: dict[str, set[str]]) -> list[exp.Column] | None:
+    """``columns`` of ``outer`` qualified so that they still read ``outer`` once moved into ``probe``'s WHERE.
+
+    Inside the probe an unqualified ``deptno`` would read the probe's own ``deptno``, and ``e.deptno``
+    would read a probe source also called ``e``. Each column is qualified by the outer source that
+    declares it, and a probe source of that name gets a fresh alias. None when that cannot be done safely.
+    """
+
+    sources = _sources_of(outer)
+    refs = []
+    for column in columns:
+        qualifier = column.table
+        if not qualifier:
+            owners = [
+                s for s in sources
+                if isinstance(s, exp.Table) and column.name.lower() in declared.get(s.name.lower(), set())
+            ]
+            if len(owners) != 1:
+                return None
+            qualifier = owners[0].alias_or_name
+        refs.append(exp.column(column.name, table=qualifier))
+    for qualifier in {r.table.lower() for r in refs}:
+        clashing = [s for s in _sources_of(probe) if s.alias_or_name.lower() == qualifier]
+        for source in clashing:
+            if not isinstance(source, exp.Table):
+                return None
+            own = [c for c in probe.find_all(exp.Column) if c.table.lower() == qualifier]
+            if any(c.find_ancestor(exp.Select) is not probe for c in own):
+                return None  # a nested query reads that name too
+            fresh = f"kq_probe{next(_INDICATOR_COUNTER)}"
+            source.set("alias", exp.TableAlias(this=exp.to_identifier(fresh)))
+            for c in own:
+                c.set("table", exp.to_identifier(fresh))
+    return refs
+
+
 def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozenset[str]] | None) -> exp.Expression:
     """``SELECT x IN (SELECT y FROM t WHERE c)`` is ``EXISTS (SELECT 1 FROM t WHERE c AND y = x)`` when neither side is NULL.
 
@@ -3640,8 +3676,12 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
         if not all(left.sql() in outer_known for left in lefts) or not all(isinstance(v, exp.Column) and v.sql() in inner_known for v in values):
             continue
         probe = inner.copy()
+        outer_refs = _qualified_outer_columns(lefts, walker, probe, declared)
+        if outer_refs is None:
+            continue
+        values = [(item.this if isinstance(item, exp.Alias) else item) for item in probe.expressions]
+        matches = [exp.EQ(this=v.copy(), expression=ref) for v, ref in zip(values, outer_refs)]
         probe.set("expressions", [exp.Literal.number(1)])
-        matches = [exp.EQ(this=v.copy(), expression=left.copy()) for v, left in zip(values, lefts)]
         where = probe.args.get("where")
         probe.set("where", exp.Where(this=_and_all(([where.this] if where is not None else []) + matches)))
         node.replace(exp.Exists(this=probe))
@@ -4446,6 +4486,10 @@ def normalize(
     if schema:
         tree = _expand_stars(tree, schema)
     tree = _isolate_windows(tree)
+    if schema:
+        # name each bare column's source before any rewrite reads a derived table as its base table, whose
+        # other columns would otherwise capture (or make ambiguous) a bare column of another source
+        tree = _qualify_outer_join_columns(tree, schema)
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
 
