@@ -1222,14 +1222,21 @@ class _Analysis:
                         if located is not None:
                             diagnostics.append(PipelineDiagnostic(key, "parse_error", _degraded_message(analysis, located)))
                 elif analysis.unknown:
-                    diagnostics.append(
-                        PipelineDiagnostic(
-                            key,
-                            "unparsed_operation",
-                            f"{len(analysis.unknown)} of {considered} {model.kind} statements could not be read; "
-                            "tables they read or write may have no edges here",
+                    # A statement that does not parse keeps the tables its tokens name (edges stay) and is located;
+                    # one that is not readable at all (dynamic text, an undefined call) is not.
+                    located = [u for u in analysis.unknown if u.error or u.degraded]
+                    if located:
+                        diagnostics.append(PipelineDiagnostic(key, "parse_error", _degraded_message(analysis, located[0])))
+                    unread = len(analysis.unknown) - len(located)
+                    if unread:
+                        diagnostics.append(
+                            PipelineDiagnostic(
+                                key,
+                                "unparsed_operation",
+                                f"{unread} of {considered} {model.kind} statements could not be read; "
+                                "tables they read or write may have no edges here",
+                            )
                         )
-                    )
                 if sum(analysis.counts().values()) > 1:
                     diagnostics.append(PipelineDiagnostic(key, "script_summary", analysis.summary()))
                 if query is not None:
