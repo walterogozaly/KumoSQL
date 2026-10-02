@@ -9,7 +9,7 @@ Everything is deterministic Python: `kumosql.counterexample` (a constraint-respe
 | Verdict | Evidence | Meaning |
 | --- | --- | --- |
 | `equivalent` | **unbounded proof** | The z3 prover proved the result bags equal on every database that satisfies the declared keys and NOT NULL columns. After a proof, 1,000 more random databases (a different seed) must still agree, or the case counts as `wrong`. |
-| `different` | **executed counterexample** | A database satisfying every constraint was built and both queries were run on it with different result bags. The difference has to survive three row-order shuffles, so it never rests on `LIMIT` ties or on MySQL's arbitrary pick for a non-grouped column, and it has to show with DuckDB's optimizer switched off (`PRAGMA disable_optimizer`), because the optimizer has returned wrong rows for some correlated subqueries. Re-checking the full LeetCode run this way dropped 3 of 5,519 refutations; Calcite and Literature did not change. |
+| `different` | **executed counterexample** | A database satisfying every constraint was built and both queries were run on it with different result bags. The difference has to survive three row-order shuffles, so it never rests on `LIMIT` ties or on MySQL's arbitrary pick for a non-grouped column, and both queries have to return the same rows with DuckDB's optimizer switched off (`PRAGMA disable_optimizer`), because the optimizer has returned wrong rows for some correlated subqueries. Re-checking the full LeetCode run this way dropped 3 of 5,519 refutations; Calcite and Literature did not change. |
 | `agrees` | **executed datasets only** | Not proven, and 600 random databases (200, then 400 more for pairs that are not proven) showed no difference. This is not a proof and not bounded verification. |
 | `unknown` | none | The pair could not be run (a query DuckDB rejects, unreadable constraints). |
 | `wrong` | | An `equivalent` verdict contradicted by a counterexample (our own second search, or VeriEQL's published counterexample replayed on DuckDB). Must stay 0. |
@@ -25,18 +25,6 @@ MySQL lets a grouped query read ungrouped columns; DuckDB refuses. Such columns 
 A table that a foreign key points at gets rows even when neither query reads it, so a query over a child table alone (EMP, whose DEPTNO references DEPT) is searched with a non-empty child. A database on which a query raises an error (a failed cast, `SINGLE_VALUE` over two rows) is skipped, and the search goes on with the next one.
 
 Every difference is run a second time with DuckDB's optimizer turned off (`kumosql.duckdb_load.run_unoptimized`) and counts only when both runs return the same rows. DuckDB 1.5's optimizer returns wrong rows for some correlated subqueries (for example `EXISTS (SELECT 1 FROM u WHERE u.d <> t.a AND t.b > u.c)` when the tables hold NULLs), which would otherwise refute an equivalent pair or fail a correct proof. The same recheck guards `sqlsolver_bench.differ` (SQLSolver, QED, R-Bot, Calcite-mined, Cosette, SPES), the Singh & Bedathur search and `kumosql.random_check`.
-
-## Scores
-
-Measured 2026-10-02 (`python tools/verieql_bench.py <suite> --audit`):
-
-| Suite | Proved equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Calcite-397 | 229 | 27 | 131 | 10 | 0 |
-| Literature (64) | 15 | 18 | 27 | 4 | 0 |
-| LeetCode sample (1,000, every 24th) | 198 | 203 | 517 | 82 | 0 |
-
-The harness translation below took Calcite-397 from 197 proved, 14 refuted and 96 not run to these numbers, and Literature from 10 proved to 15. VeriEQL marks four of our Calcite refutations equivalent (pairs 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows).
 
 ## Harness translation
 
@@ -76,8 +64,10 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Literature | 64 | 10 | 22 | 21 | 11 | 0 |
-| Calcite-397 | 397 | 197 | 15 | 89 | 96 | 0 |
+| Literature | 64 | 15 | 23 | 22 | 4 | 0 |
+| Calcite-397 | 397 | 229 | 27 | 131 | 10 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,380 | 5,516 | 12,175 | 1,923 | 0 |
+
+The [harness translation](#harness-translation) took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks four of our Calcite refutations equivalent (pairs 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows).
 
 On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,283 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax).
