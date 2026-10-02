@@ -1,0 +1,22 @@
+{
+  "suite": "Output properties (original cases)",
+  "order": 60,
+  "size": 143,
+  "score": "88/88 true claims proved, 0 wrong",
+  "metric": "Labelled claims about a query's output (column never NULL, columns unique, at most or exactly one row) found by the deterministic analysis; false claims must not be asserted.",
+  "docs": "docs/output-properties.md#evaluation",
+  "command": "python tools/output_properties_bench.py",
+  "date": "2026-10-02",
+  "caveats": "Tuned on test: the development cases (76 queries) were used to fix the analysis; the first run proved 83 of 88. The rollup regression case (2 claims) is unsupported. Held-out and SQLSolver-query results are separate rows.",
+  "evidence": "executed",
+  "correctness": "0 wrong; all 53 false labels verified by a violating random database, no true label violated",
+  "coverage": {
+    "proven": 88,
+    "refuted": 53,
+    "unknown": 0,
+    "unsupported": 2,
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "39/41 true claims proved, 0 wrong (32 queries, 55 claims, other schema, run once after the analysis was frozen; the 2 misses are CASE guarded by IS NULL and ROW_NUMBER uniqueness)"
+}

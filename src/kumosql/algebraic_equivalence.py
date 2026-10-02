@@ -4021,19 +4021,28 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: bool, **kwar
     from . import scalar_subqueries
 
     replaced = False
+    report: dict = {}
     try:
         inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
 
         def same(a: str, b: str) -> bool:
             return prove_equivalent_algebraic(a, b, compare_names=False, types=types, **inner).proven
 
+        def single_row(sql: str) -> bool:
+            from .output_properties import infer_properties
+
+            try:
+                return infer_properties(sql, kwargs.get("constraints"), kwargs.get("schema"), dialect=dialect).at_most_one_row
+            except Exception:  # noqa: BLE001 - not vouching keeps the assumption
+                return False
+
         left, right, replaced = scalar_subqueries.unify(
-            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same
+            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same, single_row=single_row, report=report
         )
     except sqlglot.errors.SqlglotError:
         replaced = False
     result = prove_equivalent_smt(left, right, **kwargs)
-    if replaced and result.proven:
+    if replaced and result.proven and report.get("unproven", 1):
         result = dataclasses.replace(
             result, assumptions=tuple(result.assumptions) + (scalar_subqueries.ASSUMPTION,)
         )

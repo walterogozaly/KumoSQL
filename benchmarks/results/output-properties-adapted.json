@@ -1,0 +1,18 @@
+{
+  "suite": "Output properties (SQLSolver queries)",
+  "order": 61,
+  "size": 761,
+  "score": "2,152 claims on 657 queries, 0 violated",
+  "metric": "Every NOT NULL, uniqueness and row-count fact the analysis asserts about the queries of SQLSolver's Calcite, Spark, TPC-H and TPC-C pairs, checked on random databases that respect their schemas.",
+  "docs": "docs/output-properties.md#evaluation",
+  "command": "python tools/output_properties_bench.py --adapted",
+  "date": "2026-10-02",
+  "caveats": "No labels, so only soundness is scored, not recall. Tuned on test: this track found two bugs (a subquery in the select list read as an aggregate, ROLLUP) that were fixed. 12 queries could not be executed in DuckDB.",
+  "evidence": "executed",
+  "correctness": "0 violated claims in 40 random databases per query",
+  "coverage": {
+    "proven": 657,
+    "unsupported": 104
+  },
+  "held_out": "none"
+}
