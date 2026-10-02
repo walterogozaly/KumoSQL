@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from kumosql import apply_rule, available_rules, load_sqlx_project  # noqa: E402
 
 PROJECT, DATASET = "p", "d"
-DEV_FAMILIES = ("config_block", "js_block", "ref_forms", "when_nested")
+DEV_FAMILIES = ("config_block", "js_block", "ref_forms", "when_nested", "declared_refs")
 HELD_OUT_FAMILIES = ("pre_post", "incremental", "unsupported", "text_forms")
 BASES = ("base_a", "base_b", "base_c")
 
@@ -55,6 +55,7 @@ class Case:
     unsupported: bool = False  # holds a template KumoSQL cannot resolve: it must say so
     fixable: bool = False  # the SQL part has something a rewrite can fix
     extra_files: dict[str, str] = field(default_factory=dict)
+    deps_keys: set[str] | None = None  # exact tables a declared source resolves to (database.schema.name)
 
 
 def _base_files() -> dict[str, str]:
@@ -120,6 +121,27 @@ def ref_forms(rng: random.Random, index: int) -> Case:
         f"WHERE 1 = 1 AND x.id > 0"
     )
     return Case("ref_forms", f"refs_{index}", f"{config}\n\n{body}\n", [config, first, second], {a, b}, fixable=True)
+
+
+def declared_refs(rng: random.Random, index: int) -> Case:
+    """A ref() to a table a declaration (sqlx or JavaScript) puts outside the default schema."""
+
+    name, schema = f"decl_src_{index}", rng.choice(["raw", "lake", "ext"])
+    database = rng.choice([PROJECT, "other"])
+    form = rng.choice(["sqlx", "js", "js_loop", "js_constants", "dynamic"])
+    config = _config(rng)
+    text = f'{config}\n\nSELECT id, val FROM ${{ref("{name}")}}\n'
+    declare = f'declare({{ database: "{database}", schema: "{schema}", name: "{name}" }});\n'
+    files = {
+        "sqlx": {f"definitions/{name}.sqlx": f'config {{ type: "declaration", database: "{database}", schema: "{schema}", name: "{name}" }}\n'},
+        "js": {f"definitions/{name}.js": declare},
+        "js_loop": {f"includes/{name}.js": f'["{name}", "{name}_other"].forEach((t) => declare({{ database: "{database}", schema: "{schema}", name: t }}));\n'},
+        "js_constants": {f"definitions/{name}.js": f'const schema = "{schema}";\nconst database = "{database}";\ndeclare({{ database, schema, name: "{name}" }});\n'},
+        "dynamic": {f"definitions/{name}.js": f'getTables().forEach((t) => declare({{ schema: "{schema}", name: t }}));\n'},
+    }[form]
+    if form == "dynamic":  # cannot be known from the files: the dependency must be left out and flagged, never guessed
+        return Case("declared_refs", f"decl_{index}", text, [config], None, unsupported=True, extra_files=files, deps_keys=set())
+    return Case("declared_refs", f"decl_{index}", text, [config], None, extra_files=files, deps_keys={f"{database}.{schema}.{name}"})
 
 
 def when_nested(rng: random.Random, index: int) -> Case:
@@ -246,6 +268,10 @@ def evaluate_project(cases: list[Case]) -> dict:
             (root / path).write_bytes(text.encode("utf-8"))
         for case in cases:
             (root / "definitions" / f"{case.name}.sqlx").write_bytes(case.text.encode("utf-8"))
+            for path, text in case.extra_files.items():
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
         start = time.perf_counter()
         pipeline = load_sqlx_project(root)
         upstream = pipeline.upstream
@@ -274,6 +300,17 @@ def evaluate_project(cases: list[Case]) -> dict:
                 if case.deps - have:
                     out["deps_missed"] += len(case.deps - have)
                     details.append(f"{case.name} ({case.family}): missed dependency {sorted(case.deps - have)}")
+            if case.deps_keys is not None:
+                got = set(upstream.get(key, ()))
+                out["deps_expected"] += len(case.deps_keys)
+                out["deps_found"] += len(got & case.deps_keys)
+                out["deps_claimed"] += len(got)
+                if got - case.deps_keys:
+                    out["deps_wrong"] += len(got - case.deps_keys)
+                    details.append(f"{case.name} ({case.family}): false dependency {sorted(got - case.deps_keys)}")
+                if case.deps_keys - got:
+                    out["deps_missed"] += len(case.deps_keys - got)
+                    details.append(f"{case.name} ({case.family}): missed dependency {sorted(case.deps_keys - got)}")
             if case.unsupported:
                 out["unsupported"] += 1
                 flagged = bool(diagnostics.get(key))
@@ -393,7 +430,7 @@ def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
                 "date": "2026-10-02",
                 "caveats": (
                     "Files are generated from templates its author wrote; real projects have more shapes. Dependency truth is how Dataform compiles an action "
-                    "(every evaluated ref(), including those in pre_operations, post_operations and when() arguments). Dev families were tuned against."
+                    "(every evaluated ref(), including those in pre_operations, post_operations and when() arguments). Dev families were tuned against. The declared_refs family (refs to tables declared in sqlx or JavaScript, including a computed list that must stay unresolved) was added with the declaration fix and is a dev family; the Dataform API fallback is not exercised by this eval."
                 ),
                 "analysis": (
                     f"Dependencies: precision {dev['dep_precision']:.3f}, recall {dev['dep_recall']:.3f}. "

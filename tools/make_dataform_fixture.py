@@ -173,6 +173,14 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
         write(defs / "sources" / "kumosql_messy" / f"{name}.sqlx",
               f'config {{\n  type: "declaration",\n  database: "{PROJECT}",\n  schema: "kumosql_messy",\n  name: "{name}"\n}}\n', "declaration")
     write(defs / "sources" / "declarations.js", 'declare({ schema: "raw_misc", name: "javascript_declared" });\n', "js")
+    # Declarations that need evaluating: a literal loop (read from the files) and a computed list (needs the Dataform API).
+    write(defs / "sources" / "declared_in_loop.js",
+          'const schema = "raw_loop";\n["loop_declared_a", "loop_declared_b"].forEach((t) => declare({ schema, name: t }));\n', "js")
+    write(defs / "sources" / "declared_dynamic.js",
+          'const names = ["computed_declared_a", "computed_declared_b"].map((n) => n);\nnames.forEach((t) => declare({ schema: "raw_computed", name: t }));\n', "js")
+
+    declared += [("raw_loop", "loop_declared_a"), ("raw_loop", "loop_declared_b"),
+                 ("raw_computed", "computed_declared_a"), ("raw_computed", "computed_declared_b")]
 
     # Layered models. Each layer reads earlier layers, so the graph is deep and wide.
     per_layer = max(1, models // len(LAYERS))
