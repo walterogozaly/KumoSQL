@@ -226,15 +226,14 @@ def _upstream_models(pipeline: Pipeline, sql: object) -> dict[str, Model]:
     """
 
     try:
-        query, _, earlier = _parse_script(sql if isinstance(sql, str) else "")
+        query, analysis = _parse_script(sql if isinstance(sql, str) else "")
         if query is None:
             raise ValueError("no query")
         upstream = pipeline._analyse().upstream
         stack = []
-        for statement in (query, *earlier):
-            for table in statement.find_all(exp.Table):
-                if (resolved := pipeline.resolve(table)) and resolved in pipeline.models:
-                    stack.append(resolved)
+        for table in (*query.find_all(exp.Table), *analysis.reads.values()):
+            if (resolved := pipeline.resolve(table)) and resolved in pipeline.models:
+                stack.append(resolved)
         keep: set[str] = set()
         while stack:
             key = stack.pop()
