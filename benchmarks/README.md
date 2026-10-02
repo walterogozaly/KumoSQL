@@ -2,6 +2,8 @@
 
 The README scoreboard is generated from the files here: one `results/<eval>.json` per eval, one object each. Edit your file, then run `python tools/scoreboard.py` (the tool fails on a missing required key or an unknown value). `python tools/scoreboard.py --check` is what the test suite runs.
 
+An eval script can write its file itself: `tools/bench_common.py` has `write_results(name, row)`, which writes `results/<name>.json` and regenerates the scoreboard, plus `today()` for `date` and `quiet()` for command-line runs. The lineage, Dataform, schema-change and SQLLineage benches use it (`--write-results`).
+
 Required keys:
 
 | Key | Meaning |
