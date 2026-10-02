@@ -28,11 +28,12 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | --- | --- |
 | [SQLSolver and the algebraic prover](sqlsolver.md) | SQLSolver Calcite, Spark, TPC-H and TPC-C; R-Bot; QED; Cosette and SPES |
 | [VeriEQL](verieql.md) | VeriEQL LeetCode, Literature and Calcite suites |
+| [Bounded verification](bounded-verification.md) | The z3 bounded checker (at most N rows per table) and its eval results |
 | [Engine test suites](engine-suites.md) | DuckDB and SQLite SQLLogicTest and SQLGlot fixtures run through every rewrite, checked by execution |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | 850 lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification |
-| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune, ClickBench and cost-based rewrites |
+| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune, ClickBench and cost-recommendation validity |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data |
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on LLM-R2's 11,353 queries, test files held out |
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage |
