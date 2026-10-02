@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 import random
 import re
@@ -50,6 +51,7 @@ class Table:
     columns: list[Column]
     primary_key: tuple[str, ...] = ()
     unique: list[tuple[str, ...]] = field(default_factory=list)
+    foreign: list[tuple[str, str, str]] = field(default_factory=list)  # (column, parent table, parent column)
 
 
 def load_schema(path: Path) -> dict[str, Table]:
@@ -66,6 +68,10 @@ def load_schema(path: Path) -> dict[str, Table]:
                 constraint_sql = " ".join(k.sql().upper() for k in item.args.get("constraints") or [])
                 column = Column(item.name.lower(), item.args["kind"].sql(dialect="mysql").upper())
                 column.not_null = "NOT NULL" in constraint_sql or "PRIMARY KEY" in constraint_sql
+                for constraint in item.args.get("constraints") or []:
+                    reference = constraint.args.get("kind")
+                    if isinstance(reference, exp.Reference) and isinstance(reference.this, exp.Schema) and reference.this.expressions:
+                        table.foreign.append((column.name, reference.this.this.name.lower(), reference.this.expressions[0].name.lower()))
                 if "PRIMARY KEY" in constraint_sql:
                     table.primary_key = (column.name,)
                 table.columns.append(column)
@@ -74,6 +80,10 @@ def load_schema(path: Path) -> dict[str, Table]:
                 for column in table.columns:
                     if column.name in table.primary_key:
                         column.not_null = True
+            elif isinstance(item, exp.ForeignKey) and item.args.get("reference") is not None:
+                reference = item.args["reference"]
+                if isinstance(reference.this, exp.Schema) and len(item.expressions) == 1 == len(reference.this.expressions):
+                    table.foreign.append((item.expressions[0].name.lower(), reference.this.this.name.lower(), reference.this.expressions[0].name.lower()))
             elif isinstance(item, exp.UniqueColumnConstraint):
                 table.unique.append(tuple(e.name.lower() for e in item.this.expressions))
         tables[name] = table
@@ -126,16 +136,27 @@ def new_database(tables: dict[str, Table]):
     return db
 
 
-def random_rows(table: Table, rng: random.Random) -> list[list]:
-    """A few rows with small value domains so joins and ties are common."""
+def random_rows(table: Table, rng: random.Random, numbers: list | None = None) -> list[list]:
+    """A few rows with small value domains so joins and ties are common.
+
+    With ``numbers`` (a few values near the queries' literals, shared by every table of the database),
+    numeric columns draw from them, and each non-key column from one or two values about half the time,
+    so rows sharing a join key or a whole row repeat often.
+    """
 
     rows, keys = [], set()
-    for _ in range(rng.choice([0, 0, 1, 2, 3, 4])):
+    domains = {}
+    key_columns = {c for key in ([table.primary_key] if table.primary_key else []) + list(table.unique) for c in key}
+    for column in table.columns:
+        kind = _duck_type(column)
+        domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES}.get(kind, numbers or [0, 1, 2, 3])
+        if numbers is not None and column.name not in key_columns and rng.random() < 0.5:
+            domain = rng.sample(domain, min(len(domain), rng.choice([1, 2])))
+        domains[column.name] = domain
+    for _ in range(rng.choice([0, 0, 1, 2, 3, 4] if numbers is None else [1, 2, 3, 4, 5])):
         row = []
         for column in table.columns:
-            kind = _duck_type(column)
-            domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES}.get(kind, [0, 1, 2, 3])
-            value = rng.choice(domain)
+            value = rng.choice(domains[column.name])
             if not column.not_null and rng.random() < 0.25:
                 value = None
             row.append(value)
@@ -192,6 +213,12 @@ def name_values(sql: str) -> str:
     return tree.sql(dialect="mysql")
 
 
+def _bag(rows) -> Counter:
+    """Rows as a bag; numbers compared as floats rounded to 6 places (DuckDB returns DECIMAL as Decimal, DOUBLE as float)."""
+
+    return Counter(tuple(round(float(v), 6) if isinstance(v, (float, Decimal)) else v for v in row) for row in rows)
+
+
 def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
@@ -210,19 +237,55 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
         used = [tables[n] for n in sorted(referenced_tables(left, right)) if n in tables]
     except sqlglot.errors.SqlglotError:
         return False
-    for _ in range(trials):
+    numbers = {0, 1, 2, 3}
+    for literal in [lit for sql in (left, right) for lit in sqlglot.parse_one(sql, read="mysql").find_all(exp.Literal)]:
+        if not literal.is_string and re.fullmatch(r"-?\d+", literal.this) and abs(int(literal.this)) < 10**6:
+            numbers.update({int(literal.this) - 1, int(literal.this), int(literal.this) + 1})
+    # Plain databases first, then skewed ones whose numbers sit next to the queries' literals
+    for trial in range(2 * trials):
+        # every table of a skewed database draws its numbers from the same few, so join keys meet
+        shared = rng.sample(sorted(numbers), min(len(numbers), rng.choice([2, 3, 4]))) if trial >= trials else None
         try:
             for table in used:
                 db.execute(f'DELETE FROM "{table.name}"')
-                rows = random_rows(table, rng)
+                rows = random_rows(table, rng, shared if trial >= trials else None)
                 insert_rows(db, f'"{table.name}"', rows)
-            a = Counter(db.execute(left_sql).fetchall())
-            b = Counter(db.execute(right_sql).fetchall())
+            a = _bag(db.execute(left_sql).fetchall())
+            b = _bag(db.execute(right_sql).fetchall())
         except duckdb.Error:
             return False
         if a != b:
             return (left_sql, right_sql, a, b)
-    return None
+    return targeted_differ(left_sql, right_sql, used)
+
+
+_TARGETED_TYPES = {"VARCHAR": "STRING", "DOUBLE": "FLOAT64", "DATE": "DATE", "BIGINT": "INT64"}
+
+
+def targeted_differ(left_sql: str, right_sql: str, used: list[Table]):
+    """The targeted suite (kumosql.refute) as a last look; same result shape as ``differ``."""
+
+    import os
+
+    if os.environ.get("KUMOSQL_TARGETED", "1") == "0":
+        return None
+    from kumosql.refute import find_targeted_difference
+    from kumosql.result_equivalence import DataRules
+
+    names = {t.name for t in used}
+    schema = {t.name: {c.name: _TARGETED_TYPES[_duck_type(c)] for c in t.columns} for t in used}
+    rules = {
+        t.name: DataRules(
+            frozenset(c.name for c in t.columns if c.not_null),
+            tuple(k for k in ([t.primary_key] if t.primary_key else []) + list(t.unique)),
+        )
+        for t in used
+    }
+    foreign = [(t.name, c, p, pc) for t in used for c, p, pc in t.foreign if p in names]
+    found = find_targeted_difference(left_sql, right_sql, schema, rules, foreign_keys=foreign, dialect="duckdb", budget=20.0)
+    if found is None:
+        return None
+    return (left_sql, right_sql, Counter(found.left.rows), Counter(found.right.rows))
 
 
 @dataclass

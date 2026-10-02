@@ -22,6 +22,8 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import conjuncts as _conjuncts, faithful_sql, select_sources as _sources
+
 ORDERED = (exp.Limit, exp.Fetch, exp.Offset)
 
 
@@ -48,13 +50,6 @@ def _has_window_or_limit(select: exp.Select) -> bool:
 
 def _is_aggregate(select: exp.Select) -> bool:
     return _own(select, (exp.AggFunc,))
-
-
-def _sources(select: exp.Select) -> list[exp.Expression]:
-    from_ = select.args.get("from_") or select.args.get("from")
-    if from_ is None:
-        return []
-    return [from_.this] + [j.this for j in select.args.get("joins") or []]
 
 
 def _single_source_name(select: exp.Select) -> str | None:
@@ -119,14 +114,6 @@ def _always_nonempty_count(node: exp.Expression) -> bool:
         n = number(node.this)
         return n is not None and (n < 1 if isinstance(node, exp.LT) else n <= 1)
     return False
-
-
-def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
-    while isinstance(node, exp.Paren):
-        node = node.this
-    if isinstance(node, exp.And):
-        return _conjuncts(node.this) + _conjuncts(node.expression)
-    return [node]
 
 
 def drop_trivial_having(tree: exp.Expression) -> bool:
@@ -282,4 +269,4 @@ def canonicalize(sql: str, dialect: str = "bigquery", schema: dict[str, list[str
             changed = True
         if not changed:
             break
-    return tree.sql(dialect=dialect)
+    return faithful_sql(tree, dialect)
