@@ -116,7 +116,7 @@ def constants_of(*queries: str, dialect: str = "mysql") -> Constants:
     found = Constants()
     for query in queries:
         try:
-            tree = sqlglot.parse_one(query, read=dialect)
+            tree = sqlglot.parse_one(_dollars(query), read=dialect)
         except sqlglot.errors.SqlglotError:
             continue
         for literal in tree.find_all(exp.Literal):
@@ -329,9 +329,18 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
 
     for select in list(tree.find_all(exp.Select)):
         group = select.args.get("group")
-        if group is None or not group.expressions:
+        if group is None or not group.expressions or any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup")):
             continue
         projections = select.expressions
+        # MySQL reads an unqualified GROUP BY name as the select item of that name, DuckDB calls it ambiguous
+        by_name = {}
+        for item in projections:
+            inner = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(inner, exp.Column) and inner.table:
+                by_name.setdefault((item.alias if isinstance(item, exp.Alias) else inner.name).lower(), inner)
+        for position, item in enumerate(list(group.expressions)):
+            if isinstance(item, exp.Column) and not item.table and item.name.lower() in by_name:
+                item.replace(by_name[item.name.lower()].copy())
         grouped = set()
         for item in group.expressions:
             if isinstance(item, exp.Literal) and not item.is_string:
@@ -341,13 +350,14 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
                     item = item.this if isinstance(item, exp.Alias) else item
             if isinstance(item, exp.Column):
                 grouped.add(item.name.lower())
+            grouped.update(c.name.lower() for c in item.find_all(exp.Column))
             grouped.add(item.sql().lower())
         aliases = {p.alias.lower() for p in projections if isinstance(p, exp.Alias)}
 
         def inside_aggregate(node) -> bool:
             parent = node.parent
             while parent is not None and parent is not select:
-                if isinstance(parent, (exp.AggFunc, exp.Window)):
+                if isinstance(parent, (exp.AggFunc, exp.Window, exp.Filter)):
                     return True
                 if isinstance(parent, exp.Select):
                     return True  # belongs to a nested select
@@ -369,19 +379,54 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
 
 
 def _date_functions(tree: exp.Expression) -> exp.Expression:
-    """``SUBDATE(d, n)`` and ``ADDDATE(d, n)`` with a day count, which DuckDB lacks."""
+    """``SUBDATE(d, n)`` / ``ADDDATE(d, n)`` (a day count or an INTERVAL) and ``CROSS JOIN .. ON``, which DuckDB lacks."""
 
     for node in list(tree.find_all(exp.Anonymous)):
         name = str(node.this).upper()
         if name in ("SUBDATE", "ADDDATE") and len(node.expressions) == 2:
             day, count = node.expressions
-            interval = exp.Interval(this=count.copy(), unit=exp.var("DAY"))
+            interval = count.copy() if isinstance(count, exp.Interval) else exp.Interval(this=count.copy(), unit=exp.var("DAY"))
+            if isinstance(day, exp.Literal) and day.is_string:
+                day = exp.cast(day.copy(), "date")
             node.replace((exp.Sub if name == "SUBDATE" else exp.Add)(this=day.copy(), expression=interval))
+    for node in list(tree.find_all(exp.Sub, exp.Add)):
+        left = node.this
+        if isinstance(node.expression, exp.Interval) and isinstance(left, exp.Literal) and left.is_string:
+            left.replace(exp.cast(left.copy(), "date"))
+    for join in tree.find_all(exp.Join):
+        if join.args.get("kind") == "CROSS" and join.args.get("on") is not None:
+            join.set("kind", None)
     return tree
 
 
-def to_duckdb(sql: str, dialect: str = "mysql") -> str:
-    tree = sqlglot.parse_one(sql, read=dialect)
+def _barewords(tree: exp.Expression, known: set[str]) -> exp.Expression:
+    """The benchmark queries sometimes write a string as a bare word (``THEN YES ELSE NO``): read an
+    unqualified name that is no column, alias or table anywhere in the schema or query as that string."""
+
+    names = set(known)
+    for node in tree.find_all(exp.Alias):
+        names.add(node.alias.lower())
+    for node in tree.find_all(exp.TableAlias):
+        names.add(node.name.lower())
+        names.update(c.name.lower() for c in node.columns)
+    for node in tree.find_all(exp.Table):
+        names.add(node.name.lower())
+    for column in list(tree.find_all(exp.Column)):
+        if not column.table and column.name.lower() not in names and not isinstance(column.parent, (exp.Dot,)):
+            column.replace(exp.Literal.string(column.name))
+    return tree
+
+
+def _dollars(sql: str) -> str:
+    """Calcite names columns ``$f9``, ``EXPR$0``: DuckDB rejects ``$`` in bare names."""
+
+    return re.sub(r"(?<=[\w$])\$|\$(?=\w)", "_S_", sql)
+
+
+def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -> str:
+    tree = sqlglot.parse_one(_dollars(sql), read=dialect)
+    if known is not None:
+        tree = _barewords(tree, known)
     return relax_grouping(_date_functions(tree)).sql(dialect="duckdb")
 
 
@@ -391,17 +436,18 @@ class Searcher:
     def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql"):
         self.spec = spec
         self.constants = constants_of(left, right, dialect=dialect)
-        self.left_sql = to_duckdb(left, dialect)
-        self.right_sql = to_duckdb(right, dialect)
+        known = {c.name.lower() for t in spec.tables.values() for c in t.columns}
+        self.left_sql = to_duckdb(left, dialect, known)
+        self.right_sql = to_duckdb(right, dialect, known)
         names = set()
         for sql in (left, right):
-            for table in sqlglot.parse_one(sql, read=dialect).find_all(exp.Table):
+            for table in sqlglot.parse_one(_dollars(sql), read=dialect).find_all(exp.Table):
                 names.add(table.name.lower())
         by_lower = {n.lower(): n for n in spec.tables}
         self.used = {by_lower[n] for n in names if n in by_lower}
         self.columns_used, self.star = set(), False
         for sql in (left, right):
-            tree = sqlglot.parse_one(sql, read=dialect)
+            tree = sqlglot.parse_one(_dollars(sql), read=dialect)
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
         self.db = duckdb.connect(":memory:")
