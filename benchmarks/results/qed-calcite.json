@@ -2,8 +2,8 @@
   "suite": "QED Calcite tests",
   "order": 21,
   "size": 375,
-  "score": "274/375 proved, 0 wrong",
-  "metric": "Calcite optimizer-test pairs from the QED prover, converted from its relational-algebra JSON to SQL, proved equivalent; 2 more are shown different by a counterexample, 99 unknown.",
+  "score": "278/375 proved, 0 wrong",
+  "metric": "Calcite optimizer-test pairs from the QED prover, converted from its relational-algebra JSON to SQL, proved equivalent; 2 more are shown different by a counterexample, 95 unknown.",
   "docs": "docs/sqlsolver.md#qeds-calcite-cases",
   "command": "python tools/qed_bench.py",
   "date": "2026-10-02",
@@ -11,9 +11,9 @@
   "evidence": "proof",
   "correctness": "0 false proofs; every proof re-run on 60 random DuckDB databases, half skewed towards the literals",
   "coverage": {
-    "proven": 274,
+    "proven": 278,
     "refuted": 2,
-    "unknown": 99,
+    "unknown": 95,
     "unsupported": 69
   },
   "held_out": "none"
