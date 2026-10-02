@@ -92,6 +92,11 @@ PROVEN = [
         "SELECT a, MIN(c), COUNT(*) FROM t GROUP BY a",
         id="two-level-aggregate-merge",
     ),
+    pytest.param(
+        "SELECT DISTINCT a FROM t GROUP BY a, b",
+        "SELECT x FROM (SELECT a AS x, b FROM t GROUP BY a, b) AS g GROUP BY x",
+        id="group-without-aggregates-under-distinct",
+    ),
 ]
 
 

@@ -13,6 +13,7 @@ Each rule takes one ``SELECT`` and returns a rewritten node, or None when it doe
 - ``distinct_join_to_exists``: an inner join with a ``DISTINCT`` derived table equated on all of its
   columns, and read nowhere else, matches each row at most once: it is an ``EXISTS`` test.
 - ``unwrap_column_parens``: ``SELECT DISTINCT(a)`` and ``COUNT(DISTINCT(a))`` read ``a``.
+- ``drop_group_under_distinct``: ``SELECT DISTINCT k FROM t GROUP BY k, j`` is ``SELECT DISTINCT k FROM t``.
 - ``drop_distinct_over_group_keys``: a grouped select that outputs every group key has no repeated rows.
 - ``regroup_distinct``: an aggregate over ``(SELECT [k,] x, partials GROUP BY [k,] x)`` regrouped by
   ``k`` (or not grouped at all) is one aggregate with ``SUM(DISTINCT x)`` / ``COUNT(DISTINCT x)``.
@@ -664,6 +665,34 @@ def unwrap_column_parens(select: exp.Select) -> exp.Select | None:
     return result
 
 
+def drop_group_under_distinct(select: exp.Select) -> exp.Select | None:
+    """A ``GROUP BY`` with no aggregate under ``DISTINCT`` only removes repeats ``DISTINCT`` removes anyway.
+
+    Every output is a function of the group keys, so each group's row is the projection of any of its
+    rows; with no rows there are no groups and no distinct rows either.
+    """
+
+    if not _plain_distinct(select) or select.args.get("having") is not None:
+        return None
+    group = select.args.get("group")
+    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        return None
+    if _own(select, (exp.AggFunc, exp.Window, exp.Star)) or _reads_output_alias(select):
+        return None
+    keys = {g.sql() for g in group.expressions}
+    for item in select.expressions:
+        value = item.this if isinstance(item, exp.Alias) else item
+        if value.sql() in keys:
+            continue
+        if any(isinstance(n, (exp.Subquery, exp.Select, exp.Rand)) for n in value.walk()):
+            return None
+        if any(c.sql() not in keys for c in value.find_all(exp.Column)):
+            return None
+    result = select.copy()
+    result.set("group", None)
+    return result
+
+
 def drop_distinct_over_group_keys(select: exp.Select) -> exp.Select | None:
     """``SELECT DISTINCT k, j, COUNT(*) ... GROUP BY k, j`` is the same without ``DISTINCT``.
 
@@ -707,7 +736,7 @@ def fold_count_casts(select: exp.Select) -> exp.Select | None:
     return result
 
 
-_RULES = (drop_membership_dedup, drop_dedup_read_as_set, merge_grouped_source, distinct_join_to_exists, regroup_distinct, unwrap_column_parens, drop_distinct_over_group_keys, fold_count_casts)
+_RULES = (drop_membership_dedup, drop_dedup_read_as_set, merge_grouped_source, distinct_join_to_exists, regroup_distinct, unwrap_column_parens, drop_group_under_distinct, drop_distinct_over_group_keys, fold_count_casts)
 
 
 def distinct_rules(select: exp.Select, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
