@@ -442,7 +442,8 @@ def _split_in_over_union(select: exp.Select) -> exp.Expression | None:
 
     A match in either part is a match in the whole and an unknown stays unknown, so the three-valued
     result agrees (and ``NOT IN`` is its negation). Unlike the pass before normalization, this one
-    also sees unions that earlier rewrites expose.
+    also sees unions that earlier rewrites expose. ``EXISTS`` over a filtered derived union is likewise
+    an ``OR`` of one ``EXISTS`` per branch.
     """
 
     for node in select.find_all(exp.In):
@@ -462,6 +463,23 @@ def _split_in_over_union(select: exp.Select) -> exp.Expression | None:
         result = tests[0]
         for test in tests[1:]:
             result = exp.Or(this=result, expression=test)
+        target.replace(exp.Paren(this=result))
+        return copy
+    # EXISTS over a derived union holds when it holds over some branch.
+    for node in select.find_all(exp.Exists):
+        if node.find_ancestor(exp.Select) is not select:
+            continue
+        body = node.this.this if isinstance(node.this, exp.Subquery) else node.this
+        if not isinstance(body, exp.Select):
+            continue
+        branches = _in_branches(body)
+        if branches is None or len(branches) < 2 or len(branches) > MAX_BRANCHES:
+            continue
+        copy = select.copy()
+        target = next(n for n in copy.find_all(exp.Exists) if n.sql() == node.sql())
+        result = exp.Exists(this=branches[0].copy())
+        for branch in branches[1:]:
+            result = exp.Or(this=result, expression=exp.Exists(this=branch.copy()))
         target.replace(exp.Paren(this=result))
         return copy
     return None

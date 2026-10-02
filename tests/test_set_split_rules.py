@@ -95,6 +95,14 @@ def test_in_over_a_filtered_derived_union_splits():
     )
 
 
+def test_exists_over_a_filtered_derived_union_splits():
+    out = _rule("SELECT x FROM u WHERE EXISTS (SELECT 1 FROM (SELECT x FROM t UNION SELECT y FROM t) AS d WHERE d.x = u.y)")
+    assert out == (
+        "SELECT x FROM u WHERE (EXISTS(SELECT 1 FROM (SELECT x FROM t) AS d WHERE d.x = u.y) "
+        "OR EXISTS(SELECT 1 FROM (SELECT y AS x FROM t) AS d WHERE d.x = u.y))"
+    )
+
+
 @pytest.mark.parametrize("other", SAME_AS_CASE_KEY)
 def test_case_join_key_matches_union_and_or_forms(other):
     assert _proven(CASE_KEY, other)
@@ -137,6 +145,10 @@ def test_self_join_symmetry_under_distinct(other):
         (
             "SELECT x FROM u WHERE x NOT IN (SELECT CASE WHEN x = 1 THEN y END FROM t)",
             "SELECT x FROM u WHERE x NOT IN (SELECT y FROM t WHERE x = 1)",
+        ),
+        (
+            "SELECT x FROM u WHERE EXISTS (SELECT 1 FROM (SELECT x FROM t UNION SELECT y FROM t) AS d WHERE d.x = u.y)",
+            "SELECT x FROM u WHERE EXISTS (SELECT 1 FROM t WHERE t.x = u.y)",
         ),
         (
             "SELECT x FROM u WHERE x IN (SELECT y FROM (SELECT x, y FROM t UNION SELECT y, x FROM t) AS d WHERE x = 1)",
