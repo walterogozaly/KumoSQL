@@ -144,14 +144,14 @@ The one flagged layout-only pair is CP05 `test_fail_postgres_create_type`: `CREA
 | Supported by KumoSQL's preferences | 169 |
 | Output equal to sqlfluff's fix | **167** |
 | Output differs | 2 |
-| Verified by KumoSQL (proven equal, or unchanged) | **159** |
-| Unverified (refused as unproven) | 10 |
+| Verified by KumoSQL (proven equal, or unchanged) | **161** |
+| Unverified (refused as unproven) | 8 |
 | Verified but the output changes the tree, a comment or a literal | **0** |
 | Unsupported (another dialect 105, configuration KumoSQL cannot express 121, Jinja 49, sqlfluff cannot parse 9) | 284 |
 
-All 167 reproductions are exact, and the 10 unverified runs are right to be: seven rename identifiers (CP02), one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column, and two are the real bug below.
+All 167 reproductions are exact, and the 8 unverified runs are right to be: seven rename identifiers (CP02) and one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column.
 
-- **Finding: a repeat-until-stable pass can turn spaced unary signs into a comment.** LT01 on `SELECT 1 * - - - 5` gives sqlfluff's `SELECT 1 * - - -5`, but running the fixer again on that output returns `SELECT 1 * ---5`, and `--5` starts a comment (the second fixture loses `AS c, 2 AS d` the same way). KumoSQL's loop in `format_sql` runs the second pass. KumoSQL's verification marks both runs unproven, so nothing wrongly passes, but the formatter should not emit them.
+- **Finding, fixed ([#313](https://github.com/walterogozaly/KumoSQL/issues/313)): sqlfluff's fixer can turn spaced unary signs into a comment.** LT01 on `SELECT 1 * - - - 5` returns `SELECT 1 * ---5` (the fixture expects `- - -5`), and `--5` starts a comment; the second fixture lost `AS c, 2 AS d` the same way. KumoSQL's verification marked both runs unproven, so nothing wrongly passed, but `format_sql` still produced the text. It now keeps the text from before any pass that creates or removes a comment, so these two fixtures come back unchanged: they differ from the fixture's fix on purpose and count as verified (unchanged).
 
 **Structural rewrite rules.** The rules in the registry (other than `format_sql`) are applied to every semantic fixture's flagged query that BigQuery can read (ANSI or BigQuery dialect, one query). Each one that changes the query is counted, and its verification status and whether its output equals sqlfluff's fix (same parse tree, or proved equivalent) are recorded; a rule whose verified output a random database separates would be **wrong**.
 
