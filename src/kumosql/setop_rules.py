@@ -446,10 +446,12 @@ def _sf_flatten(select: exp.Select) -> exp.Select | None:
                 return None
             value = mapping[column.name.lower()].copy()
             column.replace(value if isinstance(value, (exp.Column, exp.Literal)) else exp.Paren(this=value))
-        for item in flat.expressions:
-            if not isinstance(item, exp.Alias) and not (isinstance(item, exp.Column)):
-                return None
-        flat.set("expressions", [item if isinstance(item, exp.Alias) or item.alias_or_name.lower() == original.alias_or_name.lower() else exp.alias_(item, original.alias_or_name) for item, original in zip(flat.expressions, select.expressions)])
+        named = []
+        for item, original in zip(flat.expressions, select.expressions):
+            name = original.alias_or_name
+            keep = isinstance(item, exp.Alias) or not name or item.alias_or_name.lower() == name.lower()
+            named.append(item if keep else exp.alias_(item, name))
+        flat.set("expressions", named)
         inner_from = inner.args.get("from_") or inner.args.get("from")
         if inner_from is None:
             return None
