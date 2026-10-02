@@ -19,7 +19,7 @@ KumoSQL has its own small lexer for this because sqlglot's BigQuery tokenizer tr
 | Ignored | `DECLARE` and `SET` of scalars, `ASSERT`, transactions, `LOAD DATA`, DDL such as `ALTER` and `DROP`, `RAISE`, `RETURN`, `LEAVE`/`ITERATE`/`BREAK`, and the shell of `IF`, loops and `BEGIN ... END` |
 | Unknown | `EXECUTE IMMEDIATE` of dynamic text (a variable, `FORMAT`, concatenation with a variable), `CALL` of a procedure nobody defines, a statement that does not parse |
 
-Unknown is never guessed: a dynamic statement adds no edges, and the script is reported incomplete. A statement that does not parse is *degraded*, not dropped: the tables it reads and writes are taken from its tokens (names after `FROM`, `JOIN`, `USING`, `TABLE`, `INTO`, `UPDATE`, `MERGE`, `CREATE ... TABLE|VIEW`, `LIKE` and `CLONE`, minus the CTE names it declares), so its graph edges stay, its columns are unknown, and one `parse_error` says where sqlglot stopped (line and column, no SQL text). Names in comments and strings are never tables.
+Unknown is never guessed: a dynamic statement adds no edges, and the script is reported incomplete. A statement that does not parse, or whose first word is not a statement at all (a misspelled keyword), is *degraded*, not dropped: the tables it reads and writes are taken from its tokens (names after `FROM`, `JOIN`, `USING`, `TABLE`, `INTO`, `UPDATE`, `MERGE`, `CREATE ... TABLE|VIEW`, `LIKE` and `CLONE`, minus the CTE names it declares), so its graph edges stay, its columns are unknown, and one `parse_error` says where sqlglot stopped (line and column, no SQL text). Names in comments and strings are never tables.
 
 ### Roles
 
@@ -66,7 +66,7 @@ Several clauses union their sources per column. A script's last unconditional `M
 
 ## Diagnostics
 
-Nothing in the UI explains scripts. Each script gets an informational `script_summary` diagnostic with counts (for example `script of 12 statements: 7 kept, 5 ignored, 1 unknown (execute_immediate x1)`), never SQL text. Two codes block completeness: `skipped_statements` (a script where some statements that write columns are not traced: `N statements; 1 traced, K not traced (kinds: ...)`; a definition, a delete and a traced statement never count) and `unparsed_operation` (some pre/post operations could not be read). The graph, impact and dead-column views treat a model with either code as incomplete, as for any other gap.
+Nothing in the UI explains scripts. Each script gets an informational `script_summary` diagnostic with counts (for example `script of 12 statements: 7 kept, 5 ignored, 1 unknown (execute_immediate x1)`), never SQL text. Two codes block completeness: `skipped_statements` (a script where some statements that write columns are not traced: `N statements; 1 traced, K not traced (kinds: ...)`; a definition, a delete and a traced statement never count) and `unparsed_operation` (a statement of an operation that could not be read at all: dynamic text or a call nobody defines). An operation statement that does not parse is a degraded one and reports the located `parse_error`, as in a query model. The graph, impact and dead-column views treat a model with either code as incomplete, as for any other gap.
 
 ## Limits
 
