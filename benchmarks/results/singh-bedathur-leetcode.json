@@ -2,19 +2,19 @@
   "suite": "Singh & Bedathur LeetCode pairs",
   "order": 25,
   "size": 2800,
-  "score": "2650/2800, 0 wrong",
-  "metric": "Pairs decided from SQL and column names alone: 776 proved equivalent, 1874 proved different by a counterexample database, 150 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
+  "score": "2728/2800, 0 wrong",
+  "metric": "Pairs decided from SQL and column names alone: 854 proved equivalent, 1874 proved different by a counterexample database, 72 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
   "docs": "docs/evals/singh-bedathur.md#scores",
   "command": "python tools/singh_bedathur_bench.py",
   "date": "2026-10-02",
-  "caveats": "Rewrite rules were written while looking at these pairs; the held-out fifth was reserved partway through, so it is a weak check. The published labels assume LeetCode's keys and NOT NULL rules, which the files omit, so 476 pairs labelled equivalent get a valid counterexample here. Data is downloaded from a pinned commit (no licence file, not bundled). The October counterexample-search changes (seed per pair, duplicate rows, three-decimal values, date and divisor neighbours) were developed on dev pairs only; the held-out fifth was not inspected. The outer-join flattening rules (outer_join_flatten.py) were developed on dev pairs only. The structural aggregate rules were developed on dev pairs only. Measured on master 80ac740, after the structural aggregate rules (src/kumosql/aggregate_rules.py, #371).",
+  "caveats": "Rewrite rules were written while looking at these pairs; the held-out fifth was reserved partway through, so it is a weak check. The published labels assume LeetCode's keys and NOT NULL rules, which the files omit, so 476 pairs labelled equivalent get a valid counterexample here. Data is downloaded from a pinned commit (no licence file, not bundled). The October counterexample-search changes (seed per pair, duplicate rows, three-decimal values, date and divisor neighbours) were developed on dev pairs only; the held-out fifth was not inspected. The outer-join flattening rules (outer_join_flatten.py) were developed on dev pairs only. The structural aggregate rules were developed on dev pairs only. The set-split rules (set_split_rules.py, #389) were developed on dev pairs only (failing-tests cluster 11, all 72 dev). Measured on master 696c6c8, after #389.",
   "evidence": "proof",
   "correctness": "0 wrong: every proof re-checked on 900 random DuckDB databases; every 'different' carries a database on which DuckDB returns different bags (numbers compared as rounded floats, fractions exact in binary)",
   "coverage": {
-    "proven": 776,
+    "proven": 854,
     "refuted": 1874,
-    "unknown": 139,
-    "unsupported": 11
+    "unknown": 68,
+    "unsupported": 4
   },
-  "held_out": "542/580, 0 wrong (held-out fifth, by hash of the pair)"
+  "held_out": "557/580, 0 wrong (held-out fifth, by hash of the pair)"
 }
