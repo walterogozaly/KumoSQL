@@ -8,9 +8,9 @@ Everything is deterministic Python: `kumosql.counterexample` (a constraint-respe
 
 | Verdict | Evidence | Meaning |
 | --- | --- | --- |
-| `equivalent` | **unbounded proof** | The z3 prover proved the result bags equal on every database that satisfies the declared keys and NOT NULL columns. After a proof, 600 more random databases (a different seed) must still agree, or the case counts as `wrong`. |
+| `equivalent` | **unbounded proof** | The z3 prover proved the result bags equal on every database that satisfies the declared keys and NOT NULL columns. After a proof, 1,000 more random databases (a different seed) must still agree, or the case counts as `wrong`. |
 | `different` | **executed counterexample** | A database satisfying every constraint was built and both queries were run on it with different result bags. The difference has to survive three row-order shuffles, so it never rests on `LIMIT` ties or on MySQL's arbitrary pick for a non-grouped column. |
-| `agrees` | **executed datasets only** | Not proven, and 150 random databases showed no difference. This is not a proof and not bounded verification. |
+| `agrees` | **executed datasets only** | Not proven, and 600 random databases (200, then 400 more for pairs that are not proven) showed no difference. This is not a proof and not bounded verification. |
 | `unknown` | none | The pair could not be run (a query DuckDB rejects, unreadable constraints). |
 | `wrong` | | An `equivalent` verdict contradicted by a counterexample (our own second search, or VeriEQL's published counterexample replayed on DuckDB). Must stay 0. |
 
@@ -33,6 +33,14 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 `--audit` also compares with VeriEQL's published per-case outcomes (`NEQ` with a counterexample, `TMO` timeout and so on) and replays VeriEQL's counterexample against every pair we called equivalent. The suites are downloaded once into `~/.cache/kumosql/verieql` (set `KUMOSQL_VERIEQL_CACHE` to change it). The data is CC BY-NC-SA 4.0, so it is not copied into this repository, and none of VeriEQL's code is vendored (its licence is also CC BY-NC-SA 4.0); only its benchmark files are read. Please cite the VeriEQL paper when using these numbers.
 
-Calcite-397 (2026-10-02): **210 pairs proved equivalent, 0 wrong** (197 before derived tables holding an outer join were flattened and their computed columns lifted, see `docs/sqlsolver.md`; the scoreboard's earlier 176 predates other prover rules).
+`tests/test_verieql_benchmarks.py` pins floors on small samples (skipped, with a "data unavailable" message, when the data cannot be downloaded; downloads are retried, checked against pinned SHA-256 sums and written atomically).
 
-`tests/test_verieql_benchmarks.py` pins floors on small samples (skipped when the data cannot be downloaded).
+## Results (2026-10-02)
+
+| Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Literature | 64 | 10 | 22 | 21 | 11 | 0 |
+| Calcite-397 | 397 | 210 | 15 | 76 | 96 | 0 |
+| LeetCode (all pairs) | 23,994 | 4,380 | 5,519 | 12,172 | 1,923 | 0 |
+
+On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute 2,286 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax). Calcite-397 was 197 proven before derived tables holding an outer join were flattened and their computed columns lifted (`docs/sqlsolver.md`); the 13 gained pairs were among those agreeing on random databases.
