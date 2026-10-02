@@ -1,0 +1,2871 @@
+{
+ "held_out_families": [
+  "joins",
+  "aggregates"
+ ],
+ "schema": "shop",
+ "cases": [
+  {
+   "id": "filters.gt10-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt10-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.gt5-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ge10-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.lt5-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.le5-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.eq10-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount = 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.ne10-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.between-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.in-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.range-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.outside-in-not_le10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-gt10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-gt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-ge10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount >= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-lt5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-le5",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-eq10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount = 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-ne10",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <> 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-between",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount BETWEEN 5 AND 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-in",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IN (5, 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-range",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5 AND amount < 20",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "filters.not_le10-in-outside",
+   "family": "filters",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount <= 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount < 5 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_null-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.gt10_or_null-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.split-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.le10-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_gt10-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.coalesce-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.self_eq-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount = amount",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.true-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.not_in_null-in-is_null_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "q2": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-is_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-not_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount IS NOT NULL",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-gt10_or_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 10 OR amount IS NULL",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-split",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10 OR amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-le10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount <= 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-not_gt10",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE NOT (amount > 10)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-coalesce",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE COALESCE(amount, 0) <= 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-self_eq",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount = amount",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-true",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE 1 = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-not_in",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "nulls.is_null_gt10-in-not_in_null",
+   "family": "nulls",
+   "q1": "SELECT id, amount FROM orders WHERE (amount > 10) IS NULL",
+   "q2": "SELECT id, amount FROM orders WHERE amount NOT IN (1, 2, NULL)",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same table and columns; label by three-valued evaluation over every value of amount including NULL"
+  },
+  {
+   "id": "dup.plain-in-distinct",
+   "family": "duplicates",
+   "q1": "SELECT region FROM orders",
+   "q2": "SELECT DISTINCT region FROM orders",
+   "set": "contained",
+   "bag": "not_contained",
+   "note": "set-equal; the plain query repeats rows the DISTINCT one collapses"
+  },
+  {
+   "id": "dup.distinct-in-plain",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT region FROM orders",
+   "q2": "SELECT region FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "DISTINCT only removes duplicates"
+  },
+  {
+   "id": "dup.distinct-filter-in-plain",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT region FROM orders WHERE amount > 10",
+   "q2": "SELECT region FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "a filtered DISTINCT is still within the plain rows"
+  },
+  {
+   "id": "dup.filter-in-distinct",
+   "family": "duplicates",
+   "q1": "SELECT region FROM orders WHERE amount > 10",
+   "q2": "SELECT DISTINCT region FROM orders",
+   "set": "contained",
+   "bag": "not_contained",
+   "note": "set-contained; bag-wise the filtered rows can repeat"
+  },
+  {
+   "id": "dup.distinct-wider-in-narrower",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT region FROM orders",
+   "q2": "SELECT DISTINCT region FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "the unfiltered regions are not all in the filtered ones"
+  },
+  {
+   "id": "dup.same-distinct",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT region FROM orders WHERE amount > 10",
+   "q2": "SELECT DISTINCT region FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "both DISTINCT, stronger filter on the left"
+  },
+  {
+   "id": "dup.status-in-all",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT status FROM orders WHERE region = 1",
+   "q2": "SELECT DISTINCT status FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "both DISTINCT"
+  },
+  {
+   "id": "dup.status-all-in-region",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT status FROM orders",
+   "q2": "SELECT DISTINCT status FROM orders WHERE region = 1",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "a status can occur only outside region 1"
+  },
+  {
+   "id": "dup.key-distinct-noop",
+   "family": "duplicates",
+   "q1": "SELECT id FROM orders",
+   "q2": "SELECT DISTINCT id FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "id is a key, so DISTINCT removes nothing"
+  },
+  {
+   "id": "dup.key-distinct-noop-rev",
+   "family": "duplicates",
+   "q1": "SELECT DISTINCT id FROM orders WHERE amount > 5",
+   "q2": "SELECT id FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "id is a key"
+  },
+  {
+   "id": "dup.nonkey-column-order",
+   "family": "duplicates",
+   "q1": "SELECT status, region FROM orders",
+   "q2": "SELECT region, status FROM orders",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "same columns in a different order are different rows"
+  },
+  {
+   "id": "expr.computed-in-computed",
+   "family": "filters-expr",
+   "q1": "SELECT id, amount + 1 FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount + 1 FROM orders WHERE amount > 5",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same projection, weaker filter on the right"
+  },
+  {
+   "id": "expr.computed-different",
+   "family": "filters-expr",
+   "q1": "SELECT id, amount + 1 FROM orders WHERE amount > 10",
+   "q2": "SELECT id, amount FROM orders WHERE amount > 5",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "different second column"
+  },
+  {
+   "id": "expr.constant-column",
+   "family": "filters-expr",
+   "q1": "SELECT id, 1 FROM orders WHERE amount > 10",
+   "q2": "SELECT id, 1 FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "constant column unchanged"
+  },
+  {
+   "id": "expr.region-eq-vs-in",
+   "family": "filters-expr",
+   "q1": "SELECT id, region FROM orders WHERE region = 3",
+   "q2": "SELECT id, region FROM orders WHERE region IN (1, 3)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "equality inside an IN list"
+  },
+  {
+   "id": "expr.region-in-vs-eq",
+   "family": "filters-expr",
+   "q1": "SELECT id, region FROM orders WHERE region IN (1, 3)",
+   "q2": "SELECT id, region FROM orders WHERE region = 3",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "region 1 rows are missing from the right"
+  },
+  {
+   "id": "expr.status-text",
+   "family": "filters-expr",
+   "q1": "SELECT id FROM orders WHERE status = 'paid' AND amount > 0",
+   "q2": "SELECT id FROM orders WHERE status = 'paid'",
+   "set": "contained",
+   "bag": "contained",
+   "note": "extra conjunct on the left"
+  },
+  {
+   "id": "expr.status-or",
+   "family": "filters-expr",
+   "q1": "SELECT id FROM orders WHERE status = 'paid' OR amount > 0",
+   "q2": "SELECT id FROM orders WHERE status = 'paid'",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "extra disjunct widens the left"
+  },
+  {
+   "id": "expr.two-column",
+   "family": "filters-expr",
+   "q1": "SELECT id FROM orders WHERE amount > 10 AND region = 1",
+   "q2": "SELECT id FROM orders WHERE amount > 5 OR region = 2",
+   "set": "contained",
+   "bag": "contained",
+   "note": "left conjunct implies a right disjunct"
+  },
+  {
+   "id": "expr.two-column-neg",
+   "family": "filters-expr",
+   "q1": "SELECT id FROM orders WHERE amount > 10 OR region = 1",
+   "q2": "SELECT id FROM orders WHERE amount > 10 AND region = 1",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "disjunction is wider than conjunction"
+  },
+  {
+   "id": "union.left-in-union-all",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10",
+   "q2": "SELECT id FROM orders WHERE amount > 10 UNION ALL SELECT id FROM orders WHERE region = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "one branch of a UNION ALL"
+  },
+  {
+   "id": "union.union-all-in-left",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10 UNION ALL SELECT id FROM orders WHERE region = 1",
+   "q2": "SELECT id FROM orders WHERE amount > 10",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "the second branch is missing on the right"
+  },
+  {
+   "id": "union.union-in-union-all",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10 UNION SELECT id FROM orders WHERE amount > 10",
+   "q2": "SELECT id FROM orders WHERE amount > 10 UNION ALL SELECT id FROM orders WHERE amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "UNION collapses what UNION ALL doubles"
+  },
+  {
+   "id": "union.union-all-in-union",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10 UNION ALL SELECT id FROM orders WHERE amount > 10",
+   "q2": "SELECT id FROM orders WHERE amount > 10 UNION SELECT id FROM orders WHERE amount > 10",
+   "set": "contained",
+   "bag": "not_contained",
+   "note": "set-equal; the UNION ALL repeats every row"
+  },
+  {
+   "id": "union.nested-filter",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10 AND region = 1 UNION ALL SELECT id FROM orders WHERE region = 2",
+   "q2": "SELECT id FROM orders WHERE amount > 5 UNION ALL SELECT id FROM orders WHERE region IN (1, 2)",
+   "set": "contained",
+   "bag": "contained",
+   "note": "each left branch is inside a right branch, so every row appears at least as often on the right"
+  },
+  {
+   "id": "union.except",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10 EXCEPT SELECT id FROM orders WHERE region = 1",
+   "q2": "SELECT id FROM orders WHERE amount > 10",
+   "set": "contained",
+   "bag": "contained",
+   "note": "EXCEPT removes rows"
+  },
+  {
+   "id": "union.intersect",
+   "family": "setops",
+   "q1": "SELECT id FROM orders WHERE amount > 10 INTERSECT SELECT id FROM orders WHERE region = 1",
+   "q2": "SELECT id FROM orders WHERE region = 1",
+   "set": "contained",
+   "bag": "contained",
+   "note": "INTERSECT is within each side"
+  },
+  {
+   "id": "join.inner-in-base",
+   "family": "joins",
+   "q1": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "q2": "SELECT id FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "customers.id is a key, so the join cannot duplicate an order"
+  },
+  {
+   "id": "join.base-in-inner",
+   "family": "joins",
+   "q1": "SELECT id FROM orders",
+   "q2": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "orders without a customer are lost by the join"
+  },
+  {
+   "id": "join.nonkey-duplicates",
+   "family": "joins",
+   "q1": "SELECT o.id FROM orders o JOIN events e ON o.customer_id = e.customer_id",
+   "q2": "SELECT id FROM orders",
+   "set": "contained",
+   "bag": "not_contained",
+   "note": "events has no key, so a matching order repeats once per event"
+  },
+  {
+   "id": "join.nonkey-distinct",
+   "family": "joins",
+   "q1": "SELECT DISTINCT o.id FROM orders o JOIN events e ON o.customer_id = e.customer_id",
+   "q2": "SELECT id FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "DISTINCT removes the join's repeats"
+  },
+  {
+   "id": "join.swap-order",
+   "family": "joins",
+   "q1": "SELECT o.id, c.tier FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "q2": "SELECT o.id, c.tier FROM customers c JOIN orders o ON c.id = o.customer_id",
+   "set": "contained",
+   "bag": "contained",
+   "note": "same join written the other way round"
+  },
+  {
+   "id": "join.extra-filter",
+   "family": "joins",
+   "q1": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.tier = 1",
+   "q2": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "set": "contained",
+   "bag": "contained",
+   "note": "filter on the joined table"
+  },
+  {
+   "id": "join.extra-filter-rev",
+   "family": "joins",
+   "q1": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "q2": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.tier = 1",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "the unfiltered join has other tiers"
+  },
+  {
+   "id": "join.semi-in-join",
+   "family": "joins",
+   "q1": "SELECT id FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE tier = 1)",
+   "q2": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "set": "contained",
+   "bag": "contained",
+   "note": "customers.id is a key, so IN and JOIN return the same rows; the filter only narrows"
+  },
+  {
+   "id": "join.left-in-inner",
+   "family": "joins",
+   "q1": "SELECT o.id, c.tier FROM orders o LEFT JOIN customers c ON o.customer_id = c.id",
+   "q2": "SELECT o.id, c.tier FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "the LEFT JOIN keeps unmatched orders with a NULL tier"
+  },
+  {
+   "id": "join.inner-in-left",
+   "family": "joins",
+   "q1": "SELECT o.id, c.tier FROM orders o JOIN customers c ON o.customer_id = c.id",
+   "q2": "SELECT o.id, c.tier FROM orders o LEFT JOIN customers c ON o.customer_id = c.id",
+   "set": "contained",
+   "bag": "contained",
+   "note": "an inner join is a subset of the left join"
+  },
+  {
+   "id": "join.self-cross",
+   "family": "joins",
+   "q1": "SELECT a.id FROM orders a JOIN orders b ON a.id = b.id",
+   "q2": "SELECT id FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "self-join on a key returns each row once"
+  },
+  {
+   "id": "join.region-join",
+   "family": "joins",
+   "q1": "SELECT o.id FROM orders o JOIN customers c ON o.region = c.region",
+   "q2": "SELECT id FROM orders",
+   "set": "contained",
+   "bag": "not_contained",
+   "note": "region is not a key of customers: matches can repeat"
+  },
+  {
+   "id": "agg.filter-on-group",
+   "family": "aggregates",
+   "q1": "SELECT region, SUM(amount) FROM orders WHERE region IN (1, 2) GROUP BY region",
+   "q2": "SELECT region, SUM(amount) FROM orders WHERE region > 0 GROUP BY region",
+   "set": "contained",
+   "bag": "contained",
+   "note": "the filter is on the grouping column, so whole groups are kept"
+  },
+  {
+   "id": "agg.filter-on-measure",
+   "family": "aggregates",
+   "q1": "SELECT region, SUM(amount) FROM orders WHERE amount > 10 GROUP BY region",
+   "q2": "SELECT region, SUM(amount) FROM orders WHERE amount > 0 GROUP BY region",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "different rows are summed, so the totals differ"
+  },
+  {
+   "id": "agg.count-filter-measure",
+   "family": "aggregates",
+   "q1": "SELECT region, COUNT(*) FROM orders WHERE amount > 10 GROUP BY region",
+   "q2": "SELECT region, COUNT(*) FROM orders GROUP BY region",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "the counts differ"
+  },
+  {
+   "id": "agg.group-in-group",
+   "family": "aggregates",
+   "q1": "SELECT region, MAX(amount) FROM orders WHERE region = 1 GROUP BY region",
+   "q2": "SELECT region, MAX(amount) FROM orders GROUP BY region",
+   "set": "contained",
+   "bag": "contained",
+   "note": "the region-1 group is a group of the unfiltered query"
+  },
+  {
+   "id": "agg.having",
+   "family": "aggregates",
+   "q1": "SELECT region, COUNT(*) FROM orders GROUP BY region HAVING COUNT(*) > 2",
+   "q2": "SELECT region, COUNT(*) FROM orders GROUP BY region",
+   "set": "contained",
+   "bag": "contained",
+   "note": "HAVING removes whole groups"
+  },
+  {
+   "id": "agg.having-rev",
+   "family": "aggregates",
+   "q1": "SELECT region, COUNT(*) FROM orders GROUP BY region",
+   "q2": "SELECT region, COUNT(*) FROM orders GROUP BY region HAVING COUNT(*) > 2",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "small groups are missing on the right"
+  },
+  {
+   "id": "agg.having-stronger",
+   "family": "aggregates",
+   "q1": "SELECT region, COUNT(*) FROM orders GROUP BY region HAVING COUNT(*) > 5",
+   "q2": "SELECT region, COUNT(*) FROM orders GROUP BY region HAVING COUNT(*) > 2",
+   "set": "contained",
+   "bag": "contained",
+   "note": "a stronger HAVING"
+  },
+  {
+   "id": "agg.global-count",
+   "family": "aggregates",
+   "q1": "SELECT COUNT(*) FROM orders WHERE amount > 10",
+   "q2": "SELECT COUNT(*) FROM orders",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "a global aggregate always returns one row; the counts differ"
+  },
+  {
+   "id": "agg.global-sum-same",
+   "family": "aggregates",
+   "q1": "SELECT SUM(amount) FROM orders",
+   "q2": "SELECT SUM(amount) FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "identical"
+  },
+  {
+   "id": "agg.sum-vs-count",
+   "family": "aggregates",
+   "q1": "SELECT region, SUM(amount) FROM orders GROUP BY region",
+   "q2": "SELECT region, COUNT(amount) FROM orders GROUP BY region",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "different measure"
+  },
+  {
+   "id": "agg.distinct-count",
+   "family": "aggregates",
+   "q1": "SELECT region, COUNT(DISTINCT customer_id) FROM orders WHERE region = 1 GROUP BY region",
+   "q2": "SELECT region, COUNT(DISTINCT customer_id) FROM orders GROUP BY region",
+   "set": "contained",
+   "bag": "contained",
+   "note": "whole-group filter on the grouping column"
+  },
+  {
+   "id": "agg.group-superset",
+   "family": "aggregates",
+   "q1": "SELECT region, status, COUNT(*) FROM orders GROUP BY region, status",
+   "q2": "SELECT region, COUNT(*) FROM orders GROUP BY region",
+   "set": "not_contained",
+   "bag": "not_contained",
+   "note": "different columns"
+  },
+  {
+   "id": "agg.group-key-distinct",
+   "family": "aggregates",
+   "q1": "SELECT DISTINCT region FROM orders",
+   "q2": "SELECT region FROM orders GROUP BY region",
+   "set": "contained",
+   "bag": "contained",
+   "note": "DISTINCT and GROUP BY give the same rows"
+  },
+  {
+   "id": "agg.group-key-distinct-rev",
+   "family": "aggregates",
+   "q1": "SELECT region FROM orders GROUP BY region",
+   "q2": "SELECT DISTINCT region FROM orders",
+   "set": "contained",
+   "bag": "contained",
+   "note": "DISTINCT and GROUP BY give the same rows"
+  },
+  {
+   "id": "agg.max-weaker-filter",
+   "family": "aggregates",
+   "q1": "SELECT region, MAX(amount) FROM orders WHERE amount > 10 GROUP BY region",
+   "q2": "SELECT region, MAX(amount) FROM orders WHERE amount > 5 GROUP BY region",
+   "set": "contained",
+   "bag": "contained",
+   "note": "not contained: the max over amount > 5 can be larger than the max over amount > 10 only if no value >10 exists, in which case the left group is absent; if present the maxima agree"
+  }
+ ]
+}

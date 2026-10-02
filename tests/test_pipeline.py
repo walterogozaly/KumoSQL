@@ -175,6 +175,21 @@ def test_select_star_expands_with_known_source_schema(tmp_path):
     )
 
 
+def test_lineage_through_star_ctes_names_the_column_read(tmp_path):
+    # JOB-style filtered CTEs: each column read through `SELECT *` is that column of the table,
+    # not `*`, and a CTE defined earlier is not a source of a later `SELECT *` CTE.
+    write(
+        tmp_path,
+        "definitions/q.sql",
+        "WITH f_ct AS (SELECT * FROM company_type AS ct WHERE ct.kind = 'x'), "
+        "f_mc AS (SELECT * FROM movie_companies AS mc WHERE mc.note LIKE '%a%') "
+        "SELECT MIN(mc.note) AS note, MIN(ct.kind) AS kind FROM f_ct AS ct, f_mc AS mc WHERE ct.id = mc.company_type_id",
+    )
+    rows = {row["column"]: row for row in load_sqlx_project(tmp_path).lineage_report()}
+    assert rows["note"]["sources"] == [{"node": "movie_companies", "column": "note"}]
+    assert rows["kind"]["sources"] == [{"node": "company_type", "column": "kind"}]
+
+
 def compiled_graph():
     shared = (
         "SELECT customer_id, SUM(amount) AS total, COUNT(*) AS n "

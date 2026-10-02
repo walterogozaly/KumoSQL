@@ -3036,6 +3036,42 @@
    "tags": [
     "transaction"
    ]
+  },
+  {
+   "id": "query/analytical_mixed_case_names",
+   "kind": "sql",
+   "file": "sql/query/analytical_mixed_case_names.sql",
+   "tags": [
+    "query",
+    "quoting",
+    "cte",
+    "limit",
+    "sqlstorm"
+   ]
+  },
+  {
+   "id": "query/analytical_tie_stable_windows",
+   "kind": "sql",
+   "file": "sql/query/analytical_tie_stable_windows.sql",
+   "tags": [
+    "query",
+    "window",
+    "cte",
+    "limit",
+    "tpc-ds"
+   ]
+  },
+  {
+   "id": "query/analytical_correlated_average",
+   "kind": "sql",
+   "file": "sql/query/analytical_correlated_average.sql",
+   "tags": [
+    "query",
+    "correlated",
+    "cte",
+    "limit",
+    "tpc-ds"
+   ]
   }
  ]
 }

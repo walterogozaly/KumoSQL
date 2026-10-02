@@ -1,0 +1,22 @@
+{
+  "suite": "Query containment (set and bag)",
+  "order": 61,
+  "size": 636,
+  "score": "603/636 decided correctly, 0 wrong",
+  "metric": "318 query pairs, each asked under set and under bag semantics: contained answers need a proof, not-contained answers need a database that separates the queries.",
+  "evidence": "proof",
+  "correctness": "0 false proofs and 0 wrong counterexamples; every counterexample database is replayed on its own",
+  "coverage": {
+    "proven": 174,
+    "refuted": 429,
+    "unknown": 6,
+    "unsupported": 27,
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "44/54 (aggregates and joins families held out, 0 wrong); development 559/582, baseline (existing prover plus random search) 435/582",
+  "docs": "docs/model-reuse.md#query-containment",
+  "command": "python tools/containment_bench.py --all",
+  "date": "2026-10-02",
+  "caveats": "Generated cases (tools/make_containment_cases.py), labels checked by three-valued evaluation or a database; not an external corpus. Refutations are executed evidence, proofs are unbounded."
+}

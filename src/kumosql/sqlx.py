@@ -16,6 +16,7 @@ import re
 _SQLX_BLOCK_RE = re.compile(
     r"""(?im)^[ \t]*(?:(?:config|js|pre_operations|post_operations)|input\s+(?:"[^"\n]*"|'[^'\n]*'))\s*\{"""
 )
+_SQLX_WHEN_CONNECTIVE_RE = re.compile(r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*[`'\"]\s*(AND|OR)\b", re.IGNORECASE)
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"__sqlx_token_\d+__")
 
@@ -159,7 +160,13 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
 
         replacement = token
         pattern = re.compile(re.escape(token))
-        if clause_match and not preceding_clause and not preceding_condition:
+        connective = _SQLX_WHEN_CONNECTIVE_RE.match(body)
+        if connective and not clause_match and not preceding_clause and not preceding_condition:
+            # ``... WHERE a > 0 ${when(incremental(), `AND b > 1`)}``: the expression continues the condition.
+            keyword = connective.group(1).upper()
+            replacement = f"{keyword} {token}"
+            pattern = re.compile(rf"\b{keyword}\s+{re.escape(token)}\b", re.IGNORECASE)
+        elif clause_match and not preceding_clause and not preceding_condition:
             keyword = clause_match.group(1).upper()
             if keyword in {"WHERE", "QUALIFY", "HAVING"}:
                 replacement = f"{keyword} {token}"
