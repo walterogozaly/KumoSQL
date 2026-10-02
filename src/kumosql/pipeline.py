@@ -37,7 +37,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
-from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures
+from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
@@ -813,7 +813,7 @@ def _lineage(name: str, query: exp.Expression, *, copy: bool, **kwargs):
 
 
 def _parse_script(
-    sql: str, procedures: dict | None = None
+    sql: str, procedures: dict | None = None, functions: dict | None = None
 ) -> tuple[exp.Expression | None, ScriptAnalysis]:
     """The query that defines a script's output columns, and everything read from the whole script.
 
@@ -822,12 +822,14 @@ def _parse_script(
     (kept, ignored or unknown) and which tables the script reads and writes.
     """
 
-    analysis = analyse_script(sql, procedures=procedures)
+    analysis = analyse_script(sql, procedures=procedures, functions=functions)
     statement = analysis.final
     query = None
     if statement is not None:
         # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` take the columns of their query.
-        if isinstance(statement, (exp.Create, exp.Insert)):
+        if isinstance(statement, exp.Insert) and isinstance(statement.expression, exp.Values):
+            query = analysis.final_query  # a constant source: the columns are the insert list
+        elif isinstance(statement, (exp.Create, exp.Insert)):
             query = top_level_query(statement)
             if isinstance(query, exp.Query):
                 _adopt_statement_ctes(statement, query)
@@ -844,8 +846,26 @@ def _parse_script(
     return query, analysis
 
 
+def _degraded_message(analysis: ScriptAnalysis, statement) -> str:
+    """Where a statement stopped parsing, and what is still known about it. No SQL text."""
+
+    where = f"statement {statement.index + 1} of {len(analysis.statements)}" if len(analysis.statements) > 1 else "statement"
+    kept = "its tables are read from its tokens and its columns are unknown" if statement.degraded else "its tables are unknown"
+    detail = f": {statement.error}" if statement.error else ""
+    return f"{where} (line {statement.line}) could not be parsed{detail}; {kept}"
+
+
+def _skip_message(analysis: ScriptAnalysis) -> str:
+    """"N statements; 1 traced, K not traced (kinds: ...)": counts and kinds only, never SQL text or names."""
+
+    kinds = ", ".join(f"{kind} x{count}" for kind, count in analysis.untraced_kinds().items())
+    skipped = analysis.untraced_kept + len(analysis.unknown)
+    return f"{analysis.considered} statements; {analysis.traced} traced, {skipped} not traced (kinds: {kinds})"
+
+
 _TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
 _PROCEDURE_WORD = re.compile(r"\bprocedure\b", re.IGNORECASE)
+_TABLE_FUNCTION_WORD = re.compile(r"\btable\s+function\b", re.IGNORECASE)
 
 
 def _last_part(name: str) -> str:
@@ -1119,6 +1139,12 @@ class _Analysis:
             for text in (model.sql, *model.operations_sql)
             if _PROCEDURE_WORD.search(text)
         )
+        functions = collect_table_functions(
+            text
+            for model in pipeline.models.values()
+            for text in (model.sql, *model.operations_sql)
+            if _TABLE_FUNCTION_WORD.search(text)
+        )
         # Tables other models' scripts write, with the models they read (``INSERT INTO t SELECT ...`` feeds t).
         written: dict[str, set[str]] = {}
         operation_readers: set[str] = set()
@@ -1137,13 +1163,13 @@ class _Analysis:
             query = None
             if model.is_query:
                 try:
-                    query, analysis = _parse_script(model.sql, procedures)
+                    query, analysis = _parse_script(model.sql, procedures, functions)
                 except Exception as exc:  # the analysis does not raise, but sqlglot has many error types
                     statements_total += 1
                     statements_by_model[key] = (1, 0)
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
             elif model.sql.strip():
-                analysis = analyse_script(model.sql, procedures=procedures)
+                analysis = analyse_script(model.sql, procedures=procedures, functions=functions)
                 final_target = analysis.final_target
                 if (
                     isinstance(analysis.final, exp.Merge)
@@ -1161,32 +1187,23 @@ class _Analysis:
                     statements_matched += matched
                     statements_by_model[key] = (considered, matched)
                     if query is None and model.sql.strip() and analysis.counts()[KEPT] and not analysis.unknown:
-                        diagnostics.append(
-                            PipelineDiagnostic(
-                                key,
-                                "skipped_statements",
-                                f"script changes tables ({analysis.counts()[KEPT]} statements) but has no query to trace columns "
-                                "through, so column reads by its statements are missing; the tables they read are in the graph",
-                            )
-                        )
+                        if analysis.considered > 1:
+                            diagnostics.append(PipelineDiagnostic(key, "skipped_statements", _skip_message(analysis)))
                     elif query is None and model.sql.strip():
                         failure = _parse_failure(model.sql)
+                        located = next((u for u in analysis.unknown if u.error or u.degraded), None)
+                        if located is not None:
+                            failure = _degraded_message(analysis, located)
                         diagnostics.append(
                             PipelineDiagnostic(key, "parse_error", failure)
                             if failure
                             else PipelineDiagnostic(key, "no_query", "model has no parseable query")
                         )
-                    elif analysis.untraced_kept or analysis.unknown:
-                        diagnostics.append(
-                            PipelineDiagnostic(
-                                key,
-                                "skipped_statements",
-                                f"script has {considered} statements that matter; columns are traced for the final query "
-                                f"and the temporary tables it reads, so column reads by the other "
-                                f"{analysis.untraced_kept + len(analysis.unknown)} are missing "
-                                f"({len(analysis.unknown)} could not be read; the tables the rest read are in the graph)",
-                            )
-                        )
+                    elif (analysis.untraced_kept or analysis.unknown) and analysis.considered > 1:
+                        diagnostics.append(PipelineDiagnostic(key, "skipped_statements", _skip_message(analysis)))
+                        located = next((u for u in analysis.unknown if u.error or u.degraded), None)
+                        if located is not None:
+                            diagnostics.append(PipelineDiagnostic(key, "parse_error", _degraded_message(analysis, located)))
                 elif analysis.unknown:
                     diagnostics.append(
                         PipelineDiagnostic(
@@ -1201,8 +1218,8 @@ class _Analysis:
                 if query is not None:
                     parsed[key] = query
                     script_opaque[key] = frozenset(analysis.opaque_temps)
-                    if isinstance(analysis.final, exp.Merge):
-                        partial_outputs.add(key)  # only the columns the MERGE writes are known, not the whole table
+                    if isinstance(analysis.final, (exp.Merge, exp.Insert)) and analysis.final is not None and not isinstance(analysis.final.args.get("expression"), exp.Query):
+                        partial_outputs.add(key)  # only the columns the MERGE or INSERT writes are known, not the whole table
                 tables, extras = _script_tables(query, analysis)
                 if extras:
                     script_extras[key] = tuple(extras)
@@ -1218,7 +1235,7 @@ class _Analysis:
                         bucket.setdefault(key, set()).add(_table_name_for_schema(table))
                 _note_writes(pipeline, key, analysis, written)
             for operation in model.operations_sql:
-                extra = analyse_script(operation, procedures=procedures)
+                extra = analyse_script(operation, procedures=procedures, functions=functions)
                 if extra.all_reads():
                     script_extras[key] = (*script_extras.get(key, ()), *extra.all_reads())
                 for table in extra.all_reads():
@@ -1236,9 +1253,14 @@ class _Analysis:
                         )
                     )
             # A model is only trusted for column-level questions (dead columns, impact) when every statement that reads
-            # tables has its columns traced. A query model with no query to trace, or a statement that could not be
-            # read at all, leaves it blind; statements understood only at table level make the tables they read
-            # opaque readers (every column of them counts as used).
+            # tables has its columns traced. A statement that could not be read at all, or a query model with nothing
+            # read, leaves it blind; statements understood only at table level, and the bodies of routines it defines,
+            # make the tables they read opaque readers (every column of them counts as used).
+            if analysis is not None:
+                for table in analysis.definition_reads.values():
+                    resolved = pipeline.resolve(table)
+                    if resolved and resolved != key:
+                        operation_readers.add(resolved)
             columns_known = (
                 analysis is not None
                 and not analysis.unknown
@@ -1246,7 +1268,7 @@ class _Analysis:
                 and (key in parsed or analysis.counts()[KEPT] == 0)
             )
             if model.sql.strip() and not model.declared_dependencies and not columns_known:
-                table_level = analysis is not None and not analysis.unknown and not (model.is_query and key not in parsed)
+                table_level = analysis is not None and not analysis.unknown and (key in parsed or analysis.counts()[KEPT] > 0)
                 if table_level:
                     operation_readers.update(parents)
                 else:

@@ -39,10 +39,10 @@ def test_reads_become_edges_and_the_written_table_does_not(sql):
     assert "p.d.m" in pipeline.downstream["p.d.raw"]
 
 
-def test_columns_are_still_not_traced_so_the_model_stays_blind():
+def test_columns_are_not_traced_so_the_read_tables_count_as_fully_used():
     pipeline = _pipeline("DELETE FROM `p.d.victim` WHERE a IN (SELECT a FROM `p.d.raw`)")
     codes = {d.code for d in pipeline.all_diagnostics() if d.model == "p.d.m"}
-    assert "unknown_reads" in codes
+    assert not {"unknown_reads", "skipped_statements"} & codes  # the tables are known; only the columns are not traced
     assert "p.d.m" not in pipeline.explain_lineage() and not pipeline.dead_columns().get("p.d.raw")
 
 
