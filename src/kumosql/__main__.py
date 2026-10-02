@@ -24,6 +24,7 @@ COMMANDS = {
     "consolidate-tables": "kumosql.consolidate:main",
     "kumosql-equivalence": "kumosql.pipeline_equivalence:equivalence_main",
     "kumosql-refactor": "kumosql.refactor:main",
+    "minimize-tables": "kumosql.table_minimizer:main",
     "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
     "kumosql-ui": "kumosql.ui:main",
     "kumosql-scopes": "kumosql.cli:scopes_main",

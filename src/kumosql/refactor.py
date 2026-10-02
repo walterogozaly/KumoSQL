@@ -328,9 +328,12 @@ def _after_table(table: exp.Table, model) -> exp.Expression:
 
 def check_observable(
     pipeline, candidate: Mapping[str, str], observable: Iterable[str], reads: _Reads,
-    *, schema: ProverSchema | None = None, timeout_ms: int = 5000, cache: dict | None = None,
+    *, schema: ProverSchema | None = None, timeout_ms: int = 5000, cache: dict | None = None, declared: list | None = None,
 ) -> tuple[bool, list[str], str]:
-    """``(every observable model proved equal, assumptions, why not)`` for a candidate pipeline."""
+    """``(every observable model proved equal, assumptions, why not)`` for a candidate pipeline.
+
+    ``declared`` are the saved equivalences the prover may use (default: the ones saved in the app).
+    """
 
     observable = list(observable)
     missing = [key for key in observable if key not in candidate]
@@ -346,7 +349,7 @@ def check_observable(
         signature = (key, _closure_signature(candidate, key, reads)) if cache is not None else None
         hit = cache.get(signature) if cache is not None else None
         if hit is None:
-            result = prove_models(combined, key, renamed[key], schema=schema, timeout_ms=timeout_ms)
+            result = prove_models(combined, key, renamed[key], declared=declared, schema=schema, timeout_ms=timeout_ms)
             hit = (result.proven, [*result.assumptions, *result.equivalences], f"{key}: {result.reason}")
             if cache is not None:
                 cache[signature] = hit
