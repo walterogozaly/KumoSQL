@@ -50,6 +50,12 @@ Evidence levels stay separate: a refactor is **ready** only on proof (the prover
 - A duplicate group was dropped when its copies sat inside larger duplicates that did not match each other, hiding the link between those duplicates.
 - Guided refactors always read "Not ready": `ready` was fixed to false.
 
+## Baseline (master before this work, seed 1, 60 to 600 models)
+
+Measured with the same generator before any change: exact-duplicate textual recall 0% to 57% (any renamed alias hid a copy), near-duplicate analysis raised an error on any model that wraps a copy in a derived table, no near-duplicate refactor was ever offered for copies with different aliases, and every refactor was Not ready (`ready` was fixed to false). Cases are all generated here; none are adapted from a public suite, and no existing eval covers duplicate detection.
+
+Every failure found is kept as a regression test: `tests/test_canonical.py`, `tests/test_near_duplicates.py`, `tests/test_shared_logic.py` and `tests/test_dup_bench.py`.
+
 ## Scores
 
 Numbers are in the README scoreboard (`benchmarks/results/duplicate-*.json`, `shared-refactors-*.json`) and are regenerated with the command above.
