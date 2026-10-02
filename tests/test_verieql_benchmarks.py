@@ -21,9 +21,9 @@ _spec.loader.exec_module(bench)
 
 # suite -> (every Nth case, minimum equivalent proofs, minimum executed counterexamples)
 SAMPLES = {
-    "literature": (4, 0, 0),
-    "calcite": (20, 0, 0),
-    "leetcode": (200, 0, 0),
+    "literature": (4, 2, 4),
+    "calcite": (20, 7, 0),
+    "leetcode": (200, 19, 21),
 }
 
 
