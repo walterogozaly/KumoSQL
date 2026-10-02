@@ -308,3 +308,41 @@ def test_self_join_meaning():
     })["sj"]
     assert p.attribute("other_amount").meaning == "col:proj.raw.orders.amount"
     assert p.grain.status == "unknown"
+
+
+def test_profiles_are_computed_once_per_pipeline_and_grain():
+    pipeline = build({"a": "SELECT id FROM proj.raw.orders"})
+    first = profile_pipeline(pipeline)
+    assert profile_pipeline(pipeline) == first
+    assert profile_pipeline(pipeline) is not first  # a copy of the saved result: callers may edit theirs
+    assert next(iter(profile_pipeline(pipeline).values())) is next(iter(first.values()))
+    other = profile_pipeline(pipeline, declared_grain={"proj.core.a": ["id"]})
+    assert other.keys() == first.keys()
+
+
+def test_profile_query_only_analyses_what_the_query_reads():
+    from kumosql import table_profile
+
+    pipeline = build({
+        "base": "SELECT id, amount FROM proj.raw.orders",
+        "mid": "SELECT id, SUM(amount) AS total FROM proj.core.base GROUP BY id",
+        "unrelated": "SELECT sku, SUM(qty) AS n FROM proj.raw.order_items GROUP BY sku",
+    })
+    sql = "SELECT id, total * 2 AS twice FROM proj.core.mid"
+    seen = []
+    original = table_profile._upstream_models
+    table_profile._upstream_models = lambda p, s: seen.append(original(p, s)) or seen[-1]
+    try:
+        query = profile_query(pipeline, sql)
+    finally:
+        table_profile._upstream_models = original
+    assert sorted(key.split(".")[-1] for key in seen[0] if key.startswith("proj.")) == ["base", "mid"]
+    # the same profile as with the whole project around it
+    whole = Pipeline(
+        {**pipeline.models, "q": Model(Target("", "", "q"), "table", sql)},
+        sources=dict(pipeline.sources),
+        source_schema=dict(pipeline.source_schema),
+    )
+    expected = profile_pipeline(whole)["q"]
+    assert query.grain == expected.grain
+    assert [a.meaning for a in query.attributes] == [a.meaning for a in expected.attributes]

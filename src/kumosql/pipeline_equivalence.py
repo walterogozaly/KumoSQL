@@ -271,7 +271,7 @@ def prove_queries(left: object, right: object) -> dict:
     config = prover_context.settings()
     if not config["enabled"]:
         raise ValueError("the solver is turned off in Settings")
-    result = prover_context.prove(left, right)
+    result = prover_context.prove(left, right, search_counterexample=True)
     data = {"status": result.status.value, "reason": result.reason, "assumptions": list(result.assumptions)}
     if result.status is not SmtStatus.PROVEN_EQUIVALENT:
         bounded = prover_context.bounded(left, right)

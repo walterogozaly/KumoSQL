@@ -223,7 +223,7 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/lineage-limits":
             from . import lineage_limits
 
-            self._json(200, lineage_limits.settings())
+            self._json(200, lineage_limits.status())
             return
         if self.path == "/api/schema-fetch":
             from . import schema_fetch
@@ -472,7 +472,7 @@ class UIHandler(BaseHTTPRequestHandler):
         except OSError as exc:
             self._json(500, {"error": str(exc)})
             return
-        self._json(200, saved)
+        self._json(200, lineage_limits.status())
 
     def do_PUT(self) -> None:
         if self.path == "/api/schema-fetch":

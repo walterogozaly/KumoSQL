@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 import re
 
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
+from .layout_equivalence import restore_function_case
 from .sqlx import looks_like_sqlx
 
 DIALECT = "bigquery"
@@ -202,6 +203,18 @@ def _restore_quoted(original: str, formatted: str) -> str:
     return _QUOTED_RE.sub(lambda _: next(replacements), formatted)
 
 
+def _comments(sql: str) -> list[str] | None:
+    """The comment texts BigQuery reads in ``sql``, ``None`` when it cannot be tokenized."""
+
+    import sqlglot
+
+    try:
+        # re-indenting the lines of a block comment is layout, so compare the lines' words only
+        return ["\n".join(line.strip() for line in c.strip().splitlines()) for token in sqlglot.tokenize(sql, read="bigquery") for c in (token.comments or [])]
+    except sqlglot.errors.SqlglotError:
+        return None
+
+
 def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     """Format BigQuery SQL with sqlfluff. Unparseable SQL raises ``ValueError``."""
 
@@ -213,18 +226,49 @@ def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     parsed = linter.parse_string(sql)
     if any(v.rule_code() == "PRS" for v in parsed.violations):
         raise ValueError("sqlfluff could not parse this SQL")
+    # A pass must not create or remove a comment: LT01 on `- - -5` gives `---5`, and `--5` starts a comment
+    # that swallows the rest of the line. The text before that pass is kept then.
     formatted = linter.lint_string(sql, fix=True).fix_string()[0]
+    if _comments(formatted) != _comments(sql):
+        formatted = sql
     # One sqlfluff pass is not always a fixed point (a fix can enable another),
     # which would make a second run change the output. Repeat until stable.
     for _ in range(_MAX_FORMAT_PASSES):
         again = linter.lint_string(formatted, fix=True).fix_string()[0]
         if again == formatted:
             break
+        if _comments(again) != _comments(formatted):
+            break
         formatted = again
     # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.
     if not sql.endswith("\n"):
         formatted = formatted.rstrip("\n")
-    return _restore_quoted(sql, formatted)
+    return restore_function_case(sql, _restore_quoted(sql, formatted))
+
+
+def _same_meaning(before: str, after: str) -> bool:
+    """Formatting only moves whitespace and case, so both texts must parse alike.
+
+    sqlfluff joins tokens when it removes spaces: ``- -i`` becomes ``--i``, which
+    BigQuery reads as a comment. SQL sqlglot cannot parse is not checked.
+    """
+
+    import sqlglot
+
+    try:
+        left = sqlglot.parse(before, read="bigquery")
+    except Exception:
+        return True
+    try:
+        right = sqlglot.parse(after, read="bigquery")
+    except Exception:
+        return False
+    if len(left) != len(right):
+        return False
+    return all(
+        (a is None and b is None) or (a is not None and b is not None and a.sql("bigquery").upper() == b.sql("bigquery").upper())
+        for a, b in zip(left, right)
+    )
 
 
 @register_rule
@@ -251,6 +295,14 @@ class FormatSqlRule(RewriteRule):
             formatted = format_sql(sql, self.prefs or load_preferences())
         except ValueError as exc:
             return RuleOutput(sql, 0, 0, 0, 0, (RuleDiagnostic(0, "parse_error", str(exc)),))
+        except Exception as exc:  # sqlfluff can assert on rare inputs; never take the pipeline down
+            return RuleOutput(sql, 0, 0, 0, 0, (
+                RuleDiagnostic(0, "format_error", f"sqlfluff failed ({type(exc).__name__}); input left unchanged"),
+            ))
+        if not _same_meaning(sql, formatted):
+            return RuleOutput(sql, 0, 0, 0, 0, (
+                RuleDiagnostic(0, "format_changed_meaning", "formatting would change how the SQL parses; input left unchanged"),
+            ))
         changed = int(formatted != sql)
         return RuleOutput(formatted, 1, changed, changed, 0, ())
 
