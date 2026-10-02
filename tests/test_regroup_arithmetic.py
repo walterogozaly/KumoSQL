@@ -33,5 +33,13 @@ def test_wrong_averages_stay_unproven(outer):
 
 
 def test_arithmetic_reading_a_column_outside_the_aggregates_is_left_alone():
+    import sqlglot
+
+    from kumosql import algebraic_equivalence as ae
+    from kumosql.regroup_arithmetic import regroup_arithmetic
+
     sql = f"SELECT region, SUM(total) + region AS x FROM {FINE} GROUP BY region"
-    assert "daily" in normalize(sql)
+    regroupers = (ae._collapse_aggregate, ae._roll_up_aggregate, ae._regroup_distinct)
+    assert regroup_arithmetic(sqlglot.parse_one(sql), regroupers) is None
+    # region is a grouping key, so the merged-grouped-source rule (distinct_rules) still reads this as a plain rollup
+    assert normalize(sql) == "SELECT region AS region, SUM(amount) + region AS x FROM orders GROUP BY region"

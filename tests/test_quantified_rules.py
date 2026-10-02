@@ -167,7 +167,40 @@ def _expansions():
     return cases
 
 
-_CASES = _expansions()
+# The same expansions as correlated LATERAL joins: the indicator filters its rows on x = y inside
+# the LATERAL body, and the probe may carry only the (y IS NOT NULL) group.
+_LATERAL_WHERES = ["", "WHERE u.d > 1", "WHERE u.d = t.b"]
+_PROBE_ONLY_CASE = "CASE WHEN s.g = FALSE THEN NULL WHEN s.g IS NOT NULL THEN TRUE ELSE FALSE END"
+_LATERAL_MUTATIONS = [("WHERE t.a = k.k", "WHERE t.b = k.k"), ("LEFT JOIN LATERAL (SELECT k.k", "INNER JOIN LATERAL (SELECT k.k")]
+
+
+def _lateral_expansions():
+    cases = []
+    for where, place, negate, group in itertools.product(_LATERAL_WHERES, ["where", "select"], [False, True], [" GROUP BY u.c", ""]):
+        original = _original(f"t.a IN (SELECT u.c FROM u {where})", place, negate)
+        source = (
+            f"(SELECT t.a, t.b, g.c, g.ck, ind.i FROM t LEFT JOIN LATERAL (SELECT COUNT(*) AS c, COUNT(u.c) AS ck FROM u {where}) AS g ON TRUE "
+            f"LEFT JOIN LATERAL (SELECT k.k, k.i FROM (SELECT u.c AS k, TRUE AS i FROM u {where}{group}) AS k WHERE t.a = k.k) AS ind ON TRUE) AS s"
+        )
+        expansion = _wrap(_IN_CASE, place, negate).format(source=source)
+        cases.append((original, expansion, bool(group)))
+        cases += [(original, expansion.replace(a, b, 1), False) for a, b in _MUTATIONS + _LATERAL_MUTATIONS if a in expansion]
+    for where, place, negate, counted in itertools.product(_LATERAL_WHERES, ["where", "select"], [False, True], [True, False]):
+        original = _original(f"1 IN (SELECT u.c FROM u {where})", place, negate)
+        filtered = f"{where} AND" if where else "WHERE"
+        n, count = (", p.n", ", COUNT(*) AS n") if counted else ("", "")
+        source = (
+            f"(SELECT t.a, t.b, p.g{n} FROM t LEFT JOIN LATERAL (SELECT m.g{n.replace('p.', ' m.') if counted else ''} FROM (SELECT f.g{count} FROM "
+            f"(SELECT (u.c IS NOT NULL) AS g FROM u {filtered} (1 = u.c OR u.c IS NULL)) AS f GROUP BY f.g) AS m "
+            "ORDER BY (m.g IS NULL) DESC, m.g DESC LIMIT 1) AS p ON TRUE) AS s"
+        )
+        expansion = _wrap(_PROBE_CASE if counted else _PROBE_ONLY_CASE, place, negate).format(source=source)
+        cases.append((original, expansion, True))
+        cases += [(original, expansion.replace(a, b, 1), False) for a, b in _PROBE_MUTATIONS if a in expansion]
+    return cases
+
+
+_CASES = _expansions() + _lateral_expansions()
 
 
 @pytest.mark.parametrize("block", range(4))

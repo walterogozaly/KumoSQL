@@ -157,9 +157,8 @@ _SUPPORTED_AGGREGATES = {
     exp.LogicalOr: "LOGICAL_OR",
     # Bitwise aggregates are left uninterpreted: their value over an empty group differs by engine
     # (NULL in BigQuery, all ones or zero in MySQL), so only equal calls are known to agree.
-    exp.BitwiseAndAgg: "BIT_AND",
-    exp.BitwiseOrAgg: "BIT_OR",
-    exp.BitwiseXorAgg: "BIT_XOR",
+    # sqlglot 26.0.0 has no classes for them (BIT_AND is an unknown function there).
+    **{getattr(exp, cls): name for cls, name in (("BitwiseAndAgg", "BIT_AND"), ("BitwiseOrAgg", "BIT_OR"), ("BitwiseXorAgg", "BIT_XOR")) if hasattr(exp, cls)},
 }
 # Aggregates whose value depends only on the set of non-NULL values, not on how often each occurs.
 _DUPLICATE_INSENSITIVE = ("MIN", "MAX", "LOGICAL_AND", "LOGICAL_OR", "BIT_AND", "BIT_OR")

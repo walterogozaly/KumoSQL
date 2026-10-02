@@ -1,6 +1,8 @@
 """BigQuery syntax that sqlglot's BigQuery parser does not read, added once for every parse in this package.
 
-``DROP TABLE FUNCTION`` is read as dropping a function of kind ``TABLE FUNCTION``.
+``DROP TABLE FUNCTION`` is read as dropping a function of kind ``TABLE FUNCTION``. Pipe ``SET`` and ``DROP`` are read as the
+``SELECT * REPLACE`` and ``SELECT * EXCEPT`` they stand for. ``GRAPH_TABLE(...)`` and the ``MODEL m`` argument of an ``ML.``
+function sqlglot does not know are kept as their own text.
 
 ``FROM dataset.fn(TABLE dataset.input, option => value)`` passes a whole table to a table-valued function. sqlglot stops at
 ``TABLE`` ("Expecting )"), so the model was reported unparseable and everything it read was lost. Here the argument becomes a
@@ -22,17 +24,24 @@ from sqlglot.tokens import Token, TokenType
 TABLE_ARGUMENT = "__KUMO_TABLE_ARGUMENT__"
 
 
+VERBATIM = "__KUMO_VERBATIM__"
+# Calls whose arguments are a language of their own, kept as their text: ``GRAPH_TABLE(graph MATCH ... RETURN ...)``.
+_VERBATIM_CALLS = ("GRAPH_TABLE",)
+
+
 def _generate(self: Generator, expression: exp.Anonymous) -> str:
     if expression.name == TABLE_ARGUMENT and len(expression.expressions) == 1:
         return f"TABLE {self.sql(expression.expressions[0])}"
+    if expression.name == VERBATIM and len(expression.expressions) == 1 and expression.expressions[0].is_string:
+        return expression.expressions[0].this
     return self.anonymous_sql(expression)
 
 
 _installed = False
 
 
-def _in_native_call(before: list) -> bool:
-    """Inside ``ML.fn(...)`` or ``AI.fn(...)``, which sqlglot already reads with its own ``TABLE`` handling."""
+def _open_call(before: list) -> int | None:
+    """The index of the ``(`` of the innermost call still open at the end of ``before``."""
 
     depth = 0
     for index in range(len(before) - 1, -1, -1):
@@ -41,9 +50,26 @@ def _in_native_call(before: list) -> bool:
             depth += 1
         elif kind == TokenType.L_PAREN:
             if depth == 0:
-                return index >= 3 and before[index - 2].token_type == TokenType.DOT and before[index - 3].text.upper() in ("ML", "AI")
+                return index
             depth -= 1
-    return False
+    return None
+
+
+def _ml_call(before: list, index: int | None) -> str | None:
+    """The function name when the ``(`` at ``index`` opens ``ML.fn(`` or ``AI.fn(``."""
+
+    if index is None or index < 3 or before[index - 2].token_type != TokenType.DOT:
+        return None
+    if before[index - 3].text.upper() not in ("ML", "AI"):
+        return None
+    return before[index - 1].text.upper()
+
+
+def _in_native_call(before: list) -> bool:
+    """Inside an ``ML.fn(...)`` or ``AI.fn(...)`` that sqlglot reads itself (``ML.PREDICT``), with its own ``TABLE`` handling."""
+
+    name = _ml_call(before, _open_call(before))
+    return name is not None and name in BigQuery.Parser.FUNCTION_PARSERS
 
 
 def _mark_table_arguments(tokens: list) -> list:
@@ -113,6 +139,145 @@ def _merge_table_function_kind(tokens: list) -> list:
     return out
 
 
+# ``RENAME a AS b`` is left out on purpose: it keeps ``b`` in ``a``'s place, which no ``SELECT`` can say without knowing the
+# columns, and a translation that moved the column would let a prover equate queries whose columns are in different orders.
+_PIPE_OPERATORS = (TokenType.SET, TokenType.DROP)
+_PIPE = getattr(TokenType, "PIPE_GT", None)  # sqlglot 26.0.0 has no pipe syntax at all
+
+
+def _pipe_items(tokens: list, start: int) -> tuple[list[list], int]:
+    """The comma-separated items of a pipe operator whose arguments start at ``start``, and the index after them."""
+
+    items: list[list] = [[]]
+    depth = 0
+    index = start
+    while index < len(tokens):
+        kind = tokens[index].token_type
+        if depth == 0 and kind in (_PIPE, TokenType.SEMICOLON):
+            break
+        if kind in (TokenType.L_PAREN, TokenType.L_BRACKET):
+            depth += 1
+        elif kind in (TokenType.R_PAREN, TokenType.R_BRACKET):
+            if depth == 0:
+                break
+            depth -= 1
+        if depth == 0 and kind == TokenType.COMMA:
+            items.append([])
+        else:
+            items[-1].append(tokens[index])
+        index += 1
+    return [item for item in items if item], index
+
+
+def _pipe_operator_text(sql: str, operator, items: list[list]) -> str | None:
+    """``|> SET c = e`` as ``|> SELECT * REPLACE (e AS c)`` and ``|> DROP c`` as ``|> SELECT * EXCEPT (c)``, which BigQuery
+    defines them to mean, or None when an item is not plain."""
+
+    def text(tokens: list) -> str:
+        return sql[tokens[0].start : tokens[-1].end + 1]
+
+    if not items:
+        return None
+    if operator == TokenType.DROP:
+        if any(len(item) != 1 for item in items):
+            return None
+        return f"|> SELECT * EXCEPT ({', '.join(text(item) for item in items)})"
+    parts = []
+    for item in items:
+        if len(item) < 3 or item[1].token_type != TokenType.EQ:
+            return None
+        parts.append(f"{text(item[2:])} AS {text(item[:1])}")
+    return f"|> SELECT * REPLACE ({', '.join(parts)})"
+
+
+def _rewrite_pipe_operators(sql: str, tokens: list) -> str:
+    """Pipe ``SET`` and ``DROP``, which sqlglot does not read, written as the pipe ``SELECT`` that means the same."""
+
+    pieces: list[str] = []
+    position = 0
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            _PIPE is not None
+            and token.token_type == _PIPE
+            and index + 1 < len(tokens)
+            and tokens[index + 1].token_type in _PIPE_OPERATORS
+        ):
+            items, after = _pipe_items(tokens, index + 2)
+            replacement = _pipe_operator_text(sql, tokens[index + 1].token_type, items)
+            if replacement is not None:
+                end = tokens[after - 1].end + 1
+                pieces += [sql[position : token.start], replacement]
+                position = end
+                index = after
+                continue
+        index += 1
+    return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _rewrite_verbatim_calls(sql: str, tokens: list) -> str:
+    """``GRAPH_TABLE(...)`` becomes ``__KUMO_VERBATIM__('<its text>')``, which prints back as the text it holds.
+
+    The rest of the query is read as usual. The call is an unknown function of its own text, so it reads no table sqlglot
+    can see and a prover can only equate it with the same text.
+    """
+
+    pieces: list[str] = []
+    position = 0
+    index = 0
+    while index + 1 < len(tokens):
+        token = tokens[index]
+        if token.text.upper() in _VERBATIM_CALLS and tokens[index + 1].token_type == TokenType.L_PAREN:
+            depth = 0
+            end = index + 1
+            while end < len(tokens):
+                kind = tokens[end].token_type
+                depth += kind == TokenType.L_PAREN
+                depth -= kind == TokenType.R_PAREN
+                if depth == 0:
+                    break
+                end += 1
+            if end < len(tokens):
+                text = sql[token.start : tokens[end].end + 1]
+                pieces += [sql[position : token.start], f"{VERBATIM}({_quoted(text)})"]
+                position = tokens[end].end + 1
+                index = end + 1
+                continue
+        index += 1
+    return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _rewrite_model_arguments(sql: str, tokens: list) -> str:
+    """``MODEL name`` as an argument of an ``ML.fn`` sqlglot does not read (``ML.EVALUATE``, ``ML.DETECT_ANOMALIES``) becomes
+    ``__KUMO_VERBATIM__('MODEL name')``: it prints back as written and, a model not being a table, is no read."""
+
+    pieces: list[str] = []
+    position = 0
+    for index, token in enumerate(tokens):
+        if token.text.upper() != "MODEL" or index == 0 or index + 1 >= len(tokens):
+            continue
+        if tokens[index - 1].token_type not in (TokenType.L_PAREN, TokenType.COMMA):
+            continue
+        name = _ml_call(tokens, _open_call(tokens[:index]))
+        if name is None or name in BigQuery.Parser.FUNCTION_PARSERS:
+            continue
+        end = index + 1
+        while end + 1 < len(tokens) and tokens[end + 1].token_type not in (TokenType.COMMA, TokenType.R_PAREN):
+            end += 1
+        text = sql[token.start : tokens[end].end + 1]
+        pieces += [sql[position : token.start], f"{VERBATIM}({_quoted(text)})"]
+        position = tokens[end].end + 1
+    return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _quoted(text: str) -> str:
+    """``text`` as a BigQuery string literal that reads back as exactly ``text``."""
+
+    escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
+    return f"'{escaped}'"
+
+
 def _table_argument(call: exp.Anonymous) -> exp.Expression:
     arguments = call.expressions
     inner = arguments[0] if len(arguments) == 1 else None
@@ -153,8 +318,16 @@ def install() -> None:
         # Whatever sqlglot reads on its own is left alone; only SQL it rejects is retried with the table arguments marked.
         try:
             return parse(self, sql, **opts)
-        except ParseError:
+        except ParseError as error:
             tokens = self.tokenize(sql)
+            rewritten = sql
+            for rewrite in (_rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators):
+                rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
+            if rewritten != sql:
+                try:
+                    return parse_with_table_arguments(self, rewritten, **opts)
+                except ParseError:
+                    raise error from None
             marked = _mark_table_arguments(_merge_table_function_kind(tokens))
             if len(marked) == len(tokens) and all(a is b for a, b in zip(marked, tokens)):
                 raise
