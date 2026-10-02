@@ -84,6 +84,8 @@ class Model:
     # sets of columns that are unique. Declared by the project, checked when its assertions run.
     non_null: tuple[str, ...] = ()
     unique_keys: tuple[tuple[str, ...], ...] = ()
+    # Dataform ``pre_operations`` and ``post_operations`` statements, with refs resolved: scripts that run around the query.
+    operations_sql: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
