@@ -119,3 +119,39 @@ def test_table_profile_does_not_pair_by_name_columns_by_position():
     pipeline = load_compiled_graph(graph, source_schema=SCHEMA)
     text = repr(profile_pipeline(pipeline)["p.m.t"])
     assert "union(" not in text
+
+
+def _chain():
+    def t(name, query):
+        return {"target": {"database": "p", "schema": "m", "name": name}, "query": query}
+
+    graph = {"tables": [
+        t("u", f"SELECT k, x, y FROM {A} FULL OUTER UNION ALL BY NAME SELECT y, k FROM {B}"),
+        t("swapped", f"SELECT k, x, y FROM {A} UNION ALL SELECT k, y, y FROM {B}"),
+        t("v", "SELECT k, x FROM `p.m.u`"),
+        t("w", "SELECT x AS xx FROM `p.m.v`"),
+    ]}
+    return load_compiled_graph(graph, source_schema=SCHEMA)
+
+
+def test_impact_through_a_by_name_model_follows_names():
+    from kumosql.impact import assess_change
+
+    pipeline = _chain()
+    # b has no x, so dropping b.k reaches u and what reads k; nothing reads b.y through v's x.
+    assert {a.model for a in assess_change(pipeline, "change_expression", "p.raw.src_b", "k").affected} >= {"p.m.u", "p.m.v"}
+    assert "p.m.w" not in {a.model for a in assess_change(pipeline, "change_expression", "p.raw.src_b", "k").affected}
+    assert {a.model for a in assess_change(pipeline, "change_expression", "p.raw.src_a", "x").affected} >= {"p.m.u", "p.m.v", "p.m.w"}
+
+
+def test_by_name_models_never_get_a_meaning_that_could_match_another_model():
+    from kumosql.overlap import find_overlaps
+    from kumosql.rollups import find_rollups
+    from kumosql.table_profile import profile_pipeline
+
+    pipeline = _chain()
+    meanings = {a.column: a for a in profile_pipeline(pipeline)["p.m.u"].attributes}
+    assert all(a.status == "unknown" and a.meaning is None for a in meanings.values())
+    for match in find_overlaps(pipeline, model="p.m.u").matches:
+        assert match.table != "p.m.swapped" or match.kind != "same_meaning"
+    assert not [r for r in find_rollups(pipeline, model="p.m.u").rollups if r.derivability == "derivable_exact"]
