@@ -592,7 +592,9 @@ class _Compiler:
         if any(statement.find_all(exp.Pivot)):
             # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
             raise Unsupported("PIVOT and UNPIVOT are not modeled")
-        self._check_nondeterminism(statement)
+        # Inside a comparison of two opaque bodies (``_unify_opaque``) the kqw* markers are renamed away;
+        # a window there still raises Unsupported wherever it would be evaluated, or sits in an opaque body.
+        self._check_nondeterminism(statement, allow_windows=_nesting[0] > 0)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
 
@@ -1396,6 +1398,12 @@ class _Compiler:
             return _Val(v.null, val_fn(*self._uf_args([v])))
         if isinstance(e, (exp.Func, exp.Binary, exp.Unary)):
             return self._generic(e, env, agg, aliases)
+        if isinstance(e, exp.Interval) and all(isinstance(n, (exp.Interval, exp.Literal, exp.Var)) for n in e.walk()):
+            # A constant interval is one fixed value, named by its text; date arithmetic over it stays
+            # uninterpreted, and two spellings of one interval may read as different values, so no
+            # counterexample is reported from it.
+            self.uses_uf = True
+            return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
 
     def _numeric(self, v: _Val) -> None:
@@ -2772,7 +2780,9 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
         return
 
     def tables(sql: str) -> frozenset:
-        return frozenset(t.name.lower() for t in sqlglot.parse_one(sql, read="bigquery").find_all(exp.Table))
+        tree = sqlglot.parse_one(sql, read="bigquery")
+        ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+        return frozenset(t.name.lower() for t in tree.find_all(exp.Table)) - ctes
 
     representatives: list[str] = []
     mapping: dict[str, str] = {}
@@ -2785,7 +2795,8 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
             budget -= 1
             _nesting[0] += 1
             try:
-                result = _prove_core(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
+                # The LIMIT-aware entry point: a body may end in ORDER BY .. LIMIT on both sides.
+                result = prove_equivalent_smt(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
             finally:
                 _nesting[0] -= 1
             if result.status is SmtStatus.PROVEN_EQUIVALENT:
