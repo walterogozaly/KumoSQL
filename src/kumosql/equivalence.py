@@ -9,7 +9,7 @@ preferred to a false positive.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import hashlib
 import re
@@ -547,6 +547,49 @@ def _value_nondeterminism_sites(query: exp.Expression) -> tuple[str, ...]:
     )
 
 
+# Window functions whose value for a row depends only on the row's partition and its peers
+# (rows with equal ORDER BY keys), never on how ties happen to be ordered.
+_PEER_STABLE_WINDOW_FUNCTIONS = {"Rank", "DenseRank", "PercentRank", "CumeDist"}
+_ANONYMOUS_WINDOW_NAMES = {"RANK": "Rank", "DENSE_RANK": "DenseRank", "PERCENT_RANK": "PercentRank", "CUME_DIST": "CumeDist"}
+_TIE_STABLE_AGGREGATES = {
+    "Sum", "Count", "Avg", "Min", "Max", "CountIf", "LogicalAnd", "LogicalOr", "Stddev", "StddevPop",
+    "StddevSamp", "Variance", "VariancePop", "BitwiseAndAgg", "BitwiseOrAgg", "BitwiseXorAgg",
+}
+
+
+def window_is_tie_stable(window: exp.Window) -> bool:
+    """Whether a window function gives the same value on every execution of the same input.
+
+    RANK-style functions and aggregates over a whole partition or a RANGE frame (the
+    default when there is an ORDER BY) give tied rows the same value. ROW_NUMBER, LAG,
+    FIRST_VALUE, NTILE and aggregates over a ROWS frame depend on how ties are broken,
+    which BigQuery leaves unspecified. A named window (``OVER w``) is judged unstable
+    unless the function itself is peer stable.
+    """
+
+    function = window.this
+    while isinstance(function, (exp.IgnoreNulls, exp.RespectNulls)):
+        function = function.this
+    name = type(function).__name__
+    if isinstance(function, exp.Anonymous):  # sqlglot 26 parses RANK() and friends as plain calls
+        name = _ANONYMOUS_WINDOW_NAMES.get((function.name or "").upper(), name)
+    if name in _PEER_STABLE_WINDOW_FUNCTIONS:
+        return True
+    if name not in _TIE_STABLE_AGGREGATES or window.args.get("alias") is not None:
+        return False
+    spec = window.args.get("spec")
+    if spec is None:
+        return True
+    if (spec.args.get("kind") or "").upper() == "RANGE" and window.args.get("order") is not None:
+        return True
+    start, end = spec.args.get("start"), spec.args.get("end")
+    whole = (
+        str(start or "").upper() == "UNBOUNDED" and (spec.args.get("start_side") or "").upper() == "PRECEDING"
+        and str(end or "").upper() == "UNBOUNDED" and (spec.args.get("end_side") or "").upper() == "FOLLOWING"
+    )
+    return whole
+
+
 def _nondeterminism_reasons(
     query: exp.Expression, *, allow_unchanged_values: bool = False
 ) -> list[str]:
@@ -563,7 +606,7 @@ def _nondeterminism_reasons(
         if node_type in {"ArgMax", "ArgMin"}:
             reasons.append(f"tie-sensitive aggregate: {node.sql(dialect='bigquery')}")
             continue
-        if isinstance(node, exp.Window):
+        if isinstance(node, exp.Window) and not window_is_tie_stable(node):
             reasons.append(f"window function not proven tie-stable: {node.sql(dialect='bigquery')}")
             continue
         if isinstance(node, exp.Anonymous):
@@ -671,6 +714,136 @@ def _prepare_query(
     return query, canonical, reasons, sites_before, _value_nondeterminism_sites(query)
 
 
+def _output_names(query: exp.Expression) -> list[str] | None:
+    select = query
+    while isinstance(select, exp.SetOperation):
+        select = select.this
+    if not isinstance(select, exp.Select) or any(isinstance(e, exp.Star) or (
+        isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+        return None
+    return [e.alias_or_name.lower() for e in select.expressions]
+
+
+def _order_keys_are_outputs(query: exp.Expression, order: exp.Order) -> bool:
+    """Whether every ORDER BY key is a function of the output row alone.
+
+    A key may name an output column, give its position, or (in a plain SELECT) repeat a
+    projected expression exactly. Then two queries with equal result bags order them the
+    same way, so the same LIMIT picks among the same candidate rows.
+    """
+
+    names = _output_names(query)
+    if names is None:
+        return False
+    projected = set()
+    if isinstance(query, exp.Select):
+        projected = {
+            e.unalias().sql(dialect="bigquery", comments=False) for e in query.expressions
+        }
+    for item in order.expressions:
+        key = item.this if isinstance(item, exp.Ordered) else item
+        if _nondeterminism_reasons(key) or any(type(n).__name__ in _VALUE_NONDETERMINISTIC_TYPES for n in key.walk()):
+            return False
+        if isinstance(key, exp.Literal) and not key.is_string and key.name.isdigit():
+            if not 1 <= int(key.name) <= len(names):
+                return False
+            continue
+        if isinstance(key, exp.Column) and not key.table and key.name.lower() in names:
+            continue
+        if key.sql(dialect="bigquery", comments=False) in projected:
+            continue
+        return False
+    return True
+
+
+def _max_rows(query: exp.Expression) -> int | None:
+    """An upper bound on the rows a query returns, when its shape gives one.
+
+    A SELECT with aggregates and no GROUP BY returns at most one row; a UNION ALL adds.
+    """
+
+    if isinstance(query, exp.SetOperation):
+        if query.args.get("limit") is not None or query.args.get("offset") is not None:
+            return None
+        left, right = _max_rows(query.this), _max_rows(query.expression)
+        if left is None or right is None:
+            return None
+        return left + right if isinstance(query, exp.Union) else left
+    if isinstance(query, exp.Subquery):
+        return _max_rows(query.this)
+    if not isinstance(query, exp.Select) or query.args.get("group") is not None:
+        return None
+    if query.args.get("limit") is not None or query.args.get("offset") is not None:
+        return None
+    if any(e.find(exp.Window) is not None for e in query.expressions):
+        return None
+    has_aggregate = any(
+        isinstance(node, exp.AggFunc) and not _inside_subquery(node, query)
+        for e in query.expressions for node in e.walk()
+    )
+    return 1 if has_aggregate else None
+
+
+def _inside_subquery(node: exp.Expression, top: exp.Expression) -> bool:
+    parent = node.parent
+    while parent is not None and parent is not top:
+        if isinstance(parent, (exp.Subquery, exp.Select)):
+            return True
+        parent = parent.parent
+    return False
+
+
+def _drop_noop_limit(sql: str) -> str | None:
+    """``SELECT SUM(x) FROM t LIMIT 100``: a LIMIT at least the most rows the query can return does nothing."""
+
+    try:
+        query = _parse_single_query(sql)
+    except Exception:
+        return None
+    limit = query.args.get("limit")
+    if limit is None or query.args.get("offset") is not None:
+        return None
+    count = limit.expression if isinstance(limit, exp.Limit) else None
+    if not isinstance(count, exp.Literal) or count.is_string or not count.name.isdigit():
+        return None
+    body = query.copy()
+    body.set("limit", None)
+    body.set("order", None)
+    bound = _max_rows(body)
+    if bound is None or bound > int(count.name):
+        return None
+    return body.sql(dialect="bigquery")
+
+
+def _peel_root_limit(left_sql: str, right_sql: str) -> tuple[str, str, str] | None:
+    """Strip a shared root ``ORDER BY ... LIMIT`` so the rows underneath can be compared.
+
+    Both queries must end in the same ORDER BY, LIMIT and OFFSET, ordered only by output
+    columns. Equal result bags then have the same candidate rows for every position, so
+    the two queries can return exactly the same results (ties are broken arbitrarily on
+    both sides alike).
+    """
+
+    try:
+        left, right = _parse_single_query(left_sql), _parse_single_query(right_sql)
+    except Exception:
+        return None
+    if left.args.get("limit") is None and left.args.get("offset") is None:
+        return None
+    clauses = ("order", "limit", "offset")
+    render = lambda q, k: q.args[k].sql(dialect="bigquery", comments=False) if q.args.get(k) is not None else None
+    if any(render(left, k) != render(right, k) for k in clauses):
+        return None
+    order = left.args.get("order")
+    if order is None or not _order_keys_are_outputs(left, order) or not _order_keys_are_outputs(right, right.args["order"]):
+        return None
+    tail = " ".join(render(left, k) for k in clauses if left.args.get(k) is not None)
+    for query in (left, right):
+        for key in clauses:
+            query.set(key, None)
+    return left.sql(dialect="bigquery"), right.sql(dialect="bigquery"), tail
+
+
 def prove_equivalent(
     left_sql: str,
     right_sql: str,
@@ -683,8 +856,35 @@ def prove_equivalent(
     nondeterminism checks are clear, and (by default) only bag semantics are
     being compared. All other cases return ``NOT_PROVEN``; they are not called
     inequivalent because a structural mismatch alone is not a counterexample.
+
+    Two queries ending in the same ``ORDER BY ... LIMIT`` over output columns are
+    proven when the rows underneath are.
     """
 
+    if ignore_row_order:
+        left_sql = _drop_noop_limit(left_sql) or left_sql
+        right_sql = _drop_noop_limit(right_sql) or right_sql
+    peeled = _peel_root_limit(left_sql, right_sql) if ignore_row_order else None
+    if peeled is not None:
+        inner = _prove_equivalent(peeled[0], peeled[1], ignore_row_order=True)
+        if inner.proven:
+            return replace(
+                inner,
+                reason=(
+                    f"{inner.reason}; both apply the same {peeled[2]} (rows tied on the ordering"
+                    " may be picked differently, as on any two runs of either query)"
+                ),
+                diagnostics=inner.diagnostics + (f"same root {peeled[2]} over output columns",),
+            )
+    return _prove_equivalent(left_sql, right_sql, ignore_row_order=ignore_row_order)
+
+
+def _prove_equivalent(
+    left_sql: str,
+    right_sql: str,
+    *,
+    ignore_row_order: bool = True,
+) -> EquivalenceResult:
     verifier_sql: str | None = None
     try:
         left_query, left_canonical, left_nondeterminism, left_before, left_after = _prepare_query(
