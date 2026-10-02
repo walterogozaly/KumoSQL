@@ -167,6 +167,16 @@ def profile_pipeline(
     project declares unique, for example from a unique-key assertion.
     """
 
+    remember = getattr(pipeline, "_remembered", None)
+    if remember is not None:  # the project is immutable: a report asking per model must not profile every model again each time
+        grain = tuple(sorted((key, tuple(columns)) for key, columns in declared_grain.items())) if declared_grain else None
+        return dict(remember(("profiles", grain), lambda: _profile_pipeline(pipeline, declared_grain)))
+    return _profile_pipeline(pipeline, declared_grain)
+
+
+def _profile_pipeline(
+    pipeline: Pipeline, declared_grain: Mapping[str, Sequence[str]] | None
+) -> dict[str, TableProfile]:
     result: dict[str, TableProfile] = {}
     try:
         profiler = _Profiler(pipeline, declared_grain)
