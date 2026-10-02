@@ -1,18 +1,18 @@
 {
   "suite": "Incremental safety proofs",
   "order": 141,
-  "size": 16,
-  "score": "11/16 safe cases proven, 0 wrong",
-  "metric": "Incremental models that do equal their full refresh under a stated contract (watermark append and merge rules); the other 5 are left unknown, never called safe or different.",
+  "size": 15,
+  "score": "15/15 safe cases proven, 0 wrong",
+  "metric": "Incremental models that do equal their full refresh under a stated contract (watermark append and merge, key de-duplication, day watermarks, group re-aggregation, joins to unchanged tables); a case no rule covers is left unknown, never called safe or different.",
   "docs": "docs/incremental.md#scores",
   "command": "python tools/incremental_bench.py",
   "date": "2026-10-02",
-  "caveats": "Proof rules cover row-wise single-table models only; de-duplicating, aggregating, pre-operation and join models stay unknown. Proofs assume the COALESCE default precedes every event time and the declared source key is unique and non-NULL. Baseline before generalising the rules: 2/13 safe cases proven on the first 37 cases.",
+  "caveats": "Rules R3-R6 (de-duplication, day watermark, re-aggregation, unchanged joined tables) were written for the 4 dev unknowns they now prove, so the dev number is optimistic; held-out cases were not used. One dev case (pre-operation reload window) was relabelled from safe to diverges: two new rows more than 2 hours apart in one run lose the earlier one, which insert_new allows. R2 used to prove a filtered merge under updates, which diverges; no case in the corpus hit it. Proofs assume the COALESCE default precedes every event time, the declared source key is unique and non-NULL, and a re-aggregated group column is never NULL. Baseline before generalising the rules: 2/13 safe cases proven on the first 37 cases.",
   "evidence": "proof",
   "correctness": "0 false proofs: no proven case diverges in the simulator, the scripted workloads or a 25-sequence search (tests/test_incremental.py)",
   "coverage": {
-    "proven": 11,
-    "unknown": 5
+    "proven": 15,
+    "unknown": 0
   },
   "held_out": "3/3 proven, 0 wrong (3 safe among the 12 blind cases)"
 }
