@@ -278,6 +278,8 @@ def _identity_over_setop(select: exp.Select) -> exp.Expression | None:
 
     if any(select.args.get(k) for k in _EXTRAS):
         return None
+    if isinstance(select.parent, exp.Subquery) and isinstance(select.parent.parent, exp.In):
+        return None  # the prover reads ``x IN (SELECT .. FROM (set operation))``, not ``x IN (set operation)``
     distinct = select.args.get("distinct")
     if distinct is not None and distinct.args.get("on"):
         return None

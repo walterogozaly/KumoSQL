@@ -8,7 +8,7 @@
   "coverage": {
     "refuted": 18,
     "unknown": 25,
-    "unsupported": 11
+    "unsupported": 9
   },
   "caveats": "Pairs carry no labels; wrongness is checked against VeriEQL's published counterexamples and a second random search. 14 of the 64 pairs differ between our file and the published outcomes file and were not audited. Developed against these pairs (tuned on test). 'unknown' here counts pairs that agree on every random database; 'unsupported' counts pairs DuckDB or the parser rejects.",
   "size": 64,
