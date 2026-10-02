@@ -294,6 +294,31 @@ def _format_whole(sql: str, prefs: FormatPreferences) -> str:
     return restore_function_case(sql, _restore_quoted(sql, formatted))
 
 
+def _same_meaning(before: str, after: str) -> bool:
+    """Formatting only moves whitespace and case, so both texts must parse alike.
+
+    sqlfluff joins tokens when it removes spaces: ``- -i`` becomes ``--i``, which
+    BigQuery reads as a comment. SQL sqlglot cannot parse is not checked.
+    """
+
+    import sqlglot
+
+    try:
+        left = sqlglot.parse(before, read="bigquery")
+    except Exception:
+        return True
+    try:
+        right = sqlglot.parse(after, read="bigquery")
+    except Exception:
+        return False
+    if len(left) != len(right):
+        return False
+    return all(
+        (a is None and b is None) or (a is not None and b is not None and a.sql("bigquery").upper() == b.sql("bigquery").upper())
+        for a, b in zip(left, right)
+    )
+
+
 @register_rule
 class FormatSqlRule(RewriteRule):
     """Format SQL with sqlfluff using the configured preferences."""
@@ -318,6 +343,14 @@ class FormatSqlRule(RewriteRule):
             formatted, kept = format_statements(sql, self.prefs or load_preferences())
         except ValueError as exc:
             return RuleOutput(sql, 0, 0, 0, 0, (RuleDiagnostic(0, "parse_error", str(exc)),))
+        except Exception as exc:  # sqlfluff can assert on rare inputs; never take the pipeline down
+            return RuleOutput(sql, 0, 0, 0, 0, (
+                RuleDiagnostic(0, "format_error", f"sqlfluff failed ({type(exc).__name__}); input left unchanged"),
+            ))
+        if not _same_meaning(sql, formatted):
+            return RuleOutput(sql, 0, 0, 0, 0, (
+                RuleDiagnostic(0, "format_changed_meaning", "formatting would change how the SQL parses; input left unchanged"),
+            ))
         changed = int(formatted != sql)
         notes = (
             (RuleDiagnostic(-1, "statements_not_formatted", f"sqlfluff cannot parse {kept} statement(s); they are left as written"),)

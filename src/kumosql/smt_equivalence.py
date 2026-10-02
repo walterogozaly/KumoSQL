@@ -46,8 +46,9 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
+from .string_literals import canonical_literals
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -585,7 +586,7 @@ class _Compiler:
 
     def compile(self, sql: str) -> _Union:
         try:
-            statements = [check_modeled(canonical_negation(s)) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+            statements = [expand_alias_columns(check_modeled(canonical_negation(s)), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
         if len(statements) != 1:
@@ -3032,7 +3033,7 @@ def _split_limit(sql: str, dialect: str):
         tuple(ordering),
         covers,
     )
-    return core.sql(dialect=dialect), spec
+    return faithful_sql(core, dialect), spec
 
 
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
@@ -3048,6 +3049,8 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     """
 
     dialect = kwargs.get("dialect", "bigquery")
+    if dialect == "bigquery":
+        left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
