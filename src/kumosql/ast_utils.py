@@ -8,7 +8,6 @@ import logging
 import sqlglot
 from sqlglot import ErrorLevel, exp
 from sqlglot.errors import UnsupportedError
-from sqlglot.generator import Generator as _BaseGenerator
 
 
 class _UnknownSubqueryScope(logging.Filter):
@@ -313,34 +312,12 @@ def _chain(node: exp.Expression, kind: type, distinct) -> list[exp.Expression]:
     return [node]
 
 
-def _faithful_generator(dialect: str):
-    """``dialect``'s generator without the rewrites sqlglot applies when transpiling to it.
-
-    MySQL's generator, for example, spells ``FULL JOIN`` as a ``LEFT JOIN`` ``UNION ALL`` a
-    ``RIGHT JOIN`` (wrong under an aggregate) and ``a DIV b`` as ``CAST(a / b AS SIGNED)``, which
-    rounds where ``DIV`` truncates. The dialect's own parser reads the plain spelling back.
-    """
-
-    base = sqlglot.Dialect.get_or_raise(dialect)
-    cached = _FAITHFUL.get(type(base))
-    if cached is not None:
-        return cached
-    parent = type(base).Generator
-    transforms = {k: v for k, v in parent.TRANSFORMS.items() if "preprocess" not in getattr(v, "__qualname__", "")}
-    transforms[exp.IntDiv] = lambda self, e: self.binary(e, "DIV")
-    overrides = {"TRANSFORMS": transforms, "SUPPORTS_TABLE_ALIAS_COLUMNS": True, "VALUES_AS_TABLE": True}
-    # MySQL's generator also writes CAST(x AS BOOLEAN) as CAST(x AS SIGNED); keep sqlglot's own type names
-    overrides["TYPE_MAPPING"] = dict(_BaseGenerator.TYPE_MAPPING)
-    if hasattr(parent, "CAST_MAPPING"):
-        overrides["CAST_MAPPING"] = {}
-    overrides["cast_sql"] = _BaseGenerator.cast_sql  # MySQL writes CAST(x AS TIMESTAMP) as TIMESTAMP(x)
-    generator = type("FaithfulGenerator", (parent,), overrides)
-    instance = generator(dialect=base)
-    _FAITHFUL[type(base)] = instance
-    return instance
-
-
-_FAITHFUL: dict[type, object] = {}
+# Other dialects whose printing a dialect's parser reads back, tried when its own printing does not round
+# trip. MySQL's generator, for example, spells FULL JOIN as a LEFT JOIN UNION ALL a RIGHT JOIN (wrong under
+# an aggregate), a DIV b as CAST(a / b AS SIGNED) (which rounds where DIV truncates) and CAST(x AS BOOLEAN)
+# as an integer cast; Spark's prints all three as written, with the same quoting. (A generator subclass
+# would do it directly, but a compiled sqlglot does not allow one.)
+_NEIGHBOURS = ("spark", "", "duckdb", "postgres")
 
 
 def faithful_sql(tree: exp.Expression, dialect: str) -> str:
@@ -352,15 +329,12 @@ def faithful_sql(tree: exp.Expression, dialect: str) -> str:
     """
 
     expected = _shape(tree)
-    attempts = (
-        lambda: tree.sql(dialect=dialect),
-        lambda: _faithful_generator(dialect).generate(tree, copy=True),
-        lambda: tree.sql(dialect=dialect, identify=True),  # e.g. an unquoted BigQuery project name with a hyphen
-    )
-    for attempt in attempts:
+    writers = [dialect] + [d for d in _NEIGHBOURS if d != dialect]
+    # identify=True quotes every name, e.g. an unquoted BigQuery project name with a hyphen
+    for writer, identify in [(dialect, False), (dialect, True)] + [(d, False) for d in writers[1:]]:
         try:
             with quiet_parser():
-                text = attempt()
+                text = tree.sql(dialect=writer, identify=identify)
                 back = canonical_negation(sqlglot.parse_one(text, read=dialect))
         except sqlglot.errors.SqlglotError:
             continue
