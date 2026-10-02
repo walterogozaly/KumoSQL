@@ -275,18 +275,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 16."
  },
- "dml/merge_cte_source::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
- "dml/merge_full::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
- "dml/merge_insert_row::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
  "query/aggregate_filter_modifiers::prover": {
   "owner": "prover",
   "reason": "unsupported: nondeterministic: ARRAY_AGG(DISTINCT state)"
@@ -594,10 +582,6 @@
  "script/return::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
- },
- "script/set_from_subquery::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
  },
  "script/set_from_subquery::parse": {
   "owner": "sqlglot",

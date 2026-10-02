@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 import gc
+import inspect
 import re
 import threading
 import time
@@ -36,6 +37,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
+from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
@@ -799,79 +801,104 @@ class Pipeline:
             return self._analysis
 
 
-def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expression]]:
-    """The last query of a script, how many other queries it has, and those queries (read for their tables only)."""
+_LINEAGE_TAKES_COPY = "copy" in inspect.signature(lineage).parameters
 
-    with _quiet_parser():
-        statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
-    queries = []
-    readers: list[exp.Expression] = []
-    unread = 0
-    for statement in statements:
-        # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` and ``EXPORT DATA ... AS SELECT`` read what their query reads.
-        if isinstance(statement, exp.Query):
-            query = statement
-        elif isinstance(statement, (exp.Create, exp.Insert)):
+
+def _lineage(name: str, query: exp.Expression, *, copy: bool, **kwargs):
+    """``sqlglot.lineage`` with ``copy``: sqlglot 26.0.0 has no such argument and passes it on to ``qualify``, which rejects it."""
+
+    if _LINEAGE_TAKES_COPY:
+        return lineage(name, query, copy=copy, **kwargs)
+    return lineage(name, query.copy() if copy else query, **kwargs)
+
+
+def _parse_script(
+    sql: str, procedures: dict | None = None
+) -> tuple[exp.Expression | None, ScriptAnalysis]:
+    """The query that defines a script's output columns, and everything read from the whole script.
+
+    The query is the last unconditional one, with the temporary tables it reads spliced in as CTEs so
+    column lineage reaches the real sources. ``ScriptAnalysis`` says what each other statement was
+    (kept, ignored or unknown) and which tables the script reads and writes.
+    """
+
+    analysis = analyse_script(sql, procedures=procedures)
+    statement = analysis.final
+    query = None
+    if statement is not None:
+        # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` take the columns of their query.
+        if isinstance(statement, (exp.Create, exp.Insert)):
             query = top_level_query(statement)
             if isinstance(query, exp.Query):
                 _adopt_statement_ctes(statement, query)
                 _apply_target_columns(statement, query)
-        elif type(statement).__name__ == "Export":  # EXPORT DATA ... AS SELECT; sqlglot 26 cannot parse it
-            query = statement.this
+        elif isinstance(statement, exp.Merge):
+            query = analysis.final_query  # the values the MERGE writes into the target's columns
+        elif isinstance(statement, exp.Query):
+            query = statement
+        if isinstance(query, exp.Query):
+            analysis.with_temp_ctes(query)
+            _name_unaliased_casts(query)
         else:
             query = None
-        if isinstance(query, exp.Query):
-            queries.append(query)
-        elif _may_read_tables(statement):
-            unread += 1
-        if not isinstance(query, exp.Query) and (reader := _statement_reads(statement)) is not None:
-            readers.append(reader)
-    query = queries[-1] if queries else None
-    if query is not None:
-        _name_unaliased_casts(query)
-    return query, max(len(queries) - 1, 0) + unread, [*queries[:-1], *readers]
+    return query, analysis
 
 
 _TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
-_COMMAND_READS = re.compile(r"\b(?:from|join|into|update|merge|using)\b", re.IGNORECASE)
+_PROCEDURE_WORD = re.compile(r"\bprocedure\b", re.IGNORECASE)
 
 
-def _statement_reads(statement: exp.Expression) -> exp.Expression | None:
-    """A copy of a statement that is not a query but reads tables, with the table it writes marked.
-
-    ``DELETE ... USING``, ``UPDATE ... FROM``, a subquery inside ``DELETE``/``UPDATE``/``INSERT ... VALUES`` and
-    ``CREATE TABLE ... LIKE|CLONE`` read the tables they name; the table written is not one of them (``write_target``).
-    Only the tables are taken: columns of such statements are not traced. ``MERGE`` is handled where it is built.
-    """
-
-    target = None
-    if isinstance(statement, (exp.Delete, exp.Update)):
-        target = statement.this
-    elif isinstance(statement, exp.Insert):
-        target = statement.this.this if isinstance(statement.this, exp.Schema) else statement.this
-    elif isinstance(statement, exp.Create) and not isinstance(statement.expression, exp.Command):
-        like = statement.find(exp.LikeProperty)
-        if statement.args.get("clone") is None and like is None:
-            return None
-        target = statement.this.this if isinstance(statement.this, exp.Schema) else statement.this
-    else:
-        return None
-    if not isinstance(target, exp.Table):
-        return None
-    copy = statement.copy()
-    marked = copy.this.this if isinstance(copy.this, exp.Schema) else copy.this
-    marked.meta["write_target"] = True
-    return copy
+def _last_part(name: str) -> str:
+    return name.rsplit(".", 1)[-1].casefold()
 
 
-def _may_read_tables(statement: exp.Expression) -> bool:
-    """A statement KumoSQL does not trace that might still read or write tables: DML other than a query, or syntax sqlglot left as raw text."""
+def _parse_failure(sql: str) -> str | None:
+    """The first line of sqlglot's complaint about ``sql``, or ``None`` when it parses."""
 
-    if isinstance(statement, (exp.Update, exp.Delete, exp.Merge)):
-        return True
-    if isinstance(statement, exp.Command):
-        return bool(_COMMAND_READS.search(str(statement.expression or "")))
-    return isinstance(statement, exp.Create) and isinstance(statement.expression, exp.Command)
+    try:
+        with _quiet_parser():
+            sqlglot.parse(sql, read="bigquery")
+    except Exception as exc:  # sqlglot raises several error types
+        return str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    return None
+
+
+def _script_tables(query: exp.Expression | None, analysis: ScriptAnalysis) -> tuple[list[exp.Table], list[exp.Table]]:
+    """Every real table a script reads, and the ones only its other statements read (not in the output query)."""
+
+    tables: list[exp.Table] = []
+    seen: set[str] = set()
+    if query is not None:
+        cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
+        opaque = analysis.opaque_temps
+        for table in query.find_all(exp.Table):
+            if not table.db and table.name.lower() in cte_names:
+                continue
+            if not table.db and not table.catalog and table.name.lower() in opaque:
+                continue  # a temporary table the script defines; its sources are in ``analysis``
+            tables.append(table)
+            seen.add(" ".join(part for part in (table.catalog, table.db, table.name) if part).replace("`", "").casefold())
+    own = len(tables)
+    for table in analysis.all_reads():
+        name = " ".join(part for part in (table.catalog, table.db, table.name) if part).replace("`", "").casefold()
+        if name not in seen:
+            seen.add(name)
+            tables.append(table)
+    return tables, tables[own:]
+
+
+def _note_writes(pipeline: "Pipeline", key: str, analysis: ScriptAnalysis, written: dict[str, set[str]]) -> None:
+    """Record that a script writes tables that are other models: what it reads feeds them."""
+
+    for write in analysis.writes:
+        target = pipeline.resolve(write.table)
+        if not target or target == key:
+            continue
+        feeds = written.setdefault(target, set())
+        for source in write.sources:
+            resolved = pipeline.resolve(source)
+            if resolved and resolved != target:
+                feeds.add(resolved)
 
 
 def _adopt_statement_ctes(statement: exp.Expression, query: exp.Query) -> None:
@@ -1045,6 +1072,8 @@ class _Analysis:
     schema_lookup: dict[str, int] = field(default_factory=dict)
     # Per model: tables it reads that no model or declared source matches, as spelled.
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Per model: tables only its other statements read (a script's earlier queries, operations, pre/post operations).
+    script_tables: dict[str, tuple[exp.Table, ...]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1084,6 +1113,18 @@ class _Analysis:
         # for a model keyed by its bare name): its columns must be known there
         # too, or ``SELECT *`` over it cannot be expanded.
         spellings: dict[str, set[str]] = {}
+        procedures = collect_procedures(
+            text
+            for model in pipeline.models.values()
+            for text in (model.sql, *model.operations_sql)
+            if _PROCEDURE_WORD.search(text)
+        )
+        # Tables other models' scripts write, with the models they read (``INSERT INTO t SELECT ...`` feeds t).
+        written: dict[str, set[str]] = {}
+        operation_readers: set[str] = set()
+        script_opaque: dict[str, frozenset[str]] = {}
+        partial_outputs: set[str] = set()
+        script_extras: dict[str, tuple[exp.Table, ...]] = {}
         reading = Progress("read models", len(pipeline.models))
         for key, model in pipeline.models.items():
             reading.step(key)
@@ -1092,65 +1133,128 @@ class _Analysis:
                 for dep in model.declared_dependencies
                 if (resolved := pipeline.resolve(dep.key)) and resolved != key
             }
-            earlier: list[exp.Expression] = []
+            analysis: ScriptAnalysis | None = None
+            query = None
             if model.is_query:
                 try:
-                    query, skipped, earlier = _parse_script(model.sql)
-                    statements_total += skipped + 1
-                    statements_matched += 1 if query is not None else 0
-                    statements_by_model[key] = (skipped + 1, 1 if query is not None else 0)
-                    if skipped:
+                    query, analysis = _parse_script(model.sql, procedures)
+                except Exception as exc:  # the analysis does not raise, but sqlglot has many error types
+                    statements_total += 1
+                    statements_by_model[key] = (1, 0)
+                    diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
+            elif model.sql.strip():
+                analysis = analyse_script(model.sql, procedures=procedures)
+                final_target = analysis.final_target
+                if (
+                    isinstance(analysis.final, exp.Merge)
+                    and analysis.final_query is not None
+                    and final_target is not None
+                    and pipeline.resolve(final_target) == key
+                ):
+                    # An operation that merges into its own table writes those columns: trace them like a query's.
+                    query = analysis.with_temp_ctes(analysis.final_query)
+            if analysis is not None:
+                considered = max(analysis.considered, 1) if model.is_query else analysis.considered
+                matched = min(analysis.traced, considered) if query is not None else 0
+                if model.is_query:
+                    statements_total += considered
+                    statements_matched += matched
+                    statements_by_model[key] = (considered, matched)
+                    if query is None and model.sql.strip() and analysis.counts()[KEPT] and not analysis.unknown:
                         diagnostics.append(
                             PipelineDiagnostic(
                                 key,
                                 "skipped_statements",
-                                f"script has {skipped + 1} queries; only the last was analysed for columns, "
-                                f"so column reads by the other {skipped} are missing (the tables they read are in the graph)",
+                                f"script changes tables ({analysis.counts()[KEPT]} statements) but has no query to trace columns "
+                                "through, so column reads by its statements are missing; the tables they read are in the graph",
                             )
                         )
-                except Exception as exc:  # sqlglot raises several error types
-                    query = None
-                    statements_total += 1
-                    statements_by_model[key] = (1, 0)
-                    diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
+                    elif query is None and model.sql.strip():
+                        failure = _parse_failure(model.sql)
+                        diagnostics.append(
+                            PipelineDiagnostic(key, "parse_error", failure)
+                            if failure
+                            else PipelineDiagnostic(key, "no_query", "model has no parseable query")
+                        )
+                    elif analysis.untraced_kept or analysis.unknown:
+                        diagnostics.append(
+                            PipelineDiagnostic(
+                                key,
+                                "skipped_statements",
+                                f"script has {considered} statements that matter; columns are traced for the final query "
+                                f"and the temporary tables it reads, so column reads by the other "
+                                f"{analysis.untraced_kept + len(analysis.unknown)} are missing "
+                                f"({len(analysis.unknown)} could not be read; the tables the rest read are in the graph)",
+                            )
+                        )
+                elif analysis.unknown:
+                    diagnostics.append(
+                        PipelineDiagnostic(
+                            key,
+                            "unparsed_operation",
+                            f"{len(analysis.unknown)} of {considered} {model.kind} statements could not be read; "
+                            "tables they read or write may have no edges here",
+                        )
+                    )
+                if sum(analysis.counts().values()) > 1:
+                    diagnostics.append(PipelineDiagnostic(key, "script_summary", analysis.summary()))
                 if query is not None:
                     parsed[key] = query
-                elif model.sql.strip():
-                    diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
-                if query is not None or earlier:
-                    # Tables read by the script's earlier queries (and by statements that are not queries, such
-                    # as DELETE and UPDATE) are dependencies too, even though only the last query is traced
-                    # column by column.
-                    for each in (*earlier, *([query] if query is not None else [])):
-                        cte_names = {cte.alias_or_name.lower() for cte in each.find_all(exp.CTE)}
-                        for table in each.find_all(exp.Table):
-                            if table.meta.get("write_target") or (not table.db and table.name.lower() in cte_names):
-                                continue
-                            resolved = pipeline.resolve(table)
-                            if resolved and resolved != key:
-                                parents.add(resolved)
-                                spelled = _table_name_for_schema(table)
-                                if spelled != resolved:
-                                    spellings.setdefault(resolved, set()).add(spelled)
-                            elif resolved is None and table.name:
-                                bucket = (
-                                    ambiguous_tables
-                                    if pipeline._resolver.is_ambiguous(table)
-                                    else unresolved_tables
-                                )
-                                bucket.setdefault(key, set()).add(_table_name_for_schema(table))
-            elif model.sql.strip():
-                diagnostics.append(
-                    PipelineDiagnostic(
-                        key,
-                        "unparsed_operation",
-                        f"{model.kind} statements are not analysed; tables they read or write have no edges here",
+                    script_opaque[key] = frozenset(analysis.opaque_temps)
+                    if isinstance(analysis.final, exp.Merge):
+                        partial_outputs.add(key)  # only the columns the MERGE writes are known, not the whole table
+                tables, extras = _script_tables(query, analysis)
+                if extras:
+                    script_extras[key] = tuple(extras)
+                for table in tables:
+                    resolved = pipeline.resolve(table)
+                    if resolved and resolved != key:
+                        parents.add(resolved)
+                        spelled = _table_name_for_schema(table)
+                        if spelled != resolved:
+                            spellings.setdefault(resolved, set()).add(spelled)
+                    elif resolved is None and table.name:
+                        bucket = ambiguous_tables if pipeline._resolver.is_ambiguous(table) else unresolved_tables
+                        bucket.setdefault(key, set()).add(_table_name_for_schema(table))
+                _note_writes(pipeline, key, analysis, written)
+            for operation in model.operations_sql:
+                extra = analyse_script(operation, procedures=procedures)
+                if extra.all_reads():
+                    script_extras[key] = (*script_extras.get(key, ()), *extra.all_reads())
+                for table in extra.all_reads():
+                    resolved = pipeline.resolve(table)
+                    if resolved and resolved != key:
+                        parents.add(resolved)
+                        operation_readers.add(resolved)
+                _note_writes(pipeline, key, extra, written)
+                if extra.unknown:
+                    diagnostics.append(
+                        PipelineDiagnostic(
+                            key,
+                            "script_summary",
+                            f"pre/post operations: {len(extra.unknown)} of {extra.considered} statements could not be read",
+                        )
                     )
-                )
-            if key not in parsed and model.sql.strip() and not model.declared_dependencies:
-                blind_models.append(key)
+            # A model is only trusted for column-level questions (dead columns, impact) when every statement that reads
+            # tables has its columns traced. A query model with no query to trace, or a statement that could not be
+            # read at all, leaves it blind; statements understood only at table level make the tables they read
+            # opaque readers (every column of them counts as used).
+            columns_known = (
+                analysis is not None
+                and not analysis.unknown
+                and analysis.untraced_kept == 0
+                and (key in parsed or analysis.counts()[KEPT] == 0)
+            )
+            if model.sql.strip() and not model.declared_dependencies and not columns_known:
+                table_level = analysis is not None and not analysis.unknown and not (model.is_query and key not in parsed)
+                if table_level:
+                    operation_readers.update(parents)
+                else:
+                    blind_models.append(key)
             upstream[key] = parents
         reading.finish()
+        for target, sources in written.items():
+            upstream.setdefault(target, set()).update(sources - {target})
         gc.collect()
         gc.freeze()
 
@@ -1161,7 +1265,7 @@ class _Analysis:
         direct: dict[ColumnRef, frozenset[ColumnRef]] = {}
         records: dict[ColumnRef, ColumnLineage] = {}
         consumed: dict[str, frozenset[ColumnRef]] = {}
-        opaque_readers_of: set[str] = set()
+        opaque_readers_of: set[str] = set(operation_readers)
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
@@ -1277,7 +1381,7 @@ class _Analysis:
 
             names = tuple(qualified.named_selects)
             outputs[key] = names
-            if names and "*" not in names:
+            if names and "*" not in names and key not in partial_outputs:
                 schema[key] = {name: "UNKNOWN" for name in names}
                 _add_table(sqlglot_schema, key, schema[key])
                 for spelled in sorted(spellings.get(key, ())):
@@ -1316,7 +1420,7 @@ class _Analysis:
                     direct[ref] = frozenset(used)
                     continue
                 try:
-                    node = lineage(
+                    node = _lineage(
                         name,
                         qualified,
                         dialect="bigquery",
@@ -1331,7 +1435,7 @@ class _Analysis:
                         # With no schema for a table, the pre-built scope keeps a
                         # bare column unresolved; re-qualifying resolves it when
                         # only one table is in scope and leaves real ambiguity.
-                        retry = lineage(name, qualified, dialect="bigquery", copy=True)
+                        retry = _lineage(name, qualified, dialect="bigquery", copy=True)
                         again = _scan_lineage(pipeline, schema, retry, name, is_union)
                         if again[1] != "unresolved_column":
                             leaves, reason, transform = again
@@ -1348,6 +1452,19 @@ class _Analysis:
                 else:
                     records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
                 direct[ref] = frozenset(leaves)
+            hidden = script_opaque.get(key)
+            if hidden:
+                # A temporary table that DML changed has no query to trace through: columns read from
+                # it are unknown (its source tables are still this model's dependencies).
+                for name in names:
+                    ref = ColumnRef(key, name)
+                    record = records.get(ref)
+                    if record is None or not any(_last_part(src.table) in hidden for src in record.sources):
+                        continue
+                    kept = frozenset(src for src in record.sources if _last_part(src.table) not in hidden)
+                    records[ref] = ColumnLineage(ref, kept, "unknown", "unknown", "temporary_table")
+                    direct[ref] = kept
+                opaque_readers_of.update(upstream.get(key, ()))
             if skipped_columns:
                 diagnostics.append(
                     PipelineDiagnostic(
@@ -1421,6 +1538,7 @@ class _Analysis:
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
+            script_tables=script_extras,
             schema_lookup=schema_lookup,
         )
 
@@ -1460,7 +1578,10 @@ def _scan_lineage(
             if _TRANSFORM_RANK.get(kind, 0) > _TRANSFORM_RANK[transform]:
                 transform = kind
             continue
-        if isinstance(item.source, exp.Table):
+        if isinstance(item.source, exp.Table) and isinstance(item.source.this, exp.Func):
+            # ``FROM dataset.fn(TABLE t, ...)``: the columns the function returns are not columns of a table named fn.
+            reason = reason or "untraceable_source"
+        elif isinstance(item.source, exp.Table):
             owner = pipeline.resolve(item.source) or _table_name_for_schema(item.source)
             column_name = item.name.split(".")[-1].strip('"`')
             parent = parent_of.get(id(item))
