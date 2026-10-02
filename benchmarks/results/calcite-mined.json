@@ -2,18 +2,18 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "268/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 233 unknown. 53 of the 168 pairs new to every other corpus are proved.",
+  "score": "292/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 209 unknown. 53 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
-  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development.",
+  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. Rules added after the first run (268) lifted only already-covered pairs; the new-pair score stayed 53/168.",
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 30 random DuckDB databases",
   "coverage": {
-    "proven": 268,
+    "proven": 292,
     "refuted": 1,
-    "unknown": 233,
+    "unknown": 209,
     "unsupported": 332
   },
   "held_out": "53/168 on pairs new to every other corpus (not used for development)"
