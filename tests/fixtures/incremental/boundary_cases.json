@@ -614,7 +614,7 @@
      "empty"
     ]
    },
-   "label": "safe",
+   "label": "diverges",
    "script": {
     "initial": [
      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
@@ -624,16 +624,14 @@
     ],
     "batches": [
      [
-      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 04:00:00', 1)"
-     ],
-     [],
-     [
-      "INSERT INTO events (id, customer_id, ts, v) VALUES (6, 0, TIMESTAMP '2024-01-01 04:00:00', 1)"
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 04:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (6, 0, TIMESTAMP '2024-01-01 08:00:00', 1)"
      ]
-    ]
+    ],
+    "diverges_at": 1
    },
    "ignore_columns": [],
-   "note": "delete and reload use the same boundary, taken from the source",
+   "note": "delete and reload use the same boundary, taken from the source, so one run's new rows must all fall inside the 2-hour window; relabelled from safe (2026-10-02): a run that adds rows more than 2 hours apart (allowed by insert_new) never loads the earlier ones",
    "cases_version": 1
   },
   {
