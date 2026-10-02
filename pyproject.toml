@@ -15,6 +15,7 @@ execution = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.5",
     "duckdb>=1.0",
     "z3-solver>=4.12",
 ]
@@ -65,5 +66,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "slow: scans the full SQL workbook fixture",
+    "eval: scores KumoSQL on a benchmark corpus and holds its floors (set in tests/conftest.py)",
+    "xdist_group(name): keep these tests on one pytest-xdist worker (used with --dist loadgroup)",
 ]
 addopts = "-m 'not slow'"

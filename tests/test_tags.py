@@ -297,18 +297,27 @@ def test_tags_endpoint_reports_a_failure_instead_of_dropping_the_connection(serv
 def test_chosen_projects_are_listed_in_the_background_so_rules_reach_unopened_datasets(monkeypatch):
     """A rule on a dataset nobody opened still tags its tables: the catalog of chosen projects is filled in."""
 
+    import threading
     import time
 
     monkeypatch.setattr(bq, "peek", REAL_PEEK)
     monkeypatch.setattr(bq, "cached", REAL_CACHED)
     bq.clear_cache()
     calls = []
-    monkeypatch.setattr(bq, "list_datasets", lambda project: calls.append(("datasets", project)) or [{"id": "ARCHIVE"}, {"id": "prod"}])
+    release = threading.Event()  # the background listing waits, so the first snapshot cannot race it
+
+    def list_datasets(project):
+        release.wait(10)
+        calls.append(("datasets", project))
+        return [{"id": "ARCHIVE"}, {"id": "prod"}]
+
+    monkeypatch.setattr(bq, "list_datasets", list_datasets)
     monkeypatch.setattr(bq, "list_tables", lambda project, dataset: calls.append(("tables", dataset)) or (
         [{"id": "a_old", "type": "TABLE"}, {"id": "f", "type": "UDF"}] if dataset == "ARCHIVE" else [{"id": "t", "type": "TABLE"}]))
     tags.save_rules([{"tag": "Archived", "rule": {"field": "dataset", "op": "eq", "value": "archive"}}])
     first = tags.snapshot()
     assert first["syncing"] is True and first["objects"] == {}
+    release.set()
     for _ in range(100):
         snap = tags.snapshot()
         if not snap["syncing"]:
