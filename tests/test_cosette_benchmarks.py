@@ -15,7 +15,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["cosette_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {"cosette": 49, "spes": 21}
+FLOORS = {"cosette": 54, "spes": 27}
 
 
 @pytest.mark.parametrize("suite", ["cosette", "spes"])

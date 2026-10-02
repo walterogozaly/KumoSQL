@@ -231,7 +231,7 @@ def _upstream_models(pipeline: Pipeline, sql: object) -> dict[str, Model]:
             raise ValueError("no query")
         upstream = pipeline._analyse().upstream
         stack = []
-        for table in (*query.find_all(exp.Table), *analysis.reads.values()):
+        for table in (*query.find_all(exp.Table), *analysis.all_reads()):
             if (resolved := pipeline.resolve(table)) and resolved in pipeline.models:
                 stack.append(resolved)
         keep: set[str] = set()
