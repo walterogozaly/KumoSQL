@@ -600,6 +600,13 @@ class Pipeline:
         index = data_sources.join_index()
         return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index))}
 
+    def assess_schema_change(self, kind: str, table: str, column: str, **kwargs):
+        """Which models break, and which change their output columns or types, if ``table`` gains, loses, renames or retypes ``column``."""
+
+        from .schema_change import assess_schema_change
+
+        return assess_schema_change(self, kind, table, column, **kwargs)
+
     def assess_change(
         self,
         kind: str,
