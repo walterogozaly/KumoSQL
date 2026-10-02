@@ -208,6 +208,7 @@ def attach_synthetic_check(
             seeds=seed_list,
             rows_per_table=rows_per_table,
             null_rate=null_rate,
+            targeted=True,
         )
     except ValueError:
         return finish("not_run", "Synthetic check was not run: the synthetic schema is not usable.")
