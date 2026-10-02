@@ -3553,6 +3553,110 @@ def _fold_empty_set_operands(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+def _drop_group_in_membership_tests(tree: exp.Expression) -> exp.Expression:
+    """``x IN (SELECT k FROM t GROUP BY k)`` is ``x IN (SELECT k FROM t)``, and the same for ``EXISTS``.
+
+    A membership or existence test does not see repeated rows. Only a ``GROUP BY`` of exactly the selected
+    columns with no aggregate and no ``HAVING`` is dropped (a select with a ``GROUP BY`` always has at
+    least one row per group, unlike a global aggregate, so the rows tested are the same set).
+    """
+
+    for node in list(tree.find_all(exp.In, exp.Exists)):
+        query = node.args.get("query") if isinstance(node, exp.In) else node.this
+        inner = query.this if isinstance(query, exp.Subquery) else query
+        if not isinstance(inner, exp.Select):
+            continue
+        group = inner.args.get("group")
+        if group is None or inner.args.get("having") is not None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+            continue
+        if any(inner.args.get(k) for k in ("limit", "offset", "qualify", "windows", "distinct", "with_", "with")) or any(inner.find_all(exp.AggFunc, exp.Window)):
+            continue
+        outputs = {(e.this if isinstance(e, exp.Alias) else e).sql() for e in inner.expressions}
+        keys = {g.sql() for g in group.expressions}
+        if isinstance(node, exp.In) and outputs != keys:
+            continue
+        if isinstance(node, exp.Exists) and not outputs <= keys and not all(isinstance(e, (exp.Literal, exp.Star)) or (e.this if isinstance(e, exp.Alias) else e).sql() in keys for e in inner.expressions):
+            continue
+        inner.set("group", None)
+    return tree
+
+
+def _is_null_test(node: exp.Expression) -> bool:
+    """``x IS NULL`` or ``x IS NOT NULL``: a Boolean that is never NULL."""
+
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if isinstance(node, exp.Not):
+        node = node.this
+    return isinstance(node, exp.Is) and isinstance(node.expression, exp.Null)
+
+
+def _fold_boolean_constants(tree: exp.Expression) -> exp.Expression:
+    """Exact Boolean identities on never-NULL tests: ``(x IS NULL) IS NULL`` is FALSE, ``TRUE OR y`` is TRUE,
+    ``FALSE AND y`` is FALSE, and ``CAST(x IS NULL AS INTEGER)`` (0 or 1) compared with a number outside
+    ``{0, 1}`` is decided."""
+
+    def step(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, (exp.Cast, exp.Timestamp)) and isinstance(node.this, exp.Null):
+            return exp.Null()  # a typed NULL is NULL (output types are not compared)
+        if isinstance(node, exp.Is) and isinstance(node.expression, exp.Null) and _is_null_test(node.this):
+            return exp.false()
+        if isinstance(node, exp.Not) and isinstance(node.this, exp.Is) and isinstance(node.this.expression, exp.Null) and _is_null_test(node.this.this):
+            return exp.true()
+        if isinstance(node, exp.Or) and any(isinstance(side, exp.Boolean) and side.this for side in (node.this, node.expression)):
+            return exp.true()
+        if isinstance(node, exp.And) and any(isinstance(side, exp.Boolean) and not side.this for side in (node.this, node.expression)):
+            return exp.false()
+        if isinstance(node, (exp.GT, exp.GTE, exp.LT, exp.LTE, exp.EQ, exp.NEQ)):
+            cast, number = node.this, _int_value(node.expression)
+            flipped = False
+            if number is None:
+                cast, number, flipped = node.expression, _int_value(node.this), True
+            while isinstance(cast, exp.Paren):
+                cast = cast.this
+            if number is not None and isinstance(cast, exp.Cast) and _is_null_test(cast.this) and cast.to.is_type(*exp.DataType.INTEGER_TYPES):
+                if number in (0, 1):
+                    return node
+                kind = type(node)
+                if flipped:
+                    kind = {exp.GT: exp.LT, exp.GTE: exp.LTE, exp.LT: exp.GT, exp.LTE: exp.GTE}.get(kind, kind)
+                above = number > 1  # every value (0 or 1) is below the number; otherwise above it
+                holds = {exp.GT: not above, exp.GTE: not above, exp.LT: above, exp.LTE: above, exp.EQ: False, exp.NEQ: True}[kind]
+                return exp.true() if holds else exp.false()
+        return node
+
+    return tree.transform(step)
+
+
+def _drop_empty_null_extended_side(select: exp.Select) -> exp.Expression | None:
+    """``a LEFT JOIN (SELECT .. WHERE FALSE) AS e ON c`` is ``a`` with NULL for every column of ``e``
+    (and ``RIGHT JOIN`` the other way round): an empty side never matches."""
+
+    joins = select.args.get("joins") or []
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or len(joins) != 1 or any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    join = joins[0]
+    side = (join.args.get("side") or "").upper()
+    if side not in ("LEFT", "RIGHT") or join.args.get("kind") or join.args.get("on") is None:
+        return None
+    empty, kept = (join.this, from_.this) if side == "LEFT" else (from_.this, join.this)
+    if not isinstance(empty, exp.Subquery) or not empty.alias or not _provably_empty(empty):
+        return None
+    alias = empty.alias.lower()
+    copy = select.copy()
+    for column in list(copy.find_all(exp.Column)):
+        if column.table.lower() == alias:
+            if column.find_ancestor(exp.Select) is not copy:
+                return None
+            column.replace(exp.alias_(exp.Null(), column.name) if column.parent is copy else exp.Null())
+    if not isinstance(kept, (exp.Table, exp.Subquery)):
+        return None
+    copy.set("from_", exp.From(this=copy.args.get("from_", copy.args.get("from")).this if side == "LEFT" else copy.args["joins"][0].this))
+    copy.set("joins", None)
+    return copy
+
+
 def _group_by_to_distinct(select: exp.Select) -> exp.Expression | None:
     """``SELECT a, b FROM (x UNION ALL y) GROUP BY a, b`` (no aggregate, no HAVING) is ``SELECT DISTINCT a, b FROM ..``."""
 
@@ -3830,8 +3934,9 @@ def normalize(
     tree = _grouped_in_to_derived(tree)
     tree = _in_over_union(tree)
     tree = _grouping_sets_to_union(tree)
+    tree = _drop_group_in_membership_tests(tree)
     tree = _fold_dates(tree)
-    tree = _fold_constants(tree)
+    tree = _fold_boolean_constants(_fold_constants(tree))
     tree = _fold_trivia(tree)
     tree = _fold_null_guards(tree, not_null)
     tree = _select_list_in_to_exists(tree, not_null)
@@ -3859,7 +3964,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (_drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -3867,7 +3972,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_constants(tree.transform(step))))), not_null)
+        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(tree.transform(step)))))), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):

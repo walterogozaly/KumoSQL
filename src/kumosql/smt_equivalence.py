@@ -1158,6 +1158,9 @@ class _Compiler:
                 raise Unsupported(f"{key.upper()} inside a predicate subquery")
         if node.args.get("kind"):
             raise Unsupported("subquery shape")
+        if any(c.find_ancestor(exp.Select) is node for c in node.find_all(exp.AggFunc)):
+            # a global aggregate returns one row even over no input, so it is not an existence test on its rows
+            raise Unsupported("aggregate inside a predicate subquery")
         outer_collector, self.collector = self.collector, []
         try:
             states = self._scan(node, self.ctes, env)
