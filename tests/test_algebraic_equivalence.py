@@ -1296,3 +1296,116 @@ def test_select_list_tuple_in_is_exists_when_all_columns_are_not_null():
         compare_names=False,
     )
     assert result.proven, result.reason
+
+
+GROUPING_SCHEMA = {"t": ["a", "b", "v"]}
+GROUPING_PROVEN = {
+    "sets are a union all": (
+        "SELECT a, b, SUM(v) FROM t GROUP BY GROUPING SETS ((a), (b))",
+        "SELECT a, NULL, SUM(v) FROM t GROUP BY a UNION ALL SELECT NULL, b, SUM(v) FROM t GROUP BY b",
+    ),
+    "grouping is a bit mask": (
+        "SELECT a, b, GROUPING(a, b) AS g, COUNT(*) FROM t GROUP BY GROUPING SETS ((a, b), (a), ())",
+        "SELECT a, b, 0, COUNT(*) FROM t GROUP BY a, b UNION ALL SELECT a, NULL, 1, COUNT(*) FROM t GROUP BY a UNION ALL SELECT NULL, NULL, 3, COUNT(*) FROM t",
+    ),
+}
+GROUPING_NOT_PROVEN = {
+    "grouping flag has the other value": (
+        "SELECT a, GROUPING(a, b) AS g, COUNT(*) FROM t GROUP BY GROUPING SETS ((a), (b))",
+        "SELECT a, 0, COUNT(*) FROM t GROUP BY a UNION ALL SELECT NULL, 2, COUNT(*) FROM t GROUP BY b",
+    ),
+    "an empty set always returns its row": (
+        "SELECT COUNT(*) FROM t GROUP BY GROUPING SETS (())",
+        "SELECT COUNT(*) FROM t GROUP BY a",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", GROUPING_PROVEN)
+def test_grouping_sets_are_a_union_of_grouped_selects(name):
+    left, right = GROUPING_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=GROUPING_SCHEMA, dialect="bigquery", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", GROUPING_NOT_PROVEN)
+def test_grouping_sets_keep_their_boundaries(name):
+    left, right = GROUPING_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=GROUPING_SCHEMA, dialect="bigquery", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+CONSTANT_SCHEMA = {"t": ["a", "b"]}
+CONSTANT_PROVEN = {
+    "constant derived column": (
+        "SELECT d.a FROM (SELECT a, TRUE AS keep FROM t) AS d WHERE d.keep",
+        "SELECT a FROM t",
+    ),
+    "case on a constant flag": (
+        "SELECT a, CASE WHEN 1 = 1 THEN b END FROM t",
+        "SELECT a, b FROM t",
+    ),
+    "count of nothing in an aggregated select": (
+        "SELECT COUNT(a), COUNT(NULL) FROM t",
+        "SELECT COUNT(a), 0 FROM t",
+    ),
+    "constant source": (
+        "SELECT c.x + t.a FROM (SELECT 5 AS x) AS c, t",
+        "SELECT 5 + a FROM t",
+    ),
+    "intersect with an empty side": (
+        "SELECT a FROM t INTERSECT SELECT a FROM t WHERE 1 = 2",
+        "SELECT a FROM t WHERE 1 = 2",
+    ),
+}
+CONSTANT_NOT_PROVEN = {
+    "count of nothing alone keeps its row": (
+        "SELECT COUNT(NULL) FROM t",
+        "SELECT 0 FROM t",
+    ),
+    "constant flag that is false": (
+        "SELECT d.a FROM (SELECT a, FALSE AS keep FROM t) AS d WHERE d.keep",
+        "SELECT a FROM t",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", CONSTANT_PROVEN)
+def test_constants_fold_through_derived_tables_and_set_operations(name):
+    left, right = CONSTANT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=CONSTANT_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", CONSTANT_NOT_PROVEN)
+def test_constant_folding_keeps_its_boundaries(name):
+    left, right = CONSTANT_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=CONSTANT_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+def test_constant_folding_rewrites_preserve_results_on_random_databases():
+    rng = random.Random(91)
+    forms = [pair[0] for pair in CONSTANT_PROVEN.values()] + [pair[0] for pair in CONSTANT_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=CONSTANT_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE t (a INT, b INT)")
+        for _ in range(rng.choice([0, 1, 4])):
+            db.execute("INSERT INTO t VALUES (?, ?)", [rng.choice([None, 1, 2]), rng.choice([None, 0, 5])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            assert Counter(db.execute(plain).fetchall()) == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+def test_constant_column_of_a_null_extended_derived_table_is_not_inlined():
+    # d.i is NULL for a p row with no match, so "d.i IS NULL" is not FALSE
+    result = prove_equivalent_algebraic(
+        "SELECT p.id FROM p LEFT JOIN (SELECT k, 1 AS i FROM q) AS d ON p.k = d.k WHERE d.i IS NULL",
+        "SELECT p.id FROM p WHERE 1 = 2",
+        schema=IN_LIST_SCHEMA,
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert not result.proven
