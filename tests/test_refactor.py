@@ -115,7 +115,10 @@ def ui_server():
         thread.join(timeout=2)
 
 
-def test_refactor_page_and_settings_routes(ui_server):
+def test_refactor_page_and_settings_routes(ui_server, monkeypatch):
+    from kumosql import live_graph
+
+    monkeypatch.setattr(live_graph, "loaded", lambda: None)  # another test may have left a project loaded
     with urlopen(ui_server + "/refactor") as response:
         assert b"Refactor" in response.read()
     with urlopen(ui_server + "/assets/refactor.js") as response:
