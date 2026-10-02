@@ -1,0 +1,56 @@
+{
+  "source": "https://github.com/uwdb/Cosette",
+  "commit": "7a951aa3b1a70a8b310c676e524740b7114975c3",
+  "converted": 60,
+  "skipped": 26,
+  "by_folder": {
+    "calcite": {
+      "converted": 33,
+      "skipped": 14,
+      "skipped_by_category": {
+        "random_db_disagrees": 5,
+        "empty_values_relation": 6,
+        "duckdb_error": 1,
+        "type_mismatch": 2
+      }
+    },
+    "conditional": {
+      "converted": 5,
+      "skipped": 4,
+      "skipped_by_category": {
+        "precondition_not_expressible": 1,
+        "precondition_not_stated": 3
+      }
+    },
+    "inequal_queries": {
+      "converted": 5,
+      "skipped": 2,
+      "skipped_by_category": {
+        "label_disputed": 1,
+        "sqlglot_parse_error": 1
+      }
+    },
+    "sqlrewrites": {
+      "converted": 17,
+      "skipped": 5,
+      "skipped_by_category": {
+        "no_declared_columns": 4,
+        "multi_row_predicate": 1
+      }
+    },
+    "to_be_supported": {
+      "converted": 0,
+      "skipped": 1,
+      "skipped_by_category": {
+        "multi_row_predicate": 1
+      }
+    }
+  },
+  "not_equivalent_with_random_counterexample": [
+    "344-exam-1",
+    "countbug",
+    "inline-exists",
+    "issue29",
+    "string_ex1"
+  ]
+}

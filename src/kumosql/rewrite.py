@@ -168,6 +168,13 @@ def _predicate_only_change(old_sql: str, new_sql: str) -> bool:
         return False
 
 
+def _lossy_types(query: exp.Expression) -> str | None:
+    for node in query.find_all(exp.DataType):
+        if node.this in (exp.DataType.Type.FLOAT, exp.DataType.Type.UUID):
+            return node.this.value
+    return None
+
+
 def _verify_sql(
     before: str,
     after: str,
@@ -190,6 +197,12 @@ def _verify_sql(
             problems.append(f"statement {index}: text outside the query changed")
             continue
         if old_query is None:
+            continue
+        lossy = _lossy_types(old_query)
+        if lossy:
+            # The BigQuery generator prints FLOAT (a 32-bit float in GoogleSQL) as FLOAT64 and UUID as STRING,
+            # on both sides of the comparison, so a rewrite would pass the check while changing the type.
+            problems.append(f"statement {index}: type {lossy} is not rendered faithfully for BigQuery")
             continue
         old_sql = old_query.sql(dialect="bigquery")
         new_sql = new_query.sql(dialect="bigquery")
