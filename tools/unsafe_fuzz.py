@@ -217,7 +217,7 @@ def tlp_cases(rng, index: int) -> list[Case]:
     # DISTINCT partitions with UNION (set semantics).
     dbase = f"SELECT DISTINCT {sel} FROM {source}"
     dparts = [f"SELECT {sel} FROM {source} WHERE {q}" for q in (f"({p})", f"NOT ({p})", f"({p}) IS NULL")]
-    cases.append(Case(f"tlp-distinct-{index}", "tlp_distinct", dbase, " UNION ".join(dparts), "equivalent"))
+    cases.append(Case(f"tlp-distinct-{index}", "tlp_distinct", dbase, " UNION DISTINCT ".join(dparts), "equivalent"))
     # Aggregates: COUNT(*), MAX and SUM recombine over the partitions.
     col = rng.choice(cols)
     for fn, combine in (("COUNT(*)", "SUM"), (f"MAX({col})", "MAX"), (f"MIN({col})", "MIN"), (f"SUM({col})", "SUM")):
@@ -248,7 +248,7 @@ def tlp_cases(rng, index: int) -> list[Case]:
             f"tlp-mut-union-{index}",
             "tlp_mutant",
             base,
-            " UNION ".join(parts),
+            " UNION DISTINCT ".join(parts),
             "either",
         )
     )
