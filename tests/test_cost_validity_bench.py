@@ -39,3 +39,11 @@ def test_summary_keeps_estimates_and_observations_apart():
     assert s["recommendations"] == 4 and s["same_rows"] == 3 and s["different_rows"] == 1
     assert s["estimated_cheaper"] == 2 and s["estimated_unchanged"] == 1
     assert s["observed_faster"] == 2 and s["estimated_cheaper_and_observed_faster"] == 1
+
+
+def test_rows_tied_on_the_sort_keys_may_come_back_in_any_order():
+    sql = "SELECT k, v FROM t ORDER BY k LIMIT 10"
+    assert cvb.order_key_positions(sql) == [0]
+    assert cvb.same_rows([(1, "a"), (1, "b"), (2, "c")], [(1, "b"), (1, "a"), (2, "c")], sql)
+    assert not cvb.same_rows([(1, "a"), (2, "c")], [(2, "c"), (1, "a")], sql)
+    assert not cvb.same_rows([(1, "a")], [(1, "b")], sql)

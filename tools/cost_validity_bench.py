@@ -28,6 +28,7 @@ reported as estimated and as observed, never mixed.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 import json
 from pathlib import Path
@@ -43,7 +44,8 @@ import sqlglot  # noqa: E402
 
 from kumosql import query_optimizer as qo  # noqa: E402
 from kumosql.rewrite import apply_rules, canonical_rule_order  # noqa: E402
-from rewrite_bench import Executor, _catalog, _explain_cost, _jsonable, results_equal  # noqa: E402
+from rewrite_bench import Executor, _catalog, _explain_cost, _jsonable, _norm  # noqa: E402
+from sqlglot import exp  # noqa: E402
 
 FASTER = 1.10  # an observed speedup of at least 10% counts as a saving
 CHEAPER = 0.98  # an estimate at least 2% lower counts as a predicted saving
@@ -107,6 +109,46 @@ def _recommend(job: tuple) -> dict:
     return found
 
 
+def order_key_positions(sql: str) -> list[int] | None:
+    """Output positions of the top-level ``ORDER BY`` keys, or None when a key is not an output column."""
+
+    tree = sqlglot.parse_one(sql, read="postgres")
+    order = tree.args.get("order")
+    if not isinstance(tree, exp.Select) or order is None:
+        return None
+    names = [e.alias_or_name.lower() for e in tree.expressions]
+    positions = []
+    for item in order.expressions:
+        key = item.this
+        if isinstance(key, exp.Literal) and key.is_int:
+            positions.append(int(key.name) - 1)
+        elif isinstance(key, exp.Column) and key.name.lower() in names:
+            match = [i for i, e in enumerate(tree.expressions) if e.alias_or_name.lower() == key.name.lower()]
+            if len(match) != 1:
+                return None
+            positions.append(match[0])
+        else:
+            return None
+    return positions
+
+
+def same_rows(left: list, right: list, baseline: str) -> bool:
+    """Same bag of rows; under a top-level ORDER BY, also the same sequence of sort keys.
+
+    Rows that tie on every sort key may come back in any order, so only the keys'
+    sequence is compared; when a key is not an output column, the bag alone is.
+    """
+
+    a = [tuple(_norm(v) for v in r) for r in left]
+    b = [tuple(_norm(v) for v in r) for r in right]
+    if Counter(a) != Counter(b):
+        return False
+    positions = order_key_positions(baseline) if qo.has_top_level_order(baseline) else None
+    if not positions:
+        return True
+    return [tuple(r[i] for i in positions) for r in a] == [tuple(r[i] for i in positions) for r in b]
+
+
 def judge(executor: Executor, database: str, baseline: str, sql: str) -> dict:
     cost = _explain_cost(executor, database)
     before, after = cost(baseline), cost(sql)
@@ -120,8 +162,7 @@ def judge(executor: Executor, database: str, baseline: str, sql: str) -> dict:
         record["outcome"] = "rewrite_error"
         record["error"] = got["rewrite_error"][:200]
         return record
-    ordered = qo.has_top_level_order(baseline)
-    same = results_equal(_jsonable(got["benchmark_rows"]), _jsonable(got["rewrite_rows"]), ordered)
+    same = same_rows(_jsonable(got["benchmark_rows"]), _jsonable(got["rewrite_rows"]), baseline)
     record["outcome"] = "same_rows" if same else "different_rows"
     record["ms"] = [round(got["benchmark_ms"], 2), round(got["rewrite_ms"], 2)]
     record["speedup"] = round(got["benchmark_ms"] / max(got["rewrite_ms"], 1e-6), 3)
@@ -165,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--only", nargs="*", help="query names, or prefixes ending in /")
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--rejudge", type=Path, help="reuse the recommendations of an earlier --out file and only execute them again")
     args = parser.parse_args(argv)
 
     queries = [q for spec in args.workload for q in load_workload(spec)]
@@ -172,8 +214,16 @@ def main(argv: list[str] | None = None) -> int:
         queries = [q for q in queries if any(q["name"] == o or (o.endswith("/") and q["name"].startswith(o)) for o in args.only)]
     databases = {q["database"]: q["database"] for q in queries}
     explain = (databases, args.host)
-    with ProcessPoolExecutor(args.jobs) as pool:
-        found = list(pool.map(_recommend, [(q, explain) for q in queries]))
+    if args.rejudge:
+        earlier = {r["query"]: r for r in json.loads(args.rejudge.read_text())["queries"]}
+        keep = ("baseline", "sql", "steps", "label", "error")
+        found = [
+            {"seconds": earlier[q["name"]]["seconds"], **{s: {k: v for k, v in earlier[q["name"]][s].items() if k in keep} for s in ("rules", "optimizer")}}
+            for q in queries
+        ]
+    else:
+        with ProcessPoolExecutor(args.jobs) as pool:
+            found = list(pool.map(_recommend, [(q, explain) for q in queries]))
 
     executor = Executor(databases, args.host, args.runs, args.timeout)
     records = []
