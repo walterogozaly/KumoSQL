@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import itertools
+import os
 import random
 import re
 from collections import Counter
@@ -27,6 +28,7 @@ import sqlglot
 from sqlglot import exp
 
 from .duckdb_load import run_unoptimized
+from .result_equivalence import DataRules
 
 try:
     import duckdb
@@ -533,6 +535,9 @@ def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -
     return _quote_unusual_names(tree).sql(dialect="duckdb")
 
 
+_TARGETED_TYPES = {"INT": "INT64", "VARCHAR": "STRING", "ENUM": "STRING", "TIME": "STRING", "DATE": "DATE", "NUMERIC": "FLOAT64", "BOOL": "BOOL"}
+
+
 class Searcher:
     """Reusable search over one schema: parse once, then try many databases."""
 
@@ -699,7 +704,7 @@ class Searcher:
                 return False
         return True
 
-    def search(self, trials: int = 150, seed: int = 0) -> Counterexample | None:
+    def search(self, trials: int = 150, seed: int = 0, targeted: bool = True) -> Counterexample | None:
         rng = random.Random(seed)
         generator = _Generator(self.spec, self.constants, rng)
         used = sorted(self.used)
@@ -719,7 +724,83 @@ class Searcher:
                 continue  # a runtime error on this database (a failed cast, SINGLE_VALUE of two rows): try the next
             if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
                 return Counterexample({n: data[n] for n in self.used}, a, b)
+        return self._search_targeted(rng) if targeted and os.environ.get("KUMOSQL_TARGETED", "1") != "0" else None
+
+    def _search_targeted(self, rng) -> Counterexample | None:
+        """Databases built around the queries' constants, joins and groups (:mod:`kumosql.targeted_data`).
+
+        A database is tried only if it respects every declaration of the spec (NOT NULL, keys,
+        foreign keys, enumerations, sequential columns and checks).
+        """
+
+        from .refute import repair_foreign_keys
+        from .targeted_data import database_suite
+
+        schema = {name.lower(): {c.name: _TARGETED_TYPES.get(c.type, "INT64") for c in self.spec.tables[name].columns} for name in self.used}
+        rules = {
+            name.lower(): DataRules(
+                frozenset(c.name.lower() for c in self.spec.tables[name].columns if c.not_null or c.name in self.spec.tables[name].primary_key),
+                tuple(tuple(k.lower() for k in key) for key in ([self.spec.tables[name].primary_key] if self.spec.tables[name].primary_key else []) + list(self.spec.tables[name].unique)),
+            )
+            for name in self.used
+        }
+        foreign = [(c.lower(), cc.lower(), p.lower(), pc.lower()) for c, cc, p, pc in self.spec.foreign_keys if c in self.used and p in self.used]
+        generator = _Generator(self.spec, self.constants, rng)
+        seen = set()
+        for sql in (self.left_sql, self.right_sql):
+            try:
+                suite = database_suite(sql, schema, rules, dialect="duckdb", random_seeds=())
+            except Exception:
+                continue
+            for labeled in suite:
+                dataset = repair_foreign_keys(labeled.dataset, foreign, rules)
+                data = {name: [tuple(r) for r in dataset.tables[name.lower()].rows] for name in self.used}
+                key = tuple((n, tuple(data[n])) for n in sorted(data))
+                if key in seen or not self._conforms(generator, data):
+                    continue
+                seen.add(key)
+                try:
+                    for name in self.used:
+                        table = self.spec.tables[name]
+                        self.db.execute(f'DELETE FROM "{name}"')
+                        if data[name]:
+                            self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', data[name])
+                    a = self.db.execute(self.left_sql).fetchall()
+                    b = self.db.execute(self.right_sql).fetchall()
+                except duckdb.Error:
+                    continue
+                if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+                    return Counterexample({n: data[n] for n in self.used}, a, b)
         return None
+
+    def _conforms(self, generator: "_Generator", data) -> bool:
+        spec = self.spec
+        for name in self.used:
+            table = spec.tables[name]
+            names = [c.name for c in table.columns]
+            rows = data[name]
+            for column in table.columns:
+                i = names.index(column.name)
+                if column.type == "ENUM" and any(r[i] is not None and r[i] not in column.values for r in rows):
+                    return False
+            for i, column in enumerate(table.columns):
+                if (column.not_null or column.name in table.primary_key) and any(r[i] is None for r in rows):
+                    return False
+            for column_name in table.sequential:
+                i = names.index(column_name)
+                if [r[i] for r in rows] != list(range(1, len(rows) + 1)):
+                    return False
+            for check in generator.single_checks.get(name, []):
+                if not all(check.test(dict(zip(names, r))) is True for r in rows):
+                    return False
+        for child, column, parent, parent_column in spec.foreign_keys:
+            if child in self.used and parent in self.used:
+                ci = [c.name for c in spec.tables[child].columns].index(column)
+                pi = [c.name for c in spec.tables[parent].columns].index(parent_column)
+                allowed = {r[pi] for r in data[parent]}
+                if any(r[ci] is None or r[ci] not in allowed for r in data[child]):
+                    return False  # the strict reading: a NULL reference is not generated either
+        return all(generator._holds(c, data) for c in generator.global_checks if all(t in self.used for t in c.tables))
 
     def _stable(self, data, a, b, rng) -> bool:
         """The difference must not depend on row order or on an arbitrary pick: shuffle and compare again."""
