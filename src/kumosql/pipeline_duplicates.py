@@ -7,6 +7,7 @@ import hashlib
 
 from sqlglot import exp
 
+from .canonical import canonical_copy, scope_key
 from .pipeline_types import DuplicateGroup, DuplicateOccurrence
 
 def _select_location(select: exp.Expression) -> str:
@@ -21,10 +22,18 @@ def _select_location(select: exp.Expression) -> str:
 
 
 def _fingerprint(select: exp.Expression) -> tuple[str, str]:
-    sql = select.sql(
-        dialect="bigquery", normalize=True, normalize_functions="upper", comments=False
-    )
-    return hashlib.sha1(sql.encode("utf-8")).hexdigest()[:16], sql
+    """A hash of the select's canonical text (aliases, conjunct order and the like ignored) and its own text."""
+
+    def text(node: exp.Expression) -> str:
+        return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
+
+    sql = text(select)
+    try:
+        canonical = text(canonical_copy(select))
+        canonical += scope_key(select, text)
+    except Exception:  # a shape the canonicalizer cannot follow keeps its literal text
+        canonical = sql
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16], sql
 
 
 def _find_duplicates(parsed: dict[str, exp.Expression], *, min_nodes: int) -> list[DuplicateGroup]:
@@ -46,18 +55,22 @@ def _find_duplicates(parsed: dict[str, exp.Expression], *, min_nodes: int) -> li
 
     duplicated = {fp for fp, members in groups.items() if len(members) > 1}
 
-    def nested_in_duplicate(select: exp.Expression) -> bool:
+    def enclosing_duplicates(select: exp.Expression) -> set[str]:
+        found: set[str] = set()
         parent = select.parent
         while parent is not None:
             if isinstance(parent, exp.Select) and fingerprint_of.get(id(parent)) in duplicated:
-                return True
+                found.add(fingerprint_of[id(parent)])
             parent = parent.parent
-        return False
+        return found
 
     result = []
     for fingerprint in duplicated:
         members = groups[fingerprint]
-        if all(nested_in_duplicate(select) for _, select in members):
+        # Reported through one larger duplicate that holds every copy. Copies nested in different
+        # larger duplicates are what links those duplicates to each other, so the group stays.
+        enclosing = [enclosing_duplicates(select) for _, select in members]
+        if set.intersection(*enclosing):
             continue
         result.append(
             DuplicateGroup(

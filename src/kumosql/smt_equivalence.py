@@ -94,6 +94,10 @@ class TableConstraints:
 
     not_null: frozenset = frozenset()
     keys: tuple = ()
+    # Each ``(columns, parent_table, parent_columns)``: every row whose columns are all non-NULL has a
+    # matching row in the parent. The SMT encoding does not use it; the algebraic normalizer does
+    # (``fk_rules``) and counterexamples must respect it.
+    foreign_keys: tuple = ()
 
 
 BASE_ASSUMPTIONS = (
@@ -1824,6 +1828,14 @@ class _Prover:
                         seen.add(value)
                 rows = unique
             legal[table] = rows
+        for table, rows in legal.items():
+            constraint = self.constraints.get(table.lower())
+            for columns, parent, parent_columns in (constraint.foreign_keys if constraint else ()):
+                parents = {tuple(r.get(c) for c in parent_columns) for r in legal.get(parent, [])}
+                for row in rows:
+                    value = tuple(row.get(c) for c in columns)
+                    if None not in value and value not in parents:
+                        return None
         return legal
 
     # ---- mappings ------------------------------------------------------
@@ -2500,7 +2512,18 @@ def _z3_value(value):
 def _cell(model, v: _Val):
     if z3.is_true(model.eval(v.null, model_completion=True)):
         return None
+    if not _decided(model, v.val):
+        # The model never constrained this value, so z3 would complete it with
+        # an arbitrary constructor, often a string; a number loads into any column.
+        return Fraction(0)
     return _py(model, v.val)
+
+
+def _decided(model, term) -> bool:
+    """Whether the model itself, not its completion, fixes ``term``'s value."""
+
+    value = model.eval(term, model_completion=False)
+    return not (z3.is_const(value) and value.decl().kind() == z3.Z3_OP_UNINTERPRETED)
 
 
 class _NoCandidate(Exception):
