@@ -55,7 +55,7 @@ def test_aggregate_decomposition_floor(tmp_path):
 def test_calcite_materialized_view_floor(tmp_path):
     summary = _run(mv_bench, ["--source", "calcite", "--all"], tmp_path)["calcite"]
     assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
-    assert summary["rewritten_of_expected"] >= 82
+    assert summary["rewritten_of_expected"] >= 83
 
 
 @pytest.mark.slow
@@ -107,3 +107,20 @@ def test_average_is_rebuilt_from_a_sum_and_a_count():
 def test_average_is_not_rebuilt_from_a_sum_alone():
     model = "SELECT region, product, SUM(amount) AS s FROM sales GROUP BY region, product"
     assert not rewrite_over_model("SELECT region, AVG(amount) FROM sales GROUP BY region", model, schema=SALES).rewritten
+
+
+T = {"t": ["a", "b", "c", "d"]}
+
+
+@pytest.mark.parametrize(
+    "query, model",
+    [
+        ("SELECT a, b FROM t WHERE d > 0 AND (b = 2 OR c = 3) AND a = 1", "SELECT a, b, c, d FROM t WHERE d > 0"),
+        ("SELECT a, b FROM t WHERE (b = 2 OR c = 3) AND (a = 1 OR d = 4)", "SELECT a, b, c, d FROM t"),
+        ("SELECT a, SUM(b) FROM t GROUP BY a HAVING (SUM(b) > 2 OR a = 3) AND COUNT(*) > 1", "SELECT a, SUM(b) AS s, COUNT(*) AS n FROM t GROUP BY a"),
+    ],
+)
+def test_residual_disjunctions_keep_their_parentheses(query, model):
+    reuse = rewrite_over_model(query, model, schema=T)
+    assert reuse.rewritten, reuse.reason
+    assert "(" in reuse.sql
