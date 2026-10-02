@@ -15,7 +15,7 @@
     "error": 0
   },
   "held_out": "33/35 reproduced, 2 of the 35 unverified, 0 wrong (the rules held out for the layout eval)",
-  "docs": "docs/sqlfluff-fixtures.md#kumosql-on-the-fixtures",
+  "docs": "docs/evals/sqlfluff-fixtures.md#kumosql-on-the-fixtures",
   "command": "python tools/sqlfluff_fixtures_bench.py kumosql",
   "date": "2026-10-02",
   "caveats": "format_sql is sqlfluff behind KumoSQL's wrapper, so reproducing the fix mostly tests the wrapper (BigQuery dialect, repeat-until-stable passes, quoted names restored). 284 fixtures are unsupported: other dialects, Jinja, or configurations KumoSQL's preferences cannot express. The structural rewrite rules over the semantic fixtures are reported in the docs only."

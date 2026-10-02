@@ -11,7 +11,7 @@
     "unknown": 8
   },
   "held_out": "Held-out split (30 queries, every fifth task by id hash) first run, after the dev fixes: 0 failed in every stage, 1 lineage unknown (a SELECT * over a table with no known columns).",
-  "docs": "docs/spider2-bench.md",
+  "docs": "docs/evals/spider2-bench.md",
   "command": "python tools/spider2_bench.py --split all --write-results",
   "date": "2026-10-02",
   "caveats": "Only the 142 of 205 BigQuery and GA4 tasks whose gold SQL upstream publishes. The dbt tasks (68 instructions) are not scored: their project archives are on Google Drive, which is blocked here. Dev run exposed three real bugs, fixed in the same change (a prover memory blow-up on many outer joins, a near-duplicate crash, constant derived columns reported unknown). No execution evidence: the data are public BigQuery tables, so rewrites rest on SMT proof (bounded by a timeout) and lineage on construction.",

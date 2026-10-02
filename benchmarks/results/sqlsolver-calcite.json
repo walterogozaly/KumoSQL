@@ -4,7 +4,7 @@
   "size": 232,
   "score": "219/232, 0 wrong",
   "metric": "Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 120 random DuckDB databases, half skewed towards the literals.",
-  "docs": "docs/sqlsolver.md#benchmark-coverage",
+  "docs": "docs/evals/sqlsolver.md#benchmark-coverage",
   "command": "python tools/sqlsolver_bench.py calcite",
   "date": "2026-10-02",
   "caveats": "Rules were developed against these pairs (tuned on test).",

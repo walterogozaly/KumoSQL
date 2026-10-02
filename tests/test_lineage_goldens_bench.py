@@ -1,4 +1,4 @@
-"""DataHub and OpenLineage lineage goldens (docs/lineage-goldens-bench.md): harvest checks and floors.
+"""DataHub and OpenLineage lineage goldens (docs/evals/lineage-goldens-bench.md): harvest checks and floors.
 
 Zero wrong and zero confident misses in scope; ``disputed`` stays the four documented unused-CTE cases.
 """

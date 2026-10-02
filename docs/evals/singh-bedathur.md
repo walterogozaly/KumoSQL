@@ -67,7 +67,7 @@ What moved the score:
 | + a second search stream seeded per pair with tables up to 10 rows, duplicate rows, three-decimal values, date and divisor neighbours, `ORDER BY NULL` | 2,513 |
 | + `LEFT JOIN` read as inner under a NULL-rejecting `WHERE`, `WHERE` pushed into `UNION` branches (2,533 on the same master without them) | 2,581 |
 | + identity casts, `x * 1.0`, `ROUND(x)` as `ROUND(x, 0)`, `NATURAL JOIN` (`cast_rules.py`; held-out fifth unchanged at 534) | 2,586 |
-| + aggregate facts in the SMT model and the set-of-values reduction ([provers.md](provers.md)), developed on dev pairs only (held-out fifth 534 to 538) | 2,614 |
+| + aggregate facts in the SMT model and the set-of-values reduction ([provers.md](../provers.md)), developed on dev pairs only (held-out fifth 534 to 538) | 2,614 |
 
 ### Against the published labels
 

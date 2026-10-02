@@ -4,7 +4,7 @@
   "size": 60,
   "score": "55/60 correct, 0 wrong",
   "metric": "Labelled pairs (equivalent, not equivalent, equivalent under stated keys) answered correctly: 50 equivalent pairs proved, all 5 not-equivalent pairs refuted with a counterexample executed in DuckDB; 4 unknown, 1 refuted against its label.",
-  "docs": "docs/sqlsolver.md#cosette-and-spes-fixtures",
+  "docs": "docs/evals/sqlsolver.md#cosette-and-spes-fixtures",
   "command": "python tools/cosette_bench.py cosette",
   "date": "2026-10-02",
   "caveats": "60 of Cosette's 86 .cos files convert to SQL; 26 are skipped with reasons (tests/fixtures/cosette/cosette_skipped.jsonl). Cosette has no NULLs, so every column is NOT NULL. Its 33 Calcite files re-word tests already in SQLSolver's set. testDecorrelateTwoIn is labelled equivalent but a DuckDB counterexample exists on the converted schema (a transcription issue in the .cos file, not counted as correct). A table spelled A on one side and a on the other is read as one table, as Cosette does.",

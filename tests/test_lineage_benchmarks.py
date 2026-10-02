@@ -1,6 +1,6 @@
 """Lineage, change-impact and Dataform-preservation suites: floors, and zero on everything unsafe.
 
-See docs/lineage-bench.md and docs/dataform-bench.md. The numbers here are the floors behind the README
+See docs/evals/lineage-bench.md and docs/evals/dataform-bench.md. The numbers here are the floors behind the README
 scoreboard rows; raise them when a fix moves a score.
 """
 

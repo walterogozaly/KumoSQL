@@ -4,7 +4,7 @@
   "size": 2800,
   "score": "2614/2800, 0 wrong",
   "metric": "Pairs decided from SQL and column names alone: 740 proved equivalent, 1874 proved different by a counterexample database, 186 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
-  "docs": "docs/singh-bedathur.md#scores",
+  "docs": "docs/evals/singh-bedathur.md#scores",
   "command": "python tools/singh_bedathur_bench.py",
   "date": "2026-10-02",
   "caveats": "Rewrite rules were written while looking at these pairs; the held-out fifth was reserved partway through, so it is a weak check. The published labels assume LeetCode's keys and NOT NULL rules, which the files omit, so 476 pairs labelled equivalent get a valid counterexample here. Data is downloaded from a pinned commit (no licence file, not bundled). The October counterexample-search changes (seed per pair, duplicate rows, three-decimal values, date and divisor neighbours) were developed on dev pairs only; the held-out fifth was not inspected.",

@@ -259,7 +259,7 @@ def write_results(result: dict, seconds: float) -> None:
                 "correctness": "0 cases with an edge or table the expectation does not have (a SELECT * with unknown columns says unknown, not a guess)",
                 "coverage": {"proven": t["exact"], "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
                 "held_out": "none",
-                "docs": "docs/lineage-bench.md#sqllineage-test-cases",
+                "docs": "docs/evals/lineage-bench.md#sqllineage-test-cases",
                 "command": "python tools/sqllineage_bench.py --details",
                 "date": today(),
                 "caveats": (
