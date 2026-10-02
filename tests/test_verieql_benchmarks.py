@@ -32,8 +32,8 @@ def test_verieql_sample(suite):
     every, proofs, refutations = SAMPLES[suite]
     try:
         result = bench.run_suite(suite, every=every, jobs=1, audit=True)
-    except OSError as error:  # no network and nothing cached
-        pytest.skip(f"VeriEQL data unavailable: {error}")
+    except bench.DataUnavailable as error:  # no network and nothing cached, or a download that kept failing
+        pytest.skip(str(error))
     assert bench.wrong_count(result) == 0, f"wrong verdicts in {suite}: {result.audit_cases}"
     assert result.counts[bench.EQUIVALENT] >= proofs
     assert result.counts[bench.DIFFERENT] >= refutations
