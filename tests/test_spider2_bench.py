@@ -1,4 +1,4 @@
-"""Spider 2.0 BigQuery gold queries through KumoSQL (docs/spider2-bench.md): regressions it found, and floors."""
+"""Spider 2.0 BigQuery gold queries through KumoSQL (docs/evals/spider2-bench.md): regressions it found, and floors."""
 
 import importlib.util
 import sys

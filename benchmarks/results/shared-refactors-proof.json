@@ -15,6 +15,6 @@
   "usefulness": "450/450 families with at least two equal copies have a verified refactor offered (3,000 models)",
   "performance": "3,000 models: exact 18 s, near-duplicates 77 s, repeated work 8 s, refactor verification 64 s (600 models: 4 s, 6 s, 2 s, 14 s)",
   "date": "2026-10-02",
-  "docs": "docs/duplicate-detection.md",
+  "docs": "docs/evals/duplicate-detection.md",
   "command": "python tools/dup_bench.py --sizes 600 --seed 2"
 }

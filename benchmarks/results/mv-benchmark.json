@@ -15,7 +15,7 @@
   },
   "usefulness": "354 of 413 queries changed; a rewrite replaces on average 3.6 joined tables by one view scan (join savings only; no engine or data, so no latency)",
   "held_out": "69/91 (JOB families and query-text hash, 25%; views mined from development queries only); baseline (existing prover alone) 0/413",
-  "docs": "docs/mv-benchmark.md",
+  "docs": "docs/evals/mv-benchmark.md",
   "command": "python tools/mv_workload_bench.py --all --sample 100",
   "date": "2026-10-02",
   "caveats": "Source repo has no licence file: downloaded at commit 83da57fbc7, never stored. Views are generalized joins mined from the same workload, so rewriting is easier than with an outside view set; held-out shows carry-over to other instances. Unknown = 49 queries no chosen view applies to plus 1 miss. SCALE, STATS and TPC-DS are 100-query hash samples. Rules were developed looking at JOB and STATS development queries."

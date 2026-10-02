@@ -1,10 +1,6 @@
 {
  "note": "Development cases the prover does not prove yet (label: equivalent). Kept as regression cases: the floor test fails if one starts being proved without this list being updated, and never if it stays unknown.",
- "unproved": [
-  "join_staging/left_left/1",
-  "join_staging/left_left/3",
-  "join_staging/left_left/6"
- ],
+ "unproved": [],
  "held_out_unproved_at_baseline": [
   "union_split/distinct_push_filter/1",
   "union_split/distinct_push_filter/4",

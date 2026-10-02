@@ -13,7 +13,7 @@
     "unsupported": 18
   },
   "held_out": "TLP aggregate and NoREC families: 342/420 equivalent pairs proved, 0 false proofs (were 108/420 before the partition rules; the seed-2 held-out cases were not looked at, the rules were developed on dev TLP WHERE pairs and on seed 101)",
-  "docs": "docs/fuzzing.md",
+  "docs": "docs/evals/fuzzing.md",
   "command": "python tools/unsafe_fuzz.py fuzz --count 60 --seed 2",
   "date": "2026-10-02",
   "caveats": "Before the executed counterexample search (master 0ce126d plus the partition rules) seed 2 scored 569/751 proved and 309/517 refuted. Rerun after the generator change in cd9e832 and the partition-recombination rules (src/kumosql/partition_rules.py): before them seed 2 scored 238/691 proved and 258/457 refuted. The generator now writes UNION DISTINCT (bare UNION does not parse in BigQuery), so the 120 TLP DISTINCT pairs that ran in neither engine are now scored; 59 of them are unknown until UNION DISTINCT of same-source filters is merged. Remaining NoREC unknowns need COUNT(CASE WHEN p THEN 1 END) read as COUNT(*) WHERE p (the structural aggregate rules) and derived tables over a LEFT JOIN flattened."

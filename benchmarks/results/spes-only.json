@@ -4,7 +4,7 @@
   "size": 34,
   "score": "32/34 correct, 0 wrong",
   "metric": "SPES's Calcite pairs whose SQL differs from SQLSolver's wording of the same test: 29 proved equivalent, and all 3 pairs whose SPES text is not equivalent refuted with a DuckDB counterexample.",
-  "docs": "docs/sqlsolver.md#cosette-and-spes-fixtures",
+  "docs": "docs/evals/sqlsolver.md#cosette-and-spes-fixtures",
   "command": "python tools/cosette_bench.py spes",
   "date": "2026-10-02",
   "caveats": "SPES ships the same 232 Calcite tests as SQLSolver; 137 are textually SQLSolver's pairs and are not re-scored. Of the other 95, 61 cannot run (mostly SPES's own SQL bugs and empty VALUES) and are counted unsupported. testSemiJoinRule, testSemiJoinRuleExists and testSemiJoinTrim are relabelled not equivalent: SPES's text joins EMP rows that are not de-duplicated (see tests/fixtures/spes/README.md).",

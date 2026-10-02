@@ -10,7 +10,7 @@
     "refuted": 340
   },
   "held_out": "the fixture's held-out families are included in the 51 and scored the same way",
-  "docs": "docs/targeted-test-data.md#unsafe-rewrite-variants",
+  "docs": "docs/evals/targeted-test-data.md#unsafe-rewrite-variants",
   "command": "python tools/targeted_data_bench.py --split all --unsafe-only",
   "date": "2026-10-02",
   "caveats": "Easy for every strategy but one seed; the gain is size: median counterexample 2 rows for the suite versus 25 for 8 random databases. Pairs the fixture marks equivalent are not faults and are skipped. 50 of these were minimized and replayed (median 2 rows kept, 151 to 91 rows total)."

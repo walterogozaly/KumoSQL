@@ -12,7 +12,7 @@
     "error": 0
   },
   "held_out": "53/70 (75.7%) on the hash-held-out fifth of this sample, 0 wrong (seen during development; see caveats)",
-  "docs": "docs/analytical-sql-coverage.md#results",
+  "docs": "docs/evals/analytical-sql-coverage.md#results",
   "command": "python tools/benchmark_corpora.py fetch sqlstorm dsb && python tools/analytical_coverage.py --split all --limit 60",
   "date": "2026-10-02",
   "caveats": "Our own score, not an official one. Sample of 60 queries from each of 8 corpora (of ~214k); 5 queries sqlglot could not convert from Postgres are excluded. Baseline before the fixes was 243/475 (51.2%); 334/475 when first merged, 354/475 after later prover merges made 20 more TPC-DS cleanup rewrites provable. The held-out split was introduced after this sample was used for development.",

@@ -1,7 +1,7 @@
 """Behaviour eval: KumoSQL rewrites of BigQuery edge cases and GoogleSQL compliance queries.
 
 Rewrites KumoSQL accepts must give identical results in DuckDB (0 wrong). See
-docs/bigquery-behavior-eval.md and tools/bq_behavior_eval.py.
+docs/evals/bigquery-behavior-eval.md and tools/bq_behavior_eval.py.
 """
 
 import importlib.util

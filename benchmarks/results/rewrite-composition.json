@@ -11,7 +11,7 @@
     "unsupported": 4
   },
   "held_out": "none",
-  "docs": "docs/fuzzing.md#suites",
+  "docs": "docs/evals/fuzzing.md#suites",
   "command": "python tools/unsafe_fuzz.py compose --count 60 --seed 21",
   "date": "2026-10-02",
   "caveats": "Semantic preservation is bounded (random databases), not a proof. Coverage counts the prover on changed steps only. Found and fixed: canonical_rule_order() was not idempotent (an unused CTE removed after inlining left a single-use CTE)."
