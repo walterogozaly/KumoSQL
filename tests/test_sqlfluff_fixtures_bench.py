@@ -22,21 +22,15 @@ _spec.loader.exec_module(bench)
 
 # measured 2026-10-02 over the whole corpus; a little room for solver timeouts under load
 FLOORS = {
-    "semantic_proven": 205,  # of 369 pairs that keep the meaning (214 measured)
+    "semantic_proven": 214,  # of 369 pairs that keep the meaning (218 measured)
     "semantic_design_refuted": 17,  # of 28 pairs that change it by design (18 measured)
     "layout_proven": 325,  # of 426 layout-only pairs (330 measured)
     "format_reproduced": 160,  # of 169 layout fixtures KumoSQL's preferences express (167 measured)
 }
 
-# Pairs the harness reads differently from sqlfluff: sqlglot keeps BigQuery backslash escapes in string
-# literals undecoded and reads a doubled backtick as one escaped backtick, so the quoted-string and
-# alias fixes below look like changes. They are findings about the parser, not about sqlfluff.
-PARSER_READS_DIFFERENTLY = {
-    "CV10/test_fail_unnecessary_escaping",
-    "CV10/test_fail_tripple_quoted_strings_dont_remove_escapes_single_quotes",
-    "CV10/test_fail_tripple_quoted_strings_dont_remove_escapes_double_quotes",
-    "AL09/test_fail_bigquery_quoted_column_no_space_without_as",
-}
+# Pairs the harness reads differently from sqlfluff (none: the four that sqlglot's BigQuery escapes made look
+# different are fixed by kumosql.string_literals, issue #314). A pair added here is a parser finding, not a sqlfluff one.
+PARSER_READS_DIFFERENTLY: set[str] = set()
 
 
 def test_data_is_the_pinned_version():

@@ -23,6 +23,8 @@ from typing import Iterable, Sequence
 
 import sqlglot
 
+from .string_literals import canonical_literals
+
 _DUCK_TYPES = {"int": "BIGINT", "float": "DOUBLE", "text": "VARCHAR", "date": "DATE", "bool": "BOOLEAN"}
 
 
@@ -170,6 +172,8 @@ def _connect(schema: Schema):
 
 
 def _duck(sql: str, dialect: str) -> str:
+    if dialect == "bigquery":
+        sql = canonical_literals(sql)
     try:
         return sqlglot.transpile(sql, read=dialect, write="duckdb")[0]
     except sqlglot.errors.SqlglotError as error:
