@@ -121,6 +121,8 @@ A query split into partitions by a filter is put back together (`src/kumosql/par
 - A derived table folded into the query that reads it keeps its output names, and a rewrite that would rename a derived table's outputs is not applied.
 - On the NULL-padded side of an outer join only expressions that are NULL whenever their columns are (columns, arithmetic, comparisons, a `CASE`/`IF`/`COALESCE` whose every result is such an expression) are folded into the outer query; constants, `IS NULL` and the like stay in the derived table.
 - `GROUP BY 2` and `ORDER BY 2` are spelled out as the second output's expression first, so a constant folded into those clauses later is not read back as a column position.
+- A select-list `x IN (SELECT y FROM t ...)` rewritten as `EXISTS (... AND y = x)` qualifies `x` by its outer table, and a subquery table of the same name gets a fresh alias, so the inner scope cannot capture `x` (`deptno IN (SELECT deptno FROM emp ...)` over `emp` is not `deptno = deptno`); when the owner of `x` is unclear the rewrite is skipped.
+- Before any rewrite, a bare column in a select with several sources is written with its source's name, so reading a derived table as its base table (which brings that table's other columns into scope) cannot capture it or make it ambiguous.
 - A table function handed a CTE by name (DuckDB's `histogram_values(cte, l)`, BigQuery's `TABLE cte`) is declined by every prover, since such a read is not a table reference and the CTE would look unused.
 
 `tests/test_soundness_regressions.py` keeps each wrong proof found so far, with the database on which DuckDB shows the two queries differ, next to equivalent near misses that must stay proven.
@@ -139,3 +141,5 @@ python -m kumosql prove-sql-sqlsolver --check                                   
 The SQLSolver stage needs a schema listing every table with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. It is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
 
 SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are scored with these provers and hand-written rules and no language model: `python tools/sqliq_bench.py --data <SQL-IQ checkout>` (see [docs/sql-iq.md](sql-iq.md); the SQL Judge and Error Classification rules were tuned on SQL-IQ's own data, so those two scores are tuned-on-test).
+
+`kumosql.bounded_equivalence` is a third level between a proof and executed datasets: a z3 check that two queries agree on every database with at most N rows per table, written from the VeriEQL paper (OOPSLA 2024) and sharing none of its code. Its answer reads "bounded, N rows" and is never called a proof; every counterexample is replayed on DuckDB. See [bounded-verification.md](bounded-verification.md).

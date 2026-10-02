@@ -17,7 +17,7 @@ The scoreboard rows live in [benchmarks/results/](../benchmarks/results) (`sqlli
 
 Cases that are not about BigQuery lineage are left out and listed with the reason: other dialects (read as BigQuery, which is what the tool does with every project; reported apart so they never move the headline), lateral column alias references, SQL BigQuery does not accept (bare `UNION`, double-quoted identifiers, `::` casts), `INSERT` columns mapped by the target table's column order, and `DROP`/`RENAME` table lifecycles.
 
-**Score: 256/279 exact, 0 wrong, 23 unknown, 0 missed** (table cases 100/108, column cases 156/171). Column edge precision 0.993 and recall 0.876 (recall counts what is reported unknown). The first run was 211/282 exact with 21 wrong; MERGE support (all of SQLLineage's MERGE cases, table and column) moved it from 235/279. The harness names a `MERGE` target as the case's destination, as it does for `INSERT` and `CREATE ... AS`.
+**Score: 257/279 exact, 0 wrong, 22 unknown, 0 missed** (table cases 101/108, column cases 156/171). Column edge precision 0.993 and recall 0.876 (recall counts what is reported unknown). The first run was 211/282 exact with 21 wrong; MERGE support (all of SQLLineage's MERGE cases, table and column) moved it from 235/279. The harness names a `MERGE` target as the case's destination, as it does for `INSERT` and `CREATE ... AS`.
 
 This is a floor, not a held-out score: bugs it found were fixed in the same change. What it found:
 

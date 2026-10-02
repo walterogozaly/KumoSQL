@@ -2,19 +2,19 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "334/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 167 unknown. 79 of the 168 pairs new to every other corpus are proved.",
+  "score": "348/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 153 unknown. 78 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
-  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. While building the ANY/ALL rules, 7 held-out pairs were read (testJoinConditionOrExpansionRuleAnti, testNullSelect2, testSomeWithGreaterThanNoRowSubQuery, testSomeWithLessThanOrEqualNoRowSubQuery, testTopDownGeneralDecorrelateForFilterSome, testTopDownGeneralDecorrelateForSubqueryWithJoin, testNotInNullableKey); 2 of them are proved, so 61 of the 63 held-out proofs are clean. The DISTINCT and regrouping rules (distinct_rules.py) proved 4 more held-out pairs (testAggregateToSemiJoinRule, testPushAggregateThroughSemiJoin, testUnionToValuesByInList, testUnionToValuesByInList2) and lost 1 (testIntersectToExistsRuleMultiIntersect, not investigated because it is held out). The first two were in that work's failing-case list before the held-out rule was announced; no rule was written from them.",
+  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. While building the ANY/ALL rules, 7 held-out pairs were read (testJoinConditionOrExpansionRuleAnti, testNullSelect2, testSomeWithGreaterThanNoRowSubQuery, testSomeWithLessThanOrEqualNoRowSubQuery, testTopDownGeneralDecorrelateForFilterSome, testTopDownGeneralDecorrelateForSubqueryWithJoin, testNotInNullableKey); 2 of them are proved, so 61 of the 63 held-out proofs are clean.",
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 60 random DuckDB databases, half skewed towards the literals",
   "coverage": {
-    "proven": 334,
+    "proven": 348,
     "refuted": 1,
-    "unknown": 167,
+    "unknown": 153,
     "unsupported": 332
   },
-  "held_out": "79/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules (set_filters.py) were written with their unknowns in view, 7 were read while building the ANY/ALL rules (quantified_rules.py), and 2 were in the DISTINCT rules' failing-case list (see caveats)"
+  "held_out": "78/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py). Rules since then were developed on the other 334 pairs and QED only; they lifted the new pairs from 76 to 78."
 }
