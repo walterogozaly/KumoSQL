@@ -19,6 +19,8 @@ that could not be followed.
 
 from __future__ import annotations
 
+import hashlib
+
 from sqlglot import exp
 
 _FLIPPED = {exp.LT: exp.GT, exp.LTE: exp.GTE}
@@ -270,6 +272,32 @@ def free_cte_refs(select: exp.Expression) -> dict[str, exp.Expression]:
     return found
 
 
+_SCOPE_KEYS: dict[tuple[int, str], tuple[exp.Expression, str]] = {}
+_SCOPE_KEYS_MAX = 50_000
+
+
+def _cte_part(body: exp.Expression, text, seen: frozenset) -> str:
+    """One outside CTE rendered canonically with what it reads in turn, as a digest.
+
+    Cached per body: a model with a long chain of CTEs asks for the same bodies once per SELECT, which
+    otherwise renders every upstream CTE again for each one.
+    """
+
+    key = (id(body), getattr(text, "__qualname__", ""))
+    hit = _SCOPE_KEYS.get(key)
+    if hit is not None and hit[0] is body:
+        return hit[1]
+    try:
+        body_text = text(canonical_copy(body)) if isinstance(body, exp.Select) else text(body)
+    except Exception:
+        body_text = text(body)
+    part = hashlib.sha1((body_text + scope_key(body, text, seen | {id(body)})).encode("utf-8")).hexdigest()[:16]
+    if len(_SCOPE_KEYS) >= _SCOPE_KEYS_MAX:
+        _SCOPE_KEYS.clear()
+    _SCOPE_KEYS[key] = (body, part)
+    return part
+
+
 def scope_key(select: exp.Expression, text, _seen: frozenset = frozenset()) -> str:
     """What the outside CTEs a SELECT reads are made of, so equal text over different CTEs differs."""
 
@@ -282,11 +310,7 @@ def scope_key(select: exp.Expression, text, _seen: frozenset = frozenset()) -> s
         if id(body) in _seen:
             parts.append(f"{name}=<recursive>")
             continue
-        try:
-            body_text = text(canonical_copy(body)) if isinstance(body, exp.Select) else text(body)
-        except Exception:
-            body_text = text(body)
-        parts.append(f"{name}={body_text}{scope_key(body, text, _seen | {id(body)})}")
+        parts.append(f"{name}={_cte_part(body, text, _seen)}")
     return "|ctes:" + ";".join(parts)
 
 

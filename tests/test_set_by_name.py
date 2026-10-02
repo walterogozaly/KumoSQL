@@ -168,3 +168,17 @@ def test_star_over_an_unknown_table_in_a_later_union_branch_makes_columns_unknow
 def test_known_star_in_a_union_branch_still_traces():
     records, _ = trace(f"SELECT k, y FROM {B} UNION ALL SELECT * FROM {B}")
     assert leaves(records["k"]) == {"p.raw.src_b.k"} and records["y"].status == "traced"
+
+
+def test_lineage_prints_nothing_and_unknown_subquery_scopes_are_not_logged_with_sql(capsys, caplog):
+    import logging
+
+    sql = f"SELECT k, (SELECT MAX(x) FROM {A} b WHERE b.k = a.k) AS m FROM {A} AS a UNION ALL SELECT k, y FROM {B}"
+    with caplog.at_level(logging.DEBUG):
+        trace(sql)
+        logging.getLogger("sqlglot.lineage").warning("Unknown subquery scope: SELECT secret_column FROM hidden_table")
+        logging.getLogger("sqlglot.lineage").warning("Unknown subquery scope: SELECT secret_column FROM hidden_table")
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+    assert "secret_column" not in caplog.text and "hidden_table" not in caplog.text
+    assert caplog.text.count("had no scope for lineage") == 1 or "had no scope for lineage" not in caplog.text

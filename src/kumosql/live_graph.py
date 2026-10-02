@@ -587,7 +587,17 @@ class _Checkout:
         shutil.rmtree(self._created, ignore_errors=True)
 
 
-def pipeline_from_files(files: object):
+def _compiled_targets(repo_url: str | None):
+    """The loader's fallback to Dataform's compilation for a repository, or None without a remote."""
+
+    if not repo_url:
+        return None
+    from . import workflow_configs
+
+    return lambda: workflow_configs.compiled_targets(repo_url)
+
+
+def pipeline_from_files(files: object, repo_url: str | None = None):
     """Load a ``Pipeline`` from ``{relative path: text}``."""
 
     key = _content_key(files) if isinstance(files, dict) and all(isinstance(v, str) for v in files.values()) else None
@@ -611,7 +621,7 @@ def pipeline_from_files(files: object):
             _write_files(files, directory)
         try:
             with stage("parse project"):
-                pipeline = load_sqlx_project(directory)
+                pipeline = load_sqlx_project(directory, compiled_targets=_compiled_targets(repo_url))
             pipeline.completeness()  # analyse now: the folder is deleted on exit
         except Exception as exc:  # loader errors are user-facing
             from . import console
@@ -619,7 +629,8 @@ def pipeline_from_files(files: object):
             console.error(f"project parse: reading {len(files) if isinstance(files, dict) else 0} files failed", exc, code="KS-GRAPH-BUILD")
             detail = str(exc) or "project could not be loaded"
             raise ProjectError(detail if isinstance(exc, (ValueError, OSError)) else f"{type(exc).__name__}: {detail}") from exc
-    if key:
+    if key and not any(d.code == "compiled_graph_unavailable" for d in pipeline.diagnostics):
+        # A load that could not reach Dataform is not cached: the next one may have credentials.
         pipeline.content_key = key
         _save_snapshot(pipeline, key)
         with _LOCK:
@@ -634,7 +645,7 @@ def load_files(files: object, label: str, remote: dict | None = None) -> Pipelin
 
     if not isinstance(label, str) or not label.strip():
         label = "uploaded project"
-    pipeline = pipeline_from_files(files)
+    pipeline = pipeline_from_files(files, (remote or {}).get("url"))
     set_project(pipeline, label.strip()[:200], remote=remote)
     return pipeline
 

@@ -8,6 +8,7 @@ DEFAULT = Target("proj", "analytics", "")
 
 
 def project(tmp_path, files):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "workflow_settings.yaml").write_text("defaultProject: proj\ndefaultDataset: analytics\n")
     for name, text in files.items():
         path = tmp_path / name
@@ -72,3 +73,110 @@ def test_a_name_declared_in_two_schemas_is_not_guessed(tmp_path):
 def test_without_any_declaration_the_default_schema_still_applies(tmp_path):
     pl = project(tmp_path, {"definitions/m.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("t")}'})
     assert {d.key for d in pl.models["proj.analytics.m"].declared_dependencies} == {"proj.analytics.t"}
+
+
+DYNAMIC = {
+    "definitions/decl.js": 'getTables().forEach((t) => declare({ schema: "raw", name: t }));\n',
+    "definitions/m.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("orders")}',
+}
+
+
+def load(tmp_path, compiled):
+    (tmp_path / "workflow_settings.yaml").write_text("defaultProject: proj\ndefaultDataset: analytics\n")
+    for name, text in DYNAMIC.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return load_sqlx_project(tmp_path, compiled_targets=compiled)
+
+
+def test_dynamic_declarations_fall_back_to_the_compiled_graph(tmp_path):
+    pl = load(tmp_path, lambda: [(("lake", "raw", "orders"), True)])
+    assert reads(pl) == {"lake.raw.orders"}
+    assert "lake.raw.orders" in pl.sources
+    assert not any(d.code == "unsupported_ref" for d in pl.diagnostics)
+
+
+def test_an_unreachable_compiled_graph_leaves_refs_unresolved(tmp_path):
+    def broken():
+        raise RuntimeError("no credentials")
+
+    pl = load(tmp_path, broken)
+    assert reads(pl) == set()
+    assert {"compiled_graph_unavailable", "unsupported_ref"} <= {d.code for d in pl.diagnostics}
+
+
+def test_the_compiled_graph_is_not_asked_when_the_files_are_enough(tmp_path):
+    def forbidden():
+        raise AssertionError("should not be called")
+
+    pl = project(tmp_path, {"definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("t")}'})
+    assert pl is not None
+    (tmp_path / "definitions/decl.js").write_text('declare({ schema: "raw", name: "t" });')
+    assert load_sqlx_project(tmp_path, compiled_targets=forbidden) is not None
+
+
+def test_compiled_targets_reads_the_newest_release_compilation(monkeypatch):
+    from kumosql import workflow_configs as wc
+
+    monkeypatch.setattr(wc, "search_for", lambda url: {"projects": ["p"], "location": "l"})
+    monkeypatch.setattr(wc, "find_repositories", lambda *a: (["projects/p/locations/l/repositories/r"], []))
+    seen = []
+
+    def fake_list(url, key):
+        seen.append(url)
+        if key == "releaseConfigs":
+            return [{"releaseCompilationResult": "projects/p/locations/l/repositories/r/compilationResults/c1"}]
+        return [
+            {"target": {"database": "d", "schema": "raw", "name": "orders"}, "declaration": {}},
+            {"target": {"database": "d", "schema": "m", "name": "x"}, "relation": {}},
+        ]
+
+    monkeypatch.setattr(wc, "_list_all", fake_list)
+    assert wc.compiled_targets("https://github.com/o/r") == [(("d", "raw", "orders"), True), (("d", "m", "x"), False)]
+    assert seen[-1].endswith("compilationResults/c1:query")
+
+
+def graph_edges(pl):
+    return {(e["upstream"]["key"], e["downstream"]["key"]) for e in pl.report()["graph"]["edges"]}
+
+
+STG = 'config {{ type: "table", schema: "staging", name: "orders" }}\nSELECT id FROM {source}'
+DECLARED = 'config { type: "declaration", schema: "raw", name: "orders" }'
+
+
+def test_a_model_reading_a_same_named_table_elsewhere_has_an_upstream_edge(tmp_path):
+    for index, source in enumerate((
+        '${ref("raw", "orders")}', '${ref({ schema: "raw", name: "orders" })}', "`proj.raw.orders`", "raw.orders",
+    )):
+        root = tmp_path / str(index)
+        pl = project(root, {"definitions/d.sqlx": DECLARED, "definitions/s.sqlx": STG.format(source=source)})
+        assert pl.upstream["proj.staging.orders"] == {"proj.raw.orders"}, source
+
+
+def test_a_same_named_source_that_is_not_declared_is_not_the_model_itself(tmp_path):
+    for index, source in enumerate(('${ref("raw", "orders")}', "raw.orders", '${ref("lake", "raw", "orders")}')):
+        root = tmp_path / str(index)
+        pl = project(root, {"definitions/s.sqlx": STG.format(source=source)})
+        edges = {up for up, down in graph_edges(pl) if down == "proj.staging.orders"}
+        assert edges and "proj.staging.orders" not in edges, (source, edges)
+        assert "proj.staging.orders" not in pl.upstream["proj.staging.orders"]
+
+
+def test_a_qualified_name_never_resolves_to_a_model_that_only_shares_the_table_name(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/a.sqlx": 'config { type: "table", schema: "staging", name: "orders" }\nSELECT 1 AS id',
+        "definitions/b.sqlx": 'config { type: "table", schema: "marts", name: "report" }\nSELECT id FROM raw.orders',
+    })
+    assert pl.upstream["proj.marts.report"] == set()
+    assert pl.models["proj.marts.report"] is not None
+
+
+def test_two_models_with_one_name_are_each_read_through_their_own_schema(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/a.sqlx": 'config { type: "table", schema: "a", name: "t" }\nSELECT 1 AS id',
+        "definitions/b.sqlx": 'config { type: "table", schema: "b", name: "t" }\nSELECT id FROM ${ref("a", "t")}',
+        "definitions/c.sqlx": 'config { type: "table", schema: "c", name: "t" }\nSELECT id FROM ${ref({ schema: "b", name: "t" })}',
+    })
+    assert pl.upstream["proj.b.t"] == {"proj.a.t"}
+    assert pl.upstream["proj.c.t"] == {"proj.b.t"}

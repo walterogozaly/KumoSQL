@@ -40,3 +40,7 @@ Where it cannot decide, it leaves the ref unresolved (a `unsupported_ref` diagno
 
 - a name declared in more than one schema (Dataform itself refuses to compile it);
 - any ref to an unlisted name while a `.js` file declares tables it cannot read without running the code (`js_declaration_dynamic`). For exact results on such projects, load the compiled graph from the Dataform API.
+
+When Google credentials allow and the repository is also a Dataform repository (found the same way as workflow configurations), KumoSQL reads the newest release compilation (else the newest compilation) from the Dataform API and takes every compiled action and declaration from it, so computed declarations resolve too. It is only asked when a `.js` file could not be read; the compilation may differ from the checked-out commit. Without credentials, or when no repository matches, refs stay unresolved (`compiled_graph_unavailable`) and that load is not cached, so a later load with credentials tries again.
+
+A table name that carries a dataset (`raw.orders`, `ref("raw", "orders")`) is matched on that dataset, never on its table name alone, so a staging model that shares its source table's name still reads the source. A bare `ref("orders")` that two actions answer to is ambiguous to Dataform itself and stays unresolved; spell the dataset (`ref("raw", "orders")`) to settle it.

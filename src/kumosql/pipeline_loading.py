@@ -6,7 +6,7 @@ from collections import defaultdict
 import json
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Callable, Iterable, Mapping
 
 from sqlglot import exp
 
@@ -456,6 +456,7 @@ def load_sqlx_project(
     root: str | Path,
     *,
     source_schema: dict[str, dict[str, str]] | None = None,
+    compiled_targets: Callable[[], Iterable[tuple[tuple[str, str, str], bool]]] | None = None,
 ) -> Pipeline:
     """Load a Dataform project (``definitions/**.sqlx``) or a folder of ``.sql`` files.
 
@@ -631,6 +632,23 @@ def load_sqlx_project(
                 str(path.relative_to(root)), "js_declaration_dynamic",
                 "declares or names tables that cannot be read without running the code; refs to unlisted names were left unresolved"))
 
+    if incomplete_js and compiled_targets is not None:
+        # Dataform's own compilation lists every action, which settles what the JavaScript could not.
+        try:
+            fetched = list(compiled_targets())
+        except Exception as exc:  # noqa: BLE001 - no credentials, offline, no matching repository: stay unresolved
+            diagnostics.append(PipelineDiagnostic(
+                "", "compiled_graph_unavailable",
+                f"the Dataform compilation could not be read ({type(exc).__name__}); refs to unlisted names stay unresolved"))
+        else:
+            for (target_db, target_schema, target_name), is_declaration in fetched:
+                target = Target(target_db, target_schema, target_name)
+                if target not in known.setdefault(target.name, []):
+                    known[target.name].append(target)
+                if is_declaration:
+                    sources[target.key] = target
+            incomplete_js = False
+
     pending = []
     for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
         try:
@@ -774,15 +792,23 @@ class _TargetResolver:
             for start in range(len(parts)):
                 self._by_suffix[".".join(parts[start:])].add(key)
 
+    def _matches(self, parts: list[str], start: int) -> set[str]:
+        found = self._by_suffix.get(".".join(parts[start:]), set())
+        if start:
+            found = {key for key in found if key.count(".") + 1 <= len(parts) - start}
+        return found
+
     def resolve(self, table: exp.Table | str) -> str | None:
         if isinstance(table, exp.Table):
             name = ".".join(part.name for part in table.parts)
         else:
             name = table.strip("`")
         parts = name.split(".")
-        # Try the most specific spelling first, then drop leading qualifiers.
+        # Try the most specific spelling first, then drop leading qualifiers. A dropped qualifier only
+        # matches a model keyed with no more qualifiers than are left: ``raw.orders`` is not the model
+        # ``p.staging.orders``, but ``p.ds.orders`` finds a model keyed ``ds.orders`` or ``orders``.
         for start in range(len(parts)):
-            matches = self._by_suffix.get(".".join(parts[start:]))
+            matches = self._matches(parts, start)
             if matches and len(matches) == 1:
                 return next(iter(matches))
             if matches:
@@ -798,7 +824,7 @@ class _TargetResolver:
             name = table.strip("`")
         parts = name.split(".")
         for start in range(len(parts)):
-            matches = self._by_suffix.get(".".join(parts[start:]))
+            matches = self._matches(parts, start)
             if matches:
                 return len(matches) > 1
         return False
