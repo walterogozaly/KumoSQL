@@ -124,8 +124,10 @@ def test_delete_only_keeps_the_edges_and_says_columns_are_missing():
     pl = build(merge("WHEN MATCHED THEN DELETE"))
     assert pl.upstream["p.d.target"] == {"p.d.src"}
     assert lineage(pl) == {}
-    assert "skipped_statements" in codes(pl) and "unknown_reads" not in codes(pl)
+    assert "skipped_statements" in codes(pl)
     assert not pl.completeness()["views"]["lineage"]
+    # its condition reads source columns that are not traced, so nothing may be called dead
+    assert not pl.dead_columns().get("p.d.src")
 
 
 def test_insert_values_without_column_names_is_not_guessed():

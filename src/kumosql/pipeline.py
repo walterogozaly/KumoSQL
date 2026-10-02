@@ -1223,13 +1223,22 @@ class _Analysis:
                             f"pre/post operations: {len(extra.unknown)} of {extra.considered} statements could not be read",
                         )
                     )
-            understood = (
+            # A model is only trusted for column-level questions (dead columns, impact) when every statement that reads
+            # tables has its columns traced. A query model with no query to trace, or a statement that could not be
+            # read at all, leaves it blind; statements understood only at table level make the tables they read
+            # opaque readers (every column of them counts as used).
+            columns_known = (
                 analysis is not None
                 and not analysis.unknown
-                and (not model.is_query or (key not in parsed and analysis.counts()[KEPT] > 0))
+                and analysis.untraced_kept == 0
+                and (key in parsed or analysis.counts()[KEPT] == 0)
             )
-            if key not in parsed and model.sql.strip() and not model.declared_dependencies and not understood:
-                blind_models.append(key)
+            if model.sql.strip() and not model.declared_dependencies and not columns_known:
+                table_level = analysis is not None and not analysis.unknown and not (model.is_query and key not in parsed)
+                if table_level:
+                    operation_readers.update(parents)
+                else:
+                    blind_models.append(key)
             upstream[key] = parents
         reading.finish()
         for target, sources in written.items():
