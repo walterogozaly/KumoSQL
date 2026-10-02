@@ -49,3 +49,5 @@ Findings that are not bugs but gaps: for most non-equivalent unsafe pairs the pr
 Every discovered failure becomes a regression test in `tests/test_unsafe_fuzz.py`. The pre-fix baseline for the first run: 2 bad counterexamples on `fuzz` seed 1 (count 3) and one non-idempotent canonical pipeline in the first 15 composed queries.
 
 Seeds 31 (fuzz, count 40: 850 cases) and 31 (compose, 60 queries) over the richer shapes found no further bugs: 0 false proofs, 0 bad counterexamples, 0 behaviour changes.
+
+The generated shapes also cover window functions, QUALIFY, SAFE_*/NULLIF/IF, date arithmetic, UNNEST, STRUCT and NULL-heavy LEFT/RIGHT/FULL joins. Counterexamples that need a fractional value are replayed on DOUBLE columns (they are valid for FLOAT64 only). A fix from the first run over these shapes: when no integer model exists, a counterexample column that the queries only compare with numbers could be given a string; the model now prefers any numeric value before any other.
