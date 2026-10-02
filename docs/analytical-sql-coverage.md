@@ -43,23 +43,23 @@ python tools/analytical_coverage.py --log run.jsonl         # resumable: appends
 ## Results
 
 <!-- results:start -->
-Measured 2026-10-02 on 60 queries spread evenly through each corpus (`--split all --limit 60`), sqlglot 30.21:
+Measured 2026-10-02 on 60 queries spread evenly through each corpus (`--split all --limit 60`), sqlglot 30.21, master `5701ec3`:
 
-**334/475 (70.3%) of queries pass every stage, 0 wrong. 475/475 are clean.** The baseline on the same queries before the fixes below was 243/475 (51.2%). The 70 queries in the held-out fifth score 50/70 (71.4%), but that split was introduced after this sample was used, so it is not a true held-out score.
+**354/475 (74.5%) of queries pass every stage, 0 wrong. 475/475 are clean.** The baseline on the same queries before the fixes below was 243/475 (51.2%). The eval first merged at 334/475. Later prover merges in other threads made 20 more TPC-DS cleanup rewrites provable (sqlstorm-v0/tpcds 20/60 → 40/60), and some cleanup and execution counts moved by one or two. The 70 queries in the held-out fifth score 53/70 (75.7%), but that split was introduced after this sample was used, so it is not a true held-out score.
 
 | Corpus | Queries | Converted | Clean | Full | pass / unsupported / fail / timeout / error | parse | load | graph | fingerprint | cleanup | format | prover | execution |
 |---|---:|---:|---:|---:|---|---|---|---|---|---|---|---|---|
-| dsb | 60 | 59 | 59/59 (100.0%) | 59/59 (100.0%) | 59 / 0 / 0 / 0 / 0 | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 54 ✅ |
+| dsb | 60 | 59 | 59/59 (100.0%) | 59/59 (100.0%) | 59 / 0 / 0 / 0 / 0 | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 55 ✅ |
 | sqlstorm-v0/job | 60 | 60 | 60/60 (100.0%) | 60/60 (100.0%) | 60 / 0 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ |
-| sqlstorm-v0/tpcds | 60 | 60 | 60/60 (100.0%) | 20/60 (33.3%) | 20 / 40 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 40 ✅ 20 ⚪ | 60 ✅ | 40 ✅ 20 ⚪ | 40 ✅ |
+| sqlstorm-v0/tpcds | 60 | 60 | 60/60 (100.0%) | 40/60 (66.7%) | 40 / 20 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 40 ✅ 20 ⚪ | 60 ✅ |
 | sqlstorm-v0/tpch | 60 | 60 | 60/60 (100.0%) | 60/60 (100.0%) | 60 / 0 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ |
 | sqlstorm/job | 60 | 57 | 57/57 (100.0%) | 21/57 (36.8%) | 21 / 36 / 0 / 0 / 0 | 57 ✅ | 57 ✅ | 57 ✅ | 57 ✅ | 31 ✅ 26 ⚪ | 57 ✅ | 21 ✅ 36 ⚪ | 48 ✅ |
-| sqlstorm/stackoverflow | 60 | 59 | 59/59 (100.0%) | 30/59 (50.8%) | 30 / 29 / 0 / 0 / 0 | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 36 ✅ 23 ⚪ | 58 ✅ 1 ⚪ | 30 ✅ 29 ⚪ | 33 ✅ |
-| sqlstorm/tpcds | 60 | 60 | 60/60 (100.0%) | 41/60 (68.3%) | 41 / 19 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 50 ✅ 10 ⚪ | 60 ✅ | 41 ✅ 19 ⚪ | 56 ✅ |
-| sqlstorm/tpch | 60 | 60 | 60/60 (100.0%) | 43/60 (71.7%) | 43 / 17 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 53 ✅ 7 ⚪ | 60 ✅ | 43 ✅ 17 ⚪ | 57 ✅ |
-| **all** | 480 | 475 | 475/475 (100.0%) | 334/475 (70.3%) | 334 / 141 / 0 / 0 / 0 |  |  |  |  |  |  |  |  |
+| sqlstorm/stackoverflow | 60 | 59 | 59/59 (100.0%) | 30/59 (50.8%) | 30 / 29 / 0 / 0 / 0 | 59 ✅ | 59 ✅ | 59 ✅ | 59 ✅ | 42 ✅ 17 ⚪ | 58 ✅ 1 ⚪ | 30 ✅ 29 ⚪ | 34 ✅ |
+| sqlstorm/tpcds | 60 | 60 | 60/60 (100.0%) | 41/60 (68.3%) | 41 / 19 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 54 ✅ 6 ⚪ | 60 ✅ | 41 ✅ 19 ⚪ | 58 ✅ |
+| sqlstorm/tpch | 60 | 60 | 60/60 (100.0%) | 43/60 (71.7%) | 43 / 17 / 0 / 0 / 0 | 60 ✅ | 60 ✅ | 60 ✅ | 60 ✅ | 55 ✅ 5 ⚪ | 60 ✅ | 43 ✅ 17 ⚪ | 56 ✅ 1 ⚪ |
+| **all** | 480 | 475 | 475/475 (100.0%) | 354/475 (74.5%) | 354 / 121 / 0 / 0 / 0 |  |  |  |  |  |  |  |  |
 
-Execution counts are lower than the query counts because some originals do not run in DuckDB after translation, and queries that no rewrite changed have nothing to execute. Both are `n/a`. The supported-subset score is 334/334, since nothing failed, timed out or crashed.
+Execution counts are lower than the query counts because some originals do not run in DuckDB after translation, and queries that no rewrite changed have nothing to execute. Both are `n/a`. One execution ⚪ is a tie-sensitive window. The supported-subset score is 354/354, since nothing failed, timed out or crashed.
 <!-- results:end -->
 
 ## What this found and fixed

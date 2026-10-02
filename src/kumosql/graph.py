@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Iterable, Literal, Mapping
 
 from sqlglot import exp
 
+from .ast_utils import is_function_table
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .scopes import job_record
 
@@ -355,6 +356,8 @@ def build_query_graph(
             continue
         cte_names = {cte.alias_or_name.casefold() for cte in query.find_all(exp.CTE)} if query is not None else set()
         for table in (*(query.find_all(exp.Table) if query is not None else ()), *extra_tables):
+            if is_function_table(table):
+                continue  # a table function call is not a table; the tables it is given are their own nodes
             if not table.db and table.name.casefold() in cte_names:
                 continue
             if _TEMPLATE_TOKEN.fullmatch(table.name):
@@ -371,6 +374,16 @@ def build_query_graph(
             )
             item.parsed = True
             item.parse_incomplete = downstream_key in parse_incomplete
+
+    # A table another model's script writes (a MERGE or INSERT into a declared source or into another model) is fed by
+    # what that script reads.
+    for written_key, feeders in sorted(analysis.written_into.items()):
+        downstream, downstream_kind = identity_for_key(pipeline, written_key)
+        for feeder_key in sorted(feeders):
+            upstream, upstream_kind = identity_for_key(pipeline, feeder_key)
+            if upstream.stable_key == downstream.stable_key:
+                continue
+            get_evidence(upstream, downstream, upstream_kind, downstream_kind).parsed = True
 
     unresolved_count = 0
     unresolved_samples: list[dict[str, object]] = []

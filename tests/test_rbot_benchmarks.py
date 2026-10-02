@@ -15,7 +15,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["rbot_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOOR = 23
+FLOOR = 25
 
 
 def test_rbot_calcite_pairs():

@@ -1,13 +1,13 @@
 {
   "suite": "VeriEQL Calcite-397 (proofs)",
   "order": 42,
-  "score": "247/397, 0 wrong",
+  "score": "255/397, 0 wrong",
   "metric": "Pairs proved equivalent by the z3 prover over all databases meeting the declared keys and NOT NULL columns, with no LLM. Inequivalent pairs stay out of this count.",
   "evidence": "proof",
   "correctness": "0 false proofs: every proof survives 1,000 further random DuckDB databases and VeriEQL's published counterexamples replayed on DuckDB",
   "coverage": {
-    "proven": 247,
-    "unknown": 150
+    "proven": 255,
+    "unknown": 142
   },
   "caveats": "No labels. 9 pairs are not run: 5 whose Calcite text lost a correlated column (WHERE * = t5.DEPTNO), 2 with a subquery in an outer join's ON (DuckDB cannot run it), 1 comparing VARCHAR with INT and 1 naming a renamed lateral column ($cor0.SAL0). Calcite-only spellings ($f0 names, COUNT(a, b), SINGLE_VALUE, FIRST_VALUE, empty select lists, $cor correlation variables, repeated star columns, || as concatenation) are translated as docs/verieql.md describes. 4 refuted pairs are marked equivalent by VeriEQL (120, 126, 257, 367); each counterexample was executed and checked by hand. One pair (a correlated EXISTS with an unqualified column) is read differently by DuckDB than by VeriEQL. Rules were developed against SQLSolver's Calcite pairs, which overlap this suite (tuned on test).",
   "size": 397,
