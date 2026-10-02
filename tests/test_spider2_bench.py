@@ -67,6 +67,32 @@ def test_prover_gives_up_on_many_outer_joins_instead_of_exhausting_memory():
     assert result.status is SmtStatus.NOT_PROVEN and "outer-join cases" in result.reason
 
 
+def test_query_timeout_counts_cpu_time_not_machine_load(monkeypatch):
+    """The floor test failed under a parallel test run: a wall-clock limit timed out queries that were only
+    waiting for a CPU. Time spent descheduled must not count; time spent computing must."""
+
+    import time
+
+    bench = _bench()
+    monkeypatch.setattr(bench, "TIMEOUT", 0.2)
+
+    def waits(sql):
+        time.sleep(0.5)
+        raise RuntimeError("waited")
+
+    monkeypatch.setattr(bench.cov, "stage_parse", waits)
+    _, out = bench.run_query("bq031")
+    assert "timeout" not in out and "waited" in out["crash"][1]
+
+    def spins(sql):
+        while True:
+            pass
+
+    monkeypatch.setattr(bench.cov, "stage_parse", spins)
+    _, out = bench.run_query("bq031")
+    assert "timeout" in out and out["seconds"] < 5
+
+
 def test_dev_and_held_out_floors():
     bench = _bench()
     for split in ("dev", "held-out"):
