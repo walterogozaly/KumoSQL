@@ -71,3 +71,26 @@ def test_graph_table_prints_back_as_written_and_is_not_a_table(sql):
     assert tree.sql("bigquery") == sql
     names = {table.name for table in tree.find_all(exp.Table) if table.name}
     assert names <= {"t"}
+
+
+@pytest.mark.parametrize(
+    "sql,tables",
+    [
+        ("SELECT * FROM ML.EVALUATE(MODEL `p.d.m`, TABLE `p.d.t`)", {"t"}),
+        ("SELECT * FROM ML.EVALUATE(MODEL `p.d.m`)", set()),
+        ("SELECT * FROM ML.DETECT_ANOMALIES(MODEL `p.d.m`, STRUCT(0.01 AS contamination), TABLE `p.d.t`)", {"t"}),
+        ("SELECT * FROM ML.EXPLAIN_PREDICT(MODEL `p.d.m`, (SELECT * FROM p.d.t), STRUCT(3 AS top_k_features))", {"t"}),
+    ],
+)
+def test_ml_functions_sqlglot_does_not_know_read_their_tables_not_the_model(sql, tables):
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    assert tree.sql("bigquery") == sql
+    assert {table.name for table in tree.find_all(exp.Table) if table.name} == tables
+
+
+def test_ml_functions_sqlglot_reads_itself_are_unchanged():
+    # A query that fails for another reason is retried; ML.PREDICT must still come out of sqlglot's own parser.
+    sql = "SELECT * FROM ML.PREDICT(MODEL `p.d.m`, TABLE `p.d.t`) AS p JOIN ML.EVALUATE(MODEL `p.d.m`, TABLE `p.d.u`) AS e ON TRUE"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    assert tree.sql("bigquery") == sql
+    assert type(tree.find(exp.Predict)).__name__ == "Predict"

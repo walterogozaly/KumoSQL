@@ -1,7 +1,8 @@
 """BigQuery syntax that sqlglot's BigQuery parser does not read, added once for every parse in this package.
 
 ``DROP TABLE FUNCTION`` is read as dropping a function of kind ``TABLE FUNCTION``. Pipe ``SET`` and ``DROP`` are read as the
-``SELECT * REPLACE`` and ``SELECT * EXCEPT`` they stand for. ``GRAPH_TABLE(...)`` is kept as its own text.
+``SELECT * REPLACE`` and ``SELECT * EXCEPT`` they stand for. ``GRAPH_TABLE(...)`` and the ``MODEL m`` argument of an ``ML.``
+function sqlglot does not know are kept as their own text.
 
 ``FROM dataset.fn(TABLE dataset.input, option => value)`` passes a whole table to a table-valued function. sqlglot stops at
 ``TABLE`` ("Expecting )"), so the model was reported unparseable and everything it read was lost. Here the argument becomes a
@@ -39,8 +40,8 @@ def _generate(self: Generator, expression: exp.Anonymous) -> str:
 _installed = False
 
 
-def _in_native_call(before: list) -> bool:
-    """Inside ``ML.fn(...)`` or ``AI.fn(...)``, which sqlglot already reads with its own ``TABLE`` handling."""
+def _open_call(before: list) -> int | None:
+    """The index of the ``(`` of the innermost call still open at the end of ``before``."""
 
     depth = 0
     for index in range(len(before) - 1, -1, -1):
@@ -49,9 +50,26 @@ def _in_native_call(before: list) -> bool:
             depth += 1
         elif kind == TokenType.L_PAREN:
             if depth == 0:
-                return index >= 3 and before[index - 2].token_type == TokenType.DOT and before[index - 3].text.upper() in ("ML", "AI")
+                return index
             depth -= 1
-    return False
+    return None
+
+
+def _ml_call(before: list, index: int | None) -> str | None:
+    """The function name when the ``(`` at ``index`` opens ``ML.fn(`` or ``AI.fn(``."""
+
+    if index is None or index < 3 or before[index - 2].token_type != TokenType.DOT:
+        return None
+    if before[index - 3].text.upper() not in ("ML", "AI"):
+        return None
+    return before[index - 1].text.upper()
+
+
+def _in_native_call(before: list) -> bool:
+    """Inside an ``ML.fn(...)`` or ``AI.fn(...)`` that sqlglot reads itself (``ML.PREDICT``), with its own ``TABLE`` handling."""
+
+    name = _ml_call(before, _open_call(before))
+    return name is not None and name in BigQuery.Parser.FUNCTION_PARSERS
 
 
 def _mark_table_arguments(tokens: list) -> list:
@@ -222,13 +240,42 @@ def _rewrite_verbatim_calls(sql: str, tokens: list) -> str:
                 end += 1
             if end < len(tokens):
                 text = sql[token.start : tokens[end].end + 1]
-                quoted = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
-                pieces += [sql[position : token.start], f"{VERBATIM}('{quoted}')"]
+                pieces += [sql[position : token.start], f"{VERBATIM}({_quoted(text)})"]
                 position = tokens[end].end + 1
                 index = end + 1
                 continue
         index += 1
     return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _rewrite_model_arguments(sql: str, tokens: list) -> str:
+    """``MODEL name`` as an argument of an ``ML.fn`` sqlglot does not read (``ML.EVALUATE``, ``ML.DETECT_ANOMALIES``) becomes
+    ``__KUMO_VERBATIM__('MODEL name')``: it prints back as written and, a model not being a table, is no read."""
+
+    pieces: list[str] = []
+    position = 0
+    for index, token in enumerate(tokens):
+        if token.text.upper() != "MODEL" or index == 0 or index + 1 >= len(tokens):
+            continue
+        if tokens[index - 1].token_type not in (TokenType.L_PAREN, TokenType.COMMA):
+            continue
+        name = _ml_call(tokens, _open_call(tokens[:index]))
+        if name is None or name in BigQuery.Parser.FUNCTION_PARSERS:
+            continue
+        end = index + 1
+        while end + 1 < len(tokens) and tokens[end + 1].token_type not in (TokenType.COMMA, TokenType.R_PAREN):
+            end += 1
+        text = sql[token.start : tokens[end].end + 1]
+        pieces += [sql[position : token.start], f"{VERBATIM}({_quoted(text)})"]
+        position = tokens[end].end + 1
+    return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _quoted(text: str) -> str:
+    """``text`` as a BigQuery string literal that reads back as exactly ``text``."""
+
+    escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
+    return f"'{escaped}'"
 
 
 def _table_argument(call: exp.Anonymous) -> exp.Expression:
@@ -273,8 +320,9 @@ def install() -> None:
             return parse(self, sql, **opts)
         except ParseError as error:
             tokens = self.tokenize(sql)
-            rewritten = _rewrite_verbatim_calls(sql, tokens)
-            rewritten = _rewrite_pipe_operators(rewritten, self.tokenize(rewritten) if rewritten != sql else tokens)
+            rewritten = sql
+            for rewrite in (_rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators):
+                rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
             if rewritten != sql:
                 try:
                     return parse_with_table_arguments(self, rewritten, **opts)

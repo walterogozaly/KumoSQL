@@ -59,6 +59,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - The read check counted the table a `REVOKE` names as a read; like `GRANT`, it is not one.
 - Pipe `|> SET c = e` and `|> DROP c` did not parse; they are read as `|> SELECT * REPLACE (e AS c)` and `|> SELECT * EXCEPT (c)`, which BigQuery defines them to mean. `|> RENAME` is not: it keeps the column in its place, which no `SELECT` can say without the column list, and a translation that moved it could let a prover equate queries whose columns are in different orders.
 - `GRAPH_TABLE(graph MATCH ... RETURN ...)` did not parse; the call is now kept as its own text (printed back unchanged, never read as a table) and the rest of the query is read as usual.
+- `ML.` functions sqlglot does not know (`ML.EVALUATE`, `ML.DETECT_ANOMALIES`, `ML.EXPLAIN_PREDICT`, and on sqlglot 26.0.0 `ML.GENERATE_TEXT` and `AI.FORECAST`) did not parse because of their `MODEL m` argument. The model argument is kept as its text (a model is not a table) and `TABLE t` arguments are read as tables; functions sqlglot reads itself, such as `ML.PREDICT`, are left to it.
 - `SELECT WITH DIFFERENTIAL_PRIVACY` stays unparsed on purpose: read as a plain query, its noisy aggregates would look exact to every prover. Its table reads still come from the token fallback.
 - `DROP TABLE FUNCTION` did not parse; `bigquery_syntax.py` now reads it as a drop of kind `TABLE FUNCTION`. Script cleanup gaps closed by [the script reader](../scripts.md) are no longer listed.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
@@ -81,10 +82,10 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 5 ✅ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
 | ddl | 74 | 45 ✅ 29 ⚪ | 74 ✅ | 74 ✅ | n/a | 74 ✅ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
 | dml | 16 | 16 ✅ | 16 ✅ | 16 ✅ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 134 | 131 ✅ 3 ⚪ | 134 ✅ | 134 ✅ | 130 ✅ | 134 ✅ | 131 ✅ 3 ⚪ | 108 ✅ 22 ⚪ | 115 ✅ 16 ⚠ 3 – |
+| query | 134 | 132 ✅ 2 ⚪ | 134 ✅ | 134 ✅ | 131 ✅ | 134 ✅ | 131 ✅ 3 ⚪ | 109 ✅ 22 ⚪ | 115 ✅ 16 ⚠ 3 – |
 | script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 261 | 208 ✅ 53 ⚪ | 261 ✅ | 260 ✅ 1 ⚪ | 130 ✅ | 261 ✅ | 242 ✅ 19 ⚪ | 108 ✅ 22 ⚪ | 202 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 261 | 209 ✅ 52 ⚪ | 261 ✅ | 260 ✅ 1 ⚪ | 131 ✅ | 261 ✅ | 242 ✅ 19 ⚪ | 109 ✅ 22 ⚪ | 202 ✅ 45 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
@@ -98,12 +99,12 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | parse | sqlglot | sqlglot keeps CREATE as an opaque command | 11 | `ddl/create_aggregate_function`, `ddl/create_assignment`, `ddl/create_capacity_reservation` |
 | parse | sqlglot | sqlglot keeps ALTER as an opaque command | 10 | `ddl/alter_materialized_view`, `ddl/alter_model`, `ddl/alter_organization` |
 | parse | sqlglot | sqlglot keeps DROP as an opaque command | 6 | `ddl/drop_all_row_access_policies`, `ddl/drop_external_table`, `ddl/drop_index` |
-| parse | sqlglot | ParseError: Expecting ). | 5 | `ddl/create_procedure_sql`, `query/ml_data_functions_detect_anomalies`, `query/ml_forecast_ai` |
 | parse | sqlglot | sqlglot keeps BEGIN as an opaque command | 5 | `script/begin_end_block`, `script/begin_exception`, `script/raise` |
 | parse | sqlglot | sqlglot keeps DECLARE as an opaque command | 3 | `script/declare_set`, `script/declare_struct_array`, `script/set_from_subquery` |
 | parse | sqlglot | sqlglot keeps EXECUTE as an opaque command | 3 | `script/execute_immediate`, `script/execute_immediate_concat`, `script/execute_immediate_using_positional` |
 | parse | sqlglot | AttributeError: 'NoneType' object has no attribute 'name' | 2 | `data/load_data`, `data/load_data_temp_table` |
 | parse | sqlglot | sqlglot keeps END as an opaque command | 2 | `ddl/create_procedure_options`, `script/for_in` |
+| parse | sqlglot | ParseError: Expecting ). | 2 | `ddl/create_procedure_sql`, `query/object_table_function` |
 | parse | sqlglot | sqlglot keeps CALL as an opaque command | 2 | `script/call_procedure`, `script/call_with_dml` |
 | parse | sqlglot | ParseError: Required keyword: 'options' missing for <class 'sqlglot.expressions.dml.Export | 1 | `data/export_model` |
 | parse | sqlglot | sqlglot keeps GRANT as an opaque command | 1 | `dcl/grant_project` |
