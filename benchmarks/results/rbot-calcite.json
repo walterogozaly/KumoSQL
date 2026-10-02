@@ -2,8 +2,8 @@
   "suite": "R-Bot Calcite rewrites",
   "order": 20,
   "size": 45,
-  "score": "18/45 proved, 0 wrong",
-  "metric": "(Query, Calcite rewrite) pairs proved equivalent; 2 more are shown different by a counterexample, 25 unknown.",
+  "score": "19/45 proved, 0 wrong",
+  "metric": "(Query, Calcite rewrite) pairs proved equivalent; 2 more are shown different by a counterexample, 24 unknown.",
   "docs": "docs/sqlsolver.md#rbots-calcite-pairs",
   "command": "python tools/rbot_bench.py",
   "date": "2026-10-02",
@@ -11,9 +11,9 @@
   "evidence": "proof",
   "correctness": "0 false proofs; 2 counterexamples, each re-run in DuckDB",
   "coverage": {
-    "proven": 18,
+    "proven": 19,
     "refuted": 2,
-    "unknown": 25
+    "unknown": 24
   },
   "held_out": "none"
 }
