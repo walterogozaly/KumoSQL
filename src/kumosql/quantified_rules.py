@@ -583,21 +583,60 @@ def _indicator(body: exp.Select, hops: tuple, schema, not_null, groups: dict) ->
         return None
     y = keys[0].unalias()
     key_name = keys[0].alias_or_name.lower()
+    found = _indicator_join(hops, key_name)
+    if found is None:
+        return None
+    x, depth = found
+    group = groups.get(id(body))
+    if group is None:
+        group = groups[id(body)] = _Group("ind", body, hops)
+        rows = _rows_select(body, y, hops, schema, drop_group=True)
+        group.key = _canonical(rows) if rows is not None else None
+        group.rows = rows
+        group.y = y
+        group.x = _lift(x, hops, depth) if depth else x.copy()
+        group.x_null = None
+    if group.key is None or group.x is None:
+        return None
+    return group, "i"
+
+
+def _indicator_join(hops: tuple, key_name: str) -> tuple[exp.Expression, int] | None:
+    """``(x, depth)`` when the indicator is matched on ``x = key``: in the ON of a LEFT JOIN, or in the
+    WHERE of a LEFT JOIN LATERAL ... ON TRUE that reads only the indicator. ``x`` is written in the scope of
+    ``hops[depth][0]``.
+    """
+
     outer, source = hops[-1]
     sources = _source_map(outer)
     if sources is None:
         return None
     entry = sources.get(_alias_of(source))
-    if entry is None or entry[2] is None or (entry[2].args.get("side") or "").upper() != "LEFT":
-        return None
-    if _path_null(hops, len(hops) - 1):
-        return None
-    on = entry[2].args.get("on")
-    while isinstance(on, exp.Paren):
-        on = on.this
-    if not isinstance(on, exp.EQ):
+    if entry is None:
         return None
     alias = _alias_of(source)
+    if entry[2] is not None:
+        if (entry[2].args.get("side") or "").upper() != "LEFT" or _path_null(hops, len(hops) - 1):
+            return None
+        on, depth = entry[2].args.get("on"), len(hops) - 1
+    else:
+        # SELECT a.k, a.i FROM (indicator) AS a WHERE x = a.k, LEFT JOINed LATERAL ON TRUE.
+        if len(hops) < 2 or len(sources) != 1 or any(outer.args.get(k) for k in _ROW_CHANGING + ("joins",)):
+            return None
+        if any(not isinstance(e.unalias(), exp.Column) for e in outer.expressions):
+            return None
+        reader, lateral = hops[-2]
+        if not isinstance(lateral, exp.Lateral) or _query_select(lateral.this) is not outer:
+            return None
+        lateral_entry = (_source_map(reader) or {}).get(_alias_of(lateral))
+        join = lateral_entry[2] if lateral_entry else None
+        if join is None or (join.args.get("side") or "").upper() != "LEFT" or not _true(join.args.get("on")) or _path_null(hops, len(hops) - 2):
+            return None
+        where = outer.args.get("where")
+        on, depth = (where.this if where is not None else None), len(hops) - 2
+    on = _unparen(on)
+    if not isinstance(on, exp.EQ):
+        return None
 
     def is_key(side):
         return isinstance(side, exp.Column) and side.table.lower() == alias and side.name.lower() == key_name
@@ -610,18 +649,7 @@ def _indicator(body: exp.Select, hops: tuple, schema, not_null, groups: dict) ->
         return None
     if any(c.table.lower() == alias for c in x.find_all(exp.Column)) or any(not c.table for c in x.find_all(exp.Column)):
         return None
-    group = groups.get(id(body))
-    if group is None:
-        group = groups[id(body)] = _Group("ind", body, hops)
-        rows = _rows_select(body, y, hops, schema, drop_group=True)
-        group.key = _canonical(rows) if rows is not None else None
-        group.rows = rows
-        group.y = y
-        group.x = _lift(x, hops, len(hops) - 1) if len(hops) > 1 else x.copy()
-        group.x_null = None
-    if group.key is None or group.x is None:
-        return None
-    return group, "i"
+    return x, depth
 
 
 def _unparen(node: exp.Expression | None) -> exp.Expression | None:
@@ -657,9 +685,9 @@ def _probe(lineage: _Lineage, schema, groups: dict) -> tuple | None:
     hops = lineage.hops
     index = next(i for i, (_, source) in enumerate(hops) if _query_select(source.this if isinstance(source, exp.Lateral) else source).args.get("limit"))
     outer, source = hops[index]
-    if isinstance(source, exp.Lateral) or index + 1 >= len(hops) or _path_null(hops, index):
+    if index + 1 >= len(hops) or _path_null(hops, index):
         return None
-    top = _query_select(source)
+    top = _query_select(source.this if isinstance(source, exp.Lateral) else source)
     sources = _source_map(outer)
     entry = sources.get(_alias_of(source)) if sources else None
     join = entry[2] if entry else None
@@ -676,11 +704,11 @@ def _probe(lineage: _Lineage, schema, groups: dict) -> tuple | None:
     if group is None or len(group.expressions) != 1 or any(counted.args.get(k) for k in ("where", "having", "joins", "laterals", "distinct", "qualify", "windows", "order", "limit", "offset")):
         return None
     key = group.expressions[0]
-    if not isinstance(key, exp.Column) or len(counted.expressions) != 2:
+    if not isinstance(key, exp.Column) or len(counted.expressions) not in (1, 2):
         return None
     g_items = [e for e in counted.expressions if isinstance(e.unalias(), exp.Column) and e.unalias().sql() == key.sql()]
     n_items = [e for e in counted.expressions if isinstance(e.unalias(), exp.Count) and isinstance(e.unalias().this, exp.Star)]
-    if len(g_items) != 1 or len(n_items) != 1:
+    if len(g_items) != 1 or len(g_items) + len(n_items) != len(counted.expressions):
         return None
     g_name = g_items[0].alias_or_name.lower()
     if any(not isinstance(e.unalias(), exp.Column) or e.unalias().table.lower() != alias for e in top.expressions):
@@ -1101,18 +1129,37 @@ def _at_most_one_match(join: exp.Join, select: exp.Select, schema, keys: dict) -
     """Whether each row meets at most one row of a LEFT JOINed derived table through its ON equalities.
 
     True when the equated outputs cover the derived select's GROUP BY, or read (through filters and
-    renamings only) a declared key of one table.
+    renamings only) a declared key of one table. A LATERAL table ``SELECT ... FROM (d) AS a WHERE
+    <equalities>`` joined ON TRUE is read the same way, with the WHERE equalities on ``d``.
     """
 
     source = join.this
-    body = _query_select(source) if isinstance(source, exp.Subquery) else None
+    on = join.args.get("on")
+    if isinstance(source, exp.Lateral):
+        scope = _query_select(source.this)
+        if scope is None or not _true(on):
+            return False
+        if _limit_one(scope):
+            return True
+        if not _keeps_rows(scope) or scope.args.get("joins"):
+            return False
+        from_ = scope.args.get("from_") or scope.args.get("from")
+        inner = from_.this if from_ is not None else None
+        body = _query_select(inner) if isinstance(inner, exp.Subquery) else None
+        where = scope.args.get("where")
+        on = where.this if where is not None else None
+        if on is None:
+            return False
+    else:
+        scope = select
+        inner = source
+        body = _query_select(source) if isinstance(source, exp.Subquery) else None
     if body is None:
         return False
     if _limit_one(body):
         return True
-    alias = _alias_of(source)
+    alias = _alias_of(inner)
     equated = []
-    on = join.args.get("on")
     for part in on.flatten() if isinstance(on, exp.And) else [on]:
         while isinstance(part, exp.Paren):
             part = part.this
@@ -1129,7 +1176,7 @@ def _at_most_one_match(join: exp.Join, select: exp.Select, schema, keys: dict) -
         grouped = {e.sql() for e in group.expressions if not isinstance(e, (exp.Boolean, exp.Literal))}
         if grouped <= {outputs.get(c.name.lower()) for c in equated}:
             return True
-    found = [_filtered_base(column, select, schema) for column in equated]
+    found = [_filtered_base(column, scope, schema) for column in equated]
     if not found or any(f is None for f in found) or len({id(t) for t, _ in found}) != 1:
         return False
     return _is_key(found[0][0], {c for _, c in found}, keys)
