@@ -770,15 +770,23 @@ class _TargetResolver:
             for start in range(len(parts)):
                 self._by_suffix[".".join(parts[start:])].add(key)
 
+    def _matches(self, parts: list[str], start: int) -> set[str]:
+        found = self._by_suffix.get(".".join(parts[start:]), set())
+        if start:
+            found = {key for key in found if key.count(".") + 1 <= len(parts) - start}
+        return found
+
     def resolve(self, table: exp.Table | str) -> str | None:
         if isinstance(table, exp.Table):
             name = ".".join(part.name for part in table.parts)
         else:
             name = table.strip("`")
         parts = name.split(".")
-        # Try the most specific spelling first, then drop leading qualifiers.
+        # Try the most specific spelling first, then drop leading qualifiers. A dropped qualifier only
+        # matches a model keyed with no more qualifiers than are left: ``raw.orders`` is not the model
+        # ``p.staging.orders``, but ``p.ds.orders`` finds a model keyed ``ds.orders`` or ``orders``.
         for start in range(len(parts)):
-            matches = self._by_suffix.get(".".join(parts[start:]))
+            matches = self._matches(parts, start)
             if matches and len(matches) == 1:
                 return next(iter(matches))
             if matches:
@@ -794,7 +802,7 @@ class _TargetResolver:
             name = table.strip("`")
         parts = name.split(".")
         for start in range(len(parts)):
-            matches = self._by_suffix.get(".".join(parts[start:]))
+            matches = self._matches(parts, start)
             if matches:
                 return len(matches) > 1
         return False
