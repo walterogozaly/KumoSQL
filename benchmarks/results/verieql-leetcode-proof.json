@@ -1,15 +1,15 @@
 {
   "suite": "VeriEQL LeetCode (proofs)",
   "order": 44,
-  "score": "4380/23994, 0 wrong",
+  "score": "4392/23994, 0 wrong",
   "metric": "Pairs proved equivalent by the z3 prover over all databases meeting the declared keys and NOT NULL columns, with no LLM. Inequivalent pairs stay out of this count.",
   "evidence": "proof",
   "correctness": "0 false proofs: every proof survives 1,000 further random DuckDB databases and VeriEQL's published counterexamples replayed on DuckDB",
   "coverage": {
-    "proven": 4380,
-    "unknown": 19614
+    "proven": 4392,
+    "unknown": 19602
   },
-  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,923 pairs are not run (DuckDB rejects them, mostly bare words used as strings or ambiguous columns). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. Measured before the aggregate facts of the failing-tests cluster 19 work: on the 1,000-pair sample (every 24th) they raised proofs from 198 to 215, so this full-corpus count is a lower bound until the 4.5-hour run is repeated.",
+  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,072 pairs are not run (DuckDB rejects them, mostly a table name the schema spells differently and GROUP BY positions that name aggregates). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning.",
   "size": 23994,
   "docs": "docs/verieql.md",
   "command": "python tools/verieql_bench.py leetcode --jobs 4 --audit",

@@ -619,7 +619,10 @@
     const field = (label) => h("input", { type: "number", class: "sp-input sp-number", min: "0", max: "86400", step: "10", "aria-label": label });
     const model = field("Seconds per model");
     const total = field("Seconds in total");
-    const draw = (info) => { model.value = info.model_seconds; total.value = info.total_seconds; };
+    const draw = (info) => {
+      model.value = info.model_seconds; total.value = info.total_seconds;
+      model.disabled = info.locked.includes("model_seconds"); total.disabled = info.locked.includes("total_seconds");
+    };
     const put = async (payload) => {
       setStatus("Saving…");
       try { draw(await repoCall("PUT", "/api/lineage-limits", payload)); setStatus("Saved"); } catch (error) { setStatus(error.message, true); }
@@ -648,10 +651,12 @@
   async function renderSolver(body) {
     const enabled = h("input", { type: "checkbox", id: "solver-enabled", "aria-label": "Use the equivalence solver" });
     const timeout = h("input", { type: "number", class: "sp-input sp-number", min: "500", max: "60000", step: "500", "aria-label": "Time limit in milliseconds" });
+    const rows = h("input", { type: "number", class: "sp-input sp-number", min: "0", max: "6", step: "1", "aria-label": "Rows per table in the bounded check" });
     const facts = h("p", { class: "sp-row-hint" });
     const draw = (info) => {
       enabled.checked = info.enabled;
       timeout.value = info.timeout_ms;
+      rows.value = info.bounded_rows;
       if (!info.available) facts.textContent = "z3-solver is not installed, so nothing is proven by the solver.";
       else if (!info.enabled) facts.textContent = "";
       else facts.textContent = `${info.tables} tables known, ${info.constrained} with declared keys or NOT NULL columns.`;
@@ -662,10 +667,12 @@
     };
     enabled.addEventListener("change", () => put({ enabled: enabled.checked }));
     timeout.addEventListener("change", () => put({ timeout_ms: Number(timeout.value) }));
+    rows.addEventListener("change", () => put({ bounded_rows: Number(rows.value) }));
     body.append(
       h("h3", { class: "sp-heading", text: "Solver" }),
       h("label", { class: "sp-inline", for: "solver-enabled" }, enabled, h("span", { text: "Prove rewrites equivalent with the solver" })),
       h("div", { class: "sp-inline" }, timeout, h("span", { text: "ms per check" })),
+      h("div", { class: "sp-inline" }, rows, h("span", { text: "rows per table, bounded check (0 for off)" })),
       facts,
     );
     try { draw(await repoCall("GET", "/api/prover")); } catch (error) { setStatus(error.message, true); }
@@ -689,6 +696,8 @@
         left.value = right.value = pairs.value = ""; whole.checked = false; setStatus("Saved"); await refresh();
       } catch (error) { setStatus(error.message, true); }
     };
+    const boundedLine = (bounded) => !bounded || bounded.status === "unknown" ? ""
+      : bounded.status === "bounded_equivalent" ? ` (${bounded.label})` : ` (different results, ${bounded.bound} ${bounded.bound === 1 ? "row" : "rows"})`;
     const verdict = h("p", { class: "sp-row-hint" });
     const compare = async () => {
       verdict.textContent = "Comparing…";
@@ -696,7 +705,7 @@
         const result = await repoCall("POST", "/api/prove-tables", { left: left.value, right: right.value });
         verdict.textContent = result.status === "equivalent"
           ? `Equivalent (${result.method}${result.lemmas.length ? `, ${result.lemmas.length} layers matched` : ""}). ${result.assumptions.filter((a) => a.startsWith("declared")).join(" ")}`
-          : `Not proven: ${result.reason}`;
+          : `Not proven: ${result.reason}${boundedLine(result.bounded)}`;
       } catch (error) { verdict.textContent = error.message; }
     };
     body.append(
@@ -722,7 +731,11 @@
       try {
         const result = await repoCall("POST", "/api/prove-queries", { left: queryA.value, right: queryB.value });
         queryVerdict.textContent = result.status === "proven_equivalent" ? "Equivalent."
-          : result.status === "not_equivalent" ? `Different results: ${result.reason}` : `Not proven: ${result.reason}`;
+          : result.status === "not_equivalent" ? `Different results: ${result.reason}` : `Not proven: ${result.reason}${boundedLine(result.bounded)}`;
+        if (!result.counterexample && result.bounded && result.bounded.counterexample) {
+          const found = Object.entries(result.bounded.counterexample.tables).map(([name, items]) => `${name}: ${items.map((row) => JSON.stringify(row)).join(" ")}`);
+          queryDetail.append(h("pre", { class: "sp-pre", text: found.join("\n") }));
+        }
         if (result.counterexample) {
           const rows = (items) => items.length ? items.map((row) => row.join(", ")).join(" | ") : "no rows";
           const tables = Object.entries(result.counterexample.tables).map(([name, items]) => `${name}: ${items.length ? items.map((row) => JSON.stringify(row)).join(" ") : "empty"}`);

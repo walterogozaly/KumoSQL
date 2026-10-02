@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import itertools
+import os
 import random
 import re
 from collections import Counter
@@ -25,6 +26,8 @@ from typing import Callable
 
 import sqlglot
 from sqlglot import exp
+
+from .result_equivalence import DataRules
 
 try:
     import duckdb
@@ -116,7 +119,7 @@ def constants_of(*queries: str, dialect: str = "mysql") -> Constants:
     found = Constants()
     for query in queries:
         try:
-            tree = sqlglot.parse_one(query, read=dialect)
+            tree = sqlglot.parse_one(_dollars(query), read=dialect)
         except sqlglot.errors.SqlglotError:
             continue
         for literal in tree.find_all(exp.Literal):
@@ -329,9 +332,18 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
 
     for select in list(tree.find_all(exp.Select)):
         group = select.args.get("group")
-        if group is None or not group.expressions:
+        if group is None or not group.expressions or any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup")):
             continue
         projections = select.expressions
+        # MySQL reads an unqualified GROUP BY name as the select item of that name, DuckDB calls it ambiguous
+        by_name = {}
+        for item in projections:
+            inner = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(inner, exp.Column) and inner.table:
+                by_name.setdefault((item.alias if isinstance(item, exp.Alias) else inner.name).lower(), inner)
+        for position, item in enumerate(list(group.expressions)):
+            if isinstance(item, exp.Column) and not item.table and item.name.lower() in by_name:
+                item.replace(by_name[item.name.lower()].copy())
         grouped = set()
         for item in group.expressions:
             if isinstance(item, exp.Literal) and not item.is_string:
@@ -341,13 +353,14 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
                     item = item.this if isinstance(item, exp.Alias) else item
             if isinstance(item, exp.Column):
                 grouped.add(item.name.lower())
+            grouped.update(c.name.lower() for c in item.find_all(exp.Column))
             grouped.add(item.sql().lower())
         aliases = {p.alias.lower() for p in projections if isinstance(p, exp.Alias)}
 
         def inside_aggregate(node) -> bool:
             parent = node.parent
             while parent is not None and parent is not select:
-                if isinstance(parent, (exp.AggFunc, exp.Window)):
+                if isinstance(parent, (exp.AggFunc, exp.Window, exp.Filter)):
                     return True
                 if isinstance(parent, exp.Select):
                     return True  # belongs to a nested select
@@ -369,20 +382,58 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
 
 
 def _date_functions(tree: exp.Expression) -> exp.Expression:
-    """``SUBDATE(d, n)`` and ``ADDDATE(d, n)`` with a day count, which DuckDB lacks."""
+    """``SUBDATE(d, n)`` / ``ADDDATE(d, n)`` (a day count or an INTERVAL) and ``CROSS JOIN .. ON``, which DuckDB lacks."""
 
     for node in list(tree.find_all(exp.Anonymous)):
         name = str(node.this).upper()
         if name in ("SUBDATE", "ADDDATE") and len(node.expressions) == 2:
             day, count = node.expressions
-            interval = exp.Interval(this=count.copy(), unit=exp.var("DAY"))
+            interval = count.copy() if isinstance(count, exp.Interval) else exp.Interval(this=count.copy(), unit=exp.var("DAY"))
+            if isinstance(day, exp.Literal) and day.is_string:
+                day = exp.cast(day.copy(), "date")
             node.replace((exp.Sub if name == "SUBDATE" else exp.Add)(this=day.copy(), expression=interval))
+    for node in list(tree.find_all(exp.Sub, exp.Add)):
+        left = node.this
+        if isinstance(node.expression, exp.Interval) and isinstance(left, exp.Literal) and left.is_string:
+            left.replace(exp.cast(left.copy(), "date"))
+    for join in tree.find_all(exp.Join):
+        if join.args.get("kind") == "CROSS" and join.args.get("on") is not None:
+            join.set("kind", None)
     return tree
 
 
-def to_duckdb(sql: str, dialect: str = "mysql") -> str:
-    tree = sqlglot.parse_one(sql, read=dialect)
+def _barewords(tree: exp.Expression, known: set[str]) -> exp.Expression:
+    """The benchmark queries sometimes write a string as a bare word (``THEN YES ELSE NO``): read an
+    unqualified name that is no column, alias or table anywhere in the schema or query as that string."""
+
+    names = set(known)
+    for node in tree.find_all(exp.Alias):
+        names.add(node.alias.lower())
+    for node in tree.find_all(exp.TableAlias):
+        names.add(node.name.lower())
+        names.update(c.name.lower() for c in node.columns)
+    for node in tree.find_all(exp.Table):
+        names.add(node.name.lower())
+    for column in list(tree.find_all(exp.Column)):
+        if not column.table and column.name.lower() not in names and not isinstance(column.parent, (exp.Dot,)):
+            column.replace(exp.Literal.string(column.name))
+    return tree
+
+
+def _dollars(sql: str) -> str:
+    """Calcite names columns ``$f9``, ``EXPR$0``: DuckDB rejects ``$`` in bare names."""
+
+    return re.sub(r"(?<=[\w$])\$|\$(?=\w)", "_S_", sql)
+
+
+def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -> str:
+    tree = sqlglot.parse_one(_dollars(sql), read=dialect)
+    if known is not None:
+        tree = _barewords(tree, known)
     return relax_grouping(_date_functions(tree)).sql(dialect="duckdb")
+
+
+_TARGETED_TYPES = {"INT": "INT64", "VARCHAR": "STRING", "ENUM": "STRING", "TIME": "STRING", "DATE": "DATE", "NUMERIC": "FLOAT64", "BOOL": "BOOL"}
 
 
 class Searcher:
@@ -391,17 +442,18 @@ class Searcher:
     def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql"):
         self.spec = spec
         self.constants = constants_of(left, right, dialect=dialect)
-        self.left_sql = to_duckdb(left, dialect)
-        self.right_sql = to_duckdb(right, dialect)
+        known = {c.name.lower() for t in spec.tables.values() for c in t.columns}
+        self.left_sql = to_duckdb(left, dialect, known)
+        self.right_sql = to_duckdb(right, dialect, known)
         names = set()
         for sql in (left, right):
-            for table in sqlglot.parse_one(sql, read=dialect).find_all(exp.Table):
+            for table in sqlglot.parse_one(_dollars(sql), read=dialect).find_all(exp.Table):
                 names.add(table.name.lower())
         by_lower = {n.lower(): n for n in spec.tables}
         self.used = {by_lower[n] for n in names if n in by_lower}
         self.columns_used, self.star = set(), False
         for sql in (left, right):
-            tree = sqlglot.parse_one(sql, read=dialect)
+            tree = sqlglot.parse_one(_dollars(sql), read=dialect)
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
         self.db = duckdb.connect(":memory:")
@@ -538,7 +590,7 @@ class Searcher:
                 return False
         return True
 
-    def search(self, trials: int = 150, seed: int = 0) -> Counterexample | None:
+    def search(self, trials: int = 150, seed: int = 0, targeted: bool = True) -> Counterexample | None:
         rng = random.Random(seed)
         generator = _Generator(self.spec, self.constants, rng)
         used = sorted(self.used)
@@ -558,7 +610,83 @@ class Searcher:
                 return None
             if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
                 return Counterexample({n: data[n] for n in self.used}, a, b)
+        return self._search_targeted(rng) if targeted and os.environ.get("KUMOSQL_TARGETED", "1") != "0" else None
+
+    def _search_targeted(self, rng) -> Counterexample | None:
+        """Databases built around the queries' constants, joins and groups (:mod:`kumosql.targeted_data`).
+
+        A database is tried only if it respects every declaration of the spec (NOT NULL, keys,
+        foreign keys, enumerations, sequential columns and checks).
+        """
+
+        from .refute import repair_foreign_keys
+        from .targeted_data import database_suite
+
+        schema = {name.lower(): {c.name: _TARGETED_TYPES.get(c.type, "INT64") for c in self.spec.tables[name].columns} for name in self.used}
+        rules = {
+            name.lower(): DataRules(
+                frozenset(c.name.lower() for c in self.spec.tables[name].columns if c.not_null or c.name in self.spec.tables[name].primary_key),
+                tuple(tuple(k.lower() for k in key) for key in ([self.spec.tables[name].primary_key] if self.spec.tables[name].primary_key else []) + list(self.spec.tables[name].unique)),
+            )
+            for name in self.used
+        }
+        foreign = [(c.lower(), cc.lower(), p.lower(), pc.lower()) for c, cc, p, pc in self.spec.foreign_keys if c in self.used and p in self.used]
+        generator = _Generator(self.spec, self.constants, rng)
+        seen = set()
+        for sql in (self.left_sql, self.right_sql):
+            try:
+                suite = database_suite(sql, schema, rules, dialect="duckdb", random_seeds=())
+            except Exception:
+                continue
+            for labeled in suite:
+                dataset = repair_foreign_keys(labeled.dataset, foreign, rules)
+                data = {name: [tuple(r) for r in dataset.tables[name.lower()].rows] for name in self.used}
+                key = tuple((n, tuple(data[n])) for n in sorted(data))
+                if key in seen or not self._conforms(generator, data):
+                    continue
+                seen.add(key)
+                try:
+                    for name in self.used:
+                        table = self.spec.tables[name]
+                        self.db.execute(f'DELETE FROM "{name}"')
+                        if data[name]:
+                            self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', data[name])
+                    a = self.db.execute(self.left_sql).fetchall()
+                    b = self.db.execute(self.right_sql).fetchall()
+                except duckdb.Error:
+                    continue
+                if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+                    return Counterexample({n: data[n] for n in self.used}, a, b)
         return None
+
+    def _conforms(self, generator: "_Generator", data) -> bool:
+        spec = self.spec
+        for name in self.used:
+            table = spec.tables[name]
+            names = [c.name for c in table.columns]
+            rows = data[name]
+            for column in table.columns:
+                i = names.index(column.name)
+                if column.type == "ENUM" and any(r[i] is not None and r[i] not in column.values for r in rows):
+                    return False
+            for i, column in enumerate(table.columns):
+                if (column.not_null or column.name in table.primary_key) and any(r[i] is None for r in rows):
+                    return False
+            for column_name in table.sequential:
+                i = names.index(column_name)
+                if [r[i] for r in rows] != list(range(1, len(rows) + 1)):
+                    return False
+            for check in generator.single_checks.get(name, []):
+                if not all(check.test(dict(zip(names, r))) is True for r in rows):
+                    return False
+        for child, column, parent, parent_column in spec.foreign_keys:
+            if child in self.used and parent in self.used:
+                ci = [c.name for c in spec.tables[child].columns].index(column)
+                pi = [c.name for c in spec.tables[parent].columns].index(parent_column)
+                allowed = {r[pi] for r in data[parent]}
+                if any(r[ci] is None or r[ci] not in allowed for r in data[child]):
+                    return False  # the strict reading: a NULL reference is not generated either
+        return all(generator._holds(c, data) for c in generator.global_checks if all(t in self.used for t in c.tables))
 
     def _stable(self, data, a, b, rng) -> bool:
         """The difference must not depend on row order or on an arbitrary pick: shuffle and compare again."""

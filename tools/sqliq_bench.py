@@ -272,8 +272,33 @@ def test(pair: Pair, trials: int = TRIALS, seed: int = 7) -> str:
 # -- the judge -----------------------------------------------------------------------
 
 
+_BQ_TYPES = {"text": "STRING", "num": "INT64"}
+
+
+def targeted(pair: Pair):
+    """A database from the targeted suite on which the queries differ, else None (SQLite semantics)."""
+
+    from kumosql.refute import find_targeted_difference
+    from kumosql.result_equivalence import DataRules
+
+    schema = {}
+    for table, columns in pair.tables.items():
+        schema[table] = {
+            c: ("FLOAT64" if any(w in k for w in ("REAL", "FLOA", "DOUB", "DEC")) else _BQ_TYPES[_kind(k)])
+            for c, k in columns.items()
+        }
+    rules = {t: DataRules(frozenset(k), (tuple(k),)) for t, k in pair.keys.items() if k}
+    return find_targeted_difference(
+        pair.sql1, pair.sql2, schema, rules, foreign_keys=pair.foreign, engine="sqlite", dialect="sqlite",
+        ordered=has_limit(pair.sql1) or has_limit(pair.sql2), budget=20.0,
+    )
+
+
+USE_TARGETED = os.environ.get("KUMOSQL_TARGETED", "1") != "0"
+
+
 def judge(pair: Pair) -> tuple[str, str]:
-    """(answer, how): answer is "yes" or "no"; how is proved, differs, tested or error."""
+    """(answer, how): answer is "yes" or "no"; how is proved, differs, targeted, tested or error."""
 
     outcome = prove(pair)
     if outcome == "proved":
@@ -284,6 +309,8 @@ def judge(pair: Pair) -> tuple[str, str]:
     if result == "differs":
         return "no", "differs"
     if result == "agree":
+        if USE_TARGETED and targeted(pair) is not None:
+            return "no", "targeted"
         return "yes", "tested"
     return "no", "error"
 

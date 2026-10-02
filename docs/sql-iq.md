@@ -35,6 +35,7 @@ The benchmark's labels are used only to score. No pair is special-cased and no m
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | 2026-10-01 | 1010/1390 | 72.66% | 81.44% | 63.88% | 72.13% | first run |
 | 2026-10-01 | 1157/1390 | 83.24% | 81.29% | 85.18% | 83.21% | test databases respect foreign keys, rows shaped like real data, 1,000 trials instead of 60, prover counterexamples no longer answer on their own |
+| 2026-10-02 | 1165/1390 | 83.81% | 80.58% | 87.05% | | targeted databases (boundary values, shared join pools, empty tables, NULLs) tried after the random trials agree; 6 "equivalent" labels refuted on confirmed databases are label disputes |
 
 For reference, SQL-IQ's leaderboard lists language models between 69.9% and 78.4% on this task.
 

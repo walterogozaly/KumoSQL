@@ -60,3 +60,16 @@ Mutants that escape the single seed and the default eight databases but are caug
 ## Default checker
 
 `check_result_equivalence(..., targeted=True)` appends the targeted suite built around the left query after the random seeds, and `attach_synthetic_check` (the executed check on rewrites) now uses it. It only adds databases, so a rewrite that agreed before can now be refuted, never the reverse; the recorded `seeds_checked` lists the random seeds first, then the targeted databases.
+
+## Targeted databases in the equivalence evals
+
+`kumosql.refute.find_targeted_difference` runs two queries over the targeted suites built around each of them (then a few random databases), repairs foreign keys, skips databases where either query errors, and reports a difference only when it repeats. `engine="sqlite"` runs the SQL as written in SQLite for evals labelled by SQLite. The SQL-IQ judge, the Singh and Bedathur search, the SQLSolver family (QED, R-Bot, Cosette, mined Calcite) and the VeriEQL searcher call it after their own random search agrees. `KUMOSQL_TARGETED=0` turns it off for a baseline run.
+
+| Eval | Without | With | Notes |
+| --- | --- | --- | --- |
+| SQL-IQ Equivalence Judge | 1158/1390 | 1165/1390 | 19 pairs decided by it: 13 agree with the label, 6 are "equivalent" labels refuted on a confirmed database (text and CAST differences), listed as label disputes, not wrong |
+| Singh and Bedathur (dev sample of 300) | 261 | 262 | the one new refutation is on a pair labelled equivalent |
+| VeriEQL literature | 18 different | 19 different | 0 wrong |
+| QED, R-Bot, Cosette, mined Calcite | unchanged | unchanged | 0 wrong |
+
+In Settings → Solver, Compare queries searches the same way when the solver does not prove the pair, and shows the database with the fewest rows (`kumosql.minimize`) on which the results differ.

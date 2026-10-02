@@ -38,14 +38,18 @@ class PipelineResult:
     lemmas: list[str] = field(default_factory=list)
     equivalences: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
+    bounded: dict | None = None  # the bounded check of the two flat queries, when nothing was proven
 
     @property
     def proven(self) -> bool:
         return self.status == "equivalent"
 
     def to_json(self) -> dict:
-        return {"status": self.status, "reason": self.reason, "method": self.method,
+        data = {"status": self.status, "reason": self.reason, "method": self.method,
                 "lemmas": self.lemmas, "equivalences": self.equivalences, "assumptions": self.assumptions}
+        if self.bounded is not None:
+            data["bounded"] = self.bounded
+        return data
 
 
 def _opaque(model) -> bool:
@@ -87,8 +91,13 @@ def prove_models(
     declared: list[saved.Equivalence] | None = None,
     schema: ProverSchema | None = None,
     timeout_ms: int = 5000,
+    bounded_check=None,
 ) -> PipelineResult:
-    """Prove two models of ``pipeline`` return the same rows (columns compared by position)."""
+    """Prove two models of ``pipeline`` return the same rows (columns compared by position).
+
+    ``bounded_check(left_sql, right_sql)`` (optional) runs when nothing was proven; its JSON lands in
+    ``PipelineResult.bounded`` as its own evidence level.
+    """
 
     a, b = _resolve(pipeline, first), _resolve(pipeline, second)
     declared = saved.load() if declared is None else list(declared)
@@ -184,7 +193,11 @@ def prove_models(
         if direct.status is SmtStatus.PROVEN_EQUIVALENT:
             used_declared[:] = [i for i in {*(flat[0][1]), *(flat[1][1])}]
             return finish("inlined", direct)
-    return PipelineResult("unknown", result.reason, "", notes)
+    outcome = PipelineResult("unknown", result.reason, "", notes)
+    if bounded_check is not None:
+        pair = (flat[0][0], flat[1][0]) if flat[0] and flat[1] else (left_sql, right_sql)
+        outcome.bounded = bounded_check(*pair)
+    return outcome
 
 
 def _inlined(pipeline, key: str, declared, columns, limit: int = MAX_INLINE_CHARS):
@@ -243,6 +256,7 @@ def prove_loaded(left: object, right: object) -> dict:
     return prove_models(
         loaded["pipeline"], left, right,
         schema=prover_context.current_schema(), timeout_ms=config["timeout_ms"],
+        bounded_check=prover_context.bounded,
     ).to_json()
 
 
@@ -250,6 +264,7 @@ def prove_queries(left: object, right: object) -> dict:
     """``POST /api/prove-queries``: prove two pasted queries return the same rows."""
 
     from . import prover_context
+    from .result_equivalence import DataRules
     from .smt_equivalence import SmtStatus
 
     if not isinstance(left, str) or not isinstance(right, str) or not left.strip() or not right.strip():
@@ -257,8 +272,12 @@ def prove_queries(left: object, right: object) -> dict:
     config = prover_context.settings()
     if not config["enabled"]:
         raise ValueError("the solver is turned off in Settings")
-    result = prover_context.prove(left, right)
+    result = prover_context.prove(left, right, search_counterexample=True)
     data = {"status": result.status.value, "reason": result.reason, "assumptions": list(result.assumptions)}
+    if result.status is not SmtStatus.PROVEN_EQUIVALENT:
+        bounded = prover_context.bounded(left, right)
+        if bounded is not None:
+            data["bounded"] = bounded
     if result.status is SmtStatus.NOT_EQUIVALENT and result.counterexample is not None:
         example = result.counterexample
         data["counterexample"] = {
@@ -266,6 +285,20 @@ def prove_queries(left: object, right: object) -> dict:
             "left_rows": [list(row) for row in example.left_rows],
             "right_rows": [list(row) for row in example.right_rows],
         }
+    if result.status is not SmtStatus.PROVEN_EQUIVALENT:
+        from .refute import counterexample_from_search
+
+        facts = prover_context.current_schema()
+        rules = {
+            name: DataRules(not_null=frozenset(c.not_null), keys=tuple(c.keys))
+            for name, c in facts.constraints.items()
+        }
+        found = counterexample_from_search(left, right, facts.columns, rules, facts.types)
+        size = lambda c: sum(len(r) for r in c["tables"].values())
+        if found is not None and ("counterexample" not in data or size(found) < size(data["counterexample"])):
+            data["status"] = "not_equivalent"
+            data["reason"] = "the queries return different rows on a small database"
+            data["counterexample"] = found
     return data
 
 

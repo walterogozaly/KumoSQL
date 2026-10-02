@@ -29,6 +29,7 @@ def _pipeline(sql: str, **extra: str) -> Pipeline:
         "UPDATE `p.d.victim` SET a = 1 FROM `p.d.raw` WHERE victim.a = raw.a",
         "INSERT INTO `p.d.victim` (a) VALUES ((SELECT COUNT(*) FROM `p.d.raw`))",
         "CREATE TABLE `p.d.victim` CLONE `p.d.raw`",
+        "CREATE TABLE `p.d.victim` LIKE `p.d.raw`",
     ],
 )
 def test_reads_become_edges_and_the_written_table_does_not(sql):

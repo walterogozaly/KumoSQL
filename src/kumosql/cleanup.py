@@ -17,8 +17,6 @@ normalizes the same constructs independently (see ``equivalence.py``):
 
 from __future__ import annotations
 
-import re
-
 from sqlglot import exp
 from sqlglot.dialects.bigquery import BigQuery
 from sqlglot.tokens import TokenType
@@ -28,54 +26,18 @@ from .ast_utils import (
     cte_alias_name,
     cte_dependency_errors,
     has_nested_with,
+    inside as _inside,
     is_cte_reference_candidate,
     set_with_clause,
     top_level_query,
     with_clause,
 )
 from .engine import RewriteRule, RuleDiagnostic, register_rule
-from .equivalence import _nondeterminism_reasons
+from .equivalence import _literal_compare, _nondeterminism_reasons
 
 
 # ---------------------------------------------------------------------------
 # Trivial predicates
-
-
-_INT64_MAX = 2**63 - 1
-
-
-def _literal_compare(node, left, right) -> bool | None:
-    """Compare two numeric literals the way BigQuery would, when certain.
-
-    Two INT64 literals compare exactly. Any other pair (a FLOAT64 or NUMERIC
-    literal) is only decided when the texts are identical, because BigQuery
-    may coerce INT64 to FLOAT64 and lose precision.
-    """
-
-    if not (
-        isinstance(left, exp.Literal)
-        and isinstance(right, exp.Literal)
-        and not left.is_string
-        and not right.is_string
-    ):
-        return None
-    texts = (left.this, right.this)
-    if all(re.fullmatch(r"[0-9]+", text) for text in texts):
-        a, b = (int(text) for text in texts)
-        if max(a, b) > _INT64_MAX:
-            return None
-    elif texts[0] == texts[1]:
-        a = b = 0
-    else:
-        return None
-    return {
-        exp.EQ: a == b,
-        exp.NEQ: a != b,
-        exp.GT: a > b,
-        exp.GTE: a >= b,
-        exp.LT: a < b,
-        exp.LTE: a <= b,
-    }[type(node)]
 
 
 _COMPARISONS_FOLDED = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
@@ -180,8 +142,8 @@ class RemoveTrivialPredicatesRule(RewriteRule):
                 condition, count = simplify_predicate(clause.this)
                 changes += count
                 clause.set("this", condition)
-                if _truth(condition) is not True:
-                    continue
+                if _truth(condition) is not True or isinstance(clause.parent, exp.Filter):
+                    continue  # FILTER (WHERE TRUE) needs its condition to stay valid SQL
                 # HAVING without GROUP BY can make a query an aggregate, so
                 # only drop HAVING TRUE when there is a GROUP BY.
                 owner = clause.parent
@@ -464,6 +426,7 @@ class RemoveUnusedCtesRule(RewriteRule):
                     ref for ref in _references(query, cte_alias_name(cte))
                     if not _inside(ref, cte)
                 )
+                and not _named_as_value(query, cte_alias_name(cte), cte)
             ]
             if not unused:
                 break
@@ -475,10 +438,10 @@ class RemoveUnusedCtesRule(RewriteRule):
         return removed, []
 
 
-def _inside(node: exp.Expression, ancestor: exp.Expression) -> bool:
-    parent = node.parent
-    while parent is not None:
-        if parent is ancestor:
-            return True
-        parent = parent.parent
-    return False
+def _named_as_value(query: exp.Expression, name: str, cte: exp.Expression) -> bool:
+    """A bare identifier spelled like the CTE may name it (DuckDB passes tables to functions)."""
+
+    return any(
+        column.name == name and not column.table and not _inside(column, cte)
+        for column in query.find_all(exp.Column)
+    )
