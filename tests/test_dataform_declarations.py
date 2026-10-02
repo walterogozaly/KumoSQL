@@ -8,6 +8,7 @@ DEFAULT = Target("proj", "analytics", "")
 
 
 def project(tmp_path, files):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "workflow_settings.yaml").write_text("defaultProject: proj\ndefaultDataset: analytics\n")
     for name, text in files.items():
         path = tmp_path / name
@@ -134,3 +135,48 @@ def test_compiled_targets_reads_the_newest_release_compilation(monkeypatch):
     monkeypatch.setattr(wc, "_list_all", fake_list)
     assert wc.compiled_targets("https://github.com/o/r") == [(("d", "raw", "orders"), True), (("d", "m", "x"), False)]
     assert seen[-1].endswith("compilationResults/c1:query")
+
+
+def graph_edges(pl):
+    return {(e["upstream"]["key"], e["downstream"]["key"]) for e in pl.report()["graph"]["edges"]}
+
+
+STG = 'config {{ type: "table", schema: "staging", name: "orders" }}\nSELECT id FROM {source}'
+DECLARED = 'config { type: "declaration", schema: "raw", name: "orders" }'
+
+
+def test_a_model_reading_a_same_named_table_elsewhere_has_an_upstream_edge(tmp_path):
+    for index, source in enumerate((
+        '${ref("raw", "orders")}', '${ref({ schema: "raw", name: "orders" })}', "`proj.raw.orders`", "raw.orders",
+    )):
+        root = tmp_path / str(index)
+        pl = project(root, {"definitions/d.sqlx": DECLARED, "definitions/s.sqlx": STG.format(source=source)})
+        assert pl.upstream["proj.staging.orders"] == {"proj.raw.orders"}, source
+
+
+def test_a_same_named_source_that_is_not_declared_is_not_the_model_itself(tmp_path):
+    for index, source in enumerate(('${ref("raw", "orders")}', "raw.orders", '${ref("lake", "raw", "orders")}')):
+        root = tmp_path / str(index)
+        pl = project(root, {"definitions/s.sqlx": STG.format(source=source)})
+        edges = {up for up, down in graph_edges(pl) if down == "proj.staging.orders"}
+        assert edges and "proj.staging.orders" not in edges, (source, edges)
+        assert "proj.staging.orders" not in pl.upstream["proj.staging.orders"]
+
+
+def test_a_qualified_name_never_resolves_to_a_model_that_only_shares_the_table_name(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/a.sqlx": 'config { type: "table", schema: "staging", name: "orders" }\nSELECT 1 AS id',
+        "definitions/b.sqlx": 'config { type: "table", schema: "marts", name: "report" }\nSELECT id FROM raw.orders',
+    })
+    assert pl.upstream["proj.marts.report"] == set()
+    assert pl.models["proj.marts.report"] is not None
+
+
+def test_two_models_with_one_name_are_each_read_through_their_own_schema(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/a.sqlx": 'config { type: "table", schema: "a", name: "t" }\nSELECT 1 AS id',
+        "definitions/b.sqlx": 'config { type: "table", schema: "b", name: "t" }\nSELECT id FROM ${ref("a", "t")}',
+        "definitions/c.sqlx": 'config { type: "table", schema: "c", name: "t" }\nSELECT id FROM ${ref({ schema: "b", name: "t" })}',
+    })
+    assert pl.upstream["proj.b.t"] == {"proj.a.t"}
+    assert pl.upstream["proj.c.t"] == {"proj.b.t"}
