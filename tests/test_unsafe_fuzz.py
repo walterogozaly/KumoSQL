@@ -128,3 +128,17 @@ def test_normalizer_keeps_or_condition_parenthesised_when_pushed_into_a_derived_
     result = unsafe_fuzz.prove(wrong, sql)
     if result.counterexample is not None:
         assert oracle.replay(result.counterexample.tables, wrong, sql)
+
+
+def test_counterexample_keeps_numeric_columns_numeric_when_no_integer_model_exists():
+    # Only a fractional b separates the pair. The model used to fall back to an
+    # integral-only check that left y.a free, so a string landed in a column the
+    # queries only compare with numbers.
+    left = "SELECT y.b AS k0, x.b AS k1 FROM t AS x JOIN u AS y ON x.b > 0"
+    p = "((x.b >= 1) OR ((y.a < 2) OR (y.b <= 1)))"
+    right = f"{left} WHERE {p} UNION ALL {left} WHERE NOT {p} UNION ALL {left} WHERE NOT ({p} IS TRUE)"
+    result = unsafe_fuzz.prove(left, right)
+    assert result.counterexample is not None
+    cells = [v for rows in result.counterexample.tables.values() for row in rows for v in row.values() if v is not None]
+    assert cells and all(isinstance(v, (int, float)) for v in cells)
+    assert unsafe_fuzz.Oracle().replay(result.counterexample.tables, left, right)

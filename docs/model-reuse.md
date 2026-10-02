@@ -23,11 +23,11 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/110 | 30/30 | 0 | 0 |
-| Development | 61/110 | 30/30 | 25 | 0 |
+| Development | 62/110 | 30/30 | 25 | 0 |
 | Held out | 21/39 | 9/9 | 4 | 0 |
-| All (196 cases, 8 disabled) | 82/149 (supported subset 82/129) | 39/39 | 29 | 0 |
+| All (196 cases, 8 disabled) | 83/149 (supported subset 83/129) | 39/39 | 29 | 0 |
 
-85 of 196 queries were changed; 84 were verified on random databases and 1 could not be run. Adapted cases: 19/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
+86 of 196 queries were changed; 85 were verified on random databases and 1 could not be run. Adapted cases: 19/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 
 Not read yet: unique/foreign-key joins, outer joins, INTERSECT, CUBE/ROLLUP, FLOOR-TO-unit.
 
@@ -55,19 +55,22 @@ Cases: `tests/fixtures/decomposition/cases.json` (`tools/make_decomposition_case
 | | Correct | Rewrites found | Impossible declined | Traps refuted | Wrong |
 | --- | --- | --- | --- | --- | --- |
 | Baseline, development | 16/35 | 2/21 | 7/7 | 7/7 | 0 |
-| Development | 32/35 | 18/21 | 7/7 | 7/7 | 0 |
+| Development | 34/35 | 20/21 | 7/7 | 7/7 | 0 |
 | Held out | 24/24 | 14/14 | 2/2 | 8/8 | 0 |
-| All | 56/59 | 32/35 | 9/9 | 15/15 | 0 |
+| All | 58/59 | 34/35 | 9/9 | 15/15 | 0 |
 
-Open: weighted average and standard deviation from a summary. AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
+Weighted averages (a per-group `AVG` and its `COUNT`) are rebuilt as `SUM(a * n) / NULLIF(SUM(n), 0)`. Open: standard deviation from a summary (`STDDEV_POP` from sums of squares needs a square-root identity the prover does not do). AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
 
 ## Prover changes made for these evals
 
 * `eager_aggregation.unnest_grouped_source` handles `SUM` of a per-group `COUNT(x)` and `HAVING`, and replaces calls by identity (equal calls are distinct nodes).
 * `algebraic_equivalence._roll_up_aggregate` rolls `COALESCE(SUM(count), 0)` up to the `COUNT`.
-* `smt_equivalence` reads `x / NULLIF(y, 0)` as the quotient `x / y`, the same value `AVG` has.
+* `algebraic_equivalence._mean_times_count` reads `AVG(x) * COUNT(x)` over a grouped derived table as `SUM(x)`.
+* `smt_equivalence` treats `COUNT` of any two columns that are never NULL as the same count, and reads `x / NULLIF(y, 0)` as the quotient `x / y`, the same value `AVG` has.
 * Negated predicates are read as negations in every dialect (a false proof found by the first containment baseline; PR #241).
 
 ## Regression cases
 
 Every failure found while building these is a case: `filters.outside-in-*` and `nulls.*` (a disjunction lost its parentheses in the pre-filter and was proven contained), the NaN comparison in the random harness, and the AVG count-key lookup. Tests: `tests/test_model_reuse_evals.py` (fast floors, slow full-corpus floors, regressions).
+
+Residual filters that are disjunctions are parenthesized when combined (`a = 1 AND (b = 2 OR c = 3)`); without it the prover rejected the replacement and the rewrite was lost.

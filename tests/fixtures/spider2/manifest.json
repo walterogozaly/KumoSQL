@@ -1,0 +1,726 @@
+{
+ "source": "https://github.com/xlang-ai/Spider2 (MIT, Copyright (c) 2024 bird_sql), spider2-lite/evaluation_suite/gold/sql and spider2-dbt/examples/spider2-dbt.jsonl",
+ "pin": "fetched 2026-10-02 from the main branch via raw.githubusercontent.com; the commit id could not be read from here (github.com and its API are blocked), so the files are pinned by SHA-256",
+ "sha256": {
+  "spider2-lite.jsonl": "4ba48916576fbd60311a2478c6d4550b5d8cf3fcbc512457ea493b5941ca009d",
+  "spider2-dbt.jsonl": "a9c3e872df37749ffefcb16f66bc2e5450ceaa3de691c984d67e139f81b3fe76"
+ },
+ "counts": {
+  "lite_bigquery_and_ga_tasks": 205,
+  "with_published_gold_sql": 142,
+  "gold_sql_withheld_by_upstream": 63,
+  "dbt_tasks": 68
+ },
+ "cases": [
+  {
+   "id": "bq011",
+   "db": "ga4",
+   "question": "How many distinct pseudo users had positive engagement time  in the 7-day period ending on January 7, 2021 at 23:59:59, but had no positive engagement time in the 2-day period ending on the same date (January 7, 2021 at 23:59:59) ?"
+  },
+  {
+   "id": "bq010",
+   "db": "ga360",
+   "question": "Find the top-selling product among customers who bought 'Youtube Men\u2019s Vintage Henley' in July 2017, excluding itself."
+  },
+  {
+   "id": "bq009",
+   "db": "ga360",
+   "question": "Which traffic source has the highest total transaction revenue for the year 2017, and what is the difference in millions (rounded to two decimal places) between the highest and lowest monthly total transaction revenue for that traffic source?"
+  },
+  {
+   "id": "bq001",
+   "db": "ga360",
+   "question": "For each visitor who made at least one transaction in February 2017, how many days elapsed between the date of their first visit in February and the date of their first transaction in February, and on what type of device did they make that first transaction?"
+  },
+  {
+   "id": "bq002",
+   "db": "ga360",
+   "question": "During the first half of 2017,  focusing on hits product revenue, which traffic source generated the highest total product revenue, and what were the maximum daily, weekly, and monthly product revenues (in millions) for that top-performing source over this period?"
+  },
+  {
+   "id": "bq003",
+   "db": "ga360",
+   "question": "Between April 1 and July 31 of 2017, using the hits product revenue data along with the totals transactions to classify sessions as purchase (transactions \u2265 1 and productRevenue not null) or non-purchase (transactions null and productRevenue null), compare the average pageviews per visitor for each group by month"
+  },
+  {
+   "id": "bq004",
+   "db": "ga360",
+   "question": "In July 2017, among all visitors who bought any YouTube-related product, which distinct product\u2014excluding those containing \u2018YouTube\u2019 in the product name\u2014had the highest total quantity purchased?"
+  },
+  {
+   "id": "bq008",
+   "db": "ga360",
+   "question": "In January 2017, among visitors whose campaign name contains 'Data Share' and who accessed any page starting with '/home', which page did they most commonly visit next, and what is the maximum time (in seconds) they spent on the '/home' page before moving on?"
+  },
+  {
+   "id": "bq269",
+   "db": "ga360",
+   "question": "Between June 1, 2017, and July 31, 2017, consider only sessions that have non-null pageviews. Classify each session as \u2018purchase\u2019 if it has at least one transaction, or \u2018non_purchase\u2019 otherwise. For each month, sum each visitor\u2019s total pageviews under each classification, then compute the average pageviews per visitor for both purchase and non-purchase groups in each month, and present the results side by side."
+  },
+  {
+   "id": "bq268",
+   "db": "ga360",
+   "question": "Identify the longest number of days between the first visit and the last recorded event (either the last visit or the first transaction) for a user, where the last recorded event is associated with a mobile device. The last recorded event could either be the last visit or the first transaction, and you should focus on users whose last recorded event occurred on a mobile device."
+  },
+  {
+   "id": "bq270",
+   "db": "ga360",
+   "question": "What were the monthly add-to-cart and purchase conversion rates, calculated as a percentage of pageviews on product details, from January to March 2017?"
+  },
+  {
+   "id": "bq275",
+   "db": "ga360",
+   "question": "Which visitor IDs belong to users whose first transaction occurred on a device explicitly labeled as 'mobile' on a later date than their first visit?"
+  },
+  {
+   "id": "bq374",
+   "db": "ga360",
+   "question": "Calculates the percentage of new users who, between August 1, 2016, and April 30, 2017, both stayed on the site for more than 5 minutes during their initial visit and made a purchase on a subsequent visit at any later time, relative to the total number of new users in the same period."
+  },
+  {
+   "id": "bq234",
+   "db": "cms_data",
+   "question": "What is the most prescribed medication in each state in 2014?"
+  },
+  {
+   "id": "bq235",
+   "db": "cms_data",
+   "question": "Can you tell me which healthcare provider incurs the highest combined average costs for both outpatient and inpatient services in 2014?"
+  },
+  {
+   "id": "bq172",
+   "db": "cms_data",
+   "question": "For the drug with the highest total number of prescriptions in New York State during 2014, could you list the top five states with the highest total claim counts for this drug? Please also include their total claim counts and total drug costs. "
+  },
+  {
+   "id": "bq354",
+   "db": "cms_data",
+   "question": "Could you provide the percentage of participants for standard acne, atopic dermatitis, psoriasis, and vitiligo as defined by the International Classification of Diseases 10-CM (ICD-10-CM), including their subcategories? Please include all related concepts mapped to the standard ICD-10-CM codes (L70 for acne, L20 for atopic dermatitis, L40 for psoriasis, and L80 for vitiligo) by utilizing concept relationships, including descendant concepts. The percentage should be calculated based on the total number of participants, considering only the standard concepts and their related descendants."
+  },
+  {
+   "id": "bq355",
+   "db": "cms_data",
+   "question": "Please tell me the percentage of participants not using quinapril and related medications(Quinapril RxCUI: 35208)."
+  },
+  {
+   "id": "bq032",
+   "db": "noaa_data",
+   "question": "Can you provide the latitude of the final coordinates for the hurricane that traveled the second longest distance in the North Atlantic during 2020?"
+  },
+  {
+   "id": "bq119",
+   "db": "noaa_data",
+   "question": "Please show information about the hurricane with the third longest total travel distance in the North Atlantic during 2020, including its travel coordinates, the cumulative travel distance (in kilometers) at each point, and the maximum sustained wind speed at those times."
+  },
+  {
+   "id": "bq419",
+   "db": "noaa_data",
+   "question": "Which 5 states had the most storm events from 1980 to 1995, considering only the top 1000 states with the highest event counts each year? Please use state abbreviations."
+  },
+  {
+   "id": "bq042",
+   "db": "noaa_data",
+   "question": "Can you help me retrieve the average temperature, average wind speed, and precipitation for LaGuardia Airport in NYC on June 12 for each year from 2011 through 2020, specifically using the station ID 725030?"
+  },
+  {
+   "id": "bq394",
+   "db": "noaa_data",
+   "question": "What are the top 3 months between 2010 and 2014 with the smallest sum of absolute differences between the average air temperature, wet bulb temperature, dew point temperature, and sea surface temperature, including respective years and sum of differences? Please present the year and month in numerical format."
+  },
+  {
+   "id": "bq357",
+   "db": "noaa_data",
+   "question": "What are the latitude and longitude coordinates and dates between 2005 and 2015 with the top 5 highest daily average wind speeds, excluding records with missing wind speed values? Using data from tables start with prefix \"icoads_core\"."
+  },
+  {
+   "id": "bq045",
+   "db": "noaa_data",
+   "question": "Which weather stations in Washington State recorded more than 150 rainy days in 2023 but fewer rainy days compared to 2022? Defining a \u201crainy day\u201d as one having precipitation greater than zero millimeters and not equal to 99.99. Only include stations with valid precipitation data."
+  },
+  {
+   "id": "bq290",
+   "db": "noaa_data",
+   "question": "Can you calculate the difference in maximum temperature, minimum temperature, and average temperature between US and UK weather stations for each day in October 2023, using the date field, and excluding records with missing or invalid temperature values?"
+  },
+  {
+   "id": "bq031",
+   "db": "noaa_data",
+   "question": "Provide the daily weather data for Rochester from January 1 to March 31, 2019, including temperature (in Celsius), precipitation (in centimeters), and wind speed (in meters per second). For each variable, calculate the 8-day moving average (including the current day and the previous 7 days). Also, calculate the difference between the moving average on each day and the moving averages for the previous 1 to 8 days (i.e., lag1 to lag8). The result should include: The daily values for temperature, precipitation, and wind speed.The 8-day moving averages for each variable. The differences between the moving averages for each of the previous 1 to 8 days (e.g., the difference between today's moving average and the moving average from 1 day ago, from 2 days ago, and so on). Round all values to one decimal place. The data should be ordered by date, starting from January 9, 2019."
+  },
+  {
+   "id": "bq392",
+   "db": "noaa_gsod",
+   "question": "What are the top 3 dates in October 2009 with the highest average temperature for station number 723758, in the format YYYY-MM-DD?"
+  },
+  {
+   "id": "bq034",
+   "db": "ghcn_d",
+   "question": "I want to know the IDs, names of weather stations within a 50 km straight-line distance from the center of Chicago (41.8319\u00b0N, 87.6847\u00b0W)"
+  },
+  {
+   "id": "bq383",
+   "db": "ghcn_d",
+   "question": "Could you provide the highest recorded precipitation, minimum temperature, and maximum temperature from the last 15 days of each year from 2013 to 2016 at weather station USW00094846? Ensure each value represents the peak measurement for that period, with precipitation in millimeters and temperatures in degrees Celsius, using only validated data (non-null values and no quality flags)"
+  },
+  {
+   "id": "bq053",
+   "db": "new_york",
+   "question": "Calculate the change in the number of living trees of each fall color in New York City from 1995 to 2015 by computing, for each tree species, the difference between the number of trees not marked as dead in 1995 and the number of trees alive in 2015, matching species by the uppercase form of their scientific names from the tree_species table. Then, group the species by their fall color and sum these differences to determine the total change in the number of trees for each fall color."
+  },
+  {
+   "id": "bq021",
+   "db": "new_york",
+   "question": "For the top 20 Citi Bike routes in 2016, which route is faster than yellow taxis and among those, which one has the longest average bike duration? Please provide the start station name of this route. The coordinates are rounded to three decimals."
+  },
+  {
+   "id": "bq185",
+   "db": "new_york_plus",
+   "question": "What is the average trip duration in minutes for all valid Yellow taxi trips that took place between February 1, 2016, and February 7, 2016 (inclusive), with a positive trip duration, more than three passengers, and a trip distance of at least ten miles, where both the pickup and dropoff locations are in Brooklyn?"
+  },
+  {
+   "id": "bq098",
+   "db": "new_york_plus",
+   "question": "For NYC yellow taxi trips where both the pickup and dropoff occurred between January 1 and 7, 2016, inclusive, calculate the percentage of trips with no tip in each pickup borough, ensuring that only trips where the dropoff occurs after the pickup are included, the passenger count is greater than zero, and the trip distance, tip amount, tolls amount, MTA tax, fare amount, and total amount are non-negative; define \"no tip\" trips as those where the tip rate is zero, with the tip rate calculated as (tip_amount \u00d7 100) divided by total_amount (and considered zero when total_amount is zero)."
+  },
+  {
+   "id": "bq039",
+   "db": "new_york_plus",
+   "question": "Find the top 10 taxi trips in New York City between July 1 and July 7, 2016 (ensuring both pickup and dropoff times fall within these dates) where the passenger count is greater than five, the trip distance is at least ten miles, and there are no negative fare-related amounts (including tip, tolls, mta tax, fare, and total costs). Exclude any trips where the dropoff time is not strictly after the pickup time, then sort the results by total fare amount in descending order. Finally, display each trip\u2019s pickup zone, dropoff zone, trip duration in seconds, driving speed in miles per hour, and tip rate as a percentage of the total fare amount."
+  },
+  {
+   "id": "bq203",
+   "db": "new_york_plus",
+   "question": "For each New York City borough, how many subway stations are there in total, how many have at least one entrance that is marked both as an actual entry and as ADA-compliant, and what percentage of the total stations in each borough does this represent, listing boroughs from the highest to the lowest percentage?"
+  },
+  {
+   "id": "bq035",
+   "db": "san_francisco",
+   "question": "What is the total distance traveled by each bike in the San Francisco Bikeshare program, measured in meters? Use data from bikeshare trips and stations to calculate this."
+  },
+  {
+   "id": "bq081",
+   "db": "san_francisco_plus",
+   "question": "Find the latest ride data for each region between 2014 and 2017. I want to know the name of each region, the trip ID of this ride, the ride duration, the start time, the starting station, and the gender of the rider."
+  },
+  {
+   "id": "bq339",
+   "db": "san_francisco_plus",
+   "question": "Which month in 2017 had the largest absolute difference between cumulative bike usage minutes for customers and subscribers?\tWhich month (in number) in 2017 had the largest absolute difference between cumulative bike usage minutes (in thousands) for customers and subscribers, based on the trip end dates in the San Francisco bikeshare data?"
+  },
+  {
+   "id": "bq400",
+   "db": "san_francisco_plus",
+   "question": "For trips where 'Clay St & Drumm St' occurs before 'Sacramento St & Davis St' in the stop sequence (one direction only), what are the earliest departure times from 'Clay St & Drumm St' and the latest arrival times at 'Sacramento St & Davis St' in the format HH:MM:SS? Please provide the trip headsign for each route."
+  },
+  {
+   "id": "bq059",
+   "db": "san_francisco_plus",
+   "question": "What is the highest average speed (rounded to 1 decimal, in metric m/s) for bike trips in Berkeley with trip distance greater than 1000 meters?"
+  },
+  {
+   "id": "bq376",
+   "db": "san_francisco_plus",
+   "question": "For each neighborhood in San Francisco where at least one bike share station and at least one crime incident are located, provide the neighborhood name along with the total count of bike share stations and the total number of crime incidents in that neighborhood."
+  },
+  {
+   "id": "bq025",
+   "db": "census_bureau_international",
+   "question": "Provide a list of the top 10 countries for the year 2020, ordered by the highest percentage of their population under 20 years old. For each country, include the total population under 20 years old, the total midyear population, and the percentage of the population that is under 20 years old."
+  },
+  {
+   "id": "bq115",
+   "db": "census_bureau_international",
+   "question": "Which country has the highest percentage of population under the age of 25 in 2017?"
+  },
+  {
+   "id": "bq018",
+   "db": "covid19_open_data",
+   "question": "Which day in March and April had the highest COVID-19 confirmed case growth rate in the United States? The format is MM-DD."
+  },
+  {
+   "id": "bq086",
+   "db": "covid19_open_world_bank",
+   "question": "You need to calculate the percentage of each country's population that had been confirmed with COVID-19 by June 30, 2020. The population data for 2018 can be found in the World Bank dataset, and the cumulative COVID-19 confirmed cases data is available in the COVID-19 Open Data dataset. Calculate the percentage of each country's population, that was cumulatively confirmed to have COVID-19"
+  },
+  {
+   "id": "bq085",
+   "db": "covid19_jhu_world_bank",
+   "question": "Could you provide, for the United States, France, China, Italy, Spain, Germany, and Iran, the total number of confirmed COVID-19 cases as of April 20, 2020, along with the number of cases per 100,000 people based on their total 2020 populations calculated by summing all relevant population entries from the World Bank data"
+  },
+  {
+   "id": "bq130",
+   "db": "covid19_nyt",
+   "question": "Analyze daily new COVID-19 case counts from March to May 2020, identifying the top five states by daily increases. Please compile a ranking based on how often each state appears in these daily top fives. Then, examine the state that ranks fourth overall and identify its top five counties based on their frequency of appearing in the daily top five new case counts."
+  },
+  {
+   "id": "bq087",
+   "db": "covid19_symptom_search",
+   "question": "Please calculate the overall percentage change in the average weekly search frequency for the symptom 'Anosmia' across the five New York City counties\u2014Bronx County, Queens County, Kings County, New York County, and Richmond County\u2014by comparing the combined data from January 1, 2019, through December 31, 2019, with the combined data from January 1, 2020, through December 31, 2020."
+  },
+  {
+   "id": "bq088",
+   "db": "covid19_symptom_search",
+   "question": "Please calculate the average levels of anxiety and depression symptoms from the weekly country data for the United States during the periods from January 1, 2019, to January 1, 2020, and from January 1, 2020, to January 1, 2021. Then, compute the percentage increase in these average symptom levels from the 2019 period to the 2020 period."
+  },
+  {
+   "id": "bq089",
+   "db": "covid19_usa",
+   "question": "Given the latest population estimates from the 2018 five-year American Community Survey, what is the number of vaccine sites per 1000 people for counties in California?"
+  },
+  {
+   "id": "bq407",
+   "db": "covid19_usa",
+   "question": "Find the top three counties with populations over 50,000, using the 2020 5-year census data, that had the highest COVID-19 case fatality rates on August 27, 2020. For these counties, provide the name, state, median age, total population, number of confirmed COVID-19 cases per 100,000 people, number of deaths per 100,000 people, and the case fatality rate as a percentage"
+  },
+  {
+   "id": "bq060",
+   "db": "census_bureau_international",
+   "question": "Which top 3 countries had the highest net migration in 2017 among those with an area greater than 500 square kilometers? And what are their migration rates?"
+  },
+  {
+   "id": "bq338",
+   "db": "census_bureau_acs_1",
+   "question": "Can you find the census tracts in the 36047 area that are among the top 20 for the largest percentage increases in population from 2011 to 2018, are also among the top 20 for the largest absolute increases in median income during the same period, and had over 1,000 residents in each of those years?"
+  },
+  {
+   "id": "bq061",
+   "db": "census_bureau_acs_1",
+   "question": "Which census tract has witnessed the largest increase in median income between 2015 and 2018 in California? Tell me the tract code."
+  },
+  {
+   "id": "bq064",
+   "db": "census_bureau_acs_1",
+   "question": "Using the 2017 U.S. Census Tract data from the BigQuery public datasets, you need to proportionally allocate each tract's population and income to the zip codes based on the overlapping area between their geographic boundaries. Then, filter the results to include only those zip codes located within a 5-mile radius of a specific point in Washington State, with coordinates at latitude 47.685833\u00b0N and longitude -122.191667\u00b0W. Finally, calculate the total population and the average individual income for each zip code (rounded to one decimal place) and sort the results by the average individual income in descending order."
+  },
+  {
+   "id": "bq198",
+   "db": "ncaa_basketball",
+   "question": "List the top 5 universities with the most seasons where they achieved the maximum wins in their respective NCAA basketball seasons between 1900-2000, showing each team's total number of such peak-performance seasons, while excluding entries with missing team names."
+  },
+  {
+   "id": "bq428",
+   "db": "ncaa_basketball",
+   "question": "For the top five team markets with the highest number of distinct players who scored at least 15 points during the second period of games between 2010 and 2018, provide details of each game they played in NCAA basketball historical tournament matches during the same period, as specified in the data model document."
+  },
+  {
+   "id": "bq144",
+   "db": "ncaa_insights",
+   "question": "Create a dataset by combining NCAA men's basketball tournament game outcomes from the 2014 season onwards, including both the historical tournament games and the 2018 tournament results, with the corresponding pace and efficiency performance metrics for each team and their opponents from the feature_engineering data. The dataset should include the season, game outcome labels (win or loss), team and opponent seeds, school names, pace and efficiency rankings, statistical values, and the differences between the team's and the opponent's metrics to enable a comprehensive analysis of team and opponent dynamics."
+  },
+  {
+   "id": "bq113",
+   "db": "bls",
+   "question": "Which county in Utah experienced the greatest percentage increase in construction employment from 2000 to 2018, calculated by averaging the employment levels during the third month of each quarter in those years? What is the corresponding percentage increase?"
+  },
+  {
+   "id": "bq112",
+   "db": "bls",
+   "question": "Between 1998 and 2017, for Allegheny County in the Pittsburgh area, did the average annual wages for all industries keep pace with the inflation of all consumer items, and what were the respective percentage growth rates (to two decimal places) for wages and the CPI over that period?"
+  },
+  {
+   "id": "bq406",
+   "db": "google_dei",
+   "question": "Please calculate the growth rates for Asians, Black people, Latinx people, Native Americans, White people, US women, US men, global women, and global men from 2014 to 2024 concerning the overall workforce."
+  },
+  {
+   "id": "bq022",
+   "db": "chicago",
+   "question": "Calculate the minimum and maximum trip duration in minutes (rounded to the nearest whole number), total number of trips, and average fare for each of six equal quantile groups based on trip duration, considering only trips between 0 and 60 minutes."
+  },
+  {
+   "id": "bq362",
+   "db": "chicago",
+   "question": "Which three companies had the largest increase in trip numbers between two consecutive months in 2018?"
+  },
+  {
+   "id": "bq363",
+   "db": "chicago",
+   "question": "Calculate the total number of trips and average fare (formatted to two decimal places) for ten equal-sized quantile groups. Create ten quantile groups by partitioning the trip duration dimension (from 1-50 minutes) into equal sets. Each group should represent a similar number of distinct minute values. Display each group's time range formatted as \"XXm to XXm\" (where the numbers are zero-padded to two digits), the total trips count, and the average fare. The time ranges should represent the minimum and maximum duration values within each quantile. Sort the results chronologically by time range. Use NTILE(10) to create the quantiles from the ordered trip durations."
+  },
+  {
+   "id": "bq076",
+   "db": "chicago",
+   "question": "What is the highest number of motor vehicle theft incidents that occurred in any single month during 2016?"
+  },
+  {
+   "id": "bq077",
+   "db": "chicago",
+   "question": "For each year from 2010 to 2016, what is the highest number of motor thefts in one month?"
+  },
+  {
+   "id": "bq109",
+   "db": "open_targets_genetics_1",
+   "question": "Find the average, variance, max-min difference, and the QTL source(right study) of the maximum log2(h4/h3) for data where right gene id is \"ENSG00000169174\", h4 > 0.8, h3 < 0.02, reported trait includes \"lesterol levels\", right biological feature is \"IPSC\", and the variant is '1_55029009_C_T'."
+  },
+  {
+   "id": "bq090",
+   "db": "CYMBAL_INVESTMENTS",
+   "question": "How much higher the average intrinsic value is for trades using the feeling-lucky strategy compared to those using the momentum strategy under long-side trades?"
+  },
+  {
+   "id": "bq442",
+   "db": "CYMBAL_INVESTMENTS",
+   "question": "Please collect the information of the top 6 trade report with the highest closing prices. Refer to the document for all the information I want."
+  },
+  {
+   "id": "bq096",
+   "db": "gbif",
+   "question": "Determine which year had the earliest date after January on which more than 10 sightings of Sterna paradisaea were recorded north of 40 degrees latitude. For each year, find the first day after January with over 10 sightings of this species in that region, and identify the year whose earliest such date is the earliest among all years."
+  },
+  {
+   "id": "bq102",
+   "db": "gnomAD",
+   "question": "Identify which start positions are associated with missense variants in the BRCA1 gene on chromosome 17, where the reference base is 'C' and the alternate base is 'T'. Using data from the gnomAD v2.1.1 version."
+  },
+  {
+   "id": "bq103",
+   "db": "gnomAD",
+   "question": "Generate summary statistics on genetic variants in the region between positions 55039447 and 55064852 on chromosome 1. This includes the number of variants, the total allele count, the total number of alleles, and distinct gene symbols (using Variant Effect Predictor, VEP, for gene annotation). Additionally, compute the density of mutations by dividing the length of the region by the number of variants.  Using data from the gnomAD v3 version."
+  },
+  {
+   "id": "bq105",
+   "db": "nhtsa_traffic_fatalities_plus",
+   "question": "According to the 2015 and 2016 accident and driver distraction, and excluding cases where the driver\u2019s distraction status is recorded as 'Not Distracted,' 'Unknown if Distracted,' or 'Not Reported,' how many traffic accidents per 100,000 people were caused by driver distraction in each U.S. state for those two years, based on 2010 census population data, and which five states each year had the highest rates?"
+  },
+  {
+   "id": "bq396",
+   "db": "nhtsa_traffic_fatalities",
+   "question": "Which top 3 states had the largest differences in the number of traffic accidents between rainy and clear weather during weekends in 2016? Please also provide the respective differences for each state."
+  },
+  {
+   "id": "bq097",
+   "db": "sdoh",
+   "question": "What is the increasing amount of the average earnings per job between the years 2012 and 2017 for each geographic region in Massachusetts (indicated by \"MA\" at the end of GeoName)?"
+  },
+  {
+   "id": "bq120",
+   "db": "sdoh",
+   "question": "Identify the top 10 regions (counties) with the highest total number of SNAP-participating households, using the 2017 5-year ACS county-level data and SNAP enrollment data from January 1, 2017, excluding regions where the total SNAP participation is zero. For each of these regions, calculate the ratio of households earning under $20,000 to the total number of SNAP-participating households."
+  },
+  {
+   "id": "bq110",
+   "db": "sdoh",
+   "question": "What is the change in the number of homeless veterans between 2012 and 2018 for each CoC region in New York that has data available in both years?"
+  },
+  {
+   "id": "bq395",
+   "db": "sdoh",
+   "question": "Calculate the percentage change in the total number of unsheltered homeless people from 2015 to 2018 for each state by summing the counts over all Continuums of Care (CoCs) within each state. Then, determine the national average of these state percentage changes. Identify the five states whose percentage change is closest to this national average percentage change. Please provide the state abbreviations."
+  },
+  {
+   "id": "bq352",
+   "db": "sdoh",
+   "question": "Please list the average number of prenatal weeks in 2018 for counties in Wisconsin where more than 5% of the employed population had commutes of 45-59 minutes in 2017."
+  },
+  {
+   "id": "bq074",
+   "db": "sdoh",
+   "question": "Count the number of counties that experienced an increase in unemployment from 2015 to 2018, using 5-year ACS data, and a decrease in dual-eligible enrollee counts between December 1, 2015, and December 1, 2018."
+  },
+  {
+   "id": "bq066",
+   "db": "sdoh",
+   "question": "Could you assess the relationship between the poverty rates from the previous year's census data and the percentage of births without maternal morbidity for the years 2016 to 2018? Use only data for births where no maternal morbidity was reported and for each year, use the 5-year census data from the year before to compute the Pearson correlation coefficient"
+  },
+  {
+   "id": "bq114",
+   "db": "openaq",
+   "question": "Which three cities have the largest difference between their 1990 EPA PM2.5 measurements (using units_of_measure = 'Micrograms/cubic meter (LC)' and parameter_name = 'Acceptable PM2.5 AQI & Speciation Mass') and their 2020 OpenAQ PM2.5 measurements (where pollutant = 'pm25' based on the year extracted from the timestamp), with both datasets matched by latitude and longitude rounded to two decimals, and the difference ordered from greatest to least?"
+  },
+  {
+   "id": "bq123",
+   "db": "stackoverflow",
+   "question": "You need to determine which day of the week has the third highest percentage of questions on Stack Overflow that receive an answer within an hour. To do this, use the question creation date from the posts_questions table and the earliest answer creation date from the posts_answers table. Once you\u2019ve calculated the percentage of questions that get answered within an hour for each day, identify the day with the third highest percentage and report that percentage."
+  },
+  {
+   "id": "bq280",
+   "db": "stackoverflow",
+   "question": "Please provide the display name of the user who has answered the most questions on Stack Overflow, considering only users with a reputation greater than 10."
+  },
+  {
+   "id": "bq300",
+   "db": "stackoverflow",
+   "question": "What is the highest number of answers received for a single Python 2 specific question on Stack Overflow, excluding any discussions that involve Python 3?"
+  },
+  {
+   "id": "bq301",
+   "db": "stackoverflow",
+   "question": "Retrieve details of accepted answers to Stack Overflow questions posted in January 2016 that have tags including \"javascript\" and at least one of \"xss\", \"cross-site\", \"exploit\", or \"cybersecurity\"; the answers themselves must also have been posted in January 2016. For each accepted answer, include the answer's ID, the answerer's reputation, score, and comment count, along with the associated question's tags, score, answer count, the asker's reputation, view count, and comment count."
+  },
+  {
+   "id": "bq302",
+   "db": "stackoverflow",
+   "question": "What is the monthly proportion of Stack Overflow questions tagged with 'python' in the year 2022?"
+  },
+  {
+   "id": "bq303",
+   "db": "stackoverflow",
+   "question": "From July 1, 2019 through December 31, 2019, for all users with IDs between 16712208 and 18712208 on Stack Overflow, retrieve the user ID and the tags of the relevant question for each of their contributions, including comments on both questions and answers, any answers they posted, and any questions they authored, making sure to correctly associate the comment or answer with its parent question\u2019s tags."
+  },
+  {
+   "id": "bq304",
+   "db": "stackoverflow",
+   "question": "Retrieve the top 50 most viewed questions for each of the following Android-related tags on StackOverflow: 'android-layout', 'android-activity', 'android-intent', 'android-edittext', 'android-fragments', 'android-recyclerview', 'listview', 'android-actionbar', 'google-maps', and 'android-asynctask'. Each question must contain the word 'how' in either its title or body and must not contain any of the following troubleshooting terms in either its title or body: 'fail', 'problem', 'error', 'wrong', 'fix', 'bug', 'issue', 'solve', or 'trouble'. Only include tags that have at least 50 questions meeting these criteria, and for each such tag, select the top 50 questions ranked by view count."
+  },
+  {
+   "id": "bq310",
+   "db": "stackoverflow",
+   "question": "What is the title of the most viewed \"how\" question related to Android development on StackOverflow, across specified tags such as 'android-layout', 'android-activity', 'android-intent', and others"
+  },
+  {
+   "id": "bq308",
+   "db": "stackoverflow",
+   "question": "Show the number of Stack Overflow questions asked each day of the week in 2021, and find out how many and what percentage of those were answered within one hour."
+  },
+  {
+   "id": "bq309",
+   "db": "stackoverflow",
+   "question": "Retrieve the top 10 longest questions on Stack Overflow, measured by the length of their body text, where each question either has an accepted answer or has no accepted answer but has at least one answer with a score-to-view ratio exceeding 0.01. For each of these questions, include the reputation of the user who asked the question, the user's net votes (calculated as their total up_votes minus down_votes), and the total number of badges the user has earned."
+  },
+  {
+   "id": "bq124",
+   "db": "fhir_synthea",
+   "question": "Among all patients, how many individuals remain alive (i.e., with no recorded deceased.dateTime), have a diagnosis of either Diabetes or Hypertension, and are prescribed at least seven distinct active medications?"
+  },
+  {
+   "id": "bq126",
+   "db": "the_met",
+   "question": "What are the titles, artist names, mediums, and original image URLs of objects with 'Photograph' in their names from the 'Photographs' department, created not by an unknown artist, with an object end date of 1839 or earlier?"
+  },
+  {
+   "id": "bq366",
+   "db": "the_met",
+   "question": "What are the top three most frequently associated labels with artworks from each historical period in The Met's collection, only considering labels linked to 500 or more artworks? Provide me with the period, label, and the associated count."
+  },
+  {
+   "id": "bq414",
+   "db": "the_met",
+   "question": "Retrieve the object id, title, and the formatted metadata date (as a string in 'YYYY-MM-DD' format) for objects in the \"The Libraries\" department where the cropConfidence is greater than 0.5, the object's title contains the word \"book\"."
+  },
+  {
+   "id": "bq204",
+   "db": "eclipse_megamovie",
+   "question": "Find the user with the highest total clicks across all records from all available photo collections."
+  },
+  {
+   "id": "bq389",
+   "db": "epa_historical_air_quality",
+   "question": "Please calculate the monthly average levels of PM10, PM2.5 FRM, PM2.5 non-FRM, volatile organic emissions, SO2 (scaled by a factor of 10), and Lead (scaled by a factor of 100) air pollutants in California for the year 2020."
+  },
+  {
+   "id": "bq199",
+   "db": "iowa_liquor_sales",
+   "question": "Identify the top 10 liquor categories in Iowa in 2021 by calculating, for each category, the average of the per-liter retail prices across all sales transactions in that category during 2021. For these top categories, provide their average per-liter retail prices calculated in the same manner for the years 2019, 2020, and 2021."
+  },
+  {
+   "id": "bq218",
+   "db": "iowa_liquor_sales",
+   "question": "What are the top 5 items with the highest year-over-year growth percentage in total sales revenue for the year 2023?"
+  },
+  {
+   "id": "bq049",
+   "db": "iowa_liquor_sales_plus",
+   "question": "Please show the monthly per capita Bourbon Whiskey sales during 2022 in Dubuque County for the zip code that ranks third in total Bourbon Whiskey sales, using only the population aged 21 and older."
+  },
+  {
+   "id": "bq360",
+   "db": "nppes",
+   "question": "Among healthcare providers whose practice location is in Mountain View, CA, and who have a specified specialization in the field healthcare provider taxonomy, identify the top 10 most common specializations based on the count of distinct NPIs. Then determine which of those top 10 has a count of distinct NPIs closest to the average count across those 10 specializations."
+  },
+  {
+   "id": "bq286",
+   "db": "usa_names",
+   "question": "Can you tell me the name of the most popular female baby in Wyoming for the year 2021, based on the proportion of female babies given that name compared to the total number of female babies given the same name across all states?"
+  },
+  {
+   "id": "bq143",
+   "db": "CPTAC_PDC",
+   "question": "Use CPTAC proteomics and RNAseq data for Clear Cell Renal Cell Carcinoma to select 'Primary Tumor' and 'Solid Tissue Normal' samples. Join the datasets on sample submitter IDs and gene symbols. Calculate the correlation between protein abundance (log2 ratio) and gene expression levels (log-transformed+1 FPKM) for each gene and sample type. Filter out correlations with an absolute value greater than 0.5, and compute the average correlation for each sample type."
+  },
+  {
+   "id": "bq161",
+   "db": "pancancer_atlas_2",
+   "question": "Calculate the net difference between the number of pancreatic adenocarcinoma (PAAD) patients in TCGA's dataset who are confirmed to have mutations in both KRAS and TP53 genes, and those without mutations in either gene. Utilize patient clinical and follow-up data alongside genomic mutation details from TCGA\u2019s cancer genomics database, focusing specifically on PAAD studies where the mutations have passed quality filters."
+  },
+  {
+   "id": "bq151",
+   "db": "pancancer_atlas_2",
+   "question": "Using TCGA dataset, calculate the chi-squared statistic to evaluate the association between KRAS and TP53 gene mutations in patients diagnosed with pancreatic adenocarcinoma (PAAD). Incorporate clinical follow-up data and high-quality mutation annotations to accurately determine the frequency of patients with co-occurring KRAS and TP53 mutations compared to those with each mutation occurring independently. Ensure that patient records are meticulously matched based on unique identifiers to maintain data integrity. This analysis aims to identify and quantify potential correlations between KRAS and TP53 genetic alterations within the PAAD patient population."
+  },
+  {
+   "id": "bq279",
+   "db": "austin",
+   "question": "Can you provide the number of distinct active and closed bike share stations for each year 2013 and 2014?"
+  },
+  {
+   "id": "bq281",
+   "db": "austin",
+   "question": "What is the highest number of electric bike rides lasting more than 10 minutes taken by subscribers with 'Student Membership' in a single day, excluding rides starting or ending at 'Mobile Station' or 'Repair Shop'?"
+  },
+  {
+   "id": "bq282",
+   "db": "austin",
+   "question": "Can you tell me the numeric value of the active council district in Austin which has the highest number of bike trips that start and end within the same district, but not at the same station?"
+  },
+  {
+   "id": "bq006",
+   "db": "austin",
+   "question": "What is the date with the second highest Z-score for daily counts of 'PUBLIC INTOXICATION' incidents in Austin for the year 2016? List the date in the format of '2016-xx-xx'."
+  },
+  {
+   "id": "bq284",
+   "db": "bbc",
+   "question": "Can you provide a breakdown of the total number of articles into different categories and the percentage of those articles that mention \"education\" within each category from the BBC News?"
+  },
+  {
+   "id": "bq413",
+   "db": "dimensions_ai_covid19",
+   "question": "Retrieve the venue titles of publications that have a `date_inserted` from the year 2021 onwards and are associated with a grid whose address city is 'Qianjiang'. For each publication, prioritize the venue title by selecting the journal title first if it exists; if not, then the proceedings title; if that's also unavailable, then the book title; and finally, if none of those are available, the book series title."
+  },
+  {
+   "id": "bq425",
+   "db": "ebi_chembl",
+   "question": "Using data from ChEMBL Release 23, retrieve all distinct molecules associated with the company 'SanofiAventis,' listing the trade name and the most recent approval date for each molecule. Make sure to keep only the latest approval date per molecule and ensure the company field precisely matches 'SanofiAventis' without relying on other fields."
+  },
+  {
+   "id": "bq430",
+   "db": "ebi_chembl",
+   "question": "Find pairs of different molecules tested in the same assay and standard type, where both have 10\u201315 heavy atoms, fewer than 5 activities in that assay, fewer than 2 duplicate activities, non-null standard values, and pChEMBL values over 10. For each pair, report the maximum heavy atom count, the latest publication date (calculated based on the document's rank within the same journal and year, and map it to a synthetic month and day), the highest document ID, classify the change in standard values as 'increase', 'decrease', or 'no-change' based on their values and relations, and generate UUIDs from their activity IDs and canonical SMILES."
+  },
+  {
+   "id": "bq285",
+   "db": "fda",
+   "question": "Could you provide me with the zip code of the location that has the highest number of bank institutions in Florida?"
+  },
+  {
+   "id": "bq330",
+   "db": "fda",
+   "question": "Which Colorado zip code has the highest concentration of bank locations per block group, based on the overlap between zip codes and block groups?"
+  },
+  {
+   "id": "bq398",
+   "db": "world_bank",
+   "question": "What are the top three debt indicators for Russia based on the highest debt values?"
+  },
+  {
+   "id": "bq399",
+   "db": "world_bank",
+   "question": "Which high-income country had the highest average crude birth rate respectively in each region, and what are their corresponding average birth rate, during the 1980s?"
+  },
+  {
+   "id": "bq227",
+   "db": "london",
+   "question": "Could you provide the annual percentage shares, rounded to two decimal places, of the top 5 minor crime categories from 2008 in London's total crimes, with each year displayed in one row?"
+  },
+  {
+   "id": "bq232",
+   "db": "london",
+   "question": "Could you provide the total number of 'Other Theft' incidents within the 'Theft and Handling' category for each year in the Westminster borough?"
+  },
+  {
+   "id": "bq228",
+   "db": "london",
+   "question": "Please provide a list of the top three major crime categories in the borough of Barking and Dagenham, along with the number of incidents in each category."
+  },
+  {
+   "id": "bq424",
+   "db": "world_bank",
+   "question": "List the top 10 countries with respect to the total amount of long-term external debt in descending order, excluding those without a specified region."
+  },
+  {
+   "id": "bq327",
+   "db": "world_bank",
+   "question": "How many debt indicators for Russia have a value of 0, excluding NULL values?"
+  },
+  {
+   "id": "bq328",
+   "db": "world_bank",
+   "question": "Which region has the highest median GDP (constant 2015 US$) value?"
+  },
+  {
+   "id": "bq403",
+   "db": "irs_990",
+   "question": "Which three years in 2012-2017 have the smallest absolute difference between median revenue and median functional expenses for organizations filing IRS 990 forms? Please output three years and respective differences."
+  },
+  {
+   "id": "bq397",
+   "db": "ecommerce",
+   "question": "After removing any duplicate records from the rev_transactions dataset, identify each channel grouping that has transactions from more than one country. For each such channel grouping, find the country with the highest total number of transactions and report both the country name and the sum of transactions for that channel grouping."
+  },
+  {
+   "id": "bq402",
+   "db": "ecommerce",
+   "question": "Calculate the conversion rate from unique visitors to purchasers by using data exclusively from the `web_analytics` table in the `data-to-insights.ecommerce` dataset. A visitor is defined as a unique `fullVisitorId` present in the table, while a purchaser is a visitor who has at least one transaction recorded (`totals.transactions` is not null). The conversion rate is computed by dividing the number of unique purchasers by the total number of unique visitors. Additionally, calculate the average number of transactions per purchaser, considering only those visitors who have made at least one transaction."
+  },
+  {
+   "id": "ga001",
+   "db": "ga4",
+   "question": "I want to know the preferences of customers who purchased the Google Navy Speckled Tee in December 2020. What other product was purchased with the highest total quantity alongside this item?"
+  },
+  {
+   "id": "ga002",
+   "db": "ga4",
+   "question": "Tell me the most purchased other products and their quantities by customers who bought the Google Red Speckled Tee each month for the three months starting from November 2020."
+  },
+  {
+   "id": "ga003",
+   "db": "firebase",
+   "question": "I'm trying to evaluate which board types were most effective on September 15, 2018. Can you find out the average scores for each board type from the quick play mode completions on that day?"
+  },
+  {
+   "id": "ga004",
+   "db": "ga4",
+   "question": "Can you figure out the average difference in pageviews between users who bought something and those who didn\u2019t in December 2020? Just label anyone who was involved in purchase events as a purchaser."
+  },
+  {
+   "id": "ga008",
+   "db": "ga4",
+   "question": "Could you provide the total number of page views for each day in November 2020 as well as the average number of page views per user on those days, restricted to users who made at least one purchase in November 2020?"
+  },
+  {
+   "id": "ga017",
+   "db": "ga4",
+   "question": "How many distinct users viewed the most frequently visited page during January 2021?"
+  },
+  {
+   "id": "ga018",
+   "db": "ga4",
+   "question": "On January 2nd, 2021, I want to determine the percentage of times users transition from a product list page (PLP) view to a product detail page (PDP) view within the same session, using only page_view events. Could you calculate how many PLP views eventually led to a PDP view in the same session on that date, and then provide the resulting percentage of PLP-to-PDP transitions?"
+  },
+  {
+   "id": "ga010",
+   "db": "ga4",
+   "question": "Can you give me an overview of our website traffic for December 2020? I'm particularly interested in the channel with the fourth highest number of sessions."
+  },
+  {
+   "id": "ga012",
+   "db": "ga4",
+   "question": "On November 30, 2020, identify the item category with the highest tax rate by dividing tax value in usd by purchase revenue in usd for purchase events, and then retrieve the transaction IDs, total item quantities, and both purchase revenue in usd and purchase revenue for those purchase events in that top-tax-rate category."
+  },
+  {
+   "id": "ga019",
+   "db": "firebase",
+   "question": "Could you determine what percentage of users either did not uninstall our app within seven days or never uninstalled it after installing during August and September 2018?"
+  },
+  {
+   "id": "ga028",
+   "db": "firebase",
+   "question": "Please perform a 7-day retention analysis for users who first session start the app during the week starting on July 2, 2018. For each week from Week 0 (the week of their first session) to Week 4, provide the total number of new users in Week 0 and the number of retained users for each subsequent week. Ensuring that you only count events up to October 2, 2018, and group dates by Monday-based weeks"
+  },
+  {
+   "id": "ga020",
+   "db": "firebase",
+   "question": "Which quickplay event type had the lowest user retention rate during the second week after their initial engagement, for users who first engaged between August 1 and August 15, 2018, as measured by the presence of session_start events??"
+  },
+  {
+   "id": "ga021",
+   "db": "firebase",
+   "question": "What is the retention rate for users two weeks after their initial quickplay event, calculated separately for each quickplay event type, within the period from July 2, 2018, to July 16, 2018? Please focus on users who started a session (session_start) during this period."
+  },
+  {
+   "id": "ga022",
+   "db": "firebase",
+   "question": "Could you please help me get the weekly customer retention rate in September 2018 for new customers who first used our app (first_open event) within the first week starting from September 1st, 2018 (timezone in Shanghai)? The retention rates should cover the following weeks 1, 2, and 3 period after the initial use and display them in column format."
+  }
+ ]
+}

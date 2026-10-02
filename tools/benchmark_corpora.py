@@ -63,7 +63,8 @@ def _clone(url: str, dest: Path, sparse: list[str] | None = None) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if sparse:
             _run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none", "--sparse", url, str(dest)])
-            _run(["git", "sparse-checkout", "set", *sparse], cwd=dest)
+            # Non-cone mode so single files can be listed; a leading slash anchors each path at the root.
+            _run(["git", "sparse-checkout", "set", "--no-cone", *("/" + p.lstrip("/") for p in sparse)], cwd=dest)
         else:
             _run(["git", "clone", "-q", "--depth", "1", url, str(dest)])
     pin = PINS.get(url)
