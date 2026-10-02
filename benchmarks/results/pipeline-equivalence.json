@@ -2,17 +2,17 @@
   "suite": "Whole-pipeline equivalence (proof)",
   "order": 110,
   "size": 50,
-  "score": "44/50 proved, 0 wrong",
-  "metric": "Sound multi-model refactors (filter moved upstream, shared model extracted, joins staged, rollups, renames) whose every declared output, exposed intermediates included, is proved equal to the original pipeline; 6 more are unknown.",
+  "score": "47/50 proved, 0 wrong",
+  "metric": "Sound multi-model refactors (filter moved upstream, shared model extracted, joins staged, rollups, renames) whose every declared output, exposed intermediates included, is proved equal to the original pipeline; 3 more are unknown.",
   "evidence": "proof",
   "correctness": "0 false proofs: all 66 broken refactors stay unproved. Every generated answer is checked by running both pipelines in DuckDB on 25 random databases (NULLs, duplicates, empty tables).",
   "coverage": {
-    "proven": 44,
-    "unknown": 6
+    "proven": 47,
+    "unknown": 3
   },
   "held_out": "3/8 proved, 10/10 refuted, 0 wrong (union_split and latest_per_key families, run once at baseline)",
   "docs": "docs/pipeline-equivalence.md",
   "command": "python tools/pipeline_bench.py",
   "date": "2026-10-02",
-  "caveats": "Generated cases written for this eval, none adapted from a public suite yet. Source columns are declared; without them 32/50 are proved. Unknowns: AVG rebuilt from SUM and COUNT across a rollup, and staged LEFT JOIN chains."
+  "caveats": "Generated cases written for this eval, none adapted from a public suite yet. Source columns are declared; without them 32/50 are proved. Unknowns: staged LEFT JOIN chains."
 }
