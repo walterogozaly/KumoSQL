@@ -585,14 +585,20 @@ def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str
         direct = lookup(agg)
         if same_grain:
             return direct
-        if direct is None:
+        if direct is None or isinstance(agg, exp.Avg):
             if isinstance(agg, exp.Avg):
                 total = lookup(exp.Sum(this=agg.this.copy()))
                 count = lookup(exp.Count(this=agg.this.copy()))
                 if count is None:
                     count = lookup(exp.Count(this=exp.Star()))
-                if total is None or count is None:
+                if count is None:
                     return None
+                if total is None:
+                    # a weighted average: the sum is each group's mean times its count of values
+                    mean = lookup(exp.Avg(this=agg.this.copy()))
+                    if mean is None:
+                        return None
+                    total = exp.Mul(this=mean, expression=count.copy())
                 return exp.Div(
                     this=exp.Sum(this=total),
                     expression=exp.Nullif(this=exp.Sum(this=count), expression=exp.Literal.number(0)),
