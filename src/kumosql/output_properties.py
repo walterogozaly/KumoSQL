@@ -31,6 +31,7 @@ from typing import Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import conjuncts as _conjuncts
 from .smt_equivalence import TableConstraints
 
 # A fact's provenance: the declared facts it rests on (empty = follows from the query).
@@ -570,16 +571,6 @@ def _requalify(rel: _Rel, alias: str) -> _Rel:
     out.keys = [(frozenset(mapping[c] for c in key), prov) for key, prov in rel.keys]
     out.same = [{mapping[c] for c in g if c in mapping} for g in rel.same]
     return out
-
-
-def _conjuncts(node: exp.Expression):
-    if isinstance(node, exp.Paren):
-        yield from _conjuncts(node.this)
-    elif isinstance(node, exp.And):
-        yield from _conjuncts(node.left)
-        yield from _conjuncts(node.right)
-    else:
-        yield node
 
 
 def _eq_pair(cond: exp.Expression):

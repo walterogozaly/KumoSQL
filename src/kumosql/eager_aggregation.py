@@ -27,6 +27,8 @@ import itertools
 
 from sqlglot import exp
 
+from .ast_utils import conjuncts as _conjuncts
+
 _counter = itertools.count()
 
 _IDEMPOTENT = (exp.Min, exp.Max)
@@ -383,14 +385,6 @@ def _renamed_keys(grouped: _Grouped, mapping: dict[str, str], single: str) -> di
             return None
         keys[name] = renamed
     return keys
-
-
-def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
-    while isinstance(node, exp.Paren):
-        node = node.this
-    if isinstance(node, exp.And):
-        return _conjuncts(node.this) + _conjuncts(node.expression)
-    return [node]
 
 
 def flatten_grouped_join(select: exp.Select) -> exp.Expression | None:
