@@ -351,6 +351,8 @@ def _js_field(config: str, text: str, key: str) -> list[str] | None | str:
         value = pair.group(2)
         if value is None:  # shorthand ``{ name }``
             return _js_bindings(text, key)
+        if value.strip() == "undefined":
+            return ""
         literal = _js_string(value)
         if literal is not None:
             return [literal]
@@ -360,39 +362,89 @@ def _js_field(config: str, text: str, key: str) -> list[str] | None | str:
     return ""
 
 
-def js_declared_targets(text: str, default: Target) -> tuple[list[Target], list[Target], bool]:
+_JS_LOOP_RES = (
+    re.compile(r"(?P<src>[\w$.]+|\[[^\[\]]*\])\s*\.forEach\(\s*\(?\s*(?P<var>[\w$]+)"),
+    re.compile(r"\bfor\s*\(\s*(?:const|let|var)\s+(?P<var>[\w$]+)\s+of\s+(?P<src>[\w$.]+|\[[^\[\]]*\])\s*\)"),
+)
+
+
+def js_declared_targets(
+    text: str,
+    default: Target,
+    *,
+    modules: Mapping[str, Mapping[str, object]] | None = None,
+    path: str = "",
+) -> tuple[list[Target], list[Target], bool]:
     """Declarations and named actions found in one Dataform JavaScript file.
 
     Returns ``(declared, actions, complete)``. ``declared`` are ``declare({...})`` targets and ``actions`` the
     ``publish("name", {...})`` ones, both with project defaults filled in. ``complete`` is False when a call's
     name, schema or database cannot be read without running the code (computed in a function, a loop over a
-    list that is not literal): the file then may declare tables that are not listed.
+    list that is not literal): the file then may declare tables that are not listed. A loop over a literal list
+    of tables, in this file or in a module it ``require``s (``modules``: exports by project path), is expanded.
     """
+
+    from . import js_literals
 
     declared: list[Target] = []
     actions: list[Target] = []
     complete = True
+    scope: dict[str, object] | None = None
+
+    def fields(config: str, name_args: list[str], kind: str, source: str):
+        if kind == "declare":
+            names = _js_field(config, source, "name") if config.startswith("{") else None
+        else:
+            first = _js_string(name_args[0])
+            names = [first] if first is not None else (_js_bindings(source, name_args[0]) if _JS_IDENT_RE.match(name_args[0]) else None)
+        schemas = _js_field(config, source, "schema") if config.startswith("{") else ""
+        databases = _js_field(config, source, "database") if config.startswith("{") else ""
+        if not names or schemas is None or databases is None:
+            return None
+        return [(name, db, schema) for name in names for db in (databases or [default.database]) for schema in (schemas or [default.schema])]
+
     for match in _JS_CALL_RE.finditer(text):
         kind = match.group(1)
         args = _split_top_level(_call_arguments(text, match.end() - 1))
         if kind == "declare":
-            config = args[0] if args else ""
-            names = _js_field(config, text, "name") if config.startswith("{") else None
+            config, name_args = (args[0] if args else ""), []
         else:
             if not args:
                 continue
-            config = args[1] if len(args) > 1 and args[1].startswith("{") else "{}"
-            first = _js_string(args[0])
-            names = [first] if first is not None else (_js_bindings(text, args[0]) if _JS_IDENT_RE.match(args[0]) else None)
-        schemas = _js_field(config, text, "schema") if config.startswith("{") else ""
-        databases = _js_field(config, text, "database") if config.startswith("{") else ""
-        if not names or schemas is None or databases is None:
-            complete = False
-            continue
-        for name in names:
-            for database in (databases or [default.database]):
-                for schema in (schemas or [default.schema]):
-                    (declared if kind == "declare" else actions).append(Target(database, schema, name))
+            config, name_args = (args[1] if len(args) > 1 and args[1].startswith("{") else "{}"), args
+        found = fields(config, name_args, kind, text)
+        if found is None:
+            # Maybe a loop over a literal list of tables, here or in a required module.
+            if scope is None:
+                scope = {**js_literals.local_constants(text), **js_literals.required_bindings(text, path, dict(modules or {}))}
+            found = []
+            looped = False
+            for pattern in _JS_LOOP_RES:
+                headers = [m for m in pattern.finditer(text, 0, match.start()) if re.search(rf"(?<![\w$.]){re.escape(m.group('var'))}\b", config + " ".join(name_args))]
+                if not headers:
+                    continue
+                header = headers[-1]
+                items = js_literals.source_items(header.group("src"), scope)
+                if items is js_literals._MISSING:
+                    break
+                looped = True
+                for item in items:
+                    one = js_literals.substitute(config, header.group("var"), item)
+                    one_args = [js_literals.substitute(arg, header.group("var"), item) for arg in name_args]
+                    if one is None or any(arg is None for arg in one_args):
+                        found = None
+                        break
+                    each = fields(one, one_args, kind, one)
+                    if each is None:
+                        found = None
+                        break
+                    found += each
+                break
+            if not looped or found is None:
+                complete = False
+                continue
+        for name, database, schema in found:
+            (declared if kind == "declare" else actions).append(Target(database, schema, name))
     return declared, actions, complete
 
 
@@ -594,14 +646,22 @@ def load_sqlx_project(
             f"could not be analyzed ({type(exc).__name__}: {exc}); asset was skipped"))
 
     incomplete_js = False
+    js_files: dict[str, str] = {}
     for path in find_assets(root, (".js",), unlistable):
         relative_parts = path.relative_to(root).parts
         if "node_modules" in relative_parts or ".git" in relative_parts:
             continue
         text, _reason = read_text_or_reason(path)
-        if text is None or not _JS_CALL_RE.search(text):
+        if text is not None:
+            js_files["/".join(relative_parts)] = text
+    from . import js_literals
+
+    modules = {name[:-3]: js_literals.module_exports(text) for name, text in js_files.items() if "module.exports" in text or "exports." in text}
+    for relative_js, text in js_files.items():
+        path = root / relative_js
+        if not _JS_CALL_RE.search(text):
             continue
-        declared, actions, complete = js_declared_targets(text, Target(database, dataset, ""))
+        declared, actions, complete = js_declared_targets(text, Target(database, dataset, ""), modules=modules, path=relative_js)
         for target in declared:
             known.setdefault(target.name, []).append(target)
             sources[target.key] = target
