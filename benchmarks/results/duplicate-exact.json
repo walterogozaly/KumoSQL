@@ -1,17 +1,17 @@
 {
   "suite": "Duplicate detection: exact copies",
   "order": 60,
-  "size": 2173,
-  "score": "100% recall, 0 wrong",
+  "size": 428,
+  "score": "100% recall, 0 wrong (fresh seed, 600 models)",
   "metric": "Pairs of models holding the same SELECT (renamed aliases, reordered conjuncts, flipped comparisons, IN/OR/BETWEEN spellings) found by canonical fingerprints; deceptively different SELECTs (>= for >, LEFT for INNER join, same text over a different CTE) must not be grouped.",
   "evidence": "proof",
   "correctness": "0 groups of different queries across 3,000 generated models; labels checked by running copies on 6 random DuckDB databases (0 equal copies disagreed)",
   "coverage": {},
-  "held_out": "Fresh seed (600 models, 428 copies, not used while fixing): 100% recall, 0 wrong",
+  "held_out": "Seed 1, 3,000 models (tuned on): 100% recall, 0 wrong; held-out families 288/288",
   "caveats": "Generated cases written by the same team as the rules (tuned on seed 1); the fingerprint is a sound normal form, not a prover, so equivalences it does not normalize stay unfound. Decoys the random data could not tell apart (195 of 1,723) are unscored.",
   "analysis": "Pair precision 100%, recall 100% (1,250 pairs, dev families); held-out families 288/288",
   "performance": "3,000 models: exact 18 s, near-duplicates 77 s, repeated work 8 s, refactor verification 64 s (600 models: 4 s, 6 s, 2 s, 14 s)",
   "date": "2026-10-02",
   "docs": "docs/duplicate-detection.md",
-  "command": "python tools/dup_bench.py --sizes 6,60,600,3000 --seed 1"
+  "command": "python tools/dup_bench.py --sizes 600 --seed 2"
 }
