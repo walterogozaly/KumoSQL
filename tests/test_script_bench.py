@@ -37,7 +37,7 @@ def test_generated_scripts_are_exact(seed):
         assert totals.get("wrong", 0) == 0 and totals.get("columns_wrong", 0) == 0, result["details"]
         assert totals.get("missed", 0) == 0, result["details"]
         assert totals["edges_correct"] == totals["edges_true"] == totals["edges_found"]
-    assert dev["totals"]["columns_exact"] == dev["totals"]["columns_total"] >= 240
+    assert dev["totals"]["columns_exact"] == dev["totals"]["columns_total"] >= 300
 
 
 def test_job_history_scripts_leave_no_temporary_tables():

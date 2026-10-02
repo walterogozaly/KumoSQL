@@ -597,6 +597,139 @@ def _query_of(statement: exp.Expression) -> exp.Expression | None:
     return None
 
 
+def _target_column(node: exp.Expression, names: set[str]) -> str | None:
+    """The target column a ``SET`` or ``INSERT`` writes: ``t.v`` and ``v`` are ``v``, ``t.a.b`` is ``a`` (the struct column)."""
+
+    parts = [part.name for part in getattr(node, "parts", ()) if getattr(part, "name", "")]
+    if not parts:
+        return None
+    if len(parts) > 1 and parts[0].casefold() in names:
+        parts = parts[1:]
+    return parts[0]
+
+
+def _values_of(node: exp.Expression | None) -> list[exp.Expression] | None:
+    if isinstance(node, exp.Tuple):
+        return list(node.expressions)
+    if isinstance(node, exp.Paren):
+        return [node.this]
+    return None if node is None or node is False else [node]
+
+
+def _qualified_with(node: exp.Expression, alias: str) -> exp.Expression:
+    """``node`` with its bare column names (outside any subquery) qualified by ``alias``: a clause that cannot see the target
+    reads its columns from the source, and a join to the target would make a bare name ambiguous."""
+
+    copy = node.copy()
+    for column in list(copy.find_all(exp.Column)):
+        if column.table or isinstance(column.this, exp.Star):
+            continue
+        if column.find_ancestor(exp.Select, exp.Subquery) is not None:
+            continue
+        column.set("table", exp.to_identifier(alias))
+    return copy
+
+
+def merge_query(merge: exp.Merge) -> exp.Query | None:
+    """What flows into the target's columns, as a query the lineage code can trace; ``None`` when the MERGE is not understood.
+
+    Each ``WHEN`` clause becomes one arm of a ``UNION ALL`` that selects the values it assigns (``SET c = e`` and
+    ``INSERT (c) VALUES (e)``; every column the clause does not touch is ``NULL``), from the ``USING`` source joined to the target
+    on the ``ON`` condition, filtered by the clause's own ``AND`` condition. The ``ON`` and condition columns are therefore
+    read, as are the columns of any subquery in them. ``INSERT ROW`` takes every column of the source; a ``DELETE`` clause
+    assigns nothing but still reads its condition. A clause of a shape that is not understood makes the whole thing ``None``:
+    columns are then unknown, never guessed.
+    """
+
+    try:
+        return _merge_query(merge)
+    except Exception:  # sqlglot raises many types; an unreadable MERGE is unknown, never a crash
+        return None
+
+
+def _merge_query(merge: exp.Merge) -> exp.Query | None:
+    target, using, on = merge.this, merge.args.get("using"), merge.args.get("on")
+    whens = merge.args.get("whens")
+    clauses = list(whens.expressions) if isinstance(whens, exp.Whens) else list(whens or [])
+    if not isinstance(target, exp.Table) or using is None or on is None or not clauses:
+        return None
+    names = {n.casefold() for n in (target.alias, target.name) if n}
+    referable = bool(using.alias) or isinstance(using, exp.Table)  # ``s.*`` needs something to name
+    arms: list[tuple[str, list[tuple[str, exp.Expression]], bool, bool, exp.Expression | None]] = []
+    columns: dict[str, str] = {}
+    for when in clauses:
+        then, matched, by_source, condition = when.args.get("then"), bool(when.args.get("matched")), bool(when.args.get("source")), when.args.get("condition")
+        if isinstance(then, exp.Update):
+            pairs = []
+            for assignment in then.expressions:
+                column = _target_column(assignment.this, names) if isinstance(assignment, exp.EQ) else None
+                if column is None:
+                    return None
+                pairs.append((column, assignment.expression))
+                columns.setdefault(column.casefold(), column)
+            arms.append(("set", pairs, matched, by_source, condition))
+        elif isinstance(then, exp.Insert):
+            if isinstance(then.this, exp.Var) and then.this.name.upper() == "ROW":
+                arms.append(("row", [], matched, by_source, condition))
+                continue
+            targets = _values_of(then.this) if then.this is not None else None
+            values = _values_of(then.expression)
+            if not targets or values is None or len(targets) != len(values):
+                return None  # ``INSERT VALUES (...)`` without column names: positions need the target's schema
+            pairs = []
+            for column_node, value in zip(targets, values):
+                column = _target_column(column_node, names)
+                if column is None:
+                    return None
+                pairs.append((column, value))
+                columns.setdefault(column.casefold(), column)
+            arms.append(("set", pairs, matched, by_source, condition))
+        elif isinstance(then, exp.Var) and then.name.upper() == "DELETE":
+            arms.append(("delete", [], matched, by_source, condition))
+        else:
+            return None
+    has_row = any(kind == "row" for kind, *_ in arms)
+    if not columns and not has_row:
+        return None  # only deletes: nothing is written, there are no columns to trace
+    ordered = list(columns.values())
+    selects: list[exp.Select] = []
+    source_name = using.alias or (using.name if isinstance(using, exp.Table) else "")
+    for kind, pairs, matched, by_source, condition in arms:
+        sees_target = matched or by_source
+        # a clause that cannot see the target names the source's columns, and a bare name must stay the source's
+        fix = (lambda node: node.copy()) if sees_target or not source_name else (lambda node, alias=source_name: _qualified_with(node, alias))
+        if kind == "row" or (kind == "delete" and not ordered):
+            star = exp.Column(this=exp.Star(), table=exp.to_identifier(using.alias)) if using.alias else (
+                exp.Column(this=exp.Star(), table=exp.to_identifier(using.name)) if isinstance(using, exp.Table) else exp.Star()
+            )
+            projections: list[exp.Expression] = [star]
+        elif not has_row:
+            given = {column.casefold(): fix(value) for column, value in pairs}
+            projections = [exp.alias_(given[c.casefold()] if c.casefold() in given else exp.Null(), c, quoted=False) for c in ordered]
+        else:  # INSERT ROW beside explicit columns: arms keep only their own columns and are lined up by name
+            projections = [exp.alias_(fix(value), column, quoted=False) for column, value in pairs] or [exp.alias_(exp.Null(), ordered[0], quoted=False)]
+        select = exp.Select(expressions=projections)
+        if by_source:
+            select = select.from_(target.copy())
+            select = select.join(using.copy(), on=on.copy(), join_type="left")
+        elif kind in {"row"} and not referable:
+            select = select.from_(using.copy())
+        else:
+            select = select.from_(using.copy())
+            select = select.join(target.copy(), on=on.copy(), join_type=None if matched else "left")
+        if condition is not None:
+            select = select.where(fix(condition))
+        selects.append(select)
+    query: exp.Query = selects[0] if len(selects) == 1 else exp.union(*selects, distinct=False)
+    if has_row and len(selects) > 1 and ordered:
+        for node in query.find_all(exp.SetOperation):
+            node.set("by_name", True)
+    clause = with_clause(merge)
+    if clause is not None:
+        set_with_clause(query, clause.copy())
+    return query
+
+
 def _table_ref(table: exp.Table) -> str:
     return ".".join(part for part in (table.catalog, table.db, table.name) if part)
 
@@ -1330,7 +1463,7 @@ class _Run:
             output = self.after_query(statement, tree, query, target, conditional, not into_temp)
             sources = dict(output.sources)
         else:
-            sources, _temps, _late = self.reads_of(tree, [target])
+            sources, temps, _late = self.reads_of(tree, [target])
             via = self.variable_sources(tree)
             for key, table in sources.items():
                 self.a.reads.setdefault(key, table)
@@ -1338,6 +1471,11 @@ class _Run:
                 if key not in sources:
                     self.a.variable_reads.setdefault(key, table)
             sources = {**sources, **via}
+            if kind == "merge" and not into_temp:
+                node = self.rewritten(tree, temps)
+                merged = merge_query(node) if isinstance(node, exp.Merge) else None
+                if merged is not None:
+                    self.a._outputs.append(_Output(statement, node, merged, tuple(temps), sources, target, conditional, not self.nested))
         if into_temp:
             insert_columns = None
             if kind == "insert" and isinstance(tree.this, exp.Schema):

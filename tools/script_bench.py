@@ -13,7 +13,8 @@ Every case is built from a small spec; the SQL and the expected answer come from
 * ``columns``     output column -> source columns, for the families that run through the pipeline
 
 Families: tricky splitting, temporary-table chains, redefined temporary tables, ``INSERT`` into schema-only temporary
-tables, DML on temporary tables, script variables, ``IF``/``CASE`` branches, loops, exception handlers,
+tables, DML on temporary tables, ``MERGE`` (random clauses over a table or subquery: target column lineage and the
+``ON``/condition columns counted as read), script variables, ``IF``/``CASE`` branches, loops, exception handlers,
 ``EXECUTE IMMEDIATE`` (literal and dynamic), procedures, ignored statements, and random mixes. A job-history family
 turns the same scripts into child jobs with anonymous temporary tables, and a public family runs the scripting
 examples in ``tests/fixtures/bq_syntax`` against hand-written expectations (``benchmarks/script_cases``).
@@ -61,6 +62,7 @@ DEV_FAMILIES = (
     "execute_dynamic",
     "procedures",
     "ignored",
+    "merge",
 )
 MIXED = ("mixed",)
 JOBS = ("jobs",)
@@ -78,6 +80,7 @@ class Case:
     phantoms: set[str] = field(default_factory=set)
     columns: dict[str, set[tuple[str, str]]] | None = None  # output column -> {(table, column)}
     columns_unknown: set[str] = field(default_factory=set)
+    must_read: set[tuple[str, str]] = field(default_factory=set)  # (table, column) the script reads in ON and conditions
     procedures: str = ""
 
 
@@ -353,6 +356,103 @@ def f_ignored(rng: random.Random) -> Case:
     return Case("ignored", "\n".join(lines), 7, {out: {a}}, {a}, 0, set(ph))
 
 
+def f_merge(rng: random.Random) -> Case:
+    """MERGE with random clauses over a table or a subquery. Expected: assigned target column -> source columns, plus the ON and
+    condition columns that must count as read."""
+
+    n = Namer(rng)
+    s1, s2, tgt = n.src(), n.src(), n.fresh("tgt")
+    wide = ["id", "amount", "x", "key", "price", "d", "k", "a", "y"]
+    if rng.random() < 0.4:
+        using = f"(SELECT id, SUM(amount) AS amount, MAX(x) AS x FROM {ref(s1)} GROUP BY id) AS s"
+        avail = {"id": {(s1, "id")}, "amount": {(s1, "amount")}, "x": {(s1, "x")}}
+        subquery = True
+    else:
+        using = f"{ref(s1)} AS s"
+        avail = {c: {(s1, c)} for c in wide}
+        subquery = False
+    names = list(avail)
+    tcols = ["v", "w", "z"]
+    reads = {s1}
+    must_read = {(tgt, "id"), *avail["id"]}
+    columns: dict[str, set[tuple[str, str]]] = {}
+    clauses: list[str] = []
+
+    def expression(sources: set[tuple[str, str]]) -> str:
+        shape = rng.choice(["col", "sum", "coalesce", "case", "func"])
+        picks = rng.sample(names, k=min(len(names), 2 if shape in {"sum", "coalesce", "case"} else 1))
+        for pick in picks:
+            sources |= avail[pick]
+        if shape == "col":
+            return f"s.{picks[0]}"
+        if shape == "sum":
+            return " + ".join(f"s.{p}" for p in picks)
+        if shape == "coalesce":
+            return f"COALESCE({', '.join('s.' + p for p in picks)}, 0)"
+        if shape == "case":
+            return f"CASE WHEN s.{picks[0]} > 0 THEN s.{picks[-1]} ELSE 0 END"
+        return f"ABS(s.{picks[0]})"
+
+    def condition(sees_target: bool = True) -> str:
+        kind = rng.choice(["source", "target", "exists", "none"])
+        if kind == "target" and not sees_target:
+            kind = "source"
+        if kind == "source":
+            pick = rng.choice(names)
+            must_read.update(avail[pick])
+            return f" AND s.{pick} > 1"
+        if kind == "target":
+            must_read.add((tgt, "x"))
+            return " AND t.x > 5"
+        if kind == "exists":
+            reads.add(s2)
+            must_read.update({(s2, "k"), *avail["id"]})
+            return f" AND EXISTS (SELECT 1 FROM {ref(s2)} AS e WHERE e.k = s.id)"
+        return ""
+
+    def assign(count: int) -> list[tuple[str, set[tuple[str, str]], str]]:
+        out = []
+        for column in rng.sample(tcols, k=count):
+            sources: set[tuple[str, str]] = set()
+            out.append((column, sources, expression(sources)))
+        return out
+
+    row_only = rng.random() < 0.2
+    statements = 0
+    if row_only:
+        clauses.append("WHEN NOT MATCHED THEN INSERT ROW")
+        for column, sources in avail.items():
+            columns[column] = set(sources)
+    else:
+        for _ in range(rng.randint(1, 3)):
+            kind = rng.choice(["update", "insert", "delete", "by_source"])
+            if kind == "update":
+                parts = assign(rng.randint(1, 2))
+                clauses.append(f"WHEN MATCHED{condition()} THEN UPDATE SET " + ", ".join(f"t.{c} = {e}" for c, _s, e in parts))
+            elif kind == "insert":
+                parts = assign(rng.randint(1, 3))
+                by = rng.choice(["", " BY TARGET"])
+                clauses.append(
+                    f"WHEN NOT MATCHED{by}{condition(False)} THEN INSERT ({', '.join(c for c, _s, _e in parts)}) VALUES ({', '.join(e for _c, _s, e in parts)})"
+                )
+            elif kind == "delete":
+                clauses.append(f"WHEN MATCHED{condition()} THEN DELETE")
+                parts = []
+            else:
+                must_read.add((tgt, "x"))
+                clauses.append("WHEN NOT MATCHED BY SOURCE AND t.x > 5 THEN DELETE")
+                parts = []
+            for column, sources, _e in parts:
+                columns.setdefault(column, set()).update(sources)
+        if not columns:
+            parts = assign(1)
+            clauses.append("WHEN MATCHED THEN UPDATE SET " + ", ".join(f"t.{c} = {e}" for c, _s, e in parts))
+            for column, sources, _e in parts:
+                columns.setdefault(column, set()).update(sources)
+    sql = f"MERGE {ref(tgt)} AS t USING {using} ON t.id = s.id " + " ".join(clauses)
+    return Case("merge", sql, 1, {tgt: set(reads)}, reads, 0, set(), columns, set(), must_read)
+
+
 GENERATORS = {
     "split": f_split,
     "temp_chain": f_temp_chain,
@@ -367,8 +467,9 @@ GENERATORS = {
     "execute_dynamic": f_execute_dynamic,
     "procedures": f_procedures,
     "ignored": f_ignored,
+    "merge": f_merge,
 }
-MIXABLE = [f for f in DEV_FAMILIES if f not in {"temp_chain", "temp_redefine", "temp_insert", "temp_dml"}]
+MIXABLE = [f for f in DEV_FAMILIES if f not in {"temp_chain", "temp_redefine", "temp_insert", "temp_dml", "merge"}]
 
 
 def f_mixed(rng: random.Random) -> Case:
@@ -469,6 +570,7 @@ def score_case(case: Case) -> dict:
     )
     if case.columns is not None and not result["wrong"] and not result["missed"]:
         result.update(columns_score(case))
+        result["missed"] += result.pop("columns_missed")
     return result
 
 
@@ -486,12 +588,18 @@ def columns_score(case: Case) -> dict:
                 exact += 1
             continue
         got = {(c.table.split(".")[-1], c.column) for c in lineage.get(ColumnRef(f"{P}.{D}.final", column), set())}
-        if row is None or row["status"] != "traced":
-            missed.append(f"{column} not traced")
+        if row is None or row["status"] != ("traced" if want else "constant"):
+            missed.append(f"{column} not {'traced' if want else 'constant'}")
         elif got != want:
             (wrong if got - want else missed).append(f"{column}: {sorted(got)} != {sorted(want)}")
         else:
             exact += 1
+    if case.must_read:
+        used = {(c.table.split(".")[-1], c.column) for c in pl.consumed_columns().get(f"{P}.{D}.final", ())}
+        lacking = sorted(case.must_read - used)
+        if lacking:
+            missed.append(f"not counted as read: {lacking}")
+            exact = min(exact, len(case.columns) - 1)
     return {"columns_total": len(case.columns), "columns_exact": exact, "columns_wrong": wrong, "columns_missed": missed}
 
 
@@ -646,7 +754,7 @@ def write_results(dev, mixed, jobs, public, cases, seed) -> None:
         "score": f"{exact}/{total} scripts exact, {wrong} wrong",
         "metric": (
             "Multi-statement BigQuery scripts split into statements, with what each statement reads and writes followed through "
-            "temporary tables, script variables, branches, loops, exception handlers, literal EXECUTE IMMEDIATE and procedures; "
+            "temporary tables, script variables, branches, loops, exception handlers, literal EXECUTE IMMEDIATE, procedures and MERGE (target columns from the USING source, ON and condition columns read); "
             "dynamic SQL and undefined procedures must be reported unknown, and names that only appear in comments, strings, "
             "ignored statements or procedures never called must not become edges."
         ),
@@ -670,10 +778,10 @@ def write_results(dev, mixed, jobs, public, cases, seed) -> None:
         "analysis": (
             f"Edges: {td['edges_correct'] + tm['edges_correct']}/{td['edges_true'] + tm['edges_true']} found, "
             f"{(td['edges_found'] - td['edges_correct']) + (tm['edges_found'] - tm['edges_correct'])} extra. "
-            f"Columns traced through temporary tables: {td.get('columns_exact', 0) + tm.get('columns_exact', 0)}/"
+            f"Output columns traced through temporary-table chains and MERGE clauses, with ON and condition columns counted as read: {td.get('columns_exact', 0) + tm.get('columns_exact', 0)}/"
             f"{td.get('columns_total', 0) + tm.get('columns_total', 0)} exact."
         ),
-        "performance": f"{td['cases'] + tm['cases']} generated scripts in {td['seconds'] + tm['seconds']} s",
+        "performance": f"{td['cases'] + tm['cases']} generated scripts in {round(td['seconds'] + tm['seconds'], 1)} s",
     }
     path = ROOT / "benchmarks" / "results" / "script-splitting.json"
     path.write_text(json.dumps(out, indent=2) + "\n")

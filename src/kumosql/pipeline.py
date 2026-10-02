@@ -36,7 +36,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
-from .scripts import ScriptAnalysis, analyse_script, collect_procedures
+from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
@@ -820,6 +820,8 @@ def _parse_script(
             if isinstance(query, exp.Query):
                 _adopt_statement_ctes(statement, query)
                 _apply_target_columns(statement, query)
+        elif isinstance(statement, exp.Merge):
+            query = analysis.final_query  # the values the MERGE writes into the target's columns
         elif isinstance(statement, exp.Query):
             query = statement
         if isinstance(query, exp.Query):
@@ -1109,6 +1111,7 @@ class _Analysis:
         written: dict[str, set[str]] = {}
         operation_readers: set[str] = set()
         script_opaque: dict[str, frozenset[str]] = {}
+        partial_outputs: set[str] = set()
         script_extras: dict[str, tuple[exp.Table, ...]] = {}
         reading = Progress("read models", len(pipeline.models))
         for key, model in pipeline.models.items():
@@ -1129,6 +1132,15 @@ class _Analysis:
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
             elif model.sql.strip():
                 analysis = analyse_script(model.sql, procedures=procedures)
+                final_target = analysis.final_target
+                if (
+                    isinstance(analysis.final, exp.Merge)
+                    and analysis.final_query is not None
+                    and final_target is not None
+                    and pipeline.resolve(final_target) == key
+                ):
+                    # An operation that merges into its own table writes those columns: trace them like a query's.
+                    query = analysis.with_temp_ctes(analysis.final_query)
             if analysis is not None:
                 considered = max(analysis.considered, 1) if model.is_query else analysis.considered
                 matched = min(analysis.traced, considered) if query is not None else 0
@@ -1136,7 +1148,16 @@ class _Analysis:
                     statements_total += considered
                     statements_matched += matched
                     statements_by_model[key] = (considered, matched)
-                    if query is None and model.sql.strip():
+                    if query is None and model.sql.strip() and analysis.counts()[KEPT] and not analysis.unknown:
+                        diagnostics.append(
+                            PipelineDiagnostic(
+                                key,
+                                "skipped_statements",
+                                f"script changes tables ({analysis.counts()[KEPT]} statements) but has no query to trace columns "
+                                "through, so column reads by its statements are missing; the tables they read are in the graph",
+                            )
+                        )
+                    elif query is None and model.sql.strip():
                         failure = _parse_failure(model.sql)
                         diagnostics.append(
                             PipelineDiagnostic(key, "parse_error", failure)
@@ -1168,6 +1189,8 @@ class _Analysis:
                 if query is not None:
                     parsed[key] = query
                     script_opaque[key] = frozenset(analysis.opaque_temps)
+                    if isinstance(analysis.final, exp.Merge):
+                        partial_outputs.add(key)  # only the columns the MERGE writes are known, not the whole table
                 tables, extras = _script_tables(query, analysis)
                 if extras:
                     script_extras[key] = tuple(extras)
@@ -1200,7 +1223,11 @@ class _Analysis:
                             f"pre/post operations: {len(extra.unknown)} of {extra.considered} statements could not be read",
                         )
                     )
-            understood = analysis is not None and not analysis.unknown and not model.is_query
+            understood = (
+                analysis is not None
+                and not analysis.unknown
+                and (not model.is_query or (key not in parsed and analysis.counts()[KEPT] > 0))
+            )
             if key not in parsed and model.sql.strip() and not model.declared_dependencies and not understood:
                 blind_models.append(key)
             upstream[key] = parents
@@ -1333,7 +1360,7 @@ class _Analysis:
 
             names = tuple(qualified.named_selects)
             outputs[key] = names
-            if names and "*" not in names:
+            if names and "*" not in names and key not in partial_outputs:
                 schema[key] = {name: "UNKNOWN" for name in names}
                 _add_table(sqlglot_schema, key, schema[key])
                 for spelled in sorted(spellings.get(key, ())):
