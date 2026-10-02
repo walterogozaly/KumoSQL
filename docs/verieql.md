@@ -65,7 +65,7 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Literature | 64 | 15 | 25 | 20 | 4 | 0 |
+| Literature | 64 | 18 | 25 | 17 | 4 | 0 |
 | Calcite-397 | 397 | 255 | 29 | 104 | 9 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,392 | 5,652 | 12,878 | 1,072 | 0 |
 

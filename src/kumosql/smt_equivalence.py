@@ -1085,6 +1085,7 @@ class _Compiler:
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
         canonical = _canonical_aliases(body, self.schema)
+        position = {i: i for i in range(len(names))}
         root = canonical
         while isinstance(root, exp.Subquery):
             root = root.this
@@ -1094,17 +1095,22 @@ class _Compiler:
             in_select = {id(c) for item in root.expressions for c in item.find_all(exp.Column)}
             outside = {c.name.lower() for c in root.find_all(exp.Column) if not c.table and id(c) not in in_select}
             if not outside & set(names):
-                root.set(
-                    "expressions",
-                    [exp.alias_((i.this if isinstance(i, exp.Alias) else i).copy(), f"c{n}") for n, i in enumerate(root.expressions)],
-                )
+                # A windowed relation (matched by its text alone) lists its outputs by their own text, so a
+                # permutation of the select list is the same relation, each name reading the column it
+                # computes. Others keep their order: two of them proven equal are matched by position.
+                values = [(i.this if isinstance(i, exp.Alias) else i) for i in root.expressions]
+                order = list(range(len(values)))
+                if any(root.find_all(exp.Window)):
+                    order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
+                position = {old: new for new, old in enumerate(order)}
+                root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
         key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
         self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
-        return _Source(cols={name: occ.col(f"c{i}") for i, name in enumerate(names)}, order=list(names))
+        return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
 
     def _expand_ctes(self, body, ctes):
         local = dict(ctes)
