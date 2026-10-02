@@ -12,7 +12,7 @@
   },
   "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,072 pairs are not run (DuckDB rejects them, mostly a table name the schema spells differently and GROUP BY positions that name aggregates). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. In this row 'unknown' counts pairs that agree on every database tried and 'unsupported' counts pairs DuckDB or the parser rejects. Not yet rerun with the HAVING-only wider search (on the 1,000-pair sample it refutes one more pair); the next full run will include it.",
   "size": 23994,
-  "docs": "docs/verieql.md",
+  "docs": "docs/evals/verieql.md",
   "command": "python tools/verieql_bench.py leetcode --jobs 4 --audit",
   "date": "2026-10-02",
   "held_out": "Search settings tuned on every 24th pair (1,000); the other 22,994 pairs are unseen. 3,233 of the 3,586 pairs VeriEQL refutes are refuted here too (90%)."

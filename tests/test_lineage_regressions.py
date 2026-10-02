@@ -1,4 +1,4 @@
-"""Regressions found by the lineage, change-impact and Dataform-preservation suites (docs/lineage-bench.md)."""
+"""Regressions found by the lineage, change-impact and Dataform-preservation suites (docs/evals/lineage-bench.md)."""
 
 from kumosql import apply_rule, load_sqlx_project
 from kumosql.impact import assess_change

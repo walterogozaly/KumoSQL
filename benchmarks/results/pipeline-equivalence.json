@@ -11,7 +11,7 @@
     "unknown": 0
   },
   "held_out": "3/8 proved, 10/10 refuted, 0 wrong (union_split and latest_per_key families, run once at baseline)",
-  "docs": "docs/pipeline-equivalence.md",
+  "docs": "docs/evals/pipeline-equivalence.md",
   "command": "python tools/pipeline_bench.py",
   "date": "2026-10-02",
   "caveats": "Generated cases written for this eval, none adapted from a public suite yet. Source columns are declared; without them 32/50 are proved."

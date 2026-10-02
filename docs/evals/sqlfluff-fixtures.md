@@ -13,12 +13,12 @@ Then KumoSQL's own `format_sql` and structural rewrite rules are scored against 
 | --- | --- |
 | Source | `test/fixtures/rules/std_rule_cases/*.yml` in [sqlfluff](https://github.com/sqlfluff/sqlfluff) |
 | Version | 4.3.0, commit `2e2275713d078f29529250f7ff883fbf66f83e0d` (2026-09-29) |
-| Licence | MIT, Copyright (c) 2018-2026 Alan Cruickshank and contributors: [LICENSE.md](../benchmarks/sqlfluff_rule_cases/LICENSE.md) |
-| Stored as | [`benchmarks/sqlfluff_rule_cases/rule-fixtures.json`](../benchmarks/sqlfluff_rule_cases/rule-fixtures.json), every case with a `fix_str`: 850 of the 2,527 cases in 93 files (the rest only pass or fail without a fix). `python tools/sqlfluff_fixtures_bench.py extract <checkout>` rebuilds it from a checkout of the pinned commit. |
+| Licence | MIT, Copyright (c) 2018-2026 Alan Cruickshank and contributors: [LICENSE.md](../../benchmarks/sqlfluff_rule_cases/LICENSE.md) |
+| Stored as | [`benchmarks/sqlfluff_rule_cases/rule-fixtures.json`](../../benchmarks/sqlfluff_rule_cases/rule-fixtures.json), every case with a `fix_str`: 850 of the 2,527 cases in 93 files (the rest only pass or fail without a fix). `python tools/sqlfluff_fixtures_bench.py extract <checkout>` rebuilds it from a checkout of the pinned commit. |
 
 Credit for the cases belongs to the sqlfluff authors; KumoSQL only reads them.
 
-**Overlap with other evals.** None of the 850 flagged queries occurs in this repository's checked-in files, and the other evals score equivalence or rewriting of workload queries (Calcite, VeriEQL, Singh and Bedathur and so on), not lint fixes. What does overlap is function: KumoSQL's `format_sql` rule is sqlfluff behind a verified wrapper, `lift_subqueries` is ST05's fix, `inline_single_use_ctes` its reverse, and sqlfluff's complexity score drives the [Refactor](refactor.md) page. The structural-rule overlap is measured below.
+**Overlap with other evals.** None of the 850 flagged queries occurs in this repository's checked-in files, and the other evals score equivalence or rewriting of workload queries (Calcite, VeriEQL, Singh and Bedathur and so on), not lint fixes. What does overlap is function: KumoSQL's `format_sql` rule is sqlfluff behind a verified wrapper, `lift_subqueries` is ST05's fix, `inline_single_use_ctes` its reverse, and sqlfluff's complexity score drives the [Refactor](../refactor.md) page. The structural-rule overlap is measured below.
 
 ## What is scored
 
@@ -137,7 +137,7 @@ The one flagged layout-only pair is CP05 `test_fail_postgres_create_type`: `CREA
 
 `python tools/sqlfluff_fixtures_bench.py kumosql` (about 20 seconds).
 
-**`format_sql`.** KumoSQL formats BigQuery with sqlfluff through [its formatting wrapper](ui.md): BigQuery dialect, repeat until stable, quoted names restored, and every result verified. Each layout fixture that its preferences can express (ANSI or BigQuery, no Jinja, a configuration made of line length, indentation, comma position or a capitalisation policy) is run with only that fixture's rule switched on.
+**`format_sql`.** KumoSQL formats BigQuery with sqlfluff through [its formatting wrapper](../ui.md): BigQuery dialect, repeat until stable, quoted names restored, and every result verified. Each layout fixture that its preferences can express (ANSI or BigQuery, no Jinja, a configuration made of line length, indentation, comma position or a capitalisation policy) is run with only that fixture's rule switched on.
 
 | | Fixtures |
 | --- | ---: |

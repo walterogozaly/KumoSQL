@@ -2,7 +2,7 @@
 
 A stage may be ``pass`` or ``n/a``. ``unsupported`` is allowed only for gaps listed in
 ``known_gaps.json`` (an xfail, with the reason and who owns it), so a new gap fails the
-suite until it is fixed or recorded. See docs/bigquery-syntax-coverage.md.
+suite until it is fixed or recorded. See docs/evals/bigquery-syntax-coverage.md.
 """
 
 import importlib.util

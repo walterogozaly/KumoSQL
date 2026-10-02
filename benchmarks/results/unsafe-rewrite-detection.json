@@ -11,7 +11,7 @@
     "refuted": 340
   },
   "held_out": "held-out templates: 80/80 correct rewrites proved, 60/60 unsafe ones refuted (all by the executed search), 0 false proofs",
-  "docs": "docs/fuzzing.md#suites",
+  "docs": "docs/evals/fuzzing.md#suites",
   "command": "python tools/unsafe_fuzz.py unsafe --count 20 --seed 1",
   "date": "2026-10-02",
   "caveats": "Before this change the prover alone refuted 40/339 and proved 200/221; 300 of the 340 refutations now come from executed databases, not from the solver's model (the report counts them as refuted_by_executed_search). The 20 DISTINCT-join-versus-IN pairs are proved by reading a filtering inner join under DISTINCT as EXISTS. Template-generated, 28 templates."

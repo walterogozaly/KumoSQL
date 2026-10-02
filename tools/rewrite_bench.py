@@ -19,7 +19,7 @@ never read by the method.
     python tools/rewrite_bench.py --bench ../benchmark --method kumosql --no-exec  # proofs only
 
 Execution needs PostgreSQL with the TPC-DS and DSB data loaded (see
-docs/rewrite-benchmarks.md); ``--db tpcds_sf10=tpcds --db dsb=dsb`` maps the
+docs/evals/rewrite-benchmarks.md); ``--db tpcds_sf10=tpcds --db dsb=dsb`` maps the
 case databases to local database names. Timings are the median of five runs
 after one warm-up, as in the benchmark's released reports; the two statements
 alternate so that drift in the machine's speed affects both alike.
