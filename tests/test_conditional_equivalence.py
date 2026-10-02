@@ -93,7 +93,7 @@ def test_pairs_no_condition_settles_stay_unconditional(left, right):
 def test_conditions_that_make_both_queries_constant_are_not_offered():
     # with (id) unique a row cannot differ from itself, so the join returns nothing: the pair is proven, but for the wrong reason
     left = "SELECT a.id FROM u AS a JOIN u AS b ON a.id = b.id WHERE a.name <> b.name"
-    right = "SELECT id FROM u WHERE FALSE"
+    right = "SELECT a.id FROM u AS a JOIN u AS b ON a.id = b.id WHERE a.name > b.name"
     unique = ce.with_conditions(None, [ce.Condition("unique", "u", ("id",))])
     assert prove_equivalent_algebraic(left, right, constraints=unique).proven
     assert ce.data_independent(left, right, unique) is True

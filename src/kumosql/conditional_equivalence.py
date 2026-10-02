@@ -587,11 +587,19 @@ def add_conditions(
         if not chosen:
             return result
         merged = with_conditions(constraints, chosen)
-        constant = (
-            not jointly_satisfiable(chosen, constraints)
-            or always_empty(left_sql, prove, merged)
-            or data_independent(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect)
-        )
+
+        def vacuous() -> bool:
+            if not (always_empty(left_sql, prove, merged) or data_independent(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect)):
+                return False
+            # A query written to be empty or constant (WHERE 1 = 0, SELECT 0) is what the other side is meant to equal.
+            declared = {k.lower(): v for k, v in (constraints or {}).items()}
+            return not (
+                always_empty(left_sql, prove, declared) or always_empty(right_sql, prove, declared)
+                or data_independent(left_sql, left_sql, declared, schema=schema, types=types, dialect=dialect)
+                or data_independent(right_sql, right_sql, declared, schema=schema, types=types, dialect=dialect)
+            )
+
+        constant = not jointly_satisfiable(chosen, constraints) or vacuous()
         if not constant:
             needed = chosen
             break

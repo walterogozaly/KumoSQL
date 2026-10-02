@@ -94,6 +94,40 @@ CASES = [
         breaks=[{"t": [(1, 7)], "u": [(7,), (7,)]}],  # the join repeats the row once per match, IN does not
         holds=[{"t": [(1, 7), (2, None), (3, 8)], "u": [(7,), (None,), (None,)]}],  # NULL keys may repeat
     ),
+    # ---- NULL-sensitive expressions over t(id, x): the one condition is NOT NULL x ----
+    Case("count-column-against-count-star", "SELECT COUNT(x) AS n FROM t", "SELECT COUNT(*) AS n FROM t", {"t": ["id", "x"]},
+         {"t.x is NOT NULL"}, breaks=[{"t": [(1, None)]}], holds=[{"t": []}, {"t": [(1, 5), (2, 5)]}]),
+    Case("is-null-against-an-empty-query", "SELECT id FROM t WHERE x IS NULL", "SELECT id FROM t WHERE 1 = 0", {"t": ["id", "x"]},
+         {"t.x is NOT NULL"}, breaks=[{"t": [(1, None)]}], holds=[{"t": [(1, 5)]}],
+         note="the right side is empty by design, so the conditions making the left empty are the point, not a vacuous proof"),
+    Case("coalesce-of-a-non-null-column", "SELECT COALESCE(x, 0) AS x FROM t", "SELECT x FROM t", {"t": ["id", "x"]},
+         {"t.x is NOT NULL"}, breaks=[{"t": [(1, None)]}], holds=[{"t": [(1, 5), (2, 0)]}]),
+    Case("or-is-null-guard", "SELECT id FROM t WHERE x <> 0 OR x IS NULL", "SELECT id FROM t WHERE x <> 0", {"t": ["id", "x"]},
+         {"t.x is NOT NULL"}, breaks=[{"t": [(1, None)]}], holds=[{"t": [(1, 5), (2, 0)]}]),
+    Case("case-on-null", "SELECT CASE WHEN x IS NULL THEN -1 ELSE x END AS x FROM t", "SELECT x FROM t", {"t": ["id", "x"]},
+         {"t.x is NOT NULL"}, breaks=[{"t": [(1, None)]}], holds=[{"t": [(1, 5), (2, -3)]}]),
+    # ---- keys over t(k, v, w): a primary key is a unique, non-NULL column ----
+    Case("group-by-a-key", "SELECT k FROM t", "SELECT k FROM t GROUP BY k", {"t": ["k", "v", "w"]},
+         {"(k) is unique in t", "t.k is NOT NULL"}, breaks=[{"t": [(1, 1, 1), (1, 2, 2)]}, {"t": [(None, 1, 1), (None, 2, 2)]}],
+         holds=[{"t": [(1, 1, 1), (2, 1, 1)]}]),
+    Case("count-per-key-is-one", "SELECT k, COUNT(*) AS n FROM t GROUP BY k", "SELECT k, 1 AS n FROM t", {"t": ["k", "v", "w"]},
+         {"(k) is unique in t", "t.k is NOT NULL"}, breaks=[{"t": [(1, 1, 1), (1, 2, 2)]}, {"t": [(None, 1, 1), (None, 2, 2)]}],
+         holds=[{"t": [(1, 1, 1), (2, 1, 1)]}]),
+    Case("sum-per-key-is-the-value", "SELECT k, SUM(w) AS s FROM t GROUP BY k", "SELECT k, w AS s FROM t", {"t": ["k", "v", "w"]},
+         {"(k) is unique in t", "t.k is NOT NULL"}, breaks=[{"t": [(1, 1, 1), (1, 2, 2)]}, {"t": [(None, 1, 1), (None, 2, 2)]}],
+         holds=[{"t": [(1, 1, 5), (2, 1, None)]}]),
+    Case("distinct-on-two-columns", "SELECT k, v FROM t", "SELECT DISTINCT k, v FROM t", {"t": ["k", "v", "w"]},
+         {"(k, v) is unique in t", "t.k is NOT NULL", "t.v is NOT NULL"},
+         breaks=[{"t": [(1, 1, 1), (1, 1, 2)]}, {"t": [(1, None, 1), (1, None, 2)]}], holds=[{"t": [(1, 1, 1), (1, 2, 1), (2, 1, 1)]}]),
+    # ---- NOT IN against NOT EXISTS ----
+    Case("not-in-against-not-exists", "SELECT a.id FROM a WHERE a.x NOT IN (SELECT y FROM b)",
+         "SELECT a.id FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.y = a.x)", {"a": ["id", "x"], "b": ["y"]},
+         {"a.x is NOT NULL", "b.y is NOT NULL"}, breaks=[{"a": [(1, 1)], "b": [(None,)]}, {"a": [(1, None)], "b": [(2,)]}],
+         holds=[{"a": [(1, 1), (2, 2)], "b": [(2,), (3,)]}]),
+    Case("left-join-filtered-on-the-right-column", "SELECT l.id FROM l LEFT JOIN r ON l.k = r.k WHERE r.flag IS NOT NULL",
+         "SELECT l.id FROM l JOIN r ON l.k = r.k", {"l": ["id", "k"], "r": ["k", "flag"]},
+         {"r.flag is NOT NULL"}, breaks=[{"l": [(1, 1)], "r": [(1, None)]}], holds=[{"l": [(1, 1), (2, 3)], "r": [(1, 7), (1, 8)]}],
+         note="no key is needed: both sides repeat a left row once per match"),
 ]
 
 
@@ -242,7 +276,7 @@ def test_a_set_no_database_satisfies_is_refused():
 
 def test_a_set_that_empties_the_query_is_passed_over():
     left = "SELECT a.id FROM u AS a JOIN u AS b ON a.id = b.id WHERE a.name <> b.name"
-    right = "SELECT id FROM u WHERE FALSE"
+    right = "SELECT a.id FROM u AS a JOIN u AS b ON a.id = b.id WHERE a.name > b.name"
     unique = ce.with_conditions(None, [ce.Condition("unique", "u", ("id",))])
     assert prove_equivalent_algebraic(left, right, constraints=unique).proven  # true, but only because nothing is left
     prove = lambda constraints, pair=None: prove_equivalent_algebraic(*(pair or (left, right)), constraints=constraints, compare_names=False)  # noqa: E731
@@ -251,3 +285,22 @@ def test_a_set_that_empties_the_query_is_passed_over():
     ordinary = "SELECT o.id FROM orders o WHERE o.id NOT IN (SELECT customer_id FROM customers)"
     facts = ce.with_conditions(None, [ce.Condition("not_null", "orders", ("id",)), ce.Condition("not_null", "customers", ("customer_id",))])
     assert not ce.always_empty(ordinary, lambda constraints, pair=None: prove_equivalent_algebraic(*(pair or (ordinary, ordinary)), constraints=constraints, compare_names=False), facts)
+
+
+DECOYS = [
+    # NOT NULL x is not enough: an empty t gives NULL on the left and 0 on the right, and "t is not empty" is not a condition the provers can state
+    ("SELECT SUM(CASE WHEN x IS NULL THEN 0 ELSE 1 END) AS n FROM t", "SELECT COUNT(*) AS n FROM t", {"t": ["id", "x"]}, {"t": []}),
+    # these need a CHECK on the values (x > 0, x < 10): outside the catalog, so the answer stays what it was
+    ("SELECT id FROM t WHERE x >= 0", "SELECT id FROM t WHERE x > 0", {"t": ["id", "x"]}, {"t": [(1, 0)]}),
+    ("SELECT id FROM t WHERE x < 10", "SELECT id FROM t WHERE x <= 10", {"t": ["id", "x"]}, {"t": [(1, 10)]}),
+    ("SELECT id FROM t WHERE x BETWEEN 1 AND 10", "SELECT id FROM t WHERE x >= 1", {"t": ["id", "x"]}, {"t": [(1, 11)]}),
+]
+
+
+@pytest.mark.parametrize("left,right,columns,database", DECOYS)
+def test_decoys_that_need_conditions_outside_the_catalog_are_never_called_conditional(left, right, columns, database):
+    db = _db(columns, database)
+    assert _bag(db, left) != _bag(db, right)  # the known answer: they differ on this database
+    candidates = ce.candidate_conditions(left, right)
+    assert not prove_equivalent_algebraic(left, right, constraints=ce.with_conditions(None, candidates)).proven
+    assert prove_equivalent_algebraic(left, right, conditional=True).status is not SmtStatus.PROVEN_CONDITIONALLY
