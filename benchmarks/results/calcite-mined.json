@@ -2,19 +2,19 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "285/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 216 unknown. 61 of the 168 pairs new to every other corpus are proved.",
+  "score": "294/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 207 unknown. 63 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
-  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. While building the ANY/ALL rules, 7 held-out pairs were read (testJoinConditionOrExpansionRuleAnti, testNullSelect2, testSomeWithGreaterThanNoRowSubQuery, testSomeWithLessThanOrEqualNoRowSubQuery, testTopDownGeneralDecorrelateForFilterSome, testTopDownGeneralDecorrelateForSubqueryWithJoin, testNotInNullableKey); 2 of them are proved, so 59 of the 61 held-out proofs are clean.",
+  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. While building the ANY/ALL rules, 7 held-out pairs were read (testJoinConditionOrExpansionRuleAnti, testNullSelect2, testSomeWithGreaterThanNoRowSubQuery, testSomeWithLessThanOrEqualNoRowSubQuery, testTopDownGeneralDecorrelateForFilterSome, testTopDownGeneralDecorrelateForSubqueryWithJoin, testNotInNullableKey); 2 of them are proved, so 61 of the 63 held-out proofs are clean.",
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 60 random DuckDB databases, half skewed towards the literals",
   "coverage": {
-    "proven": 285,
+    "proven": 294,
     "refuted": 1,
-    "unknown": 216,
+    "unknown": 207,
     "unsupported": 332
   },
-  "held_out": "61/168 on pairs new to every other corpus; 7 held-out pairs were read while building the ANY/ALL rules (quantified_rules.py), 2 of which are among the newly proved"
+  "held_out": "63/168 on pairs new to every other corpus; 7 held-out pairs were read while building the ANY/ALL rules (quantified_rules.py), 2 of which are among the proved"
 }
