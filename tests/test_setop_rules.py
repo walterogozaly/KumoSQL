@@ -61,6 +61,8 @@ EQUIVALENT = [
      "SELECT DISTINCT t.a AS a, t.b AS b FROM t WHERE t.c = 1 AND t.b = 2"),
     ("SELECT t.a AS a, t.b AS b FROM t WHERE t.c = 1 EXCEPT SELECT x.a AS a, x.b AS b FROM t AS x WHERE x.b = 2",
      "SELECT DISTINCT t.a AS a, t.b AS b FROM t WHERE t.c = 1 AND NOT COALESCE(t.b = 2, FALSE)"),
+    # at the top level an unqualified name is the table's own column, so both spellings meet
+    ("SELECT * FROM t WHERE a < 3 UNION SELECT * FROM t WHERE a > 1", "SELECT t.a, t.b, t.c FROM t WHERE t.a > 1 UNION SELECT t.a, t.b, t.c FROM t WHERE t.a < 3"),
 ]
 
 DIFFERENT = [

@@ -344,18 +344,20 @@ def _filtered_projection(node: exp.Expression):
     alias = table.alias_or_name.lower()
     if table.args.get("alias") is not None and table.args["alias"].args.get("columns"):
         return None
+    # Inside another query an unqualified name could be an outer reference; at the top it is the table's.
+    owners = {alias} if select.find_ancestor(exp.Select) is not None else {alias, ""}
     names = []
     for item in select.expressions:
         column = item.this if isinstance(item, exp.Alias) else item
-        if not isinstance(column, exp.Column) or isinstance(column.this, exp.Star) or column.table.lower() != alias:
-            return None  # an unqualified name could be an outer reference
+        if not isinstance(column, exp.Column) or isinstance(column.this, exp.Star) or column.table.lower() not in owners:
+            return None
         names.append(column.name.lower())
     where = select.args.get("where")
     condition = where.this if where is not None else None
     if condition is not None:
         if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select, exp.Window, exp.AggFunc, exp.Star)) for n in condition.walk()) or not _deterministic(condition):
             return None
-        if any(c.table.lower() != alias for c in condition.find_all(exp.Column)):
+        if any(c.table.lower() not in owners for c in condition.find_all(exp.Column)):
             return None
     key = (".".join(p.name.lower() for p in table.parts), tuple(names))
     return select, alias, key, condition
