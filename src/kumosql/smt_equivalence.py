@@ -155,7 +155,17 @@ _SUPPORTED_AGGREGATES = {
     exp.CountIf: "COUNTIF",
     exp.LogicalAnd: "LOGICAL_AND",
     exp.LogicalOr: "LOGICAL_OR",
+    # Bitwise aggregates are left uninterpreted: their value over an empty group differs by engine
+    # (NULL in BigQuery, all ones or zero in MySQL), so only equal calls are known to agree.
+    exp.BitwiseAndAgg: "BIT_AND",
+    exp.BitwiseOrAgg: "BIT_OR",
+    exp.BitwiseXorAgg: "BIT_XOR",
 }
+# Aggregates whose value depends only on the set of non-NULL values, not on how often each occurs.
+_DUPLICATE_INSENSITIVE = ("MIN", "MAX", "LOGICAL_AND", "LOGICAL_OR", "BIT_AND", "BIT_OR")
+# Aggregates that are NULL exactly when no argument value is non-NULL (BIT_AND/BIT_OR/BIT_XOR are not:
+# MySQL returns a number for an empty group).
+_NULL_WHEN_EMPTY = ("SUM", "MIN", "MAX", "LOGICAL_AND", "LOGICAL_OR")
 _DATEISH = re.compile(r"^\s*[+-]?\d{1,5}-\d{1,2}-\d{1,2}")
 _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CANONICAL_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
@@ -545,6 +555,43 @@ def _parse_number(text: str) -> Fraction:
     if len(dec.normalize().as_tuple().digits) > 15:
         raise Unsupported(f"numeric literal {text} has more than 15 significant digits")
     return value
+
+
+_INTEGER_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.Type.SMALLINT, exp.DataType.Type.TINYINT}
+
+# Scalar functions that return NULL whenever an argument is NULL, in every dialect.
+_STRICT_FUNCTIONS = tuple(
+    getattr(exp, name) for name in ("Round", "Abs", "Floor", "Ceil", "Sqrt", "Ln", "Exp", "Upper", "Lower") if hasattr(exp, name)
+)
+
+# Dialects whose decimal literals are exact DECIMAL/NUMERIC values (BigQuery's are FLOAT64).
+_EXACT_DECIMAL_LITERALS = {"mysql", "postgres", "duckdb"}
+
+
+def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
+    """The value of ``+``, ``-``, ``*`` and parentheses over numeric literals, when the engine computes it
+    exactly: integers anywhere, decimals only where decimal literals are exact."""
+
+    if isinstance(node, exp.Paren):
+        return _literal_arithmetic(node.this, dialect)
+    if isinstance(node, exp.Literal) and not node.is_string:
+        try:
+            value = _parse_number(node.this)
+        except Unsupported:
+            return None
+        if value.denominator != 1 and dialect not in _EXACT_DECIMAL_LITERALS:
+            return None
+        return value
+    if isinstance(node, exp.Neg):
+        value = _literal_arithmetic(node.this, dialect)
+        return -value if value is not None else None
+    if isinstance(node, (exp.Add, exp.Sub, exp.Mul)):
+        a, b = _literal_arithmetic(node.this, dialect), _literal_arithmetic(node.expression, dialect)
+        if a is None or b is None:
+            return None
+        value = a + b if isinstance(node, exp.Add) else a - b if isinstance(node, exp.Sub) else a * b
+        return value if abs(value) <= 2**53 else None
+    return None
 
 
 class _AggCtx:
@@ -1368,6 +1415,19 @@ class _Compiler:
             a = self._val(e.this, env, agg, aliases)
             eq = self._compare("=", a, self._val(e.expression, env, agg, aliases))
             return _Val(z3.Or(a.null, eq.t), a.val)
+        if isinstance(e, (exp.Add, exp.Sub, exp.Mul)) and not self.exact:
+            folded = _literal_arithmetic(e, self.dialect)
+            if folded is not None:
+                return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{folded.numerator}/{folded.denominator}")))
+            # x * 1 is x for every numeric type (arithmetic operands are numbers, as in exact mode).
+            for side, other in ((e.this, e.expression), (e.expression, e.this)):
+                if isinstance(e, exp.Mul) and _literal_arithmetic(side, self.dialect) == 1:
+                    value = self._val(other, env, agg, aliases)
+                    self._numeric(value)
+                    return value
+        if isinstance(e, exp.Round) and isinstance(e.args.get("decimals"), exp.Literal) and e.args["decimals"].this == "0" and not e.args.get("truncate"):
+            # ROUND(x, 0) is ROUND(x).
+            return self._val(exp.Round(this=e.this), env, agg, aliases)
         if (
             isinstance(e, (exp.Add, exp.Sub, exp.Mul))
             and self.exact
@@ -1408,6 +1468,13 @@ class _Compiler:
             return _Val(nulls, val_fn(*args))
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
+            inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+            if type(inner) is exp.Cast and inner.args["to"] == to:
+                # A cast to the type a value already has is the value: CAST(CAST(x AS T) AS T) is CAST(x AS T).
+                return self._val(inner, env, agg, aliases)
+            if isinstance(inner, exp.IntDiv) and to.this in _INTEGER_TYPES:
+                # Integer division already gives an integer (overflow is not modeled).
+                return self._val(inner, env, agg, aliases)
             if (
                 isinstance(e.this, exp.Literal)
                 and e.this.is_string
@@ -1495,6 +1562,9 @@ class _Compiler:
         if not vals:
             return _Val(null_fn, val_fn)
         args = self._uf_args(vals)
+        if isinstance(e, _STRICT_FUNCTIONS):
+            # NULL in, NULL out (and possibly NULL for some non-NULL inputs, such as SQRT(-1) in MySQL).
+            return _Val(z3.Or(*[v.null for v in vals], null_fn(*args)), val_fn(*args))
         return _Val(null_fn(*args), val_fn(*args))
 
     def _aggregate(self, func: str, e, env, agg: _AggCtx | None) -> _Val:
@@ -1520,7 +1590,7 @@ class _Compiler:
         for key in ("having_max", "ignore_nulls", "order", "limit", "separator"):
             if e.args.get(key):
                 raise Unsupported(f"aggregate modifier {key}")
-        if func in ("MIN", "MAX", "LOGICAL_AND", "LOGICAL_OR"):
+        if func in _DUPLICATE_INSENSITIVE:
             distinct = False
         if func == "COUNT" and (target is None or isinstance(target, exp.Star)):
             arg = None
@@ -1670,11 +1740,56 @@ class _Prover:
                     facts.append(z3.Implies(same_key, same_row))
         return facts
 
+    @staticmethod
+    def _group_member_facts(occs: list[_Occ]):
+        """Facts linking a derived ``GROUP BY`` table to rows of its source in the same scope.
+
+        A row ``s`` of table ``t`` whose key columns equal those of a row ``d`` of
+        ``SELECT k, MAX(v), COUNT(*) .. FROM t GROUP BY k`` is a member of ``d``'s group: a non-NULL
+        ``s.v`` makes ``MAX(v)`` non-NULL and at least ``s.v`` (``MIN`` at most), ``COUNT(v)`` at
+        least one and ``SUM(v)`` non-NULL. Every group has a row, so ``COUNT(*)`` is at least one.
+        Only columns the queries already read are used.
+        """
+
+        V = _value_sort()
+        facts = []
+        for d in occs:
+            shape = _group_shape(d.table) if d.opaque else None
+            if shape is None:
+                continue
+            table, keys, outputs = shape
+            for index, (kind, column) in enumerate(outputs):
+                value = d.cols.get(f"c{index}")
+                if value is not None and kind in ("count", "count*"):
+                    facts.append(z3.And(V.is_Num(value.val), z3.IsInt(V.num(value.val)), V.num(value.val) >= (1 if kind == "count*" else 0)))
+            for s in occs:
+                if s.opaque or s.table.lower() != table:
+                    continue
+                pairs = [(s.cols.get(k), d.cols.get(f"c{i}")) for k, i in keys]
+                if any(a is None or b is None for a, b in pairs):
+                    continue
+                member = z3.And(*[_null_eq(a, b) for a, b in pairs])
+                for index, (kind, column) in enumerate(outputs):
+                    value, row = d.cols.get(f"c{index}"), s.cols.get(column) if column else None
+                    if value is None or row is None:
+                        continue
+                    present = z3.And(member, z3.Not(row.null))
+                    if kind == "max":
+                        facts.append(z3.Implies(present, z3.And(z3.Not(value.null), z3.Not(_lt(value.val, row.val)))))
+                    elif kind == "min":
+                        facts.append(z3.Implies(present, z3.And(z3.Not(value.null), z3.Not(_lt(row.val, value.val)))))
+                    elif kind == "sum":
+                        facts.append(z3.Implies(present, z3.Not(value.null)))
+                    elif kind == "count":
+                        facts.append(z3.Implies(present, V.num(value.val) >= 1))
+        return facts
+
     def valid(self, formula, occs: list[_Occ], facts=()) -> bool:
         solver = z3.Solver()
         solver.set("timeout", self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
+        solver.add(*self._group_member_facts(occs))
         solver.add(*facts)
         solver.add(z3.Not(formula))
         result = solver.check()
@@ -2045,7 +2160,18 @@ class _Prover:
                         own_pairs.extend([(call_a.var.null, first.var.null), (call_a.var.val, first.var.val)])
         own_pairs = [p for p in own_pairs if not p[0].eq(p[1])]
         all_pairs = pairs + [p for p in agg_pairs if not p[0].eq(p[1])]
-        # Aggregate values are left free: the claim must hold for any group.
+        # Aggregate values are left free: the claim must hold for any group, with the facts every
+        # group satisfies (counts are whole numbers, a group has a row, ...).
+        calls = [dataclasses.replace(c, arg=_subst_val(c.arg, own_pairs) if c.arg is not None else None, var=_subst_val(c.var, own_pairs)) for c in a.aggs]
+        calls += [
+            dataclasses.replace(
+                c,
+                arg=_subst_val(_subst_val(c.arg, pairs), own_pairs) if c.arg is not None else None,
+                var=_subst_val(_subst_val(c.var, all_pairs), own_pairs),
+            )
+            for c in b.aggs
+        ]
+        facts = facts + self._aggregate_facts(a, calls, facts, None if a.is_global else (copies, copy_pairs, keys_b))
         guard = z3.BoolVal(True) if a.is_global else a.cond.t
         outs_a = [_subst_val(v, own_pairs) for v in a.outputs]
         outs_b = [_subst_val(v, own_pairs) for v in (_subst_val(v, all_pairs) for v in b.outputs)]
@@ -2054,6 +2180,97 @@ class _Prover:
         having_a = _subst(a.having.t, own_pairs) if a.having is not None else z3.BoolVal(True)
         having_b = _subst(_subst(b.having.t, all_pairs), own_pairs) if b.having is not None else z3.BoolVal(True)
         return self.valid(z3.Implies(guard, having_a == having_b), a.occs, facts)
+
+    def _aggregate_facts(self, a: _Agg, calls: list, facts, grouping) -> list:
+        """What every group of ``a`` satisfies about the aggregate values ``calls``.
+
+        * COUNT and COUNTIF are whole numbers of at least zero, and a group has at least one row.
+        * The group's representative row (the row variables of ``a``) is one of its members: a non-NULL
+          argument there makes MIN/MAX/SUM non-NULL and COUNT at least one.
+        * An argument that is the same on every row of a group (a function of the group key) is its
+          own MIN/MAX/SUM(DISTINCT)/BIT_AND/BIT_OR; COUNT of it is 0 when it is NULL and COUNT(*)
+          otherwise, COUNT(DISTINCT) of it is 0 or 1.
+        * SUM/MIN/MAX of x is NULL exactly when COUNT of an argument NULL on the same rows is 0.
+
+        ``grouping`` is ``(copies, copy_pairs, keys_b)`` for a grouped ``a`` (a second row of the
+        same group), ``None`` for a global aggregate.
+        """
+
+        V = _value_sort()
+        out: list = []
+        cond = a.cond.t
+        seen: set = set()
+        unique = []
+        for c in calls:
+            ident = (c.func, c.distinct, c.var.null.get_id(), c.var.val.get_id())
+            if ident not in seen:
+                seen.add(ident)
+                unique.append(c)
+        counts = [c for c in unique if c.func == "COUNT"]
+        star = next((c for c in counts if c.arg is None), None)
+        for c in unique:
+            if c.func in ("COUNT", "COUNTIF"):
+                out.append(z3.And(V.is_Num(c.var.val), z3.IsInt(V.num(c.var.val)), V.num(c.var.val) >= 0))
+        if grouping is not None:
+            copies, copy_pairs, _ = grouping
+            if star is None:
+                uid = self._fresh_count()
+                star = _AggCall("COUNT", False, None, _Val(z3.BoolVal(False), z3.Const(uid, V)))
+                out.append(z3.And(V.is_Num(star.var.val), z3.IsInt(V.num(star.var.val))))
+            out.append(V.num(star.var.val) >= 1)
+            copy_facts = list(facts) + [_subst(f, copy_pairs) for f in facts]
+            both = z3.And(cond, _subst(cond, copy_pairs), _rows_eq(a.keys, [_subst_val(k, copy_pairs) for k in a.keys]))
+            for c in unique:
+                if c.arg is None:
+                    continue
+                present = z3.And(cond, z3.Not(c.arg.null))
+                if c.func in _NULL_WHEN_EMPTY or c.func in ("BIT_AND", "BIT_OR", "BIT_XOR"):
+                    out.append(z3.Implies(present, z3.Not(c.var.null)))
+                elif c.func == "COUNT":
+                    out.append(z3.Implies(present, V.num(c.var.val) >= 1))
+                if c.func == "COUNTIF" or c.func == "BIT_XOR" or (c.func == "SUM" and not c.distinct):
+                    continue
+                if not any(c.arg.null.eq(k.null) and c.arg.val.eq(k.val) for k in a.keys):
+                    saved = len(self.candidates)
+                    constant = self.valid(
+                        z3.Implies(both, _null_eq(c.arg, _subst_val(c.arg, copy_pairs))), a.occs + copies, copy_facts
+                    )
+                    del self.candidates[saved:]
+                    if not constant:
+                        continue
+                if c.func == "COUNT" and c.distinct:
+                    value = z3.If(c.arg.null, V.Num(0), V.Num(1))
+                    out.append(z3.Implies(cond, c.var.val == value))
+                elif c.func == "COUNT":
+                    out.append(z3.Implies(cond, c.var.val == z3.If(c.arg.null, V.Num(0), star.var.val)))
+                elif c.func in _NULL_WHEN_EMPTY:
+                    out.append(z3.Implies(cond, _null_eq(c.var, c.arg)))
+                else:
+                    # BIT_AND/BIT_OR of a group of NULLs is not NULL in MySQL: only the non-NULL case is known.
+                    out.append(z3.Implies(present, _null_eq(c.var, c.arg)))
+        for c in unique:
+            if c.func not in _NULL_WHEN_EMPTY or c.arg is None:
+                continue
+            for n in counts:
+                if n.arg is None:
+                    same = z3.Implies(cond, z3.Not(c.arg.null))
+                elif n.arg.null.eq(c.arg.null):
+                    same = None
+                else:
+                    same = z3.Implies(cond, n.arg.null == c.arg.null)
+                if same is not None:
+                    saved = len(self.candidates)
+                    ok = self.valid(same, a.occs, facts)
+                    del self.candidates[saved:]
+                    if not ok:
+                        continue
+                out.append(c.var.null == (V.num(n.var.val) == 0))
+                break
+        return out
+
+    def _fresh_count(self) -> str:
+        self.count_vars = getattr(self, "count_vars", 0) + 1
+        return f"count*#{self.count_vars}"
 
     def _same_aggregate(self, a: _Agg, call_a: _AggCall, func: str, distinct: bool, arg: _Val | None, facts) -> bool:
         """Whether ``call_a`` and the other call agree on every group of ``a``."""
@@ -2069,9 +2286,9 @@ class _Prover:
         if self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts):
             return True
         if func == "COUNT" and not distinct:
-            # COUNT of two columns that are never NULL is the same count of rows.
-            both = z3.And(z3.Not(call_a.arg.null), z3.Not(arg.null))
-            return self.valid(z3.Implies(a.cond.t, both), a.occs, facts)
+            # COUNT only sees whether its argument is NULL: two arguments that are NULL on the same rows
+            # give the same count (COUNT(CASE WHEN p THEN 'x' END) is COUNT(CASE WHEN p THEN 1 END)).
+            return self.valid(z3.Implies(a.cond.t, call_a.arg.null == arg.null), a.occs, facts)
         return False
 
     def resolve_set_sources(self, block):
@@ -2441,9 +2658,37 @@ class _Prover:
     def branch_set_contained(self, a, b) -> bool:
         if isinstance(a, _Spj) and isinstance(b, _Spj):
             return self.spj_set_contained(a, b)
+        # Read as sets, a SELECT DISTINCT is the GROUP BY of its outputs.
+        a, b = _spj_as_groups(a), _spj_as_groups(b)
         if isinstance(a, _Agg) and isinstance(b, _Agg):
             return self.agg_equal(a, b)
         return False
+
+    def groups_unique(self, block) -> bool:
+        """No two groups of a ``GROUP BY`` give the same row: equal outputs force equal group keys,
+        whatever the two groups' aggregate values are."""
+
+        if not isinstance(block, _Agg) or block.is_global or block.distinct:
+            return False
+        copies = [o.copy(o.uid + "''") for o in block.occs]
+        copy_pairs = _atom_copy_pairs(block.subs, "''")
+        for o, c in zip(block.occs, copies):
+            copy_pairs.extend(_occ_pairs(o, c))
+        for call in block.aggs:
+            for term in (call.var.null, call.var.val):
+                if z3.is_const(term) and term.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+                    copy_pairs.append((term, z3.Const(f"{term.decl().name()}''", term.sort())))
+        other_out = [_subst_val(v, copy_pairs) for v in block.outputs]
+        other_keys = [_subst_val(v, copy_pairs) for v in block.keys]
+        formula = z3.Implies(
+            z3.And(block.cond.t, _subst(block.cond.t, copy_pairs), _rows_eq(block.outputs, other_out)),
+            _rows_eq(block.keys, other_keys),
+        )
+        facts = block.facts + [_subst(f, copy_pairs) for f in block.facts]
+        saved = len(self.candidates)
+        result = self.valid(formula, block.occs + copies, facts)
+        del self.candidates[saved:]
+        return result
 
 
 _CONST_PAIRS_NULL = ("COUNT", "COUNTIF")
@@ -2467,7 +2712,7 @@ def _prune(prover: "_Prover", union: _Union) -> None:
         if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
             kept.append(block)
             continue
-        if isinstance(block, _Agg) and block.is_global and block.having is None:
+        if isinstance(block, _Agg) and block.is_global and block.having is None and all(c.func in _NULL_WHEN_EMPTY + _CONST_PAIRS_NULL for c in block.aggs):
             pairs = []
             for call in block.aggs:
                 value = _aggregate_of_nothing(call)
@@ -2477,6 +2722,17 @@ def _prune(prover: "_Prover", union: _Union) -> None:
         elif isinstance(block, _Agg) and block.is_global:
             kept.append(block)  # HAVING over the empty group: leave to the general path
     union.branches = kept
+
+
+def _spj_as_groups(block):
+    """A ``SELECT DISTINCT`` as the ``GROUP BY`` of its outputs (no aggregates), to compare with a grouped block."""
+
+    if not isinstance(block, _Spj) or not block.distinct:
+        return block
+    return _Agg(
+        block.occs, block.cond, list(block.outputs), [], None, block.outputs, block.names, is_global=False,
+        distinct=True, facts=block.facts, subs=block.subs,
+    )
 
 
 def _constant_global(block):
@@ -2536,7 +2792,9 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
         return False, "only one query can return rows"
     for keep, other in ((left, right), (right, left)):
         # A side whose rows are provably distinct (by keys) is as good as a DISTINCT one.
-        if _is_set(keep) and not _is_set(other) and len(other.branches) == 1 and prover.branch_unique(other.branches[0]):
+        if _is_set(keep) and not _is_set(other) and len(other.branches) == 1 and (
+            prover.branch_unique(other.branches[0]) or prover.groups_unique(other.branches[0])
+        ):
             other.branches = [dataclasses.replace(other.branches[0], distinct=True)]
     if _is_set(left) and _is_set(right):
         for a in left.branches:
@@ -2769,6 +3027,60 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
+
+
+_GROUP_SHAPES: dict[str, object] = {}
+
+
+def _group_shape(key: str):
+    """``(table, [(key column, output index)], [(kind, column)])`` for an opaque relation that is one
+    ``GROUP BY`` of plain columns over one table with no filter, or ``None``. Kinds: key, max, min,
+    sum, count, count* (other outputs are ``(None, None)``)."""
+
+    if key in _GROUP_SHAPES:
+        return _GROUP_SHAPES[key]
+    shape = None
+    try:
+        tree = sqlglot.parse_one(key[1:-1], read="bigquery") if key.startswith("(") and key.endswith(")") else None
+    except sqlglot.errors.SqlglotError:
+        tree = None
+    from_ = _from_clause(tree) if isinstance(tree, exp.Select) else None
+    group = tree.args.get("group") if from_ is not None else None
+    if (
+        group is not None
+        and isinstance(from_.this, exp.Table)
+        and not from_.this.args.get("joins")
+        and not any(tree.args.get(k) for k in ("joins", "where", "having", "distinct", "limit", "offset", "qualify", "laterals", "pivots", "with", "with_"))
+        and not any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals"))
+        and all(isinstance(g, exp.Column) for g in group.expressions)
+    ):
+        group_names = {g.name.lower() for g in group.expressions}
+        keys, outputs = [], []
+        for index, item in enumerate(tree.expressions):
+            value = item.this if isinstance(item, exp.Alias) else item
+            target = value.this if isinstance(value, exp.AggFunc) else None
+            if isinstance(target, exp.Distinct):
+                target = target.expressions[0] if len(target.expressions) == 1 and not isinstance(value, exp.Count) else None
+            column = target.name.lower() if isinstance(target, exp.Column) else None
+            if isinstance(value, exp.Column) and value.name.lower() in group_names:
+                keys.append((value.name.lower(), index))
+                outputs.append(("key", value.name.lower()))
+            elif isinstance(value, exp.Max) and column and not value.args.get("expressions"):
+                outputs.append(("max", column))
+            elif isinstance(value, exp.Min) and column and not value.args.get("expressions"):
+                outputs.append(("min", column))
+            elif isinstance(value, exp.Sum) and column:
+                outputs.append(("sum", column))
+            elif isinstance(value, exp.Count) and isinstance(value.this, exp.Star):
+                outputs.append(("count*", None))
+            elif isinstance(value, exp.Count) and isinstance(value.this, exp.Column):
+                outputs.append(("count", value.this.name.lower()))
+            else:
+                outputs.append((None, None))
+        if {k for k, _ in keys} == group_names:
+            shape = (_Compiler._table_key(from_.this).lower(), keys, outputs)
+    _GROUP_SHAPES[key] = shape
+    return shape
 
 
 _OPAQUE_PROOFS = 6

@@ -52,9 +52,10 @@ from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
+from . import set_aggregates
 from .outer_join_flatten import outer_join_rules
 from .empty_rules import canonical_empty, propagate_empty
-from .set_filters import _flatten as _flatten_projections, merge_same_source, set_operation_to_exists
+from .setop_rules import _sf_flatten as _flatten_projections, merge_same_source, normalize_set_operations, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
 from .lone_source import lift_derived_expressions
@@ -3260,10 +3261,13 @@ def _derived_key_outputs(inner: exp.Select) -> dict[str, exp.Expression] | None:
     """Output name -> value for the outputs of a DISTINCT or GROUP BY derived select that a filter commutes with.
 
     A filter on a value the select deduplicates or groups by can run before it: DISTINCT outputs, or
-    the non-aggregate outputs that are GROUP BY keys. ``None`` when the select is anything else.
+    the non-aggregate outputs that are GROUP BY keys (a HAVING drops whole groups, as such a filter
+    does, so the two commute). ``None`` when the select is anything else.
     """
 
-    if any(inner.args.get(k) for k in ("having", "limit", "offset", "qualify", "windows", "with_", "with", "order")) or any(inner.find_all(exp.Window)):
+    if inner.args.get("having") is not None and inner.args.get("group") is None:
+        return None
+    if any(inner.args.get(k) for k in ("limit", "offset", "qualify", "windows", "with_", "with", "order")) or any(inner.find_all(exp.Window)):
         return None
     if any(isinstance(e, exp.Star) for e in inner.expressions):
         return None
@@ -3387,7 +3391,11 @@ def _drop_redundant_distinct_source(select: exp.Select) -> exp.Expression | None
     """
 
     from_ = select.args.get("from_") or select.args.get("from")
-    if from_ is None or select.args.get("joins") or select.args.get("distinct") or select.args.get("having") is not None:
+    if from_ is None or select.args.get("joins") or select.args.get("having") is not None:
+        return None
+    # An outer DISTINCT without aggregates or grouping ignores repeated rows of the source too.
+    distinct = select.args.get("distinct")
+    if distinct is not None and (distinct.args.get("on") or select.args.get("group")):
         return None
     source = from_.this
     if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
@@ -3407,6 +3415,14 @@ def _drop_redundant_distinct_source(select: exp.Select) -> exp.Expression | None
         if sorted(values) != sorted(g.sql() for g in group.expressions):
             return None
     aggregates = [a for a in select.find_all(exp.AggFunc) if a.find_ancestor(exp.Select) is select]
+    if distinct is not None:
+        if aggregates or any(select.find_all(exp.Window)) or any(n is not source for n in select.find_all(exp.Subquery, exp.Exists)):
+            return None
+        copy = select.copy()
+        new_inner = copy.args.get("from_", copy.args.get("from")).this.this
+        new_inner.set("distinct", None)
+        new_inner.set("group", None)
+        return copy
     if not aggregates:
         return None
     for call in aggregates:
@@ -4666,7 +4682,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null), not_null)
+        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step))))))), not_null), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
@@ -4770,6 +4786,21 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
     except sqlglot.errors.SqlglotError:
         replaced = False
     result = prove_equivalent_smt(left, right, **kwargs)
+    if result.status is SmtStatus.NOT_PROVEN and not replaced:
+        reduced = set_aggregates.reduce(left, right, dialect, kwargs.get("compare_names", True))
+        if reduced:
+            inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
+            proofs = []
+            for value_left, value_right in reduced:
+                proof = prove_equivalent_algebraic(value_left, value_right, compare_names=False, types=types, group_by_constants=constants, **inner)
+                if not proof.proven:
+                    break
+                proofs.append(proof)
+            else:
+                assumptions = tuple(dict.fromkeys(a for proof in proofs for a in proof.assumptions))
+                return SmtEquivalenceResult(
+                    SmtStatus.PROVEN_EQUIVALENT, "the aggregates read the same set of values on both sides", assumptions=assumptions
+                )
     if result.status is SmtStatus.NOT_PROVEN and not replaced:
         from .structural_identity import same_scoped_query
         if same_scoped_query(left, right, schema=kwargs.get("schema"), dialect=dialect,
