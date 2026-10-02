@@ -223,6 +223,8 @@ def _bag(rows) -> Counter:
 def calcite_operators(sql: str) -> str:
     """Calcite's ``||`` concatenates strings; read as MySQL it would be OR (see ``tools/bench_sql_repairs.py``)."""
 
+    if str(Path(__file__).resolve().parent) not in sys.path:  # loaded by file path (the tests), not run as a script
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
     from bench_sql_repairs import pipes_as_concat
 
     try:
