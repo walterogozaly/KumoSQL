@@ -1,4 +1,5 @@
-"""Tables read by statements that are not queries (DELETE, UPDATE, INSERT ... VALUES, CREATE ... LIKE/CLONE).
+"""Tables read by statements that are not queries (DELETE, UPDATE, INSERT ... VALUES, CREATE ... LIKE/CLONE, and
+subqueries in script SET and DECLARE).
 
 They become graph edges and appear in ``table_reads()``; the table a statement writes is not a read, and the columns of
 such statements are still not traced (the model keeps its ``unknown_reads`` flag).
@@ -60,3 +61,16 @@ def test_a_script_mixing_a_query_and_a_delete_reads_both():
     sql = "DELETE FROM `p.d.victim` WHERE a IN (SELECT a FROM `p.d.other`);\nSELECT a FROM `p.d.raw`"
     pipeline = _pipeline(sql, other="SELECT 2 AS a")
     assert {"p.d.raw", "p.d.other"} <= set(pipeline.table_reads()["p.d.m"])
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DECLARE n INT64;\nSET n = (SELECT COUNT(*) FROM `p.d.raw`);\nSELECT n AS n",
+        "DECLARE n INT64 DEFAULT (SELECT MAX(a) FROM `p.d.raw`);\nSELECT n AS n",
+    ],
+)
+def test_script_subqueries_read_their_tables(sql):
+    pipeline = _pipeline(sql)
+    assert "p.d.raw" in pipeline.table_reads()["p.d.m"]
+    assert "p.d.m" in pipeline.downstream["p.d.raw"]
