@@ -1,0 +1,1 @@
+WITH ranked AS (SELECT user_id, SUM(sale_price) AS total, RANK() OVER (ORDER BY SUM(sale_price) DESC) AS rnk, SUM(SUM(sale_price)) OVER () AS grand FROM `kumosql.kumosql_messy.raw_order_items` GROUP BY user_id) SELECT user_id, total, rnk, total / grand AS share FROM ranked WHERE rnk <= 5 ORDER BY rnk, user_id LIMIT 100

@@ -35,7 +35,7 @@ SAFE_TO_DELETE_NOTE = (
     "unparsed operations) are not visible, so an empty result is not evidence of safety."
 )
 
-_READER_REASONS = ("parse_error", "qualify_error", "no_query", "unexpanded_star", "unparsed_operation")
+_READER_REASONS = ("parse_error", "qualify_error", "no_query", "unexpanded_star", "unparsed_operation", "unresolved_template", "cycle")
 _VIA_RANK = {"output_column": 0, "condition_only": 1, "model_dependency": 2}
 
 
@@ -189,9 +189,13 @@ def assess_change(
         return set(downstream.get(name, ())) | readers_index.get(name, set())
 
     def reader_problem(model: str) -> str | None:
+        codes = codes_by_model.get(model, set())
+        if "unresolved_template" in codes:
+            return "unresolved_template"  # it reads a table named by a template, which might be the target
+        if "cycle" in codes and not a.consumed.get(model):
+            return "cycle"  # a cycle member analysed before its input's columns were known cannot say which it reads
         if model in a.consumed and "*" not in a.outputs.get(model, ()):
             return None
-        codes = codes_by_model.get(model, set())
         return next((c for c in _READER_REASONS if c in codes), "unparsed_model")
 
     lineage_index: dict[tuple[str, str], list["ColumnRef"]] = {}
@@ -295,6 +299,8 @@ def assess_change(
     for model, codes in sorted(codes_by_model.items()):
         if "unknown_reads" in codes and model not in affected:
             unknown.setdefault(model, "unknown_reads")
+        elif "unresolved_template" in codes and model not in affected:
+            unknown.setdefault(model, "unresolved_template")  # the table it reads is named by a template, so it may be the target
 
     observed_reads = list(observed_reads)
     observed_found: dict[str, ObservedReader] = {}

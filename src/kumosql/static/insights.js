@@ -839,7 +839,7 @@ function gapsPanel(data) {
   const kinds = {
     parse_error: "Could not parse", inaccessible: "Not accessible",
     unmatched_reference: "Unmatched reference", unattributed_reads: "No destination",
-    skipped_statements: "Statements skipped", unparsed_operation: "Not analyzed", cycle: "Dependency cycle",
+    skipped_statements: "Statements skipped", unresolved_template: "Template not resolved", unparsed_operation: "Not analyzed", cycle: "Dependency cycle",
   };
   return panel("Gaps", { note: "Parts of the project this graph could not see", id: "gaps" },
     h("div", { class: "table-wrap" }, h("table", { class: "data-table" },
