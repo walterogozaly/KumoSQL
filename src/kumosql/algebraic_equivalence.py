@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation, check_modeled, strip_positions
+from .ast_utils import canonical_negation, check_modeled, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -55,28 +55,6 @@ MAX_BRANCHES = 16
 _SPLIT_ALIAS = "kumosql_u"
 
 _COMBINE = {exp.Count: "SUM", exp.Sum: "SUM", exp.Min: "MIN", exp.Max: "MAX"}
-
-
-def _union_all_branches(node: exp.Expression) -> list[exp.Expression] | None:
-    """Flatten ``a UNION ALL b UNION ALL c``; ``None`` if not a pure UNION ALL."""
-
-    if isinstance(node, exp.Subquery):
-        node = node.this
-    if isinstance(node, exp.Union):
-        if node.args.get("distinct", True) or node.args.get("with_") or node.args.get("with"):
-            return None
-        if any(node.args.get(k) for k in ("order", "limit", "offset")):
-            return None
-        left = _union_all_branches(node.left)
-        right = _union_all_branches(node.right)
-        if left is None or right is None:
-            return None
-        return left + right
-    if isinstance(node, exp.Select):
-        if any(node.args.get(k) for k in ("order", "limit", "offset", "with_", "with")):
-            return None
-        return [node]
-    return None
 
 
 def _aligned_branches(source: exp.Subquery) -> list[exp.Select] | None:
@@ -678,11 +656,6 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     for branch in branches:
         branch.set("expressions", [branch.expressions[i].copy() for i in keep])
     return True
-
-
-def _sources_of(select: exp.Select) -> list[exp.Expression]:
-    from_ = select.args.get("from_") or select.args.get("from")
-    return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
 
 def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
