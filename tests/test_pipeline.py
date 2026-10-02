@@ -529,13 +529,35 @@ def test_extra_queries_in_a_script_are_reported():
     assert pipeline.completeness()["complete"] is False
 
 
-def test_operations_are_listed_as_not_analysed():
+def test_operations_are_read_as_scripts():
+    graph = {
+        "tables": [
+            {"target": {"schema": "d", "name": "a"}, "query": "SELECT 1 AS id"},
+            {"target": {"schema": "d", "name": "raw"}, "query": "SELECT 1 AS id"},
+        ],
+        "operations": [
+            {
+                "target": {"schema": "d", "name": "load"},
+                "queries": ["INSERT INTO d.a SELECT id FROM d.raw"],
+                "dependencyTargets": [{"schema": "d", "name": "a"}],
+            }
+        ],
+    }
+    pipeline = load_compiled_graph(graph)
+
+    assert pipeline.completeness()["complete"] is True
+    assert "d.raw" in pipeline.upstream["d.load"]
+    # what the operation writes is fed by what it reads
+    assert "d.raw" in pipeline.upstream["d.a"]
+
+
+def test_an_operation_with_dynamic_sql_is_listed_as_not_analysed():
     graph = {
         "tables": [{"target": {"schema": "d", "name": "a"}, "query": "SELECT 1 AS id"}],
         "operations": [
             {
                 "target": {"schema": "d", "name": "load"},
-                "queries": ["INSERT INTO d.a SELECT 2"],
+                "queries": ["EXECUTE IMMEDIATE FORMAT('INSERT INTO d.a SELECT 2 FROM %s', CAST(1 AS STRING))"],
                 "dependencyTargets": [{"schema": "d", "name": "a"}],
             }
         ],

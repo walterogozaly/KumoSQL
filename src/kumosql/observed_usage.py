@@ -37,6 +37,7 @@ import sqlglot
 from sqlglot import exp
 
 from .graph import ObservedRead
+from .scripts import split_statements
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -302,10 +303,14 @@ def _examine(pipeline: "Pipeline", fields: dict) -> "_Outcome | str":
         return "no_query_text"
     if fields["truncated"]:
         return "truncated"
-    try:
-        statements = [s for s in sqlglot.parse(text, read="bigquery") if s is not None]
-    except Exception:  # noqa: BLE001 - never echo the text
-        return "parse_error"
+    # A script is cut into its statements first (blocks, strings and comments respected), so one
+    # statement that does not parse costs only itself.
+    statements = []
+    for part in split_statements(text):
+        try:
+            statements.extend(s for s in sqlglot.parse(part, read="bigquery") if s is not None)
+        except Exception:  # noqa: BLE001 - never echo the text
+            continue
     if not statements:
         return "parse_error"
     outcome = _Outcome()

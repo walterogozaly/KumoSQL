@@ -84,6 +84,7 @@ EVAL_FILES = {
     "test_rbot_benchmarks.py",
     "test_safety_corpus.py",
     "test_schema_change.py",
+    "test_script_bench.py",
     "test_singh_bedathur_benchmark.py",
     "test_spider2_bench.py",
     "test_sqlfluff_fixtures_bench.py",
