@@ -28,6 +28,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | --- | --- |
 | [SQLSolver and the algebraic prover](sqlsolver.md) | SQLSolver Calcite, Spark, TPC-H and TPC-C; R-Bot; QED; Cosette and SPES |
 | [VeriEQL](verieql.md) | VeriEQL LeetCode, Literature and Calcite suites |
+| [Engine test suites](engine-suites.md) | DuckDB and SQLite SQLLogicTest and SQLGlot fixtures run through every rewrite, checked by execution |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | 850 lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification |

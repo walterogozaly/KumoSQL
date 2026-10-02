@@ -588,6 +588,12 @@ def _compiled_targets(repo_url: str | None):
     return lambda: workflow_configs.compiled_targets(repo_url)
 
 
+def _awaits_compilation(pipeline: Pipeline, repo_url: str | None) -> bool:
+    """Whether the Dataform compilation could not be read when this project was parsed and may be now."""
+
+    return bool(repo_url) and any(d.code == "compiled_graph_unavailable" for d in pipeline.diagnostics)
+
+
 def pipeline_from_files(files: object, repo_url: str | None = None):
     """Load a ``Pipeline`` from ``{relative path: text}``."""
 
@@ -596,12 +602,14 @@ def pipeline_from_files(files: object, repo_url: str | None = None):
         cached = _PROJECT_CACHE.get(key) if key else None
         if cached is not None:
             _PROJECT_CACHE.move_to_end(key)
+    if cached is not None and _awaits_compilation(cached, repo_url):
+        cached = None
     if cached is not None:
         with stage("project cache hit", files=len(files)):
             return cached
     if key:
         saved = _load_snapshot(key)
-        if saved is not None:
+        if saved is not None and not _awaits_compilation(saved, repo_url):
             with _LOCK:
                 _PROJECT_CACHE[key] = saved
                 while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:
@@ -620,10 +628,12 @@ def pipeline_from_files(files: object, repo_url: str | None = None):
             console.error(f"project parse: reading {len(files) if isinstance(files, dict) else 0} files failed", exc, code="KS-GRAPH-BUILD")
             detail = str(exc) or "project could not be loaded"
             raise ProjectError(detail if isinstance(exc, (ValueError, OSError)) else f"{type(exc).__name__}: {detail}") from exc
-    if key and not any(d.code == "compiled_graph_unavailable" for d in pipeline.diagnostics):
-        # A load that could not reach Dataform is not cached: the next one may have credentials.
+    if key:
+        # The saved copy is always written, so a restart shows the project at once. A load that could not reach Dataform
+        # stays out of the in-memory cache and is parsed again by the next load (see _awaits_compilation).
         pipeline.content_key = key
         _save_snapshot(pipeline, key)
+    if key and not _awaits_compilation(pipeline, repo_url):
         with _LOCK:
             _PROJECT_CACHE[key] = pipeline
             while len(_PROJECT_CACHE) > _PROJECT_CACHE_SIZE:
