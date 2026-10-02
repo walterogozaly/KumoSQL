@@ -1092,6 +1092,7 @@ class _Analysis:
                 for dep in model.declared_dependencies
                 if (resolved := pipeline.resolve(dep.key)) and resolved != key
             }
+            earlier: list[exp.Expression] = []
             if model.is_query:
                 try:
                     query, skipped, earlier = _parse_script(model.sql)
