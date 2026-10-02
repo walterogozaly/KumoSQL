@@ -619,7 +619,10 @@
     const field = (label) => h("input", { type: "number", class: "sp-input sp-number", min: "0", max: "86400", step: "10", "aria-label": label });
     const model = field("Seconds per model");
     const total = field("Seconds in total");
-    const draw = (info) => { model.value = info.model_seconds; total.value = info.total_seconds; };
+    const draw = (info) => {
+      model.value = info.model_seconds; total.value = info.total_seconds;
+      model.disabled = info.locked.includes("model_seconds"); total.disabled = info.locked.includes("total_seconds");
+    };
     const put = async (payload) => {
       setStatus("Saving…");
       try { draw(await repoCall("PUT", "/api/lineage-limits", payload)); setStatus("Saved"); } catch (error) { setStatus(error.message, true); }
