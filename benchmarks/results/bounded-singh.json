@@ -14,7 +14,7 @@
     "timeout": 97
   },
   "held_out": "none",
-  "docs": "docs/bounded-verification.md#results",
+  "docs": "docs/evals/bounded-verification.md#results",
   "command": "python tools/bounded_bench.py run singh --rows 3",
   "date": "2026-10-02",
   "caveats": "Labels come from the benchmark; a bounded counterexample against a label is counted wrong unless audited. 1794 pairs the prover already refutes with a database are not rerun and not counted. Bounded evidence is a separate level from the unbounded proofs and executed checks on the same pairs; where the prover already proves a pair, the bounded verdict is a cross-check of the encoder. Assumes exact arithmetic and no runtime errors. Encoder developed with these suites in view (tuned on test)."

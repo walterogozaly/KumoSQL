@@ -10,7 +10,7 @@
     "refuted": 66
   },
   "held_out": "10/10 refuted (union_split and latest_per_key families, run once at baseline)",
-  "docs": "docs/pipeline-equivalence.md",
+  "docs": "docs/evals/pipeline-equivalence.md",
   "command": "python tools/pipeline_bench.py",
   "date": "2026-10-02",
   "caveats": "Bounded by the databases tried (25 random ones), so a subtle break could escape; every case here is caught. Generated cases, none adapted from a public suite yet."

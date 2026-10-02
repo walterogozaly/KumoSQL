@@ -12,7 +12,7 @@
     "unsupported": 12
   },
   "held_out": "This row is LLM-R2's own test split, run once after developing on train. Train split: 1,742/1,742 changed queries proven and same, 0 wrong (9,853 queries, 4 not convertible).",
-  "docs": "docs/llmr2-bench.md#results",
+  "docs": "docs/evals/llmr2-bench.md#results",
   "command": "python tools/benchmark_corpora.py fetch llm-r2 tpch-data tpcds-data job-data && python tools/llmr2_bench.py --split test",
   "date": "2026-10-02",
   "caveats": "LLM-R2 at 91ba530 has no licence, so the queries are fetched at the pin and never committed. All queries original, none adapted; 17 DSB test queries also appear in train, and none matches the transformation-workload queries (overlap is in the templates). unknown = left unchanged (the JOB-syn queries are flat joins no rule changes); unsupported = 12 TPC-H queries sqlglot cannot convert. LLM-R2's PostgreSQL latency labels are not used; DuckDB is the oracle.",

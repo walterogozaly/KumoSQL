@@ -9,7 +9,7 @@
   "coverage": {"proven": 5, "unknown": 45},
   "usefulness": "5 of 50 queries changed, all 5 proven; 1 reproduces the developers' improvement",
   "held_out": "none",
-  "docs": "docs/rewrite-benchmarks.md#wetunes-50-github-performance-issues",
+  "docs": "docs/evals/rewrite-benchmarks.md#wetunes-50-github-performance-issues",
   "command": "python tools/wetune_bench.py --wetune WeTune-code",
   "date": "2026-10-02",
   "caveats": "Structural match only, no timings (the applications' data is not available). WeTune's 8,518 application queries sit in Git LFS and could not be downloaded here."

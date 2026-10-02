@@ -12,7 +12,7 @@
     "timeout": 3
   },
   "held_out": "none",
-  "docs": "docs/bounded-verification.md#results",
+  "docs": "docs/evals/bounded-verification.md#results",
   "command": "python tools/bounded_bench.py run qed --rows 3",
   "date": "2026-10-02",
   "caveats": "The same 375 converted cases as the proof row; the 69 unconvertible cases are not scored. Overlaps the SQLSolver and R-Bot Calcite sets. Bounded evidence is a separate level from the unbounded proofs and executed checks on the same pairs; where the prover already proves a pair, the bounded verdict is a cross-check of the encoder. Assumes exact arithmetic and no runtime errors. Encoder developed with these suites in view (tuned on test)."

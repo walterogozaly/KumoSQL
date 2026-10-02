@@ -11,7 +11,7 @@
     "unknown": 22
   },
   "held_out": "none",
-  "docs": "docs/lineage-bench.md#sqllineage-test-cases",
+  "docs": "docs/evals/lineage-bench.md#sqllineage-test-cases",
   "command": "python tools/sqllineage_bench.py --details",
   "date": "2026-10-02",
   "caveats": "Adapted from SQLLineage's tests (MIT); 253 of the 532 adapted cases are left out because they are not BigQuery SQL (other dialects, lateral column aliases, DROP/RENAME lifecycles). Bugs it found were fixed in the same change, so it is a floor, not a held-out score.",

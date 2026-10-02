@@ -6,7 +6,7 @@ Each case runs through the stages below and gets ``pass``, ``unsupported``
 ``fail`` (a crash, a lost reference, a changed meaning). ``n/a`` means the stage
 does not apply to that kind of statement.
 
-    python tools/bq_syntax_coverage.py --markdown docs/bigquery-syntax-coverage.md
+    python tools/bq_syntax_coverage.py --markdown docs/evals/bigquery-syntax-coverage.md
     python tools/bq_syntax_coverage.py --json out.json
 """
 
