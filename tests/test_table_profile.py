@@ -346,3 +346,17 @@ def test_profile_query_only_analyses_what_the_query_reads():
     expected = profile_pipeline(whole)["q"]
     assert query.grain == expected.grain
     assert [a.meaning for a in query.attributes] == [a.meaning for a in expected.attributes]
+
+
+def test_profile_query_follows_what_a_script_reads_before_its_last_query():
+    from kumosql import table_profile
+
+    pipeline = build({
+        "base": "SELECT id, amount FROM proj.raw.orders",
+        "mid": "SELECT id, SUM(amount) AS total FROM proj.core.base GROUP BY id",
+        "unrelated": "SELECT sku FROM proj.raw.order_items",
+    })
+    script = "CREATE TEMP TABLE x AS SELECT id FROM proj.core.mid; SELECT id FROM x"
+    assert sorted(table_profile._upstream_models(pipeline, script)) == ["proj.core.base", "proj.core.mid"]
+    declared = "DECLARE n INT64 DEFAULT (SELECT COUNT(*) FROM proj.core.base); SELECT n"
+    assert sorted(table_profile._upstream_models(pipeline, declared)) == ["proj.core.base"]

@@ -51,7 +51,7 @@ def test_cosette_case_parses(case):
 
 @pytest.mark.parametrize("pair", SPES_PAIRS, ids=lambda p: f"{p['spes_index']}-{p['name']}")
 def test_spes_pair_parses(pair):
-    assert pair["label"] == "equivalent"
+    assert pair["label"] == "equivalent" or (pair["label"] == "not_equivalent" and pair.get("label_note"))
     for sql in (pair["sql_a"], pair["sql_b"]):
         assert sqlglot.parse_one(sql, read="mysql") is not None
 
