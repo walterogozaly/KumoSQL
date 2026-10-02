@@ -56,6 +56,26 @@ def render_statement(statement: exp.Expression) -> str:
     return statement.sql(dialect="bigquery", pretty=True, pad=4, identify=False)
 
 
+_POSITION_META = ("line", "col", "start", "end")
+
+
+def strip_positions(tree: exp.Expression) -> exp.Expression:
+    """Drop the source positions the parser records on tokens, in place.
+
+    A third of the nodes carry them and every ``copy()`` deep-copies them, which was about 30% of the
+    prover's run time. Nothing in the equivalence pipeline reads positions; other ``meta`` keys are kept.
+    """
+
+    for node in tree.walk():
+        meta = node._meta
+        if meta:
+            for key in _POSITION_META:
+                meta.pop(key, None)
+            if not meta:
+                node._meta = None
+    return tree
+
+
 def canonical_negation(tree: exp.Expression) -> exp.Expression:
     """Spell ``x IS NOT NULL``, ``x NOT LIKE y`` and ``x NOT ILIKE y`` as ``NOT (...)``.
 
@@ -131,6 +151,40 @@ def identifier_name(node: exp.Expression | None) -> str | None:
         return value
     value = getattr(node, "this", None)
     return value if isinstance(value, str) else None
+
+
+def conjuncts(node: exp.Expression) -> list[exp.Expression]:
+    """The AND-parts of a predicate, with the parentheses around each part removed."""
+
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if isinstance(node, exp.And):
+        return conjuncts(node.this) + conjuncts(node.expression)
+    return [node]
+
+
+def inside(node: exp.Expression, ancestor: exp.Expression) -> bool:
+    """Whether ``ancestor`` is a strict ancestor of ``node``."""
+
+    parent = node.parent
+    while parent is not None:
+        if parent is ancestor:
+            return True
+        parent = parent.parent
+    return False
+
+
+def select_sources(select: exp.Select) -> list[exp.Expression]:
+    """The relations in a SELECT's FROM clause followed by its JOINs."""
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    return ([from_.this] if from_ is not None else []) + [join.this for join in select.args.get("joins") or []]
+
+
+def table_parts(table: exp.Table) -> list[str]:
+    """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
+
+    return [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
 
 
 def with_arg_key(node: exp.Expression) -> str:

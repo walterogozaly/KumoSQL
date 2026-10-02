@@ -14,13 +14,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-
-def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
-    if isinstance(node, exp.Paren):
-        return _conjuncts(node.this)
-    if isinstance(node, exp.And):
-        return _conjuncts(node.left) + _conjuncts(node.right)
-    return [node]
+from .ast_utils import conjuncts as _conjuncts
 
 
 def _same_table(spelled: str, declared: str) -> bool:

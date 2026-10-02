@@ -144,11 +144,19 @@ def violated(claim: list, names, rows, counts) -> bool:
     return len(set(projected)) != len(projected)
 
 
-def claims_made(props) -> list[list]:
-    """Every fact the analysis asserts, in the claim format used by the labels."""
+def claims_made(props, positional: bool = False) -> list[list]:
+    """Every fact the analysis asserts, in the claim format used by the labels.
 
-    made = [["non_null", c.name] for c in props.columns if c.non_null]
-    made += [["unique", list(k.columns)] for k in props.keys if k.columns]
+    ``positional`` names columns by output position (as strings) instead of by name, for
+    queries whose output repeats a name.
+    """
+
+    if positional:
+        made = [["non_null", str(i)] for i, c in enumerate(props.columns) if c.non_null]
+        made += [["unique", [str(p) for p in k.positions]] for k in props.keys if k.columns]
+    else:
+        made = [["non_null", c.name] for c in props.columns if c.non_null]
+        made += [["unique", list(k.columns)] for k in props.keys if k.columns]
     if props.at_most_one_row:
         made.append(["rows", "at_most_one"])
     if props.exactly_one_row:
@@ -287,7 +295,7 @@ def run_adapted(trials: int = 40, seed: int = 5) -> dict:
                 if props.unsupported:
                     out["unsupported"] += 1
                     continue
-                made = claims_made(props)
+                made = claims_made(props, positional=True)
                 out["supported"] += 1
                 out["columns"] += len(props.columns)
                 out["non_null"] += sum(1 for m in made if m[0] == "non_null")
@@ -319,8 +327,8 @@ def run_adapted(trials: int = 40, seed: int = 5) -> dict:
                     except duckdb.Error:
                         break
                     ran = True
-                    # position-based: the analysis lists columns in output order
-                    names = [c.name for c in props.columns]
+                    # position-based: the analysis lists columns in output order, and names can repeat
+                    names = [str(i) for i in range(len(props.columns))]
                     if len(cursor.description) != len(names):
                         break
                     for claim in made:

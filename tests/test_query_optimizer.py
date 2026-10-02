@@ -205,3 +205,30 @@ def test_deletion_that_raises_the_estimated_cost_is_not_kept():
 )
 def test_negated_predicates_are_not_read_as_positive(left, right):
     assert not prove_equivalent_algebraic(left, right, schema=CATALOG.columns, dialect="postgres").proven
+
+
+GROUPED_WINDOW = "SELECT b, RANK() OVER (ORDER BY SUM(a)) AS r FROM t GROUP BY b"
+
+
+@pytest.mark.parametrize(
+    "left, right, proven",
+    [
+        # A grouped select with windows is kept whole, so the same one on both sides matches.
+        (f"SELECT * FROM ({GROUPED_WINDOW}) x WHERE b > 1", f"SELECT x.b, x.r FROM ({GROUPED_WINDOW}) AS x WHERE x.b > 1", True),
+        (f"SELECT * FROM ({GROUPED_WINDOW}) x WHERE b > 1", f"SELECT x.b, x.r FROM ({GROUPED_WINDOW}) AS x WHERE x.b > 2", False),
+        (
+            f"SELECT b, r FROM ({GROUPED_WINDOW}) x",
+            "SELECT b, RANK() OVER (ORDER BY MAX(a)) AS r FROM t GROUP BY b",
+            False,
+        ),
+        # A limited body written inside a WITH on one side and plainly on the other is one relation.
+        (
+            f"SELECT q.b FROM (WITH g AS ({GROUPED_WINDOW}) SELECT b FROM g ORDER BY b LIMIT 3) q CROSS JOIN (SELECT COUNT(*) AS c FROM u) w WHERE w.c >= 0",
+            f"SELECT b FROM ({GROUPED_WINDOW}) AS g ORDER BY b LIMIT 3",
+            True,
+        ),
+    ],
+)
+def test_grouped_windows_and_limited_bodies(left, right, proven):
+    result = prove_equivalent_algebraic(left, right, schema=CATALOG.columns, dialect="postgres")
+    assert result.proven is proven, result.reason
