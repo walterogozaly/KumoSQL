@@ -92,7 +92,7 @@ def test_mysql_cast_to_char_of_a_varchar_column_is_identity():
 
 
 def test_set_operations_of_one_table_become_filters():
-    from kumosql.set_filters import merge_same_source
+    from kumosql.setop_rules import merge_same_source
 
     union = merge_same_source(sqlglot.parse_one("SELECT a.x FROM t AS a WHERE a.y = 1 UNION SELECT b.x FROM t AS b WHERE b.y = 2"))
     assert _sql(union) == "SELECT DISTINCT a.x FROM t AS a WHERE (a.y = 1) OR (a.y = 2)"
@@ -106,7 +106,7 @@ def test_set_operations_of_one_table_become_filters():
 
 
 def test_intersect_and_except_become_exists_tests():
-    from kumosql.set_filters import set_operation_to_exists
+    from kumosql.setop_rules import set_operation_to_exists
 
     tree = set_operation_to_exists(sqlglot.parse_one("SELECT x AS c FROM t EXCEPT SELECT y AS d FROM u"))
     assert "NOT EXISTS" in _sql(tree) and "<=>" in _sql(tree) and _sql(tree).startswith("SELECT DISTINCT")
@@ -123,3 +123,50 @@ def test_intersect_in_a_derived_table_is_proven_and_unsound_merges_are_not():
     assert prove_equivalent_algebraic(left, right, **kwargs).proven
     left = "SELECT x FROM t WHERE y = 1 INTERSECT SELECT x FROM t WHERE y = 2"
     assert not prove_equivalent_algebraic(left, "SELECT DISTINCT x FROM t WHERE y = 1 AND y = 2", **kwargs).proven
+
+
+def _emp_kwargs():
+    from kumosql.smt_equivalence import TableConstraints
+
+    return dict(
+        schema={"emp": ["empno", "ename", "sal", "deptno", "mgr"], "bonus": ["ename", "job"]},
+        constraints={"emp": TableConstraints(not_null=frozenset({"empno", "ename", "sal", "deptno"}), keys=(("empno",),)), "bonus": TableConstraints(not_null=frozenset({"ename"}))},
+        compare_names=False,
+        dialect="mysql",
+    )
+
+
+def test_count_pushed_through_union_all_needs_no_coalesce():
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    flat = "SELECT u.ename, COUNT(*) FROM (SELECT ename FROM emp UNION ALL SELECT ename FROM emp) AS u GROUP BY u.ename"
+    pushed = "SELECT u.ename, COALESCE(SUM(u.c), 0) FROM (SELECT ename, COUNT(*) AS c FROM emp GROUP BY ename UNION ALL SELECT ename, COUNT(*) AS c FROM emp GROUP BY ename) AS u GROUP BY u.ename"
+    assert prove_equivalent_algebraic(flat, pushed, **_emp_kwargs()).proven
+    # A sum of a nullable column can be NULL in a group, so the coalesce stays.
+    nullable = "SELECT u.ename, COALESCE(SUM(u.m), 0) FROM (SELECT ename, mgr AS m FROM emp UNION ALL SELECT ename, mgr AS m FROM emp) AS u GROUP BY u.ename"
+    summed = "SELECT u.ename, SUM(u.m) FROM (SELECT ename, mgr AS m FROM emp UNION ALL SELECT ename, mgr AS m FROM emp) AS u GROUP BY u.ename"
+    assert not prove_equivalent_algebraic(nullable, summed, **_emp_kwargs()).proven
+
+
+def test_projection_computed_inside_or_above_an_outer_join():
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    above = "SELECT CASE WHEN d.s < 11 THEN 11 ELSE d.s END AS k, COUNT(*) FROM (SELECT e.sal AS s FROM emp AS e LEFT JOIN bonus AS b ON e.ename = b.ename) AS d GROUP BY CASE WHEN d.s < 11 THEN 11 ELSE d.s END"
+    inside = "SELECT d.k, COUNT(*) FROM (SELECT CASE WHEN e.sal < 11 THEN 11 ELSE e.sal END AS k FROM emp AS e LEFT JOIN bonus AS b ON e.ename = b.ename) AS d GROUP BY d.k"
+    assert prove_equivalent_algebraic(above, inside, **_emp_kwargs()).proven
+    padded = "SELECT d.k, COUNT(*) FROM (SELECT COALESCE(b.job, 'x') AS k FROM emp AS e LEFT JOIN bonus AS b ON e.ename = b.ename) AS d GROUP BY d.k"
+    unpadded = "SELECT d.k, COUNT(*) FROM (SELECT COALESCE(b.job, 'y') AS k FROM emp AS e LEFT JOIN bonus AS b ON e.ename = b.ename) AS d GROUP BY d.k"
+    assert not prove_equivalent_algebraic(padded, unpadded, **_emp_kwargs()).proven
+
+
+def test_in_in_the_select_list_matches_a_left_join_indicator_read_above_it():
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    test = "SELECT e.empno, e.deptno IN (SELECT x.d FROM (SELECT deptno AS d FROM emp WHERE empno < 20) AS x) AS hit FROM emp AS e"
+    joined = (
+        "SELECT w.empno, CASE WHEN NOT w.i IS NULL THEN TRUE ELSE FALSE END FROM "
+        "(SELECT e.empno, g.i FROM emp AS e LEFT JOIN (SELECT deptno AS d, TRUE AS i FROM emp WHERE empno < 20 GROUP BY deptno) AS g ON e.deptno = g.d) AS w"
+    )
+    assert prove_equivalent_algebraic(test, joined, **_emp_kwargs()).proven
+    nullable = test.replace("e.deptno IN", "e.mgr IN")
+    assert not prove_equivalent_algebraic(nullable, joined.replace("e.deptno = g.d", "e.mgr = g.d"), **_emp_kwargs()).proven

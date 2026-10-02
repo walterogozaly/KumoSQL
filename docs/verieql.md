@@ -65,10 +65,10 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Literature | 64 | 18 | 25 | 17 | 4 | 0 |
-| Calcite-397 | 397 | 255 | 29 | 104 | 9 | 0 |
-| LeetCode (all pairs) | 23,994 | 4,436 | 5,652 | 12,834 | 1,072 | 0 |
+| Literature | 64 | 20 | 25 | 17 | 2 | 0 |
+| Calcite-397 | 397 | 290 | 28 | 70 | 9 | 0 |
+| LeetCode (all pairs) | 23,994 | 4,392 | 5,652 | 12,878 | 1,072 | 0 |
 
 The [harness translation](#harness-translation), with the bare-word and `$` fixes from the full LeetCode rerun, took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks four of our Calcite refutations equivalent (pairs 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows).
 
-On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,400 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores (the figures above are the full run, with the 1,923 pairs that DuckDB first rejected re-run after the translation fixes). Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (a table the schema names differently, `GROUP BY` positions that name aggregates, Calcite-only syntax). Translation handles bare words used as strings, `$` in names, unqualified `GROUP BY` names that DuckDB calls ambiguous, `SUBDATE`/`ADDDATE`, `CROSS JOIN .. ON` and MySQL's ungrouped columns.
+On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,400 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores (the figures above are the full run, with the 1,923 pairs that DuckDB first rejected re-run after the translation fixes). Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (a table the schema names differently, `GROUP BY` positions that name aggregates, Calcite-only syntax). Translation handles a set operation of bare table names (`(R UNION ALL S)`, relational-algebra shorthand in two Literature pairs, spelled `(SELECT * FROM R UNION ALL SELECT * FROM S)` and marked `adapted`; both are then proved), bare words used as strings, `$` in names, unqualified `GROUP BY` names that DuckDB calls ambiguous, `SUBDATE`/`ADDDATE`, `CROSS JOIN .. ON` and MySQL's ungrouped columns.
