@@ -22,6 +22,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [BigQuery test bed](bigquery-testbed.md) | A messy, low-cost model layer with real job history |
 | [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
+| [Test history](test-history.md) | Recording every test run, ranking the tests that break changes that otherwise work, and running likely failures first |
 
 ## Evals
 
