@@ -322,13 +322,29 @@ def _roll_up_aggregate(select: exp.Select) -> exp.Expression | None:
     if not inner.args.get("group") or inner.args.get("having") or not _no_extras(inner, allow_group=True):
         return None
     parts: dict[str, exp.Expression] = {}
+    counts: dict[str, exp.Expression] = {}
     for item in inner.expressions:
         expr = item.this if isinstance(item, exp.Alias) else item
         if item.alias_or_name and _is_agg(expr) and isinstance(expr, (exp.Sum, exp.Min, exp.Max)):
             parts[item.alias_or_name.lower()] = expr
+        elif item.alias_or_name and isinstance(expr, exp.Count) and not isinstance(expr.this, exp.Distinct) and not expr.args.get("distinct"):
+            counts[item.alias_or_name.lower()] = expr
     items = []
     for item in select.expressions:
         expr = item.this if isinstance(item, exp.Alias) else item
+        total = expr.this if isinstance(expr, exp.Coalesce) and isinstance(expr.this, exp.Sum) and len(expr.expressions) == 1 else None
+        if (
+            total is not None
+            and isinstance(expr.expressions[0], exp.Literal)
+            and expr.expressions[0].name == "0"
+            and isinstance(total.this, exp.Column)
+            and (not total.this.table or total.this.table.lower() == (source.alias or "").lower())
+            and total.this.name.lower() in counts
+        ):
+            # COALESCE(SUM(per-group COUNT), 0) is the COUNT over all rows: 0 for no groups, as COUNT reads 0.
+            name = item.alias_or_name
+            items.append(exp.alias_(counts[total.this.name.lower()].copy(), name) if name else counts[total.this.name.lower()].copy())
+            continue
         if not (isinstance(expr, (exp.Sum, exp.Min, exp.Max)) and isinstance(expr.this, exp.Column) and not expr.this.table or isinstance(expr, (exp.Sum, exp.Min, exp.Max)) and isinstance(expr.this, exp.Column) and (expr.this.table or "").lower() == (source.alias or "").lower()):
             return None
         part = parts.get(expr.this.name.lower())

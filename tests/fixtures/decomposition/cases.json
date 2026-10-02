@@ -1,0 +1,1236 @@
+{
+ "held_out_families": [
+  "distinct",
+  "empty-null"
+ ],
+ "schema": "sales",
+ "cases": [
+  {
+   "id": "basic.sum",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "SUM of sums",
+   "traps": []
+  },
+  {
+   "id": "basic.count-star",
+   "family": "basic",
+   "summary": "SELECT region, product, day, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, COUNT(*) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "COUNT(*) is the SUM of counts",
+   "traps": [
+    {
+     "sql": "SELECT region, COUNT(n) FROM mv0 GROUP BY region",
+     "why": "counts the summary rows, not the sales rows",
+     "witness": {
+      "sales": [
+       [
+        3,
+        3,
+        1,
+        1,
+        3,
+        1,
+        0,
+        3
+       ],
+       [
+        0,
+        0,
+        3,
+        3,
+        1,
+        0,
+        0,
+        null
+       ],
+       [
+        1,
+        0,
+        3,
+        2,
+        1,
+        1,
+        2,
+        null
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "basic.count-column-nullable",
+   "family": "basic",
+   "summary": "SELECT region, product, day, COUNT(discount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, COUNT(discount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "COUNT of a nullable column is the SUM of non-NULL counts",
+   "traps": []
+  },
+  {
+   "id": "basic.min-max",
+   "family": "basic",
+   "summary": "SELECT region, product, day, MIN(amount) AS lo, MAX(amount) AS hi FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, MIN(amount), MAX(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "MIN of mins and MAX of maxes",
+   "traps": []
+  },
+  {
+   "id": "basic.several",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(*) AS n, MAX(qty) AS m FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount), COUNT(*), MAX(qty) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "three aggregates at once",
+   "traps": []
+  },
+  {
+   "id": "basic.same-grain",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, product, day, SUM(amount) FROM sales GROUP BY region, product, day",
+   "expect": "rewrite",
+   "note": "same grain: read the summary",
+   "traps": []
+  },
+  {
+   "id": "basic.fewer-columns",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT product, SUM(amount) AS total FROM sales GROUP BY product",
+   "expect": "rewrite",
+   "note": "group by a different single grain column",
+   "traps": []
+  },
+  {
+   "id": "basic.filter-on-grain",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount) FROM sales WHERE region = 1 GROUP BY region",
+   "expect": "rewrite",
+   "note": "a filter on a grouping column keeps whole groups",
+   "traps": []
+  },
+  {
+   "id": "basic.filter-on-measure",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount) FROM sales WHERE amount > 10 GROUP BY region",
+   "expect": "none",
+   "note": "rows are filtered before summing; the summary has already added them up",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(s) FROM mv0 WHERE s > 10 GROUP BY region",
+     "why": "filters the group totals, not the rows",
+     "witness": {
+      "sales": [
+       [
+        1,
+        9,
+        11,
+        2,
+        0,
+        10,
+        2,
+        11
+       ],
+       [
+        11,
+        10,
+        10,
+        null,
+        2,
+        3,
+        10,
+        1
+       ],
+       [
+        3,
+        10,
+        10,
+        1,
+        2,
+        11,
+        11,
+        null
+       ],
+       [
+        2,
+        9,
+        0,
+        9,
+        2,
+        3,
+        3,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       1,
+       1,
+       10,
+       1,
+       10,
+       10,
+       10,
+       10
+      ],
+      [
+       10,
+       1,
+       10,
+       null,
+       10,
+       1,
+       1,
+       10
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       11,
+       1,
+       10,
+       11,
+       10,
+       11,
+       11,
+       9
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "basic.expression-of-grain",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT day % 2, SUM(amount) FROM sales GROUP BY day % 2",
+   "expect": "rewrite",
+   "note": "group by an expression of a grouping column",
+   "traps": []
+  },
+  {
+   "id": "basic.having",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount) FROM sales GROUP BY region HAVING SUM(amount) > 100",
+   "expect": "rewrite",
+   "note": "HAVING over the rolled-up aggregate",
+   "traps": []
+  },
+  {
+   "id": "basic.filter-grain-having",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, COUNT(*) FROM sales WHERE product = 2 GROUP BY region HAVING COUNT(*) > 1",
+   "expect": "rewrite",
+   "note": "filter on a grouping column plus HAVING",
+   "traps": []
+  },
+  {
+   "id": "basic.summary-having",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day HAVING SUM(amount) > 5",
+   "query": "SELECT region, SUM(amount) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "the summary dropped small groups, so totals computed from it lose their rows",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(s) FROM mv0 GROUP BY region",
+     "why": "the summary lacks the groups its HAVING removed",
+     "witness": {
+      "sales": [
+       [
+        4,
+        6,
+        6,
+        null,
+        0,
+        3,
+        6,
+        3
+       ],
+       [
+        3,
+        6,
+        1,
+        0,
+        6,
+        3,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       2,
+       6,
+       2,
+       0,
+       0,
+       0,
+       5,
+       2
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       5,
+       5,
+       0,
+       5,
+       0,
+       0,
+       5,
+       5
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "basic.missing-measure",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(qty) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "the summary never stored qty",
+   "traps": [],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       3,
+       3,
+       3,
+       3,
+       1,
+       3,
+       3,
+       3
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       0,
+       3,
+       3,
+       3,
+       1,
+       3,
+       1,
+       1
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "basic.finer-than-summary",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, customer, SUM(amount) FROM sales GROUP BY region, customer",
+   "expect": "none",
+   "note": "customer is finer than the summary's grain",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(s) FROM mv0 GROUP BY region",
+     "why": "drops the customer column's detail",
+     "witness": {
+      "sales": [
+       [
+        0,
+        2,
+        0,
+        3,
+        3,
+        3,
+        1,
+        0
+       ],
+       [
+        3,
+        3,
+        0,
+        3,
+        1,
+        0,
+        2,
+        null
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       0,
+       1,
+       0,
+       null,
+       0,
+       1,
+       0,
+       0
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       1,
+       1,
+       0,
+       3,
+       0,
+       1,
+       0,
+       1
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "basic.sum-product",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount * qty) AS revenue FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount * qty) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "SUM of an expression stored as a unit",
+   "traps": []
+  },
+  {
+   "id": "basic.ratio-of-sums",
+   "family": "basic",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, SUM(qty) AS q FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount) / SUM(qty) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "ratio of two rolled-up sums",
+   "traps": []
+  },
+  {
+   "id": "avg.sum-over-count",
+   "family": "average",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(amount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, AVG(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "AVG is SUM over non-NULL COUNT",
+   "traps": []
+  },
+  {
+   "id": "avg.nullable-column",
+   "family": "average",
+   "summary": "SELECT region, product, day, SUM(discount) AS s, COUNT(discount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, AVG(discount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "NULLs are ignored by SUM, COUNT(col) and AVG alike",
+   "traps": []
+  },
+  {
+   "id": "avg.count-star-on-nullable",
+   "family": "average",
+   "summary": "SELECT region, product, day, SUM(discount) AS s, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, AVG(discount) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "COUNT(*) counts rows whose discount is NULL, so the ratio is too small",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(s) / SUM(n) FROM mv0 GROUP BY region",
+     "why": "divides by all rows, not the non-NULL ones",
+     "witness": {
+      "sales": [
+       [
+        1,
+        3,
+        0,
+        0,
+        0,
+        2,
+        0,
+        null
+       ],
+       [
+        3,
+        3,
+        0,
+        null,
+        3,
+        0,
+        0,
+        1
+       ],
+       [
+        0,
+        3,
+        0,
+        null,
+        1,
+        2,
+        3,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       2,
+       3,
+       2,
+       3,
+       3,
+       2,
+       0,
+       0
+      ],
+      [
+       1,
+       3,
+       2,
+       2,
+       3,
+       3,
+       0,
+       3
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       3,
+       3,
+       2,
+       null,
+       3,
+       2,
+       2,
+       3
+      ],
+      [
+       2,
+       3,
+       2,
+       null,
+       3,
+       2,
+       3,
+       null
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "avg.avg-of-avgs",
+   "family": "average",
+   "summary": "SELECT region, product, day, AVG(amount) AS a FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, AVG(amount) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "groups differ in size, so the average of averages is not the average",
+   "traps": [
+    {
+     "sql": "SELECT region, AVG(a) FROM mv0 GROUP BY region",
+     "why": "averaging averages ignores unequal group sizes",
+     "witness": {
+      "sales": [
+       [
+        2,
+        0,
+        0,
+        1,
+        3,
+        1,
+        2,
+        3
+       ],
+       [
+        3,
+        0,
+        3,
+        0,
+        2,
+        3,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        3,
+        2,
+        2,
+        3,
+        3,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       1,
+       0,
+       1,
+       1,
+       1,
+       2,
+       1,
+       null
+      ],
+      [
+       0,
+       0,
+       1,
+       2,
+       1,
+       2,
+       0,
+       2
+      ],
+      [
+       2,
+       0,
+       2,
+       null,
+       0,
+       0,
+       2,
+       null
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       1,
+       0,
+       2,
+       2,
+       0,
+       0,
+       0,
+       1
+      ],
+      [
+       0,
+       0,
+       1,
+       0,
+       1,
+       2,
+       2,
+       0
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "avg.global",
+   "family": "average",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(amount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT AVG(amount) FROM sales",
+   "expect": "rewrite",
+   "note": "global average from per-group sums and counts",
+   "traps": []
+  },
+  {
+   "id": "avg.weighted",
+   "family": "average",
+   "summary": "SELECT region, product, day, AVG(amount) AS a, COUNT(amount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, AVG(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "average weighted by the counts: SUM(a * n) / SUM(n) (exact arithmetic; a stretch for the prover)",
+   "traps": []
+  },
+  {
+   "id": "avg.avg-with-count-same-grain",
+   "family": "average",
+   "summary": "SELECT region, product, day, AVG(amount) AS a FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, product, day, AVG(amount) FROM sales GROUP BY region, product, day",
+   "expect": "rewrite",
+   "note": "same grain: read the stored average",
+   "traps": []
+  },
+  {
+   "id": "avg.avg-qty-and-sum",
+   "family": "average",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(amount) AS n, SUM(qty) AS q, COUNT(qty) AS m FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, AVG(amount), AVG(qty) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "two averages at once",
+   "traps": []
+  },
+  {
+   "id": "variance.from-sums",
+   "family": "variance",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, SUM(amount * amount) AS s2, COUNT(amount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount * amount) - SUM(amount) * SUM(amount) / COUNT(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "the textbook sum of squares from rolled-up sums",
+   "traps": []
+  },
+  {
+   "id": "variance.stddev-from-summary",
+   "family": "variance",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, SUM(amount * amount) AS s2, COUNT(amount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, STDDEV_POP(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "population standard deviation from sum, sum of squares and count (stretch: needs STDDEV and SQRT reasoning)",
+   "traps": []
+  },
+  {
+   "id": "variance.stddev-of-stddevs",
+   "family": "variance",
+   "summary": "SELECT region, product, day, STDDEV_POP(amount) AS d FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, STDDEV_POP(amount) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "standard deviations alone do not combine",
+   "traps": [
+    {
+     "sql": "SELECT region, STDDEV_POP(d) FROM mv0 GROUP BY region",
+     "why": "the spread of spreads is not the spread",
+     "witness": {
+      "sales": [
+       [
+        2,
+        2,
+        0,
+        3,
+        1,
+        0,
+        1,
+        0
+       ],
+       [
+        1,
+        3,
+        0,
+        null,
+        1,
+        3,
+        2,
+        1
+       ],
+       [
+        3,
+        1,
+        0,
+        1,
+        3,
+        1,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1,
+        1,
+        2,
+        2,
+        1,
+        null
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       0,
+       1,
+       3,
+       3,
+       3,
+       2,
+       3,
+       null
+      ],
+      [
+       1,
+       1,
+       3,
+       null,
+       1,
+       3,
+       3,
+       0
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       0,
+       1,
+       3,
+       3,
+       3,
+       1,
+       0,
+       null
+      ],
+      [
+       3,
+       1,
+       3,
+       0,
+       1,
+       1,
+       3,
+       0
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "empty-null.global-count",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT COUNT(*) FROM sales",
+   "expect": "rewrite",
+   "note": "an empty table has COUNT 0, an empty summary has no rows to add up",
+   "traps": [
+    {
+     "sql": "SELECT SUM(n) FROM mv0",
+     "why": "NULL on empty input where the query returns 0",
+     "witness": {
+      "sales": []
+     }
+    }
+   ]
+  },
+  {
+   "id": "empty-null.global-sum",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT SUM(amount) FROM sales",
+   "expect": "rewrite",
+   "note": "SUM of an empty set is NULL on both sides",
+   "traps": [
+    {
+     "sql": "SELECT COALESCE(SUM(s), 0) FROM mv0",
+     "why": "0 where the query returns NULL on empty input",
+     "witness": {
+      "sales": []
+     }
+    }
+   ]
+  },
+  {
+   "id": "empty-null.global-count-column",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, COUNT(discount) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT COUNT(discount) FROM sales",
+   "expect": "rewrite",
+   "note": "COUNT of a column is 0 on empty input",
+   "traps": [
+    {
+     "sql": "SELECT SUM(n) FROM mv0",
+     "why": "NULL where the query returns 0",
+     "witness": {
+      "sales": []
+     }
+    }
+   ]
+  },
+  {
+   "id": "empty-null.global-min",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, MIN(amount) AS lo FROM sales GROUP BY region, product, day",
+   "query": "SELECT MIN(amount) FROM sales",
+   "expect": "rewrite",
+   "note": "MIN of an empty set is NULL",
+   "traps": []
+  },
+  {
+   "id": "empty-null.all-null-group-sum",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, SUM(discount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(discount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "a group whose discounts are all NULL sums to NULL, and so does the sum of those NULLs",
+   "traps": [
+    {
+     "sql": "SELECT region, COALESCE(SUM(s), 0) FROM mv0 GROUP BY region",
+     "why": "0 where the query returns NULL for an all-NULL group",
+     "witness": {
+      "sales": [
+       [
+        3,
+        -1,
+        1,
+        -1,
+        2,
+        2,
+        2,
+        null
+       ],
+       [
+        -1,
+        2,
+        2,
+        3,
+        -1,
+        2,
+        1,
+        0
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "empty-null.sum-of-counts-as-sum",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, SUM(amount) AS s, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "unused counts are ignored",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(n) FROM mv0 GROUP BY region",
+     "why": "adds up the wrong column",
+     "witness": {
+      "sales": [
+       [
+        0,
+        2,
+        0,
+        3,
+        3,
+        3,
+        1,
+        0
+       ],
+       [
+        3,
+        3,
+        0,
+        3,
+        1,
+        0,
+        2,
+        null
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "empty-null.grouped-count-no-coalesce",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, COUNT(*) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "with GROUP BY an empty input gives no rows on both sides",
+   "traps": []
+  },
+  {
+   "id": "empty-null.filter-everything",
+   "family": "empty-null",
+   "summary": "SELECT region, product, day, COUNT(*) AS n FROM sales GROUP BY region, product, day",
+   "query": "SELECT COUNT(*) FROM sales WHERE region = 99",
+   "expect": "rewrite",
+   "note": "a global count over a filter on a grouping column; zero rows still counts 0",
+   "traps": [
+    {
+     "sql": "SELECT SUM(n) FROM mv0 WHERE region = 99",
+     "why": "NULL where the query returns 0",
+     "witness": {
+      "sales": []
+     }
+    }
+   ]
+  },
+  {
+   "id": "distinct.count-distinct-from-grain",
+   "family": "distinct",
+   "summary": "SELECT region, customer, SUM(amount) AS s FROM sales GROUP BY region, customer",
+   "query": "SELECT region, COUNT(DISTINCT customer) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "customer is in the summary's grain, so its distinct values can be counted there",
+   "traps": []
+  },
+  {
+   "id": "distinct.count-distinct-stored-per-product",
+   "family": "distinct",
+   "summary": "SELECT region, product, day, COUNT(DISTINCT customer) AS d FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, COUNT(DISTINCT customer) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "a customer can buy several products, so per-product distinct counts overlap",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(d) FROM mv0 GROUP BY region",
+     "why": "counts a customer once per product",
+     "witness": {
+      "sales": [
+       [
+        2,
+        2,
+        0,
+        3,
+        1,
+        0,
+        1,
+        0
+       ],
+       [
+        1,
+        3,
+        0,
+        null,
+        1,
+        3,
+        2,
+        1
+       ],
+       [
+        3,
+        1,
+        0,
+        1,
+        3,
+        1,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1,
+        1,
+        2,
+        2,
+        1,
+        null
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       2,
+       0,
+       2,
+       2,
+       2,
+       2,
+       2,
+       2
+      ],
+      [
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       2,
+       null
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       0,
+       0,
+       2,
+       2,
+       2,
+       2,
+       2,
+       2
+      ],
+      [
+       2,
+       0,
+       0,
+       2,
+       0,
+       2,
+       2,
+       null
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "distinct.same-grain",
+   "family": "distinct",
+   "summary": "SELECT region, product, day, COUNT(DISTINCT customer) AS d FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, product, day, COUNT(DISTINCT customer) FROM sales GROUP BY region, product, day",
+   "expect": "rewrite",
+   "note": "same grain: read the stored distinct count",
+   "traps": []
+  },
+  {
+   "id": "distinct.sum-distinct-from-grain",
+   "family": "distinct",
+   "summary": "SELECT region, amount, COUNT(*) AS n FROM sales GROUP BY region, amount",
+   "query": "SELECT region, SUM(DISTINCT amount) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "amount is in the summary's grain",
+   "traps": []
+  },
+  {
+   "id": "distinct.count-distinct-region",
+   "family": "distinct",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT COUNT(DISTINCT region) FROM sales",
+   "expect": "rewrite",
+   "note": "region is in the grain; a global distinct count",
+   "traps": []
+  },
+  {
+   "id": "distinct.count-distinct-product",
+   "family": "distinct",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, COUNT(DISTINCT product) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "product is in the grain",
+   "traps": []
+  },
+  {
+   "id": "distinct.distinct-of-sum",
+   "family": "distinct",
+   "summary": "SELECT region, product, day, SUM(amount) AS s FROM sales GROUP BY region, product, day",
+   "query": "SELECT region, SUM(DISTINCT amount) FROM sales GROUP BY region",
+   "expect": "none",
+   "note": "amount is only stored as per-group totals",
+   "traps": [
+    {
+     "sql": "SELECT region, SUM(DISTINCT s) FROM mv0 GROUP BY region",
+     "why": "distinct totals are not distinct amounts",
+     "witness": {
+      "sales": [
+       [
+        2,
+        0,
+        0,
+        1,
+        3,
+        1,
+        2,
+        3
+       ],
+       [
+        3,
+        0,
+        3,
+        0,
+        2,
+        3,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        3,
+        2,
+        2,
+        3,
+        3,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "witness": {
+    "a": {
+     "sales": [
+      [
+       2,
+       1,
+       1,
+       null,
+       1,
+       2,
+       2,
+       2
+      ]
+     ]
+    },
+    "b": {
+     "sales": [
+      [
+       0,
+       1,
+       1,
+       null,
+       1,
+       1,
+       1,
+       0
+      ],
+      [
+       1,
+       1,
+       1,
+       null,
+       1,
+       1,
+       1,
+       0
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "distinct.count-distinct-nullable",
+   "family": "distinct",
+   "summary": "SELECT region, customer, COUNT(*) AS n FROM sales GROUP BY region, customer",
+   "query": "SELECT region, COUNT(DISTINCT customer) FROM sales GROUP BY region",
+   "expect": "rewrite",
+   "note": "customer may be NULL; COUNT(DISTINCT) skips NULLs on both sides",
+   "traps": []
+  }
+ ]
+}
