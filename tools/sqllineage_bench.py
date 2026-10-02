@@ -103,7 +103,7 @@ def load_cases() -> list[dict]:
 
 
 def _destination(statement: exp.Expression) -> str | None:
-    if isinstance(statement, (exp.Create, exp.Insert)):
+    if isinstance(statement, (exp.Create, exp.Insert, exp.Merge)):
         table = statement.this
         if isinstance(table, exp.Schema):
             table = table.this
@@ -253,7 +253,7 @@ def write_results(result: dict, seconds: float) -> None:
                 "score": f"{t['exact']}/{t['total']} exact, {t['wrong']} wrong",
                 "metric": (
                     "Cases whose table and column lineage match SQLLineage's expected graph exactly. The rest are reported as "
-                    f"unknown ({t['unknown']}: a SELECT * with no known columns, UPDATE, MERGE and procedures that are not traced) and none claims a wrong edge."
+                    f"unknown ({t['unknown']}: a SELECT * with no known columns, UPDATE and procedures that are not traced) and none claims a wrong edge."
                 ),
                 "evidence": "executed",
                 "correctness": "0 cases with an edge or table the expectation does not have (a SELECT * with unknown columns says unknown, not a guess)",

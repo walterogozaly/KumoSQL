@@ -28,6 +28,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | --- | --- |
 | [SQLSolver and the algebraic prover](sqlsolver.md) | SQLSolver Calcite, Spark, TPC-H and TPC-C; R-Bot; QED; Cosette and SPES |
 | [VeriEQL](verieql.md) | VeriEQL LeetCode, Literature and Calcite suites |
+| [Engine test suites](engine-suites.md) | DuckDB and SQLite SQLLogicTest and SQLGlot fixtures run through every rewrite, checked by execution |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | 850 lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification |
@@ -36,6 +37,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on LLM-R2's 11,353 queries, test files held out |
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage |
 | [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct |
+| [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
 | [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases |
 | [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC, unsafe-rewrite detection, rewrite composition |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking, counterexample minimization |
