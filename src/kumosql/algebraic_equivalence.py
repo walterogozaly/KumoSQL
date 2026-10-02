@@ -48,6 +48,7 @@ from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .empty_rules import canonical_empty, propagate_empty
 from .set_filters import merge_same_source, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
+from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .regroup_arithmetic import regroup_arithmetic
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -4347,7 +4348,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(tree).transform(step)))))), not_null)
+        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):

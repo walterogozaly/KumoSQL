@@ -5,7 +5,7 @@
   "score": "109/147 reusable cases rewritten, 0 wrong",
   "metric": "Queries Calcite can answer from a materialized view that KumoSQL rewrites over the view and proves equivalent; 41 of 41 'cannot' cases (and 8 disabled ones) are not rewritten. Supported subset: 109/139.",
   "evidence": "proof",
-  "correctness": "0 wrong: every rewrite is proven by the prover and re-run against the original on random DuckDB databases (105 verified, 7 not runnable: FLOOR-TO-unit)",
+  "correctness": "0 wrong: every rewrite is proven by the prover and re-run against the original on random DuckDB databases (112 verified; `FLOOR(x TO unit)` is checked as DATE_TRUNC)",
   "coverage": {
     "proven": 112,
     "unknown": 67,
@@ -13,7 +13,7 @@
     "timeout": 0,
     "error": 0
   },
-  "usefulness": "112 of 196 queries changed (109 expected, 3 in cases Calcite disables); 105 of 112 verified on random databases",
+  "usefulness": "112 of 196 queries changed (109 expected, 3 in cases Calcite disables); 112 of 112 verified on random databases",
   "held_out": "27/39 reusable (held-out quarter by case-id hash; 28 rewrites, 26 verified, 0 wrong); development 82/108, baseline (existing prover alone) 8/108",
   "docs": "docs/model-reuse.md#materialized-view-reuse",
   "command": "python tools/mv_reuse_bench.py --all",
