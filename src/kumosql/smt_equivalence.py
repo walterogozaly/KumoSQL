@@ -1443,6 +1443,10 @@ class _Compiler:
             return _Val(nulls, val_fn(*args))
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
+            inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+            if type(inner) is exp.Cast and inner.args["to"] == to:
+                # A cast to the type a value already has is the value: CAST(CAST(x AS T) AS T) is CAST(x AS T).
+                return self._val(inner, env, agg, aliases)
             if (
                 isinstance(e.this, exp.Literal)
                 and e.this.is_string

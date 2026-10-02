@@ -73,6 +73,7 @@ EQUIVALENT = [
     # Exact literal arithmetic, x * 1, ROUND(x, 0) and ROUND over CASE arms.
     ("SELECT x * (1 - 0.25), x * 1 FROM t", "SELECT x * 0.75, x FROM t"),
     ("SELECT ROUND(CASE WHEN k > 1 THEN x END, 0) FROM t", "SELECT CASE WHEN k > 1 THEN ROUND(x) END FROM t"),
+    ("SELECT CAST(CAST(x AS BIGINT) AS BIGINT) FROM t", "SELECT CAST(x AS BIGINT) FROM t"),
 ]
 
 DIFFERENT = [
@@ -97,6 +98,7 @@ DIFFERENT = [
     ("SELECT s.y, CASE WHEN s.x > g.m THEN 1 ELSE g.m END FROM t AS s JOIN (SELECT k, MAX(x) AS m FROM t WHERE x < 2 GROUP BY k) AS g ON s.k = g.k",
      "SELECT s.y, g.m FROM t AS s JOIN (SELECT k, MAX(x) AS m FROM t WHERE x < 2 GROUP BY k) AS g ON s.k = g.k"),
     ("SELECT x * (1 - 0.25) FROM t", "SELECT x * 0.5 FROM t"),
+    ("SELECT CAST(CAST(x AS DOUBLE) AS VARCHAR) FROM t", "SELECT CAST(x AS VARCHAR) FROM t"),
 ]
 
 
