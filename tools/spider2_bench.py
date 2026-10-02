@@ -55,7 +55,8 @@ from kumosql.smt_equivalence import SmtStatus, prove_equivalent_smt  # noqa: E40
 
 PASS, UNSUPPORTED, FAIL = cov.PASS, cov.UNSUPPORTED, cov.FAIL
 STAGES = ("parse", "load", "graph", "lineage", "rename", "drop", "cleanup", "format")
-TIMEOUT = 60
+TIMEOUT = 60  # CPU seconds per query, so a busy machine (a parallel test run) cannot time a query out
+WALL_TIMEOUT = 10 * TIMEOUT  # backstop for a query that blocks without using CPU
 
 
 class _Timeout(BaseException):
@@ -197,13 +198,19 @@ def stage_rewrites(sql: str) -> dict:
     return out
 
 
+def _set_limits(cpu: float, wall: float) -> None:
+    signal.setitimer(signal.ITIMER_PROF, cpu)
+    signal.setitimer(signal.ITIMER_REAL, wall)
+
+
 def run_query(case_id: str) -> tuple[str, dict]:
+    signal.signal(signal.SIGPROF, _alarm)
     signal.signal(signal.SIGALRM, _alarm)
     sql = text_of(case_id)
     out: dict = {}
     started = time.time()
     try:
-        signal.alarm(TIMEOUT)
+        _set_limits(TIMEOUT, WALL_TIMEOUT)
         out["parse"] = cov.stage_parse(sql)
         pipeline, *loaded = cov.stage_load_sql(sql, out["parse"][0])
         out["load"] = tuple(loaded)
@@ -222,13 +229,13 @@ def run_query(case_id: str) -> tuple[str, dict]:
         )
         fmt = rewrites["format_sql"]
         out["format"] = (FAIL, "crashed") if "error" in fmt else ((FAIL, "damaged the query") if fmt.get("damaged") else (PASS, ""))
-        signal.alarm(0)
+        _set_limits(0, 0)
     except _Timeout:
-        out["timeout"] = (FAIL, f"over {TIMEOUT}s")
+        out["timeout"] = (FAIL, f"over {TIMEOUT} CPU seconds or {WALL_TIMEOUT} s")
     except Exception as exc:  # noqa: BLE001
         out["crash"] = (FAIL, cov._error(exc))
     finally:
-        signal.alarm(0)
+        _set_limits(0, 0)
     out["seconds"] = round(time.time() - started, 2)
     return case_id, out
 
