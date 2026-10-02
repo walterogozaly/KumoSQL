@@ -1,0 +1,18 @@
+{
+  "suite": "Incremental safety proofs",
+  "order": 141,
+  "size": 16,
+  "score": "11/16 safe cases proven, 0 wrong",
+  "metric": "Incremental models that do equal their full refresh under a stated contract (watermark append and merge rules); the other 5 are left unknown, never called safe or different.",
+  "docs": "docs/incremental.md#scores",
+  "command": "python tools/incremental_bench.py",
+  "date": "2026-10-02",
+  "caveats": "Proof rules cover row-wise single-table models only; de-duplicating, aggregating, pre-operation and join models stay unknown. Proofs assume the COALESCE default precedes every event time and the declared source key is unique and non-NULL. Baseline before generalising the rules: 2/13 safe cases proven on the first 37 cases.",
+  "evidence": "proof",
+  "correctness": "0 false proofs: no proven case diverges in the simulator, the scripted workloads or a 25-sequence search (tests/test_incremental.py)",
+  "coverage": {
+    "proven": 11,
+    "unknown": 5
+  },
+  "held_out": "3/3 proven, 0 wrong (3 safe among the 12 blind cases)"
+}
