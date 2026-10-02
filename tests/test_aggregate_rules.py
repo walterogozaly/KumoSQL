@@ -172,3 +172,12 @@ def test_filter_over_a_union_with_aggregating_branches_is_distributed():
     out = _rule(rules._distribute_over_aggregating_branches, f"SELECT t.name, t.c FROM {union} WHERE t.name = 'x'")
     assert out.count("UNION ALL") == 1 and out.count("WHERE t.name = 'x'") == 2
     assert _rule(rules._distribute_over_aggregating_branches, f"SELECT COUNT(*) FROM {union}") is None
+
+
+def test_projection_over_a_grouped_join_reads_the_join():
+    grouped = "(SELECT deptno AS k, SUM(sal) AS s FROM emp GROUP BY deptno) AS g"
+    out = _rule(rules._merge_projection_over_grouped_join, f"SELECT d.v * 2 FROM (SELECT g.s + 1 AS v FROM dept JOIN {grouped} ON dept.deptno = g.k) AS d")
+    assert out is not None and "AS d" not in out and "(g.s + 1) * 2" in out
+    # an outer join is left for the rules that first make a null-rejected one inner
+    outer = f"SELECT d.v FROM (SELECT g.s AS v FROM dept LEFT JOIN {grouped} ON dept.deptno = g.k) AS d WHERE d.v > 0"
+    assert _rule(rules._merge_projection_over_grouped_join, outer) is None
