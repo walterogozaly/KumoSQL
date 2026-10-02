@@ -138,3 +138,62 @@ def test_generated_job_log_star_failures_are_resolved(monkeypatch):
     unresolved_models = {m for m, _ in stars}
     assert unresolved_models == {f"p.m.{n}" for n, q in queries.items() if q.split("`")[1] in denied}
     assert len(stars) < 1200 and readable
+
+
+def test_lookup_reads_metadata_only_even_for_partition_filtered_tables(monkeypatch):
+    """Only ``tables.get`` calls are made, so a table that requires a partition filter is looked up like any other."""
+
+    paths = []
+
+    def fake_get_once(path, params=None):
+        paths.append(path)
+        if not path.endswith("/tables/events") or "queries" in path or "data" in path.split("/")[-1]:
+            raise bigquery_catalog.CatalogError("Cannot query over table without a filter over partition column", 400)
+        return {"tableReference": {"tableId": "events"}, "schema": {"fields": [{"name": "id", "type": "INTEGER"}]},
+                "timePartitioning": {"requirePartitionFilter": True}}
+
+    monkeypatch.setenv("KUMOSQL_SCHEMA_FETCH", "1")
+    monkeypatch.setattr(bigquery_catalog, "_token_cached", lambda: "token")
+    monkeypatch.setattr(bigquery_catalog, "_get_once", fake_get_once)
+    schema, _ = schema_fetch.resolve(["p.ext.events"])
+    assert schema == {"p.ext.events": {"id": "INT64"}}
+    assert paths == ["projects/p/datasets/ext/tables/events"]
+
+
+def test_one_credential_is_used_for_every_concurrent_request(monkeypatch):
+    import threading
+    import time
+
+    refreshes = []
+
+    def slow_token():
+        refreshes.append(1)
+        time.sleep(0.05)
+        return "token"
+
+    monkeypatch.delenv("BQ_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(bigquery_catalog, "access_token", slow_token)
+    monkeypatch.setattr(bigquery_catalog, "_token", None)
+    threads = [threading.Thread(target=bigquery_catalog._token_cached) for _ in range(20)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(refreshes) == 1
+
+
+def test_many_tables_are_fetched_concurrently(monkeypatch):
+    import time
+
+    tables = {f"p.ext{i % 7}.t{i}": ["id"] for i in range(210)}
+    fake_bigquery(monkeypatch, tables)
+    real = bigquery_catalog.get_table
+
+    def slow(project, dataset, table):
+        time.sleep(0.05)
+        return real(project, dataset, table)
+
+    monkeypatch.setattr(bigquery_catalog, "get_table", slow)
+    started = time.time()
+    schema, stats = schema_fetch.resolve(list(tables))
+    elapsed = time.time() - started
+    assert stats["found"] == 210
+    assert elapsed < 210 * 0.05 / 3  # serial would take 10.5 s; a pool of 8 takes about 1.3 s
