@@ -6,7 +6,7 @@ from collections import defaultdict
 import json
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Callable, Iterable, Mapping
 
 from sqlglot import exp
 
@@ -456,6 +456,7 @@ def load_sqlx_project(
     root: str | Path,
     *,
     source_schema: dict[str, dict[str, str]] | None = None,
+    compiled_targets: Callable[[], Iterable[tuple[tuple[str, str, str], bool]]] | None = None,
 ) -> Pipeline:
     """Load a Dataform project (``definitions/**.sqlx``) or a folder of ``.sql`` files.
 
@@ -611,6 +612,23 @@ def load_sqlx_project(
             diagnostics.append(PipelineDiagnostic(
                 str(path.relative_to(root)), "js_declaration_dynamic",
                 "declares or names tables that cannot be read without running the code; refs to unlisted names were left unresolved"))
+
+    if incomplete_js and compiled_targets is not None:
+        # Dataform's own compilation lists every action, which settles what the JavaScript could not.
+        try:
+            fetched = list(compiled_targets())
+        except Exception as exc:  # noqa: BLE001 - no credentials, offline, no matching repository: stay unresolved
+            diagnostics.append(PipelineDiagnostic(
+                "", "compiled_graph_unavailable",
+                f"the Dataform compilation could not be read ({type(exc).__name__}); refs to unlisted names stay unresolved"))
+        else:
+            for (target_db, target_schema, target_name), is_declaration in fetched:
+                target = Target(target_db, target_schema, target_name)
+                if target not in known.setdefault(target.name, []):
+                    known[target.name].append(target)
+                if is_declaration:
+                    sources[target.key] = target
+            incomplete_js = False
 
     pending = []
     for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
