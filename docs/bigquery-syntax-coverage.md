@@ -41,6 +41,8 @@ python tools/bq_dry_run_manifest.py --project kumosql      # free dry runs; need
 
 After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverage.py --update-known-gaps` under each supported sqlglot version (CI tests 26.0.0 and the latest) and delete the entries that now pass.
 
+See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrites of GoogleSQL compliance queries and BigQuery edge cases and compares results.
+
 ## What this found and fixed
 
 - A nested `name:` (a documented column called `name`, a `{ name, schema }` entry in `dependencies`) renamed the action. Config keys are now read at the top level only.

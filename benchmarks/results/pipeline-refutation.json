@@ -1,0 +1,17 @@
+{
+  "suite": "Whole-pipeline equivalence (refutation)",
+  "order": 111,
+  "size": 66,
+  "score": "66/66 refuted, 0 wrong",
+  "metric": "Deliberately broken multi-model refactors (filter moved across an outer join or aggregate, extracted model that changes an exposed intermediate, wrong rollup, join type changed) shown different by a database on which an output differs.",
+  "evidence": "executed",
+  "correctness": "0 wrong: no sound refactor is called different. Each counterexample is a database replayed through both full pipelines in DuckDB; 15 come from the prover's counterexample, 51 from a random-database search.",
+  "coverage": {
+    "refuted": 66
+  },
+  "held_out": "10/10 refuted (union_split and latest_per_key families, run once at baseline)",
+  "docs": "docs/pipeline-equivalence.md",
+  "command": "python tools/pipeline_bench.py",
+  "date": "2026-10-02",
+  "caveats": "Bounded by the databases tried (25 random ones), so a subtle break could escape; every case here is caught. Generated cases, none adapted from a public suite yet."
+}
