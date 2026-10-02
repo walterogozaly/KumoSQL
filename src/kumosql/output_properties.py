@@ -32,6 +32,7 @@ from typing import Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import conjuncts as _conjuncts
 from .smt_equivalence import TableConstraints
 
 # A fact's provenance: the declared facts it rests on (empty = follows from the query).
@@ -798,16 +799,6 @@ def _all_distinct(values: list) -> bool:
         return False
     kinds = {tuple(c[0] for c in v) if isinstance(v[0], tuple) else v[0] for v in values}
     return len(kinds) == 1 and len(set(values)) == len(values)
-
-
-def _conjuncts(node: exp.Expression):
-    if isinstance(node, exp.Paren):
-        yield from _conjuncts(node.this)
-    elif isinstance(node, exp.And):
-        yield from _conjuncts(node.left)
-        yield from _conjuncts(node.right)
-    else:
-        yield node
 
 
 def _eq_pair(cond: exp.Expression):
