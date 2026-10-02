@@ -133,3 +133,13 @@ def test_a_count_is_never_null():
     joined = "SELECT n FROM emp LEFT JOIN (SELECT COUNT(*) AS n FROM emp) AS d ON TRUE WHERE n IS NULL"
     assert never_null_counts(sqlglot.parse_one(joined, read="mysql")) is None
     assert _proven(sql, "SELECT n FROM (SELECT COUNT(empno) OVER (PARTITION BY deptno) AS n FROM emp) AS d WHERE FALSE")
+
+
+def test_weighted_sum_of_a_count_of_nulls_is_zero():
+    # every x NULL: COUNT(x) is 0, so SUM(c * w) is 0; the flat rewrite must add 0 * w, not NULL
+    schema = {"t": ["k", "x"], "u": ["k", "w"]}
+    left = "SELECT u.k, SUM(m.c * u.w) AS s FROM u JOIN (SELECT k, COUNT(x) AS c FROM t GROUP BY k) m ON m.k = u.k GROUP BY u.k"
+    wrong = "SELECT u.k, SUM(CASE WHEN NOT t.x IS NULL THEN u.w END) AS s FROM u JOIN t ON t.k = u.k GROUP BY u.k"
+    right = "SELECT u.k, SUM(CASE WHEN NOT t.x IS NULL THEN u.w ELSE 0 * u.w END) AS s FROM u JOIN t ON t.k = u.k GROUP BY u.k"
+    assert not prove_equivalent_algebraic(left, wrong, schema=schema, dialect="mysql").proven
+    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="mysql").proven

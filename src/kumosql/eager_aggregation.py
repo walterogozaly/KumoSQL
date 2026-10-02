@@ -318,7 +318,11 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
             if weight is None:
                 replacements.append((call, exp.Count(this=inner_arg)))
             else:
-                present = exp.Case(ifs=[exp.If(this=exp.Not(this=exp.Is(this=inner_arg.copy(), expression=exp.Null())), true=weight.copy())])
+                # a row whose x is NULL adds 0 * w: c * w is 0 (not NULL) for a group of NULLs, NULL only for a NULL w
+                present = exp.Case(
+                    ifs=[exp.If(this=exp.Not(this=exp.Is(this=inner_arg.copy(), expression=exp.Null())), true=weight.copy())],
+                    default=exp.Mul(this=exp.Literal.number(0), expression=exp.Paren(this=weight.copy())),
+                )
                 replacements.append((call, exp.Sum(this=present)))
         else:
             return None
