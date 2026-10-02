@@ -1,0 +1,22 @@
+{
+  "suite": "MV-based rewriting (JOB, SCALE, STATS, TPC-DS)",
+  "order": 63,
+  "size": 413,
+  "score": "354/413 queries rewritten over mined views, 0 wrong",
+  "metric": "Queries rewritten onto views that KumoSQL mined from the workload, each rewrite proven equal to the query and re-run on random databases. JOB 108/113, SCALE 67/100, STATS 93/100, TPC-DS 86/100 (a fixed 100-query sample for the last three). Benchmark's own ten JOB views: 90/113.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every rewrite is proven by the prover and re-run against the original on random DuckDB databases (354 verified); control with empty views accepts 0 of 355 rewrites",
+  "coverage": {
+    "proven": 354,
+    "unknown": 50,
+    "unsupported": 9,
+    "timeout": 0,
+    "error": 0
+  },
+  "usefulness": "354 of 413 queries changed; a rewrite replaces on average 3.6 joined tables by one view scan (join savings only; no engine or data, so no latency)",
+  "held_out": "69/91 (JOB families and query-text hash, 25%; views mined from development queries only); baseline (existing prover alone) 0/413",
+  "docs": "docs/mv-benchmark.md",
+  "command": "python tools/mv_workload_bench.py --all --sample 100",
+  "date": "2026-10-02",
+  "caveats": "Source repo has no licence file: downloaded at commit 83da57fbc7, never stored. Views are generalized joins mined from the same workload, so rewriting is easier than with an outside view set; held-out shows carry-over to other instances. Unknown = 49 queries no chosen view applies to plus 1 miss. SCALE, STATS and TPC-DS are 100-query hash samples. Rules were developed looking at JOB and STATS development queries."
+}
