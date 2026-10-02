@@ -188,7 +188,7 @@ Evidence levels are kept apart: unbounded proof, bounded verification and agreem
 
 The lineage, change-impact and Dataform rows are built from Python-generated pipelines and SQLX files whose answers are known by construction, plus SQLLineage's own test cases; see [docs/lineage-bench.md](docs/lineage-bench.md) and [docs/dataform-bench.md](docs/dataform-bench.md).
 
-The lineage, change-impact, schema-change ([docs/schema-change-bench.md](docs/schema-change-bench.md)), Spider 2.0 ([docs/spider2-bench.md](docs/spider2-bench.md)) and Dataform rows are built from Python-generated pipelines and SQLX files whose answers are known by construction, plus SQLLineage's own test cases; see [docs/lineage-bench.md](docs/lineage-bench.md) and [docs/dataform-bench.md](docs/dataform-bench.md).
+The lineage, change-impact, schema-change ([docs/schema-change-bench.md](docs/schema-change-bench.md)), Spider 2.0 ([docs/spider2-bench.md](docs/spider2-bench.md)), lineage goldens ([docs/lineage-goldens-bench.md](docs/lineage-goldens-bench.md)) and Dataform rows are built from Python-generated pipelines and SQLX files whose answers are known by construction, plus SQLLineage's own test cases; see [docs/lineage-bench.md](docs/lineage-bench.md) and [docs/dataform-bench.md](docs/dataform-bench.md).
 
 ## Local browser UI
 
@@ -372,7 +372,7 @@ python tools/run_tests.py --no-evals  # everything except the floors
 python -m pytest                      # plain serial run
 ```
 
-`run_tests.py` is `python -m pytest -n <cpus> --dist loadgroup` with the right marker; extra arguments go to pytest and `-j N` sets the workers. The whole fast suite took 35 minutes serially and about 9 on 4 CPUs; the longest single test (QED, about 5 minutes) is the floor. Tests must not share state: keep files under `tmp_path`, never write next to the sources, and reset module globals in a fixture (`tests/conftest.py` already isolates the state directory, the loaded project and the redactor). `tests/conftest.py` starts the slowest test files first under xdist (`HEAVY_FILES`) and marks the benchmark files `eval` (`EVAL_FILES`): add a new eval file to `EVAL_FILES` (`tests/test_scoreboard.py` fails when a test that loads an eval script from a results file's `command` is missing). Optionally `pip install sqlglotc` (the same version as `sqlglot`) compiles sqlglot and speeds the suite up by about 15%.
+`run_tests.py` is `python -m pytest -n <cpus> --dist loadgroup` with the right marker; extra arguments go to pytest and `-j N` sets the workers. The whole fast suite took 35 minutes serially and about 9 on 4 CPUs; the longest single test (QED, about 5 minutes) is the floor. Tests must not share state: keep files under `tmp_path`, never write next to the sources, and reset module globals in a fixture (`tests/conftest.py` already isolates the state directory, the loaded project and the redactor). `tests/conftest.py` starts the slowest test files first under xdist (`HEAVY_FILES`) and marks the benchmark files `eval` (`EVAL_FILES`): add a new eval file to `EVAL_FILES` (`tests/test_scoreboard.py` fails when a test that loads an eval script from a results file's `command` is missing). The runner uses compiled sqlglot (`sqlglotc`, mypyc wheels of the same version as `sqlglot`) when it is installed, which is about 10% faster for the whole suite (8.5 vs 9.5 minutes on 4 CPUs) and 15-20% on the prover tests; `python tools/run_tests.py --install-compiled` installs it, and `--pure` runs the suite against a pure-Python copy of sqlglot so both builds can be checked (CI runs both). KumoSQL itself stays pure Python: its own code is about 10% of the prover's run time, so compiling it would not pay, and the work laptop needs no compiler. Code must not subclass sqlglot's `Expression` (a compiled sqlglot refuses it).
 
 Use `python -m pytest` rather than bare `pytest` so the repository root is importable. CI (`.github/workflows/tests.yml`) runs `python -m pytest -m "not slow" -n auto --dist loadgroup` on the floor and the current `sqlglot` releases.
 
@@ -485,6 +485,8 @@ Schema facts strengthen proofs: pass `constraints={"orders": TableConstraints(no
 `AVG`, `DISTINCT`, outer joins, `LIMIT` and `UNION DISTINCT` are left alone. `tests/test_algebraic_equivalence.py` runs every rewrite on random SQLite databases (empty tables and NULLs included) to check normalization never changes results.
 
 [docs/singh-bedathur.md](docs/singh-bedathur.md) scores the 2,800 public LeetCode pairs from Singh and Bedathur's SQL-equivalence study with no model at run time (`python tools/singh_bedathur_bench.py`): each pair is proved equivalent, shown different by a DuckDB counterexample database, or left unknown. `kumosql.canonical_rules.canonicalize` holds the constraint-free rewrites (merging a select into the one derived table it reads, `DISTINCT` over selected group keys, `IN` over a grouped table as a join) that the harness tries when the prover finds no proof.
+
+[docs/sqlfluff-fixtures.md](docs/sqlfluff-fixtures.md) scores KumoSQL on the 850 fail-to-fix pairs in sqlfluff's rule tests (MIT, pinned to sqlfluff 4.3.0; `python tools/sqlfluff_fixtures_bench.py semantic|layout|kumosql`): the prover must prove the fixes that keep the meaning and never the ones that change it by design, the parser must find tree, comments and literals unchanged after a layout fix, and `format_sql` and the structural rewrites are compared with sqlfluff's own fixes.
 
 `kumosql.sqlsolver_backend.prove_equivalent(left, right, schema=...)` runs the algebraic prover first and, only when it finds no proof, the real SQLSolver jar if one is installed in a user folder. See [docs/sqlsolver.md](docs/sqlsolver.md) for setup, the translation rules and the rollout plan.
 
@@ -683,7 +685,7 @@ These pieces build on the pipeline graph. They report evidence and never claim m
 
 ## Join ordering and cardinality estimation
 
-`kumosql.joinorder` estimates the sizes of sub-joins from statistics gathered once from the data, and picks bushy join orders with DPccp. Both run in pure Python with no database. On STATS-CEB its sub-plan Q-error is 17 at p99, against 3,482 for Postgres 16 and 156 to 1,027 for the published learned estimators. Its plans run the workload in 98.8 s in DuckDB, against 275 s for DuckDB's own optimizer. `python tools/joinorder_bench.py stats-ceb --repo PATH` reruns it. See [docs/joinorder.md](docs/joinorder.md) for the method, the benchmarks and credits.
+`kumosql.joinorder` estimates the sizes of sub-joins from statistics gathered once from the data, and picks bushy join orders with DPccp. Both run in pure Python with no database. On STATS-CEB its sub-plan Q-error is 16.9 at p99, against 3,482 for Postgres 16 and 156 to 1,027 for the published learned estimators. On JOB with the full IMDB data, its plans cost 1.41x the optimum on geometric average (Postgres 16's estimates: 2.79x) and run the 113 queries in 10.8 s in DuckDB, against 15.5 s for DuckDB's own optimizer. `python tools/joinorder_bench.py stats-ceb|job --repo PATH` reruns them. See [docs/joinorder.md](docs/joinorder.md) for the method, the benchmarks, the held-out split and credits.
 
 ## BigQuery and Dataform syntax coverage
 
@@ -704,6 +706,8 @@ python tools/analytical_coverage.py --limit 200 --reasons
 python tools/benchmark_corpora.py fetch sqlstorm tpch-data tpcds-data job-data
 python tools/transformation_bench.py tpch tpcds job --json results.json
 ```
+
+`tools/llmr2_bench.py` repeats this at scale on the [LLM-R2](https://github.com/DAMO-NLP-SG/LLM-R2) query sets: 11,353 TPC-H, DSB and synthetic JOB queries, with LLM-R2's test files held out. See [docs/llmr2-bench.md](docs/llmr2-bench.md).
 
 ## BigQuery test bed
 
