@@ -25,6 +25,8 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 | [SQL-IQ Equivalence Judge](docs/sql-iq.md#scores) | Executed datasets | 1390 | **83.24% (1157/1390)**: Accuracy at deciding whether two queries are equivalent, with no model at run time. SQL-IQ's leaderboard lists language models at 69.9% to 78.4%. | Scored against the benchmark's labels only; about 9% of remaining misses look like label errors | none | 2026-10-01 | Needs a SQL-IQ checkout (not bundled); number copied from the docs, not rerun for this table. Database realism and trial count were chosen for realism, not per pair. |
 | [SQL-IQ SQL Judge](docs/sql-iq.md#sql-judge-and-sql-error-classification) | Executed datasets | 1850 | **66.65% (1233/1850)**: Picks the better of two candidate queries from rules that read only the question and schema. | Scored against labels only | none | 2026-10-01 | Rule weights were set by judgment and checked on SQL-IQ's own data, so likely optimistic elsewhere. Needs a SQL-IQ checkout; number copied from the docs. |
 | [SQL-IQ Error Classification](docs/sql-iq.md#sql-judge-and-sql-error-classification) | Executed datasets | 1850 | **58.85% detection F1**: Detection F1 for flagging that a query has an error (exact-set accuracy 38.90%, unified F1 39.07%). | Scored against labels only | none | 2026-10-01 | Exact-set accuracy is below the 50.5% of always answering "No error". Same tuning and checkout caveats as SQL Judge. |
+| [STATS-CEB cardinality](docs/joinorder.md#stats-ceb) | Executed datasets | 2603 | **Q-error p50 1.36, p90 3.7, p99 17, max 63**: Q-error (max of over- and under-estimate ratio) of KumoSQL's statistics-only estimator on all 2,603 STATS-CEB sub-plan queries, against exact sizes. Same sub-plans: Postgres 16 p99 3,482; published BayesCard p99 156, FLAT 771, DeepDB 1,027. | Exact sizes by variable elimination in DuckDB; all 146 query sizes match the published ones. 0 estimator errors. | none (JOB is the held-out workload; not yet reported) | 2026-10-02 | The full-row storage of frequent keys was added after looking at the worst STATS-CEB sub-plans (tuned on test). 1.2 MB of statistics (10,000-row samples). Source: End-to-End-CardEst-Benchmark at 670cb8d. |
+| [STATS-CEB end to end](docs/joinorder.md#stats-ceb) | Executed datasets | 146 | **98.8 s (DuckDB's optimizer 275 s with 3 timeouts; true sizes 97.9 s)**: Total DuckDB runtime of the 146 STATS-CEB queries with join trees chosen by KumoSQL's DPccp optimizer from its own estimates, join reordering in DuckDB switched off. Postgres 16 estimates through the same optimizer: 101.5 s. Median plan cost (C_out with true sizes) equals the optimum; worst plan 1.59x optimal (Postgres estimates 6.4x). | Every executed plan returned the published COUNT(*). | none (JOB is the held-out workload; not yet reported) | 2026-10-02 | Timeouts count as 60 s. 4 threads, one container; timings are best of two runs. Tuned on test, as for the cardinality row. |
 
 **Coverage** (pairs or cases by outcome)
 
@@ -38,6 +40,14 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 | [SQL-IQ Equivalence Judge](docs/sql-iq.md#scores) | – | – | – | – | – | – |
 | [SQL-IQ SQL Judge](docs/sql-iq.md#sql-judge-and-sql-error-classification) | – | – | – | – | – | – |
 | [SQL-IQ Error Classification](docs/sql-iq.md#sql-judge-and-sql-error-classification) | – | – | – | – | – | – |
+| [STATS-CEB cardinality](docs/joinorder.md#stats-ceb) | – | – | – | – | – | – |
+| [STATS-CEB end to end](docs/joinorder.md#stats-ceb) | – | – | – | – | 0 | 0 |
+
+**Usefulness, analysis quality and performance**
+
+| Eval | Usefulness | Analysis quality | Performance |
+| --- | --- | --- | --- |
+| [STATS-CEB cardinality](docs/joinorder.md#stats-ceb) | – | – | 11.8 ms per sub-plan estimate in pure Python |
 <!-- scoreboard:end -->
 
 Evidence levels are kept apart: unbounded proof, bounded verification and agreement on executed datasets. Each row comes from one file in `benchmarks/results/` (format in [benchmarks/README.md](benchmarks/README.md)); the command in that file reruns the eval. After a change that moves a score, edit that eval's file (`score`, `size`, `date`, `caveats`) and run `python tools/scoreboard.py` to regenerate the table; `python tools/scoreboard.py --check` fails if it is stale. A new eval adds a new results file in the same PR. On a merge conflict in the table, keep either side and rerun the script. Evals still being added (VeriEQL, QED, Singh and Bedathur, DSB and SQLStorm coverage, rewriting, join ordering and cardinality) appear once their harness is merged.
@@ -511,6 +521,10 @@ These pieces build on the pipeline graph. They report evidence and never claim m
 - **Query sources** (`query_sources.py`): a source is `connected` only when every asset it reports maps to a graph identity; otherwise it is `not_enabled`.
 - **Failures stay local** (`resilience.py`): an asset that cannot be read or parsed becomes an entry in `diagnostics` and the rest of the report is still produced. Diagnostics carry no file contents.
 - **Refactoring proposals** (`shared_logic.py`, `filter_pushdown.py`, `proposal_readiness.py`): `propose_shared_logic` and `find_upstream_filter_proposals` suggest extracting shared logic or pushing a filter upstream, listing every affected consumer and refusing when the consumer set is incomplete. Neither applies changes. `assess_proposal` marks a proposal `ready` only when every consumer is `proven` or `unchanged`; a missing result is `unknown`.
+
+## Join ordering and cardinality estimation
+
+`kumosql.joinorder` estimates the sizes of sub-joins from statistics gathered once from the data, and picks bushy join orders with DPccp. Both run in pure Python with no database. On STATS-CEB its sub-plan Q-error is 17 at p99, against 3,482 for Postgres 16 and 156 to 1,027 for the published learned estimators. Its plans run the workload in 98.8 s in DuckDB, against 275 s for DuckDB's own optimizer. `python tools/joinorder_bench.py stats-ceb --repo PATH` reruns it. See [docs/joinorder.md](docs/joinorder.md) for the method, the benchmarks and credits.
 
 ## BigQuery and Dataform syntax coverage
 
