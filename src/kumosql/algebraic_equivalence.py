@@ -53,7 +53,7 @@ from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .empty_rules import canonical_empty, propagate_empty
-from .set_filters import _flatten as _flatten_projections, merge_same_source, set_operation_to_exists
+from .setop_rules import _sf_flatten as _flatten_projections, merge_same_source, normalize_set_operations, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
 from .lone_source import lift_derived_expressions
@@ -4665,7 +4665,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null), not_null)
+        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step))))))), not_null), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):

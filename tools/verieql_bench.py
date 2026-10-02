@@ -105,8 +105,27 @@ def load_cases(suite: str) -> list[dict]:
     cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     for position, case in enumerate(cases):
         case["index"] = position  # the files restart their own index per problem, so number the cases here
+        tables = set((case.get("schema") or {}).keys())
+        adapted = [_bare_table_setops(sql, tables) for sql in case["pair"]]
+        if adapted != list(case["pair"]):
+            case["pair"], case["adapted"] = adapted, True
         case["suite"] = suite
     return cases
+
+
+_BARE_SETOP = re.compile(r"\(\s*(\w+)\s+(UNION ALL|UNION|INTERSECT|EXCEPT)\s+(\w+)\s*\)", re.IGNORECASE)
+
+
+def _bare_table_setops(sql: str, tables: set[str]) -> str:
+    """``(R UNION ALL S)`` (relational-algebra shorthand) is ``(SELECT * FROM R UNION ALL SELECT * FROM S)`` in SQL."""
+
+    def spell(match: re.Match) -> str:
+        left, op, right = match.groups()
+        if left not in tables or right not in tables:
+            return match.group(0)
+        return f"(SELECT * FROM {left} {op} SELECT * FROM {right})"
+
+    return _BARE_SETOP.sub(spell, sql)
 
 
 def load_veri_states(suite: str) -> dict[tuple, dict]:
