@@ -225,7 +225,7 @@ class Pipeline:
         """Every table each query model reads: pipeline models and declared sources by key, others as spelled."""
 
         analysis = self._analyse()
-        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed}
+        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed or parents}
         for key, tables in analysis.external_reads.items():
             reads.setdefault(key, set()).update(tables)
         return {key: frozenset(tables) for key, tables in reads.items()}
