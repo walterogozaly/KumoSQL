@@ -15,7 +15,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["qed_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOOR = 221
+FLOOR = 241
 
 
 def test_qed_calcite_cases():
