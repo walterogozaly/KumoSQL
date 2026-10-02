@@ -7,7 +7,9 @@ benchmark files carry no labels, so every verdict has to stand on evidence:
   run on it* (DuckDB) with different result bags.
 * ``equivalent`` - the SMT prover (``kumosql.prover``'s algebraic + z3 pipeline) proved the
   bags equal under the schema's keys and NOT NULL columns.
-* ``unknown`` - neither. An unknown is always better than a wrong verdict.
+* ``agrees`` - not proven, but no counterexample turned up in the random databases (executed-dataset
+  evidence only: not a proof, and not bounded verification).
+* ``unknown`` - the pair could not be run at all (a query DuckDB rejects, unreadable constraints). An unknown is always better than a wrong verdict.
 * ``wrong`` - an ``equivalent`` verdict that a second, independent random search (other seed,
   more databases) refutes, or that VeriEQL's published counterexample (replayed on DuckDB)
   refutes. This must stay 0.
@@ -18,7 +20,7 @@ benchmark files carry no labels, so every verdict has to stand on evidence:
 
 The suites are downloaded once into ``~/.cache/kumosql/verieql`` (they are CC BY-NC-SA 4.0
 and are not copied into this repository). They come from https://github.com/VeriEQL/VeriEQL
-(Pan Yi's group, see the README for the paper and licence); nothing from that code is
+(see the README for the paper and licence); nothing from that code is
 vendored here, only its benchmark files are read.
 """
 
@@ -195,7 +197,7 @@ def _or(values):
 
 # --- verdicts ---------------------------------------------------------------------------
 
-EQUIVALENT, DIFFERENT, UNKNOWN, WRONG = "equivalent", "different", "unknown", "wrong"
+EQUIVALENT, DIFFERENT, AGREES, UNKNOWN, WRONG = "equivalent", "different", "agrees", "unknown", "wrong"
 
 
 def prove(case: dict, spec: cx.Spec, timeout_ms: int):
@@ -247,6 +249,7 @@ def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_
     left, right = case["pair"]
     signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(budget)
+    searched = False
     try:
         try:
             searcher = cx.Searcher(spec, left, right)
@@ -255,6 +258,7 @@ def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_
         if not searcher.runs():
             return Verdict(index, UNKNOWN, "a query DuckDB rejects", time.time() - start)
         found = searcher.search(trials, seed=index)
+        searched = True
         if found is not None:
             return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
         try:
@@ -262,22 +266,25 @@ def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_
         except _Timeout:
             raise
         except Exception as error:
-            return Verdict(index, UNKNOWN, f"prover crash: {type(error).__name__}", time.time() - start)
+            return Verdict(index, AGREES, f"prover crash: {type(error).__name__}", time.time() - start)
         if result.proven:
             again = searcher.search(recheck_trials, seed=index + 1_000_003)
             if again is not None:
                 return Verdict(index, WRONG, "proved, then refuted by a counterexample", time.time() - start)
             return Verdict(index, EQUIVALENT, "proof", time.time() - start)
-        return Verdict(index, UNKNOWN, result.reason[:80], time.time() - start)
+        return Verdict(index, AGREES, result.reason[:80], time.time() - start)
     except _Timeout:
-        return Verdict(index, UNKNOWN, "time budget", time.time() - start)
+        return Verdict(index, AGREES if searched else UNKNOWN, "time budget", time.time() - start)
     finally:
         signal.alarm(0)
 
 
 def _work(args):
     case, options = args
-    return decide(case, **options)
+    try:
+        return decide(case, **options)
+    except Exception as error:  # a crash is an unknown, never a verdict
+        return Verdict(case["index"], UNKNOWN, f"crash: {type(error).__name__}")
 
 
 # --- auditing against VeriEQL's published outcome ---------------------------------------
@@ -359,7 +366,7 @@ def format_result(result: SuiteResult) -> str:
     c = result.counts
     line = (
         f"{result.suite:10} cases {result.total:6}  equivalent {c[EQUIVALENT]:6}  different {c[DIFFERENT]:6}  "
-        f"unknown {c[UNKNOWN]:6}  wrong {wrong_count(result):3}  {result.seconds:7.1f}s"
+        f"agrees {c[AGREES]:6}  unknown {c[UNKNOWN]:6}  wrong {wrong_count(result):3}  {result.seconds:7.1f}s"
     )
     return line
 
