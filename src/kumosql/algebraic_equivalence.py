@@ -33,8 +33,9 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation, check_modeled, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, parenthesize_is_operands, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
+from .string_literals import canonical_literals
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -45,10 +46,13 @@ from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .row_bound_rules import trim_redundant_row_clauses
 from .date_ranges import extract_to_ranges
-from .dedup_join_rules import drop_unread_outer_join
+from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .empty_rules import canonical_empty, propagate_empty
+from .set_filters import merge_same_source, set_operation_to_exists
+from .outer_filters import strengthen_derived_outer_join
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
@@ -659,11 +663,55 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     return True
 
 
+def _null_extended(select: exp.Select, source: exp.Expression) -> bool:
+    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join."""
+
+    joins = select.args.get("joins") or []
+    sides = [(j.args.get("side") or "").upper() for j in joins]
+    kinds = [(j.args.get("kind") or "").upper() for j in joins]
+    for join, side, kind in zip(joins, sides, kinds):
+        if join.this is source:
+            return side in ("LEFT", "FULL") or kind in ("LEFT", "FULL")
+    # the FROM item, or anything joined before a RIGHT or FULL join, is padded by that join
+    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides, kinds))
+
+
+_STRICT = (exp.Paren, exp.Neg, exp.Cast, exp.Add, exp.Sub, exp.Mul, exp.Div, exp.IntDiv, exp.Mod, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
+
+
+def _null_propagating(node: exp.Expression) -> bool:
+    """Whether ``node`` is NULL whenever every column it reads is NULL (constants and IS NULL are not)."""
+
+    if isinstance(node, exp.Column):
+        return True
+    if isinstance(node, (exp.Paren, exp.Neg, exp.Cast)) and not isinstance(node, exp.TryCast):
+        return _null_propagating(node.this)
+    if isinstance(node, exp.Binary) and isinstance(node, _STRICT):
+        return _null_propagating(node.this) or _null_propagating(node.expression)
+    if isinstance(node, exp.Null):
+        return True
+    # every branch that can be taken gives NULL; a condition that is NULL itself is never taken
+    if isinstance(node, exp.Case) and not node.args.get("this"):
+        results = [i.args.get("true") for i in node.args.get("ifs") or [] if not _null_propagating(i.this)]
+        return all(r is not None and _null_propagating(r) for r in results + [node.args.get("default") or exp.null()])
+    if isinstance(node, exp.If):
+        taken = [node.args.get("false") or exp.null()] + ([] if _null_propagating(node.this) else [node.args.get("true")])
+        return all(r is not None and _null_propagating(r) for r in taken)
+    if isinstance(node, exp.Coalesce):
+        return all(_null_propagating(a) for a in [node.this, *node.expressions])
+    if isinstance(node, exp.Nullif):
+        return _null_propagating(node.this)
+    return False
+
+
 def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
     """``(SELECT f(a) AS x FROM t) AS d`` joined in: read ``t AS d`` and replace ``d.x`` by ``f(d.a)``.
 
     A derived table that only computes expressions over one table keeps every row, so it can be
-    folded into the query that uses it, for any join type.
+    folded into the query that uses it. On the NULL-extended side of an outer join a missing match
+    gives ``d.x`` NULL, while ``f(d.a)`` gives ``f(NULL)``; there only expressions that are NULL
+    whenever their columns are (columns, arithmetic, comparisons, a ``CASE`` whose reachable
+    branches are) are folded, never constants, ``IS NULL`` or a ``CASE`` that can give a constant.
     """
 
     if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
@@ -691,6 +739,8 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
         qualifier = table.alias_or_name
         # Columns of the new relation are the table's columns, so every use of ``d.x`` is replaced.
         by_name = {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, inner.expressions)}
+        if _null_extended(select, source) and not all(_null_propagating(e) for e in by_name.values()):
+            continue
         uses = [c for c in select.find_all(exp.Column) if c.table.lower() == alias.lower()]
         if any(c.name.lower() not in by_name for c in uses):
             continue
@@ -706,8 +756,10 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
                 if not inner_column.table or inner_column.table.lower() == qualifier.lower():
                     inner_column.set("table", exp.to_identifier(alias))
             value = exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement
-            # a select-list item keeps its output name once the column is replaced by a value
-            column.replace(exp.alias_(value, column.name) if column.parent is select and not isinstance(replacement, exp.Column) else value)
+            # a select-list item keeps its output name once the column is replaced by a value or a
+            # differently named column (``d.x`` becoming ``d.a`` would rename the output to ``a``)
+            renamed = not isinstance(replacement, exp.Column) or replacement.name.lower() != column.name.lower()
+            column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" and renamed else value)
         replaced = exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=exp.TableAlias(this=exp.to_identifier(alias)))
         source.replace(replaced)
         changed = True
@@ -1378,6 +1430,17 @@ def _origin_type(select: exp.Select, column: exp.Column, types: dict[str, dict[s
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _unbounded_text_cast(to: exp.DataType, dialect: str) -> bool:
+    """A cast to a string type with no length (MySQL's ``CAST(x AS CHAR)`` is one), which keeps any string."""
+
+    if to.expressions:
+        return False
+    kinds = {exp.DataType.Type.VARCHAR, exp.DataType.Type.TEXT}
+    if dialect == "mysql":
+        kinds.add(exp.DataType.Type.CHAR)
+    return to.this in kinds
+
+
 def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], dialect: str = "bigquery") -> exp.Expression | None:
     """``CAST(x AS DECIMAL(p, s))`` is ``x`` when ``x``'s declared type already fits it.
 
@@ -1397,6 +1460,12 @@ def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], d
     copy = select.copy()
     changed = False
     for cast in [c for c in copy.find_all(exp.Cast) if c.find_ancestor(exp.Select) is copy and input_column(c) is not None and isinstance(c.args.get("to"), exp.DataType)]:
+        if isinstance(cast.this, exp.Column) and not isinstance(cast, exp.TryCast) and _unbounded_text_cast(cast.args["to"], dialect):
+            declared = _origin_type(copy, cast.this, types)
+            if declared and re.match(r"^\s*(VARCHAR|TEXT|STRING)\b", declared, re.I):
+                cast.replace(cast.this.copy())
+                changed = True
+            continue
         target = _datatype_shape(cast.args["to"], (29, 9) if dialect == "bigquery" else (10, 0))
         if target is None or isinstance(cast, exp.TryCast):
             continue
@@ -3487,6 +3556,42 @@ def _push_distinct_into_sources(select: exp.Select, schema: dict[str, list[str]]
     return copy
 
 
+def _qualified_outer_columns(columns: list[exp.Column], outer: exp.Select, probe: exp.Select, declared: dict[str, set[str]]) -> list[exp.Column] | None:
+    """``columns`` of ``outer`` qualified so that they still read ``outer`` once moved into ``probe``'s WHERE.
+
+    Inside the probe an unqualified ``deptno`` would read the probe's own ``deptno``, and ``e.deptno``
+    would read a probe source also called ``e``. Each column is qualified by the outer source that
+    declares it, and a probe source of that name gets a fresh alias. None when that cannot be done safely.
+    """
+
+    sources = _sources_of(outer)
+    refs = []
+    for column in columns:
+        qualifier = column.table
+        if not qualifier:
+            owners = [
+                s for s in sources
+                if isinstance(s, exp.Table) and column.name.lower() in declared.get(s.name.lower(), set())
+            ]
+            if len(owners) != 1:
+                return None
+            qualifier = owners[0].alias_or_name
+        refs.append(exp.column(column.name, table=qualifier))
+    for qualifier in {r.table.lower() for r in refs}:
+        clashing = [s for s in _sources_of(probe) if s.alias_or_name.lower() == qualifier]
+        for source in clashing:
+            if not isinstance(source, exp.Table):
+                return None
+            own = [c for c in probe.find_all(exp.Column) if c.table.lower() == qualifier]
+            if any(c.find_ancestor(exp.Select) is not probe for c in own):
+                return None  # a nested query reads that name too
+            fresh = f"kq_probe{next(_INDICATOR_COUNTER)}"
+            source.set("alias", exp.TableAlias(this=exp.to_identifier(fresh)))
+            for c in own:
+                c.set("table", exp.to_identifier(fresh))
+    return refs
+
+
 def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozenset[str]] | None) -> exp.Expression:
     """``SELECT x IN (SELECT y FROM t WHERE c)`` is ``EXISTS (SELECT 1 FROM t WHERE c AND y = x)`` when neither side is NULL.
 
@@ -3529,8 +3634,12 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
         if not all(left.sql() in outer_known for left in lefts) or not all(isinstance(v, exp.Column) and v.sql() in inner_known for v in values):
             continue
         probe = inner.copy()
+        outer_refs = _qualified_outer_columns(lefts, walker, probe, declared)
+        if outer_refs is None:
+            continue
+        values = [(item.this if isinstance(item, exp.Alias) else item) for item in probe.expressions]
+        matches = [exp.EQ(this=v.copy(), expression=ref) for v, ref in zip(values, outer_refs)]
         probe.set("expressions", [exp.Literal.number(1)])
-        matches = [exp.EQ(this=v.copy(), expression=left.copy()) for v, left in zip(values, lefts)]
         where = probe.args.get("where")
         probe.set("where", exp.Where(this=_and_all(([where.this] if where is not None else []) + matches)))
         node.replace(exp.Exists(this=probe))
@@ -3636,7 +3745,15 @@ def _inline_constant_columns(select: exp.Select) -> exp.Expression | None:
                 if column.find_ancestor(exp.Select) is not select:
                     continue
                 value = constants[name].copy()
-                column.replace(exp.alias_(value, column.name) if column.parent is select else value)
+                if isinstance(column.parent, exp.Group):
+                    # A constant key never splits a group, and a literal there would read as a column
+                    # ordinal: drop it, keeping GROUP BY TRUE when nothing else is grouped.
+                    group = column.parent
+                    column.pop()
+                    if not group.expressions:
+                        group.set("expressions", [exp.true()])
+                else:
+                    column.replace(exp.alias_(value, column.name) if column.parent is select else value)
                 changed = True
     return select if changed else None
 
@@ -4031,6 +4148,9 @@ def _parenthesize_set_operations(tree: exp.Expression) -> exp.Expression:
     for node in list(tree.find_all(exp.SetOperation)):
         for side in ("this", "expression"):
             child = node.args.get(side)
+            if isinstance(child, exp.Select) and any(child.args.get(k) for k in ("order", "limit", "offset")):
+                child.replace(exp.Subquery(this=child.copy()))  # unwrapped, its ORDER BY .. LIMIT reads as the whole operation's
+                continue
             if not isinstance(child, exp.SetOperation):
                 continue
             same = type(child) is type(node) and bool(child.args.get("distinct")) == bool(node.args.get("distinct"))
@@ -4219,6 +4339,65 @@ def _lowercase_columns(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _is_number(node: exp.Expression) -> bool:
+    return isinstance(node, exp.Literal) and not node.is_string
+
+
+def _resolve_ordinals(tree: exp.Expression, group_by: bool) -> exp.Expression:
+    """Spell ``GROUP BY 2`` and ``ORDER BY 2`` of a select as the second output's expression.
+
+    Rewrites substitute constants into these clauses (a derived ``2 AS c`` read in ``ORDER BY d.c``), and
+    a number printed there would be read back as a position. With every position spelled out first, a
+    number left in them at the end is a constant (see ``_constant_keys``). A position that cannot be
+    spelled out (a star, an aggregate or window in ``GROUP BY``) is declined. ``group_by=False`` leaves
+    ``GROUP BY`` alone (Calcite's constants, already dropped).
+    """
+
+    for select in list(tree.find_all(exp.Select)):
+        clauses = [(select.args.get("order"), False)] + ([(select.args.get("group"), True)] if group_by else [])
+        for clause, grouping in clauses:
+            if clause is None or not any(_is_number(k.this if isinstance(k, exp.Ordered) else k) for k in clause.expressions):
+                continue
+            outputs = select.expressions
+            for key in list(clause.expressions):
+                value = key.this if isinstance(key, exp.Ordered) else key
+                if not _is_number(value) or not re.fullmatch(r"\d+", value.this):
+                    continue
+                position = int(value.this)
+                if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in outputs):
+                    raise UnmodeledConstruct("a column position next to a star select list is not modeled")
+                if not 1 <= position <= len(outputs):
+                    raise UnmodeledConstruct(f"column position {position} is out of range")
+                target = outputs[position - 1]
+                target = target.this if isinstance(target, exp.Alias) else target
+                if grouping and any(isinstance(n, (exp.AggFunc, exp.Window)) for n in target.walk()):
+                    raise UnmodeledConstruct("GROUP BY position of an aggregate")
+                value.replace(target.copy())
+    return tree
+
+
+def _constant_keys(tree: exp.Expression) -> exp.Expression:
+    """A number left in a select's ``GROUP BY`` or ``ORDER BY`` is a constant: write it ``TRUE``.
+
+    Printed as a number it would be read as a column position; a constant key never splits a group
+    or changes an order, and ``GROUP BY TRUE`` keeps a grouping of constants a grouping.
+    """
+
+    for select in list(tree.find_all(exp.Select)):
+        for clause in (select.args.get("group"), select.args.get("order")):
+            if clause is None:
+                continue
+            keys = [k for k in clause.expressions if not _is_number(k.this if isinstance(k, exp.Ordered) else k)]
+            if keys and clause is select.args.get("order"):
+                clause.set("expressions", keys)  # a constant sort key ahead of others orders nothing
+                continue
+            for key in list(clause.expressions):
+                value = key.this if isinstance(key, exp.Ordered) else key
+                if _is_number(value):
+                    value.replace(exp.true())
+    return tree
+
+
 def _drop_constant_groupings(tree: exp.Expression) -> exp.Expression:
     """Calcite reads ``GROUP BY 4, x`` with 4 as a constant: it never splits a group, so it is dropped.
 
@@ -4245,6 +4424,29 @@ def _drop_constant_groupings(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _derived_output_names(query: exp.Expression) -> list[str] | None:
+    """The output names of a query (its first branch for a set operation), ``None`` with a star."""
+
+    while isinstance(query, (exp.Subquery, exp.SetOperation)):
+        query = query.this
+    if not isinstance(query, exp.Select):
+        return None
+    names = []
+    for item in query.expressions:
+        if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
+            return None
+        names.append(item.alias_or_name.lower())
+    return names
+
+
+def _keeps_names(before: list[str], after: list[str] | None) -> bool:
+    """Whether a rewrite kept every output name (an unnamed output may gain a name)."""
+
+    if after is None:
+        return True  # a star lists the same sources' columns
+    return len(before) == len(after) and all(not old or old == new for old, new in zip(before, after))
+
+
 def normalize(
     sql: str,
     *,
@@ -4254,22 +4456,25 @@ def normalize(
     keys: dict[str, list[tuple[str, ...]]] | None = None,
     types: dict[str, dict[str, str]] | None = None,
     group_by_constants: bool = False,
-    keyed_distinct: bool = False,
+    keyed_distinct: int = 0,
     foreign_keys: dict[str, list[tuple]] | None = None,
 ) -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out).
 
     ``group_by_constants`` reads a literal in ``GROUP BY`` as a constant, as Calcite does, instead of a
     column ordinal (see ``_drop_constant_groupings``). ``keyed_distinct`` drops a ``DISTINCT`` that outputs a
-    NOT NULL key (``keyed_rules.drop_keyed_distinct``); it is a second attempt, since dropping it on one side
+    NOT NULL key (``keyed_rules.drop_keyed_distinct``), and at 2 also strips duplicate removal from derived tables
+    under a duplicate-blind select (``dedup_join_rules.strip_distinct_sources``); these are later attempts, since applying them on one side
     can hide a match the first attempt finds.
     """
 
-    tree = check_modeled(canonical_negation(strip_positions(sqlglot.parse_one(sql, read=dialect))))
+    tree = expand_alias_columns(check_modeled(canonical_negation(strip_positions(sqlglot.parse_one(sql, read=dialect)))), schema)
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
+    tree = _resolve_ordinals(tree, group_by=not group_by_constants)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
+    tree = rewrite_quantified(tree, schema, not_null, keys)
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
@@ -4304,6 +4509,10 @@ def normalize(
     if schema:
         tree = _expand_stars(tree, schema)
     tree = _isolate_windows(tree)
+    if schema:
+        # name each bare column's source before any rewrite reads a derived table as its base table, whose
+        # other columns would otherwise capture (or make ambiguous) a bare column of another source
+        tree = _qualify_outer_join_columns(tree, schema)
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
 
@@ -4317,16 +4526,33 @@ def normalize(
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
+        if isinstance(node, exp.SetOperation):
+            return merge_same_source(node) or set_operation_to_exists(node) or node
         if isinstance(node, exp.Select):
+            # a derived table's output names are how the query around it reads it, so a rule that renames
+            # them would silently redirect those reads (to another column of the same name, say)
+            names = _derived_output_names(node) if isinstance(node.parent, (exp.Subquery, exp.CTE)) else None
+            snapshot = node.copy() if names is not None else None  # rules rewrite in place
             constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
-                return constrained
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
+                if names is None or _keeps_names(names, _derived_output_names(constrained)):
+                    return constrained
+                fresh = snapshot.copy()
+                if node.parent is not None:
+                    node.replace(fresh)
+                node = fresh
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join):
                 rewritten = rule(node)
                 if rewritten is not None:
+                    if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
+                        fresh = snapshot.copy()
+                        if node.parent is not None:
+                            node.replace(fresh)
+                        node = fresh
+                        continue
                     return rewritten
             if keyed_distinct:
-                return drop_keyed_distinct(node, keys, not_null) or node
+                return drop_keyed_distinct(node, keys, not_null) or (keyed_distinct >= 2 and strip_distinct_sources(node)) or node
         return node
 
     for _ in range(16):
@@ -4339,7 +4565,7 @@ def normalize(
             replacement = _canonicalize_union_source(subquery)
             if replacement is not None:
                 subquery.replace(replacement)
-    return _parenthesize_boolean(_parenthesize_set_operations(canonical_empty(tree))).sql(dialect=dialect)
+    return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
@@ -4351,13 +4577,17 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     """
 
     search = kwargs.pop("search_counterexample", False)
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     original = (left_sql, right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
-    result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
-    if not result.proven and (kwargs.get("constraints") or {}):
-        retry = _prove_algebraic(left_sql, right_sql, True, **kwargs)
+    result = _prove_algebraic(left_sql, right_sql, 0, **kwargs)
+    for level in (1, 2):
+        if result.proven or (level == 1 and not (kwargs.get("constraints") or {})):
+            continue
+        retry = _prove_algebraic(left_sql, right_sql, level, **kwargs)
         if retry.proven:
             return retry
     if result.status is SmtStatus.NOT_PROVEN:
@@ -4389,7 +4619,7 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     return result
 
 
-def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: bool, **kwargs) -> SmtEquivalenceResult:
+def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
     constants = kwargs.get("group_by_constants", False)

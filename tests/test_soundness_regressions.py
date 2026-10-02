@@ -1,0 +1,260 @@
+"""Wrong proofs found on master, kept as regression cases.
+
+Each pair here returns different rows (DuckDB shows it on the database next to it), so neither prover
+may call it equivalent. Near misses that are equivalent stay proven, so a fix cannot just decline more.
+"""
+
+from collections import Counter
+
+import pytest
+import sqlglot
+
+pytest.importorskip("z3")
+
+from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
+from kumosql.ast_utils import LossySql, expand_alias_columns, faithful_sql
+from kumosql.smt_equivalence import TableConstraints, prove_equivalent_smt
+
+CALCITE = {"emp": ["empno", "ename", "job", "sal", "deptno"], "dept": ["deptno", "name"]}
+CALCITE_KEYS = {
+    "emp": TableConstraints(not_null=frozenset({"empno", "ename", "job", "sal", "deptno"}), keys=(("empno",),)),
+    "dept": TableConstraints(not_null=frozenset({"deptno", "name"}), keys=(("deptno",),)),
+}
+CALCITE_DDL = {
+    "emp": "CREATE TABLE emp (empno BIGINT, ename VARCHAR, job VARCHAR, sal BIGINT, deptno BIGINT)",
+    "dept": "CREATE TABLE dept (deptno BIGINT, name VARCHAR)",
+}
+
+
+def _bags_differ(left: str, right: str, ddl: dict[str, str], rows: dict[str, list[tuple]]) -> bool:
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    for name, create in ddl.items():
+        db.execute(create)
+        for row in rows.get(name, []):
+            db.execute(f"INSERT INTO {name} VALUES ({', '.join('?' for _ in row)})", row)
+    run = lambda sql: Counter(db.execute(sqlglot.transpile(sql, read="mysql", write="duckdb")[0]).fetchall())  # noqa: E731
+    return run(left) != run(right)
+
+
+# (id, left, right, schema, constraints, DDL, rows on which they differ)
+WRONG_PROOFS = [
+    pytest.param(
+        "SELECT x.SAL2 FROM (SELECT t.SAL2 FROM (SELECT SAL AS SAL2 FROM EMP) t) x",
+        "SELECT SAL2 FROM EMP",
+        {"emp": ["empno", "sal", "sal2"]},
+        None,
+        {"emp": "CREATE TABLE emp (empno BIGINT, sal BIGINT, sal2 BIGINT)"},
+        {"emp": [(1, 10, 20)]},
+        id="inlined-projection-keeps-the-renamed-output",
+    ),
+    pytest.param(
+        "SELECT t5.c5 FROM (SELECT t2.sal c5, t3.c1 c10 FROM EMP t2 LEFT JOIN (SELECT d.deptno c0, TRUE c1, d.name c2 FROM DEPT d) t3"
+        " ON t2.empno = t3.c0 AND t2.job = t3.c2) t5 WHERE t5.c10 IS NULL",
+        "SELECT sal FROM emp WHERE 1 = 0",
+        CALCITE,
+        CALCITE_KEYS,
+        CALCITE_DDL,
+        {"emp": [(1, "a", "b", 10, 1)]},
+        id="constant-from-the-null-side-of-a-left-join",
+    ),
+    pytest.param(
+        "SELECT name FROM dept AS d(name, x)",
+        "SELECT name FROM dept",
+        CALCITE,
+        None,
+        CALCITE_DDL,
+        {"dept": [(1, "a")]},
+        id="table-alias-column-list",
+    ),
+    pytest.param(
+        "SELECT d.name FROM (SELECT deptno, name FROM dept) AS d(name, a)",
+        "SELECT name FROM dept",
+        CALCITE,
+        None,
+        CALCITE_DDL,
+        {"dept": [(1, "a")]},
+        id="derived-table-alias-column-list",
+    ),
+    pytest.param(
+        "SELECT deptno DIV 2 FROM dept",
+        "SELECT CAST(deptno / 2 AS SIGNED) FROM dept",
+        CALCITE,
+        None,
+        CALCITE_DDL,
+        {"dept": [(7, "a")]},
+        id="mysql-div-is-not-a-rounding-cast",
+    ),
+    pytest.param(
+        "SELECT d.deptno, d.name FROM (SELECT deptno, name, 2 AS c FROM dept) AS d ORDER BY d.c, d.deptno LIMIT 1",
+        "SELECT deptno, name FROM dept ORDER BY name, deptno LIMIT 1",
+        CALCITE,
+        None,
+        CALCITE_DDL,
+        {"dept": [(1, "z"), (2, "a")]},
+        id="inlined-constant-sort-key-is-not-a-column-position",
+    ),
+    pytest.param(
+        "SELECT CAST(deptno AS BOOLEAN) FROM dept",
+        "SELECT CAST(deptno AS SIGNED) FROM dept",
+        CALCITE,
+        None,
+        CALCITE_DDL,
+        {"dept": [(7, "a")]},
+        id="mysql-boolean-cast-is-not-an-integer-cast",
+    ),
+    pytest.param(
+        "SELECT empno, deptno IN (SELECT deptno FROM emp WHERE empno < 20) AS d FROM emp",
+        "SELECT empno, EXISTS(SELECT 1 FROM emp WHERE empno < 20) AS d FROM emp",
+        CALCITE,
+        CALCITE_KEYS,
+        CALCITE_DDL,
+        {"emp": [(1, "a", "j", 1, 10), (30, "b", "j", 1, 20)]},
+        id="in-to-exists-keeps-the-outer-column-outside",
+    ),
+    pytest.param(
+        "SELECT e.empno, e.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.empno < 20) AS d FROM emp AS e",
+        "SELECT e.empno, EXISTS(SELECT 1 FROM emp AS e WHERE e.empno < 20) AS d FROM emp AS e",
+        CALCITE,
+        CALCITE_KEYS,
+        CALCITE_DDL,
+        {"emp": [(1, "a", "j", 1, 10), (30, "b", "j", 1, 20)]},
+        id="in-to-exists-keeps-a-shadowed-alias-outside",
+    ),
+]
+
+
+def test_in_to_exists_still_proves_the_correlated_form():
+    left = "SELECT empno, deptno IN (SELECT deptno FROM emp WHERE empno < 20) AS d FROM emp"
+    right = "SELECT o.empno, EXISTS(SELECT 1 FROM emp AS i WHERE i.empno < 20 AND i.deptno = o.deptno) AS d FROM emp AS o"
+    assert prove_equivalent_algebraic(left, right, schema=CALCITE, dialect="mysql", constraints=CALCITE_KEYS, compare_names=False).proven
+
+
+@pytest.mark.parametrize("left,right,schema,constraints,ddl,rows", WRONG_PROOFS)
+def test_pairs_that_differ_are_never_proven(left, right, schema, constraints, ddl, rows):
+    assert _bags_differ(left, right, ddl, rows)
+    kwargs = {"schema": schema, "dialect": "mysql", "compare_names": False}
+    if constraints:
+        kwargs["constraints"] = constraints
+    for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+        assert not prove(left, right, **kwargs).proven, prove.__name__
+
+
+STILL_PROVEN = [
+    pytest.param("SELECT x.k FROM (SELECT t.a AS k FROM (SELECT a FROM s) t) x", "SELECT a FROM s", id="renamed-column-passthrough"),
+    pytest.param(
+        "SELECT p.id, d.y FROM p LEFT JOIN (SELECT k, w + 1 AS y FROM q) AS d ON p.k = d.k",
+        "SELECT p.id, d.w + 1 FROM p LEFT JOIN q AS d ON p.k = d.k",
+        id="arithmetic-from-the-null-side-folds",
+    ),
+    pytest.param("SELECT x FROM s AS d(x, y)", "SELECT a FROM s", id="alias-column-list-renames-by-position"),
+    pytest.param("SELECT a DIV 2 FROM s", "SELECT a DIV 2 FROM s WHERE TRUE", id="div-matches-div"),
+    pytest.param(
+        "SELECT p.id, d.y FROM p LEFT JOIN (SELECT k, CASE WHEN w < 11 THEN -1 * w ELSE w END AS y FROM q) AS d ON p.k = d.k",
+        "SELECT p.id, CASE WHEN d.w < 11 THEN -1 * d.w ELSE d.w END FROM p LEFT JOIN q AS d ON p.k = d.k",
+        id="case-whose-every-result-is-null-on-null-folds",
+    ),
+    pytest.param(
+        "SELECT p.id, d.y FROM p LEFT JOIN (SELECT k, CASE WHEN w < 11 THEN 11 ELSE -w END AS y FROM q) AS d ON p.k = d.k",
+        "SELECT p.id, CASE WHEN d.w < 11 THEN 11 ELSE -d.w END FROM p LEFT JOIN q AS d ON p.k = d.k",
+        id="case-whose-constant-branch-needs-a-column-folds",
+    ),
+    pytest.param("SELECT a, b FROM s ORDER BY 2, 1 LIMIT 3", "SELECT a, b FROM s ORDER BY b, a LIMIT 3", id="column-positions"),
+    pytest.param(
+        "SELECT d.a, d.b FROM (SELECT a, b, 2 AS c FROM s) AS d ORDER BY d.c, d.a LIMIT 1",
+        "SELECT a, b FROM s ORDER BY a LIMIT 1",
+        id="constant-sort-key-orders-nothing",
+    ),
+]
+STILL_SCHEMA = {"s": ["a", "b"], "p": ["id", "k"], "q": ["k", "w"]}
+
+
+@pytest.mark.parametrize("left,right", STILL_PROVEN)
+def test_equivalent_near_misses_stay_proven(left, right):
+    assert prove_equivalent_algebraic(left, right, schema=STILL_SCHEMA, dialect="mysql", compare_names=False).proven
+
+
+def test_constants_on_the_null_side_of_any_outer_join_are_not_folded():
+    for join in ("LEFT JOIN", "FULL JOIN"):
+        sql = f"SELECT p.id, d.i FROM p {join} (SELECT k, 1 AS i FROM q) AS d ON p.k = d.k"
+        assert "1 AS i" in normalize(sql, schema=STILL_SCHEMA, dialect="mysql").replace("1 AS I", "1 AS i")
+    for case in ("CASE WHEN w IS NULL THEN 0 ELSE w END", "CASE WHEN w < 11 THEN w ELSE 0 END", "IF(w < 11, w, 0)"):
+        sql = f"SELECT p.id, d.i FROM p LEFT JOIN (SELECT k, {case} AS i FROM q) AS d ON p.k = d.k"
+        assert " AS i" in normalize(sql, schema=STILL_SCHEMA, dialect="mysql"), case
+    right = "SELECT d.i, p.id FROM (SELECT k, COALESCE(w, 0) AS i FROM q) AS d RIGHT JOIN p ON p.k = d.k"
+    assert "COALESCE" in normalize(right, schema=STILL_SCHEMA, dialect="mysql").upper()
+
+
+def test_faithful_sql_refuses_what_a_dialect_cannot_print():
+    assert faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql") == "SELECT a DIV 2 FROM t"
+    full = sqlglot.parse_one("SELECT COUNT(*) FROM a FULL JOIN b ON a.k = b.k", read="mysql")
+    assert "FULL JOIN" in faithful_sql(full, "mysql")  # MySQL's generator writes a LEFT/RIGHT union that doubles the count
+    hyphen = sqlglot.parse_one("SELECT 1 FROM `my-project.d.t`", read="bigquery")
+    assert sqlglot.parse_one(faithful_sql(hyphen, "bigquery"), read="bigquery").find(sqlglot.exp.Table).catalog == "my-project"
+    # an OR built under an AND without parentheses prints as (a AND b) OR c: the OR-under-AND class of wrong proof
+    unparenthesized = sqlglot.exp.select("x").from_("t").where(
+        sqlglot.exp.And(this=sqlglot.parse_one("a = 1"), expression=sqlglot.parse_one("b = 2 OR c = 3"))
+    )
+    with pytest.raises(LossySql):
+        faithful_sql(unparenthesized, "mysql")
+
+
+def test_alias_column_lists_become_explicit_renames():
+    tree = expand_alias_columns(sqlglot.parse_one("SELECT name FROM dept AS d(name, x)", read="postgres"), CALCITE)
+    assert "deptno AS name" in tree.sql() and "name AS x" in tree.sql()
+    cte = expand_alias_columns(sqlglot.parse_one("WITH c AS (SELECT 1 AS p, 2 AS q) SELECT r FROM c AS z(r)", read="postgres"), None)
+    assert "p AS r" in cte.sql()
+    for unresolved in ("SELECT a FROM unknown_table AS u(a)", "SELECT a FROM dept AS d(a, b, c)", "SELECT a FROM (SELECT * FROM dept) AS d(a)"):
+        assert not prove_equivalent_algebraic(unresolved, unresolved, schema=CALCITE, dialect="postgres").proven
+
+
+def test_column_positions_that_cannot_be_spelled_out_are_declined():
+    for sql in ("SELECT * FROM s ORDER BY 1 LIMIT 2", "SELECT a FROM s ORDER BY 3 LIMIT 2", "SELECT COUNT(*) FROM s GROUP BY 1"):
+        assert not prove_equivalent_algebraic(sql, sql, schema=STILL_SCHEMA, dialect="mysql").proven
+
+
+TABLE_FUNCTION_CTE = [
+    pytest.param(
+        "WITH cte AS (SELECT 1 AS l UNION ALL SELECT 2) SELECT * FROM histogram_values(cte, l)",
+        "SELECT * FROM histogram_values(cte, l)",
+        id="cte-passed-by-bare-name-is-read",
+    ),
+    pytest.param(
+        "WITH cte AS (SELECT a AS l FROM t) SELECT * FROM histogram_values(cte, l)",
+        "WITH cte AS (SELECT b AS l FROM t) SELECT * FROM histogram_values(cte, l)",
+        id="different-ctes-passed-by-bare-name",
+    ),
+    pytest.param(
+        "WITH c AS (SELECT a FROM t) SELECT * FROM ML.PREDICT(MODEL m, TABLE c)",
+        "WITH c AS (SELECT b AS a FROM t) SELECT * FROM ML.PREDICT(MODEL m, TABLE c)",
+        id="cte-passed-as-table-argument",
+    ),
+]
+
+
+@pytest.mark.parametrize("left,right", TABLE_FUNCTION_CTE)
+def test_a_cte_read_by_a_table_function_is_never_dropped(left, right):
+    from kumosql.equivalence import prove_equivalent
+    from kumosql.rewrite import verify_rewrite
+
+    assert not prove_equivalent(left, right).proven
+    assert verify_rewrite(left, right).status.value != "proven"
+    for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+        assert not prove(left, right, schema={"t": ["a", "b"]}).proven
+
+
+def test_a_comparison_followed_by_is_without_parentheses_is_declined():
+    # sqlglot reads a = b IS TRUE as a = (b IS TRUE); the engines read (a = b) IS TRUE
+    left, right = "SELECT * FROM s WHERE a = b IS TRUE", "SELECT * FROM s WHERE a = (b IS TRUE)"
+    for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+        assert not prove(left, right, schema=STILL_SCHEMA, dialect="mysql").proven
+    assert prove_equivalent_algebraic(right, "SELECT * FROM s WHERE (b IS TRUE) = a", schema=STILL_SCHEMA, dialect="mysql").proven
+
+
+def test_a_bare_column_keeps_its_source_when_a_derived_table_is_read_as_its_base_table():
+    schema = {"t": ["k", "a", "b"], "u": ["k", "a", "c"]}
+    left = "SELECT a FROM t JOIN (SELECT k, a + 1 AS y FROM u) AS g ON g.k = t.k"
+    # reading g as u would put a second column a in scope; the bare a stays t's
+    assert normalize(left, schema=schema, dialect="mysql").startswith("SELECT t.a ")
+    assert prove_equivalent_algebraic(left, "SELECT t.a FROM t JOIN u AS g ON g.k = t.k", schema=schema, dialect="mysql").proven
+    assert not prove_equivalent_algebraic(left, "SELECT g.a FROM t JOIN u AS g ON g.k = t.k", schema=schema, dialect="mysql").proven

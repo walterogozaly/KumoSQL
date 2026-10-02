@@ -22,10 +22,12 @@ from .ast_utils import (
     is_cte_reference_candidate,
     nearest_root_cte,
     set_with_clause,
+    table_function_reads_cte,
     with_clause as _with_clause,
 )
 from .distinct_safety import distinct_is_redundant
 from .lift_subqueries import lift_subqueries
+from .string_literals import canonical_literals
 
 
 class EquivalenceStatus(str, Enum):
@@ -689,7 +691,8 @@ def _prepare_query(
     # Require strict parsing before invoking the lifting transformer. Recovery
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
-    _parse_single_query(sql)
+    if table_function_reads_cte(_parse_single_query(sql)):
+        raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
     lifted = lift_subqueries(sql, rewrite_pipe_syntax=True)
     if lifted.diagnostics:
         details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)
@@ -861,6 +864,7 @@ def prove_equivalent(
     proven when the rows underneath are.
     """
 
+    left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     if ignore_row_order:
         left_sql = _drop_noop_limit(left_sql) or left_sql
         right_sql = _drop_noop_limit(right_sql) or right_sql

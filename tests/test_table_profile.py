@@ -318,3 +318,45 @@ def test_profiles_are_computed_once_per_pipeline_and_grain():
     assert next(iter(profile_pipeline(pipeline).values())) is next(iter(first.values()))
     other = profile_pipeline(pipeline, declared_grain={"proj.core.a": ["id"]})
     assert other.keys() == first.keys()
+
+
+def test_profile_query_only_analyses_what_the_query_reads():
+    from kumosql import table_profile
+
+    pipeline = build({
+        "base": "SELECT id, amount FROM proj.raw.orders",
+        "mid": "SELECT id, SUM(amount) AS total FROM proj.core.base GROUP BY id",
+        "unrelated": "SELECT sku, SUM(qty) AS n FROM proj.raw.order_items GROUP BY sku",
+    })
+    sql = "SELECT id, total * 2 AS twice FROM proj.core.mid"
+    seen = []
+    original = table_profile._upstream_models
+    table_profile._upstream_models = lambda p, s: seen.append(original(p, s)) or seen[-1]
+    try:
+        query = profile_query(pipeline, sql)
+    finally:
+        table_profile._upstream_models = original
+    assert sorted(key.split(".")[-1] for key in seen[0] if key.startswith("proj.")) == ["base", "mid"]
+    # the same profile as with the whole project around it
+    whole = Pipeline(
+        {**pipeline.models, "q": Model(Target("", "", "q"), "table", sql)},
+        sources=dict(pipeline.sources),
+        source_schema=dict(pipeline.source_schema),
+    )
+    expected = profile_pipeline(whole)["q"]
+    assert query.grain == expected.grain
+    assert [a.meaning for a in query.attributes] == [a.meaning for a in expected.attributes]
+
+
+def test_profile_query_follows_what_a_script_reads_before_its_last_query():
+    from kumosql import table_profile
+
+    pipeline = build({
+        "base": "SELECT id, amount FROM proj.raw.orders",
+        "mid": "SELECT id, SUM(amount) AS total FROM proj.core.base GROUP BY id",
+        "unrelated": "SELECT sku FROM proj.raw.order_items",
+    })
+    script = "CREATE TEMP TABLE x AS SELECT id FROM proj.core.mid; SELECT id FROM x"
+    assert sorted(table_profile._upstream_models(pipeline, script)) == ["proj.core.base", "proj.core.mid"]
+    declared = "DECLARE n INT64 DEFAULT (SELECT COUNT(*) FROM proj.core.base); SELECT n"
+    assert sorted(table_profile._upstream_models(pipeline, declared)) == ["proj.core.base"]

@@ -126,6 +126,8 @@ def positional_sql_pair(left_sql: str, right_sql: str, dialect: str = "bigquery"
 
     import sqlglot
 
+    from .ast_utils import UnmodeledConstruct, faithful_sql
+
     out = []
     for sql in (left_sql, right_sql):
         if "name" not in sql.lower() and "corresponding" not in sql.lower():
@@ -142,5 +144,8 @@ def positional_sql_pair(left_sql: str, right_sql: str, dialect: str = "bigquery"
         tree, problems = positionalize(tree)
         if problems:
             return left_sql, right_sql, problems[0]
-        out.append(tree.sql(dialect=dialect))
+        try:
+            out.append(faithful_sql(tree, dialect))
+        except UnmodeledConstruct as error:
+            return left_sql, right_sql, str(error)
     return out[0], out[1], None

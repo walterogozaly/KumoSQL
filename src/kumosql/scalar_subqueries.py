@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import select_sources as _sources
+from .ast_utils import faithful_sql, select_sources as _sources
 
 ASSUMPTION = "uncorrelated scalar subqueries return at most one row"
 MAX_PROOFS = 8
@@ -104,7 +104,7 @@ def _candidates(tree: exp.Expression, schema) -> list[exp.Subquery]:
     found = []
     for node in tree.find_all(exp.Subquery):
         parent = node.parent
-        if isinstance(parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.Union, exp.Subquery, exp.Table, exp.TableAlias)):
+        if isinstance(parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.SetOperation, exp.Subquery, exp.Table, exp.TableAlias)):
             continue
         inner = node.this
         if not isinstance(inner, exp.Select) or len(inner.expressions) != 1:
@@ -138,7 +138,7 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
 
     def class_of(node: exp.Subquery) -> int:
         nonlocal proofs
-        text = node.this.sql(dialect="bigquery")
+        text = faithful_sql(node.this, dialect)
         for index, representative in enumerate(classes):
             if representative == text:
                 return index
@@ -159,9 +159,9 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
             if node.find_ancestor(exp.Subquery) in nodes:
                 continue
             if single_row is not None and report is not None:
-                scalars = [node] + [n for n in node.find_all(exp.Subquery) if n is not node and not isinstance(n.parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.Union, exp.Subquery, exp.Table, exp.TableAlias))]
-                report["unproven"] = report.get("unproven", 0) + sum(1 for n in scalars if not single_row(n.this.sql(dialect=dialect)))
+                scalars = [node] + [n for n in node.find_all(exp.Subquery) if n is not node and not isinstance(n.parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.SetOperation, exp.Subquery, exp.Table, exp.TableAlias))]
+                report["unproven"] = report.get("unproven", 0) + sum(1 for n in scalars if not single_row(faithful_sql(n.this, dialect)))
             index = class_of(node)
             node.replace(exp.Anonymous(this=PLACEHOLDER, expressions=[exp.Literal.number(index)]))
             replaced = True
-    return left_tree.sql(dialect=dialect), right_tree.sql(dialect=dialect), replaced
+    return faithful_sql(left_tree, dialect), faithful_sql(right_tree, dialect), replaced
