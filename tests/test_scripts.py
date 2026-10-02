@@ -566,3 +566,40 @@ END;
     assert 'EXECUTE IMMEDIATE "SELECT 1 WHERE 1 = 1";' in result.sql
     assert result.sql.startswith("DECLARE d DATE DEFAULT CURRENT_DATE();\nBEGIN\n  IF d > '2020-01-01' THEN")
     assert result.rule_success and result.verification.trusted
+
+
+# ------------------------------------------------- rewrite verification: the skeleton around the queries
+
+SKELETON_SCRIPT = (
+    "DECLARE n INT64 DEFAULT 1;\nIF n = 1 THEN\n  SELECT id FROM `p.d.t` WHERE age > 3;\nELSE\n  BEGIN\n    SELECT id FROM `p.d.t`;\n  END;\nEND IF;\n"
+)
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        SKELETON_SCRIPT.replace("IF n = 1", "IF n = 2"),
+        SKELETON_SCRIPT.replace("DEFAULT 1", "DEFAULT 5"),
+        SKELETON_SCRIPT.replace("ELSE\n", "ELSEIF n = 2 THEN\n"),
+        SKELETON_SCRIPT.replace("DECLARE n INT64", "DECLARE m INT64"),
+        SKELETON_SCRIPT.replace("END IF;", "END IF;\nSET n = 3;"),
+    ],
+    ids=["if-condition", "declare-default", "else-to-elseif", "declare-name", "added-statement"],
+)
+def test_changing_only_the_control_flow_around_the_queries_is_not_proven(after):
+    """Verification used to compare only the queries, so these were reported proven."""
+
+    from kumosql.rewrite import _verify_sql
+
+    ok, problems = _verify_sql(SKELETON_SCRIPT, after)
+    assert not ok and problems
+
+
+def test_layout_and_comments_around_the_queries_do_not_matter_but_a_changed_query_is_still_proven_or_refused():
+    from kumosql.rewrite import _verify_sql
+
+    reflowed = SKELETON_SCRIPT.replace("\n  ", "\n      ").replace("IF n = 1", "if n  =  1").replace("DECLARE", "-- note\nDECLARE")
+    assert _verify_sql(SKELETON_SCRIPT, reflowed) == (True, [])
+    assert _verify_sql(SKELETON_SCRIPT, SKELETON_SCRIPT.replace("WHERE age > 3", "WHERE 3 < age")) == (True, [])
+    ok, problems = _verify_sql(SKELETON_SCRIPT, SKELETON_SCRIPT.replace("age > 3", "age > 4"))
+    assert not ok and problems

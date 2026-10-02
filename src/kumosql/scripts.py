@@ -546,6 +546,29 @@ def block_statements(text: str) -> list[exp.Expression] | None:
     return statements
 
 
+def script_skeleton(text: str) -> list[str]:
+    """What a rewrite must leave alone in a script: its tokens with each rewriteable statement replaced by one placeholder.
+
+    Control flow, conditions, ``DECLARE``/``SET`` expressions, ``CALL`` arguments, procedure headers and the order of everything
+    stay in the skeleton. Layout and comments do not count (the tokens are compared, not the text), keywords and names are
+    compared case-insensitively and strings exactly.
+    """
+
+    ranges = [(node.start, node.end) for node in leaf_statements(text) if is_rewriteable(node.header)]
+    skeleton: list[str] = []
+    inside = -1
+    for token in lex(text):
+        index = next((k for k, (start, end) in enumerate(ranges) if start <= token.start < end), -1)
+        if index >= 0:
+            if index != inside:
+                skeleton.append("<statement>")
+            inside = index
+            continue
+        inside = -1
+        skeleton.append(token.text.upper() if token.kind == "w" else token.text)
+    return skeleton
+
+
 def split_statements(text: str) -> list[str]:
     """Just the statement texts, in order (see :func:`split_script`)."""
 

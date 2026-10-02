@@ -23,7 +23,7 @@ from urllib.error import URLError
 from sqlglot import exp
 
 from .ast_utils import parse_statements, top_level_query
-from .scripts import block_statements
+from .scripts import block_statements, script_skeleton
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
@@ -191,6 +191,10 @@ def _verify_sql(
         return False, [f"strict parse failed: {exc}"]
     if len(left) != len(right):
         return False, [f"statement count changed from {len(left)} to {len(right)}"]
+    if block_statements(before) is not None or block_statements(after) is not None:
+        # In a script only the queries are proven; the control flow, conditions and declarations around them must not change.
+        if script_skeleton(before) != script_skeleton(after):
+            return False, ["script structure changed: control flow, conditions or declarations outside the queries differ"]
 
     problems: list[str] = []
     for index, (old, new) in enumerate(zip(left, right)):
