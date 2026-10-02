@@ -1617,13 +1617,14 @@ class _Prover:
         return self._nice_model(solver, occs) or base
 
     def _nice_model(self, solver, occs):
-        """Prefer integer-valued counterexamples; they fit INT64 and FLOAT64."""
+        """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
+        column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
         values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
-        for extra in (integral + numeric, integral):
+        for extra in (integral + numeric, numeric, integral):
             solver.push()
             solver.add(*extra)
             model = solver.model() if solver.check() == z3.sat else None
