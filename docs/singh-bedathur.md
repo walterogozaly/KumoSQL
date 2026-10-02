@@ -41,21 +41,21 @@ DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A
 
 Measured 2026-10-02 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`, about 30 minutes on 4 cores):
 
-**2521/2800, 0 wrong**: 650 proved equivalent, 1,871 proved different, 279 unknown.
+**2539/2800, 0 wrong**: 665 proved equivalent, 1,874 proved different, 261 unknown.
 
 | Outcome | Pairs |
 | --- | ---: |
-| Proven equivalent | 650 |
-| Refuted (counterexample) | 1,871 |
-| Unknown | 249 |
-| Unsupported (the prover cannot read a query, and no counterexample) | 30 |
+| Proven equivalent | 665 |
+| Refuted (counterexample) | 1,874 |
+| Unknown | 232 |
+| Unsupported (the prover cannot read a query, and no counterexample) | 29 |
 | Timeout | 0 |
 | Error | 0 |
 | Wrong | 0 |
 
-Supported subset: 2521/2770. Held-out fifth (pairs whose text hash is divisible by 5): **525/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+Supported subset: 2539/2771. Held-out fifth (pairs whose text hash is divisible by 5): **528/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
 
-The last step was developed on dev pairs only (the held-out fifth went from 509 to 524 without being looked at). The `cast_rules.py` step after it was developed on other suites and on dev pairs; it moved the held-out fifth from 524 to 525. It also fixed two ways the harness could see a difference that is not one: DuckDB returns `DECIMAL` results as Python `Decimal` and `DOUBLE` ones as `float`, and `0.33` never equals `Decimal("0.33")`, so numbers are now compared as floats rounded to six places; and every fraction the generator draws is exact in binary (eighths), because DuckDB averages decimals in floating point and a value like `1.005` lands on the other side of a `ROUND(.., 2)` midpoint from MySQL's exact result. Neither had produced a published refutation. Every dev pair labelled equivalent that this step newly refutes was checked by hand: they hinge on a NULL inside `NOT IN`, duplicate rows, or an inclusive `BETWEEN` against a half-open range.
+The last step was developed on dev pairs only (the held-out fifth went from 509 to 524 without being looked at). The `cast_rules.py` step after it was developed on other suites and on dev pairs; it moved the held-out fifth from 524 to 525, and the prover work merged alongside it (outer-join filters, set operations as filters, ANY/ALL) took it to 528. It also fixed two ways the harness could see a difference that is not one: DuckDB returns `DECIMAL` results as Python `Decimal` and `DOUBLE` ones as `float`, and `0.33` never equals `Decimal("0.33")`, so numbers are now compared as floats rounded to six places; and every fraction the generator draws is exact in binary (eighths), because DuckDB averages decimals in floating point and a value like `1.005` lands on the other side of a `ROUND(.., 2)` midpoint from MySQL's exact result. Neither had produced a published refutation. Every dev pair labelled equivalent that this step newly refutes was checked by hand: they hinge on a NULL inside `NOT IN`, duplicate rows, or an inclusive `BETWEEN` against a half-open range.
 
 What moved the score:
 
@@ -66,6 +66,7 @@ What moved the score:
 | + skewed databases, fractional decimals, `LIMIT` over a full ordering, MySQL NULL order and case rules | 2,434 |
 | + a second search stream seeded per pair with tables up to 10 rows, duplicate rows, three-decimal values, date and divisor neighbours, `ORDER BY NULL` | 2,513 |
 | + identity casts, `x * 1.0`, `ROUND(x)` as `ROUND(x, 0)`, `NATURAL JOIN` (`cast_rules.py`) | 2,521 |
+| + prover work merged alongside (outer-join filters, set operations as filters, ANY/ALL) | 2,539 |
 
 ### Against the published labels
 
