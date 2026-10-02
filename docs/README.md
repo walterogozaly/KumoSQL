@@ -32,6 +32,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification |
 | [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune, ClickBench and cost-based rewrites |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data |
+| [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on LLM-R2's 11,353 queries, test files held out |
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage |
 | [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct |
 | [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases |
