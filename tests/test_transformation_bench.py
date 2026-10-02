@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
-from tools import transformation_bench as bench
 from kumosql.result_equivalence import check_result_equivalence
+from tools import transformation_bench as bench
+
+duckdb_needed = pytest.mark.skipif(importlib.util.find_spec("duckdb") is None, reason="duckdb is required for result equivalence")
 
 QUERY = (
     "SELECT MIN(t.title) AS movie, MIN(n.name) AS actor "
@@ -25,6 +29,7 @@ def test_nan_rows_compare_equal():
     assert bench._bag([(0.1 + 0.2,)]) == bench._bag([(0.3,)])
 
 
+@duckdb_needed
 @pytest.mark.parametrize("form", sorted(bench.FORMS))
 def test_each_job_form_changes_the_query_and_keeps_its_results(form):
     alternative = bench.FORMS[form](QUERY, SCHEMA)
