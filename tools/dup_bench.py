@@ -177,6 +177,8 @@ class Site:
     class_id: tuple
     placement: str
     holdout: bool
+    location: str = "query"
+    body: str = ""  # SQL of the whole model, to check the labels by execution
 
 
 @dataclass
@@ -337,6 +339,34 @@ def _near(rng: random.Random, spec: Spec) -> tuple[str, Spec]:
     return "base", spec
 
 
+def _layered_family(rng, family, table, skeletons, sites, families, add_model, index) -> None:
+    """Copies of a SELECT that reads a CTE: identical text is the same query only if the CTE is the same too.
+
+    ``decoy_upstream`` copies have the very same ``agg`` text over a CTE with a different body.
+    """
+
+    base = _family_spec(rng, table, skeletons)
+    base = _replace(base, agg="", group="", cols=tuple(dict.fromkeys(("id", "amt", "status", *base.cols))),
+                    conds=tuple(c for c in base.conds if c.col not in ("amt", "status")) or base.conds[:1],
+                    ifnull_cols=())
+    threshold, status = rng.randint(2, 30), rng.choice(STATUSES)
+    variants = [("base", base, False), ("equiv_a", base, True)]
+    for _ in range(rng.randint(1, 2)):
+        kind, changed = _decoy(rng, base)
+        variants.append(("decoy_upstream", changed, True))
+    for kind, upstream, tier_a in variants:
+        name = f"m{index:05d}_f{family}"
+        index += 1
+        alias = rng.choice(["a", "g", "r"]) if tier_a else "a"
+        body = render(upstream, rng, tier_a=tier_a)
+        agg = f"SELECT {alias}.id, {alias}.amt FROM base AS {alias} WHERE {alias}.amt > {threshold} AND {alias}.status = '{status}'"
+        add_model(name, f"WITH base AS ({body}), agg AS ({agg}) SELECT id, amt FROM agg WHERE id IS NOT NULL")
+        site = Site(f"proj.mart.{name}", family, kind, upstream, (family, ("layered", upstream.semantic_key())), "cte",
+                    family % HOLDOUT_EVERY == 0, "cte:agg", f"WITH base AS ({body}), agg AS ({agg}) SELECT id, amt FROM agg")
+        sites.append(site)
+        families.setdefault(family, []).append(site)
+
+
 def generate(models: int, seed: int = 1) -> Project:
     """A project of about ``models`` models: families of copies, downstream readers and unrelated noise."""
 
@@ -358,6 +388,10 @@ def generate(models: int, seed: int = 1) -> Project:
     placements = ["cte", "cte", "whole", "subquery"]
     for family in range(family_count):
         table = tables[family % len(tables)]
+        if rng.random() < 0.15:
+            _layered_family(rng, family, table, skeletons_by_table[table], sites, families, add_model, index)
+            index += len(families[family])
+            continue
         base = _family_spec(rng, table, skeletons_by_table[table])
         holdout = family % HOLDOUT_EVERY == 0
         variants: list[tuple[str, Spec, dict]] = [("base", base, {})]
@@ -378,16 +412,19 @@ def generate(models: int, seed: int = 1) -> Project:
             body = render(spec, rng, **options)
             placement = rng.choice(placements)
             cols = [c.replace("d.", "") for c in spec.cols] if not spec.agg else [spec.group.replace("d.", ""), "total"]
+            location = "query"
             if placement == "cte":
                 cte = rng.choice(["base", "src", "prepared", "scoped"])
+                location = f"cte:{cte}"
                 query = f"WITH {cte} AS ({body}) SELECT {', '.join(cols[:2])} FROM {cte} WHERE {cols[0]} IS NOT NULL"
             elif placement == "subquery":
+                location = "subquery:s"
                 query = f"SELECT {cols[0]} FROM ({body}) AS s WHERE {cols[0]} IS NOT NULL"
             else:
                 query = body
             add_model(name, query)
-            site = Site(name, family, kind, spec,
-                        (family, spec.semantic_key()), placement, holdout)
+            site = Site(f"proj.mart.{name}", family, kind, spec,
+                        (family, spec.semantic_key()), placement, holdout, location, body)
             sites.append(site)
             families.setdefault(family, []).append(site)
 
@@ -410,7 +447,7 @@ def generate(models: int, seed: int = 1) -> Project:
 # ------------------------------------------------------------------ DuckDB
 
 
-def make_database(tables: list[str], seed: int, rows: int = 40):
+def make_database(tables: list[str], seed: int, rows: int = 150):
     """A DuckDB connection with random data: small value domains, some NULLs, so filters bite."""
 
     import duckdb
@@ -474,6 +511,36 @@ def agree(sql_a: str, sql_b: str, tables: list[str], databases: int = 6, seed: i
         if left != right:
             return False
     return True
+
+
+def check_labels(project: Project, databases) -> dict:
+    """Run every copy next to its family's first copy: equal classes must agree, decoys should differ.
+
+    ``equal_disagree`` lists copies labelled the same query that return different rows (a generator bug).
+    ``decoy_agree`` lists decoys the random data could not tell apart; they are left out of the scores.
+    """
+
+    equal_disagree, decoy_agree, checked = [], [], 0
+    for sites in project.families.values():
+        first = sites[0]
+        for other in sites[1:]:
+            verdicts = []
+            for con in databases:
+                left, right = rows_of(con, first.body), rows_of(con, other.body)
+                if left is None or right is None:
+                    verdicts = None
+                    break
+                verdicts.append(left == right)
+            if verdicts is None:
+                continue
+            checked += 1
+            same = all(verdicts)
+            if other.class_id == first.class_id:
+                if not same:
+                    equal_disagree.append(other.model)
+            elif same:
+                decoy_agree.append(other.model)
+    return {"checked": checked, "equal_disagree": equal_disagree, "decoy_agree": decoy_agree}
 
 
 def main(argv: list[str] | None = None) -> int:
