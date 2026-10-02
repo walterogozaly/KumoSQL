@@ -1,19 +1,19 @@
 {
-  "suite": "VeriEQL LeetCode (1,000-case sample) (counterexamples)",
+  "suite": "VeriEQL LeetCode (counterexamples)",
   "order": 45,
-  "score": "203/1000 refuted, 517 agree, 0 wrong",
-  "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 150 random databases showed no difference (not a proof, not bounded verification) sample of 1,000 of the 23,994 pairs, every 24th.",
+  "score": "5516/23994 refuted, 12175 agree, 0 wrong",
+  "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 600 random databases (and every database of at most 2 rows per table) showed no difference (not a proof, not bounded verification).",
   "evidence": "executed",
-  "correctness": "Every refutation was executed on both queries and is stable under row-order shuffles; none are claimed without a database",
+  "correctness": "Every refutation was executed on both queries, is stable under row-order shuffles, and shows with DuckDB's optimizer off too; none are claimed without a database",
   "coverage": {
-    "refuted": 203,
-    "unknown": 517,
-    "unsupported": 82
+    "refuted": 5516,
+    "unknown": 12175,
+    "unsupported": 1923
   },
-  "caveats": "Sample only (every 24th pair); the full corpus has not been run yet. No labels. Dialect: MySQL source, DuckDB execution. 'unknown' here counts pairs that agree on every random database; 'unsupported' counts pairs DuckDB or the parser rejects.",
-  "size": 1000,
+  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,923 pairs are not run (DuckDB rejects them, mostly bare words used as strings or ambiguous columns). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. In this row 'unknown' counts pairs that agree on every database tried and 'unsupported' counts pairs DuckDB or the parser rejects.",
+  "size": 23994,
   "docs": "docs/verieql.md",
-  "command": "python tools/verieql_bench.py leetcode --every 24 --audit",
+  "command": "python tools/verieql_bench.py leetcode --jobs 4 --audit",
   "date": "2026-10-02",
-  "held_out": "none"
+  "held_out": "Search settings tuned on every 24th pair (1,000); the other 22,994 pairs are unseen: 3,233 of the 3,586 pairs VeriEQL refutes are refuted here too (90%)."
 }

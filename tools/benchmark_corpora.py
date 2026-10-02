@@ -43,12 +43,14 @@ SQLSTORM_URL = "https://github.com/SQL-Storm/SQLStorm.git"
 DSB_URL = "https://github.com/microsoft/dsb.git"
 JOB_URL = "https://github.com/gregrahn/join-order-benchmark.git"
 IMDB_URL = "https://github.com/danolivo/jo-bench.git"  # the IMDB data JOB runs on, as CSV chunks in git (BSD-2)
+LLMR2_URL = "https://github.com/DAMO-NLP-SG/LLM-R2.git"  # no licence file: fetched at the pin, never committed
 # Pinned source versions: results are only comparable on the same queries.
 PINS = {
     SQLSTORM_URL: "b3bb0b96794a6afe9bb8f3ff2b243562b779c40d",
     DSB_URL: "ec9a156ceee923db1114cbe388f6183b53d49787",
     JOB_URL: "a39603662e023e449cb2121997a5034df9e02ebf",
     IMDB_URL: "ad516b39edc51f914f0097b801dc7dbd114fc46b",
+    LLMR2_URL: "91ba530b45b1353d6d2cc45d816dfefc34dbad92",
 }
 SQLSTORM_DATASETS = ("stackoverflow", "tpch", "tpcds", "job")
 DSB_SEEDS = (1, 2, 3)
@@ -78,7 +80,7 @@ def source_versions() -> dict[str, str]:
     """The commit each fetched corpus is at (it should match ``PINS``)."""
 
     out = {}
-    for name in ("SQLStorm", "dsb", "join-order-benchmark", "jo-bench"):
+    for name in ("SQLStorm", "dsb", "join-order-benchmark", "jo-bench", "llm-r2"):
         path = BENCH_DIR / name
         if path.exists():
             out[name] = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True).stdout.strip()
@@ -312,12 +314,21 @@ def fetch_job_data() -> Path:
     return target
 
 
+def fetch_llmr2() -> Path:
+    """LLM-R2's query sets (train and test files for TPC-H, DSB and synthetic JOB), about 31 MB."""
+
+    dest = BENCH_DIR / "llm-r2"
+    _clone(LLMR2_URL, dest, sparse=["data/data_llmr2/queries"])
+    return dest / "data" / "data_llmr2" / "queries"
+
+
 FETCHERS = {
     "sqlstorm": fetch_sqlstorm,
     "dsb": fetch_dsb,
     "tpch-data": fetch_tpch_data,
     "tpcds-data": fetch_tpcds_data,
     "job-data": fetch_job_data,
+    "llm-r2": fetch_llmr2,
 }
 
 
