@@ -203,6 +203,16 @@ def _inline(grouped: _Grouped) -> tuple[list[exp.Expression], list[exp.Expressio
     return new_items, conditions, mapping, single or ""
 
 
+def _zero_when_empty(call: exp.Expression) -> bool:
+    """``COALESCE(call, 0)``: the NULL a SUM gives over no rows already reads as the 0 a COUNT gives."""
+
+    parent = call.parent
+    return (
+        isinstance(parent, exp.Coalesce) and parent.this is call and len(parent.expressions) == 1
+        and isinstance(parent.expressions[0], exp.Literal) and parent.expressions[0].this == "0"
+    )
+
+
 def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
     """Rewrite an aggregate over a join with a grouped derived table into the flat aggregate."""
 
@@ -295,7 +305,7 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
             term = inner_arg if weight is None else exp.Mul(this=exp.Paren(this=inner_arg), expression=weight)
             replacements.append((call, exp.Sum(this=term)))
         elif _count_star(agg):
-            if weight is None and not select.args.get("group"):
+            if weight is None and not select.args.get("group") and not _zero_when_empty(call):
                 return None  # a global SUM over no rows is NULL where COUNT(*) is 0
             replacements.append((call, exp.Count(this=exp.Star()) if weight is None else exp.Sum(this=weight)))
         elif isinstance(agg, exp.Count) and agg.this is not None and not isinstance(agg.this, (exp.Star, exp.Distinct)) and not agg.args.get("distinct"):
@@ -303,7 +313,7 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
             inner_arg = renamed_arg(agg)
             if inner_arg is None:
                 return None
-            if weight is None and not select.args.get("group"):
+            if weight is None and not select.args.get("group") and not _zero_when_empty(call):
                 return None  # as above: a global SUM over no rows is NULL, COUNT(x) is 0
             if weight is None:
                 replacements.append((call, exp.Count(this=inner_arg)))

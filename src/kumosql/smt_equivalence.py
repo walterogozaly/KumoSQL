@@ -1073,10 +1073,13 @@ class _Compiler:
             in_select = {id(c) for item in root.expressions for c in item.find_all(exp.Column)}
             outside = {c.name.lower() for c in root.find_all(exp.Column) if not c.table and id(c) not in in_select}
             if not outside & set(names):
-                # nor by their order: the outputs are listed by their own text, so a permutation of
-                # the select list is the same relation, each name reading the column it computes
+                # A windowed relation (matched by its text alone) lists its outputs by their own text, so a
+                # permutation of the select list is the same relation, each name reading the column it
+                # computes. Others keep their order: two of them proven equal are matched by position.
                 values = [(i.this if isinstance(i, exp.Alias) else i) for i in root.expressions]
-                order = sorted(range(len(values)), key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
+                order = list(range(len(values)))
+                if any(root.find_all(exp.Window)):
+                    order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
                 position = {old: new for new, old in enumerate(order)}
                 root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
         key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
