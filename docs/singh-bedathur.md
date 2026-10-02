@@ -41,19 +41,19 @@ DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A
 
 Measured 2026-10-02 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`, about 25 minutes on 4 cores):
 
-**2434/2800, 0 wrong**: 640 proved equivalent, 1,794 proved different, 366 unknown.
+**2440/2800, 0 wrong**: 646 proved equivalent, 1,794 proved different, 360 unknown.
 
 | Outcome | Pairs |
 | --- | ---: |
-| Proven equivalent | 640 |
+| Proven equivalent | 646 |
 | Refuted (counterexample) | 1,794 |
-| Unknown | 328 |
-| Unsupported (the prover cannot read a query, and no counterexample) | 38 |
+| Unknown | 316 |
+| Unsupported (the prover cannot read a query, and no counterexample) | 44 |
 | Timeout | 0 |
 | Error | 0 |
 | Wrong | 0 |
 
-Supported subset: 2434/2762. Held-out fifth (pairs whose text hash is divisible by 5): **509/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+Supported subset: 2440/2756. Held-out fifth (pairs whose text hash is divisible by 5): **510/580, 0 wrong**; the outer-join flattening rules gained one held-out pair without it being looked at. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
 
 What moved the score:
 
@@ -62,14 +62,15 @@ What moved the score:
 | Prover alone, random search on small tables | 2,211 |
 | + prover counterexamples, canonical rewrites, bigger tables for `COUNT` thresholds | 2,317 |
 | + skewed databases, fractional decimals, `LIMIT` over a full ordering, MySQL NULL order and case rules | 2,434 |
+| + derived tables holding an outer join read through (`outer_join_flatten.py`) | 2,440 |
 
 ### Against the published labels
 
 | Verdict | Label "Equivalent" | Label "Non Equivalent" |
 | --- | ---: | ---: |
-| Proved equivalent | 640 | 0 |
+| Proved equivalent | 646 | 0 |
 | Proved different | 461 | 1,333 |
-| Unknown | 299 | 67 |
+| Unknown | 293 | 67 |
 
 No proof contradicts a label. The 461 pairs labelled equivalent that get a counterexample are equivalent only under LeetCode's constraints, which the files drop: most rely on a key (`UNION` versus `UNION ALL`), a NOT NULL column (`NOT IN` versus an anti-join) or a foreign key. A few differ outright, for example a typo inside a string literal (`'15 OR MORE AS BIN'`). Each comes with its counterexample: `--show-disagreements` prints them.
 
