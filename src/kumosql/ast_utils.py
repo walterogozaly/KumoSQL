@@ -56,6 +56,26 @@ def render_statement(statement: exp.Expression) -> str:
     return statement.sql(dialect="bigquery", pretty=True, pad=4, identify=False)
 
 
+_POSITION_META = ("line", "col", "start", "end")
+
+
+def strip_positions(tree: exp.Expression) -> exp.Expression:
+    """Drop the source positions the parser records on tokens, in place.
+
+    A third of the nodes carry them and every ``copy()`` deep-copies them, which was about 30% of the
+    prover's run time. Nothing in the equivalence pipeline reads positions; other ``meta`` keys are kept.
+    """
+
+    for node in tree.walk():
+        meta = node._meta
+        if meta:
+            for key in _POSITION_META:
+                meta.pop(key, None)
+            if not meta:
+                node._meta = None
+    return tree
+
+
 def canonical_negation(tree: exp.Expression) -> exp.Expression:
     """Spell ``x IS NOT NULL``, ``x NOT LIKE y`` and ``x NOT ILIKE y`` as ``NOT (...)``.
 

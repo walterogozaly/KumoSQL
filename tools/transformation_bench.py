@@ -123,6 +123,17 @@ def _run_duckdb(con, sql: str, timeout: float = QUERY_TIMEOUT_S):
         timer.cancel()
 
 
+def _run_duckdb_value(con, call, timeout: float = QUERY_TIMEOUT_S):
+    """``call()`` with DuckDB interrupted after ``timeout`` seconds."""
+
+    timer = threading.Timer(timeout, con.interrupt)
+    timer.start()
+    try:
+        return call()
+    finally:
+        timer.cancel()
+
+
 def _duck(sql: str) -> str:
     return sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]
 
@@ -189,7 +200,10 @@ def _strip_root_limit(sql: str) -> str:
 
 def _shares_root_limit(left: str, right: str) -> bool:
     a, b = sqlglot.parse_one(left, read="bigquery"), sqlglot.parse_one(right, read="bigquery")
-    tail = lambda q: [q.args.get(k) and q.args[k].sql(dialect="bigquery") for k in ("order", "limit", "offset")]
+
+    def tail(q):
+        return [q.args.get(k) and q.args[k].sql(dialect="bigquery") for k in ("order", "limit", "offset")]
+
     return a.args.get("limit") is not None and tail(a) == tail(b)
 
 

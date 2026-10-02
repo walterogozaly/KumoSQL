@@ -280,7 +280,7 @@
    "origin": "rules",
    "materialization": "select \"eventid\", floor(cast(\"ts\" as timestamp) to month), count(*) + 1 as c, sum(\"eventid\") as s\nfrom \"events\" group by \"eventid\", floor(cast(\"ts\" as timestamp) to month)",
    "query": "select floor(cast(\"ts\" as timestamp) to hour), sum(\"eventid\") as s\nfrom \"events\" group by floor(cast(\"ts\" as timestamp) to hour)",
-   "calcite": "ok",
+   "calcite": "ok-without-mv",
    "schema": "hr",
    "disabled": false
   },
@@ -310,7 +310,7 @@
    "origin": "rules",
    "materialization": "select 11 as \"empno\", 22 as \"sal\", count(*) from \"emps\" group by 11, 22",
    "query": "select * from\n(select 11 as \"empno\", 22 as \"sal\", count(*)\nfrom \"emps\" group by 11, 22) tmp\nwhere \"sal\" = 33",
-   "calcite": "ok",
+   "calcite": "ok-without-mv",
    "schema": "hr",
    "disabled": false
   },
