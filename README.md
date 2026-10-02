@@ -486,6 +486,10 @@ Source table columns come from `source_schema={"project.dataset.table": {"col": 
 python -m kumosql pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
 
+## Refactor: keep some tables, rearrange the rest
+
+The **Refactor** page and `python -m kumosql refactor DIR` take a classification of models (protected tables that must stay equivalent, editable ones that may be dropped, merged or inlined, everything else read-only) and return the Pareto front of simpler pipelines over total sqlfluff complexity and model count, each with every protected table proved equal to the original. See [docs/refactor.md](docs/refactor.md).
+
 ## Table profiles: what each table is
 
 `profile_pipeline(pipeline)` and `profile_query(pipeline, sql)` describe every pipeline model, and a proposed query that is not in the pipeline, in a form that can be compared regardless of names, casing or formatting. A `TableProfile` has three parts, each with a status and, when it cannot be told, a reason. Nothing is guessed and nothing is inferred from names.
@@ -670,6 +674,7 @@ Every command prints `--help`.
 | `python -m kumosql prove-sql-equivalent` | Structural equivalence proof for two queries |
 | `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries |
 | `python -m kumosql prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
+| `python -m kumosql refactor DIR [--protect M] [--editable M]` | Find simpler pipelines that keep the protected tables proved equivalent |
 | `python -m kumosql prove-tables LEFT RIGHT --project DIR` | Prove two models of a Dataform project equivalent, layer by layer, using saved equivalences |
 | `python -m kumosql equivalence list\|add\|remove` | Saved "column X of table A is column Y of table B" declarations |
 | `python -m kumosql pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
