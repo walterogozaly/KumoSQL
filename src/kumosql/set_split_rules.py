@@ -347,11 +347,13 @@ def _distribute_union_source(select: exp.Select) -> exp.Expression | None:
 
 
 def _returns_set_of_union(select: exp.Select) -> bool:
-    """``SELECT a, b FROM (x UNION y) AS d [WHERE p]`` listing every column of the union once:
+    """``SELECT a, b FROM (x UNION y) AS d WHERE p`` listing every column of the union once:
     filtering a set and permuting its columns keeps it a set, so this is DISTINCT already."""
 
     if select.args.get("distinct") or select.args.get("joins") or any(select.args.get(k) for k in _EXTRAS):
         return False
+    if select.args.get("where") is None:
+        return False  # without a filter it is the union itself, which other rules unwrap
     relations = _inner_relations(select)
     if not relations or len(relations) != 1:
         return False
