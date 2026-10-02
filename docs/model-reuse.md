@@ -23,11 +23,11 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/110 | 30/30 | 0 | 0 |
-| Development | 62/110 | 30/30 | 25 | 0 |
-| Held out | 21/39 | 9/9 | 4 | 0 |
-| All (196 cases, 8 disabled) | 83/149 (supported subset 83/129) | 39/39 | 29 | 0 |
+| Development | 68/110 | 30/30 | 25 | 0 |
+| Held out | 23/39 | 9/9 | 4 | 0 |
+| All (196 cases, 8 disabled) | 91/149 (supported subset 91/129) | 39/39 | 29 | 0 |
 
-86 of 196 queries were changed; 85 were verified on random databases and 1 could not be run. Adapted cases: 19/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
+94 of 196 queries were changed; 87 were verified on random databases and 7 (`FLOOR(.. TO unit)`, which DuckDB cannot parse) could not be run. Five CUBE/ROLLUP rewrites that an earlier prover proved were wrong over an empty table (a global `SUM` of per-group counts is NULL where `COUNT(*)` is 0); that false proof is fixed and they are no longer rewritten. Adapted cases: 19/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 
 Not read yet: unique/foreign-key joins, outer joins, INTERSECT, CUBE/ROLLUP, FLOOR-TO-unit.
 
