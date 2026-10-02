@@ -85,6 +85,54 @@ def test_unknown_tables_and_shapes_are_unsupported_not_guessed():
     assert infer_properties("SELECT * FROM UNNEST([1,2]) AS x", {}, SCHEMA).unsupported
 
 
+def test_a_repeated_output_name_keeps_its_facts_by_position():
+    result = props("SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id")
+    assert [c.name for c in result.columns] == ["id", "id"]
+    assert [k.positions for k in result.keys] == [(0,)]  # the orders id, not the customers id
+    assert result.column("id") is None  # ambiguous by name
+    outer = props("SELECT t.id FROM (SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id) t")
+    assert not outer.non_null("id") and not outer.keys  # which id is meant is not known
+    star = props("SELECT * FROM (SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id) t")
+    assert [k.positions for k in star.keys] == [(0,)]
+
+
+def test_values_rows_are_read_as_literals():
+    two = props("SELECT * FROM (VALUES (1, 'a'), (2, 'A')) AS t(x, y)")
+    assert two.non_null("x") and two.non_null("y")
+    assert two.is_unique("x") and not two.is_unique("y")  # 'a' and 'A' can compare equal
+    one = props("SELECT * FROM (VALUES (1, NULL)) AS t(x, y)")
+    assert one.exactly_one_row and one.non_null("x") and not one.non_null("y")
+    assert not props("SELECT * FROM (VALUES (1), (1.0)) AS t(x)").is_unique("x")
+
+
+def test_grouping_sets_null_out_columns_outside_a_set():
+    rolled = props("SELECT customer_id, COUNT(*) AS n FROM orders GROUP BY ROLLUP(customer_id)")
+    assert not rolled.non_null("customer_id") and rolled.non_null("n")
+    assert rolled.is_unique("customer_id")  # the grand total row is the only NULL: customer_id is NOT NULL
+    assert not props("SELECT amount FROM orders GROUP BY ROLLUP(amount)").is_unique("amount")  # a NULL amount repeats it
+    assert not props("SELECT customer_id FROM orders GROUP BY GROUPING SETS ((customer_id), (customer_id))").keys
+    kept = props("SELECT customer_id, id FROM orders GROUP BY customer_id, ROLLUP(id)")
+    assert kept.non_null("customer_id") and not kept.non_null("id")
+    assert not props("SELECT customer_id AS c FROM orders GROUP BY ROLLUP(c)").non_null("c")
+    assert not props("SELECT SUM(qty) AS q FROM items GROUP BY GROUPING SETS ((order_id), ())").non_null("q")  # () sees an empty table
+
+
+def test_lateral_and_parenthesised_joins():
+    lateral = props(
+        "SELECT o.id, s.m FROM orders o LEFT JOIN LATERAL (SELECT MAX(i.qty) AS m FROM items i WHERE i.order_id = o.id) s ON TRUE"
+    )
+    assert lateral.is_unique("id") and not lateral.non_null("m")
+    nested = props("SELECT o.id, c.name FROM (orders o LEFT JOIN customers c ON c.id = o.customer_id)")
+    assert nested.is_unique("id") and not nested.non_null("name")
+
+
+def test_column_alias_lists_rename_and_recursion_is_unsupported():
+    renamed = props("WITH c(a, b) AS (SELECT id, customer_id FROM orders) SELECT a, b FROM c")
+    assert renamed.is_unique("a") and renamed.non_null("b")
+    assert props("SELECT p FROM orders AS o(p, q, r)").is_unique("p")
+    assert infer_properties("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r) SELECT n FROM r", {}, SCHEMA).unsupported
+
+
 _path = Path(__file__).resolve().parent.parent / "tools" / "output_properties_bench.py"
 _spec = importlib.util.spec_from_file_location("output_properties_bench", _path)
 bench = importlib.util.module_from_spec(_spec)
