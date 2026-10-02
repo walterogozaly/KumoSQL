@@ -623,6 +623,17 @@
       h("div", { class: "sp-inline" }, total, h("span", { text: "seconds in total (0 for none)" })),
     );
     try { draw(await repoCall("GET", "/api/lineage-limits")); } catch (error) { setStatus(error.message, true); }
+
+    const fetchColumns = h("input", { type: "checkbox", id: "schema-fetch", "aria-label": "Look up columns of unknown tables" });
+    fetchColumns.addEventListener("change", async () => {
+      setStatus("Saving…");
+      try { fetchColumns.checked = (await repoCall("PUT", "/api/schema-fetch", { enabled: fetchColumns.checked })).enabled; setStatus("Saved"); } catch (error) { setStatus(error.message, true); }
+    });
+    body.append(
+      h("h3", { class: "sp-heading", text: "Unknown tables" }),
+      h("label", { class: "sp-inline", for: "schema-fetch" }, fetchColumns, h("span", { text: "Look up their columns in BigQuery" })),
+    );
+    try { fetchColumns.checked = (await repoCall("GET", "/api/schema-fetch")).enabled; } catch (error) { setStatus(error.message, true); }
   }
 
   async function renderSolver(body) {
