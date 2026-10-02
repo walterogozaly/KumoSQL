@@ -251,6 +251,39 @@ def _is_ground(term) -> bool:
     return True
 
 
+_ARITHMETIC = (z3.Z3_OP_ADD, z3.Z3_OP_SUB, z3.Z3_OP_MUL, z3.Z3_OP_UMINUS, z3.Z3_OP_ANUM, z3.Z3_OP_AGNUM)
+
+
+def _uninterpreted_leaves(term) -> list | None:
+    """The column constants of ``term`` when it is a column or ``+ - *`` over columns and numbers
+    (NULL exactly when one of its columns is), else ``None``."""
+
+    leaves, stack = [], [term]
+    while stack:
+        node = stack.pop()
+        if z3.is_const(node) and node.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+            if not any(leaf.eq(node) for leaf in leaves):
+                leaves.append(node)
+            continue
+        kind = node.decl().kind()
+        if kind not in _ARITHMETIC and not (kind in (z3.Z3_OP_DT_CONSTRUCTOR, z3.Z3_OP_DT_ACCESSOR) and node.decl().name() in ("Num", "num")):
+            return None
+        stack.extend(node.children())
+    return leaves
+
+
+def _implied(conjuncts: list, fact, ids: set) -> bool:
+    """Whether the conjunction ``conjuncts`` implies ``fact`` (a quick solver check)."""
+
+    if fact.get_id() in ids:
+        return True
+    solver = z3.Solver()
+    solver.set("timeout", 2000)
+    solver.add(*conjuncts)
+    solver.add(z3.Not(fact))
+    return solver.check() == z3.unsat
+
+
 class _SetSourceUnresolved(Exception):
     """A DISTINCT derived table was not joined on all of its columns."""
 
@@ -1674,9 +1707,9 @@ def _pinned_guard(sub: _Sub, pairs, ids) -> object:
     """The guard of a set-source test once its columns are pinned; the pinned outer columns are known non-NULL."""
 
     known = [
-        z3.Not(z3.Bool(pin.decl().name() + "#null"))
+        z3.Not(z3.Bool(leaf.decl().name() + "#null"))
         for _, pin in pairs
-        if z3.is_const(pin) and pin.decl().kind() == z3.Z3_OP_UNINTERPRETED
+        for leaf in (_uninterpreted_leaves(pin) or [])
     ]
     return z3.And(_subst(sub.guard, pairs), *known)
 
@@ -2354,9 +2387,13 @@ class _Prover:
                     left, right = term.children()
                     if right.eq(column.val):
                         left, right = right, left
-                    if not left.eq(column.val) or not z3.is_const(right) or right.decl().kind() != z3.Z3_OP_UNINTERPRETED:
+                    if not left.eq(column.val):
                         continue
-                    if z3.Not(z3.Bool(right.decl().name() + "#null")).get_id() in ids:
+                    leaves = _uninterpreted_leaves(right)
+                    if not leaves or any(leaf.eq(column.val) or leaf.sort() == z3.BoolSort() for leaf in leaves):
+                        continue
+                    # an arithmetic expression over outer columns that the condition requires to be non-NULL
+                    if all(_implied(conjuncts, z3.Not(z3.Bool(leaf.decl().name() + "#null")), ids) for leaf in leaves):
                         pairs.append((column.val, right))
                         break
                 else:
@@ -2364,9 +2401,9 @@ class _Prover:
         # The test already requires the pinned columns to be non-NULL, so the
         # condition need not repeat it (the existence atom is a free Boolean).
         known = [
-            (z3.Not(z3.Bool(pin.decl().name() + "#null")), z3.BoolVal(True))
+            (z3.Not(z3.Bool(leaf.decl().name() + "#null")), z3.BoolVal(True))
             for _, pin in pairs
-            if z3.is_const(pin) and pin.decl().kind() == z3.Z3_OP_UNINTERPRETED
+            for leaf in (_uninterpreted_leaves(pin) or [])
         ]
         changes = {
             "cond": _Pred(_subst(_subst(block.cond.t, pairs), known), _subst(block.cond.f, pairs)),
