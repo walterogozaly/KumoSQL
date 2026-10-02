@@ -49,10 +49,10 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> d
         tables, db = schemas[key]
         left, right = case["sql_a"], case["sql_b"]
         try:
-            proof = prove(left, right, tables)
+            proof = prove(left, right, tables, True)  # Calcite reads a literal GROUP BY key as a constant
         except Exception:  # a crash is a failure to prove, never a proof
             proof = False
-        counter = sb.differ(left, right, tables, db, trials)
+        counter = sb.differ(left, right, tables, db, trials, constants=True)
         found = counter not in (None, False)
         if proof and found:
             out["wrong"].append(case["name"])

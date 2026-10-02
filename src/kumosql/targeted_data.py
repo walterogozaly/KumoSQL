@@ -87,6 +87,12 @@ def _neighbours(value: Any, col_type: str) -> list[Any]:
         return [value - 0.5, value, value + 0.5]
     if col_type == "NUMERIC":
         return [value - Decimal("0.5"), value, value + Decimal("0.5")]
+    if col_type == "STRING" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        day = date.fromisoformat(value)  # a date kept in a text column: neighbours are dates too
+        return [(day - timedelta(days=1)).isoformat(), value, (day + timedelta(days=1)).isoformat()]
+    if col_type == "STRING" and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value):
+        moment = datetime.fromisoformat(value)
+        return [(moment + timedelta(hours=h)).isoformat(sep=" ") for h in (-1, 0, 1)]
     if col_type == "STRING":
         return [value, value + "x", value[:-1] if value else "x", value.upper() if value.lower() == value else value.lower()]
     if col_type == "DATE":
@@ -101,7 +107,7 @@ def _passing(values: list[Any], col_type: str, op) -> Any:
 
     if col_type == "BOOL":
         return None
-    low, mid, high = (values + [values[-1]] * 3)[:3] if col_type != "STRING" else (values[2], values[0], values[1])
+    low, mid, high = (values + [values[-1]] * 3)[:3] if col_type != "STRING" or len(values) == 3 else (values[2], values[0], values[1])
     return {exp.EQ: mid, exp.GTE: mid, exp.LTE: mid, exp.GT: high, exp.LT: low, exp.NEQ: high}.get(op, mid)
 
 
