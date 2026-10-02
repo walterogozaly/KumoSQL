@@ -2,14 +2,17 @@
   "suite": "STATS-CEB end to end",
   "order": 61,
   "size": 146,
-  "score": "98.8 s (DuckDB's optimizer 275 s with 3 timeouts; true sizes 97.9 s)",
-  "metric": "Total DuckDB runtime of the 146 STATS-CEB queries with join trees chosen by KumoSQL's DPccp optimizer from its own estimates, join reordering in DuckDB switched off. Postgres 16 estimates through the same optimizer: 101.5 s. Median plan cost (C_out with true sizes) equals the optimum; worst plan 1.59x optimal (Postgres estimates 6.4x).",
+  "score": "133.1 s (DuckDB's optimizer 274.5 s with 3 timeouts; true sizes 134.3 s)",
+  "metric": "Total DuckDB runtime of the 146 queries with join trees and hash sides chosen by KumoSQL's DPccp optimizer from its own estimates. Postgres 16 estimates through the same optimizer: 170.9 s with 1 timeout. Plan cost (C_out under true sizes) is 1.009x optimal on average and 1.59x at worst (Postgres estimates 1.11x, 6.4x).",
   "docs": "docs/joinorder.md#stats-ceb",
   "command": "python tools/joinorder_bench.py stats-ceb --repo PATH --psql \"psql -d stats\" --execute",
   "date": "2026-10-02",
-  "caveats": "Timeouts count as 60 s. 4 threads, one container; timings are best of two runs. Tuned on test, as for the cardinality row.",
+  "caveats": "Timeouts count as 60 s; 4 threads, one container, best of two runs. Tuned on test, as for the cardinality row. Letting DuckDB choose hash sides gives 98.8 s here but doubles JOB's time, so one setting is used for both.",
   "evidence": "executed",
   "correctness": "Every executed plan returned the published COUNT(*).",
-  "coverage": {"timeout": 0, "error": 0},
-  "held_out": "none (JOB is the held-out workload; not yet reported)"
+  "coverage": {
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "none (JOB families 17-33 are the held-out workload)"
 }

@@ -1,0 +1,20 @@
+{
+  "suite": "Lineage goldens: OpenLineage (independent)",
+  "order": 250,
+  "size": 94,
+  "score": "83/94 matched, 4 disputed, 7 unknown, 0 wrong",
+  "metric": "OpenLineage's own lineage tests (Apache-2.0, commit 7a84fd4d48) for a Rust parser (sqlparser-rs) that shares no code with sqlglot: the independent oracle. Each case is one SQL statement with its expected table and column lineage; KumoSQL must produce exactly it or say unknown.",
+  "correctness": "0 cases claim a table or edge the oracle does not have; 0 confident misses",
+  "coverage": {
+    "proven": 83,
+    "unknown": 7
+  },
+  "docs": "docs/lineage-goldens-bench.md",
+  "command": "python tools/lineage_goldens_bench.py --write-results",
+  "caveats": "Cases left out: 46 (other dialects, upstream-skipped tests, USE state, not BigQuery); 18 upstream tests could not be harvested. Statements other than queries and CREATE ... AS (DELETE, UPDATE, MERGE, ALTER, DROP, TRUNCATE) are not traced and are reported unknown.",
+  "analysis": "49/49 expected column edges found (column cases only; recall counts edges reported unknown)",
+  "evidence": "executed",
+  "date": "2026-10-02",
+  "held_out": "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to shape the adapter, so they are an unseen generalisation check; first run: datahub: 39/80 exact, 15 unknown, 16 missed, 9 wrong; openlineage: 10/29 exact, 1 unknown, 6 missed, 12 wrong. Their wrong/missed counts are dialect differences and are not in the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.",
+  "performance": "112 in-scope cases in 3.9 s"
+}

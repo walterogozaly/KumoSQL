@@ -69,3 +69,18 @@ def test_prover_never_calls_a_pivot_equivalent_to_its_source():
     pivoted = "SELECT * FROM (SELECT id, a FROM t) PIVOT (SUM(a) FOR id IN (1, 2))"
     for other in ("SELECT * FROM (SELECT id, a FROM t)", pivoted):
         assert prove_equivalent_smt(pivoted, other).status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_unordered_aggregates_compare_as_multisets():
+    sql = "SELECT ARRAY_CONCAT_AGG(x) FROM (SELECT [1, 2] x UNION ALL SELECT [3])"
+    assert ev.unordered_aggregates(sql) == {"ArrayConcatAgg"}
+    assert ev.unordered_aggregates("SELECT ARRAY_AGG(x ORDER BY x) FROM t") == set()
+    assert ev.same_results([((3, 1, 2),)], [((1, 2, 3),)], False, unordered_elements=True)
+    assert not ev.same_results([((3, 1, 2),)], [((1, 2, 4),)], False, unordered_elements=True)
+    assert not ev.same_results([((3, 1, 2),)], [((1, 2, 3),)], False)
+
+
+def test_array_concat_agg_json_case_is_stable():
+    case = next(c for c in ev.load_googlesql() if c["id"] == "array_aggregation/array_concat_agg_json")
+    for _ in range(5):
+        assert ev.evaluate(case["sql"], ev.PIPELINES["lift"])["class"] != "WRONG"

@@ -79,6 +79,12 @@ _CMP = {exp.EQ: "=", exp.NEQ: "!=", exp.LT: "<", exp.LTE: "<=", exp.GT: ">", exp
 
 def compile_predicate(node: exp.Expression) -> Callable[[Row], Any]:
     """Return ``fn(row) -> True | False | None`` for a predicate or scalar."""
+    if node.args.get("negate") and isinstance(node, (exp.Is, exp.Like, exp.ILike, exp.In, exp.Between)):
+        # newer sqlglot spells ``x IS NOT NULL`` / ``NOT LIKE`` with a negate flag
+        positive = node.copy()
+        positive.set("negate", None)
+        inner = compile_predicate(positive)
+        return lambda row: (lambda v: None if v is None else not v)(inner(row))
     if isinstance(node, exp.Paren):
         return compile_predicate(node.this)
     if isinstance(node, exp.Column):

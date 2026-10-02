@@ -196,12 +196,13 @@ def forget_table(project: str, dataset: str, table: str) -> None:
 
 
 _token_lock = threading.Lock()
+token_refreshes = 0  # times a new access token was fetched in this process (a count for the log, never the token)
 
 
 def _token_cached() -> str:
     """One access token for every request, refreshed once when it ages out (safe from many threads)."""
 
-    global _token
+    global _token, token_refreshes
     if os.environ.get("BQ_ACCESS_TOKEN"):
         return access_token()
     current = _token
@@ -211,6 +212,7 @@ def _token_cached() -> str:
         if _token and time.time() < _token[1]:
             return _token[0]
         value = access_token()
+        token_refreshes += 1
         _token = (value, time.time() + _TOKEN_SECONDS)
         return value
 
