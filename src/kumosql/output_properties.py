@@ -26,6 +26,7 @@ carry none. Anything the analysis does not understand is left as unknown, so
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Iterable, Mapping
 
 import sqlglot
@@ -43,6 +44,11 @@ _NULL_PROPAGATING = {
 }
 _ALWAYS_NON_NULL = {"ROW_NUMBER", "RANK", "DENSE_RANK", "COUNTIF", "CURRENT_DATE", "CURRENT_TIMESTAMP", "CURRENT_DATETIME", "CURRENT_TIME"}
 _NULL_ON_EMPTY_AGGREGATES = (exp.Sum, exp.Min, exp.Max, exp.Avg)
+# Marks an internal column name that no reference can resolve to: a repeated output name
+# (``name`` + _HIDDEN + position) or a VALUES column nobody named.
+_HIDDEN = "\x00"
+_MAX_GROUPING_SETS = 4096
+_STAR_SOURCE = "output_properties_star_source"
 
 
 @dataclass(frozen=True)
@@ -56,6 +62,7 @@ class ColumnFact:
 class UniqueKey:
     columns: tuple[str, ...]  # empty: the query returns at most one row
     assumptions: tuple[str, ...] = ()
+    positions: tuple[int, ...] = ()  # the same columns by output position (names can repeat)
 
 
 @dataclass(frozen=True)
@@ -68,10 +75,10 @@ class OutputProperties:
     unsupported: str = ""
 
     def column(self, name: str) -> ColumnFact | None:
-        for column in self.columns:
-            if column.name == name.lower():
-                return column
-        return None
+        """The fact for an output name; None when no column, or several, carry that name."""
+
+        found = [column for column in self.columns if column.name == name.lower()]
+        return found[0] if len(found) == 1 else None
 
     def non_null(self, name: str) -> bool:
         column = self.column(name)
@@ -179,8 +186,9 @@ class _Analyzer:
         if isinstance(node, exp.Table):
             name = node.name.lower()
             if not node.args.get("db") and name in self.ctes:
-                rel = self.query_rel(self.ctes[name])
-                return alias or name, _requalify(rel, alias or name)
+                cte = self.ctes[name]
+                rel = _requalify(self.query_rel(cte.this), alias or name, _alias_columns(cte))
+                return alias or name, _requalify(rel, alias or name, _alias_columns(node))
             columns, not_null, keys = self._lookup(node)
             alias = alias or node.name.lower()
             rel = _Rel()
@@ -193,12 +201,57 @@ class _Analyzer:
                 key = tuple(c.lower() for c in key)
                 if all(c in columns for c in key):
                     rel.keys.append((frozenset(f"{alias}.{c}" for c in key), frozenset({f"({', '.join(key)}) is unique in {display}"})))
-            return alias, rel
+            return alias, _requalify(rel, alias, _alias_columns(node))
+        if isinstance(node, exp.Values):
+            alias = alias or f"{_HIDDEN}values{id(node)}"
+            return alias, _requalify(self.values_rel(node), alias, _alias_columns(node))
         if isinstance(node, exp.Subquery):
             if not alias:
-                raise _Unsupported("subquery without an alias")
-            return alias, _requalify(self.query_rel(node.this), alias)
+                if isinstance(node.this, (exp.Table, exp.Subquery)) and node.this.args.get("joins"):
+                    return "", self._join_group(node.this)
+                alias = f"{_HIDDEN}subquery{id(node)}"  # its columns are read unqualified
+            return alias, _requalify(self.query_rel(node.this), alias, _alias_columns(node))
+        if isinstance(node, exp.Lateral) and not node.args.get("view") and isinstance(node.this, exp.Subquery) and alias:
+            # Correlated: the inner query's references to earlier FROM items read as outer values
+            # (constants per outer row), so its facts hold per row of the left side.
+            return alias, _requalify(self.query_rel(node.this.this), alias, _alias_columns(node))
         raise _Unsupported(f"source {type(node).__name__}")
+
+    def _join_group(self, node: exp.Expression) -> _Rel:
+        """``(a JOIN b ON ...)`` in FROM: the joined relation, its columns keeping their own qualifiers."""
+
+        node = node.copy()
+        joins = node.args.pop("joins")
+        _, current = self.source(node)
+        for join in joins:
+            current = self._join(current, {}, join, None)
+        return current
+
+    def values_rel(self, node: exp.Values) -> _Rel:
+        """``VALUES (...), (...)``: literal rows, so NULLs, row count and repeats are visible."""
+
+        rows = [list(row.expressions) if isinstance(row, exp.Tuple) else [row] for row in node.expressions]
+        width = len(rows[0]) if rows else 0
+        if not rows or not width or any(len(row) != width for row in rows):
+            raise _Unsupported("VALUES rows of different widths")
+        out = _Rel(exactly_one=len(rows) == 1)
+        empty = _Rel()
+        values = []
+        for index in range(width):
+            q = f".{_HIDDEN}{index}"
+            cells = [row[index] for row in rows]
+            non_null = all(self._non_null(cell, empty)[0] for cell in cells)
+            out.cols[q] = (non_null, frozenset())
+            out.order.append(q)
+            values.append([_literal_value(cell) for cell in cells])
+            if len(rows) > 1 and _all_distinct(values[-1]):
+                out.keys.append((frozenset({q}), frozenset()))
+        if len(rows) == 1:
+            out.keys.append((frozenset(), frozenset()))
+        elif _all_distinct([tuple(v[i] for v in values) if all(v[i] is not None for v in values) else None for i in range(len(rows))]):
+            out.keys.append((frozenset(out.order), frozenset()))
+        out.keys = _prune_keys(out.keys)
+        return out
 
     def query_rel(self, node: exp.Expression) -> _Rel:
         """The output relation of a query, columns qualified by the empty alias."""
@@ -209,10 +262,14 @@ class _Analyzer:
         saved = dict(self.ctes)
         try:
             if with_ is not None:
+                if with_.args.get("recursive"):
+                    raise _Unsupported("recursive WITH")
                 for cte in with_.expressions:
-                    self.ctes[cte.alias.lower()] = cte.this
+                    self.ctes[cte.alias.lower()] = cte
             if isinstance(node, exp.Select):
                 return self.select_rel(node)
+            if isinstance(node, exp.Values):
+                return self.values_rel(node)
             if isinstance(node, (exp.Union, exp.Intersect, exp.Except)):
                 return self.set_rel(node)
             raise _Unsupported(type(node).__name__)
@@ -255,13 +312,13 @@ class _Analyzer:
             alias, current = self.source(from_.this)
             scope[alias] = current
             for join in select.args.get("joins") or []:
-                current = self._join(current, scope, join, select, select.args.get("where").this if select.args.get("where") else None)
+                current = self._join(current, scope, join, select.args.get("where").this if select.args.get("where") else None)
         current = self._filter(current, select.args.get("where"), scope)
         return self._project(select, current, scope)
 
     # ----- joins and filters
 
-    def _join(self, left: _Rel, scope: dict, join: exp.Join, select: exp.Select, where: exp.Expression | None = None) -> _Rel:
+    def _join(self, left: _Rel, scope: dict, join: exp.Join, where: exp.Expression | None = None) -> _Rel:
         if join.args.get("using"):
             raise _Unsupported("JOIN USING")
         alias, right = self.source(join.this)
@@ -318,12 +375,16 @@ class _Analyzer:
 
         if not isinstance(node, exp.Column) or isinstance(node.this, exp.Star):
             return None
+        if node.meta.get(_STAR_SOURCE) in known:
+            return node.meta[_STAR_SOURCE]
         name = node.name.lower()
         table = node.table.lower()
         if table:
             q = f"{table}.{name}"
-            return q if q in known else None
-        found = [q for q in known if q.split(".", 1)[1] == name]
+            if q not in known or any(k.startswith(q + _HIDDEN) for k in known):
+                return None  # a repeated output name is ambiguous
+            return q
+        found = [q for q in known if _base(q.split(".", 1)[1]) == name]
         return found[0] if len(found) == 1 else None
 
     def _filter(self, rel: _Rel, where: exp.Where | None, scope: dict) -> _Rel:
@@ -436,11 +497,15 @@ class _Analyzer:
 
     def _project(self, select: exp.Select, rel: _Rel, scope: dict) -> _Rel:
         group = select.args.get("group")
-        grouped = bool(group and group.expressions)
-        if group is not None and (any(group.args.get(k) for k in ("grouping_sets", "rollup", "cube", "totals", "all")) or group.find(exp.Rollup, exp.Cube, exp.GroupingSets)):
-            raise _Unsupported("grouping sets")
+        sets = self._grouping_sets(group, rel) if group is not None else None
+        grouped = bool(group and group.expressions) if sets is None else True
         has_agg = any(select_has_aggregate(e) for e in select.expressions) or bool(select.args.get("having"))
         global_agg = has_agg and not grouped
+        unrolled = rel
+        if sets is not None:
+            if any(isinstance(g, exp.Literal) for g in self._group_items(group)):
+                raise _Unsupported("grouping sets by position")
+            rel = self._rolled_up(rel, group, sets)
         projected: list[tuple[str, exp.Expression]] = []
         for item in select.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
@@ -448,28 +513,42 @@ class _Analyzer:
                 for q in rel.order:
                     table, name = q.split(".", 1)
                     if not qualifier or table == qualifier:
-                        projected.append((name, exp.column(name, table=table)))
+                        column = exp.column(name, table=table)
+                        column.meta[_STAR_SOURCE] = q  # the column itself, even when its name repeats
+                        projected.append((name, column))
                 continue
             name = item.alias_or_name.lower() if item.alias_or_name else f"f{len(projected)}_"  # BigQuery's name for it
             projected.append((name, item.this if isinstance(item, exp.Alias) else item))
-        if len({n for n, _ in projected}) != len(projected):
-            raise _Unsupported("duplicate output names")
+        # A repeated output name keeps its position but can no longer be referenced by name.
+        seen_names: set[str] = set()
+        for index, (name, expr) in enumerate(projected):
+            base = _base(name)
+            projected[index] = (f"{base}{_HIDDEN}{index}" if base in seen_names or not base else base, expr)
+            seen_names.add(base)
         out = _Rel()
         for name, expr in projected:
-            non_null, prov = self._non_null(expr, rel, possibly_empty=global_agg)
+            non_null, prov = self._non_null(expr, rel, possibly_empty=global_agg or bool(sets and any(not s for s in sets)))
             out.cols[f".{name}"] = (non_null, prov if non_null else frozenset())
             out.order.append(f".{name}")
         keys: list[tuple[frozenset, Provenance]] = []
         by_canon: dict[str, str] = {}
         for name, expr in projected:
             by_canon.setdefault(self._canon(expr, rel), f".{name}")
-        if grouped:
+        if sets is not None:
+            # Rows of different grouping sets differ in which grouping columns are NULL when no
+            # grouped value is NULL in the input; within one set the set's columns are unique.
+            members = [by_canon.get(c) for c in sorted({c for s in sets for c in s})]
+            exprs = {self._canon(g, unrolled): g for g in self._group_items(group)}
+            if all(members) and len(set(sets)) == len(sets) and all(self._non_null(e, unrolled)[0] for e in exprs.values()):
+                keys.append((frozenset(members), frozenset().union(*(self._non_null(e, unrolled)[1] for e in exprs.values()))))
+        elif grouped:
             members = []
             for g in group.expressions:
                 if isinstance(g, exp.Literal) and not g.is_string and g.this.isdigit() and 1 <= int(g.this) <= len(projected):
                     members.append(f".{projected[int(g.this) - 1][0]}")
                     continue
-                alias_hit = [n for n, e in projected if isinstance(g, exp.Column) and not g.table and n == g.name.lower() and self._resolve(g, rel.cols) is None]
+                alias_hit = [n for n, e in projected if isinstance(g, exp.Column) and not g.table and _base(n) == g.name.lower() and self._resolve(g, rel.cols) is None]
+                alias_hit = alias_hit if len(alias_hit) == 1 else []
                 members.append(by_canon.get(self._canon(g, rel)) or (f".{alias_hit[0]}" if alias_hit else None))
             if all(members):
                 keys.append((frozenset(members), frozenset()))
@@ -512,6 +591,68 @@ class _Analyzer:
         out.keys = _prune_keys(keys)
         return out
 
+    def _group_items(self, group: exp.Group) -> list:
+        items = []
+        for node in [*group.expressions, *(group.args.get("grouping_sets") or []), *(group.args.get("rollup") or []), *(group.args.get("cube") or [])]:
+            if isinstance(node, (exp.Rollup, exp.Cube, exp.GroupingSets)):
+                for element in node.expressions:
+                    items += element.expressions if isinstance(element, exp.Tuple) else [element.this if isinstance(element, exp.Paren) else element]
+            else:
+                items.append(node)
+        return items
+
+    def _grouping_sets(self, group: exp.Group, rel: _Rel) -> list[frozenset] | None:
+        """The grouping sets of ``GROUP BY`` (as sets of canonical expressions), or None for a plain one."""
+
+        if group.args.get("totals") or group.args.get("all"):
+            raise _Unsupported("GROUP BY ALL / WITH TOTALS")
+        plain = [g for g in group.expressions if not isinstance(g, (exp.Rollup, exp.Cube, exp.GroupingSets))]
+        factors = [n for n in [*group.expressions, *(group.args.get("grouping_sets") or []), *(group.args.get("rollup") or []), *(group.args.get("cube") or [])] if isinstance(n, (exp.Rollup, exp.Cube, exp.GroupingSets))]
+        if not factors:
+            return None
+        canon = lambda node: self._canon(node.this if isinstance(node, exp.Paren) else node, rel)  # noqa: E731
+        sets = [frozenset(canon(g) for g in plain)]
+        for factor in factors:
+            elements = [list(e.expressions) if isinstance(e, exp.Tuple) else [e] for e in factor.expressions]
+            if any(isinstance(x, (exp.Rollup, exp.Cube, exp.GroupingSets)) for e in elements for x in e):
+                raise _Unsupported("nested grouping sets")
+            if isinstance(factor, exp.Rollup) and not elements:  # MySQL WITH ROLLUP: over the plain list
+                if len(factors) > 1:
+                    raise _Unsupported("WITH ROLLUP combined with grouping sets")
+                elements = [[g] for g in plain]
+                sets = [frozenset()]
+            if isinstance(factor, exp.Rollup):
+                options = [[x for e in elements[:i] for x in e] for i in range(len(elements) + 1)]
+            elif isinstance(factor, exp.Cube):
+                if len(elements) > 12:
+                    raise _Unsupported("too many grouping sets")
+                options = [[x for i, e in enumerate(elements) if mask >> i & 1 for x in e] for mask in range(1 << len(elements))]
+            else:
+                options = elements
+            sets = [s | frozenset(canon(x) for x in option) for s in sets for option in options]
+            if len(sets) > _MAX_GROUPING_SETS:
+                raise _Unsupported("too many grouping sets")
+        return sets
+
+    def _rolled_up(self, rel: _Rel, group: exp.Group, sets: list[frozenset]) -> _Rel:
+        """The grouped input as the select list sees it: a column grouped in some sets but not all is NULL in the others."""
+
+        out = _Rel(cols=dict(rel.cols), keys=list(rel.keys), order=list(rel.order), revert=dict(rel.revert))
+        common = frozenset.intersection(*sets)
+        partial: set[str] = set()
+        for item in self._group_items(group):
+            if self._canon(item, rel) in common:
+                continue
+            columns = list(item.find_all(exp.Column))
+            resolved = {self._resolve(c, rel.cols) for c in columns}
+            if not columns or None in resolved:
+                partial = set(rel.cols)  # an output alias or position: give up on every column
+                break
+            partial |= resolved
+        for q in partial:
+            out.cols[q] = (False, frozenset())
+        return out
+
     def _non_null(self, node: exp.Expression, rel: _Rel, possibly_empty: bool = False) -> tuple[bool, Provenance]:
         """Whether an expression is never NULL, and the declared facts that say so."""
 
@@ -552,7 +693,7 @@ class _Analyzer:
                 return none if possibly_empty else all_args(n)
             if isinstance(n, exp.Window):
                 return (True, frozenset()) if isinstance(n.this, (exp.RowNumber, exp.Rank, exp.DenseRank, exp.Count)) else none
-            if isinstance(n, (exp.Is, exp.Exists)):
+            if isinstance(n, (exp.Is, exp.Exists, exp.Grouping)):
                 return True, frozenset()
             if isinstance(n, exp.Coalesce):
                 best = none
@@ -596,14 +737,67 @@ class _Analyzer:
         return go(node)
 
 
-def _requalify(rel: _Rel, alias: str) -> _Rel:
+def _requalify(rel: _Rel, alias: str, names: list[str] | None = None) -> _Rel:
+    """``rel`` under a FROM alias, its columns renamed by ``AS alias(a, b, ...)`` when given."""
+
     out = _Rel(exactly_one=rel.exactly_one)
-    mapping = {q: f"{alias}.{q.split('.', 1)[1]}" for q in rel.order}
+    if names and len(names) != len(rel.order):
+        raise _Unsupported("column alias list of a different width")
+    mapping = {q: f"{alias}.{names[i] if names else q.split('.', 1)[1]}" for i, q in enumerate(rel.order)}
+    if len(set(mapping.values())) != len(mapping):
+        raise _Unsupported("repeated column alias")
     out.order = [mapping[q] for q in rel.order]
     out.cols = {mapping[q]: v for q, v in rel.cols.items()}
     out.keys = [(frozenset(mapping[c] for c in key), prov) for key, prov in rel.keys]
     out.same = [{mapping[c] for c in g if c in mapping} for g in rel.same]
     return out
+
+
+def _base(name: str) -> str:
+    """An output name without the marker that keeps repeated names apart."""
+
+    return name.split(_HIDDEN, 1)[0]
+
+
+def _alias_columns(node: exp.Expression) -> list[str]:
+    alias = node.args.get("alias")
+    return [c.name.lower() for c in alias.columns] if isinstance(alias, exp.TableAlias) and alias.columns else []
+
+
+def _literal_value(node: exp.Expression):
+    """A comparable value for a plain literal, or None when equality with other cells is not obvious."""
+
+    from decimal import Decimal, InvalidOperation
+
+    negate = False
+    while isinstance(node, (exp.Paren, exp.Neg)):
+        negate ^= isinstance(node, exp.Neg)
+        node = node.this
+    if isinstance(node, exp.Literal) and not node.is_string:
+        if not re.fullmatch(r"\d{1,15}(\.\d{0,15})?", node.this) or len(node.this.replace(".", "")) > 15:
+            return None  # long or exponent literals may round to the same float
+        try:
+            value = Decimal(node.this)
+        except InvalidOperation:
+            return None
+        return ("number", -value if negate else value) if value.is_finite() else None
+    if negate:
+        return None
+    if isinstance(node, exp.Literal) and node.this.isascii() and node.this.isalnum():
+        # case and trailing spaces are ignored by some collations, so compare without them
+        return ("string", node.this.casefold())
+    if isinstance(node, exp.Boolean):
+        return ("boolean", bool(node.this))
+    return None
+
+
+def _all_distinct(values: list) -> bool:
+    """Every value is a known literal of one kind and no two are equal."""
+
+    if any(v is None for v in values):
+        return False
+    kinds = {tuple(c[0] for c in v) if isinstance(v[0], tuple) else v[0] for v in values}
+    return len(kinds) == 1 and len(set(values)) == len(values)
 
 
 def _conjuncts(node: exp.Expression):
@@ -676,12 +870,11 @@ def infer_properties(
         rel = analyzer.query_rel(tree)
     except (_Unsupported, sqlglot.errors.SqlglotError) as error:
         return OutputProperties(unsupported=str(error))
-    columns = tuple(
-        ColumnFact(q.split(".", 1)[1], rel.cols[q][0], tuple(sorted(rel.cols[q][1])))
-        for q in rel.order
-    )
+    position = {q: i for i, q in enumerate(rel.order)}
+    shown = {q: _base(q.split(".", 1)[1]) or f"f{i}_" for q, i in position.items()}
+    columns = tuple(ColumnFact(shown[q], rel.cols[q][0], tuple(sorted(rel.cols[q][1]))) for q in rel.order)
     keys = tuple(
-        UniqueKey(tuple(sorted(c.split(".", 1)[1] for c in key)), tuple(sorted(prov)))
-        for key, prov in sorted(rel.keys, key=lambda kp: (len(kp[0]), sorted(kp[0])))
+        UniqueKey(tuple(sorted(shown[c] for c in key)), tuple(sorted(prov)), tuple(sorted(position[c] for c in key)))
+        for key, prov in sorted(rel.keys, key=lambda kp: (len(kp[0]), sorted(position[c] for c in kp[0])))
     )
     return OutputProperties(columns=columns, keys=keys, exactly_one_row=rel.exactly_one)
