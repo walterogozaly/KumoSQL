@@ -15,6 +15,7 @@ from .pipeline_types import Model, PipelineDiagnostic, Target
 from .resilience import (
     PipelineLoadError,
     describe_os_error,
+    extended_path,
     find_assets,
     parse_json_or_raise,
     read_text_or_reason,
@@ -300,7 +301,7 @@ def load_sqlx_project(
     the output of ``dataform compile --json``.
     """
 
-    root = Path(root)
+    root = extended_path(root)
     if not root.is_dir():
         raise PipelineLoadError("project folder was not found or is not a directory")
     diagnostics: list[PipelineDiagnostic] = []
