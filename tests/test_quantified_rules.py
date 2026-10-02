@@ -170,23 +170,6 @@ def _expansions():
 _CASES = _expansions()
 
 
-def test_min_of_true_is_an_existence_test():
-    """Calcite marks existence with MIN(TRUE) over the rows: NULL when there are none."""
-
-    exists = "SELECT t.a, t.b FROM t WHERE {neg}EXISTS (SELECT 1 FROM u WHERE u.d > 1)"
-    joined = "SELECT t.a, t.b FROM t LEFT JOIN (SELECT MIN({y}) AS m FROM u WHERE u.d > 1) AS g ON TRUE WHERE g.m IS {neg}NULL"
-    assert prove_equivalent_algebraic(exists.format(neg=""), joined.format(y="TRUE", neg="NOT "), schema=SCHEMA).proven
-    assert prove_equivalent_algebraic(exists.format(neg="NOT "), joined.format(y="TRUE", neg=""), schema=SCHEMA).proven
-    # MIN of a nullable column is NULL also when every value is NULL.
-    assert not prove_equivalent_algebraic(exists.format(neg=""), joined.format(y="u.c", neg="NOT "), schema=SCHEMA).proven
-    assert not prove_equivalent_algebraic(exists.format(neg=""), joined.format(y="TRUE", neg=""), schema=SCHEMA).proven
-    value = "SELECT t.a, g.m IS NOT NULL AS v FROM t LEFT JOIN (SELECT MIN(TRUE) AS m FROM u WHERE u.d > 1) AS g ON TRUE"
-    assert prove_equivalent_algebraic("SELECT t.a, EXISTS (SELECT 1 FROM u WHERE u.d > 1) AS v FROM t", value, schema=SCHEMA).proven
-    for k in range(20):
-        con = _database(9000 + k)
-        assert _bag(con, exists.format(neg="")) == _bag(con, joined.format(y="TRUE", neg="NOT "))
-
-
 @pytest.mark.parametrize("block", range(4))
 def test_expansions_fold_only_when_they_mean_the_quantified_test(block):
     """A faithful expansion is proved equal to the subquery test; a wrong one never folds into a different query."""

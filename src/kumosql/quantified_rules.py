@@ -14,8 +14,7 @@
   to ``x op ANY (q)``, ``x op ALL (q)`` or ``x IN (q)`` only when a small z3 check proves it
   has the same value (TRUE, FALSE or NULL; or the same TRUE/FALSE where only that matters)
   for every possible aggregate state, so a differently written or wrong expansion is left as is.
-  The same check reads ``MIN(TRUE)`` over the rows (NULL only when there are none) as ``EXISTS``,
-  and Calcite's constant ``c IN (q)``, the first row of ``(y IS NOT NULL, COUNT(*))`` grouped over
+  The same check reads Calcite's constant ``c IN (q)``, the first row of ``(y IS NOT NULL, COUNT(*))`` grouped over
   the rows of ``q`` where ``y = c OR y IS NULL``, as ``c IN (q)``.
 """
 
@@ -1282,12 +1281,4 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
                 if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique)):
                     quantifier = exp.All if quantifier_all else exp.Any
                     return _compare(op, _operand(x), quantifier(this=exp.Subquery(this=rows_group.rows.copy())))
-    # A condition that only asks whether the rows are there, such as MIN(TRUE) IS NOT NULL.
-    for negated in (False, True):
-        encoder, condition = encoder_for(None)
-        _, c = encoder.agg("c")
-        semantics = (c == 0, c >= 1) if negated else (c >= 1, c == 0)
-        if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique)):
-            test = exp.Exists(this=rows_group.rows.copy())
-            return exp.Not(this=test) if negated else test
     return None
