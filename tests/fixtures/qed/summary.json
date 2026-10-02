@@ -1,0 +1,26 @@
+{
+ "source_commit": "31f4b6c271440942ecaca1e1111d4beeabf1f14c",
+ "files": 444,
+ "converted": 375,
+ "skipped": 69,
+ "skip_reasons": {
+  "aggregate FILTER clause (not represented in QED's IR)": 23,
+  "unsupported operator ST_POINT": 7,
+  "multi-column COUNT(DISTINCT)": 5,
+  "unsupported aggregate LITERAL_AGG": 5,
+  "window function": 5,
+  "integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled)": 4,
+  "unsupported aggregate SINGLE_VALUE": 4,
+  "projection with no columns": 3,
+  "table is empty only by test-harness convention (not expressible in the schema)": 2,
+  "nondeterministic aggregate ANY_VALUE": 2,
+  "aggregate WITHIN DISTINCT (not represented in QED's IR)": 2,
+  "unsupported operator CURRENT_TIMESTAMP": 1,
+  "unsupported aggregate GROUPING": 1,
+  "implicit cross-type comparison": 1,
+  "column type ANY": 1,
+  "unsupported operator ROW": 1,
+  "unsupported operator USER": 1,
+  "LIMIT/OFFSET without ORDER BY (nondeterministic)": 1
+ }
+}

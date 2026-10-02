@@ -1,0 +1,21 @@
+{
+  "suite": "GoogleSQL compliance rewrites",
+  "order": 60,
+  "size": 7870,
+  "score": "200 rewritten and result-identical, 0 wrong (of 7,870)",
+  "metric": "Self-contained SELECT/WITH queries from the GoogleSQL compliance tests, run through KumoSQL's cleanup, inlining and lifting rules; every rewrite KumoSQL accepts is executed in DuckDB before and after and the results compared. Only the SQL is used, never the expected results.",
+  "docs": "docs/bigquery-behavior-eval.md",
+  "command": "python tools/bq_behavior_eval.py --corpus googlesql --pipeline lift",
+  "date": "2026-10-02",
+  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0), 7,870 original queries, none adapted. proven = rewritten and identical in DuckDB; unknown = left unchanged or rewrite not accepted (5,732); unsupported = sqlglot does not parse (1,356); 582 not executable in DuckDB so unverified. Without lifting: 38 rewritten, 0 wrong. Baseline before fixes: 3 wrong (FLOAT and UUID types printed as FLOAT64 and STRING). DuckDB is a differential oracle, not BigQuery; no held-out split.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing accepted rewrites; checked by executing both versions in DuckDB",
+  "coverage": {
+    "proven": 200,
+    "unknown": 5732,
+    "unsupported": 1356,
+    "error": 0
+  },
+  "held_out": "none",
+  "performance": "7,870 queries in 294 s (lifting pipeline), 145 s without"
+}

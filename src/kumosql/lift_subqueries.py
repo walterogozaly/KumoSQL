@@ -108,6 +108,11 @@ def _replace_relation_subquery(subquery: exp.Subquery, name: str) -> None:
     replacement = exp.to_table(name)
     if subquery.alias:
         replacement.set("alias", exp.TableAlias(this=exp.to_identifier(subquery.alias)))
+    # PIVOT / UNPIVOT / TABLESAMPLE attach to the subquery in the tree; they belong to the relation
+    # and must move onto the new table reference, or the lifted query silently loses them.
+    for key in ("pivots", "sample", "laterals"):
+        if subquery.args.get(key):
+            replacement.set(key, subquery.args[key])
     subquery.replace(replacement)
 
 

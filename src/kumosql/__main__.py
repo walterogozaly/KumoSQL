@@ -30,6 +30,7 @@ COMMANDS = {
     "kumosql-evidence-summary": "kumosql.cli:evidence_summary_main",
     "kumosql-workflow-configs": "kumosql.workflow_configs:main",
     "kumosql-smoke": "kumosql.smoke:main",
+    "kumosql-incremental-report": "kumosql.incremental_scan:main",
 }
 
 

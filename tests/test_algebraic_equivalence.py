@@ -263,7 +263,24 @@ def test_the_same_scalar_subquery_on_both_sides_is_one_value():
         "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT MAX(sal) FROM emp WHERE deptno > 3) = sal",
     )
     assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # a global aggregate returns exactly one row, so nothing is assumed about its size
+    assert "scalar subqueries return at most one row" not in " ".join(result.assumptions)
+
+
+def test_a_scalar_subquery_that_may_return_several_rows_is_listed_as_an_assumption():
+    left = "SELECT empno FROM emp WHERE sal = (SELECT sal FROM emp WHERE empno = 7) AND deptno = 1"
+    right = "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT sal FROM emp WHERE empno = 7) = sal"
+    result = _prove(left, right)
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
     assert "scalar subqueries return at most one row" in " ".join(result.assumptions)
+    from kumosql.smt_equivalence import TableConstraints
+
+    keyed = prove_equivalent_algebraic(
+        left, right, schema=SCHEMA, compare_names=False, dialect="mysql",
+        constraints={"emp": TableConstraints(not_null=frozenset({"empno"}), keys=(("empno",),))},
+    )
+    assert keyed.status is SmtStatus.PROVEN_EQUIVALENT, keyed.reason
+    assert "scalar subqueries return at most one row" not in " ".join(keyed.assumptions)
 
 
 def test_differently_written_equivalent_scalar_subqueries_are_matched():
