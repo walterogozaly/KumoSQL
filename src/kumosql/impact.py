@@ -21,7 +21,7 @@ unknown is not repeated.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
@@ -56,6 +56,7 @@ class AffectedModel:
     via: str
     depth: int
     columns: tuple[str, ...] = ()
+    owned: bool = True
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class UnknownReader:
 
     model: str
     reason: str
+    owned: bool = True
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class ObservedReader:
     confidence: str
     observed_count: int
     source: str = "observed"
+    owned: bool = True
 
 
 @dataclass
@@ -99,6 +102,8 @@ class ChangeImpact:
     incomplete_reasons: list[str] = field(default_factory=list)
     scope: str | None = None
     out_of_scope: int = 0
+    catalogs: list[str] = field(default_factory=list)
+    not_owned: int = 0
     safe_to_delete: str = "unknown"
     safe_to_delete_note: str = SAFE_TO_DELETE_NOTE
 
@@ -108,14 +113,15 @@ class ChangeImpact:
             "target": self.target,
             "target_known": self.target_known,
             "affected": [
-                {"model": a.model, "effect": a.effect, "via": a.via, "depth": a.depth, "columns": list(a.columns)}
+                {"model": a.model, "effect": a.effect, "via": a.via, "depth": a.depth, "columns": list(a.columns),
+                 "owned": a.owned}
                 for a in self.affected
             ],
-            "unknown": [{"model": u.model, "reason": u.reason} for u in self.unknown],
+            "unknown": [{"model": u.model, "reason": u.reason, "owned": u.owned} for u in self.unknown],
             "observed": [
                 {"model": o.model, "effect": o.effect, "via": o.via, "depth": o.depth,
                  "last_seen": o.last_seen, "confidence": o.confidence,
-                 "observed_count": o.observed_count, "source": o.source}
+                 "observed_count": o.observed_count, "source": o.source, "owned": o.owned}
                 for o in self.observed
             ],
             "observed_checked": self.observed_checked,
@@ -124,6 +130,8 @@ class ChangeImpact:
             "incomplete_reasons": self.incomplete_reasons,
             "scope": self.scope,
             "out_of_scope": self.out_of_scope,
+            "catalogs": self.catalogs,
+            "not_owned": self.not_owned,
             "safe_to_delete": self.safe_to_delete,
             "safe_to_delete_note": self.safe_to_delete_note,
         }
@@ -137,6 +145,7 @@ def assess_change(
     *,
     scope=None,
     observed_reads: Iterable[object] = (),
+    owned=None,
 ) -> ChangeImpact:
     """Blast radius of ``kind`` applied to ``target`` (a table) and ``column``.
 
@@ -148,7 +157,9 @@ def assess_change(
     case-insensitively. With a ``scope``, only in-scope models are listed and
     the rest are counted in ``out_of_scope``. ``observed_reads`` are job-history
     records (see ``build_query_graph``); readers seen only there are added under
-    ``observed``.
+    ``observed``. ``owned`` (:func:`kumosql.catalogs.owned`) says which readers the
+    chosen catalogs own: every reader stays listed, flagged ``owned: false`` when
+    it is outside them, and ``not_owned`` counts those. Without it every reader is owned.
     """
 
     if kind not in CHANGE_KINDS:
@@ -341,13 +352,21 @@ def assess_change(
     def in_scope(model: str) -> bool:
         return keep is None or model in keep
 
+    def is_owned(model: str) -> bool:
+        return owned is None or model in owned
+
     result.affected = sorted(
-        (m for m in affected.values() if in_scope(m.model)), key=lambda m: (m.depth, m.model)
+        (replace(m, owned=is_owned(m.model)) for m in affected.values() if in_scope(m.model)),
+        key=lambda m: (m.depth, m.model),
     )
-    result.unknown = [UnknownReader(m, r) for m, r in sorted(unknown.items()) if in_scope(m)]
+    result.unknown = [UnknownReader(m, r, is_owned(m)) for m, r in sorted(unknown.items()) if in_scope(m)]
     result.observed = sorted(
-        (o for o in observed_found.values() if in_scope(o.model)), key=lambda o: (o.depth, o.model)
+        (replace(o, owned=is_owned(o.model)) for o in observed_found.values() if in_scope(o.model)),
+        key=lambda o: (o.depth, o.model),
     )
+    if owned is not None:
+        result.catalogs = list(getattr(owned, "catalogs", ()))
+        result.not_owned = sum(1 for m in {*affected, *unknown, *observed_found} if in_scope(m) and not is_owned(m))
     result.out_of_scope = sum(1 for m in {*affected, *unknown, *observed_found} if not in_scope(m))
 
     reasons = []

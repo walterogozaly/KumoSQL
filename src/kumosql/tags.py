@@ -184,6 +184,8 @@ def _check_rule(rule: Mapping, lookup: Mapping[str, scope_store.Scope]) -> dict:
     banned = [name for name in used if name.casefold().split(".")[0] in RESERVED_FIELDS]
     if banned:
         raise ValueError(f"a tag rule cannot use {banned[0]!r}: tags are what the rule produces")
+    if any(name.casefold().split(".")[0] == "catalog" for name in used):
+        raise ValueError("a tag rule cannot use 'catalog': a catalog rule can use tags")
     from . import data_sources
 
     fields = (*OBJECT_FIELDS, *data_sources.tag_fields())
@@ -507,6 +509,13 @@ def tag_lookup(pipeline: object | None = None) -> dict[str, list[str]]:
         for alias in objects.get(key, {}).get("_aliases", ()):
             result[alias] = tags
     return result
+
+
+def tags_by_object(objects: Mapping[str, Mapping]) -> dict[str, list[str]]:
+    """Every tag (manual and from rules) of each object in ``objects``, by normalized object name."""
+
+    assigned, _ = _assign(objects)
+    return {key: list(dict.fromkeys([*slot["manual"], *slot["rules"]])) for key, slot in assigned.items()}
 
 
 def preview_rule(data: object, limit: int = 12) -> dict:

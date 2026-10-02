@@ -1,0 +1,25 @@
+.rf-page { max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px; }
+.rf-head { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.rf-head h1 { margin: 0 auto 0 0; font-size: 16px; }
+.rf-status { color: var(--text-muted); font-size: 12.5px; }
+.rf-status.error { color: var(--bad-fg); }
+.rf-classes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 16px; }
+.rf-class { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); padding: 8px 12px; }
+.rf-class h2 { margin: 0 0 6px; font-size: 13px; }
+.rf-scopes { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
+.rf-scopes label { display: inline-flex; gap: 5px; align-items: center; }
+.rf-toolbar { display: flex; gap: 14px; align-items: center; margin-bottom: 8px; font-size: 12.5px; }
+.rf-toolbar input { flex: 1; font: inherit; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
+.rf-list { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); max-height: 42vh; overflow: auto; }
+.rf-row { display: grid; grid-template-columns: 1fr 90px 130px; gap: 8px; align-items: center; padding: 4px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border-subtle); }
+.rf-row:last-child { border-bottom: 0; }
+.rf-row .rf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-row .rf-kind { color: var(--text-faint); }
+.rf-row select { font: inherit; font-size: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px 4px; }
+.rf-row[data-role="protected"] { background: var(--accent-soft); }
+.rf-results { margin-top: 18px; }
+.rf-results table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.rf-results th, .rf-results td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+.rf-results details summary { cursor: pointer; }
+.rf-results pre { white-space: pre-wrap; margin: 4px 0; font-size: 11.5px; }
+.rf-empty { color: var(--text-faint); font-size: 12.5px; padding: 10px 12px; }

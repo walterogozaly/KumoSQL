@@ -22,7 +22,6 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 import gc
-import os
 import re
 import threading
 import time
@@ -36,6 +35,8 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
+from . import lineage_limits
+from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
@@ -539,11 +540,12 @@ class Pipeline:
 
     def model_record(
         self, key: str, profile: object | None = None, tags: "Mapping[str, list[str]] | None" = None,
-        sources: "list | None" = None,
+        sources: "list | None" = None, catalogs: "Mapping[str, list[str]] | None" = None,
     ) -> dict[str, object]:
         """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own.
 
         ``tags`` is :func:`kumosql.tags.tag_lookup` (computed once for many models); ``tag`` is empty without it.
+        ``catalogs`` is :func:`kumosql.catalogs.lookup`; ``catalog`` is empty without it.
         ``sources`` is :func:`kumosql.data_sources.join_index` (built once for many models): the columns of data
         sources with a ``full_name`` column join the model's own ``project.dataset.name``.
         """
@@ -563,6 +565,7 @@ class Pipeline:
             "path": model.path,
             "depends_on": [dep.key for dep in model.declared_dependencies],
             "tag": list((tags or {}).get(key.strip().casefold(), ())),
+            "catalog": list((catalogs or {}).get(key.strip().casefold(), ())),
         }
         if profile is not None:
             record.update(profile_record(profile))
@@ -597,8 +600,13 @@ class Pipeline:
             from .tags import tag_lookup
 
             tags = tag_lookup(self)
+        catalogs = None
+        if {"catalog"} & set(map(str.casefold, scope.fields_used())):
+            from .catalogs import lookup
+
+            catalogs = lookup(self)
         index = data_sources.join_index()
-        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index))}
+        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index, catalogs))}
 
     def assess_schema_change(self, kind: str, table: str, column: str, **kwargs):
         """Which models break, and which change their output columns or types, if ``table`` gains, loses, renames or retypes ``column``."""
@@ -615,6 +623,7 @@ class Pipeline:
         *,
         scope: "SavedScope | None" = None,
         observed_reads: Iterable[object] = (),
+        owned=None,
     ):
         """Blast radius of a drop, rename, changed expression or dropped table.
 
@@ -627,7 +636,7 @@ class Pipeline:
 
         from .impact import assess_change
 
-        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads)
+        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads, owned=owned)
 
     def _scoped(self, report: dict, scope: "SavedScope") -> dict:
         keep = self.scope_keys(scope)
@@ -790,16 +799,6 @@ class Pipeline:
             return self._analysis
 
 
-def _seconds_from_env(name: str, default: float) -> float:
-    """A time budget in seconds from the environment; ``0`` means no limit."""
-
-    try:
-        value = float(os.environ.get(name, default))
-    except ValueError:
-        return default
-    return max(value, 0.0)
-
-
 def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expression]]:
     """The last query of a script, how many other queries it has, and those queries (read for their tables only)."""
 
@@ -875,6 +874,8 @@ def _apply_target_columns(statement: exp.Expression, query: exp.Query) -> None:
         names.append(name)
     first = query
     while isinstance(first, exp.SetOperation):
+        if is_by_name(first):
+            return  # the first branch need not carry the output columns
         first = first.left
     first = first.unnest() if isinstance(first, exp.Subquery) else first
     if not isinstance(first, exp.Select) or len(first.expressions) != len(names):
@@ -963,6 +964,21 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
     return found
 
 
+def _star_in_set_operation(query: exp.Expression) -> bool:
+    """True when a branch of a set operation still has a ``*`` (its table's columns are unknown)."""
+
+    def branch_has_star(branch: exp.Expression) -> bool:
+        while isinstance(branch, exp.Subquery):
+            branch = branch.this
+        if isinstance(branch, exp.SetOperation):
+            return branch_has_star(branch.this) or branch_has_star(branch.expression)
+        return isinstance(branch, exp.Select) and any(
+            projection.is_star or isinstance(projection.unalias(), exp.Star) for projection in branch.expressions
+        )
+
+    return any(branch_has_star(node) for node in query.find_all(exp.SetOperation) if not isinstance(node.parent, exp.SetOperation))
+
+
 def _has_unexpanded_star(query: exp.Expression) -> bool:
     return any(
         isinstance(node, exp.Star) and isinstance(node.parent, (exp.Select, exp.Column))
@@ -994,6 +1010,8 @@ class _Analysis:
     statements_matched: int = 0
     # Per model: (statements seen, statements analysed), for scoped coverage.
     statements_by_model: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # Tables read from outside the project whose columns were looked up: {"asked", "found", "from_catalog", "unknown"}.
+    schema_lookup: dict[str, int] = field(default_factory=dict)
     # Per model: tables it reads that no model or declared source matches, as spelled.
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
 
@@ -1114,13 +1132,22 @@ class _Analysis:
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
+        # Tables read from outside the project: their columns come from the saved BigQuery catalog or
+        # BigQuery itself, so a ``SELECT *`` over them can be expanded. Unreadable ones stay unknown.
+        from . import schema_fetch
+
+        outside = {name for names in unresolved_tables.values() for name in names if name not in schema}
+        found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
+        for name, columns in found.items():
+            schema[name] = columns
+            _add_table(sqlglot_schema, name, columns)
 
         tracing = Progress("trace columns", len(order))
         # Column tracing copies a model's whole query once per output column, so wide models with
         # many CTEs can take seconds each. A budget keeps a load bounded: past it, a model keeps
         # its columns and edges but its column-level lineage is skipped and reported as a gap.
-        model_budget = _seconds_from_env("KUMOSQL_LINEAGE_MODEL_SECONDS", 8.0)
-        total_deadline = _seconds_from_env("KUMOSQL_LINEAGE_SECONDS", 120.0)
+        model_budget = lineage_limits.effective("model_seconds")
+        total_deadline = lineage_limits.effective("total_seconds")
         total_deadline = time.perf_counter() + total_deadline if total_deadline else None
         for key in order:
             tracing.step(key)
@@ -1146,6 +1173,16 @@ class _Analysis:
                 opaque_readers_of.update(upstream.get(key, ()))
                 continue
 
+            by_name_problems: list[str] = []
+            before_by_name = None
+            if any(is_by_name(node) for node in qualified.find_all(exp.SetOperation)):
+                # BY NAME / CORRESPONDING match columns by name; everything below reads by position.
+                before_by_name = qualified.copy()
+                qualified, by_name_problems = positionalize(qualified)
+                for problem in by_name_problems:
+                    diagnostics.append(PipelineDiagnostic(key, "by_name_set_operation", problem))
+
+            union_star = _star_in_set_operation(qualified)
             if _has_unexpanded_star(qualified):
                 diagnostics.append(
                     PipelineDiagnostic(
@@ -1193,6 +1230,14 @@ class _Analysis:
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
                         used.add(ColumnRef(owner, column.name))
+            if before_by_name is not None:
+                # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
+                for scope in traverse_scope(before_by_name):
+                    for column in scope.columns:
+                        table = _source_table(scope, column)
+                        if table is not None:
+                            owner = pipeline.resolve(table) or _table_name_for_schema(table)
+                            used.add(ColumnRef(owner, column.name))
             used.update(excepted)
             consumed[key] = frozenset(used)
 
@@ -1212,6 +1257,7 @@ class _Analysis:
             is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
             model_deadline = time.perf_counter() + model_budget if model_budget else None
             skipped_columns = 0
+            cte_names: dict[str, str] = {}
             for name in names:
                 ref = ColumnRef(key, name)
                 now = time.perf_counter()
@@ -1219,11 +1265,21 @@ class _Analysis:
                     (model_deadline is not None and now > model_deadline)
                     or (total_deadline is not None and now > total_deadline)
                 ):
-                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_skipped")
+                    # Table-level fallback: the column is taken to depend on everything the model reads,
+                    # so impact and dead-column answers stay safe even though they are coarser.
+                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "lineage_skipped")
+                    direct[ref] = frozenset(used)
                     skipped_columns += 1
                     continue
                 if name == "*":
                     records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                    continue
+                if by_name_problems or union_star:
+                    # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
+                    # an unknown table counts as one column, so every position after it is off).
+                    reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
+                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason)
+                    direct[ref] = frozenset(used)
                     continue
                 try:
                     node = lineage(
@@ -1236,7 +1292,7 @@ class _Analysis:
                         # label; the trace never reads that copy, and for wide models it dominated.
                         trim_selects=False,
                     )
-                    leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union)
+                    leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union, cte_names)
                     if reason == "unresolved_column" and lineage_scope is not None:
                         # With no schema for a table, the pre-built scope keeps a
                         # bare column unresolved; re-qualifying resolves it when
@@ -1263,8 +1319,9 @@ class _Analysis:
                     PipelineDiagnostic(
                         key,
                         "lineage_skipped",
-                        f"{skipped_columns} of {len(names)} columns were not traced because tracing this model "
-                        "took longer than the time budget (KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
+                        f"{skipped_columns} of {len(names)} columns are traced at table level (they depend on everything "
+                        "this model reads) because column tracing took longer than the time limit "
+                        "(Settings > Analysis, or KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
                         "its reads and readers are still in the graph",
                     )
                 )
@@ -1330,6 +1387,7 @@ class _Analysis:
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
+            schema_lookup=schema_lookup,
         )
 
 
@@ -1342,6 +1400,7 @@ def _scan_lineage(
     node,
     name: str,
     is_union: bool,
+    cte_names: dict | None = None,
 ) -> tuple[set[ColumnRef], str | None, str]:
     """Leaf columns, the reason the trace is incomplete (or None), and the transform."""
 
@@ -1353,7 +1412,7 @@ def _scan_lineage(
     # ``WITH f AS (SELECT * FROM t) SELECT f.x`` traces f.x to a ``*`` leaf on t; the column
     # read through that star is the one asked for one step up (t.x).
     parent_of = {id(child): item for item in node.walk() for child in item.downstream}
-    phantoms = _phantom_star_sources(node)
+    phantoms = _phantom_star_sources(node, cte_names)
     for item in node.walk():
         if any(id(n) in phantoms for n in _ancestors(item, parent_of)):
             continue
@@ -1385,6 +1444,14 @@ def _scan_lineage(
             reason = reason or "unresolved_column"
         elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
             literal_unnest = True  # UNNEST of literals reads no column
+        elif (
+            item is not node
+            and isinstance(item.source, exp.Query)
+            and not isinstance(item.expression, exp.Star)
+            and not isinstance(getattr(item.expression, "this", None), exp.Star)
+            and item.expression.find(exp.Column) is None
+        ):
+            literal_unnest = True  # a derived column like COUNT(*) or 1 reads no column
         elif item is not node:
             reason = reason or "untraceable_source"
     if reason is None and not leaves and reads_column and not literal_unnest:
@@ -1398,21 +1465,26 @@ def _ancestors(item, parent_of: dict):
         item = parent_of.get(id(item))
 
 
-def _phantom_star_sources(node) -> set[int]:
+def _phantom_star_sources(node, cte_names: dict | None = None) -> set[int]:
     """Lineage nodes a ``SELECT *`` inside a WITH does not actually read.
 
     sqlglot expands the star of ``f AS (SELECT * FROM t)`` over every source visible to
     that CTE, which includes the CTEs defined before it; only the relations in its own
     FROM and JOIN clauses are read.
+
+    Printing every CTE to match it is the slow part for models with many CTEs, so it happens
+    only once a ``*`` is found, and ``cte_names`` (one dict per model) shares it across columns.
     """
 
     phantoms: set[int] = set()
     root = node.source if isinstance(node.source, exp.Expression) else None
-    ctes = {cte.this.sql(): cte.alias_or_name for cte in root.find_all(exp.CTE)} if root is not None else {}
+    ctes = cte_names if cte_names is not None else {}
     for item in node.walk():
         select = item.source
         if len(item.downstream) < 2 or not isinstance(item.expression, exp.Star) or not isinstance(select, exp.Select):
             continue
+        if not ctes and root is not None:
+            ctes.update({cte.this.sql(): cte.alias_or_name for cte in root.find_all(exp.CTE)})
         read = {
             source.alias_or_name
             for source in [getattr(select.args.get("from_") or select.args.get("from"), "this", None),

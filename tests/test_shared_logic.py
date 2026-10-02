@@ -189,3 +189,25 @@ def test_a_refactor_that_drops_a_filter_is_never_verified():
     result = verify_proposal(pipeline, broken)
     assert not result.ready
     assert result.verification["proj.mart.a"] != "proven"
+
+
+LEFT_BASE = (
+    "SELECT o.id, o.customer_id, o.amount, o.status, c.country FROM `proj.raw.orders` AS o "
+    "LEFT JOIN `proj.raw.customers` AS c ON o.customer_id = c.id WHERE o.amount BETWEEN 10 AND 23 AND o.amount > 1"
+)
+
+
+def test_extra_filter_over_a_left_join_is_proven_by_merging_the_view_back():
+    graph = {
+        "tables": [
+            table("a", f"WITH x AS ({LEFT_BASE}) SELECT id FROM x"),
+            table("b", f"WITH y AS ({LEFT_BASE} AND o.status <> 'void') SELECT id FROM y"),
+        ],
+        "declarations": DECLARATIONS,
+    }
+    pipeline = load_compiled_graph(graph)
+    (proposal,) = [p for p in propose_shared_logic(pipeline) if p.origin == "extra_filters"]
+
+    assert proposal.ready
+    broken = replace(proposal, residual_filters={k: ("status = 'open'",) for k in proposal.residual_filters})
+    assert not verify_proposal(pipeline, broken).ready

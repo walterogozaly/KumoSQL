@@ -30,6 +30,7 @@ from contextlib import contextmanager
 
 from . import console
 from .pipeline import Pipeline, load_sqlx_project
+from .resilience import extended_path
 from .timing import stage
 
 MAX_FILES = 20_000  # real enterprise Dataform repositories have thousands of files
@@ -54,7 +55,7 @@ _PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
 _PROJECT_CACHE_SIZE = 3
 _ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
 _ACTIVITY_IDS = iter(range(1, 1 << 62))
-_CACHE_VERSION = "1"
+_CACHE_VERSION = "3"
 _CACHE_KEEP = 12
 _SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
@@ -95,8 +96,8 @@ def _cache_file(pipeline: Pipeline):
     try:
         import sqlglot
 
-        from . import __version__
-        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{key}".encode()).hexdigest()[:32]
+        from . import __version__, lineage_limits, schema_fetch
+        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{lineage_limits.cache_tag()}|{schema_fetch.cache_tag()}|{key}".encode()).hexdigest()[:32]
         return state.data_path("analysis-cache", f"{tag}.json")
     except OSError:
         return None
@@ -152,8 +153,8 @@ def _snapshot_file(key: str):
     try:
         import sqlglot
 
-        from . import __version__
-        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{key}".encode()).hexdigest()[:32]
+        from . import __version__, lineage_limits, schema_fetch
+        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{lineage_limits.cache_tag()}|{schema_fetch.cache_tag()}|{key}".encode()).hexdigest()[:32]
         return state.data_path("parse-cache", f"{tag}.pkl")
     except OSError:
         return None
@@ -571,9 +572,7 @@ class _Checkout:
 
     def __enter__(self) -> str:
         self._created = tempfile.mkdtemp(prefix="kumosql-project-")
-        if os.name == "nt":
-            return "\\\\?\\" + str(Path(self._created).resolve())
-        return self._created
+        return str(extended_path(Path(self._created).resolve()))
 
     def __exit__(self, *exc: object) -> None:
         shutil.rmtree(self._created, ignore_errors=True)
@@ -699,6 +698,9 @@ def graph_payload(
         for source in row["sources"]:
             add_column(source["node"], source["column"])
 
+    from . import catalogs
+
+    have = catalogs.owned(pipeline)
     gap_assets = {gap["asset"] for gap in completeness["gaps"] if gap["blocking"]}
     nodes = []
     for item in graph["nodes"]:
@@ -715,6 +717,7 @@ def graph_payload(
             "id": key, "dataset": dataset, "name": name, "kind": kind,
             "source": "declared" if model is not None else "parsed",
             "columns": columns.get(key, []),
+            "owned": key in have,
         }
         if key in gap_assets:
             entry["note"] = "Could not be fully analyzed; its reads are unknown."
@@ -740,6 +743,7 @@ def graph_payload(
     return {
         "source": source_info(),
         "scope": plan.to_json() if plan else None,
+        "catalogs": have.catalogs,
         "window": coverage.get("window") or {"start": None, "end": None},
         "coverage": coverage,
         "nodes": nodes,
@@ -802,8 +806,11 @@ def impact_payload(node: str, column: str, change: str, scope_name: str | None =
         from .scopes import job_record
 
         reads = [row for row in reads if plan.jobs.matches(job_record(row))]
+    from . import catalogs
+
     result = current["pipeline"].assess_change(
-        kind, node, column, scope=plan.models if plan else None, observed_reads=reads
+        kind, node, column, scope=plan.models if plan else None, observed_reads=reads,
+        owned=catalogs.owned(current["pipeline"]),
     )
     return {**result.to_json(), "source": source_info(),
             "scope_plan": plan.to_json() if plan else None}

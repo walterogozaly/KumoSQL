@@ -35,6 +35,7 @@ from .incremental import (
     check_incremental,
     parse_incremental_sqlx,
 )
+from .resilience import extended_path
 from .sqlx import split_sqlx_sections
 
 CONTRACTS: dict[str, tuple[str, ...]] = {
@@ -103,6 +104,7 @@ def infer_sources(model, overrides: dict[str, dict[str, str]] | None = None) -> 
 
 
 def _incremental_files(root: Path) -> list[Path]:
+    root = extended_path(root)
     base = root / "definitions" if (root / "definitions").is_dir() else root
     found = []
     for path in sorted(base.rglob("*.sqlx")):
@@ -132,7 +134,7 @@ def scan_project(
     seeds: int = 20,
     limit: int | None = None,
 ) -> list[ScanRow]:
-    root = Path(root)
+    root = extended_path(root)
     contracts = contracts or CONTRACTS
     rows: list[ScanRow] = []
     files = _incremental_files(root)

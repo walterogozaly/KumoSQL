@@ -5,7 +5,7 @@ description = "Deterministic, test-verified transformations for BigQuery SQL"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "sqlglot>=26.0",
+    "sqlglot>=26.0,<31",
     "sqlfluff>=3.0",
 ]
 
@@ -48,6 +48,7 @@ kumosql-smoke = "kumosql.smoke:main"
 kumosql-incremental-report = "kumosql.incremental_scan:main"
 prove-tables = "kumosql.pipeline_equivalence:main"
 kumosql-equivalence = "kumosql.pipeline_equivalence:equivalence_main"
+kumosql-refactor = "kumosql.refactor:main"
 
 [build-system]
 requires = ["setuptools>=68"]

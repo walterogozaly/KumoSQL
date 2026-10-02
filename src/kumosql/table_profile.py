@@ -24,6 +24,7 @@ from typing import Any, Mapping, Sequence
 from sqlglot import exp
 
 from .pipeline import ColumnRef, Model, Pipeline, Target, _table_name_for_schema
+from .set_operations import is_by_name
 
 __all__ = [
     "AttributeMeaning",
@@ -576,6 +577,8 @@ class _Profiler:
         if isinstance(query, exp.Select):
             return self._select_out(self._ctx(query, env), name)
         if isinstance(query, exp.SetOperation):
+            if is_by_name(query):
+                raise _Unresolved("by_name_set_operation")  # columns pair by name here, not position
             env = self._extend_env(query, env)
             branches = self._branches(query)
             first = self._output_names(branches[0], env)
@@ -808,7 +811,9 @@ class _Profiler:
                 result = self._select_grain(self._ctx(query, env))
             elif isinstance(query, exp.SetOperation):
                 names = self._output_names(query, env)
-                if not query.args.get("distinct"):
+                if is_by_name(query):
+                    result = Grain(reason="by_name_set_operation")
+                elif not query.args.get("distinct"):
                     result = Grain(reason="union_mixed_grain")
                 elif "*" in names:
                     result = Grain(reason="unexpanded_star")
