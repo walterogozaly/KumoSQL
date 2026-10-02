@@ -710,12 +710,13 @@ def _null_propagating(node: exp.Expression) -> bool:
         return _null_propagating(node.this) or _null_propagating(node.expression)
     if isinstance(node, exp.Null):
         return True
-    # whichever branch is taken, every possible result is NULL
+    # every branch that can be taken gives NULL; a condition that is NULL itself is never taken
     if isinstance(node, exp.Case) and not node.args.get("this"):
-        results = [i.args.get("true") for i in node.args.get("ifs") or []] + [node.args.get("default") or exp.null()]
-        return all(r is not None and _null_propagating(r) for r in results)
+        results = [i.args.get("true") for i in node.args.get("ifs") or [] if not _null_propagating(i.this)]
+        return all(r is not None and _null_propagating(r) for r in results + [node.args.get("default") or exp.null()])
     if isinstance(node, exp.If):
-        return all(_null_propagating(r) for r in (node.args.get("true"), node.args.get("false") or exp.null()) if r is not None)
+        taken = [node.args.get("false") or exp.null()] + ([] if _null_propagating(node.this) else [node.args.get("true")])
+        return all(r is not None and _null_propagating(r) for r in taken)
     if isinstance(node, exp.Coalesce):
         return all(_null_propagating(a) for a in [node.this, *node.expressions])
     if isinstance(node, exp.Nullif):
@@ -729,8 +730,8 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
     A derived table that only computes expressions over one table keeps every row, so it can be
     folded into the query that uses it. On the NULL-extended side of an outer join a missing match
     gives ``d.x`` NULL, while ``f(d.a)`` gives ``f(NULL)``; there only expressions that are NULL
-    whenever their columns are (columns, arithmetic, comparisons) are folded, never constants,
-    ``CASE``, ``COALESCE`` or ``IS NULL``.
+    whenever their columns are (columns, arithmetic, comparisons, a ``CASE`` whose reachable
+    branches are) are folded, never constants, ``IS NULL`` or a ``CASE`` that can give a constant.
     """
 
     if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):

@@ -130,6 +130,11 @@ STILL_PROVEN = [
         "SELECT p.id, CASE WHEN d.w < 11 THEN -1 * d.w ELSE d.w END FROM p LEFT JOIN q AS d ON p.k = d.k",
         id="case-whose-every-result-is-null-on-null-folds",
     ),
+    pytest.param(
+        "SELECT p.id, d.y FROM p LEFT JOIN (SELECT k, CASE WHEN w < 11 THEN 11 ELSE -w END AS y FROM q) AS d ON p.k = d.k",
+        "SELECT p.id, CASE WHEN d.w < 11 THEN 11 ELSE -d.w END FROM p LEFT JOIN q AS d ON p.k = d.k",
+        id="case-whose-constant-branch-needs-a-column-folds",
+    ),
     pytest.param("SELECT a, b FROM s ORDER BY 2, 1 LIMIT 3", "SELECT a, b FROM s ORDER BY b, a LIMIT 3", id="column-positions"),
     pytest.param(
         "SELECT d.a, d.b FROM (SELECT a, b, 2 AS c FROM s) AS d ORDER BY d.c, d.a LIMIT 1",
@@ -149,6 +154,9 @@ def test_constants_on_the_null_side_of_any_outer_join_are_not_folded():
     for join in ("LEFT JOIN", "FULL JOIN"):
         sql = f"SELECT p.id, d.i FROM p {join} (SELECT k, 1 AS i FROM q) AS d ON p.k = d.k"
         assert "1 AS i" in normalize(sql, schema=STILL_SCHEMA, dialect="mysql").replace("1 AS I", "1 AS i")
+    for case in ("CASE WHEN w IS NULL THEN 0 ELSE w END", "CASE WHEN w < 11 THEN w ELSE 0 END", "IF(w < 11, w, 0)"):
+        sql = f"SELECT p.id, d.i FROM p LEFT JOIN (SELECT k, {case} AS i FROM q) AS d ON p.k = d.k"
+        assert " AS i" in normalize(sql, schema=STILL_SCHEMA, dialect="mysql"), case
     right = "SELECT d.i, p.id FROM (SELECT k, COALESCE(w, 0) AS i FROM q) AS d RIGHT JOIN p ON p.k = d.k"
     assert "COALESCE" in normalize(right, schema=STILL_SCHEMA, dialect="mysql").upper()
 
