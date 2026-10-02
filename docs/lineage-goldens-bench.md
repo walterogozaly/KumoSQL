@@ -58,7 +58,7 @@ shape the adapter, so they are an unseen generalisation check; their wrong and m
 the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.
 
 Table reads (not columns) are traced for `DELETE ... USING`, `UPDATE ... FROM`, `INSERT ... VALUES` with a subquery and
-`CREATE TABLE ... LIKE/CLONE`; the table such a statement writes is not a read, and ALTER/DROP/TRUNCATE are scored by the
+`CREATE TABLE ... LIKE/CLONE`, and for subqueries in script `SET`, `DECLARE ... DEFAULT` and `ASSERT`; the table such a statement writes is not a read, and ALTER/DROP/TRUNCATE are scored by the
 table they write. These models stay column-blind (`unknown_reads`). Still `unknown`, never guessed: `MERGE` and multi-statement
 scripts (other work), the no-`FROM` BigQuery `DELETE` form, the second table of a multi-table `DROP`, and a partition-decorated
 table name. Struct

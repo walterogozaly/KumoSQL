@@ -841,10 +841,12 @@ def _statement_reads(statement: exp.Expression) -> exp.Expression | None:
 
     ``DELETE ... USING``, ``UPDATE ... FROM``, a subquery inside ``DELETE``/``UPDATE``/``INSERT ... VALUES`` and
     ``CREATE TABLE ... LIKE|CLONE`` read the tables they name; the table written is not one of them (``write_target``).
-    Only the tables are taken: columns of such statements are not traced. ``MERGE`` is handled where it is built.
+    A subquery in ``SET``, ``DECLARE ... DEFAULT`` or ``ASSERT`` reads its tables too. Only the tables are taken: columns of such statements are not traced. ``MERGE`` is handled where it is built.
     """
 
     target = None
+    if _reads_through_subqueries(statement):
+        return statement.copy()
     if isinstance(statement, (exp.Delete, exp.Update)):
         target = statement.this
     elif isinstance(statement, exp.Insert):
@@ -862,6 +864,21 @@ def _statement_reads(statement: exp.Expression) -> exp.Expression | None:
     marked = copy.this.this if isinstance(copy.this, exp.Schema) else copy.this
     marked.meta["write_target"] = True
     return copy
+
+
+def _reads_through_subqueries(statement: exp.Expression) -> bool:
+    """A script statement that writes no table but reads tables in a subquery: ``SET x = (SELECT ...)``,
+    ``DECLARE x DEFAULT (SELECT ...)`` and ``ASSERT (SELECT ...) > 0``, which sqlglot reads as a call."""
+
+    if isinstance(statement, (exp.Set, exp.Declare)):
+        return statement.find(exp.Query) is not None
+    leftmost = statement
+    while not isinstance(leftmost, exp.Anonymous) and isinstance(leftmost.this, exp.Expression):
+        leftmost = leftmost.this
+    return (
+        isinstance(leftmost, exp.Anonymous) and str(leftmost.this).upper() == "ASSERT"
+        and statement.find(exp.Query) is not None
+    )
 
 
 def _may_read_tables(statement: exp.Expression) -> bool:

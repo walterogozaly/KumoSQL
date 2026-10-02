@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 import re
 
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
-from .layout_equivalence import restore_function_case
+from .layout_equivalence import restore_function_case, tokenize_exactly
 from .sqlx import looks_like_sqlx
 
 DIALECT = "bigquery"
@@ -216,8 +216,56 @@ def _comments(sql: str) -> list[str] | None:
 
 
 def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
-    """Format BigQuery SQL with sqlfluff. Unparseable SQL raises ``ValueError``."""
+    """Format BigQuery SQL with sqlfluff. SQL with no statement sqlfluff can parse raises ``ValueError``."""
 
+    return format_statements(sql, prefs)[0]
+
+
+def _statement_spans(sql: str) -> list[tuple[int, int]]:
+    """Where each statement's text starts and ends, between top-level semicolons (comments around it excluded)."""
+
+    from sqlglot.tokens import TokenType
+
+    tokens = tokenize_exactly(sql) or []
+    spans, start, end = [], None, None
+    for token in [*tokens, None]:
+        if token is None or token.token_type == TokenType.SEMICOLON:
+            if start is not None:
+                spans.append((start, end))
+            start = end = None
+            continue
+        start = token.start if start is None else start
+        end = token.end + 1
+    return spans
+
+
+def format_statements(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> tuple[str, int]:
+    """Format ``sql`` and return it with the number of statements left as written.
+
+    When sqlfluff cannot parse the whole text (a ``GRANT``, ``EXPORT MODEL`` or a property graph among
+    queries it can), each statement is formatted on its own and the ones it cannot parse are kept.
+    """
+
+    try:
+        return _format_whole(sql, prefs), 0
+    except ValueError:
+        spans = _statement_spans(sql)
+        if len(spans) < 2:
+            raise
+    pieces, position, kept = [], 0, 0
+    for start, end in spans:
+        try:
+            statement = _format_whole(sql[start:end], prefs)
+        except ValueError:
+            statement, kept = sql[start:end], kept + 1
+        pieces += [sql[position:start], statement]
+        position = end
+    if kept == len(spans):
+        raise ValueError("sqlfluff could not parse this SQL")
+    return "".join(pieces) + sql[position:], kept
+
+
+def _format_whole(sql: str, prefs: FormatPreferences) -> str:
     from sqlfluff.core import Linter
 
     if not sql.strip():
@@ -267,11 +315,15 @@ class FormatSqlRule(RewriteRule):
                 RuleDiagnostic(0, "unsupported_sqlx", "sqlfluff cannot format Dataform SQLX; input left unchanged"),
             ))
         try:
-            formatted = format_sql(sql, self.prefs or load_preferences())
+            formatted, kept = format_statements(sql, self.prefs or load_preferences())
         except ValueError as exc:
             return RuleOutput(sql, 0, 0, 0, 0, (RuleDiagnostic(0, "parse_error", str(exc)),))
         changed = int(formatted != sql)
-        return RuleOutput(formatted, 1, changed, changed, 0, ())
+        notes = (
+            (RuleDiagnostic(-1, "statements_not_formatted", f"sqlfluff cannot parse {kept} statement(s); they are left as written"),)
+            if kept else ()
+        )
+        return RuleOutput(formatted, 1, changed, changed, 0, notes)
 
 
 # ------------------------------------------------------------------ complexity
