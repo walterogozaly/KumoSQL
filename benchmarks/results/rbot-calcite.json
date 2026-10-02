@@ -2,18 +2,18 @@
   "suite": "R-Bot Calcite rewrites",
   "order": 20,
   "size": 45,
-  "score": "31/45 proved, 0 wrong",
-  "metric": "(Query, Calcite rewrite) pairs proved equivalent; 2 more are shown different by a counterexample, 12 unknown.",
+  "score": "34/45 proved, 0 wrong",
+  "metric": "(Query, Calcite rewrite) pairs proved equivalent; 2 more are shown different by a counterexample, 9 unknown.",
   "docs": "docs/evals/sqlsolver.md#r-bots-calcite-pairs",
   "command": "python tools/rbot_bench.py",
   "date": "2026-10-02",
-  "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test).",
+  "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test). Measured on master 9ba22c8, the merge of the outer-join flattening rules (#375).",
   "evidence": "proof",
   "correctness": "0 false proofs; 2 counterexamples, each re-run in DuckDB",
   "coverage": {
-    "proven": 31,
+    "proven": 34,
     "refuted": 2,
-    "unknown": 12
+    "unknown": 9
   },
   "held_out": "none"
 }
