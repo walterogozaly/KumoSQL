@@ -183,7 +183,8 @@ def summarize(cases: list[dict], records: list[dict]) -> dict:
     for case in cases:
         key = f"{case['source']}:{case['origin']}" if case["source"] == "calcite" else case["source"]
         groups.setdefault(key, []).append((case, by_id[case["id"]]))
-        groups.setdefault(case["source"], []).append((case, by_id[case["id"]]))
+        if key != case["source"]:
+            groups.setdefault(case["source"], []).append((case, by_id[case["id"]]))
     for key, pairs in sorted(groups.items()):
         statuses = Counter(r["status"] for _, r in pairs)
         scored = [(c, r) for c, r in pairs if not c.get("disabled")]
