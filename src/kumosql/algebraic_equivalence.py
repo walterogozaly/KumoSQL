@@ -2132,8 +2132,11 @@ def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
 
 
 def _and_all(parts: list[exp.Expression]) -> exp.Expression | None:
+    # sqlglot prints trees without adding parentheses, so an OR operand must carry its own.
     result = None
     for part in parts:
+        if isinstance(part, exp.Or):
+            part = exp.Paren(this=part)
         result = part if result is None else exp.And(this=result, expression=part)
     return result
 

@@ -2478,7 +2478,18 @@ def _z3_value(value):
 def _cell(model, v: _Val):
     if z3.is_true(model.eval(v.null, model_completion=True)):
         return None
+    if not _decided(model, v.val):
+        # The model never constrained this value, so z3 would complete it with
+        # an arbitrary constructor, often a string; a number loads into any column.
+        return Fraction(0)
     return _py(model, v.val)
+
+
+def _decided(model, term) -> bool:
+    """Whether the model itself, not its completion, fixes ``term``'s value."""
+
+    value = model.eval(term, model_completion=False)
+    return not (z3.is_const(value) and value.decl().kind() == z3.Z3_OP_UNINTERPRETED)
 
 
 class _NoCandidate(Exception):
