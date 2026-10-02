@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 import gc
+import inspect
 import re
 import threading
 import time
@@ -800,6 +801,17 @@ class Pipeline:
             return self._analysis
 
 
+_LINEAGE_TAKES_COPY = "copy" in inspect.signature(lineage).parameters
+
+
+def _lineage(name: str, query: exp.Expression, *, copy: bool, **kwargs):
+    """``sqlglot.lineage`` with ``copy``: sqlglot 26.0.0 has no such argument and passes it on to ``qualify``, which rejects it."""
+
+    if _LINEAGE_TAKES_COPY:
+        return lineage(name, query, copy=copy, **kwargs)
+    return lineage(name, query.copy() if copy else query, **kwargs)
+
+
 def _parse_script(
     sql: str, procedures: dict | None = None
 ) -> tuple[exp.Expression | None, ScriptAnalysis]:
@@ -1408,7 +1420,7 @@ class _Analysis:
                     direct[ref] = frozenset(used)
                     continue
                 try:
-                    node = lineage(
+                    node = _lineage(
                         name,
                         qualified,
                         dialect="bigquery",
@@ -1423,7 +1435,7 @@ class _Analysis:
                         # With no schema for a table, the pre-built scope keeps a
                         # bare column unresolved; re-qualifying resolves it when
                         # only one table is in scope and leaves real ambiguity.
-                        retry = lineage(name, qualified, dialect="bigquery", copy=True)
+                        retry = _lineage(name, qualified, dialect="bigquery", copy=True)
                         again = _scan_lineage(pipeline, schema, retry, name, is_union)
                         if again[1] != "unresolved_column":
                             leaves, reason, transform = again
