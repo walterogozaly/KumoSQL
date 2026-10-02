@@ -29,7 +29,7 @@ Java is taken from `KUMOSQL_JAVA`, `<home>/jre`, `JAVA_HOME`, then `PATH`; `pyth
 
 ## Benchmark coverage
 
-`tools/sqlsolver_bench.py` runs the benchmark pairs published with SQLSolver (copied to `tests/fixtures/sqlsolver/`, Apache-2.0, LICENSE alongside) through the prover. SQLSolver's authors state every pair is equivalent, so the benchmark measures how many pairs KumoSQL **proves** versus leaves **unknown**; a pair is never reported "not equivalent" just because it was not proved. Each proof is re-checked on 60 random DuckDB databases (NULLs, duplicates, empty tables; NOT NULL and primary keys respected) and any disagreement counts as a **wrong** proof. `tests/test_sqlsolver_benchmarks.py` fails on any wrong proof or when a suite falls below its floor.
+`tools/sqlsolver_bench.py` runs the benchmark pairs published with SQLSolver (copied to `tests/fixtures/sqlsolver/`, Apache-2.0, LICENSE alongside) through the prover. SQLSolver's authors state every pair is equivalent, so the benchmark measures how many pairs KumoSQL **proves** versus leaves **unknown**; a pair is never reported "not equivalent" just because it was not proved. Each proof is re-checked on 60 random DuckDB databases (NULLs, duplicates, empty tables; NOT NULL and primary keys respected), then on 60 skewed ones whose numbers come from a few values next to the queries' literals, shared by every table so join keys meet and rows repeat; any disagreement counts as a **wrong** proof. `tests/test_sqlsolver_benchmarks.py` fails on any wrong proof or when a suite falls below its floor.
 
 Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs are read as MySQL and translated to BigQuery for the prover.
 
