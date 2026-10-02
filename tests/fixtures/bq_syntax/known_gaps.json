@@ -99,10 +99,6 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
- "dcl/revoke_table::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
  "dcl/revoke_table::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 37."
@@ -510,10 +506,6 @@
  "script/case_when::cleanup": {
   "owner": "kumosql",
   "reason": "recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovere"
- },
- "script/case_when::format": {
-  "owner": "sqlfluff",
-  "reason": "parse_error"
  },
  "script/case_when::parse": {
   "owner": "sqlglot",

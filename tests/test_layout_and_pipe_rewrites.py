@@ -77,3 +77,24 @@ def test_prover_still_reads_pipe_syntax():
 
     sql = "FROM `p.d.t` |> WHERE age > 1 |> SELECT id"
     assert prove_equivalent(sql, sql).proven
+
+
+def test_formatter_formats_the_statements_sqlfluff_can_read():
+    sql = (
+        "select a,b from `p.d.t` where x=1;\n"
+        "GRANT `roles/bigquery.dataViewer` ON TABLE `p.d.t` TO 'user:a@example.com';\n"
+        "-- note\n"
+        "select   count(*) from `p.d.u`\n"
+    )
+    result = rewrite.apply_rule("format_sql", sql)
+    assert result.verification.status is rewrite.VerificationStatus.PROVEN
+    assert "GRANT `roles/bigquery.dataViewer` ON TABLE `p.d.t` TO 'user:a@example.com';\n-- note\n" in result.sql
+    assert "WHERE x = 1;" in result.sql and "SELECT COUNT(*) FROM `p.d.u`" in result.sql
+    assert [d.code for d in result.diagnostics] == ["statements_not_formatted"]
+
+
+def test_formatter_reports_a_statement_it_cannot_read():
+    result = rewrite.apply_rule("format_sql", "GRANT `roles/x` ON TABLE `p.d.t` TO 'user:a@example.com'")
+    assert [d.code for d in result.diagnostics] == ["parse_error"]
+    with pytest.raises(ValueError):
+        format_sql("GRANT `roles/x` ON TABLE `p.d.t` TO 'user:a@example.com'; GRANT `roles/y` ON TABLE `p.d.u` TO 'user:b@example.com'")

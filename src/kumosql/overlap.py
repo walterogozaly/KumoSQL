@@ -143,6 +143,7 @@ def find_overlaps(
     scope: Scope | None = None,
     roles: Mapping[str, TableRole] | None = None,
     declared_grain: Mapping[str, Sequence[str]] | None = None,
+    target_profile: TableProfile | None = None,
 ) -> OverlapResult:
     """Existing tables that already provide what ``sql`` (or ``model``) computes.
 
@@ -151,7 +152,8 @@ def find_overlaps(
     ``Scope`` (record fields: ``project``, ``dataset``, ``table``, ``model``);
     the others are skipped and counted as ``outside_scope``. ``roles`` are
     attached to matches; when omitted they are inferred. A model is never
-    compared with itself.
+    compared with itself. ``target_profile`` is the profile of ``sql`` when the caller already has it
+    (profiling a query builds a scratch pipeline, seconds on a large project).
     """
 
     if (sql is None) == (model is None):
@@ -159,7 +161,7 @@ def find_overlaps(
     profiles = profile_pipeline(pipeline, declared_grain=declared_grain)
     if sql is not None:
         target_key = None
-        target = profile_query(pipeline, sql, declared_grain=declared_grain)
+        target = target_profile or profile_query(pipeline, sql, declared_grain=declared_grain)
     else:
         target_key = _resolve(pipeline, model)
         if target_key not in profiles:

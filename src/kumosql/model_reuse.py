@@ -33,6 +33,7 @@ from sqlglot import exp
 from sqlglot.optimizer.merge_subqueries import merge_subqueries
 from sqlglot.optimizer.qualify import qualify
 
+from .ast_utils import inside as _inside
 from .smt_equivalence import SmtStatus, TableConstraints
 
 
@@ -1055,15 +1056,6 @@ def _with_pieces(plain_query: exp.Expression, pieces: list[tuple[exp.Select, str
             if candidate:
                 out.append(candidate)
     return out
-
-
-def _inside(node: exp.Expression, ancestor: exp.Expression) -> bool:
-    parent = node.parent
-    while parent is not None:
-        if parent is ancestor:
-            return True
-        parent = parent.parent
-    return False
 
 
 @dataclass(frozen=True)

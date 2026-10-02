@@ -32,4 +32,10 @@ an empty and 40 random databases of the schema. **34 are kept** in
 | 1 | uses `||`, Calcite's string concatenation, which sqlglot's mysql dialect reads as `OR` |
 
 Label: `equivalent` (each pair is a Calcite rule's input and output plan, as
-SPES wrote them out).
+SPES wrote them out), except three pairs labelled `not_equivalent` with a
+`label_note`: `testSemiJoinRule`, `testSemiJoinRuleExists` and
+`testSemiJoinTrim`. SPES's text replaces the semi-join with an inner join on
+EMP rows that are not de-duplicated, so each DEPT row repeats once per
+matching employee; nothing makes `EMP.DEPTNO` unique, so the texts differ
+under bag semantics (Calcite's rule is fine; the SPES transcription is not).
+`cosette_bench.py` refutes the first two with a DuckDB database.
