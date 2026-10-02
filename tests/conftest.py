@@ -72,6 +72,7 @@ EVAL_FILES = {
     "test_dup_bench.py",
     "test_incremental.py",
     "test_lineage_benchmarks.py",
+    "test_lineage_goldens_bench.py",
     "test_model_reuse_evals.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",

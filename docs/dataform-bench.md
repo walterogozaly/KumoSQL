@@ -17,7 +17,7 @@ Each file has a `config` block (with nested braces, braces and apostrophes insid
 | Coverage | Templates resolved, templates flagged as unsupported, and SQL parts still fixed by a rewrite around protected text |
 | Performance | Seconds to load 500 and 2,000 files |
 
-**Score: 7,032/7,032 protected-text checks kept, 0 damaged; 368/368 dependencies found, 0 wrong; 36/36 unresolvable templates flagged; 216/216 fixable files still rewritten around protected text.** Loading takes 2.1 s for 496 files and 7.7 s for 2,000.
+**Score: 7,032/7,032 protected-text checks kept, 0 damaged; 370/370 dependencies found, 0 wrong; 36/36 unresolvable templates flagged; 216/216 fixable files still rewritten around protected text.** Loading takes 2.1 s for 496 files and 7.7 s for 2,000.
 
 **Held-out families, first run** (144 files): 0 protected spans damaged and 0 wrong dependencies, but dependency recall was 108/144: every `ref()` inside `pre_operations` was missed. Fixed afterwards, so those families no longer count as held out. Before the dev fixes below, the dev families rewrote 108 of 144 fixable files; the rest were declined safely.
 
