@@ -2203,8 +2203,11 @@ class _Prover:
                     out.append(z3.Implies(cond, c.var.val == value))
                 elif c.func == "COUNT":
                     out.append(z3.Implies(cond, c.var.val == z3.If(c.arg.null, V.Num(0), star.var.val)))
-                else:
+                elif c.func in _NULL_WHEN_EMPTY:
                     out.append(z3.Implies(cond, _null_eq(c.var, c.arg)))
+                else:
+                    # BIT_AND/BIT_OR of a group of NULLs is not NULL in MySQL: only the non-NULL case is known.
+                    out.append(z3.Implies(present, _null_eq(c.var, c.arg)))
         for c in unique:
             if c.func not in _NULL_WHEN_EMPTY or c.arg is None:
                 continue

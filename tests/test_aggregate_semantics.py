@@ -131,3 +131,11 @@ def test_decimal_literals_are_not_folded_where_they_are_floats():
     # BigQuery reads 0.25 as FLOAT64, so literal arithmetic is left alone there (integers still fold).
     assert not _proven("SELECT x * (1 - 0.25) FROM t", "SELECT x * 0.75 FROM t", dialect="bigquery")
     assert _proven("SELECT x * (3 - 1) FROM t", "SELECT x * 2 FROM t", dialect="bigquery")
+
+
+def test_bit_aggregate_of_a_null_group_key_stays_unknown():
+    # MySQL's BIT_AND over a group of NULLs is all ones, so it is the key only when the key is not NULL.
+    assert not _proven("SELECT k, BIT_AND(k) FROM t GROUP BY k", "SELECT k, k FROM t GROUP BY k", dialect="mysql")
+    assert _proven(
+        "SELECT k, CASE WHEN k IS NULL THEN NULL ELSE BIT_AND(k) END FROM t GROUP BY k", "SELECT k, k FROM t GROUP BY k", dialect="mysql"
+    )
