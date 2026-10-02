@@ -110,6 +110,17 @@ Schema facts strengthen proofs: pass `constraints={"orders": TableConstraints(no
 
 `AVG`, `DISTINCT`, outer joins, `LIMIT` and `UNION DISTINCT` are left alone. `tests/test_algebraic_equivalence.py` runs every rewrite on random SQLite databases (empty tables and NULLs included) to check normalization never changes results.
 
+**Declined, never guessed.** A construct the provers cannot read faithfully makes the result `not_proven`, never a proof:
+
+- Rewritten queries pass between the provers as text, and some sqlglot generators change meaning when they print (MySQL writes `a DIV b` as `CAST(a / b AS SIGNED)`, which rounds where `DIV` truncates, `CAST(x AS BOOLEAN)` as an integer cast, and `FULL JOIN` as a `LEFT`/`RIGHT` union that is wrong under an aggregate). `kumosql.ast_utils.faithful_sql` prints a query, parses it back and compares the two trees; when no spelling reads back the same, the pair is declined.
+- A column list on a table alias (`FROM dept AS d(name, x)`, on a table, CTE or derived table) renames by position and is spelled out as explicit renames before proving; a list that cannot be resolved (unknown table, star select, too many names) is declined.
+- A derived table folded into the query that reads it keeps its output names, and a rewrite that would rename a derived table's outputs is not applied.
+- On the NULL-padded side of an outer join only expressions that are NULL whenever their columns are (columns, arithmetic, comparisons, a `CASE`/`IF`/`COALESCE` whose every result is such an expression) are folded into the outer query; constants, `IS NULL` and the like stay in the derived table.
+- `GROUP BY 2` and `ORDER BY 2` are spelled out as the second output's expression first, so a constant folded into those clauses later is not read back as a column position.
+- A table function handed a CTE by name (DuckDB's `histogram_values(cte, l)`, BigQuery's `TABLE cte`) is declined by every prover, since such a read is not a table reference and the CTE would look unused.
+
+`tests/test_soundness_regressions.py` keeps each wrong proof found so far, with the database on which DuckDB shows the two queries differ, next to equivalent near misses that must stay proven.
+
 [docs/singh-bedathur.md](singh-bedathur.md) scores the 2,800 public LeetCode pairs from Singh and Bedathur's SQL-equivalence study with no model at run time (`python tools/singh_bedathur_bench.py`): each pair is proved equivalent, shown different by a DuckDB counterexample database, or left unknown. `kumosql.canonical_rules.canonicalize` holds the constraint-free rewrites (merging a select into the one derived table it reads, `DISTINCT` over selected group keys, `IN` over a grouped table as a join) that the harness tries when the prover finds no proof.
 
 `kumosql.sqlsolver_backend.prove_equivalent(left, right, schema=...)` runs the algebraic prover first and, only when it finds no proof, the real SQLSolver jar if one is installed in a user folder. See [docs/sqlsolver.md](sqlsolver.md) for setup, the translation rules and the rollout plan.

@@ -22,6 +22,8 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import faithful_sql
+
 ORDERED = (exp.Limit, exp.Fetch, exp.Offset)
 
 
@@ -282,4 +284,4 @@ def canonicalize(sql: str, dialect: str = "bigquery", schema: dict[str, list[str
             changed = True
         if not changed:
             break
-    return tree.sql(dialect=dialect)
+    return faithful_sql(tree, dialect)

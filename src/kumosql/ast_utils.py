@@ -8,6 +8,7 @@ import logging
 import sqlglot
 from sqlglot import ErrorLevel, exp
 from sqlglot.errors import UnsupportedError
+from sqlglot.generator import Generator as _BaseGenerator
 
 
 class _UnknownSubqueryScope(logging.Filter):
@@ -100,6 +101,28 @@ _UNMODELED_ARGS = (
 )
 
 
+def table_function_reads_cte(tree: exp.Expression) -> bool:
+    """Whether a table-valued function call is handed a CTE by name.
+
+    DuckDB passes a table to a function by its bare name (``histogram_values(cte, l)``) and BigQuery
+    with ``TABLE cte``. Such a read is not a table reference, so code that tracks CTE use by table
+    references would think the CTE unused, drop it, and compare queries that read different rows.
+    """
+
+    names = {cte.alias.lower() for cte in tree.find_all(exp.CTE) if cte.alias}
+    if not names:
+        return False
+    for table in tree.find_all(exp.Table):
+        if isinstance(table.this, exp.Identifier) or table.this is None:
+            continue
+        for node in table.this.walk():
+            if isinstance(node, exp.Column) and not node.table and node.name.lower() in names:
+                return True
+            if isinstance(node, exp.Table) and not node.db and node.name.lower() in names:
+                return True
+    return False
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
@@ -120,7 +143,224 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
+    if table_function_reads_cte(tree):
+        raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
+
+
+def _output_names(query: exp.Expression) -> list[str] | None:
+    """The column names a derived query outputs, or ``None`` when they are not plain and distinct."""
+
+    while isinstance(query, (exp.Subquery, exp.SetOperation)):
+        query = query.this
+    if not isinstance(query, exp.Select):
+        return None
+    names = []
+    for item in query.expressions:
+        if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
+            return None
+        names.append(item.alias_or_name)
+    if "" in names or len({n.lower() for n in names}) != len(names):
+        return None
+    return names
+
+
+def expand_alias_columns(tree: exp.Expression, schema: dict[str, list[str]] | None) -> exp.Expression:
+    """Rewrite ``FROM t AS d(a, b)`` as ``FROM (SELECT c1 AS a, c2 AS b FROM t) AS d``.
+
+    A column list on a table alias renames the source's columns by position, so ``dept AS d(name, x)``
+    calls ``deptno`` ``name``. The provers resolve columns by name and would read the original
+    ``name``; some sqlglot dialects also drop the list when printing. The list is made explicit
+    here, for tables (columns in ``schema`` order), CTEs and derived tables; a list that cannot be
+    resolved (unknown table, star select, more names than columns) is declined.
+    """
+
+    lowered = {k.lower(): v for k, v in (schema or {}).items()}
+    ctes = {}
+    for cte in tree.find_all(exp.CTE):
+        if cte.alias:
+            ctes[cte.alias.lower()] = cte.this
+    for alias in list(tree.find_all(exp.TableAlias)):
+        renamed = [c.name for c in alias.args.get("columns") or []]
+        source = alias.parent
+        if not renamed or isinstance(source, exp.CTE):
+            continue
+        if not isinstance(source, (exp.Table, exp.Subquery)) or not isinstance(source.parent, (exp.From, exp.Join)):
+            continue
+        if isinstance(source, exp.Table):
+            if not isinstance(source.this, exp.Identifier):
+                raise UnmodeledConstruct("a column list on a table function alias is not modeled")
+            key = ".".join(p.name for p in source.parts).lower()
+            if not source.db and key in ctes:
+                columns = _output_names(ctes[key])
+            else:
+                columns = lowered.get(key) or (lowered.get(source.name.lower()) if source.db else None)
+        else:
+            columns = _output_names(source.this)
+        if not columns or len(renamed) > len(columns):
+            raise UnmodeledConstruct("a column list on a table alias could not be resolved")
+        inner_alias = "kq_renamed"
+        items = [
+            exp.alias_(exp.column(old, table=inner_alias), new if index < len(renamed) else old)
+            for index, (old, new) in enumerate(zip(columns, renamed + list(columns[len(renamed):])))
+        ]
+        if isinstance(source, exp.Table):
+            inner = source.copy()
+            inner.set("alias", exp.TableAlias(this=exp.to_identifier(inner_alias)))
+        else:
+            inner = exp.Subquery(this=source.this.copy(), alias=exp.TableAlias(this=exp.to_identifier(inner_alias)))
+        body = exp.select(*items).from_(inner)
+        replacement = exp.Subquery(this=body, alias=exp.TableAlias(this=alias.this.copy()))
+        if source is tree:
+            return replacement
+        source.replace(replacement)
+    return tree
+
+
+class LossySql(UnmodeledConstruct):
+    """Printing a rewritten query in its dialect would change what it means, so it is declined."""
+
+
+# Arguments that only record spelling or what the parser inferred about a type, not what is computed.
+_IGNORED_ARGS = frozenset({"quoted", "comments", "big_int"})
+
+
+def _shape(node: object) -> object:
+    """A comparable form of a tree that ignores what does not change its meaning.
+
+    Parentheses (the tree's own nesting already says how operators group), identifier quoting,
+    comments and the case of names are left out; string literals keep their case.
+    """
+
+    if isinstance(node, exp.Paren) or (isinstance(node, exp.Subquery) and set(k for k, v in node.args.items() if v) == {"this"}):
+        return _shape(node.this)  # grouping only: the tree's nesting already says how things group
+    if isinstance(node, exp.Connector):
+        # AND and OR are associative: a AND (b AND c) prints as a AND b AND c
+        return (node.key, tuple(_shape(o) for o in _connected(node, type(node))))
+    if isinstance(node, (exp.Union, exp.Intersect)) and not _modified(node):
+        # UNION ALL, UNION and INTERSECT are associative, so a chain prints without inner parentheses
+        return (node.key, bool(node.args.get("distinct")), tuple(_shape(o) for o in _chain(node, type(node), node.args.get("distinct"))))
+    if isinstance(node, exp.DataType):
+        # the provers read a type by its BigQuery spelling, so INT and SIGNED, or VARCHAR and CHAR, are one type
+        return ("datatype", node.sql(dialect="bigquery").upper())
+    if isinstance(node, (exp.LogicalAnd, exp.LogicalOr)):
+        # MIN and MAX of booleans are LOGICAL_AND and LOGICAL_OR; MySQL spells them that way
+        return (exp.Min.key if isinstance(node, exp.LogicalAnd) else exp.Max.key, (("this", _shape(node.this)),))
+    if isinstance(node, exp.Fetch):
+        return ("limit", (("expression", _shape(node.args.get("count"))),))
+    if isinstance(node, exp.Limit) and not node.args.get("offset") and not node.args.get("expressions"):
+        return ("limit", (("expression", _shape(node.args.get("expression"))),))
+    if isinstance(node, list):
+        return tuple(_shape(x) for x in node if x is not None and x is not False)
+    if isinstance(node, exp.Expression):
+        literal = isinstance(node, exp.Literal)
+        items = []
+        for key in sorted(node.args):
+            if key in _IGNORED_ARGS or (isinstance(node, exp.Identifier) and key == "global_"):
+                continue
+            if isinstance(node, exp.Join) and key == "kind" and str(node.args[key]).upper() == "CROSS" and not node.args.get("on"):
+                continue  # ", t" and "CROSS JOIN t" are one join
+            value = node.args[key]
+            if value is None or value is False or value == []:
+                continue
+            if isinstance(value, str) and not literal:
+                value = value.lower()
+            items.append((key, _shape(value) if isinstance(value, (exp.Expression, list)) else value))
+        return (node.key, tuple(items))
+    return node
+
+
+def _modified(node: exp.Expression) -> bool:
+    return any(node.args.get(k) for k in ("order", "limit", "offset", "with_", "with", "by_name", "side", "kind", "on"))
+
+
+def _connected(node: exp.Expression, kind: type) -> list[exp.Expression]:
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if type(node) is kind:
+        return _connected(node.this, kind) + _connected(node.expression, kind)
+    return [node]
+
+
+def _chain(node: exp.Expression, kind: type, distinct) -> list[exp.Expression]:
+    """The operands of a chain of one associative set operation, through grouping parentheses."""
+
+    while isinstance(node, exp.Subquery) and set(k for k, v in node.args.items() if v) == {"this"}:
+        node = node.this
+    if type(node) is kind and bool(node.args.get("distinct")) == bool(distinct) and not _modified(node):
+        return _chain(node.this, kind, distinct) + _chain(node.expression, kind, distinct)
+    return [node]
+
+
+def _faithful_generator(dialect: str):
+    """``dialect``'s generator without the rewrites sqlglot applies when transpiling to it.
+
+    MySQL's generator, for example, spells ``FULL JOIN`` as a ``LEFT JOIN`` ``UNION ALL`` a
+    ``RIGHT JOIN`` (wrong under an aggregate) and ``a DIV b`` as ``CAST(a / b AS SIGNED)``, which
+    rounds where ``DIV`` truncates. The dialect's own parser reads the plain spelling back.
+    """
+
+    base = sqlglot.Dialect.get_or_raise(dialect)
+    cached = _FAITHFUL.get(type(base))
+    if cached is not None:
+        return cached
+    parent = type(base).Generator
+    transforms = {k: v for k, v in parent.TRANSFORMS.items() if "preprocess" not in getattr(v, "__qualname__", "")}
+    transforms[exp.IntDiv] = lambda self, e: self.binary(e, "DIV")
+    overrides = {"TRANSFORMS": transforms, "SUPPORTS_TABLE_ALIAS_COLUMNS": True, "VALUES_AS_TABLE": True}
+    # MySQL's generator also writes CAST(x AS BOOLEAN) as CAST(x AS SIGNED); keep sqlglot's own type names
+    overrides["TYPE_MAPPING"] = dict(_BaseGenerator.TYPE_MAPPING)
+    if hasattr(parent, "CAST_MAPPING"):
+        overrides["CAST_MAPPING"] = {}
+    overrides["cast_sql"] = _BaseGenerator.cast_sql  # MySQL writes CAST(x AS TIMESTAMP) as TIMESTAMP(x)
+    generator = type("FaithfulGenerator", (parent,), overrides)
+    instance = generator(dialect=base)
+    _FAITHFUL[type(base)] = instance
+    return instance
+
+
+_FAITHFUL: dict[type, object] = {}
+
+
+def faithful_sql(tree: exp.Expression, dialect: str) -> str:
+    """Print ``tree`` as ``dialect`` SQL that parses back to the same query, or raise :class:`LossySql`.
+
+    The provers hand rewritten queries to each other as text. sqlglot's generators rewrite some
+    constructs for the target engine, and a few of those rewrites change the result, so the text is
+    parsed back and compared with the tree before anyone reasons about it.
+    """
+
+    expected = _shape(tree)
+    attempts = (
+        lambda: tree.sql(dialect=dialect),
+        lambda: _faithful_generator(dialect).generate(tree, copy=True),
+        lambda: tree.sql(dialect=dialect, identify=True),  # e.g. an unquoted BigQuery project name with a hyphen
+    )
+    for attempt in attempts:
+        try:
+            with quiet_parser():
+                text = attempt()
+                back = canonical_negation(sqlglot.parse_one(text, read=dialect))
+        except sqlglot.errors.SqlglotError:
+            continue
+        if _shape(back) == expected:
+            return text
+    import os  # TEMPORARY-DEBUG
+    if os.environ.get("KQ_FAITHFUL_LOG"):  # TEMPORARY-DEBUG
+        with open(os.environ["KQ_FAITHFUL_LOG"], "a") as f:  # TEMPORARY-DEBUG
+            back = sqlglot.parse_one(tree.sql(dialect=dialect), read=dialect)  # TEMPORARY-DEBUG
+            f.write(repr((dialect, tree.sql(dialect=dialect)[:3000], _first_diff(expected, _shape(canonical_negation(back))))) + "\n")  # TEMPORARY-DEBUG
+    raise LossySql(f"the query cannot be printed faithfully in {dialect or 'the default dialect'}")
+
+
+def _first_diff(x, y):  # TEMPORARY-DEBUG
+    if x == y:
+        return None
+    if isinstance(x, tuple) and isinstance(y, tuple) and len(x) == len(y):
+        for p, q in zip(x, y):
+            if p != q:
+                return _first_diff(p, q)
+    return (str(x)[:300], str(y)[:300])
 
 
 def identifier_name(node: exp.Expression | None) -> str | None:
