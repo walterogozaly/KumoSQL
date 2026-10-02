@@ -33,11 +33,16 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation
+from .ast_utils import canonical_negation, check_modeled, strip_positions
 from .set_operations import positional_sql_pair
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
+from .constraint_normalization import keyed_join_to_exists, normalize_key_counts
+from .grouping_expansion import collapse_grouping_expansion
+from .intersection_rules import collapse_counted_intersection
+from .count_case_rules import fold_grouped_count_cases
+from .row_bound_rules import trim_redundant_row_clauses
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join
 from .empty_rules import canonical_empty, propagate_empty
@@ -1404,20 +1409,84 @@ def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], d
     cast only changes the type the engine reports.
     """
 
-    casts = [c for c in select.find_all(exp.Cast) if c.find_ancestor(exp.Select) is select and isinstance(c.this, exp.Column) and isinstance(c.args.get("to"), exp.DataType)]
+    def input_column(cast):
+        value = cast.this
+        if isinstance(value, (exp.Sum, exp.Min, exp.Max)):
+            value = value.this
+        return value if isinstance(value, exp.Column) else None
+
+    casts = [c for c in select.find_all(exp.Cast) if c.find_ancestor(exp.Select) is select and input_column(c) is not None and isinstance(c.args.get("to"), exp.DataType)]
     if not casts:
         return None
     copy = select.copy()
     changed = False
-    for cast in [c for c in copy.find_all(exp.Cast) if c.find_ancestor(exp.Select) is copy and isinstance(c.this, exp.Column) and isinstance(c.args.get("to"), exp.DataType)]:
+    for cast in [c for c in copy.find_all(exp.Cast) if c.find_ancestor(exp.Select) is copy and input_column(c) is not None and isinstance(c.args.get("to"), exp.DataType)]:
         target = _datatype_shape(cast.args["to"], (29, 9) if dialect == "bigquery" else (10, 0))
         if target is None or isinstance(cast, exp.TryCast):
             continue
-        declared = _origin_type(copy, cast.this, types)
+        declared = _origin_type(copy, input_column(cast), types)
         have = _decimal_shape(declared) if declared else None
+        if isinstance(cast.this, exp.Sum):
+            # SUM of integers stays integral. As elsewhere in this prover,
+            # overflow/failed casts and output type differences are excluded.
+            # A decimal SUM can overflow its original precision, so do not
+            # use the input column's precision to justify a decimal cast.
+            if have is None or have[1] != 0 or target[1] != 0:
+                continue
         if have is not None and target[1] >= have[1] and target[0] >= have[0]:
             cast.replace(cast.this.copy())
             changed = True
+    return copy if changed else None
+
+
+_EXACT_TYPE = re.compile(r"^\s*(tinyint|smallint|mediumint|int|integer|bigint|int2|int4|int8|int64|numeric|decimal|bignumeric)\b", re.I)
+
+
+def _shifted_sums(select: exp.Select, types: dict[str, dict[str, str]]) -> exp.Expression | None:
+    """``SUM(x + c)`` is ``SUM(x) + c * COUNT(x)`` for a constant ``c`` and an exact-typed column ``x``.
+
+    Rows where ``x`` is NULL count in neither; with no such rows both sides are NULL
+    (``NULL + c * 0``). Only declared integer and decimal columns qualify, so no rounding differs.
+    """
+
+    def split(arg: exp.Expression):
+        node = arg.unnest() if isinstance(arg, exp.Paren) else arg
+        if not isinstance(node, (exp.Add, exp.Sub)):
+            return None
+        left, right = node.this, node.expression
+        number = lambda e: isinstance(e, exp.Literal) and not e.is_string and re.fullmatch(r"\d+(\.\d+)?", e.this or "")
+        if isinstance(left, exp.Column) and number(right):
+            return left, right, isinstance(node, exp.Sub)
+        if isinstance(node, exp.Add) and number(left) and isinstance(right, exp.Column):
+            return right, left, False
+        return None
+
+    if not types:
+        return None
+    sums = [
+        s for s in select.find_all(exp.Sum)
+        if s.find_ancestor(exp.Select) is select and not isinstance(s.parent, exp.Window) and not s.args.get("distinct")
+        and not isinstance(s.this, exp.Distinct) and split(s.this) is not None
+    ]
+    if not sums:
+        return None
+    copy = select.copy()
+    changed = False
+    for node in [
+        s for s in copy.find_all(exp.Sum)
+        if s.find_ancestor(exp.Select) is copy and not isinstance(s.parent, exp.Window) and not isinstance(s.this, exp.Distinct)
+    ]:
+        parts = split(node.this)
+        if parts is None:
+            continue
+        column, constant, minus = parts
+        declared = _origin_type(copy, column, types)
+        if not declared or not _EXACT_TYPE.match(declared):
+            continue
+        shift = exp.Mul(this=constant.copy(), expression=exp.Count(this=column.copy()))
+        total = exp.Sub(this=exp.Sum(this=column.copy()), expression=shift) if minus else exp.Add(this=exp.Sum(this=column.copy()), expression=shift)
+        node.replace(exp.Paren(this=total))
+        changed = True
     return copy if changed else None
 
 
@@ -2485,6 +2554,33 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
             tree = outer
         else:
             select.replace(outer)
+    return tree
+
+
+def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
+    """``SELECT * FROM (q) a`` with no other clause is ``q`` itself, at the root of the statement.
+
+    The wrapper returns exactly ``q``'s rows and columns, so a query that ends in
+    ``ORDER BY .. LIMIT`` inside such wrappers (CTE chains of ``SELECT *``) is
+    read with its limit at the top.
+    """
+
+    while isinstance(tree, exp.Select):
+        from_ = tree.args.get("from_") or tree.args.get("from")
+        if from_ is None or not isinstance(from_.this, exp.Subquery) or not isinstance(from_.this.this, exp.Query):
+            return tree
+        source = from_.this
+        if source.args.get("lateral") or (source.args.get("alias") is not None and source.args["alias"].args.get("columns")):
+            return tree
+        if any(tree.args.get(k) for k in ("joins", "where", "group", "having", "qualify", "order", "limit", "offset", "distinct", "windows", "with_", "with", "laterals", "pivots")):
+            return tree
+        if len(tree.expressions) != 1:
+            return tree
+        item = tree.expressions[0]
+        alias = source.alias_or_name.lower()
+        if not (isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias and alias)):
+            return tree
+        tree = source.this.copy()
     return tree
 
 
@@ -4154,18 +4250,28 @@ def normalize(
     can hide a match the first attempt finds.
     """
 
-    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
+    tree = check_modeled(canonical_negation(strip_positions(sqlglot.parse_one(sql, read=dialect))))
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
+    tree = _peel_star_wrappers(tree)
+    tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
     tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
     tree = exists_over_aggregate(tree)
+    tree = fold_grouped_count_cases(tree, not_null)
     tree = _left_join_indicator_to_exists(tree, keys)
     tree = _grouped_in_to_derived(tree)
     tree = _in_over_union(tree)
+    for select in list(tree.find_all(exp.Select))[::-1]:
+        replacement = collapse_grouping_expansion(select) or collapse_counted_intersection(select)
+        if replacement is not None:
+            if select is tree:
+                tree = replacement
+            else:
+                select.replace(replacement)
     tree = _grouping_sets_to_union(tree)
     tree = _drop_group_in_membership_tests(tree)
     tree = _fold_dates(extract_to_ranges(tree))
@@ -4197,7 +4303,10 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
+            constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
+            if constrained is not None:
+                return constrained
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -4273,6 +4382,12 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: bool, **kwar
     except sqlglot.errors.SqlglotError:
         replaced = False
     result = prove_equivalent_smt(left, right, **kwargs)
+    if result.status is SmtStatus.NOT_PROVEN and not replaced:
+        from .structural_identity import same_scoped_query
+        if same_scoped_query(left, right, schema=kwargs.get("schema"), dialect=dialect,
+                             compare_names=kwargs.get("compare_names", True)):
+            return dataclasses.replace(result, status=SmtStatus.PROVEN_EQUIVALENT,
+                                       reason="identical scoped queries after algebraic normalization")
     if replaced and result.proven and report.get("unproven", 1):
         result = dataclasses.replace(
             result, assumptions=tuple(result.assumptions) + (scalar_subqueries.ASSUMPTION,)

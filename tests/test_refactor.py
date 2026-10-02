@@ -141,3 +141,28 @@ def test_refactor_page_and_settings_routes(ui_server, monkeypatch):
     with pytest.raises(HTTPError) as error:
         urlopen(run)
     assert error.value.code == 400  # no project loaded
+
+
+def test_background_run_reports_progress_and_can_be_cancelled(project, monkeypatch):
+    import time
+
+    from kumosql import live_graph
+
+    monkeypatch.setattr(live_graph, "loaded", lambda: {"pipeline": project})
+    refactor.save_classes({"protected": {"models": ["report", "report2"]}, "editable": {"models": ["stg1", "stg2", "stg2b", "unused"]}})
+    started = refactor.run_loaded({})
+    assert started["state"] == "running"
+    with pytest.raises(ValueError):
+        refactor.run_loaded({})  # one search at a time
+    deadline = time.time() + 120
+    while refactor.job_status()["state"] == "running" and time.time() < deadline:
+        time.sleep(0.2)
+    done = refactor.job_status()
+    assert done["state"] == "done" and done["result"]["front"]
+    assert min(item["models"] for item in done["result"]["front"]) < done["result"]["baseline"]["models"]
+    # cancelling stops a run early and keeps what was proved
+    refactor.run_loaded({})
+    refactor.cancel_job()
+    while refactor.job_status()["state"] == "running" and time.time() < deadline:
+        time.sleep(0.1)
+    assert refactor.job_status()["state"] in ("cancelled", "done")

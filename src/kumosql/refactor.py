@@ -20,7 +20,7 @@ Proofs carry the prover's assumptions and any saved equivalences they relied on.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-import heapq
+import threading
 import time
 from typing import Callable, Iterable, Mapping
 
@@ -35,6 +35,8 @@ from .prover_schema import ProverSchema, _select_names
 SECTION = "refactor"
 CLASSES = ("protected", "editable")
 MAX_INLINE_CHARS = 200_000
+#: Weights on model count against complexity for the descents (0: complexity only, large: model count only).
+WEIGHTS = (0.0, 2.0, 5.0, 10.0, 25.0, 1000.0)
 SUFFIX = "__after"
 
 
@@ -260,8 +262,12 @@ def _dominates(a: RefactorState, b: RefactorState) -> bool:
 # ---------------------------------------------------------------- the check
 
 
-def _combined_pipeline(pipeline, candidate: Mapping[str, str], reads: _Reads):
-    """The original models plus an ``__after`` copy of every candidate model that changed or reads one that did."""
+def _combined_pipeline(pipeline, candidate: Mapping[str, str], reads: _Reads, observable: Iterable[str] | None = None):
+    """The original models plus an ``__after`` copy of every candidate model that changed or reads one that did.
+
+    With ``observable`` the pipeline holds only what those models (and their copies) read, so a check costs
+    what it touches, not the size of the project.
+    """
 
     changed = {k for k, sql in candidate.items() if pipeline.models[k].sql != sql}
     affected = set(changed)
@@ -272,7 +278,27 @@ def _combined_pipeline(pipeline, candidate: Mapping[str, str], reads: _Reads):
             if key not in affected and reads(sql) & affected:
                 affected.add(key)
                 grew = True
-    models = dict(pipeline.models)
+    keep: set[str] | None = None
+    if observable is not None:
+        keep = set()
+        todo = [k for k in observable if k in affected]
+        seen_after: set[str] = set()
+        while todo:
+            key = todo.pop()
+            if key in seen_after:
+                continue
+            seen_after.add(key)
+            keep.add(key)
+            todo.extend(r for r in reads(candidate[key]) if r in candidate and r in affected)
+        todo = [*keep]
+        while todo:  # originals of every affected model, and everything either version reads
+            key = todo.pop()
+            for read in [*reads(pipeline.models[key].sql), *(reads(candidate[key]) if key in candidate else ())]:
+                if read in pipeline.models and read not in keep:
+                    keep.add(read)
+                    todo.append(read)
+        affected = {k for k in affected if k in keep}
+    models = {k: m for k, m in pipeline.models.items() if keep is None or k in keep}
     renamed = {}
     for key in affected:
         original = pipeline.models[key]
@@ -302,7 +328,7 @@ def _after_table(table: exp.Table, model) -> exp.Expression:
 
 def check_observable(
     pipeline, candidate: Mapping[str, str], observable: Iterable[str], reads: _Reads,
-    *, schema: ProverSchema | None = None, timeout_ms: int = 5000,
+    *, schema: ProverSchema | None = None, timeout_ms: int = 5000, cache: dict | None = None,
 ) -> tuple[bool, list[str], str]:
     """``(every observable model proved equal, assumptions, why not)`` for a candidate pipeline."""
 
@@ -310,16 +336,36 @@ def check_observable(
     missing = [key for key in observable if key not in candidate]
     if missing:
         return False, [], f"{missing[0]} no longer exists"
-    combined, renamed = _combined_pipeline(pipeline, candidate, reads)
+    combined, renamed = _combined_pipeline(pipeline, candidate, reads, observable)
     assumptions: list[str] = []
     for key in observable:
         if key not in renamed:
             continue  # neither it nor anything upstream changed
-        result = prove_models(combined, key, renamed[key], schema=schema, timeout_ms=timeout_ms)
-        if not result.proven:
-            return False, [], f"{key}: {result.reason}"
-        assumptions.extend(a for a in [*result.assumptions, *result.equivalences] if a not in assumptions)
+        # a proof depends only on the SQL of the models the observable reads, so it is shared by every
+        # candidate that leaves those models as they are
+        signature = (key, _closure_signature(candidate, key, reads)) if cache is not None else None
+        hit = cache.get(signature) if cache is not None else None
+        if hit is None:
+            result = prove_models(combined, key, renamed[key], schema=schema, timeout_ms=timeout_ms)
+            hit = (result.proven, [*result.assumptions, *result.equivalences], f"{key}: {result.reason}")
+            if cache is not None:
+                cache[signature] = hit
+        if not hit[0]:
+            return False, [], hit[2]
+        assumptions.extend(a for a in hit[1] if a not in assumptions)
     return True, assumptions, ""
+
+
+def _closure_signature(candidate: Mapping[str, str], key: str, reads: _Reads) -> tuple:
+    seen: dict[str, str] = {}
+    todo = [key]
+    while todo:
+        model = todo.pop()
+        if model in seen or model not in candidate:
+            continue
+        seen[model] = candidate[model]
+        todo.extend(reads(candidate[model]))
+    return tuple(sorted(seen.items()))
 
 
 # ------------------------------------------------------------------- moves
@@ -334,6 +380,7 @@ class _Setup:
     score: _Complexity
     schema: ProverSchema | None
     timeout_ms: int
+    cache: dict = field(default_factory=dict)
 
 
 def _modifiable(setup: _Setup, key: str) -> bool:
@@ -366,24 +413,28 @@ def _moves(setup: _Setup, current: Mapping[str, str]):
             if all(len(sql) <= MAX_INLINE_CHARS for sql in changed.values()):
                 new = {k: changed.get(k, v) for k, v in current.items() if k != key}
                 yield f"inline {key} into {', '.join(sorted(users))}", new
-    # merge: an editable model that returns the same columns as another model reading the same tables
+    # merge: an editable model that returns the same columns from the same tables as another model
+    groups: dict[tuple, list[str]] = {}
     for key in sorted(current):
-        if setup.roles.get(key) != "editable" or key in setup.observable or not names[key]:
-            continue
-        for other in sorted(current):
-            if other == key or names[other] != names[key] or setup.reads(current[other]) != setup.reads(current[key]):
+        if names[key]:
+            groups.setdefault((names[key], setup.reads(current[key])), []).append(key)
+    for members in groups.values():
+        for key in members:
+            if setup.roles.get(key) != "editable" or key in setup.observable:
                 continue
-            if _depends_on(setup, current, other, key):
-                continue
-            users = readers[key]
-            if not all(_modifiable(setup, user) for user in users):
-                continue
-            try:
-                changed = {user: _redirect(current[user], key, other, resolve) for user in users}
-            except sqlglot.errors.SqlglotError:
-                continue
-            new = {k: changed.get(k, v) for k, v in current.items() if k != key}
-            yield f"merge {key} into {other}", new
+            for other in members:
+                if other == key or _depends_on(setup, current, other, key):
+                    continue
+                users = readers[key]
+                if not all(_modifiable(setup, user) for user in users):
+                    continue
+                try:
+                    changed = {user: _redirect(current[user], key, other, resolve) for user in users}
+                except sqlglot.errors.SqlglotError:
+                    continue
+                new = {k: changed.get(k, v) for k, v in current.items() if k != key}
+                yield f"merge {key} into {other}", new
+                break  # one target per model is enough: the others are equivalent copies
 
 
 def _depends_on(setup: _Setup, current: Mapping[str, str], model: str, target: str) -> bool:
@@ -416,6 +467,7 @@ class RefactorResult:
     tried: int = 0
     rejected: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
+    rejected_moves: list[dict] = field(default_factory=list)
     stopped: str = ""
     seconds: float = 0.0
     unscored: int = 0
@@ -442,6 +494,7 @@ class RefactorResult:
             "front": [item(entry) for entry in self.front],
             "tried": self.tried,
             "rejected": self.rejected,
+            "rejected_moves": self.rejected_moves,
             "rejected_reasons": dict(sorted(self.reasons.items(), key=lambda kv: -kv[1])[:5]),
             "stopped": self.stopped,
             "seconds": round(self.seconds, 1),
@@ -460,6 +513,8 @@ def search(
     max_states: int = 40,
     max_seconds: float = 300.0,
     progress: Callable[[str], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    on_front: Callable[[RefactorResult], None] | None = None,
 ) -> RefactorResult:
     """Explore proved-safe moves and return the Pareto front over (complexity, model count)."""
 
@@ -475,42 +530,66 @@ def search(
     setup = _Setup(pipeline, roles, frozenset(observable), reads, _Complexity(), schema, timeout_ms)
     baseline = _state(setup, candidate_models, (), ())
     result = RefactorResult(roles, observable, baseline, [baseline])
-    seen = {baseline.sql}
-    queue: list[tuple[float, int, int, RefactorState]] = []
-    counter = 0
-    heapq.heappush(queue, (baseline.complexity, baseline.models, counter, baseline))
     verified = 0
-    while queue:
+    stop = ""
+
+    def out_of_budget() -> str:
+        if cancelled is not None and cancelled():
+            return "cancel"
         if time.time() - started > max_seconds:
-            result.stopped = "time limit"
-            break
+            return "time limit"
         if verified >= max_states:
-            result.stopped = "state limit"
+            return "state limit"
+        return ""
+
+    # One greedy descent per weight on model count versus complexity: at each step the cheapest moves
+    # under that weight are proved first and the first proved one is taken. Every proved state on every
+    # path is a candidate for the Pareto front, and proofs are shared between paths through the cache.
+    for weight in WEIGHTS:
+        current = baseline
+        while not stop:
+            stop = out_of_budget()
+            if stop:
+                break
+            options = []
+            for label, sql in _moves(setup, current.sql_map):
+                child = _state(setup, sql, (*current.moves, label), current.assumptions)
+                gain = (current.complexity - child.complexity) + weight * (current.models - child.models)
+                if gain > 0:
+                    options.append((-gain, label, child))
+            options.sort(key=lambda item: (item[0], item[1]))
+            taken = None
+            for _, label, child in options:
+                stop = out_of_budget()
+                if stop:
+                    break
+                result.tried += 1
+                ok, assumptions, why = check_observable(
+                    pipeline, child.sql_map, observable, reads, schema=schema, timeout_ms=timeout_ms, cache=setup.cache)
+                if not ok:
+                    result.rejected += 1
+                    reason = why.split(":", 1)[-1].strip()[:80]
+                    result.reasons[reason] = result.reasons.get(reason, 0) + 1
+                    if len(result.rejected_moves) < 20 and not any(m["move"] == label for m in result.rejected_moves):
+                        result.rejected_moves.append({"move": label, "why": why[:200]})
+                    continue
+                verified += 1
+                taken = replace(child, assumptions=tuple(dict.fromkeys([*current.assumptions, *assumptions])))
+                if progress:
+                    progress(f"{label}: proved ({taken.models} models, complexity {taken.complexity})")
+                break
+            if taken is None:
+                break
+            current = taken
+            if not any(_dominates(other, current) or other.cost() == current.cost() for other in result.front):
+                result.front = [e for e in result.front if not _dominates(current, e)] + [current]
+                if on_front:
+                    result.front.sort(key=lambda e: (e.models, e.complexity))
+                    result.seconds = time.time() - started
+                    on_front(result)
+        if stop:
             break
-        *_, current = heapq.heappop(queue)
-        if any(_dominates(other, current) for other in result.front):
-            continue
-        for label, sql in _moves(setup, current.sql_map):
-            sig = tuple(sorted(sql.items()))
-            if sig in seen:
-                continue
-            seen.add(sig)
-            result.tried += 1
-            ok, assumptions, why = check_observable(
-                pipeline, sql, observable, reads, schema=schema, timeout_ms=timeout_ms)
-            if not ok:
-                result.rejected += 1
-                reason = why.split(":", 1)[-1].strip()[:80]
-                result.reasons[reason] = result.reasons.get(reason, 0) + 1
-                continue
-            verified += 1
-            child = _state(setup, sql, (*current.moves, label), tuple(dict.fromkeys([*current.assumptions, *assumptions])))
-            if progress:
-                progress(f"{label}: proved ({child.models} models, complexity {child.complexity})")
-            if not any(_dominates(other, child) or other.cost() == child.cost() for other in result.front):
-                result.front = [e for e in result.front if not _dominates(child, e)] + [child]
-                counter += 1
-                heapq.heappush(queue, (child.complexity, child.models, counter, child))
+    result.stopped = stop
     result.front.sort(key=lambda e: (e.models, e.complexity))
     result.seconds = time.time() - started
     result.unscored = setup.score.unscored
@@ -520,8 +599,32 @@ def search(
 # --------------------------------------------------------------- app and CLI
 
 
+_JOB: dict = {"state": "idle"}
+_JOB_LOCK = threading.Lock()
+_CANCEL = threading.Event()
+
+
+def _snapshot() -> dict:
+    with _JOB_LOCK:
+        return {k: v for k, v in _JOB.items() if k != "thread"}
+
+
+def job_status() -> dict:
+    """``GET /api/refactor/status``: idle, running (with the front found so far), done, cancelled or error."""
+
+    data = _snapshot()
+    if data["state"] == "running":
+        data["elapsed"] = round(time.time() - data["started"], 1)
+    return data
+
+
+def cancel_job() -> dict:
+    _CANCEL.set()
+    return job_status()
+
+
 def run_loaded(payload: Mapping | None = None) -> dict:
-    """``POST /api/refactor/run``: search the project loaded in the app with the saved classes."""
+    """``POST /api/refactor/run``: start the search on the project loaded in the app, in the background."""
 
     from . import live_graph, prover_context
 
@@ -534,11 +637,34 @@ def run_loaded(payload: Mapping | None = None) -> dict:
     payload = payload or {}
     classes = parse_classes(payload["classes"]) if payload.get("classes") else load_classes()
     pipeline = loaded["pipeline"]
-    result = search(
-        pipeline, classes, schema=prover_context.current_schema(), timeout_ms=config["timeout_ms"],
-        max_states=int(payload.get("max_states") or 40), max_seconds=float(payload.get("max_seconds") or 120),
-    )
-    return result.to_json(pipeline)
+    schema = prover_context.current_schema()
+    limits = {"max_states": int(payload.get("max_states") or 200), "max_seconds": float(payload.get("max_seconds") or 600)}
+    with _JOB_LOCK:
+        if _JOB["state"] == "running":
+            raise ValueError("a search is already running")
+        _CANCEL.clear()
+        _JOB.clear()
+        _JOB.update(state="running", started=time.time(), line="", partial=None, tried=0)
+
+    def update(**values) -> None:
+        with _JOB_LOCK:
+            _JOB.update(values)
+
+    def work() -> None:
+        try:
+            result = search(
+                pipeline, classes, schema=schema, timeout_ms=config["timeout_ms"], cancelled=_CANCEL.is_set,
+                progress=lambda line: update(line=line),
+                on_front=lambda partial: update(partial=partial.to_json(pipeline), tried=partial.tried),
+                **limits,
+            )
+            update(state="cancelled" if result.stopped == "cancel" else "done", result=result.to_json(pipeline))
+        except Exception as error:  # noqa: BLE001 - reported to the page, never raised into the server
+            update(state="error", error=str(error) or type(error).__name__)
+
+    thread = threading.Thread(target=work, name="refactor-search", daemon=True)
+    thread.start()
+    return job_status()
 
 
 def classes_view() -> dict:

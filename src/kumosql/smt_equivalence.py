@@ -38,6 +38,7 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from fractions import Fraction
 import argparse
+import hashlib
 import itertools
 import json
 import re
@@ -45,7 +46,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled
 from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised by the import itself
@@ -581,7 +582,10 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [canonical_negation(s) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        try:
+            statements = [check_modeled(canonical_negation(s)) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        except UnmodeledConstruct as error:
+            raise Unsupported(str(error)) from error
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
@@ -948,6 +952,9 @@ class _Compiler:
         except Unsupported:
             del self.facts[saved:]
             return self._opaque(body, ctes, occs)
+        one_row = self._one_row_source(sub, body, ctes)
+        if one_row is not None:
+            return one_row
         if len(sub.branches) == 1 and isinstance(sub.branches[0], _Spj) and not sub.branches[0].distinct:
             branch = sub.branches[0]
             if len(set(branch.names)) != len(branch.names) or "" in branch.names:
@@ -964,6 +971,41 @@ class _Compiler:
             if is_set and names and len(set(names)) == len(names) and "" not in names:
                 return self._set_source(branch, names, conds)
         return self._opaque(body, ctes, occs)
+
+    def _one_row_source(self, sub: _Union, body, ctes) -> _Source | None:
+        """A derived global aggregate (no GROUP BY, no HAVING) always has exactly one row.
+
+        Joined into a query it changes no multiplicity, so it is read as one row
+        of values that may be anything an aggregate returns, the same values
+        wherever the same relation (by its CTE-expanded SQL) appears; COUNT is a
+        number of at least zero.
+        """
+
+        if len(sub.branches) != 1 or sub.distinct:
+            return None
+        block = sub.branches[0]
+        if not isinstance(block, _Agg) or not block.is_global or block.having is not None or block.subs:
+            return None
+        names = list(block.names)
+        if not names or "" in names or len(set(names)) != len(names):
+            return None
+        expanded = self._expand_ctes(body.copy(), ctes)
+        self._check_nondeterminism(expanded)
+        self.uses_uf = True  # the values are free: a model is not a database, so no counterexample
+        key = _canonical_aliases(expanded, self.schema).sql(dialect="bigquery", normalize_functions="upper")
+        tag = hashlib.sha1(key.encode()).hexdigest()[:16]
+        V = _value_sort()
+        counts = {id(call.var): call for call in block.aggs if call.func in ("COUNT", "COUNTIF")}
+        cols = {}
+        for index, (name, output) in enumerate(zip(names, block.outputs)):
+            call = next((c for c in counts.values() if c.var.val.eq(output.val) and c.var.null.eq(output.null)), None)
+            val = z3.Const(f"one{tag}.{index}", V)
+            if call is not None:
+                self.facts.append(z3.And(V.is_Num(val), V.num(val) >= 0))
+                cols[name] = _Val(z3.BoolVal(False), val)
+            else:
+                cols[name] = _Val(z3.Bool(f"one{tag}.{index}#null"), val)
+        return _Source(cols=cols, order=names)
 
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
@@ -2907,7 +2949,10 @@ def _split_limit(sql: str, dialect: str):
     shape is not handled (``spec`` then says why).
     """
 
-    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
+    try:
+        tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
+    except UnmodeledConstruct:
+        return sql, None
     root = tree
     while isinstance(root, exp.Subquery):
         root = root.this
@@ -2999,6 +3044,14 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         reason = left_spec if left_core is None else right_spec
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {reason}")
     if left_spec is None or right_spec is None:
+        # The limited query may sit inside the other one as a derived table: compare with it wrapped.
+        wrapped = [
+            sql if spec is None else f"SELECT * FROM ({sql}) AS kq_limited"
+            for sql, spec in ((left_sql, left_spec), (right_sql, right_spec))
+        ]
+        result = _prove_core(wrapped[0], wrapped[1], **kwargs)
+        if result.proven:
+            return result
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
     if left_spec[:3] != right_spec[:3]:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")
