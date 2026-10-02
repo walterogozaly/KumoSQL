@@ -700,3 +700,4 @@ select.sp-input { min-width: 200px; }
 .ds-field.ds-inline > span:first-child { min-width: 52px; }
 .ds-query { height: auto; padding: 8px 10px; font-family: ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
 .ds-dialog .is-error { color: var(--bad-fg); }
+.gnode.not-owned { opacity: 0.7; }

@@ -185,6 +185,7 @@
         } },
         { selector: "node.kind-source", style: { "background-color": c.surface2 } },
         { selector: "node.kind-observed", style: { "border-style": "dashed" } },
+        { selector: "node.not-owned", style: { opacity: 0.7 } },
         { selector: "node.is-gap", style: { "border-style": "dashed", "border-color": c.warn, "background-color": c.warnBg } },
         { selector: "node.is-scheduled", style: { "border-width": 2, "border-color": c.ok } },
         { selector: "node.is-group", style: { shape: "round-rectangle", width: NODE_W + 14, height: NODE_H + 12, "border-width": 2, "background-color": c.accentSoft, "border-color": c.accentBorder, "font-weight": 700 } },
@@ -250,7 +251,7 @@
       for (const [id, info] of visible) {
         const isGroup = id.startsWith(GROUP_PREFIX);
         const node = nodesById.get(id);
-        const classes = isGroup ? "is-group" : `kind-${node.kind}${gaps.has(id) ? " is-gap" : ""}${node.schedules ? " is-scheduled" : ""}`;
+        const classes = isGroup ? "is-group" : `kind-${node.kind}${gaps.has(id) ? " is-gap" : ""}${node.schedules ? " is-scheduled" : ""}${node.owned === false ? " not-owned" : ""}`;
         elements.push({ group: "nodes", data: { id, label: isGroup ? `${id.slice(GROUP_PREFIX.length)} · ${info.members.length}` : node.name, group: isGroup }, position: positions.get(id), classes });
       }
       edges.forEach((edge, i) => elements.push({ group: "edges", data: { id: `e${i}`, source: edge.from, target: edge.to }, classes: `edge-${edge.source}` }));
