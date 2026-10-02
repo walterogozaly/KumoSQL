@@ -42,7 +42,7 @@ Keep these apart: they are different kinds of evidence.
 
 Findings that are not bugs but gaps: for most non-equivalent unsafe pairs the prover returns *unknown* rather than a counterexample ("no row-preserving mapping", "UNION shapes differ"), so the executed check is what produces the replayable counterexample today. See the scoreboard row for the numbers.
 
-`fuzz --count 60 --seed 2` (rerun 2026-10-02, 1,268 cases): 0 false proofs and 0 bad counterexamples; 255/691 equivalent pairs proved, 251/457 different pairs refuted with a replayable counterexample, 424/457 found once the executed check is added; held-out families 108/420 proved.
+`fuzz --count 60 --seed 2` (rerun 2026-10-02, 1,268 cases): 0 false proofs and 0 bad counterexamples; 255/691 equivalent pairs proved, 256/457 different pairs refuted with a replayable counterexample, 425/457 found once the executed check is added; held-out families 108/420 proved.
 
 ## Reusable cases
 
