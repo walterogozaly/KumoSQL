@@ -141,6 +141,11 @@ def merge_correlated_derived(select: exp.Select) -> exp.Expression | None:
     return None
 
 
+def _named(value: exp.Expression, name: str) -> exp.Alias:
+    # exp.alias_ would set a subquery's own alias, which prints the same but parses back as an Alias
+    return exp.Alias(this=value, alias=exp.to_identifier(name))
+
+
 def _under(node: exp.Expression, root: exp.Expression) -> bool:
     parent = node.parent
     while parent is not None:
@@ -166,7 +171,7 @@ def _merge(select: exp.Select, source: exp.Subquery, position: int, uses: list[e
         value = rename(values[column.name.lower()])
         value = exp.Paren(this=value) if isinstance(value, (exp.Binary, exp.Not)) and not isinstance(value, exp.Column) else value
         if column.parent is select and column.arg_key == "expressions":
-            value = exp.alias_(value, column.name)
+            value = _named(value, column.name)
         column.replace(value)
     new_sources = []
     for item in _sources(inner):
@@ -258,7 +263,7 @@ def existence_joins(select: exp.Select) -> exp.Expression | None:
             continue
         for column in uses:
             value = values[column.name.lower()].copy()
-            column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
+            column.replace(_named(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
         probe = body.copy()
         probe.set("group", None)
         probe.set("expressions", [exp.Literal.number(1)])
@@ -494,7 +499,7 @@ def one_row_joins(select: exp.Select) -> exp.Expression | None:
             probe = body.copy()
             probe.set("expressions", [values[column.name.lower()].copy()])
             value = exp.Subquery(this=probe)
-            column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
+            column.replace(_named(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
         holder.set("joins", [j for j in holder.args["joins"] if j is not join] or None)
         wrapper = holder.parent
         # (t AS a) once its last nested join is gone is t AS a
@@ -897,7 +902,7 @@ def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | N
             continue
         for column in [n for n in outside if isinstance(n, exp.Column) and n.table.lower() == alias]:
             value = pinned[column.name.lower()].copy()
-            column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
+            column.replace(_named(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
         select.set("joins", [j for j in joins if j is not join] or None)
         return select
     return None
