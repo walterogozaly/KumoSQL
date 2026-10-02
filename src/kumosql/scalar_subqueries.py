@@ -121,11 +121,16 @@ def _candidates(tree: exp.Expression, schema) -> list[exp.Subquery]:
     return found
 
 
-def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=None, prove=None) -> tuple[str, str, bool]:
+def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=None, prove=None, single_row=None, report=None) -> tuple[str, str, bool]:
     """Replace shared uncorrelated scalar subqueries by placeholders in both queries.
 
     ``prove(a, b)`` is called to compare two differently written subqueries (it returns
     whether they are provably equivalent). Returns ``(left, right, replaced_any)``.
+
+    ``single_row(sql)`` may say whether a subquery provably returns at most one row (see
+    ``output_properties``); when given with ``report``, ``report["unproven"]`` counts the replaced
+    subqueries, nested scalar ones included, that it could not vouch for. A proof then needs
+    ``ASSUMPTION`` only if that count is not zero.
     """
 
     left_tree = sqlglot.parse_one(left_sql, read=dialect)
@@ -158,6 +163,9 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
         for node in nodes:
             if node.find_ancestor(exp.Subquery) in nodes:
                 continue
+            if single_row is not None and report is not None:
+                scalars = [node] + [n for n in node.find_all(exp.Subquery) if n is not node and not isinstance(n.parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.Union, exp.Subquery, exp.Table, exp.TableAlias))]
+                report["unproven"] = report.get("unproven", 0) + sum(1 for n in scalars if not single_row(n.this.sql(dialect=dialect)))
             index = class_of(node)
             node.replace(exp.Anonymous(this=PLACEHOLDER, expressions=[exp.Literal.number(index)]))
             replaced = True
