@@ -76,6 +76,7 @@ EVAL_FILES = {
     "test_lineage_goldens_bench.py",
     "test_llmr2_bench.py",
     "test_model_reuse_evals.py",
+    "test_mv_workload_bench.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",

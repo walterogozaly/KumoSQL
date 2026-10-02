@@ -35,14 +35,13 @@ from pathlib import Path
 import re
 import sys
 
-import logging
-import os
-
-
 import sqlglot
 from sqlglot import exp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from bench_common import quiet as _quiet, today, write_results as _write_results  # noqa: E402
 
 from kumosql.pipeline import Pipeline  # noqa: E402
 from kumosql.pipeline_types import ColumnRef, Model, Target  # noqa: E402
@@ -242,15 +241,12 @@ def run() -> dict:
     }
 
 
-RESULTS = Path(__file__).resolve().parent.parent / "benchmarks" / "results" / "sqllineage.json"
-
-
 def write_results(result: dict, seconds: float) -> None:
     t = result["in_scope"]
     left = sum(result["left_out"].values())
-    RESULTS.write_text(
-        json.dumps(
-            {
+    _write_results(
+        "sqllineage",
+        {
                 "suite": "SQLLineage test cases",
                 "order": 200,
                 "size": t["total"],
@@ -265,7 +261,7 @@ def write_results(result: dict, seconds: float) -> None:
                 "held_out": "none",
                 "docs": "docs/lineage-bench.md#sqllineage-test-cases",
                 "command": "python tools/sqllineage_bench.py --details",
-                "date": "2026-10-02",
+                "date": today(),
                 "caveats": (
                     f"Adapted from SQLLineage's tests (MIT); {left} of the {t['total'] + left} adapted cases are left out because they are not BigQuery SQL "
                     "(other dialects, lateral column aliases, DROP/RENAME lifecycles). Bugs it found were fixed in the same change, so it is a floor, not a held-out score."
@@ -275,19 +271,8 @@ def write_results(result: dict, seconds: float) -> None:
                     "(recall counts edges KumoSQL reports as unknown)"
                 ),
                 "performance": f"{t['total']} cases in {seconds:.1f} s",
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+        },
     )
-
-
-def _quiet() -> None:
-    """Command-line runs print results, not per-stage timings or sqlglot warnings (kept out of module import so tests are unaffected)."""
-
-    os.environ.setdefault("KUMOSQL_TIMING", "0")
-    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 
 def main() -> None:
