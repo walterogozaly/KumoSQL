@@ -176,6 +176,8 @@ def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None)
     parts = [*conjuncts, *outputs, *group] + ([having] if having is not None else [])
     for part in parts:
         for node in part.walk():
+            if isinstance(node, exp.In) and not node.args.get("query") and not node.args.get("unnest") and not node.args.get("field") and all(isinstance(e, exp.Literal) or isinstance(e, exp.Null) for e in node.expressions):
+                continue  # x IN (literal, ...) is a plain predicate
             if isinstance(node, _TOP_LEVEL_UNSUPPORTED) and not (isinstance(node, exp.Star) and isinstance(node.parent, exp.Count)):
                 raise _Unsupported(f"unsupported construct: {type(node).__name__}")
     order = list(tree.args["order"].expressions) if tree.args.get("order") else []

@@ -70,6 +70,7 @@ EVAL_FILES = {
     "test_incremental.py",
     "test_lineage_benchmarks.py",
     "test_model_reuse_evals.py",
+    "test_mv_workload_bench.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
