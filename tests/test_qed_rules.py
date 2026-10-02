@@ -92,7 +92,7 @@ def test_mysql_cast_to_char_of_a_varchar_column_is_identity():
 
 
 def test_set_operations_of_one_table_become_filters():
-    from kumosql.set_filters import merge_same_source
+    from kumosql.setop_rules import merge_same_source
 
     union = merge_same_source(sqlglot.parse_one("SELECT a.x FROM t AS a WHERE a.y = 1 UNION SELECT b.x FROM t AS b WHERE b.y = 2"))
     assert _sql(union) == "SELECT DISTINCT a.x FROM t AS a WHERE (a.y = 1) OR (a.y = 2)"
@@ -106,7 +106,7 @@ def test_set_operations_of_one_table_become_filters():
 
 
 def test_intersect_and_except_become_exists_tests():
-    from kumosql.set_filters import set_operation_to_exists
+    from kumosql.setop_rules import set_operation_to_exists
 
     tree = set_operation_to_exists(sqlglot.parse_one("SELECT x AS c FROM t EXCEPT SELECT y AS d FROM u"))
     assert "NOT EXISTS" in _sql(tree) and "<=>" in _sql(tree) and _sql(tree).startswith("SELECT DISTINCT")

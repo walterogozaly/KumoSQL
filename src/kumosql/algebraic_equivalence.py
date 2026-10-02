@@ -47,10 +47,9 @@ from .row_bound_rules import trim_redundant_row_clauses
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .empty_rules import canonical_empty, propagate_empty
-from .set_filters import merge_same_source, set_operation_to_exists
+from .setop_rules import merge_same_source, normalize_set_operations, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
 from .partition_rules import recombine_partitions
-from .setop_rules import normalize_set_operations
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic

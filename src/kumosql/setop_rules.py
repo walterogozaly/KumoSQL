@@ -12,6 +12,10 @@ Each rule is an exact bag identity; a shape the rule cannot read is left alone.
 * ``X EXCEPT [ALL] X`` has no rows when both operands are the same deterministic query.
 * ``X EXCEPT ALL E`` is ``X`` and ``X EXCEPT E`` is ``SELECT DISTINCT`` over ``X`` when ``E``
   can never return a row.
+* Inside a DISTINCT set operation, a ``GROUP BY`` of exactly an operand's outputs is dropped.
+* ``merge_same_source`` and ``set_operation_to_exists`` (below, called from the normalizer's
+  per-node step): DISTINCT set operations of filters over one table as one filter, and other
+  ``INTERSECT``/``EXCEPT`` as ``EXISTS``/``NOT EXISTS`` tests.
 
 A query has no repeated rows when it is a DISTINCT set operation, ``SELECT DISTINCT``, a
 ``GROUP BY`` that outputs every grouping expression, a global aggregate (one row), or a
@@ -328,82 +332,6 @@ def _drop_operand_grouping(node: exp.SetOperation) -> exp.Expression | None:
     return changed
 
 
-def _filtered_projection(node: exp.Expression):
-    """``SELECT [DISTINCT] t.a, t.b FROM t WHERE p``: the select, its table, the column names and ``p``."""
-
-    select = _unwrap(node)
-    if not isinstance(select, exp.Select) or any(select.args.get(k) for k in _EXTRAS if k != "where"):
-        return None
-    distinct = select.args.get("distinct")
-    if distinct is not None and distinct.args.get("on"):
-        return None
-    from_ = select.args.get("from_") or select.args.get("from")
-    table = from_.this if from_ is not None else None
-    if not isinstance(table, exp.Table) or any(table.args.get(k) for k in ("joins", "pivots", "laterals", "sample", "version", "when")):
-        return None
-    alias = table.alias_or_name.lower()
-    if table.args.get("alias") is not None and table.args["alias"].args.get("columns"):
-        return None
-    # Inside another query an unqualified name could be an outer reference; at the top it is the table's.
-    owners = {alias} if select.find_ancestor(exp.Select) is not None else {alias, ""}
-    names = []
-    for item in select.expressions:
-        column = item.this if isinstance(item, exp.Alias) else item
-        if not isinstance(column, exp.Column) or isinstance(column.this, exp.Star) or column.table.lower() not in owners:
-            return None
-        names.append(column.name.lower())
-    where = select.args.get("where")
-    condition = where.this if where is not None else None
-    if condition is not None:
-        if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select, exp.Window, exp.AggFunc, exp.Star)) for n in condition.walk()) or not _deterministic(condition):
-            return None
-        if any(c.table.lower() not in owners for c in condition.find_all(exp.Column)):
-            return None
-    key = (".".join(p.name.lower() for p in table.parts), tuple(names))
-    return select, alias, key, condition
-
-
-def _merge_same_table_filters(node: exp.SetOperation) -> exp.Expression | None:
-    """DISTINCT set operations of filters over one table that output the same columns, as one filter.
-
-    ``SELECT a, b FROM t WHERE p UNION SELECT a, b FROM t WHERE q`` is ``SELECT DISTINCT a, b FROM t WHERE p OR q``.
-    When ``q`` reads only output columns, a row is in ``SELECT a, b FROM t WHERE q`` exactly when it is a row of
-    ``SELECT a, b FROM t`` on which ``q`` holds, so INTERSECT is ``p AND q`` and EXCEPT is
-    ``p AND NOT COALESCE(q, FALSE)``.
-    """
-
-    if not node.args.get("distinct"):
-        return None
-    left, right = _filtered_projection(node.this), _filtered_projection(node.expression)
-    if left is None or right is None or left[2] != right[2]:
-        return None
-    select, alias, (_, names), p = left
-    _, right_alias, _, q = right
-    if q is not None:
-        q = q.copy()
-        for column in q.find_all(exp.Column):
-            column.set("table", exp.to_identifier(alias))
-    if not isinstance(node, exp.Union) or type(node) is not exp.Union:
-        if q is not None and any(c.name.lower() not in names for c in q.find_all(exp.Column)):
-            return None
-    if type(node) is exp.Union:
-        condition = None if p is None or q is None else exp.Or(this=exp.Paren(this=p.copy()), expression=exp.Paren(this=q))
-    elif isinstance(node, exp.Intersect):
-        parts = [x for x in (p.copy() if p is not None else None, q) if x is not None]
-        condition = None if not parts else parts[0] if len(parts) == 1 else exp.And(this=exp.Paren(this=parts[0]), expression=exp.Paren(this=parts[1]))
-    elif isinstance(node, exp.Except):
-        if q is None:
-            return _empty_like(node.this)
-        negated = exp.Not(this=exp.Coalesce(this=exp.Paren(this=q), expressions=[exp.false()]))
-        condition = negated if p is None else exp.And(this=exp.Paren(this=p.copy()), expression=negated)
-    else:
-        return None
-    merged = select.copy()
-    merged.set("where", exp.Where(this=condition) if condition is not None else None)
-    merged.set("distinct", exp.Distinct())
-    return merged
-
-
 def _setop_identities(node: exp.SetOperation) -> exp.Expression | None:
     if not _plain_setop(node):
         return None
@@ -416,15 +344,15 @@ def _setop_identities(node: exp.SetOperation) -> exp.Expression | None:
                 return _distinct_over(_unwrap(left))
             return _unwrap(left).copy()
     if node.args.get("distinct"):
-        return _merge_same_table_filters(node) or _drop_operand_grouping(node)
+        return _drop_operand_grouping(node)
     if isinstance(node, exp.Intersect) and (distinct_rows(left) or distinct_rows(right)):
         copy = node.copy()
         copy.set("distinct", True)
-        return copy
+        return _drop_operand_grouping(copy) or copy
     if isinstance(node, exp.Except) and distinct_rows(left):
         copy = node.copy()
         copy.set("distinct", True)
-        return copy
+        return _drop_operand_grouping(copy) or copy
     return None
 
 
@@ -446,3 +374,210 @@ def normalize_set_operations(tree: exp.Expression) -> exp.Expression:
         return replacement
 
     return tree.transform(step)
+
+
+# --- Filters and EXISTS tests (moved here from set_filters.py) ---------------------------------
+#
+# Duplicate-removing set operations as filters and EXISTS tests.
+#
+# Two rewrites of ``UNION``, ``INTERSECT`` and ``EXCEPT`` (the duplicate-removing forms, not ``ALL``):
+#
+# * ``merge_same_source``: both operands select the same expressions from the same single table and
+#   differ only in their filters ``p`` and ``q``. Then ``UNION`` is ``SELECT DISTINCT .. WHERE p OR q``.
+#   When ``q`` reads only projected columns, a row's ``q`` depends only on its output values, so
+#   ``INTERSECT`` is ``.. WHERE p AND q`` and ``EXCEPT`` is ``.. WHERE p AND NOT COALESCE(q, FALSE)``
+#   (for ``INTERSECT`` it is enough that either filter reads only projected columns). Calcite's
+#   ``UnionToFilterRule``, ``IntersectToFilterRule`` and ``MinusToFilterRule`` do this.
+# * ``set_operation_to_exists``: ``A INTERSECT B`` is ``SELECT DISTINCT a.* FROM (A) a WHERE EXISTS
+#   (SELECT 1 FROM (B) b WHERE a.c1 <=> b.d1 AND ..)``, and ``EXCEPT`` is the same with ``NOT EXISTS``;
+#   set operations compare rows with NULLs equal, which ``<=>`` spells. It only fires once both operands
+#   read plain tables, so that ``merge_same_source`` gets the first chance.
+_sf_counter = itertools.count()
+_sf_BLOCKERS = ("group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with", "laterals", "pivots")
+
+
+def _sf_unwrap(node: exp.Expression) -> exp.Expression:
+    while isinstance(node, (exp.Subquery, exp.Paren)) and not node.alias:
+        node = node.this
+    return node
+
+
+def _sf_operand(node: exp.Expression) -> exp.Select | None:
+    node = _sf_unwrap(node)
+    return node if isinstance(node, exp.Select) else None
+
+
+def _sf_from(select: exp.Select) -> exp.Expression | None:
+    from_ = select.args.get("from_") or select.args.get("from")
+    return from_.this if from_ is not None else None
+
+
+def _sf_deterministic(node: exp.Expression) -> bool:
+    return not any(isinstance(n, (exp.Rand, exp.Anonymous, exp.AggFunc, exp.Window, exp.Subquery, exp.Exists, exp.Placeholder)) for n in node.walk())
+
+
+def _sf_flatten(select: exp.Select) -> exp.Select | None:
+    """``SELECT f(d.x) FROM (SELECT g(t.y) AS x FROM t WHERE w) AS d WHERE h(d.x)`` read as one select of ``t``."""
+
+    while True:
+        source = _sf_from(select)
+        if not isinstance(source, exp.Subquery) or not source.alias:
+            return select
+        inner = source.this
+        if not isinstance(inner, exp.Select) or select.args.get("joins") or any(select.args.get(k) for k in _sf_BLOCKERS):
+            return None
+        if inner.args.get("distinct") or any(inner.args.get(k) for k in _sf_BLOCKERS):
+            return None
+        if any(isinstance(n, (exp.Subquery, exp.Exists)) and not _sf_within(n, source) for n in select.walk()):
+            return None
+        mapping = {}
+        for item in inner.expressions:
+            name = item.alias_or_name.lower()
+            if not name or name in mapping or isinstance(_sf_value(item), exp.Star) or not _sf_deterministic(_sf_value(item)):
+                return None
+            mapping[name] = _sf_value(item)
+        alias = source.alias.lower()
+        flat = select.copy()
+        flat.set("from_", None)
+        flat.set("from", None)
+        flat_where = flat.args.get("where")
+        for column in list(flat.find_all(exp.Column)):
+            if column.table.lower() not in ("", alias) or column.name.lower() not in mapping:
+                return None
+            value = mapping[column.name.lower()].copy()
+            column.replace(value if isinstance(value, (exp.Column, exp.Literal)) else exp.Paren(this=value))
+        for item in flat.expressions:
+            if not isinstance(item, exp.Alias) and not (isinstance(item, exp.Column)):
+                return None
+        flat.set("expressions", [item if isinstance(item, exp.Alias) or item.alias_or_name.lower() == original.alias_or_name.lower() else exp.alias_(item, original.alias_or_name) for item, original in zip(flat.expressions, select.expressions)])
+        inner_from = inner.args.get("from_") or inner.args.get("from")
+        if inner_from is None:
+            return None
+        flat.set("from_", inner_from.copy())
+        flat.set("joins", [j.copy() for j in inner.args.get("joins") or []] or None)
+        parts = [w.this.copy() for w in (inner.args.get("where"), flat_where) if w is not None]
+        flat.set("where", exp.Where(this=exp.and_(*[exp.Paren(this=p) for p in parts])) if parts else None)
+        select = flat
+
+
+def _sf_within(node: exp.Expression, ancestor: exp.Expression) -> bool:
+    while node is not None:
+        if node is ancestor:
+            return True
+        node = node.parent
+    return False
+
+
+def _sf_single_table(select: exp.Select):
+    """``(table, alias, projections, where)`` for a projection and filter of one table, else None."""
+
+    if any(select.args.get(k) for k in _sf_BLOCKERS) or select.args.get("joins"):
+        return None
+    table = _sf_from(select)
+    if not isinstance(table, exp.Table) or table.args.get("joins"):
+        return None
+    alias = (table.alias_or_name or "").lower()
+    where = select.args.get("where")
+    parts = list(select.expressions) + ([where.this] if where is not None else [])
+    for part in parts:
+        if not _sf_deterministic(part) or isinstance(part, exp.Star):
+            return None
+        if any(c.table.lower() not in ("", alias) or isinstance(c.this, exp.Star) for c in part.find_all(exp.Column)):
+            return None
+    return table, alias, select.expressions, where.this if where is not None else None
+
+
+def _sf_rename(node: exp.Expression, old: str, new: str) -> exp.Expression:
+    node = node.copy()
+    for column in node.find_all(exp.Column):
+        if column.table.lower() in ("", old):
+            column.set("table", exp.to_identifier(new))
+    return node
+
+
+def _sf_value(item: exp.Expression) -> exp.Expression:
+    return item.this if isinstance(item, exp.Alias) else item
+
+
+def _sf_reads_only(condition: exp.Expression | None, projected: set[str]) -> bool:
+    if condition is None:
+        return True
+    return all(c.name.lower() in projected for c in condition.find_all(exp.Column))
+
+
+def merge_same_source(node: exp.Expression) -> exp.Expression | None:
+    if not isinstance(node, (exp.Union, exp.Intersect, exp.Except)) or not node.args.get("distinct", True):
+        return None
+    if isinstance(node, exp.Union) and (node.find_ancestor(exp.SetOperation) is not None or any(isinstance(_sf_unwrap(o), exp.SetOperation) for o in (node.this, node.expression))):
+        return None  # a chain of unions is flattened into one n-ary union instead, on both sides alike
+    left, right = _sf_operand(node.this), _sf_operand(node.expression)
+    left, right = left and _sf_flatten(left), right and _sf_flatten(right)
+    if left is None or right is None:
+        return None
+    a, b = _sf_single_table(left), _sf_single_table(right)
+    if a is None or b is None:
+        return None
+    (a_table, a_alias, a_items, p), (b_table, b_alias, b_items, q) = a, b
+    if a_table.name.lower() != b_table.name.lower() or a_table.args.get("db") != b_table.args.get("db") or len(a_items) != len(b_items):
+        return None
+    target = a_table.alias_or_name
+    if [_sf_rename(_sf_value(i), a_alias, target).sql() for i in a_items] != [_sf_rename(_sf_value(i), b_alias, target).sql() for i in b_items]:
+        return None
+    q = _sf_rename(q, b_alias, target) if q is not None else None
+    projected = {_sf_value(i).name.lower() for i in a_items if isinstance(_sf_value(i), exp.Column)}
+    if isinstance(node, exp.Union):
+        if p is None or q is None:
+            condition = None
+        else:
+            condition = exp.Or(this=exp.Paren(this=p.copy()), expression=exp.Paren(this=q))
+    elif isinstance(node, exp.Intersect):
+        if not (_sf_reads_only(p, projected) or _sf_reads_only(q, projected)):
+            return None
+        parts = [exp.Paren(this=c.copy()) for c in (p, q) if c is not None]
+        condition = exp.and_(*parts) if parts else None
+    else:
+        if not _sf_reads_only(q, projected):
+            return None
+        rejected = exp.false() if q is None else exp.Not(this=exp.Coalesce(this=exp.Paren(this=q), expressions=[exp.false()]))
+        condition = exp.and_(exp.Paren(this=p.copy()), rejected) if p is not None else rejected
+    merged = left.copy()
+    merged.set("where", exp.Where(this=condition) if condition is not None else None)
+    merged.set("distinct", exp.Distinct())
+    return merged
+
+
+def _sf_plain(select: exp.Select) -> bool:
+    sources = [_sf_from(select)] + [j.this for j in select.args.get("joins") or []]
+    return all(isinstance(s, exp.Table) for s in sources)
+
+
+def _sf_names(select: exp.Select) -> list[str] | None:
+    names = [item.alias_or_name.lower() for item in select.expressions]
+    if any(not n or n == "*" for n in names) or len(set(names)) != len(names):
+        return None
+    return names
+
+
+def set_operation_to_exists(node: exp.Expression) -> exp.Expression | None:
+    if not isinstance(node, (exp.Intersect, exp.Except)) or not node.args.get("distinct", True):
+        return None
+    left, right = _sf_operand(node.this), _sf_operand(node.expression)
+    if left is None or right is None or not all(f is not None and _sf_plain(f) for f in (_sf_flatten(left), _sf_flatten(right))):
+        return None
+    if is_empty(left) or is_empty(right):  # left to the empty-operand folding
+        return None
+    a, b = _sf_names(left), _sf_names(right)
+    if a is None or b is None or len(a) != len(b):
+        return None
+    n = next(_sf_counter)
+    outer, inner = f"kumosql_s{n}", f"kumosql_r{n}"
+    match = exp.and_(*[exp.NullSafeEQ(this=exp.column(x, table=outer), expression=exp.column(y, table=inner)) for x, y in zip(a, b)])
+    probe = exp.select("1").from_(exp.Subquery(this=right.copy(), alias=exp.TableAlias(this=exp.to_identifier(inner)))).where(match)
+    test: exp.Expression = exp.Exists(this=probe)
+    if isinstance(node, exp.Except):
+        test = exp.Not(this=test)
+    out = exp.select(*[exp.alias_(exp.column(x, table=outer), x) for x in a]).from_(
+        exp.Subquery(this=left.copy(), alias=exp.TableAlias(this=exp.to_identifier(outer)))
+    ).where(test)
+    out.set("distinct", exp.Distinct())
+    return out
