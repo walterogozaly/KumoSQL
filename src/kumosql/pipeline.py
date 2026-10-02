@@ -539,11 +539,12 @@ class Pipeline:
 
     def model_record(
         self, key: str, profile: object | None = None, tags: "Mapping[str, list[str]] | None" = None,
-        sources: "list | None" = None,
+        sources: "list | None" = None, catalogs: "Mapping[str, list[str]] | None" = None,
     ) -> dict[str, object]:
         """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own.
 
         ``tags`` is :func:`kumosql.tags.tag_lookup` (computed once for many models); ``tag`` is empty without it.
+        ``catalogs`` is :func:`kumosql.catalogs.lookup`; ``catalog`` is empty without it.
         ``sources`` is :func:`kumosql.data_sources.join_index` (built once for many models): the columns of data
         sources with a ``full_name`` column join the model's own ``project.dataset.name``.
         """
@@ -563,6 +564,7 @@ class Pipeline:
             "path": model.path,
             "depends_on": [dep.key for dep in model.declared_dependencies],
             "tag": list((tags or {}).get(key.strip().casefold(), ())),
+            "catalog": list((catalogs or {}).get(key.strip().casefold(), ())),
         }
         if profile is not None:
             record.update(profile_record(profile))
@@ -597,8 +599,13 @@ class Pipeline:
             from .tags import tag_lookup
 
             tags = tag_lookup(self)
+        catalogs = None
+        if {"catalog"} & set(map(str.casefold, scope.fields_used())):
+            from .catalogs import lookup
+
+            catalogs = lookup(self)
         index = data_sources.join_index()
-        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index))}
+        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index, catalogs))}
 
     def assess_schema_change(self, kind: str, table: str, column: str, **kwargs):
         """Which models break, and which change their output columns or types, if ``table`` gains, loses, renames or retypes ``column``."""
@@ -615,6 +622,7 @@ class Pipeline:
         *,
         scope: "SavedScope | None" = None,
         observed_reads: Iterable[object] = (),
+        owned=None,
     ):
         """Blast radius of a drop, rename, changed expression or dropped table.
 
@@ -627,7 +635,7 @@ class Pipeline:
 
         from .impact import assess_change
 
-        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads)
+        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads, owned=owned)
 
     def _scoped(self, report: dict, scope: "SavedScope") -> dict:
         keep = self.scope_keys(scope)
