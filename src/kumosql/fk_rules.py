@@ -88,6 +88,13 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
             continue
         child_name, parent_name = child.name.lower(), parent.name.lower()
         declared = {c.lower() for c in (not_null or {}).get(child_name, frozenset())}
+        where = select.args.get("where")
+        for part in (_conjuncts(where.this) if where is not None else []):
+            # a WHERE conjunct ``child.col IS NOT NULL`` makes the column non-NULL for every row that is kept
+            if isinstance(part, exp.Not) and isinstance(part.this, exp.Is) and isinstance(part.this.expression, exp.Null):
+                column = part.this.this
+                if isinstance(column, exp.Column) and column.table.lower() == child_alias:
+                    declared.add(column.name.lower())
         wanted = {child_col: parent_col for parent_col, child_col in pairs.items()}
         covered = any(
             _same_table(parent_name, fk_parent) and {c.lower(): p.lower() for c, p in zip(cols, parent_cols)} == wanted
