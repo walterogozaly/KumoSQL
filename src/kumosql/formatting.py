@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 import re
 
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
+from .layout_equivalence import restore_function_case
 from .sqlx import looks_like_sqlx
 
 DIALECT = "bigquery"
@@ -224,7 +225,7 @@ def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.
     if not sql.endswith("\n"):
         formatted = formatted.rstrip("\n")
-    return _restore_quoted(sql, formatted)
+    return restore_function_case(sql, _restore_quoted(sql, formatted))
 
 
 @register_rule
