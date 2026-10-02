@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
+import json
 from pathlib import Path
 import random
 import re
@@ -310,6 +311,21 @@ class SuiteResult:
     unchecked: int = 0
     seconds: float = 0.0
     unproved: list = field(default_factory=list)
+    excluded: list = field(default_factory=list)  # pairs that must stay unproven (see tests/fixtures/sqlsolver/not_provable.json)
+
+    @property
+    def scored(self) -> int:
+        """Pairs a prover should prove: all of them except the ones that must stay unproven."""
+
+        return self.total - len(self.excluded)
+
+
+def must_not_prove(name: str) -> dict[int, str]:
+    """Pairs of a suite that hold only if tie-breaking is fixed (LIMIT without ORDER BY) and so must never be
+    proved as written, with the reason. They stay in the suite as a guard and leave the score's denominator."""
+
+    path = FIXTURES / "not_provable.json"
+    return {int(index): reason for index, reason in json.loads(path.read_text(encoding="utf-8")).get(name, {}).items()}
 
 
 def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> SuiteResult:
@@ -317,6 +333,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     tables = load_schema(FIXTURES / schema_file)
     pairs = load_pairs(FIXTURES / pairs_file)[:limit]
     result = SuiteResult(name, total=len(pairs))
+    result.excluded = sorted(index for index in must_not_prove(name) if index < len(pairs))
     start = time.time()
     db = new_database(tables)
     for index, (left, right) in enumerate(pairs):
@@ -330,6 +347,9 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
             continue
         if not proof:
             result.unproved.append((index, "not proven"))
+            continue
+        if index in result.excluded:
+            result.wrong.append((index, "proved, but the pair must stay unproven"))
             continue
         result.proved += 1
         counter = differ(left, right, tables, db, trials, constants=name in CONSTANT_GROUPING)
@@ -367,11 +387,11 @@ def prove_result(left: str, right: str, tables: dict[str, Table], constants: boo
 
 def main(argv: list[str] | None = None) -> int:
     names = (argv if argv is not None else sys.argv[1:]) or list(SUITES)
-    print(f"{'suite':8} {'pairs':>6} {'proved':>7} {'unknown':>8} {'wrong':>6} {'unchecked':>10} {'sec':>6}")
+    print(f"{'suite':8} {'pairs':>6} {'scored':>7} {'proved':>7} {'unknown':>8} {'wrong':>6} {'unchecked':>10} {'sec':>6}")
     bad = 0
     for name in names:
         r = run_suite(name, default_prove)
-        print(f"{r.name:8} {r.total:6} {r.proved:7} {r.total - r.proved:8} {len(r.wrong):6} {r.unchecked:10} {r.seconds:6.1f}")
+        print(f"{r.name:8} {r.total:6} {r.scored:7} {r.proved:7} {r.scored - r.proved:8} {len(r.wrong):6} {r.unchecked:10} {r.seconds:6.1f}")
         bad += len(r.wrong)
     return 1 if bad else 0
 
