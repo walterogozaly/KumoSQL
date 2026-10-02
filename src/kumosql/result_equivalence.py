@@ -384,6 +384,7 @@ def prepare_statements(
     schema: Schema,
     *,
     run_tag: str,
+    dialect: str = "bigquery",
 ) -> tuple[list[str], str | None]:
     """Translate BigQuery SQL (or SQLX) to DuckDB statements for one isolated run.
 
@@ -396,9 +397,9 @@ def prepare_statements(
     if looks_like_sqlx(sql):
         sql = sqlx_to_sql(sql)
     try:
-        statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
+        statements = [s for s in sqlglot.parse(sql, read=dialect) if s is not None]
     except sqlglot.errors.ParseError as exc:
-        raise ExecutionError(f"BigQuery parse failed: {exc}") from exc
+        raise ExecutionError(f"{dialect} parse failed: {exc}") from exc
     if not statements:
         raise ExecutionError("no SQL statements to execute")
 
@@ -555,9 +556,12 @@ class DatasetRunner:
     ``schema`` (scripts and writes still go through ``execute_on_dataset``).
     """
 
-    def __init__(self, schema: Schema):
+    def __init__(self, schema: Schema, dialect: str = "bigquery", settings: Iterable[str] = ()):
         self.schema = schema
+        self.dialect = dialect
         self._connection = _connect()
+        for statement in settings:
+            self._connection.execute(statement)
         self._loaded: SyntheticDataset | None = None
         columns_by_table = {key: tuple((n, _normalize_type(t)) for n, t in cols.items()) for key, cols in schema.items()}
         for key, columns in columns_by_table.items():
@@ -579,7 +583,7 @@ class DatasetRunner:
 
         cached = self._prepared.get(sql)
         if cached is None:
-            statements, last_target = prepare_statements(sql, self.schema, run_tag="runner")
+            statements, last_target = prepare_statements(sql, self.schema, run_tag="runner", dialect=self.dialect)
             if len(statements) != 1 or last_target is not None:
                 raise ExecutionError("a dataset runner takes exactly one query")
             cached = self._prepared[sql] = statements[0]
