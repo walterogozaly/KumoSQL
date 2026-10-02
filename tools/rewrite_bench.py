@@ -234,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                 cost = _explain_cost(executor, case["database"])
             outcome = query_optimizer.optimize(
                 case["sql"],
-                query_optimizer.Catalog.from_schema_profile(case["profile"]),
+                _catalog(case, executor),
                 dialect="postgres",
                 cost=cost,
             )
@@ -292,7 +292,7 @@ def _rewrite_case(case: dict, explain: tuple | None = None) -> dict:
         cost = _explain_cost(executor, case["database"]) if executor is not None else None
         try:
             outcome = query_optimizer.optimize(
-                case["sql"], query_optimizer.Catalog.from_schema_profile(case["profile"]), dialect="postgres", cost=cost
+                case["sql"], _catalog(case, executor), dialect="postgres", cost=cost
             )
         finally:
             for conn in (executor.connections.values() if executor is not None else ()):
@@ -305,6 +305,52 @@ def _rewrite_case(case: dict, explain: tuple | None = None) -> dict:
         "reason": outcome.reason,
         "seconds": round(time.perf_counter() - started, 3),
     }
+
+
+def _catalog(case: dict, executor: "Executor | None") -> query_optimizer.Catalog:
+    """The case's schema profile, completed from the database's own catalog when one is connected.
+
+    Profiles list only some of the tables a query reads; the rest (columns, types,
+    NOT NULL, primary keys) come from ``information_schema``, so stars expand and
+    columns resolve. Tables the profile describes keep the profile's description.
+    """
+
+    tables = list((case["profile"] or {}).get("tables") or [])
+    if executor is not None:
+        known = {str(t["name"]).lower() for t in tables}
+        try:
+            tables += [t for t in _database_tables(executor, case["database"]) if t["name"] not in known]
+        except Exception:  # noqa: BLE001 - without the database the profile alone is used
+            pass
+    return query_optimizer.Catalog.from_schema_profile({"tables": tables})
+
+
+_DATABASE_TABLES: dict = {}
+
+
+def _database_tables(executor: "Executor", database: str) -> list[dict]:
+    if database not in _DATABASE_TABLES:
+        conn = executor._connection(database)
+        rows = conn.execute(
+            "SELECT table_name, column_name, data_type, is_nullable, ordinal_position FROM information_schema.columns "
+            "WHERE table_schema = 'public' ORDER BY table_name, ordinal_position"
+        ).fetchall()
+        keys = conn.execute(
+            "SELECT k.table_name, k.column_name FROM information_schema.table_constraints c "
+            "JOIN information_schema.key_column_usage k ON c.constraint_name = k.constraint_name AND c.table_name = k.table_name "
+            "WHERE c.constraint_type = 'PRIMARY KEY' AND c.table_schema = 'public' ORDER BY k.table_name, k.ordinal_position"
+        ).fetchall()
+        tables: dict[str, dict] = {}
+        for table, column, kind, nullable, position in rows:
+            entry = tables.setdefault(table.lower(), {"name": table.lower(), "columns": [], "primary_key": []})
+            entry["columns"].append(
+                {"column_name": column, "data_type": kind, "is_nullable": nullable, "ordinal_position": position}
+            )
+        for table, column in keys:
+            if table.lower() in tables:
+                tables[table.lower()]["primary_key"].append(column)
+        _DATABASE_TABLES[database] = list(tables.values())
+    return _DATABASE_TABLES[database]
 
 
 def _explain_cost(executor: Executor, database: str):

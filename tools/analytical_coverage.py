@@ -98,6 +98,16 @@ def _tie_sensitive(sql: str) -> bool:
     return any(not window_is_tie_stable(w) for w in sqlglot.parse_one(sql, read="bigquery").find_all(sqlglot.exp.Window))
 
 
+def _nondeterministic(sql: str, schema, attempts: int = 3) -> bool:
+    """Whether the query disagrees with itself on the same data (``STRING_AGG`` without ``ORDER BY``, ties
+    under ``ORDER BY``). The equivalence check samples two runs per side, so one pass can miss it."""
+
+    return any(
+        check_result_equivalence(sql, sql, schema, seeds=EXECUTION_SEEDS).status is not ResultEquivalenceStatus.EQUIVALENT
+        for _ in range(attempts)
+    )
+
+
 def _execution(original: str, rewrites: dict[str, object], schema) -> tuple[str, str]:
     """Run the original and each changed rewrite on generated data; proven rewrites must agree."""
 
@@ -119,6 +129,8 @@ def _execution(original: str, rewrites: dict[str, object], schema) -> tuple[str,
             ties.append(name)
         elif check.status is ResultEquivalenceStatus.DIFFERENT and _tie_sensitive(original):
             notes.append(f"{name}: results differ, but a tie-sensitive window (ROW_NUMBER, LAG, ...) can differ between any two runs")
+        elif check.status is ResultEquivalenceStatus.DIFFERENT and _nondeterministic(original, schema):
+            notes.append(f"{name}: results differ, but the original itself returns different rows on reruns")
         elif check.status is ResultEquivalenceStatus.DIFFERENT:
             if result.verification.trusted:
                 return FAIL, f"{name}: proven rewrite returns different rows (seed {check.failing_seed})"

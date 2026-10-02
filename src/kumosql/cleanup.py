@@ -17,8 +17,6 @@ normalizes the same constructs independently (see ``equivalence.py``):
 
 from __future__ import annotations
 
-import re
-
 from sqlglot import exp
 from sqlglot.dialects.bigquery import BigQuery
 from sqlglot.tokens import TokenType
@@ -28,54 +26,18 @@ from .ast_utils import (
     cte_alias_name,
     cte_dependency_errors,
     has_nested_with,
+    inside as _inside,
     is_cte_reference_candidate,
     set_with_clause,
     top_level_query,
     with_clause,
 )
 from .engine import RewriteRule, RuleDiagnostic, register_rule
-from .equivalence import _nondeterminism_reasons
+from .equivalence import _literal_compare, _nondeterminism_reasons
 
 
 # ---------------------------------------------------------------------------
 # Trivial predicates
-
-
-_INT64_MAX = 2**63 - 1
-
-
-def _literal_compare(node, left, right) -> bool | None:
-    """Compare two numeric literals the way BigQuery would, when certain.
-
-    Two INT64 literals compare exactly. Any other pair (a FLOAT64 or NUMERIC
-    literal) is only decided when the texts are identical, because BigQuery
-    may coerce INT64 to FLOAT64 and lose precision.
-    """
-
-    if not (
-        isinstance(left, exp.Literal)
-        and isinstance(right, exp.Literal)
-        and not left.is_string
-        and not right.is_string
-    ):
-        return None
-    texts = (left.this, right.this)
-    if all(re.fullmatch(r"[0-9]+", text) for text in texts):
-        a, b = (int(text) for text in texts)
-        if max(a, b) > _INT64_MAX:
-            return None
-    elif texts[0] == texts[1]:
-        a = b = 0
-    else:
-        return None
-    return {
-        exp.EQ: a == b,
-        exp.NEQ: a != b,
-        exp.GT: a > b,
-        exp.GTE: a >= b,
-        exp.LT: a < b,
-        exp.LTE: a <= b,
-    }[type(node)]
 
 
 _COMPARISONS_FOLDED = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
@@ -473,12 +435,3 @@ class RemoveUnusedCtesRule(RewriteRule):
         if removed and not clause.expressions:
             set_with_clause(query, None)
         return removed, []
-
-
-def _inside(node: exp.Expression, ancestor: exp.Expression) -> bool:
-    parent = node.parent
-    while parent is not None:
-        if parent is ancestor:
-            return True
-        parent = parent.parent
-    return False

@@ -17,6 +17,8 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import faithful_sql, select_sources as _sources
+
 ASSUMPTION = "uncorrelated scalar subqueries return at most one row"
 MAX_PROOFS = 8
 PLACEHOLDER = "kumosql_scalar"
@@ -36,13 +38,6 @@ def _select_names(select: exp.Expression) -> list[str] | None:
             return None
         names.append(name.lower())
     return names
-
-
-def _sources(select: exp.Select) -> list[exp.Expression]:
-    from_ = select.args.get("from_") or select.args.get("from")
-    found = [from_.this] if from_ is not None else []
-    found += [join.this for join in select.args.get("joins") or []]
-    return found
 
 
 def _table_key(table: exp.Table) -> str:
@@ -143,7 +138,7 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
 
     def class_of(node: exp.Subquery) -> int:
         nonlocal proofs
-        text = node.this.sql(dialect="bigquery")
+        text = faithful_sql(node.this, dialect)
         for index, representative in enumerate(classes):
             if representative == text:
                 return index
@@ -165,8 +160,8 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
                 continue
             if single_row is not None and report is not None:
                 scalars = [node] + [n for n in node.find_all(exp.Subquery) if n is not node and not isinstance(n.parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.SetOperation, exp.Subquery, exp.Table, exp.TableAlias))]
-                report["unproven"] = report.get("unproven", 0) + sum(1 for n in scalars if not single_row(n.this.sql(dialect=dialect)))
+                report["unproven"] = report.get("unproven", 0) + sum(1 for n in scalars if not single_row(faithful_sql(n.this, dialect)))
             index = class_of(node)
             node.replace(exp.Anonymous(this=PLACEHOLDER, expressions=[exp.Literal.number(index)]))
             replaced = True
-    return left_tree.sql(dialect=dialect), right_tree.sql(dialect=dialect), replaced
+    return faithful_sql(left_tree, dialect), faithful_sql(right_tree, dialect), replaced
