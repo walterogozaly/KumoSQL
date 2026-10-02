@@ -2,17 +2,17 @@
   "suite": "SQLSolver Calcite",
   "order": 10,
   "size": 232,
-  "score": "215/232, 0 wrong",
+  "score": "216/232, 0 wrong",
   "metric": "Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 120 random DuckDB databases, half skewed towards the literals.",
   "docs": "docs/sqlsolver.md#benchmark-coverage",
   "command": "python tools/sqlsolver_bench.py calcite",
   "date": "2026-10-02",
-  "caveats": "Rules were developed against these pairs (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test).",
+  "caveats": "Rules were developed against these pairs (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test).",
   "evidence": "proof",
   "correctness": "0 false proofs (re-checked on 120 random DuckDB databases, half skewed towards the literals)",
   "coverage": {
-    "proven": 215,
-    "unknown": 17
+    "proven": 216,
+    "unknown": 16
   },
   "held_out": "none"
 }

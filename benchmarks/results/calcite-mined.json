@@ -2,8 +2,8 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "356/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 145 unknown. 80 of the 168 pairs new to every other corpus are proved.",
+  "score": "373/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 128 unknown. 86 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
@@ -11,10 +11,10 @@
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 60 random DuckDB databases, half skewed towards the literals",
   "coverage": {
-    "proven": 356,
+    "proven": 373,
     "refuted": 1,
-    "unknown": 145,
+    "unknown": 128,
     "unsupported": 332
   },
-  "held_out": "80/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py). Rules since then were developed on the other 334 pairs and QED only; they lifted the new pairs from 76 to 78. The cast and constant rules (cast_rules.py) were developed with two held-out pairs in view, testProjectAggregateMergeSum01 and testUnionToValuesByUnionAll3; both now prove, and they lifted the new pairs from 78 to 80."
+  "held_out": "86/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py). Rules since then were developed on the other 334 pairs and QED only; they lifted the new pairs from 76 to 78. The cast and constant rules (cast_rules.py) were developed with two held-out pairs in view, testProjectAggregateMergeSum01 and testUnionToValuesByUnionAll3; both now prove, and they lifted the new pairs from 78 to 80. The outer-join flattening rules (outer_join_flatten.py) lifted them from 80 to 86; all 6 gained pairs were among the failing pairs read in the 2026-10-02 triage, so they are not clean."
 }

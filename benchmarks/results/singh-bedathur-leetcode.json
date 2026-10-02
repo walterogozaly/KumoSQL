@@ -2,19 +2,19 @@
   "suite": "Singh & Bedathur LeetCode pairs",
   "order": 25,
   "size": 2800,
-  "score": "2586/2800, 0 wrong",
-  "metric": "Pairs decided from SQL and column names alone: 712 proved equivalent, 1874 proved different by a counterexample database, 214 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
+  "score": "2590/2800, 0 wrong",
+  "metric": "Pairs decided from SQL and column names alone: 716 proved equivalent, 1874 proved different by a counterexample database, 210 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
   "docs": "docs/singh-bedathur.md#scores",
   "command": "python tools/singh_bedathur_bench.py",
   "date": "2026-10-02",
-  "caveats": "Rewrite rules were written while looking at these pairs; the held-out fifth was reserved partway through, so it is a weak check. The published labels assume LeetCode's keys and NOT NULL rules, which the files omit, so 473 pairs labelled equivalent get a valid counterexample here. Data is downloaded from a pinned commit (no licence file, not bundled). The October counterexample-search changes (seed per pair, duplicate rows, three-decimal values, date and divisor neighbours) were developed on dev pairs only; the held-out fifth was not inspected.",
+  "caveats": "Rewrite rules were written while looking at these pairs; the held-out fifth was reserved partway through, so it is a weak check. The published labels assume LeetCode's keys and NOT NULL rules, which the files omit, so 473 pairs labelled equivalent get a valid counterexample here. Data is downloaded from a pinned commit (no licence file, not bundled). The October counterexample-search changes (seed per pair, duplicate rows, three-decimal values, date and divisor neighbours) were developed on dev pairs only; the held-out fifth was not inspected. The outer-join flattening rules took it from 2586 to 2590 and were developed on dev pairs only.",
   "evidence": "proof",
   "correctness": "0 wrong: every proof re-checked on 900 random DuckDB databases; every 'different' carries a database on which DuckDB returns different bags (numbers compared as rounded floats, fractions exact in binary)",
   "coverage": {
-    "proven": 712,
+    "proven": 716,
     "refuted": 1874,
-    "unknown": 202,
+    "unknown": 198,
     "unsupported": 12
   },
-  "held_out": "534/580, 0 wrong (held-out fifth, by hash of the pair)"
+  "held_out": "535/580, 0 wrong (held-out fifth, by hash of the pair)"
 }
