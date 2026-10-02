@@ -40,12 +40,13 @@ The Calcite-397 queries are printed by Calcite, and some of its spellings mean n
 | `ORDER BY NULL` | dropped | `to_duckdb` |
 | `$cor0.$f0`, where `$f0` is a column of the LATERAL subquery, not of `$cor0` | that subquery's alias, when exactly one source has the column | `tools/bench_sql_repairs.py` |
 | `SELECT *` over a join with a repeated column, inside a derived table | the columns spelled out, later copies named `SAL_1` as DuckDB names them (`t.SAL` is the first copy, as in Calcite) | `bench_sql_repairs.py` |
+| `a \|\| b` (concatenation; MySQL reads `\|\|` as OR) | `CONCAT(a, b)`, NULL when either is NULL | `bench_sql_repairs.py` |
 
 Literature pairs call uninterpreted predicates on whole rows (`B1(X)` where `X` names a FROM item). The harness spells each out over the row's columns (`B1(X.a, X.b)`): the prover reads it as an uninterpreted function, and DuckDB runs it as a macro with one fixed, arbitrary interpretation (a hash of the arguments). A difference under that interpretation refutes the pair, since an equivalent pair must agree under every interpretation.
 
 The prover gets the schema's foreign keys on a second attempt, after a first attempt with keys and NOT NULL columns alone (the foreign-key rules can rewrite one side out of the shape the other side's proof needs).
 
-Left unknown on purpose: 5 pairs whose Calcite text lost a correlated column (`WHERE * = t5.DEPTNO`), 2 with a subquery in an outer join's `ON` (DuckDB cannot run it), 1 comparing VARCHAR with INT (MySQL coerces, DuckDB refuses), 1 that names a renamed lateral column (`$cor0.SAL0`), 1 with `||` (Calcite's concatenation, MySQL's OR), and 2 malformed Literature pairs.
+Left unknown on purpose: 5 pairs whose Calcite text lost a correlated column (`WHERE * = t5.DEPTNO`), 2 with a subquery in an outer join's `ON` (DuckDB cannot run it), 1 comparing VARCHAR with INT (MySQL coerces, DuckDB refuses), 1 that names a renamed lateral column (`$cor0.SAL0`), and 2 malformed Literature pairs.
 
 ## Running
 
@@ -65,7 +66,7 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Literature | 64 | 15 | 23 | 22 | 4 | 0 |
-| Calcite-397 | 397 | 247 | 28 | 112 | 10 | 0 |
+| Calcite-397 | 397 | 247 | 29 | 112 | 9 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,392 | 5,652 | 12,878 | 1,072 | 0 |
 
 The [harness translation](#harness-translation), with the bare-word and `$` fixes from the full LeetCode rerun, took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks four of our Calcite refutations equivalent (pairs 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows).
