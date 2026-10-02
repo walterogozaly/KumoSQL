@@ -88,3 +88,42 @@ def test_settings_default_validate_and_persist(monkeypatch):
     for bad in ({"enabled": "yes"}, {"timeout_ms": 5}, {"timeout_ms": True}):
         with pytest.raises(ValueError):
             prover_context.save_settings(**bad)
+
+
+def test_bigquery_foreign_keys_reach_the_prover():
+    from kumosql.prover_schema import from_bigquery
+
+    schema = from_bigquery(
+        [
+            ("p", "d", "customers", {"schema": [{"name": "id", "mode": "REQUIRED"}], "constraints": {"primaryKey": {"columns": ["id"]}}}),
+            (
+                "p",
+                "d",
+                "orders",
+                {
+                    "schema": [{"name": "id", "mode": "REQUIRED"}, {"name": "customer_id", "mode": "REQUIRED"}],
+                    "constraints": {
+                        "primaryKey": {"columns": ["id"]},
+                        "foreignKeys": [
+                            {
+                                "referencedTable": {"projectId": "p", "datasetId": "d", "tableId": "customers"},
+                                "columnReferences": [{"referencingColumn": "customer_id", "referencedColumn": "id"}],
+                            }
+                        ],
+                    },
+                },
+            ),
+        ]
+    )
+    assert schema.constraints["d.orders"].foreign_keys == ((("customer_id",), "p.d.customers", ("id",)),)
+
+    pytest.importorskip("z3")
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    result = prove_equivalent_algebraic(
+        "SELECT o.id FROM d.orders AS o JOIN d.customers AS c ON o.customer_id = c.id",
+        "SELECT id FROM d.orders",
+        schema=schema.columns,
+        constraints=schema.constraints,
+    )
+    assert result.proven, result.reason
