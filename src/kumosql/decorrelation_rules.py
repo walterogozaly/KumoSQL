@@ -483,6 +483,10 @@ def one_row_joins(select: exp.Select) -> exp.Expression | None:
         uses = [n for n in outside if isinstance(n, exp.Column) and n.table.lower() == alias]
         if any(c.name.lower() not in values for c in uses):
             continue
+        # an inner join filtered on the aggregate's own columns (COUNT(*) >= 0) is read better as a join
+        where = select.args.get("where")
+        if side != "LEFT" and where is not None and any(_under(c, where) for c in uses):
+            continue
         holder = join.parent
         if holder is None or join.arg_key != "joins":
             continue
