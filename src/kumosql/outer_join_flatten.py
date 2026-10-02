@@ -23,6 +23,8 @@ wrap every outer join that way.
 * ``flatten_join_tree``: a parenthesized join tree ``a JOIN (b CROSS JOIN c) ON p`` read left-deep.
 * ``constants_into_outer_on``: a column its derived table fixes to a number (``WHERE k = 10``) reads
   as that number in a later outer join's ON clause.
+* ``left_join_rejected_by_where``: ``a LEFT JOIN b ON c WHERE b.x = a.y`` is an inner join, the flat
+  form of ``outer_filters.strengthen_derived_outer_join`` (flattening runs first).
 """
 
 from __future__ import annotations
@@ -251,7 +253,7 @@ def indicator_joins_after_flattening(select: exp.Select, keys: dict[str, list[tu
 def outer_join_rules(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
     """The rules of this module, as one entry of the normalizer's rule list."""
 
-    return flatten_join_tree(select) or flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys) or mirror_right_join(select) or constants_into_outer_on(select)
+    return flatten_join_tree(select) or flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys) or mirror_right_join(select) or constants_into_outer_on(select) or left_join_rejected_by_where(select)
 
 
 # --- NULL propagation -----------------------------------------------------------------
@@ -654,4 +656,51 @@ def constants_into_outer_on(select: exp.Select) -> exp.Expression | None:
             table = column.table.lower()
             if table in real and column.name.lower() in real[table] and isinstance(column.parent, exp.EQ) and column.find_ancestor(exp.Select) is copy:
                 column.replace(real[table][column.name.lower()].copy())
+    return copy
+
+
+_REJECTING = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Like, exp.ILike)
+
+
+def left_join_rejected_by_where(select: exp.Select) -> exp.Expression | None:
+    """``a LEFT JOIN b ON c WHERE b.x = a.y`` is ``a JOIN b ON c WHERE b.x = a.y``.
+
+    The padded rows carry NULL for every column of ``b``, and a comparison of such a column (or
+    ``b.x IS NOT NULL``) rejects them, so only matched rows reach the result. Read only for a chain
+    of inner and left joins: a later RIGHT or FULL join would decide its own padding from the rows
+    the left join keeps.
+    """
+
+    joins = select.args.get("joins") or []
+    where = select.args.get("where")
+    if not joins or where is None:
+        return None
+    sides = [(j.args.get("side") or "").upper() for j in joins]
+    kinds = [(j.args.get("kind") or "").upper() for j in joins]
+    if any(side not in ("", "LEFT") for side in sides) or "LEFT" not in sides:
+        return None
+    if any(kind not in ("", "INNER", "CROSS", "OUTER") for kind in kinds):
+        return None
+    rejected = set()
+    for part in _conjuncts(where.this):
+        if isinstance(part, exp.Not) and isinstance(part.this, exp.Is) and isinstance(part.this.expression, exp.Null):
+            columns = [part.this.this]
+        elif isinstance(part, _REJECTING):
+            columns = [part.this, part.expression]
+        else:
+            continue
+        for column in columns:
+            if isinstance(column, exp.Column) and column.table and not isinstance(column.this, exp.Star):
+                rejected.add(column.table.lower())
+    copy = None
+    for index, join in enumerate(joins):
+        alias = (join.this.alias_or_name or "").lower()
+        if sides[index] != "LEFT" or not alias or alias not in rejected or join.args.get("using") is not None:
+            continue
+        if sum(1 for s in _sources(select) if (s.alias_or_name or "").lower() == alias) != 1:
+            continue
+        copy = copy or select.copy()
+        target = copy.args["joins"][index]
+        target.set("side", None)
+        target.set("kind", None)
     return copy

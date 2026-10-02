@@ -100,6 +100,11 @@ EQUIVALENT = [
         "SELECT COUNT(*) FROM a LEFT JOIN b ON a.k = b.k WHERE a.x > b.y",
         id="unaliased-derived-table",
     ),
+    pytest.param(
+        "SELECT a.x, b.y FROM a LEFT JOIN b ON a.k = b.k LEFT JOIN c ON b.k = c.k WHERE b.y > a.x",
+        "SELECT a.x, b.y FROM a JOIN b ON a.k = b.k LEFT JOIN c ON b.k = c.k WHERE b.y > a.x",
+        id="left-join-rejected-by-where",
+    ),
 ]
 
 NOT_EQUIVALENT = [
@@ -132,6 +137,11 @@ NOT_EQUIVALENT = [
         "SELECT c.z, b.y FROM c LEFT JOIN (SELECT a.k AS k FROM a WHERE a.k = 1) AS d ON c.k = d.k LEFT JOIN b ON d.k = b.k",
         "SELECT c.z, b.y FROM c LEFT JOIN (SELECT a.k AS k FROM a WHERE a.k = 1) AS d ON c.k = d.k LEFT JOIN b ON 1 = b.k",
         id="fixed-column-of-padded-source-is-not-constant",
+    ),
+    pytest.param(
+        "SELECT a.x, b.y FROM a LEFT JOIN b ON a.k = b.k WHERE b.y > a.x OR a.x = 1",
+        "SELECT a.x, b.y FROM a JOIN b ON a.k = b.k WHERE b.y > a.x OR a.x = 1",
+        id="disjunction-does-not-reject-padded-rows",
     ),
 ]
 
