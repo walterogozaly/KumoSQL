@@ -51,10 +51,6 @@
   "owner": "kumosql",
   "reason": "ref() inside a js block is not resolved: raw_users"
  },
- "dataform/operations_ddl_script::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
- },
  "dataform/operations_export::cleanup": {
   "owner": "kumosql",
   "reason": "recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_pa"
@@ -179,10 +175,6 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
- "ddl/create_procedure_options::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
- },
  "ddl/create_procedure_options::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps END as an opaque command"
@@ -194,10 +186,6 @@
  "ddl/create_procedure_spark::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
- },
- "ddl/create_procedure_sql::cleanup": {
-  "owner": "kumosql",
-  "reason": "recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovere"
  },
  "ddl/create_procedure_sql::parse": {
   "owner": "sqlglot",
@@ -259,10 +247,6 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps DROP as an opaque command"
  },
- "ddl/drop_table_function::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 22."
- },
  "ddl/drop_vector_index::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps DROP as an opaque command"
@@ -287,10 +271,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 11."
  },
- "query/appends_changes_functions::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Expecting ). Line 1, Col: 61."
- },
  "query/backtick_dashed_project::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
@@ -302,10 +282,6 @@
  "query/backtick_whole_path::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
- },
- "query/changes_function::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Expecting ). Line 1, Col: 61."
  },
  "query/graph_gql::format": {
   "owner": "sqlfluff",
@@ -455,10 +431,6 @@
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
  },
- "query/vector_search::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Expecting ). Line 1, Col: 67."
- },
  "query/wildcard_table::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
@@ -479,17 +451,9 @@
   "owner": "kumosql",
   "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
  },
- "script/begin_end_block::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
- },
  "script/begin_end_block::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
- },
- "script/begin_exception::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
  },
  "script/begin_exception::parse": {
   "owner": "sqlglot",
@@ -502,10 +466,6 @@
  "script/call_with_dml::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CALL as an opaque command"
- },
- "script/case_when::cleanup": {
-  "owner": "kumosql",
-  "reason": "recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovere"
  },
  "script/case_when::parse": {
   "owner": "sqlglot",
@@ -535,10 +495,6 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps END as an opaque command"
  },
- "script/if_elseif_else::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
- },
  "script/if_elseif_else::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps IF as an opaque command"
@@ -555,10 +511,6 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps LOOP as an opaque command"
  },
- "script/raise::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
- },
  "script/raise::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
@@ -566,10 +518,6 @@
  "script/repeat_until::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 4, Col: 10."
- },
- "script/return::cleanup": {
-  "owner": "kumosql",
-  "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
  },
  "script/return::parse": {
   "owner": "sqlglot",
