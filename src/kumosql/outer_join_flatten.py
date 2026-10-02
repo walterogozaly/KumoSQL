@@ -17,6 +17,10 @@ wrap every outer join that way.
   prover matches its columns by position.
 * ``indicator_joins_after_flattening``: Calcite's LEFT JOIN indicator test, once flattening has
   brought it next to its ``IS NULL`` test.
+* ``mirror_right_join``: ``LEFT OUTER JOIN`` as ``LEFT JOIN``, a lone ``FULL JOIN`` with an empty
+  side as one-sided, and a lone ``RIGHT JOIN`` as the mirrored ``LEFT JOIN``, the form the other
+  rules read.
+* ``flatten_join_tree``: a parenthesized join tree ``a JOIN (b CROSS JOIN c) ON p`` read left-deep.
 """
 
 from __future__ import annotations
@@ -243,7 +247,7 @@ def indicator_joins_after_flattening(select: exp.Select, keys: dict[str, list[tu
 def outer_join_rules(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
     """The rules of this module, as one entry of the normalizer's rule list."""
 
-    return flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys)
+    return flatten_join_tree(select) or flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys) or mirror_right_join(select)
 
 
 # --- NULL propagation -----------------------------------------------------------------
@@ -461,3 +465,104 @@ def order_derived_columns(select: exp.Select) -> exp.Expression | None:
         items = list(target.expressions)
         target.set("expressions", [item for _, item in sorted(zip(keys, items), key=lambda pair: pair[0])])
     return copy
+
+
+def mirror_right_join(select: exp.Select) -> exp.Expression | None:
+    """``LEFT OUTER JOIN`` is ``LEFT JOIN``, and ``a RIGHT JOIN b ON c`` (the select's only join) is ``b LEFT JOIN a ON c``.
+
+    Most rules test a join's kind and only read LEFT joins. The select lists its columns
+    (no ``*``), so the order of its two sources does not change its rows.
+    """
+
+    joins = select.args.get("joins") or []
+    if not joins:
+        return None
+    copy = select.copy()
+    changed = False
+    for join in copy.args["joins"]:
+        if (join.args.get("kind") or "").upper() == "OUTER" and (join.args.get("side") or "").upper() in _OUTER_SIDES:
+            join.set("kind", None)
+            changed = True
+    join = copy.args["joins"][0]
+    from_ = _from(copy)
+    if len(joins) == 1 and (join.args.get("side") or "").upper() == "FULL" and not join.args.get("kind") and from_ is not None:
+        from .empty_rules import is_empty
+
+        # A FULL JOIN with a side that can never hold a row keeps only the other side's rows, padded.
+        if is_empty(from_.this):
+            join.set("side", "RIGHT")
+            changed = True
+        elif is_empty(join.this):
+            join.set("side", "LEFT")
+            changed = True
+    if (
+        len(joins) == 1
+        and (join.args.get("side") or "").upper() == "RIGHT"
+        and not join.args.get("kind")
+        and join.args.get("on") is not None
+        and join.args.get("using") is None
+        and not join.args.get("method")
+        and isinstance(from_.this, (exp.Table, exp.Subquery))
+        and isinstance(join.this, (exp.Table, exp.Subquery))
+        and not any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in copy.find_all(exp.Star))
+    ):
+        left, right = from_.this.copy(), join.this.copy()
+        from_.set("this", right)
+        join.set("this", left)
+        join.set("side", "LEFT")
+        changed = True
+    return copy if changed else None
+
+
+def _join_tree(node: exp.Expression) -> exp.Table | None:
+    """The table of a parenthesized join tree ``(b JOIN c ON ..)`` (an unaliased subquery around a joined table)."""
+
+    if isinstance(node, exp.Subquery) and not node.alias and isinstance(node.this, exp.Table) and node.this.args.get("joins"):
+        return node.this
+    return None
+
+
+def flatten_join_tree(select: exp.Select) -> exp.Expression | None:
+    """``a JOIN (b CROSS JOIN c) ON p`` is ``a CROSS JOIN b JOIN c ON p``; ``FROM (a LEFT JOIN b ON q) ..`` is ``FROM a LEFT JOIN b ON q ..``.
+
+    A join tree in FROM is read left-deep anyway. One joined in later is flattened only when it and
+    all of its joins are inner or cross joins, where an ON condition can move to the last join.
+    """
+
+    from_ = _from(select)
+    if from_ is None:
+        return None
+    copy = None
+    tree = _join_tree(from_.this)
+    if tree is not None:
+        copy = select.copy()
+        tree = _join_tree(_from(copy).this)
+        nested = tree.args["joins"]
+        tree.set("joins", None)
+        _from(copy).set("this", tree)
+        copy.set("joins", list(nested) + list(copy.args.get("joins") or []))
+        return copy
+    for position, join in enumerate(select.args.get("joins") or []):
+        tree = _join_tree(join.this)
+        if tree is None or join.args.get("side") or (join.args.get("kind") or "").upper() not in ("", "INNER", "CROSS"):
+            continue
+        if join.args.get("using") is not None or join.args.get("method"):
+            continue
+        if any(j.args.get("side") or (j.args.get("kind") or "").upper() not in ("", "INNER", "CROSS") or j.args.get("using") is not None or j.args.get("method") for j in tree.args["joins"]):
+            continue
+        copy = select.copy()
+        outer = copy.args["joins"][position]
+        tree = outer.this.this
+        nested = list(tree.args["joins"])
+        tree.set("joins", None)
+        on = outer.args.get("on")
+        first = exp.Join(this=tree, kind="CROSS")
+        last = nested[-1]
+        if on is not None:
+            own = last.args.get("on")
+            last.set("on", exp.And(this=exp.Paren(this=own), expression=exp.Paren(this=on)) if own is not None else on)
+            last.set("kind", None)
+        joins = copy.args["joins"]
+        copy.set("joins", joins[:position] + [first] + nested + joins[position + 1:])
+        return copy
+    return None

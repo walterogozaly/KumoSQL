@@ -75,6 +75,21 @@ EQUIVALENT = [
         "SELECT c.z, d.y + 1 FROM c LEFT JOIN (SELECT a.k AS k, b.y AS y FROM a LEFT JOIN b ON a.k = b.k) AS d ON c.k = d.k",
         id="lift-strict-expression-from-padded-side",
     ),
+    pytest.param(
+        "SELECT b.y FROM a RIGHT OUTER JOIN b ON a.k = b.k",
+        "SELECT b.y FROM b LEFT JOIN a ON a.k = b.k",
+        id="right-outer-join-mirrored",
+    ),
+    pytest.param(
+        "SELECT d.x, b.y FROM (SELECT a.x AS x, a.k AS k FROM a WHERE FALSE) AS d FULL JOIN b ON d.k = b.k",
+        "SELECT NULL AS x, b.y FROM b",
+        id="full-join-with-empty-side",
+    ),
+    pytest.param(
+        "SELECT a.x, b.y, c.z FROM a JOIN (b CROSS JOIN c) ON a.k = b.k AND b.k = c.k",
+        "SELECT a.x, b.y, c.z FROM a JOIN b ON a.k = b.k JOIN c ON b.k = c.k",
+        id="parenthesized-inner-join-tree",
+    ),
 ]
 
 NOT_EQUIVALENT = [
@@ -97,6 +112,11 @@ NOT_EQUIVALENT = [
         "SELECT d.f FROM (SELECT a.x AS x, b.y IS NULL AS f FROM a LEFT JOIN b ON a.k = b.k) AS d RIGHT JOIN c ON d.x = c.k",
         "SELECT b.y IS NULL FROM a LEFT JOIN b ON a.k = b.k RIGHT JOIN c ON a.x = c.k",
         id="is-null-flattened-under-right-join",
+    ),
+    pytest.param(
+        "SELECT a.x, b.y FROM a LEFT JOIN (b JOIN c ON b.k = c.k) ON a.k = b.k",
+        "SELECT a.x, b.y FROM a LEFT JOIN b ON a.k = b.k JOIN c ON b.k = c.k",
+        id="outer-join-to-a-join-tree-is-not-left-deep",
     ),
 ]
 
