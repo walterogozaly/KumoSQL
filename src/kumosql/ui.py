@@ -601,7 +601,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
-            "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries",
+            "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries", "/api/consolidate-tables",
             "/api/refactor/run", "/api/refactor/cancel",
         ):
             self._json(404, {"error": "not found"})
@@ -649,6 +649,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import refactor
 
                 result = refactor.cancel_job()
+            elif self.path == "/api/consolidate-tables":
+                from . import consolidate
+
+                result = consolidate.consolidate_loaded(payload.get("tables"), payload.get("target"))
             elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries"):
                 from . import equivalences, pipeline_equivalence
 

@@ -48,6 +48,7 @@ kumosql-workflow-configs = "kumosql.workflow_configs:main"
 kumosql-smoke = "kumosql.smoke:main"
 kumosql-incremental-report = "kumosql.incremental_scan:main"
 prove-tables = "kumosql.pipeline_equivalence:main"
+consolidate-tables = "kumosql.consolidate:main"
 kumosql-equivalence = "kumosql.pipeline_equivalence:equivalence_main"
 kumosql-refactor = "kumosql.refactor:main"
 
