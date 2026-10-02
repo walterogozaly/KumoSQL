@@ -21,6 +21,8 @@ wrap every outer join that way.
   side as one-sided, and a lone ``RIGHT JOIN`` as the mirrored ``LEFT JOIN``, the form the other
   rules read.
 * ``flatten_join_tree``: a parenthesized join tree ``a JOIN (b CROSS JOIN c) ON p`` read left-deep.
+* ``constants_into_outer_on``: a column its derived table fixes to a number (``WHERE k = 10``) reads
+  as that number in a later outer join's ON clause.
 """
 
 from __future__ import annotations
@@ -247,7 +249,7 @@ def indicator_joins_after_flattening(select: exp.Select, keys: dict[str, list[tu
 def outer_join_rules(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
     """The rules of this module, as one entry of the normalizer's rule list."""
 
-    return flatten_join_tree(select) or flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys) or mirror_right_join(select)
+    return flatten_join_tree(select) or flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys) or mirror_right_join(select) or constants_into_outer_on(select)
 
 
 # --- NULL propagation -----------------------------------------------------------------
@@ -566,3 +568,88 @@ def flatten_join_tree(select: exp.Select) -> exp.Expression | None:
         copy.set("joins", joins[:position] + [first] + nested + joins[position + 1:])
         return copy
     return None
+
+
+def _fixed_columns(source: exp.Expression, depth: int = 0) -> dict[str, exp.Expression]:
+    """Output columns of a derived table that its own WHERE fixes to a number (``WHERE t.k = 10``)."""
+
+    if depth > 8 or not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select):
+        return {}
+    inner = source.this
+    if not _plain(inner) or inner.args.get("joins") or any(isinstance(n, (exp.AggFunc, exp.Window)) for e in inner.expressions for n in e.walk()):
+        return {}
+    from_ = _from(inner)
+    if from_ is None or not isinstance(from_.this, (exp.Table, exp.Subquery)):
+        return {}
+    own = (from_.this.alias_or_name or "").lower()
+    fixed: dict[str, exp.Expression] = {}
+    for name, value in _fixed_columns(from_.this, depth + 1).items():
+        fixed[name] = value
+    where = inner.args.get("where")
+    for part in _conjuncts(where.this) if where is not None else []:
+        if not isinstance(part, exp.EQ):
+            continue
+        for column, value in ((part.this, part.expression), (part.expression, part.this)):
+            if isinstance(column, exp.Column) and column.table.lower() in ("", own) and isinstance(value, exp.Literal) and not value.is_string:
+                fixed[column.name.lower()] = value
+    out = {}
+    for item in inner.expressions:
+        value = item.this if isinstance(item, exp.Alias) else item
+        if isinstance(value, exp.Column) and value.table.lower() in ("", own) and value.name.lower() in fixed:
+            out[item.alias_or_name.lower()] = fixed[value.name.lower()]
+    return out
+
+
+def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
+    if isinstance(node, exp.Paren):
+        return _conjuncts(node.this)
+    if isinstance(node, exp.And):
+        return _conjuncts(node.this) + _conjuncts(node.expression)
+    return [node]
+
+
+def constants_into_outer_on(select: exp.Select) -> exp.Expression | None:
+    """``(SELECT .. FROM emp WHERE empno = 10) AS t LEFT JOIN dept ON t.empno = dept.deptno`` tests ``10 = dept.deptno``.
+
+    Every real row of ``t`` has ``empno = 10``, and an ON clause only sees real rows of the sources
+    joined before it, so ``t.empno`` reads as the constant there, unless an earlier join could have
+    padded ``t`` with NULLs.
+    """
+
+    joins = select.args.get("joins") or []
+    if not any((j.args.get("side") or "").upper() in _OUTER_SIDES for j in joins):
+        return None
+    sources = _sources(select)
+    aliases = [(s.alias_or_name or "").lower() for s in sources]
+    if "" in aliases or len(set(aliases)) != len(aliases):
+        return None
+    fixed = [_fixed_columns(s) for s in sources]
+    if not any(fixed):
+        return None
+    sides = [(j.args.get("side") or "").upper() for j in joins]
+    copy = None
+    for index, join in enumerate(joins):
+        if sides[index] not in _OUTER_SIDES or join.args.get("on") is None:
+            continue
+        # sources joined before this join (source i is joins[i - 1].this), still real rows here
+        real = {}
+        for i in range(index + 1):
+            padded_by = sides[:index] if i == 0 else ([sides[i - 1]] if sides[i - 1] in ("LEFT", "FULL") else []) + [s for s in sides[i:index] if s in ("RIGHT", "FULL")]
+            if i == 0:
+                padded_by = [s for s in padded_by if s in ("RIGHT", "FULL")]
+            if not padded_by and fixed[i]:
+                real[aliases[i]] = fixed[i]
+        if not real:
+            continue
+        target = (copy or select).args["joins"][index].args["on"]
+        columns = [c for c in target.find_all(exp.Column) if c.table.lower() in real and c.name.lower() in real[c.table.lower()] and isinstance(c.parent, exp.EQ)]
+        columns = [c for c in columns if c.find_ancestor(exp.Select) is (copy or select)]
+        if not columns:
+            continue
+        copy = copy or select.copy()
+        target = copy.args["joins"][index].args["on"]
+        for column in list(target.find_all(exp.Column)):
+            table = column.table.lower()
+            if table in real and column.name.lower() in real[table] and isinstance(column.parent, exp.EQ) and column.find_ancestor(exp.Select) is copy:
+                column.replace(real[table][column.name.lower()].copy())
+    return copy

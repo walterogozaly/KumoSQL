@@ -90,6 +90,11 @@ EQUIVALENT = [
         "SELECT a.x, b.y, c.z FROM a JOIN b ON a.k = b.k JOIN c ON b.k = c.k",
         id="parenthesized-inner-join-tree",
     ),
+    pytest.param(
+        "SELECT d.x, b.y FROM (SELECT a.k AS k, a.x AS x FROM a WHERE a.k = 1) AS d LEFT JOIN b ON d.k = b.k",
+        "SELECT d.x, b.y FROM (SELECT a.k AS k, a.x AS x FROM a WHERE a.k = 1) AS d LEFT JOIN b ON 1 = b.k",
+        id="fixed-column-reads-as-constant-in-on",
+    ),
 ]
 
 NOT_EQUIVALENT = [
@@ -117,6 +122,11 @@ NOT_EQUIVALENT = [
         "SELECT a.x, b.y FROM a LEFT JOIN (b JOIN c ON b.k = c.k) ON a.k = b.k",
         "SELECT a.x, b.y FROM a LEFT JOIN b ON a.k = b.k JOIN c ON b.k = c.k",
         id="outer-join-to-a-join-tree-is-not-left-deep",
+    ),
+    pytest.param(
+        "SELECT c.z, b.y FROM c LEFT JOIN (SELECT a.k AS k FROM a WHERE a.k = 1) AS d ON c.k = d.k LEFT JOIN b ON d.k = b.k",
+        "SELECT c.z, b.y FROM c LEFT JOIN (SELECT a.k AS k FROM a WHERE a.k = 1) AS d ON c.k = d.k LEFT JOIN b ON 1 = b.k",
+        id="fixed-column-of-padded-source-is-not-constant",
     ),
 ]
 
