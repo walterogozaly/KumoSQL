@@ -399,6 +399,10 @@ def prepare_statements(
                 raise ExecutionError(
                     f"statement {index + 1} references table {key!r}, which is not in the synthetic schema"
                 )
+            if not table.alias and table.name and not isinstance(table.this, exp.Func):
+                # Columns may be qualified by the table's own name (``t.a``);
+                # keep that name usable after the table is renamed.
+                table.set("alias", exp.TableAlias(this=exp.to_identifier(table.name)))
             table.set("catalog", None)
             table.set("db", None)
             table.set("this", exp.to_identifier(local))
