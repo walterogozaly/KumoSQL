@@ -177,3 +177,21 @@ def test_cli_rejects_an_unknown_scope_and_can_skip_overlaps(tmp_path, capsys):
     assert change_report_main([str(a), str(b)]) == 0
     data = json.loads(capsys.readouterr().out)
     assert all("overlaps" in c for c in data["report"]["changes"])
+
+
+def test_a_retired_table_is_found_without_profiling_the_new_sql_again(monkeypatch):
+    from kumosql import overlap
+
+    def boom(*a, **k):
+        raise AssertionError("the changed model's profile is reused")
+
+    monkeypatch.setattr(overlap, "profile_query", boom)
+    section = change(report(build({"old_totals": BY_REGION}), build({"new_totals": RENAMED})), "core.new_totals")["overlaps"]
+    assert section["matches"][0]["retiring"] is True
+
+
+def test_the_list_of_tables_that_could_not_be_compared_is_capped(monkeypatch):
+    monkeypatch.setattr(overlap_report, "MAX_UNKNOWN_LISTED", 2)
+    broken = {f"broken_{i}": "SELECT * FROM proj.raw.missing_table" for i in range(5)}
+    section = change(report(build(broken), build({**broken, "new": BY_REGION})), "core.new")["overlaps"]
+    assert len(section["unknown"]) == 2 and section["unknown_total"] == 5

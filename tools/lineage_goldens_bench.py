@@ -26,8 +26,6 @@ from __future__ import annotations
 from collections import Counter
 import importlib.util
 import json
-import logging
-import os
 import re
 import sys
 import time
@@ -36,6 +34,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FIX = ROOT / "tests" / "fixtures" / "lineage_goldens"
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tools"))
+from bench_common import quiet as _quiet  # noqa: E402
 
 _SPEC = importlib.util.spec_from_file_location("sqllineage_bench", ROOT / "tools" / "sqllineage_bench.py")
 base = importlib.util.module_from_spec(_SPEC)
@@ -280,11 +280,6 @@ def run() -> dict:
             "left_out": dict(Counter(r["scope"].split(" ")[0] if r["scope"].startswith("dialect") else r["scope"] for r in mine if r["scope"] != "in")),
         }
     return out
-
-
-def _quiet() -> None:
-    os.environ.setdefault("KUMOSQL_TIMING", "0")
-    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 
 def main(argv: list[str]) -> int:
