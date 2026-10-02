@@ -164,6 +164,40 @@ def config_rows(repo_name: str, updated_ts: str) -> list[dict]:
     return rows
 
 
+def compiled_targets(github_url: str) -> list[tuple[tuple[str, str, str], bool]]:
+    """Every action Dataform compiled for a repository: ``((database, schema, name), is_declaration)``.
+
+    Uses the newest release compilation (else the newest compilation) of the first Dataform repository whose
+    remote matches ``github_url``. Raises :class:`WorkflowConfigError` when none can be read, for example
+    without credentials.
+    """
+
+    search = search_for(github_url)
+    repos, warnings = find_repositories(github_url, search["projects"], search["location"])
+    if not repos:
+        raise WorkflowConfigError("; ".join(warnings) or "no Dataform repository matches this remote")
+    repo = repos[0]
+    result = ""
+    for config in _list_all(f"{_API}/{repo}/releaseConfigs", "releaseConfigs"):
+        if isinstance(config.get("releaseCompilationResult"), str):
+            result = config["releaseCompilationResult"]
+            break
+    if not result:
+        query = f"{_API}/{repo}/compilationResults?{urlencode({'pageSize': '1', 'orderBy': 'create_time desc'})}"
+        found = _get(query).get("compilationResults") or []
+        result = found[0].get("name", "") if found else ""
+    if not result:
+        raise WorkflowConfigError("the Dataform repository has no compilation result")
+    actions = _list_all(f"{_API}/{result}:query", "compilationResultActions")
+    targets: list[tuple[tuple[str, str, str], bool]] = []
+    for action in actions:
+        target = action.get("target") if isinstance(action, dict) else None
+        if isinstance(target, dict) and isinstance(target.get("name"), str):
+            targets.append(((str(target.get("database") or ""), str(target.get("schema") or ""), target["name"]),
+                            isinstance(action.get("declaration"), dict)))
+    return targets
+
+
 def fetch(github_url: str, projects: list[str], location: str) -> dict:
     """Everything the UI needs about one repository's schedules (this calls the Dataform API)."""
 

@@ -22,6 +22,13 @@ def no_project_loaded(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_schema_fetch(monkeypatch):
+    """Tests never look tables up in BigQuery unless they switch it on with a stub."""
+
+    monkeypatch.setenv("KUMOSQL_SCHEMA_FETCH", "0")
+
+
+@pytest.fixture(autouse=True)
 def fresh_redactor(monkeypatch):
     """Placeholders are per session; keep names one test registered from changing another test's log text."""
 
