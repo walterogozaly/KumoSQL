@@ -21,6 +21,7 @@ COMMANDS = {
     "prove-sql-smt": "kumosql.smt_equivalence:main",
     "prove-sql-sqlsolver": "kumosql.sqlsolver_backend:main",
     "prove-tables": "kumosql.pipeline_equivalence:main",
+    "consolidate-tables": "kumosql.consolidate:main",
     "kumosql-equivalence": "kumosql.pipeline_equivalence:equivalence_main",
     "kumosql-refactor": "kumosql.refactor:main",
     "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
