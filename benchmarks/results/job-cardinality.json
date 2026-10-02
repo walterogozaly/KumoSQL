@@ -1,0 +1,18 @@
+{
+  "suite": "JOB cardinality",
+  "order": 62,
+  "size": 71384,
+  "score": "Q-error p50 4.7, p90 698 (Postgres 16: 226, 42,462); held-out p50 5.0",
+  "metric": "Q-error of KumoSQL's statistics-only estimator on every connected sub-join of 2+ relations of the 113 JOB queries on full IMDB, against exact sizes. Plan cost (C_out under true sizes) of DPccp plans from these estimates: geomean 1.41x optimal (held-out 1.49x), max 9.8x; from Postgres 16 estimates 2.79x, max 38,079x.",
+  "docs": "docs/joinorder.md#job",
+  "command": "python tools/joinorder_bench.py job --repo PATH --psql \"psql -d imdb\"",
+  "date": "2026-10-02",
+  "caveats": "Families 1-16 were looked at during development; 17-33 held out. The 17-way queries 29a-c contribute over half the sub-joins. 6 MB of statistics. Source: jo-bench at ad516b3.",
+  "evidence": "executed",
+  "correctness": "Exact sizes by variable elimination in DuckDB. 113 of 113 queries supported, 0 errors.",
+  "coverage": {
+    "error": 0
+  },
+  "held_out": "Families 17-33 (54 queries): Q-error p50 5.0, p90 815; plan cost geomean 1.49x (Postgres 2.80x)",
+  "performance": "Pure Python; 1.5 ms per sub-join estimate"
+}
