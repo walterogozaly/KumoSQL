@@ -110,6 +110,9 @@ def run_duckdb(sql: str, setup: list[str] | None = None):
     try:
         statements = sqlglot.transpile(sql, read="bigquery", write="duckdb")
         con = duckdb.connect()
+        # One thread: with several, DuckDB may build ARRAY(SELECT .. UNION ALL ..) in a different
+        # order on each run, and the same query would look like it changed behaviour.
+        con.execute("SET threads TO 1")
         for stmt in setup or []:
             con.execute(stmt)
         rows = con.execute(statements[0]).fetchall()

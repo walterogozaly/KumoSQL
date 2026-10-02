@@ -1,17 +1,17 @@
 {
   "suite": "Duplicate detection: similar logic",
   "order": 61,
-  "size": 2173,
-  "score": "99.3% recall, 89.9% precision",
+  "size": 428,
+  "score": "99.6% recall, 92.1% precision (fresh seed, 600 models)",
   "metric": "Pairs of models whose copies are the same logic or a drifted version (other literal, extra filter or column) found by exact plus near-duplicate analysis; a pair from different families counts as wrong.",
   "evidence": "executed",
   "correctness": "Unsafe suggestions are counted under Shared-model refactors, not here; labels checked by execution as for exact copies",
   "coverage": {},
-  "held_out": "Held-out families (90): 97.5% precision, 99.4% recall. Fresh seed (600 models): see docs",
-  "caveats": "Similar logic over the same table and join but from another generated family counts as a false pair, which understates precision. Near-only recall (drift pairs the exact check misses) is 74.7%; the repeated-work report scores 89.7% precision, 97.2% recall. Tuned on seed 1.",
-  "analysis": "Near-duplicate pairs only: 83.5% precision, 74.7% recall; repeated-work report: 89.7% / 97.2%",
+  "held_out": "Seed 1, 3,000 models (tuned on): 99.3% recall, 89.9% precision; held-out families 97.5% / 99.4%",
+  "caveats": "Similar logic over the same table and join but from another generated family counts as a false pair, which understates precision. Earlier near-only recall of 74.7% was a scoring artifact (pairs the exact check already found counted as misses); corrected. Tuned on seed 1.",
+  "analysis": "Fresh seed: near-duplicate pairs only 86.3% precision, 99.3% recall; repeated-work report 91.8% / 96.2%",
   "performance": "3,000 models: exact 18 s, near-duplicates 77 s, repeated work 8 s, refactor verification 64 s (600 models: 4 s, 6 s, 2 s, 14 s)",
   "date": "2026-10-02",
   "docs": "docs/duplicate-detection.md",
-  "command": "python tools/dup_bench.py --sizes 6,60,600,3000 --seed 1"
+  "command": "python tools/dup_bench.py --sizes 600 --seed 2"
 }

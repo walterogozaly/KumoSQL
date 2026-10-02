@@ -24,6 +24,7 @@ from typing import Mapping
 
 from .graph import build_query_graph
 from .overlap_report import MAX_COMPARED_MODELS, OverlapChecker, mark_retiring, unavailable_section
+from .resilience import extended_path
 from .pipeline import Model, Pipeline, load_compiled_graph, load_sqlx_project
 from .rewrite import verify_rewrite
 from .scopes import Scope, get_scope
@@ -42,7 +43,7 @@ def _raw_text(root: Path | None, model: Model) -> str:
 
     if root is not None and model.path:
         try:
-            return (root / model.path).read_text(encoding="utf-8")
+            return (extended_path(root) / model.path).read_text(encoding="utf-8")
         except OSError:
             pass
     return model.sql
