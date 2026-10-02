@@ -42,6 +42,8 @@ Keep these apart: they are different kinds of evidence.
 
 Findings that are not bugs but gaps: for most non-equivalent unsafe pairs the prover returns *unknown* rather than a counterexample ("no row-preserving mapping", "UNION shapes differ"), so the executed check is what produces the replayable counterexample today. See the scoreboard row for the numbers.
 
+`fuzz --count 60 --seed 2` (rerun 2026-10-02, 1,268 cases): 0 false proofs and 0 bad counterexamples; 255/691 equivalent pairs proved, 251/457 different pairs refuted with a replayable counterexample, 424/457 found once the executed check is added; held-out families 108/420 proved.
+
 ## Reusable cases
 
 `python tools/unsafe_fuzz.py unsafe --count 20 --seed 1 --dump-cases tests/fixtures/unsafe_rewrite_cases.jsonl` writes the cases as JSONL (`id`, `family`, `left`, `right`, `expect`, `heldout`). The committed copy is checked against its seed by the tests; other threads can use it as faulty variants. `expect` is `equivalent` (by construction) or `either` (the oracle decides): 220 cases are equivalent by construction and 340 are `either`, of which the oracle separates 339 (all but `union-intersect-5`).
