@@ -1077,7 +1077,7 @@ def _merge_projection_over_grouped_join(select: exp.Select) -> exp.Expression | 
     """``SELECT f(d.x) FROM (SELECT p.s * q.c AS x FROM (..) AS p JOIN (..) AS q ON ..) AS d`` reads the join directly.
 
     Both selects only compute values row by row, so the outer one's expressions can be written over
-    the inner one's sources. It is limited to joins of grouped subqueries, so that
+    the inner one's sources. It is limited to inner joins of grouped subqueries, so that
     ``eager_aggregation.flatten_grouped_join`` sees the join it reads off.
     """
 
@@ -1096,6 +1096,9 @@ def _merge_projection_over_grouped_join(select: exp.Select) -> exp.Expression | 
         return None
     joins = inner.args.get("joins") or []
     if not joins or _own(inner) or any(isinstance(i, exp.Star) for i in inner.expressions):
+        return None
+    # outer joins are left to the rules that turn a null-rejected one into an inner join first
+    if any(j.args.get("side") or (j.args.get("kind") or "").upper() not in ("", "INNER", "CROSS") for j in joins):
         return None
     if any(isinstance(n, exp.Window) for i in inner.expressions for n in i.walk()):
         return None
