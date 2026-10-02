@@ -157,6 +157,7 @@ _SUPPORTED_AGGREGATES = {
 }
 _DATEISH = re.compile(r"^\s*[+-]?\d{1,5}-\d{1,2}-\d{1,2}")
 _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CANONICAL_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
 
@@ -575,6 +576,7 @@ class _Compiler:
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
         self.string_literals: set[str] = set()
+        self.timestamp_literals: set[str] = set()
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -1412,8 +1414,10 @@ class _Compiler:
         if e.is_string:
             text = e.this
             self.string_literals.add(text)
-            if _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
-                raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' is modeled)")
+            if _CANONICAL_TIMESTAMP.match(text):
+                self.timestamp_literals.add(text)  # fixed width, so string order is time order among timestamps
+            elif _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
+                raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' and 'YYYY-MM-DD HH:MM:SS' are modeled)")
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal(text)))
         value = _parse_number(e.this)
         if negate:
@@ -2856,6 +2860,9 @@ def _prove_core(
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
         )
+        if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
+            # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)
         extra = compiler.order_facts()
         if extra:
             for union in (left, right):

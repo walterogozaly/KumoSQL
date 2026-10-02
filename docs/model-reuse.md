@@ -23,11 +23,11 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/108 | 32/32 | 0 | 0 |
-| Development | 83/108 | 32/32 | 14 | 0 |
+| Development | 82/108 | 32/32 | 14 | 0 |
 | Held out | 27/39 | 9/9 | 3 | 0 |
-| All (196 cases, 8 disabled) | 110/147 (supported subset 110/139) | 41/41 | 17 | 0 |
+| All (196 cases, 8 disabled) | 109/147 (supported subset 109/139) | 41/41 | 17 | 0 |
 
-113 of 196 queries were changed; 106 were verified on random databases and 7 could not be run (DuckDB does not read `FLOOR(x TO unit)`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
+112 of 196 queries were changed; all 112 were verified on random databases (`FLOOR(x TO unit)` is run as `DATE_TRUNC`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 
 What the proposer reads beyond select-project-join and rollups:
 
