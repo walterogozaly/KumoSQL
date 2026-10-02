@@ -252,6 +252,63 @@ def _identical_copies(proposal: SharedLogicProposal, model_sql: str, sites) -> b
     return True
 
 
+_NOT_PLAIN = ("distinct", "group", "having", "qualify", "limit", "offset", "joins_lateral")
+
+
+def _merges_back(proposal: SharedLogicProposal, model_sql: str, sites) -> bool:
+    """Whether reading the shared SELECT and filtering it is the copy itself, by view merging.
+
+    For a shared SELECT with no DISTINCT, grouping, window or limit, ``SELECT cols FROM (shared) WHERE r``
+    is ``shared`` with the columns replaced by the shared expressions of those names and ``r`` added to
+    its WHERE. When that merged SELECT has the copy's canonical text, the copy and the refactor are one query.
+    """
+
+    try:
+        tree = sqlglot.parse_one(model_sql, read="bigquery")
+        shared = sqlglot.parse_one(proposal.shared_sql, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return False
+    if tree is None or not isinstance(shared, exp.Select):
+        return False
+    if any(shared.args.get(key) for key in _NOT_PLAIN) or shared.find(exp.Window) or shared.find(exp.AggFunc):
+        return False
+    by_name: dict[str, exp.Expression] = {}
+    for projection in shared.expressions:
+        name = projection.alias_or_name.lower()
+        if not name or name == "*" or name in by_name:
+            return False
+        by_name[name] = projection.unalias() if isinstance(projection, exp.Alias) else projection
+    for site in sites:
+        fingerprint = (proposal.site_fingerprints or {}).get(site)
+        copy = _find_copy(tree, site[1], fingerprint) if fingerprint else None
+        if copy is None:
+            return False
+        names = [p.alias_or_name.lower() for p in copy.expressions]
+        if not names or any(n not in by_name for n in names) or len(set(names)) != len(names):
+            return False
+        merged = shared.copy()
+        projections = []
+        for projection, name in zip(copy.expressions, names):
+            expression = by_name[name].copy()
+            projections.append(expression if isinstance(expression, exp.Column) and expression.name.lower() == name
+                               else exp.alias_(expression, projection.alias_or_name, copy=False))
+        merged.set("expressions", projections)
+        for text in (proposal.residual_filters or {}).get(site, ()):
+            try:
+                condition = sqlglot.parse_one(text, read="bigquery")
+            except sqlglot.errors.SqlglotError:
+                return False
+            for column in list(condition.find_all(exp.Column)):
+                target = by_name.get(column.name.lower())
+                if target is None or column.table:
+                    return False
+                column.replace(target.copy())
+            merged = merged.where(condition, copy=False)
+        if _fingerprint(merged)[0] != _fingerprint(copy)[0]:
+            return False
+    return True
+
+
 def verify_proposal(pipeline: "Pipeline", proposal: SharedLogicProposal) -> SharedLogicProposal:
     """Apply the refactor to every copy and label each consumer by what the prover shows.
 
@@ -282,6 +339,11 @@ def verify_proposal(pipeline: "Pipeline", proposal: SharedLogicProposal) -> Shar
         if after and proposal.origin == "exact_duplicate" and _identical_copies(proposal, before, sites):
             results[model_key] = ConsumerResult(
                 model_key, "proven", "every copy is the shared SELECT itself once aliases and clause order are ignored"
+            )
+            continue
+        if after and before and _merges_back(proposal, before, sites):
+            results[model_key] = ConsumerResult(
+                model_key, "proven", "merging the shared SELECT back into each copy gives the copy itself"
             )
             continue
         results[model_key] = verify_consumer(before, after, node=model_key)

@@ -127,7 +127,7 @@ def run_project(project: gen.Project) -> dict:
             "exact_recall_semantic": round(len(sel(exact_pred) & sel(semantic)) / max(1, len(sel(semantic))), 4) if sel(semantic) else None,
             "exact_wrong": len(sel(exact_pred) - sel(same_class)),
             "similar": _pair_score(sel(exact_pred | near_pred), sel(family)),
-            "near_only": _pair_score(sel(near_pred - exact_pred), sel(family - textual)),
+            "near_only": _pair_score(sel(near_pred - exact_pred), sel(family - same_class)),
             "repeated_work": _pair_score(sel(repeat_pred), sel(family)),
         }
 
