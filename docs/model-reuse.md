@@ -14,7 +14,7 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 
 `rewrite_over_model(query, model_sql, schema=..., constraints=...)` proposes replacements that read only the model (identity, projection, filter over model columns, join-order changes, aggregate rollup) and returns one **only if** the prover proves query ≡ replacement with the model inlined. `check_replacement` proves or refutes a replacement you supply.
 
-* Source: Apache Calcite 1.37.0 (tag `calcite-1.37.0`, Apache-2.0), `MaterializedViewRelOptRulesTest` and `MaterializedViewSubstitutionVisitorTest`. `tools/extract_calcite_mv.py` downloads the pinned files and writes `tests/fixtures/mv_reuse/calcite_mv_cases.json` (196 cases, SQL unchanged, Calcite's own `ok`/`noMat` verdict kept).
+* Source: Apache Calcite 1.37.0 (tag `calcite-1.37.0`, Apache-2.0), `MaterializedViewRelOptRulesTest` and `MaterializedViewSubstitutionVisitorTest`. `tools/extract_calcite_mv.py` downloads the pinned files and writes `tests/fixtures/mv_reuse/calcite_mv_cases.json` (196 cases, SQL unchanged, Calcite's own `ok`/`noMat` verdict kept). A test that calls `ok()` but asserts a plan that never scans `MV0` (Calcite answers from the base table or from empty `VALUES`) is labelled `ok-without-mv` and scored as a cannot-case: `testAggregateMaterializationAggregateFuncs17` and `Funcs20`.
 * Original and adapted are separate. Original: the extracted cases above. Adapted: `tests/fixtures/mv_reuse/adapted_cases.json` (29 shared-model cases in Dataform style, written by `tools/make_adapted_mv_cases.py`, scored as source `adapted`).
 * Overlap with the other evals: `python tools/mv_overlap.py` finds no case whose query or materialization appears in the SQLSolver, Cosette, QED, R-Bot or SPES fixtures (`tests/fixtures/mv_reuse/overlap.json`). SQLSolver's Calcite pairs come from `RelOptRulesTest`, a different test class.
 * A Calcite `noMat` verdict is not proof that no rewrite exists. A rewrite where Calcite says `noMat` is checked, not penalised; none occurred.
@@ -35,7 +35,7 @@ Not read yet: unique/foreign-key joins, outer joins, INTERSECT, CUBE/ROLLUP, FLO
 
 `check_containment(q1, q2, schema=..., semantics="set" | "bag", database=...)` answers `contained` (a proof, with the method named), `not_contained` (a stored database where `q1` returns a row `q2` does not return as often), `unknown`, `unsupported` or `timeout`. Set and bag are different questions: `SELECT x FROM t` is set-contained in `SELECT DISTINCT x FROM t` but not bag-contained.
 
-Proof methods reduce containment to an equivalence: equal, pre-filter (restrict `q2` by `q1`'s extra conjuncts), post-filter (reuse engine over an identity model), distinct collapse (bags) and `q1 UNION q2 ≡ q2 UNION q2` (sets).
+Proof methods reduce containment to an equivalence: equal, pre-filter (restrict `q2` by `q1`'s extra conjuncts), post-filter (reuse engine over an identity model), distinct collapse (bags) and `q1 UNION q2 ≡ q2 UNION q2` (sets). Set operations are taken apart first, with steps that hold for bags: `A EXCEPT B` is within `A`, `A INTERSECT B` within either operand, `A UNION B` within `A UNION ALL B`, and a `UNION ALL` is within another when each branch is contained in its own branch of the other. Literal `IN` lists are read like any other filter.
 
 Cases are generated (`tools/make_containment_cases.py`, 318 cases, labels checked by three-valued evaluation or a database) in families filters, nulls, duplicates, filters-expr, aggregates and joins. Aggregates and joins are held out whole.
 
