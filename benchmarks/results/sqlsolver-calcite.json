@@ -1,0 +1,18 @@
+{
+  "suite": "SQLSolver Calcite",
+  "order": 10,
+  "size": 232,
+  "score": "192/232, 0 wrong",
+  "metric": "Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 60 random DuckDB databases.",
+  "docs": "docs/sqlsolver.md#benchmark-coverage",
+  "command": "python tools/sqlsolver_bench.py calcite",
+  "date": "2026-10-01",
+  "caveats": "Rules were developed against these pairs (tuned on test).",
+  "evidence": "proof",
+  "correctness": "0 false proofs (re-checked on 60 random DuckDB databases)",
+  "coverage": {
+    "proven": 192,
+    "unknown": 40
+  },
+  "held_out": "none"
+}
