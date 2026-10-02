@@ -3460,7 +3460,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         return result
     from . import conditional_equivalence
 
-    def prove(constraints):
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return _prove_with_limit(*pair, **{**kwargs, "constraints": constraints, "compare_names": False})
         return _prove_with_limit(left_sql, right_sql, **{**kwargs, "constraints": constraints})
 
     options = {} if wall is None else {"wall_seconds": wall}

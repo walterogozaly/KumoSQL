@@ -4719,7 +4719,9 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
         return result
     from . import conditional_equivalence
 
-    def prove(constraints):
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return _prove_algebraic_levels(*pair, False, **{**kwargs, "constraints": constraints, "compare_names": False})
         return _prove_algebraic_levels(left_sql, right_sql, False, **{**kwargs, "constraints": constraints})
 
     options = {} if wall is None else {"wall_seconds": wall}

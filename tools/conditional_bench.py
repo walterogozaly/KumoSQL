@@ -62,7 +62,7 @@ WITHOUT_DATABASES = 300  # random databases without the conditions, to show they
 
 @dataclass
 class Outcome:
-    kind: str  # equivalent | conditional | unknown | wrong
+    kind: str  # equivalent | conditional | refuted | unknown | wrong
     detail: str = ""
     conditions: list[dict] = field(default_factory=list)
     validated: int = 0  # databases that met the conditions and ran on both queries
@@ -221,6 +221,22 @@ def _each_needed(pair: singh.Pair, conditions: list[Condition], options: dict) -
     return True
 
 
+def _refuted_or_unknown(pair: singh.Pair, trees, texts, result, start: float, base: dict) -> Outcome:
+    """Not proved, even under conditions: ``refuted`` when a database that meets *every* candidate condition separates
+    the queries (no set of conditions can help), otherwise ``unknown``."""
+
+    from kumosql.conditional_equivalence import candidate_conditions
+
+    checked = singh.Pair(pair.index, texts[0], texts[1], pair.tables, pair.gold)
+    if singh.unsafe_to_refute(*trees):
+        return Outcome("unknown", "no counterexample allowed (LIMIT with ties, LOWER, or non-determinism)", seconds=time.time() - start, **base)
+    candidates = candidate_conditions(checked.left, checked.right, schema=pair.tables, dialect="mysql")
+    witness, _ = _singh_search(checked, trees, candidates, VALIDATION_DATABASES // 3, seed=303)
+    if witness:
+        return Outcome("refuted", f"a database meeting all {len(candidates)} candidate conditions separates the queries", [c.to_json() for c in candidates], seconds=time.time() - start, **base)
+    return Outcome("unknown", result.reason[:200], seconds=time.time() - start, **base)
+
+
 def decide_singh(pair: singh.Pair) -> Outcome:
     start = time.time()
     base = dict(label=pair.gold, key=pair.key, held_out=pair.held_out)
@@ -232,7 +248,7 @@ def decide_singh(pair: singh.Pair) -> Outcome:
     if result.status is SmtStatus.PROVEN_EQUIVALENT:
         return Outcome("equivalent", "proved outright", seconds=time.time() - start, **base)
     if result.status is not SmtStatus.PROVEN_CONDITIONALLY:
-        return Outcome("unknown", result.reason[:200], seconds=time.time() - start, **base)
+        return _refuted_or_unknown(pair, trees, texts, result, start, base)
     conditions = _conditions_of(result)
     checked = singh.Pair(pair.index, texts[0], texts[1], pair.tables, pair.gold)
     witness, ran = _singh_search(checked, trees, conditions, VALIDATION_DATABASES, seed=202)
@@ -352,9 +368,9 @@ class Report:
         needed = sum(1 for o in conditional if o.needed)
         minimal = sum(1 for o in conditional if o.minimal)
         return (
-            f"{self.suite}: {len(self.outcomes)} pairs, {c['equivalent']} proved outright, {c['conditional']} equivalent under conditions, "
-            f"{c['unknown']} unknown, {c['wrong']} wrong; of the conditional ones {needed} separated without the conditions "
-            f"and {minimal} have a minimal set"
+            f"{self.suite}: {len(self.outcomes)} pairs: {c['equivalent']} proved outright, {c['conditional']} equivalent under conditions, "
+            f"{c['refuted']} refuted by a database meeting every candidate condition, {c['unknown']} unknown, {c['wrong']} wrong; "
+            f"of the conditional ones {needed} separated without the conditions and {minimal} have a minimal set"
         )
 
 

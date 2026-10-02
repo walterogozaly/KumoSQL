@@ -277,7 +277,7 @@ def candidate_conditions(
                     columns = other_columns = ()
                 if not columns:
                     continue
-                for group in dict.fromkeys([columns, *[(c,) for c in columns]]):
+                for group in dict.fromkeys([*[(c,) for c in columns], columns]):
                     add("join_unique", _make("unique", occ, sorted(group), dialect))
                 if occ.key != other.key:
                     aligned = dict(zip(columns, other_columns))
@@ -301,7 +301,7 @@ def candidate_conditions(
         def unique_of(items: Iterable[exp.Expression]) -> None:
             for occ, names in single_table(items):
                 names = sorted(dict.fromkeys(names))
-                for group in dict.fromkeys([tuple(names), *[(n,) for n in names]]):
+                for group in dict.fromkeys([*[(n,) for n in names], tuple(names)]):
                     add("shape_unique", _make("unique", occ, group, dialect))
 
         for select in tree.find_all(exp.Select):
@@ -439,6 +439,20 @@ def minimal_conditions(candidates: list[Condition], proves: Callable[[list[Condi
     return keep, True
 
 
+def always_empty(left_sql: str, prove: Callable[..., SmtEquivalenceResult], constraints: Mapping[str, TableConstraints]) -> bool:
+    """Whether the prover shows, under ``constraints``, that the query returns no rows on any database.
+
+    That is the signature of facts nothing satisfies, or of facts that empty the query: either way an
+    equivalence proved under them says nothing.
+    """
+
+    try:
+        counted = prove(constraints, (f"SELECT COUNT(*) AS n FROM ({left_sql.strip().rstrip(';')}) AS q", "SELECT 0 AS n"))
+    except Exception:  # noqa: BLE001 - a control that cannot run finds nothing
+        return False
+    return counted.status is SmtStatus.PROVEN_EQUIVALENT
+
+
 def data_independent(
     left_sql: str,
     right_sql: str,
@@ -494,6 +508,30 @@ def data_independent(
     return len(seen["left"]) <= 1 and len(seen["right"]) <= 1
 
 
+def jointly_satisfiable(conditions: Iterable[Condition], constraints: Mapping[str, TableConstraints] | None = None) -> bool:
+    """Whether one non-empty database meets every condition and every declared fact at once.
+
+    Builds it: two rows per table whose columns hold the row's number (distinct, so keys are unique; never
+    NULL; a child column then equals a parent column's value), and reads each fact back off it. A set that
+    no database satisfies would let a prover "prove" anything.
+    """
+
+    from .constraint_dependence import guarantees_of
+
+    facts = list(conditions) + [
+        Condition(g.kind, g.table.lower(), g.columns, g.parent.lower(), g.parent_columns) for g in guarantees_of(constraints or {})
+    ]
+    columns: dict[str, set[str]] = {}
+    for fact in facts:
+        if fact.kind == "foreign_key" and len(fact.columns) != len(fact.parent_columns):
+            return False
+        columns.setdefault(fact.table, set()).update(fact.columns)
+        if fact.kind == "foreign_key":
+            columns.setdefault(fact.parent, set()).update(fact.parent_columns)
+    database = {table: [{c: row for c in cols} for row in (1, 2)] for table, cols in columns.items()}
+    return not any(broken_by(fact, database) for fact in facts)
+
+
 MAX_ALTERNATIVES = 6
 
 
@@ -501,7 +539,7 @@ def add_conditions(
     left_sql: str,
     right_sql: str,
     result: SmtEquivalenceResult,
-    prove: Callable[[dict[str, TableConstraints] | None], SmtEquivalenceResult],
+    prove: Callable[..., SmtEquivalenceResult],
     *,
     schema: Mapping[str, list[str]] | None = None,
     constraints: Mapping[str, TableConstraints] | None = None,
@@ -511,8 +549,10 @@ def add_conditions(
 ) -> SmtEquivalenceResult:
     """``result`` unchanged, or a ``PROVEN_CONDITIONALLY`` result when conditions settle a pair it did not prove.
 
-    ``prove(constraints)`` runs the prover on the pair with the given constraints. A set whose conditions make
-    both queries constant is passed over for another set (see :func:`data_independent`).
+    ``prove(constraints, pair=None)`` runs the prover on the pair (or on another pair, names ignored) with the given
+    constraints. A set of conditions is passed over for another set when no database meets it, when the prover then
+    shows the query is always empty (a prover given contradictory facts proves that and everything else), or when it
+    makes both queries return one result on every test database (see :func:`data_independent`).
     """
 
     if result.status is SmtStatus.PROVEN_EQUIVALENT:
@@ -525,8 +565,15 @@ def add_conditions(
     def proves(chosen: list[Condition]) -> bool:
         return prove(with_conditions(constraints, chosen)).status is SmtStatus.PROVEN_EQUIVALENT
 
-    full = prove(with_conditions(constraints, candidates))
-    if full.status is not SmtStatus.PROVEN_EQUIVALENT:
+    # Foreign keys come second: their rules can rewrite one side out of the shape the other side's proof needs, so a
+    # pair the other facts prove is never lost to them.
+    without_keys = [c for c in candidates if c.kind != "foreign_key"]
+    for universe in dict.fromkeys([tuple(without_keys), tuple(candidates)]):
+        full = prove(with_conditions(constraints, universe))
+        if universe and full.status is SmtStatus.PROVEN_EQUIVALENT:
+            candidates = list(universe)
+            break
+    else:
         return result
     pool, blocked = candidates, []
     needed: list[Condition] = []
@@ -539,7 +586,12 @@ def add_conditions(
         chosen, minimal = minimal_conditions(pool, proves, deadline)
         if not chosen:
             return result
-        constant = data_independent(left_sql, right_sql, with_conditions(constraints, chosen), schema=schema, types=types, dialect=dialect)
+        merged = with_conditions(constraints, chosen)
+        constant = (
+            not jointly_satisfiable(chosen, constraints)
+            or always_empty(left_sql, prove, merged)
+            or data_independent(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect)
+        )
         if not constant:
             needed = chosen
             break
