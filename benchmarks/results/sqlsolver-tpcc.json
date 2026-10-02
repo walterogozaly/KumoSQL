@@ -4,7 +4,7 @@
   "size": 19,
   "score": "19/19, 0 wrong",
   "metric": "Equivalent query pairs proved; same checking as Calcite.",
-  "docs": "docs/sqlsolver.md#benchmark-coverage",
+  "docs": "docs/evals/sqlsolver.md#benchmark-coverage",
   "command": "python tools/sqlsolver_bench.py tpcc",
   "date": "2026-10-01",
   "caveats": "Tuned on test.",

@@ -14,7 +14,7 @@
     "error": 225
   },
   "held_out": "1,038 held-out mutants escape 8 random databases and are caught by the suite",
-  "docs": "docs/targeted-test-data.md",
+  "docs": "docs/evals/targeted-test-data.md",
   "command": "python tools/targeted_data_bench.py --split all",
   "date": "2026-10-02",
   "caveats": "Check time per original query: 0.29 s dev (suite) versus 0.13 s (8 random). Held-out TPC-H timeouts depress every strategy's score equally. 108 escape cases are kept as regression tests in tests/fixtures/targeted_data."

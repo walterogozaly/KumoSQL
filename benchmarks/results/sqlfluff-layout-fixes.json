@@ -15,7 +15,7 @@
     "error": 0
   },
   "held_out": "77/97 layout-only fixes passed (the other 20 unsupported), 2/3 identifier renames refuted, 0 wrong; rules LT01, LT12, LT13 and the CP02+LT01 pairs held out by hash of the rule code",
-  "docs": "docs/sqlfluff-fixtures.md#layout-fixes",
+  "docs": "docs/evals/sqlfluff-fixtures.md#layout-fixes",
   "command": "python tools/sqlfluff_fixtures_bench.py layout",
   "date": "2026-10-02",
   "caveats": "Passing means identical parse trees, not a solver proof, and function-name case is ignored. 97 pairs are unsupported as written (50 templated with Jinja, the rest in oracle, tsql, exasol and snowflake syntax sqlglot cannot read); the Jinja ones were also checked with their tags masked (41 of 50 passed), which is not in the score. No implementation changed."

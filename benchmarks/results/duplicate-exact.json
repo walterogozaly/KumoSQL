@@ -12,6 +12,6 @@
   "analysis": "Pair precision 100%, recall 100% (1,250 pairs, dev families); held-out families 288/288",
   "performance": "3,000 models: exact 18 s, near-duplicates 77 s, repeated work 8 s, refactor verification 64 s (600 models: 4 s, 6 s, 2 s, 14 s)",
   "date": "2026-10-02",
-  "docs": "docs/duplicate-detection.md",
+  "docs": "docs/evals/duplicate-detection.md",
   "command": "python tools/dup_bench.py --sizes 600 --seed 2"
 }

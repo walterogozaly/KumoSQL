@@ -15,7 +15,7 @@
     "error": 0
   },
   "held_out": "50/83 meaning-keeping fixes proved (50/50 on the supported ones) and 6/6 by-design changes refuted, 0 wrong; rules AL01, AM05, CV02, CV04, CV05, CV06, CV08, TQ02 held out by hash of the rule code",
-  "docs": "docs/sqlfluff-fixtures.md#semantic-fixes",
+  "docs": "docs/evals/sqlfluff-fixtures.md#semantic-fixes",
   "command": "python tools/sqlfluff_fixtures_bench.py semantic",
   "date": "2026-10-02",
   "caveats": "The fixtures have no schema: one is read off the queries (the columns they mention plus two placeholders), so a verdict holds for tables with those columns. Fixtures are authored by sqlfluff, not ground-truth equivalence. 150 pairs are unsupported as written (Jinja, dialects or syntax sqlglot cannot read, queries with columns but no FROM, DML); 33 of them were also compared query by query in an adapted form (24 proved, 1 refuted, 8 unsupported), which is not in the score. The first run (214 proved, 4 refuted by sqlglot's reading of BigQuery escapes) was the baseline; the only implementation change since is the string-literal canonicaliser (issue #314). One held-out case was read after it exposed a labelling error."

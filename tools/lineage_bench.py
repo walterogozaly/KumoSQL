@@ -21,7 +21,7 @@ coverage         share of columns traced, rather than reported unknown
 performance      seconds and peak memory by pipeline size
 
 ``dev`` families were used while building the suite; ``held-out`` families were written afterwards and not
-looked at until the first scored run (see ``docs/lineage-bench.md``).
+looked at until the first scored run (see ``docs/evals/lineage-bench.md``).
 
     python tools/lineage_bench.py [--sizes 10,100,1000] [--seed 1]
 """
@@ -677,7 +677,7 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
                 ),
                 "coverage": {"proven": exact, "unknown": unknown},
                 "held_out": HELD_OUT_FIRST_RUN,
-                "docs": "docs/lineage-bench.md#lineage-and-change-impact",
+                "docs": "docs/evals/lineage-bench.md#lineage-and-change-impact",
                 "command": "python tools/lineage_bench.py --scale --write-results",
                 "date": today(),
                 "caveats": (

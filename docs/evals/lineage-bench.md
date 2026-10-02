@@ -2,7 +2,7 @@
 
 Two evals score the graph, changes and cost pages' foundation: table and column lineage, and "what breaks if I change this". Neither runs a language model. Scores keep four things apart: **correctness** (nothing wrong, nothing unsafe), **analysis quality** (precision and recall), **coverage** (how much is traced rather than reported unknown) and **performance** (time and memory by pipeline size). Unknown beats wrong: a column KumoSQL cannot trace is reported `unknown`, never guessed.
 
-The scoreboard rows live in [benchmarks/results/](../benchmarks/results) (`sqllineage.json`, `lineage-impact.json`) and are rendered into the README by `python tools/scoreboard.py`. The floors behind them are in `tests/test_lineage_benchmarks.py`.
+The scoreboard rows live in [benchmarks/results/](../../benchmarks/results) (`sqllineage.json`, `lineage-impact.json`) and are rendered into the README by `python tools/scoreboard.py`. The floors behind them are in `tests/test_lineage_benchmarks.py`.
 
 ## SQLLineage test cases
 

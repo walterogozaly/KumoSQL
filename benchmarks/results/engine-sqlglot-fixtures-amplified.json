@@ -16,7 +16,7 @@
   "usefulness": "1365 of 2228 executed queries changed by a rewrite; each changed result was compared with the control",
   "performance": "median 279.9 ms, p95 1150.7 ms per query through all rules",
   "held_out": "dev 0 wrong / 1247 transformed; held out (files hashing to 0 mod 4) 0 wrong / 239 transformed",
-  "docs": "docs/engine-suites.md",
+  "docs": "docs/evals/engine-suites.md",
   "command": "python tools/engine_suites.py --suite sqlglot-fixtures",
   "date": "2026-10-02",
   "caveats": "Pinned to 954503e4c6 (MIT, Copyright Toby Mao). In coverage, 'proven' counts rewrites whose executed result matched the control, and 'unknown' counts queries no rule changed. 233 duplicate cases collapsed; 0 files skipped for unsupported directives."

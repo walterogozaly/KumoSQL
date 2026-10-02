@@ -32,5 +32,5 @@ Moves: drop an unread editable model; inline an editable model into all its read
 
 - Evidence is proof only. A move that is not proved is listed with the prover's reason (`rejected_moves`); there is no counterexample for it yet.
 - Complexity is the sqlfluff structural score summed over models, so inlining lowers the model count but raises complexity (each derived table counts); the front shows that trade.
-- It cannot extract shared logic into a new model, rewrite SQL inside a model, or write the result back to `.sqlx` files; it reports the new SQL. Proof coverage is the prover's: staged LEFT JOIN chains and AVG rebuilt across a rollup are still unknown (see [pipeline-equivalence.md](pipeline-equivalence.md)).
+- It cannot extract shared logic into a new model, rewrite SQL inside a model, or write the result back to `.sqlx` files; it reports the new SQL. Proof coverage is the prover's: staged LEFT JOIN chains and AVG rebuilt across a rollup are still unknown (see [pipeline-equivalence.md](evals/pipeline-equivalence.md)).
 - The search is bounded by `--max-states` and `--max-seconds`; the result says which limit stopped it.

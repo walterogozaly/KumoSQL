@@ -16,7 +16,7 @@ coverage         scenarios and models the tool answered, rather than reported un
 performance      seconds per scenario by pipeline size
 
 ``dev`` families were used while building the tool; ``held-out`` families were written after and not looked at until
-the first scored run (docs/schema-change-bench.md).
+the first scored run (docs/evals/schema-change-bench.md).
 
     python tools/schema_change_bench.py [--write-results]
 """
@@ -481,7 +481,7 @@ def write_results(dev: dict, held: dict) -> None:
         "correctness": f"{dev['unsafe_misses'] + held['unsafe_misses']} models that break or change output reported as safe; {dev['false_breaks'] + held['false_breaks']} false breaks; {dev['opaque_unsafe'] + held['opaque_unsafe']} unparsed models that mention the table reported as safe",
         "coverage": {"proven": exact, "unknown": total - exact},
         "held_out": "First scored run of the held-out families (474 models): 2 models missed, both a SELECT * EXCEPT (col) or REPLACE over a column that was dropped, which BigQuery rejects and sqlglot ignores. Fixed afterwards, so those families no longer count as held out. Dev runs before it also exposed a bug that dropped table aliases, which made joins look unresolvable; reported then as unknown, never as safe.",
-        "docs": "docs/schema-change-bench.md",
+        "docs": "docs/evals/schema-change-bench.md",
         "command": "python tools/schema_change_bench.py --write-results",
         "date": today(),
         "caveats": "Retypes are checked only where the type reaches an output column; an operation that is invalid on the new type is not detected. Retypes feeding a UNION are not scored (the supertype is not modelled). Answers come from the generator, whose families are ones the tool's author could think of.",

@@ -251,6 +251,39 @@ def _is_ground(term) -> bool:
     return True
 
 
+_ARITHMETIC = (z3.Z3_OP_ADD, z3.Z3_OP_SUB, z3.Z3_OP_MUL, z3.Z3_OP_UMINUS, z3.Z3_OP_ANUM, z3.Z3_OP_AGNUM)
+
+
+def _uninterpreted_leaves(term) -> list | None:
+    """The column constants of ``term`` when it is a column or ``+ - *`` over columns and numbers
+    (NULL exactly when one of its columns is), else ``None``."""
+
+    leaves, stack = [], [term]
+    while stack:
+        node = stack.pop()
+        if z3.is_const(node) and node.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+            if not any(leaf.eq(node) for leaf in leaves):
+                leaves.append(node)
+            continue
+        kind = node.decl().kind()
+        if kind not in _ARITHMETIC and not (kind in (z3.Z3_OP_DT_CONSTRUCTOR, z3.Z3_OP_DT_ACCESSOR) and node.decl().name() in ("Num", "num")):
+            return None
+        stack.extend(node.children())
+    return leaves
+
+
+def _implied(conjuncts: list, fact, ids: set) -> bool:
+    """Whether the conjunction ``conjuncts`` implies ``fact`` (a quick solver check)."""
+
+    if fact.get_id() in ids:
+        return True
+    solver = z3.Solver()
+    solver.set("timeout", 2000)
+    solver.add(*conjuncts)
+    solver.add(z3.Not(fact))
+    return solver.check() == z3.unsat
+
+
 class _SetSourceUnresolved(Exception):
     """A DISTINCT derived table was not joined on all of its columns."""
 
@@ -699,7 +732,7 @@ class _Compiler:
             distinct = bool(node.args.get("distinct"))
             branches = []
             for child in (node.this, node.expression):
-                sub = self._query(child, ctes)
+                sub = self._query(self._cut_branch(child), ctes)
                 if not sub.distinct or distinct:
                     branches.extend(sub.branches)
                 elif len(sub.branches) == 1:
@@ -715,6 +748,23 @@ class _Compiler:
             result = self._select(node, ctes)
             return result if isinstance(result, _Union) else _Union([result], False)
         raise Unsupported(f"{type(node).__name__} statements")
+
+    def _cut_branch(self, child: exp.Expression) -> exp.Expression:
+        """A ``UNION`` branch ending in ``ORDER BY .. LIMIT`` read as a derived table kept whole, as a
+        ``FROM`` subquery with a LIMIT is (under ``LIMIT_SOURCE_ASSUMPTION``)."""
+
+        body = child
+        while isinstance(body, exp.Subquery) and not any(body.args.get(k) for k in ("limit", "offset", "order")):
+            body = body.this
+        if not isinstance(body, exp.Select) or not (body.args.get("limit") or body.args.get("offset")):
+            return child
+        if body.args.get("order") is None or _is_limit_zero(body):
+            return child
+        names = [e.alias_or_name for e in body.expressions]
+        if not names or any(isinstance(e, exp.Star) or not n for e, n in zip(body.expressions, names)) or len({n.lower() for n in names}) != len(names):
+            return child
+        alias = self.fresh("kq_cut")
+        return exp.select(*[exp.column(n, table=alias) for n in names]).from_(exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias))))
 
     def _set_operation(self, node: exp.Expression, ctes: dict) -> _Union:
         """``A INTERSECT B`` and ``A EXCEPT B`` (set semantics) as existence tests.
@@ -1657,9 +1707,9 @@ def _pinned_guard(sub: _Sub, pairs, ids) -> object:
     """The guard of a set-source test once its columns are pinned; the pinned outer columns are known non-NULL."""
 
     known = [
-        z3.Not(z3.Bool(pin.decl().name() + "#null"))
+        z3.Not(z3.Bool(leaf.decl().name() + "#null"))
         for _, pin in pairs
-        if z3.is_const(pin) and pin.decl().kind() == z3.Z3_OP_UNINTERPRETED
+        for leaf in (_uninterpreted_leaves(pin) or [])
     ]
     return z3.And(_subst(sub.guard, pairs), *known)
 
@@ -2337,9 +2387,13 @@ class _Prover:
                     left, right = term.children()
                     if right.eq(column.val):
                         left, right = right, left
-                    if not left.eq(column.val) or not z3.is_const(right) or right.decl().kind() != z3.Z3_OP_UNINTERPRETED:
+                    if not left.eq(column.val):
                         continue
-                    if z3.Not(z3.Bool(right.decl().name() + "#null")).get_id() in ids:
+                    leaves = _uninterpreted_leaves(right)
+                    if not leaves or any(leaf.eq(column.val) or leaf.sort() == z3.BoolSort() for leaf in leaves):
+                        continue
+                    # an arithmetic expression over outer columns that the condition requires to be non-NULL
+                    if all(_implied(conjuncts, z3.Not(z3.Bool(leaf.decl().name() + "#null")), ids) for leaf in leaves):
                         pairs.append((column.val, right))
                         break
                 else:
@@ -2347,9 +2401,9 @@ class _Prover:
         # The test already requires the pinned columns to be non-NULL, so the
         # condition need not repeat it (the existence atom is a free Boolean).
         known = [
-            (z3.Not(z3.Bool(pin.decl().name() + "#null")), z3.BoolVal(True))
+            (z3.Not(z3.Bool(leaf.decl().name() + "#null")), z3.BoolVal(True))
             for _, pin in pairs
-            if z3.is_const(pin) and pin.decl().kind() == z3.Z3_OP_UNINTERPRETED
+            for leaf in (_uninterpreted_leaves(pin) or [])
         ]
         changes = {
             "cond": _Pred(_subst(_subst(block.cond.t, pairs), known), _subst(block.cond.f, pairs)),
@@ -3295,7 +3349,7 @@ TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for eq
 def _split_limit(sql: str, dialect: str):
     """``(core_sql, spec)`` for a query ending in ORDER BY .. LIMIT, ``(sql, None)`` without a limit.
 
-    ``spec`` is ``(limit, offset, ordering, covers_all)`` where ``ordering`` lists
+    ``spec`` is ``(limit, offset, ordering, covers_all)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
     ``(output position, descending, nulls first)``; ``None`` as the core means the
     shape is not handled (``spec`` then says why).
     """
@@ -3312,9 +3366,10 @@ def _split_limit(sql: str, dialect: str):
     limit, offset, order = root.args.get("limit"), root.args.get("offset"), root.args.get("order")
     if (limit is None and offset is None) or _is_limit_zero(root):
         return sql, None
-    if limit is None or order is None:
-        return None, "LIMIT without ORDER BY or OFFSET without LIMIT picks arbitrary rows"
-    if not isinstance(limit.expression, exp.Literal) or limit.expression.is_string:
+    if order is None:
+        return None, "LIMIT or OFFSET without ORDER BY picks arbitrary rows"
+    # ORDER BY .. OFFSET m without LIMIT keeps every row after the first m: an unbounded limit.
+    if limit is not None and (not isinstance(limit, exp.Limit) or not isinstance(limit.expression, exp.Literal) or limit.expression.is_string):
         return None, "LIMIT is not a constant"
     if offset is not None and (not isinstance(offset.expression, exp.Literal) or offset.expression.is_string):
         return None, "OFFSET is not a constant"
@@ -3340,13 +3395,16 @@ def _split_limit(sql: str, dialect: str):
                 for i, (name, expr) in enumerate(outputs)
                 if (isinstance(key, exp.Column) and not key.table and key.name.lower() == name) or expr == text
             ]
-            if len(matches) == 1 or (matches and len({outputs[i] for i in matches}) == 1):
+            if len(matches) == 1 or (matches and len({outputs[i][1] for i in matches}) == 1):
                 position = matches[0]
         if position is None and root is first and not first.args.get("distinct") and not any(key.find_all(exp.Subquery, exp.Window)):
             hidden.append(key.copy())
             position = len(outputs) + len(hidden) - 1
         if position is None:
             return None, "ORDER BY on an expression that is not an output column"
+        if position < len(outputs):
+            # Output columns with the same expression hold the same values: name the first one.
+            position = next(i for i, (_, expr) in enumerate(outputs) if expr == outputs[position][1])
         desc = bool(item.args.get("desc"))
         nulls_first = item.args.get("nulls_first")
         ordering.append((position, desc, (not desc) if nulls_first is None else bool(nulls_first)))
@@ -3360,7 +3418,7 @@ def _split_limit(sql: str, dialect: str):
     for index, key in enumerate(hidden):
         stripped.set("expressions", list(stripped.expressions) + [exp.alias_(key, f"kq_ord{index}")])
     spec = (
-        int(limit.expression.this),
+        int(limit.expression.this) if limit is not None else None,
         int(offset.expression.this) if offset is not None else 0,
         tuple(ordering),
         covers,

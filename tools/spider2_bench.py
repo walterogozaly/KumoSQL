@@ -334,7 +334,7 @@ def write_results(all_summary: dict, dev: dict, held: dict) -> None:
         "correctness": f"0 queries failed or timed out in any stage; {damaged} rewrites damaged a query; rewrites changed {changed} query-rule pairs, {verified} proven equivalent, the rest left unproven (never applied unproven)",
         "coverage": {"proven": total - st["lineage"]["unsupported"], "unknown": st["lineage"]["unsupported"]},
         "held_out": f"Held-out split ({held['queries']} queries, every fifth task by id hash) first run, after the dev fixes: 0 failed in every stage, {held['stages']['lineage']['unsupported']} lineage unknown (a SELECT * over a table with no known columns).",
-        "docs": "docs/spider2-bench.md",
+        "docs": "docs/evals/spider2-bench.md",
         "command": "python tools/spider2_bench.py --split all --write-results",
         "date": "2026-10-02",
         "caveats": "Only the 142 of 205 BigQuery and GA4 tasks whose gold SQL upstream publishes. The dbt tasks (68 instructions) are not scored: their project archives are on Google Drive, which is blocked here. Dev run exposed three real bugs, fixed in the same change (a prover memory blow-up on many outer joins, a near-duplicate crash, constant derived columns reported unknown).",

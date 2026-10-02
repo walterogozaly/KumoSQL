@@ -818,7 +818,7 @@ def scoreboard_rows(summary: dict, results_dir: Path) -> list[Path]:
             "held_out": "dev {} wrong / {} transformed; held out (files hashing to 0 mod {}) {} wrong / {} transformed".format(
                 summary["dev"]["wrong"], summary["dev"]["transformed"], HOLDOUT_MODULUS, summary["held_out"]["wrong"], summary["held_out"]["transformed"]
             ),
-            "docs": "docs/engine-suites.md",
+            "docs": "docs/evals/engine-suites.md",
             "command": f"python tools/engine_suites.py --suite {suite}" + SUITE_ARGS.get(suite, ""),
             "date": time.strftime("%Y-%m-%d"),
             "caveats": (
