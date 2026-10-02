@@ -243,3 +243,22 @@ def test_parse_script_keeps_the_shape_its_callers_unpack():
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and getattr(node.value.func, "id", "") == "_parse_script":
                 target = node.targets[0]
                 assert isinstance(target, ast.Tuple) and len(target.elts) == 2, f"{path.name}:{node.lineno} unpacks the wrong shape"
+
+
+@pytest.mark.parametrize("kind", ["table", "operations"])
+def test_a_misspelled_keyword_keeps_its_edge_and_reports_one_located_parse_error(kind):
+    """The statement is unrecognised from its first word, but it is degraded, not dropped, and it is described the same way
+    in a query model and in an operation."""
+
+    pl = build("SELEC k FROM `p.d.src` WHERE ((", kind)
+    assert pl.upstream["p.d.tgt"] == {"p.d.src"}
+    parse_errors = [d.message for d in pl.all_diagnostics() if d.code == "parse_error"]
+    assert len(parse_errors) == 1 and "Line 1, Col" in parse_errors[0] and "read from its tokens" in parse_errors[0]
+    assert "unparsed_operation" not in codes(pl)
+    assert "may have no edges" not in " ".join(d.message for d in pl.all_diagnostics())
+
+
+def test_an_operation_statement_that_is_not_readable_at_all_still_says_edges_may_be_missing():
+    pl = build("EXECUTE IMMEDIATE CONCAT('SELECT * FROM ', @name)", "operations")
+    messages = {d.code: d.message for d in pl.all_diagnostics()}
+    assert "may have no edges" in messages["unparsed_operation"]
