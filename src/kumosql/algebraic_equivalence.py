@@ -34,6 +34,7 @@ import re
 import sqlglot
 from sqlglot import exp
 from .ast_utils import canonical_negation
+from .set_operations import positional_sql_pair
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -305,6 +306,60 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
             return None
     result = inner.copy()
     result.set("expressions", items)
+    return result
+
+
+def _mean_times_count(select: exp.Select) -> exp.Expression | None:
+    """Over ``(SELECT .., AVG(x) AS a, COUNT(x) AS n .. GROUP BY ..) AS m``, ``m.a * m.n`` is ``SUM(x)``.
+
+    A group's mean times its count of non-NULL values is its sum (both read NULL when no value is
+    present). The sum is added to the derived table and the product replaced by it, so a weighted
+    average of per-group averages meets the plain ``SUM``/``COUNT`` form.
+    """
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    source = from_.this if from_ else None
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select) or not source.alias:
+        return None
+    inner = source.this
+    if not inner.args.get("group") or not _no_extras(inner, allow_group=True):
+        return None
+    means: dict[str, exp.Expression] = {}
+    counts: dict[str, exp.Expression] = {}
+    for item in inner.expressions:
+        expr = item.this if isinstance(item, exp.Alias) else item
+        name = (item.alias_or_name or "").lower()
+        if not name or isinstance(expr.this if hasattr(expr, "this") else None, exp.Distinct) or expr.args.get("distinct"):
+            continue
+        if isinstance(expr, exp.Avg):
+            means[name] = expr.this
+        elif isinstance(expr, exp.Count) and not isinstance(expr.this, exp.Star):
+            counts[name] = expr.this
+    alias = source.alias.lower()
+
+    def column_name(node: exp.Expression) -> str | None:
+        if isinstance(node, exp.Column) and (not node.table or node.table.lower() == alias):
+            return node.name.lower()
+        return None
+
+    new_items: list[exp.Expression] = []
+    changed = False
+    result = select.copy()
+    inner_copy = result.args["from_" if result.args.get("from_") else "from"].this.this
+    for product in list(result.find_all(exp.Mul)):
+        if product.find_ancestor(exp.Select) is not result:
+            continue
+        left, right = column_name(product.this), column_name(product.expression)
+        for mean, count in ((left, right), (right, left)):
+            if mean in means and count in counts and means[mean].sql() == counts[count].sql() and isinstance(means[mean], exp.Column):
+                total = f"kq_sum_{len(new_items)}"
+                new_items.append(exp.alias_(exp.Sum(this=means[mean].copy()), total))
+                product.replace(exp.column(total, table=source.alias))
+                changed = True
+                break
+    if not changed:
+        return None
+    inner_copy.set("expressions", list(inner_copy.expressions) + new_items)
     return result
 
 
@@ -4142,7 +4197,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -4166,6 +4221,9 @@ def normalize(
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result."""
 
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
+    if problem:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
     if result.proven or not (kwargs.get("constraints") or {}):
         return result

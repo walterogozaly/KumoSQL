@@ -39,6 +39,7 @@ import multiprocessing
 from pathlib import Path
 import statistics
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -172,13 +173,11 @@ def build_corpus(split: str) -> tuple[list[dict], dict]:
 
 
 def ssb_tables_from_text(text: str):
-    path = DETAIL_DIR / "_university.sql"
-    DETAIL_DIR.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    try:
+    # A private temporary file: parallel test workers import this module at the same time.
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "university.sql"
+        path.write_text(text, encoding="utf-8")
         return ssb.load_schema(path)
-    finally:
-        path.unlink()
 
 
 # -- per-query work --------------------------------------------------------------

@@ -1,0 +1,20 @@
+{
+  "suite": "Spider 2.0 BigQuery queries (adapted)",
+  "order": 240,
+  "size": 142,
+  "score": "134/142 gold queries fully traced and passing every stage, 0 wrong; lineage 134/134, renamed-column lineage 134/134, drop-impact 142/142",
+  "metric": "KumoSQL's own analyses on the 142 published BigQuery gold queries of Spider 2.0 (not the official text-to-SQL score): parse, load, graph, per-column lineage, lineage through a renaming model (answer known by construction), column-drop impact, and cleanup/format rewrites checked by the prover.",
+  "evidence": "proof",
+  "correctness": "0 queries failed or timed out in any stage; 0 rewrites damaged a query; rewrites changed 121 query-rule pairs, 83 proven equivalent, the rest left unproven (never applied unproven)",
+  "coverage": {
+    "proven": 134,
+    "unknown": 8
+  },
+  "held_out": "Held-out split (30 queries, every fifth task by id hash) first run, after the dev fixes: 0 failed in every stage, 1 lineage unknown (a SELECT * over a table with no known columns).",
+  "docs": "docs/spider2-bench.md",
+  "command": "python tools/spider2_bench.py --split all --write-results",
+  "date": "2026-10-02",
+  "caveats": "Only the 142 of 205 BigQuery and GA4 tasks whose gold SQL upstream publishes. The dbt tasks (68 instructions) are not scored: their project archives are on Google Drive, which is blocked here. Dev run exposed three real bugs, fixed in the same change (a prover memory blow-up on many outer joins, a near-duplicate crash, constant derived columns reported unknown). No execution evidence: the data are public BigQuery tables, so rewrites rest on SMT proof (bounded by a timeout) and lineage on construction.",
+  "analysis": "Lineage: 419 columns traced exactly across 134 queries; 8 queries have a column reported unknown (a SELECT * over a public table with no known columns, or an unresolved reference), never guessed.",
+  "performance": "142 queries through every stage in 270 s on 4 workers (about 1.9 s per query including prover re-checks)"
+}

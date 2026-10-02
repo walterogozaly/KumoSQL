@@ -220,6 +220,8 @@ class _Analyzer:
             self.ctes = saved
 
     def set_rel(self, node) -> _Rel:
+        if node.args.get("by_name") or node.args.get("on"):
+            raise _Unsupported("BY NAME set operation")  # columns pair by name, not position
         left, right = self.query_rel(node.left), self.query_rel(node.right)
         if len(left.order) != len(right.order):
             raise _Unsupported("set operation with different widths")

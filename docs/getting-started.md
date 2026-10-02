@@ -65,7 +65,7 @@ SELECT
 FROM __lifted_subquery_001 AS c
 ```
 
-`proven` means the equivalence prover established that the output returns the same rows as the input. Only `unchanged` and `proven` are trusted. Anything else (`planner_checked`, `unproven`, `failed`) is shown as such, and `python -m kumosql rewrite-sql` exits with status 3 for untrusted output unless you pass `--allow-unproven`. Run `python -m kumosql rewrite-sql --help` for the list of rules; the [README](../README.md#rewrite-rules) describes each one.
+`proven` means the equivalence prover established that the output returns the same rows as the input. Only `unchanged` and `proven` are trusted. Anything else (`planner_checked`, `unproven`, `failed`) is shown as such, and `python -m kumosql rewrite-sql` exits with status 3 for untrusted output unless you pass `--allow-unproven`. Run `python -m kumosql rewrite-sql --help` for the list of rules; the [rewrite rules page](rewrite-rules.md#rewrite-rules) describes each one.
 
 The same thing from Python:
 
@@ -116,7 +116,7 @@ python -m kumosql pipeline-report demo --assess drop_column --target demo.analyt
 
 The result lists `customer_totals` as `breaks` (it reads the column directly) and anything downstream of it as `indirect`. Anything KumoSQL cannot analyze is listed as `unknown`, never dropped. Without `--assess`, the same command prints the full report (model order, column lineage, dead columns, duplicate and near-duplicate logic, and what the analysis could not see) as JSON; add `-o report.json` to write it to a file.
 
-In Python, `load_sqlx_project("demo")` gives you the same `Pipeline` object, and `find_overlaps`, `find_rollups`, `profile_pipeline` and `infer_roles` answer "is this already done elsewhere?" and "what kind of table is this?" (see the README).
+In Python, `load_sqlx_project("demo")` gives you the same `Pipeline` object, and `find_overlaps`, `find_rollups`, `profile_pipeline` and `infer_roles` answer "is this already done elsewhere?" and "what kind of table is this?" (see [pipeline analysis](pipeline-analysis.md)).
 
 ## 4. Use the browser UI
 
@@ -136,7 +136,7 @@ This starts a local server at `http://127.0.0.1:8765/` and opens your browser. U
 - **Catalogs** (*Settings → Catalogs*). Saved rules for what your team owns, including BigQuery tables and routines written outside Dataform. The *Dataform repository* catalog is active by default; activate your own to change what the graph, impact and Cost pages treat as yours.
 - **Cost** lists repeated work in your models; with job history (**Load job history**, or `python -m kumosql.ui --project demo --jobs jobs.json`) it adds measured cost per asset. **Change reports** compare the loaded git project against another branch (**Compare**). Both show what to load instead of example numbers when they have nothing yet.
 
-Preferences and scopes are saved on your computer; the README's *Saved state* paragraph says where and how to change it.
+Preferences and scopes are saved on your computer; the *Saved state* paragraph in the [UI guide](ui.md) says where and how to change it.
 
 ## 5. Compare two versions of a project
 
@@ -160,7 +160,7 @@ gcloud auth application-default login
 
 - `python -m kumosql dry-run original.sql --rewritten rewritten.sql --project my-project` checks that both statements plan and that their output schemas match, without running them.
 - `python -m kumosql rewrite-sql query.sql -r remove_trivial_predicates --planner-project my-project` adds the same check to a rewrite.
-- With a repository connected, **Settings → Repositories** also loads its Dataform workflow configurations (using the same credentials) and the graph marks models that run in a production schedule; see the README section on production schedules.
+- With a repository connected, **Settings → Repositories** also loads its Dataform workflow configurations (using the same credentials) and the graph marks models that run in a production schedule; see [production schedules](dataform-repositories.md#production-schedules-dataform-workflow-configurations).
 - The **BigQuery** page in the UI lists the projects, datasets, tables and schemas your credentials can see.
 
 Only these features contact BigQuery, and only when you ask.
@@ -176,5 +176,6 @@ Use `python -m pytest`, not bare `pytest`, so the repository root is importable.
 
 ## Where to go next
 
-- [README](../README.md): every rewrite rule, the provers, pipeline analysis, overlap and roll-up detection, scopes, cost and change reports.
+- [README](../README.md): the benchmark scoreboard, a summary of every feature and the CLI.
+- [UI guide](ui.md), [rewrite rules](rewrite-rules.md), [provers](provers.md), [pipeline analysis](pipeline-analysis.md) (overlap and roll-up detection), [cost and change reports](cost-and-change-reports.md) and [Dataform repositories](dataform-repositories.md).
 - [UI roadmap](ui-roadmap.md): which UI area reads which data.
