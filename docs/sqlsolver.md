@@ -44,6 +44,10 @@ The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSo
 
 SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.
 
+## Negated tests in every dialect
+
+`x IS NOT NULL`, `x NOT LIKE y` and `x NOT ILIKE y` are rewritten to `NOT (...)` before either prover reads a query (`ast_utils.canonical_negation`). sqlglot parses them under PostgreSQL as the positive node with a `negate` flag, which an earlier version of the provers ignored: read as PostgreSQL, `x IS NULL` and `x IS NOT NULL` were proven equivalent. The BigQuery default was never affected. `tests/test_negated_predicates.py` pins it for five dialects.
+
 ## Rewrite verification and declared facts
 
 `kumosql.prover_context.prove` is the one entry point the app uses; `verify_rewrite` calls it for any changed statement when the solver is enabled (`prover` section of the saved settings, default on, 5000 ms). The facts it may assume come from `kumosql.prover_schema`: BigQuery `REQUIRED` columns and `tableConstraints.primaryKey` from the saved catalog (`bigquery_catalog.saved_tables`), and Dataform `assertions` read by `pipeline_loading` into `Model.non_null` / `Model.unique_keys`. A table is registered under each spelling (`project.dataset.table`, `dataset.table`, `table`); a bare name shared by two tables is dropped. Proofs that used any declared fact list the assumption "declared keys and NOT NULL columns hold in the data".

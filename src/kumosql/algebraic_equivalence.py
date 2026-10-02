@@ -33,6 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
+from .ast_utils import canonical_negation
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
@@ -3926,7 +3927,7 @@ def normalize(
     can hide a match the first attempt finds.
     """
 
-    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)

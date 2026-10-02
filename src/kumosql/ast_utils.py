@@ -35,6 +35,24 @@ def render_statement(statement: exp.Expression) -> str:
     return statement.sql(dialect="bigquery", pretty=True, pad=4, identify=False)
 
 
+def canonical_negation(tree: exp.Expression) -> exp.Expression:
+    """Spell ``x IS NOT NULL``, ``x NOT LIKE y`` and ``x NOT ILIKE y`` as ``NOT (...)``.
+
+    Some dialects (PostgreSQL in current sqlglot releases) parse these as ``Is``, ``Like`` or
+    ``ILike`` carrying ``negate=True``; code that reads only the node type would take them for the
+    positive test. One spelling everywhere keeps the provers from reading ``IS NOT NULL`` as ``IS NULL``.
+    """
+
+    for node in list(tree.find_all(exp.Is, exp.Like, exp.ILike)):
+        if node.args.get("negate"):
+            positive = node.copy()
+            positive.set("negate", None)
+            if node is tree:
+                return exp.Not(this=positive)
+            node.replace(exp.Not(this=positive))
+    return tree
+
+
 def identifier_name(node: exp.Expression | None) -> str | None:
     if node is None:
         return None
