@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation, check_modeled
+from .ast_utils import canonical_negation, check_modeled, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -47,35 +47,15 @@ from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join
 from .empty_rules import canonical_empty, propagate_empty
+from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .regroup_arithmetic import regroup_arithmetic
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
 _SPLIT_ALIAS = "kumosql_u"
 
 _COMBINE = {exp.Count: "SUM", exp.Sum: "SUM", exp.Min: "MIN", exp.Max: "MAX"}
-
-
-def _union_all_branches(node: exp.Expression) -> list[exp.Expression] | None:
-    """Flatten ``a UNION ALL b UNION ALL c``; ``None`` if not a pure UNION ALL."""
-
-    if isinstance(node, exp.Subquery):
-        node = node.this
-    if isinstance(node, exp.Union):
-        if node.args.get("distinct", True) or node.args.get("with_") or node.args.get("with"):
-            return None
-        if any(node.args.get(k) for k in ("order", "limit", "offset")):
-            return None
-        left = _union_all_branches(node.left)
-        right = _union_all_branches(node.right)
-        if left is None or right is None:
-            return None
-        return left + right
-    if isinstance(node, exp.Select):
-        if any(node.args.get(k) for k in ("order", "limit", "offset", "with_", "with")):
-            return None
-        return [node]
-    return None
 
 
 def _aligned_branches(source: exp.Subquery) -> list[exp.Select] | None:
@@ -677,11 +657,6 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     for branch in branches:
         branch.set("expressions", [branch.expressions[i].copy() for i in keep])
     return True
-
-
-def _sources_of(select: exp.Select) -> list[exp.Expression]:
-    from_ = select.args.get("from_") or select.args.get("from")
-    return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
 
 def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
@@ -4272,7 +4247,7 @@ def normalize(
     can hide a match the first attempt finds.
     """
 
-    tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
+    tree = check_modeled(canonical_negation(strip_positions(sqlglot.parse_one(sql, read=dialect))))
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
@@ -4328,7 +4303,7 @@ def normalize(
             constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
                 return constrained
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -4338,7 +4313,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(tree).transform(step)))))), not_null)
+        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
