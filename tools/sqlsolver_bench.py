@@ -219,6 +219,17 @@ def _bag(rows) -> Counter:
     return Counter(tuple(round(float(v), 6) if isinstance(v, (float, Decimal)) else v for v in row) for row in rows)
 
 
+def calcite_operators(sql: str) -> str:
+    """Calcite's ``||`` concatenates strings; read as MySQL it would be OR (see ``tools/bench_sql_repairs.py``)."""
+
+    from bench_sql_repairs import pipes_as_concat
+
+    try:
+        return pipes_as_concat(sql)
+    except (sqlglot.errors.SqlglotError, ValueError):
+        return sql
+
+
 def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
@@ -309,6 +320,8 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     start = time.time()
     db = new_database(tables)
     for index, (left, right) in enumerate(pairs):
+        if name in CONSTANT_GROUPING:
+            left, right = calcite_operators(left), calcite_operators(right)
         try:
             proof = prove(left, right, tables, name in CONSTANT_GROUPING) if name in CONSTANT_GROUPING else prove(left, right, tables)
         except Exception as error:  # a crash is a failure to prove, never a proof
