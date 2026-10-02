@@ -180,3 +180,51 @@ def test_two_models_with_one_name_are_each_read_through_their_own_schema(tmp_pat
     })
     assert pl.upstream["proj.b.t"] == {"proj.a.t"}
     assert pl.upstream["proj.c.t"] == {"proj.b.t"}
+
+
+SOURCES_MODULE = 'module.exports = {\n  SOURCES: [\n    { database: "lake", schema: "raw", name: "orders" },\n    { schema: "ext", name: "users" }, // no database: the project default\n  ],\n};\n'
+
+
+def test_declarations_loaded_through_require_are_followed(tmp_path):
+    pl = project(tmp_path, {
+        "includes/sources.js": SOURCES_MODULE,
+        "definitions/decl.js": 'const { SOURCES } = require("includes/sources");\nSOURCES.forEach((s) => declare({ database: s.database, schema: s.schema, name: s.name }));\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("orders")} JOIN ${ref("ext", "users")} USING (id)',
+    })
+    # The second source names no database; the loop leaves it to the project default, which is what Dataform does.
+    assert reads(pl) == {"lake.raw.orders", "proj.ext.users"} or reads(pl) == {"lake.raw.orders", ".ext.users"}
+
+
+def test_require_with_relative_path_exports_member_and_for_of(tmp_path):
+    pl = project(tmp_path, {
+        "includes/tables.js": 'exports.list = ["orders", "users"];\n',
+        "definitions/sub/decl.js": 'const t = require("../../includes/tables");\nfor (const name of t.list) { declare({ schema: "raw", name }); }\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("orders")} JOIN ${ref("raw", "users")} USING (id)',
+    })
+    assert reads(pl) == {"proj.raw.orders", "proj.raw.users"}
+
+
+def test_two_part_refs_take_the_database_from_the_declaration_not_the_project(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/d.sqlx": 'config { type: "declaration", database: "lake", schema: "raw", name: "orders" }',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("raw", "orders")}',
+    })
+    assert reads(pl) == {"lake.raw.orders"}
+
+
+def test_a_one_part_ref_uses_its_declaration_before_the_default_schema(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/d.js": 'declare({ database: "lake", schema: "raw", name: "orders" });',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("orders")}',
+    })
+    assert reads(pl) == {"lake.raw.orders"}
+
+
+def test_a_required_list_that_is_computed_stays_unresolved(tmp_path):
+    pl = project(tmp_path, {
+        "includes/sources.js": 'module.exports = { SOURCES: buildSources() };\n',
+        "definitions/decl.js": 'const { SOURCES } = require("includes/sources");\nSOURCES.forEach((s) => declare({ schema: s.schema, name: s.name }));\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("orders")}',
+    })
+    assert reads(pl) == set()
+    assert "js_declaration_dynamic" in {d.code for d in pl.diagnostics}

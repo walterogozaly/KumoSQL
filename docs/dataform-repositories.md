@@ -34,7 +34,7 @@ When a repository is connected, KumoSQL looks up the Dataform repository whose g
 A `ref("name")` is resolved from what the project declares, never from the default schema alone. KumoSQL reads:
 
 - `.sqlx` files with `type: "declaration"` (their own `database`, `schema` and `name`, else the project defaults);
-- `declare({...})` and `publish("name", {...})` calls in any `.js` file, including `includes/`, when the name, schema and database are string literals, constants, or a loop variable over a literal list (`["a", "b"].forEach(...)`, `for (const t of [...])`).
+- `declare({...})` and `publish("name", {...})` calls in any `.js` file, including `includes/`, when the name, schema and database are string literals, constants, or a loop variable over a literal list (`["a", "b"].forEach(...)`, `for (const t of [...])`). A list kept in another file is followed through `require("includes/sources")` or a relative path, with `module.exports = {...}`, `module.exports = [...]` or `exports.name = [...]`, including lists of `{database, schema, name}` objects (`SOURCES.forEach((s) => declare({schema: s.schema, name: s.name}))`); a member an item leaves out takes the project default. A list that is computed (`buildSources()`, `.map(...)`) is not followed.
 
 Where it cannot decide, it leaves the ref unresolved (a `unsupported_ref` diagnostic, the dependency unknown) instead of guessing:
 

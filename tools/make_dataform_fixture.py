@@ -179,6 +179,18 @@ def generate(out: Path, models: int, seed: int, config: str = "yaml") -> dict:
     write(defs / "sources" / "declared_dynamic.js",
           'const names = ["computed_declared_a", "computed_declared_b"].map((n) => n);\nnames.forEach((t) => declare({ schema: "raw_computed", name: t }));\n', "js")
 
+    # Declarations read through require(): a shared list in includes/ that a definitions file loops over.
+    write(out / "includes" / "required_sources.js",
+          f'module.exports = {{ SOURCES: [{{ database: "{PROJECT}", schema: "raw_req", name: "required_a" }}, {{ schema: "raw_req", name: "required_b" }}] }};\n',
+          "include")
+    write(defs / "sources" / "declared_required.js",
+          'const { SOURCES } = require("includes/required_sources");\nSOURCES.forEach((s) => declare({ database: s.database, schema: s.schema, name: s.name }));\n', "js")
+    # Models that read them by one-argument and two-argument ref; the second shares its name with the source it reads.
+    write(defs / "required" / "required_reader_a.sqlx",
+          'config { type: "table", schema: "fx_required" }\nselect id, created_at, amount, items from ${ref("required_a")}\n', "sqlx")
+    write(defs / "required" / "required_b.sqlx",
+          'config { type: "table", schema: "fx_required" }\nselect id, created_at, amount, items from ${ref("raw_req", "required_b")}\n', "sqlx")
+
     declared += [("raw_loop", "loop_declared_a"), ("raw_loop", "loop_declared_b"),
                  ("raw_computed", "computed_declared_a"), ("raw_computed", "computed_declared_b")]
 

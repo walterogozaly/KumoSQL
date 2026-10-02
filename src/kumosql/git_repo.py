@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, ProjectError
 from . import console, state
 from .state import data_dir
+from .resilience import decode_text
 
 # One git load at a time: the UI can start several (a double click, the startup
 # reload plus a manual one), and they must not clone into or delete the same cache.
@@ -433,12 +434,7 @@ def _fetch(remote: str, wanted: str | None, refresh: bool) -> dict:
         step.note(megabytes=round(sum(len(d) for d in contents.values()) / 1e6, 1))
     console.register("file", selected)
     for name, data in contents.items():
-        try:
-            text = data.decode("utf-8-sig")  # editors on Windows add a byte-order mark; it hides the config block
-        except UnicodeDecodeError:
-            # An older code page (Windows-1252). Only comments and strings differ, so read it rather than
-            # silently dropping the model from the graph.
-            text = data.decode("latin-1")
+        text = decode_text(data)
         total += len(data)
         if total > MAX_TOTAL_BYTES:
             raise GitRepoError("Project is too large to load")

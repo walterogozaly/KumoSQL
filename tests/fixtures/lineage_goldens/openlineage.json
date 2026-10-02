@@ -1,0 +1,2391 @@
+{
+ "cases": [
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table2",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "b"
+     ],
+     [
+      "__select__",
+      "d"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_aliases::test_nested_renaming",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t2.a, t2.c as d\n         FROM (SELECT t2.a, t2.b as c FROM table2 t2) t2"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "b"
+     ],
+     [
+      "__select__",
+      "d"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_aliases::test_nested_renaming_with_join",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a, t2.c as d\n         FROM table1 t1\n         INNER JOIN (SELECT t2.a, t2.b as c FROM table2 t2) t2\n         ON t1.a = t2.a"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "b"
+     ],
+     [
+      "__select__",
+      "b"
+     ]
+    ],
+    [
+     [
+      "table3",
+      "c"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_aliases::test_multiple_tables",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a, t2.b, t3.c\n         FROM table1 t1, table2 t2, table3 t3"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "e"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_aliases::test_deeply_nested_alias_chain",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT d as e FROM (\n            SELECT c as d FROM (\n                SELECT b as c FROM (\n                    SELECT a as b FROM table1 t\n                )\n            )\n         )"
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/column_lineage/tests_aliases::test_circular_alias",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "test_orders"
+   ],
+   "sql": "select * from test_orders as test_orders",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/column_lineage/tests_aliases::test_long_alias_used",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "a"
+   ],
+   "sql": "with test_orders as (select * from a as a) select * from test_orders",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/column_lineage/tests_aliases::test_long_alias_not_used",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": true,
+   "sources": [
+    "other"
+   ],
+   "sql": "with test_orders as (select * from a as a) select * from other",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/column_lineage/tests_aliases::test_long_circular_alias",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": true,
+   "sources": [
+    "test_orders"
+   ],
+   "sql": "with test_orders as (select * from test_orders as test_orders) select * from test_orders",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "t1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "t1",
+      "c"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_cte::test_simple_cte",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "WITH my_cte AS (\n            SELECT a,b,c FROM t1\n         )\n         SELECT a,c FROM my_cte"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "b"
+     ],
+     [
+      "__select__",
+      "b"
+     ]
+    ],
+    [
+     [
+      "table3",
+      "c"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_select::test_multiple_derived_tables",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a, t2.b, t3.c FROM \n         (SELECT a, t.b FROM table1 t) t1,\n         (SELECT t.b, t.c FROM table2 t) t2,\n         (SELECT c, t.a FROM table3 t) t3"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "t",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_select::test_deeply_nested_selects",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT a FROM (\n            SELECT a FROM (\n                SELECT a FROM (\n                    SELECT a FROM t\n                )\n            )\n         )"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "t1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_select",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT a FROM t1"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "b"
+     ],
+     [
+      "__select__",
+      "b"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "c"
+     ],
+     [
+      "__select__",
+      "x"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "d"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_renaming",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a, b, c as x, d as y FROM table1 t1"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "db.t",
+      "x"
+     ],
+     [
+      "__select__",
+      "x"
+     ]
+    ],
+    [
+     [
+      "db.t",
+      "y"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ],
+    [
+     [
+      "db.t",
+      "z"
+     ],
+     [
+      "__select__",
+      "z"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_compound_names",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT db.t.x as x, y, t1.z as z FROM db.t as t1"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "db.t",
+      "a"
+     ],
+     [
+      "__select__",
+      "_0"
+     ]
+    ],
+    [
+     [
+      "db.t",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "db.t",
+      "b"
+     ],
+     [
+      "__select__",
+      "_0"
+     ]
+    ],
+    [
+     [
+      "db.t",
+      "b"
+     ],
+     [
+      "__select__",
+      "b"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_column_name_inference",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT db.t.a, b, (a + b) FROM db.t"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "x"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "b"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_join",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a as x, t2.b as y\n         FROM table1 t1\n         INNER JOIN table2 t2\n         ON t1.a = t2.a"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_nested_select",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a\n         FROM table1 t1\n         WHERE b IN (SELECT b FROM table2)"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "d"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "b"
+     ],
+     [
+      "__select__",
+      "d"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "c"
+     ],
+     [
+      "__select__",
+      "d"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_case",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT CASE WHEN a > b THEN c ELSE a END as d\n         FROM table1"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "b"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_operators",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT t1.a + b as c\n         FROM table1 t1"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "b"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_count",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT COUNT(t1.a) as b\n         FROM table1 t1"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "orders",
+      "status"
+     ],
+     [
+      "__select__",
+      "paid_orders"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_aggregate_filter",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT COUNT(*) FILTER (WHERE status = 'paid') AS paid_orders\n         FROM orders"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ],
+    [
+     [
+      "table1",
+      "b"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ]
+   ],
+   "id": "openlineage/column_lineage/tests_simple::test_simple_aggregate",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT RANK() OVER (PARTITION BY i.a ORDER BY i.b DESC) AS c\n         FROM table1 i"
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_reference_with_simple_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "bots",
+    "python"
+   ],
+   "sql": "WITH tab1 AS (\n            SELECT * FROM users as u\n        ),\n        tab2 AS (\n            SELECT * FROM bots\n        )\n        SELECT r.id\n        FROM python AS r\n        UNION ALL\n        SELECT id\n        FROM tab2",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_reference_with_simple_q_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "tab2"
+   ],
+   "sql": "WITH tab1 AS (\n            SELECT * FROM users\n        )\n        SELECT id\n        FROM tab2",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "TAB1",
+      "COL2"
+     ],
+     [
+      "__select__",
+      "COL1"
+     ]
+    ]
+   ],
+   "id": "openlineage/table_lineage/test_alias_resolving::table_complex",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "SELECT COL1\n        FROM\n        (\n            SELECT COL1\n            FROM\n                (\n                    SELECT \n                    COL2\n                        AS COL1\n                    FROM TAB1\n                  ) INNER_QUERY\n        )"
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_reference_with_passersby_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "users",
+    "users3"
+   ],
+   "sql": "WITH tab1 AS (\n            SELECT * FROM users as u\n        ),\n        tab2 AS (\n            SELECT * FROM tab1\n        ),\n        tab3 AS (\n            SELECT * FROM users2\n        )\n        SELECT id\n        FROM tab2\n        UNION ALL\n        SELECT id\n        FROM users3",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_with_simple_query",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "tab1",
+    "tab2"
+   ],
+   "sql": "SELECT * FROM tab1\n        UNION ALL\n        SELECT * FROM tab2",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_with_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "tab1",
+    "tab2"
+   ],
+   "sql": "SELECT * FROM tab1\n        UNION ALL\n        SELECT * FROM (SELECT * FROM tab2)",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_with_subquery_and_alias",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "tab1",
+    "tab2"
+   ],
+   "sql": "SELECT * FROM tab1\n        UNION ALL\n        SELECT * FROM (SELECT * FROM tab2) AS t",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_with_subquery_and_alias_and_cte",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "tab2",
+    "users"
+   ],
+   "sql": "WITH tab1 AS (\n            SELECT * FROM users as u\n        )\n        SELECT * FROM tab1\n        UNION ALL\n        SELECT * FROM (SELECT * FROM tab2) AS t",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_complex_main_query_does_not_use_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "animals1",
+    "animals2",
+    "animals3"
+   ],
+   "sql": "WITH tab10 AS (\n            SELECT * FROM users as u\n        )\n        SELECT * FROM animals1\n        UNION ALL\n        SELECT * FROM (SELECT * FROM animals2) AS t\n        UNION ALL\n        SELECT * FROM (SELECT * FROM animals3) AS t",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_complex_main_query_uses_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "animals2",
+    "animals3",
+    "users",
+    "users2"
+   ],
+   "sql": "WITH tab10 AS (\n            SELECT * FROM\n            (SELECT * FROM users2 as u\n            UNION\n            SELECT * FROM users as u) as t\n        )\n        SELECT * FROM tab10\n        UNION ALL\n        SELECT * FROM (SELECT * FROM animals2) AS t\n        UNION ALL\n        SELECT * FROM (SELECT * FROM animals3) AS t",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_with_many_union_all",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "animals2",
+    "animals3",
+    "users",
+    "users2",
+    "users3",
+    "users4"
+   ],
+   "sql": "WITH tab10 AS (\n            SELECT * FROM\n            (SELECT * FROM users2 as u\n            UNION\n            SELECT * FROM users as u\n            UNION\n            SELECT * FROM users3 as u\n            UNION\n            SELECT * FROM users4 as u\n            ) as t\n        )\n        SELECT * FROM tab10\n        UNION ALL\n        SELECT * FROM (SELECT * FROM animals2) AS t\n        UNION ALL\n        SELECT * FROM (SELECT * FROM animals3) AS t",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/test_alias_resolving::table_references_connected_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "users2"
+   ],
+   "sql": "WITH tab1 AS (\n            WITH data3 AS (\n                WITH data8 AS (\n                    SELECT r.* FROM (\n                        SELECT * FROM users as u\n                    ) as r\n                ),\n                data5 AS (\n                    SELECT r.* FROM (\n                        SELECT * FROM owners as u\n                    ) as r\n                ),\n               data6 AS (\n                    SELECT * FROM data5\n                )\n               SELECT * FROM data6\n               UNION ALL\n               SELECT * FROM data5\n            ),\n            data2 AS (\n                SELECT * FROM data3\n            )\n            SELECT * FROM data2\n        ),\n        tab2 AS (\n            SELECT * FROM tab1\n        ),\n        tab3 AS (\n            SELECT * FROM tab2\n        ),\n        tab4 AS (\n            SELECT * FROM users2\n        ),\n        tab5 AS (\n            SELECT * FROM tab4\n        )\n        SELECT * FROM tab5",
+   "targets": null
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "stg",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "stg",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "stg2",
+      "col3"
+     ],
+     [
+      "__select__",
+      "col3"
+     ]
+    ],
+    [
+     [
+      "stg2",
+      "col4"
+     ],
+     [
+      "__select__",
+      "col4"
+     ]
+    ]
+   ],
+   "id": "openlineage/table_lineage/test_alias_resolving::test_complex_cte",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "with tab1 as (\n                 SELECT s.col1, s.col2, s2.col3, s2.col4\n                 from stg as s, stg2 AS s2\n            ),\n            tab2 as (\n                 SELECT col1, col2, col3, col4 from tab1\n            )\n            SELECT col1, col2, col3, col4 FROM tab2"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "source_tbl",
+      "col_1"
+     ],
+     [
+      "__select__",
+      "col_1"
+     ]
+    ],
+    [
+     [
+      "source_tbl",
+      "col_3"
+     ],
+     [
+      "__select__",
+      "col_3"
+     ]
+    ],
+    [
+     [
+      "source_tbl",
+      "col_4"
+     ],
+     [
+      "__select__",
+      "col_4"
+     ]
+    ],
+    [
+     [
+      "tbl2",
+      "x"
+     ],
+     [
+      "__select__",
+      "x"
+     ]
+    ],
+    [
+     [
+      "tbl3",
+      "y"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ]
+   ],
+   "id": "openlineage/table_lineage/test_alias_resolving::test_column_resolving_in_complex_cte",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "with stage_1 as\n            (\n                   SELECT col_1, col_2, col_3, col_4 FROM source_tbl\n                   WHERE date_time >= current_date AND  col_1 IN (SELECT distinct col_1 FROM source_tbl)\n            ),\n            stage_2 as\n            (\n                select col_1, col_2, col_3, col_4 from stage_1\n            )\n            select tl.col_1, s_acc.x,\n            s_coa_acc.y,\n            tl.col_3, tl.col_4\n            from stage_2 tl\n            join tbl2 s_acc on s_acc.x= tl.col_2\n            left join tbl3 s_coa_acc on s_coa_acc.y= tl.col_2"
+  },
+  {
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "stg",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "stg",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "stg2",
+      "col3"
+     ],
+     [
+      "__select__",
+      "col3"
+     ]
+    ],
+    [
+     [
+      "stg2",
+      "col4"
+     ],
+     [
+      "__select__",
+      "col4"
+     ]
+    ]
+   ],
+   "id": "openlineage/table_lineage/test_alias_resolving::test_cte_with_cycles",
+   "kind": "column",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sql": "WITH tab1 AS (\n                SELECT s.col1, s.col2, s2.col3, s2.col4\n                FROM stg AS s, stg2 AS s2\n            ), tab1 AS (\n                SELECT col1, col2, col3, col4\n                FROM tab1\n            )\n            SELECT col1, col2, col3, col4\n            FROM tab1"
+  },
+  {
+   "dialect": "generic",
+   "id": "openlineage/table_lineage/test_use::use_generic_with_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE db1;\nINSERT INTO Clients SELECT key, value FROM my_table",
+   "targets": [
+    "db1.Clients"
+   ]
+  },
+  {
+   "dialect": "generic",
+   "id": "openlineage/table_lineage/test_use::use_generic_with_full_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.schema1.my_table"
+   ],
+   "sql": "USE db1.schema1;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "generic",
+   "id": "openlineage/table_lineage/test_use::use_generic_with_complex_select",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.schema1.my_table"
+   ],
+   "sql": "USE db1.schema1;\nSELECT x, y FROM my_table WHERE STATUS = 'LOADED' GROUP BY DATA_DATE, DATA_HOUR",
+   "targets": []
+  },
+  {
+   "dialect": "generic",
+   "id": "openlineage/table_lineage/test_use::use_generic_with_full_id_and_full_table_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "some_db.other_schema.my_table"
+   ],
+   "sql": "USE db1.schema1;\nSELECT key, value FROM some_db.other_schema.my_table",
+   "targets": []
+  },
+  {
+   "dialect": "generic",
+   "id": "openlineage/table_lineage/test_use::use_generic_with_single_id_and_single_table_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.other_schema.my_table"
+   ],
+   "sql": "USE db1;\nSELECT key, value FROM other_schema.my_table",
+   "targets": []
+  },
+  {
+   "dialect": "generic",
+   "id": "openlineage/table_lineage/test_use::use_generic_with_multiple_use_statements",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.foo",
+    "db2.schema2.bar",
+    "db3.schema2.world"
+   ],
+   "sql": "USE db1;\nSELECT key, value FROM foo;\nUSE db2.schema2;\nINSERT INTO Clients SELECT key, value FROM bar;\nUSE db3;\nSELECT key, value FROM world",
+   "targets": [
+    "db2.schema2.Clients"
+   ]
+  },
+  {
+   "dialect": "databricks",
+   "id": "openlineage/table_lineage/test_use::use_databricks_with_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "my_schema.my_table"
+   ],
+   "sql": "USE db1;\nINSERT INTO Clients SELECT key, value FROM my_schema.my_table",
+   "targets": [
+    "db1.Clients"
+   ]
+  },
+  {
+   "dialect": "databricks",
+   "id": "openlineage/table_lineage/test_use::use_databricks_with_database_keyword",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "my_schema.my_table"
+   ],
+   "sql": "USE DATABASE my_schema;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "databricks",
+   "id": "openlineage/table_lineage/test_use::use_databricks_with_schema_keyword",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "my_schema.my_table"
+   ],
+   "sql": "USE SCHEMA my_schema;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "databricks",
+   "id": "openlineage/table_lineage/test_use::use_databricks_with_catalog_keyword",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE CATALOG db1;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/test_use::use_snowflake_with_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE db1;\nINSERT INTO Clients SELECT key, value FROM my_table",
+   "targets": [
+    "db1.Clients"
+   ]
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/test_use::use_snowflake_with_full_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_schema.my_table"
+   ],
+   "sql": "USE db1.my_schema;\nINSERT INTO Clients SELECT key, value FROM my_table",
+   "targets": [
+    "db1.my_schema.Clients"
+   ]
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/test_use::use_snowflake_with_database_keyword",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE DATABASE db1;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/test_use::use_snowflake_with_schema_keyword_and_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "my_schema.my_table"
+   ],
+   "sql": "USE SCHEMA my_schema;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/test_use::use_snowflake_with_schema_keyword_and_full_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_schema.my_table"
+   ],
+   "sql": "USE SCHEMA db1.my_schema;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "mssql",
+   "id": "openlineage/table_lineage/test_use::use_mssql_with_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE db1;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "mysql",
+   "id": "openlineage/table_lineage/test_use::use_mysql_with_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE db1;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/test_use::use_hive_with_single_id",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.my_table"
+   ],
+   "sql": "USE db1;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/test_use::use_hive_with_default_keyword",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "my_table"
+   ],
+   "sql": "USE DEFAULT;\nSELECT key, value FROM my_table",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_alter::alter_contains_modified_table_as_output",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "ALTER TABLE tab1 ADD COLUMN b int",
+   "targets": [
+    "tab1"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_alter::alter_table_rename",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "tab1"
+   ],
+   "sql": "ALTER TABLE tab1 RENAME TO tab2",
+   "targets": [
+    "tab2"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_alter::alter_multiple_operations",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "ALTER TABLE IF EXISTS ONLY tab ADD COLUMN a TEXT, ADD COLUMN b INT",
+   "targets": [
+    "tab"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::test_create_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "CREATE TABLE Persons (\n        PersonID int,\n        LastName varchar(255),\n        FirstName varchar(255),\n        Address varchar(255),\n        City varchar(255))",
+   "targets": [
+    "Persons"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::test_create_table_like",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "original"
+   ],
+   "sql": "CREATE TABLE new LIKE original",
+   "targets": [
+    "new"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::test_create_table_clone",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "original"
+   ],
+   "sql": "CREATE OR REPLACE TABLE new CLONE original",
+   "targets": [
+    "new"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::test_create_and_insert",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "temp.table"
+   ],
+   "sql": "CREATE TABLE Persons (\n        key int,\n        value varchar(255));\n        INSERT INTO Persons SELECT key, value FROM temp.table",
+   "targets": [
+    "Persons"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::create_and_insert_multiple_stmts",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "temp.table"
+   ],
+   "sql": "CREATE TABLE Persons (key int, value varchar(255));\nINSERT INTO Persons SELECT key, value FROM temp.table",
+   "targets": [
+    "Persons"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_create::create_hive_external_table_if_not_exist",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "CREATE EXTERNAL TABLE IF NOT EXISTS  Testing_Versions_latest (\n                `ID` INT,\n                `ExperimentID` INT,\n                `Version` SMALLINT,\n                `EnrollmentPeriodInHours` INT,\n                `Started` TIMESTAMP,\n                `EndDate` TIMESTAMP,\n                `IsActive` BOOLEAN,\n                `PercentOfSubjectsToEnroll` SMALLINT,\n                `Created` TIMESTAMP,\n                `Updated` TIMESTAMP,\n                        ds STRING\n                    )\n                    STORED AS PARQUET\n                    LOCATION 's3://abc.ingest/sqlserver/Testing/Versions/ds=2022-08-10'\n                    TBLPROPERTIES ('parquet.compression'='SNAPPY')",
+   "targets": [
+    "Testing_Versions_latest"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::create_replace_as_select",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "dwh_dev.commons.calendar"
+   ],
+   "sql": "CREATE OR REPLACE TABLE DATA_TEAM_DEMOS.ALL_DAYS AS (\n            SELECT date AS calendar_day, yyyy_mm as calendar_month, yyyy as calendar_year\n            FROM dwh_dev.commons.calendar\n            WHERE date BETWEEN '2022-01-01' AND CURRENT_DATE\n        )",
+   "targets": [
+    "DATA_TEAM_DEMOS.ALL_DAYS"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_create::create_view",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "dwh_dev.commons.calendar"
+   ],
+   "sql": "CREATE OR REPLACE VIEW DATA_TEAM_DEMOS.ALL_DAYS AS (\n            SELECT date AS calendar_day, yyyy_mm as calendar_month, yyyy as calendar_year\n            FROM dwh_dev.commons.calendar\n            WHERE date BETWEEN '2022-01-01' AND CURRENT_DATE\n        )",
+   "targets": [
+    "DATA_TEAM_DEMOS.ALL_DAYS"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_cte::parse_simple_cte",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "transactions"
+   ],
+   "sql": "WITH sum_trans as (\n                    SELECT user_id, COUNT(*) as cnt, SUM(amount) as balance\n                    FROM transactions\n                    WHERE created_date > '2020-01-01'\n                    GROUP BY user_id\n                )\n                INSERT INTO potential_fraud (user_id, cnt, balance)\n                SELECT user_id, cnt, balance\n                    FROM sum_trans\n                    WHERE count > 1000 OR balance > 100000",
+   "targets": [
+    "potential_fraud"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_cte::parse_recursive_cte",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "employees"
+   ],
+   "sql": "WITH RECURSIVE subordinates AS\n            (SELECT employee_id,\n                manager_id,\n                full_name\n            FROM employees\n            WHERE employee_id = 2\n            UNION SELECT e.employee_id,\n                e.manager_id,\n                e.full_name\n            FROM employees e\n            INNER JOIN subordinates s ON s.employee_id = e.manager_id)\n            INSERT INTO sub_employees (employee_id, manager_id, full_name)\n            SELECT employee_id, manager_id, full_name FROM subordinates",
+   "targets": [
+    "sub_employees"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_cte::multiple_ctes",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "DEMO_DB.public.stg_customers",
+    "DEMO_DB.public.stg_orders"
+   ],
+   "sql": "WITH customers AS (\n                SELECT * FROM DEMO_DB.public.stg_customers\n            ),\n            orders AS (\n                SELECT * FROM DEMO_DB.public.stg_orders\n            )\n            SELECT *\n            FROM customers c\n            JOIN orders o\n            ON c.id = o.customer_id",
+   "targets": []
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_cte::cte_insert_overwrite",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "d_n.f_p_s"
+   ],
+   "sql": "WITH g_s AS (\n              SELECT\n                p_i,\n                u_i,\n                uk,\n                started,\n                COALESCE(stopped, updated) AS stopped,\n                CASE WHEN started > MAX(\n                  FROM_UNIXTIME(\n                    UNIX_TIMESTAMP(\n                      COALESCE(stopped, updated)\n                    ) + 30\n                  )\n                ) OVER(\n                  PARTITION BY p_i,\n                  u_i,\n                  uk\n                  ORDER BY\n                    started,\n                    COALESCE(stopped, updated) ROWS BETWEEN UNBOUNDED PRECEDING\n                    AND 1 PRECEDING\n                ) THEN 1 ELSE 0 END gr_st\n              FROM\n                d_n.f_p_s\n              WHERE\n                ds = 'ds'\n            ),\n            grps AS (\n              SELECT\n                p_i,\n                u_i,\n                uk,\n                started,\n                stopped,\n                SUM(gr_st) OVER(\n                  PARTITION BY p_i,\n                  u_i,\n                  uk\n                  ORDER BY\n                    started,\n                    stopped\n                ) AS grp\n              FROM\n                g_s\n            ) INSERT OVERWRITE TABLE dev_d_n.f_p_s_m PARTITION (ds = 'ds')\n            SELECT\n              grps.p_i,\n              grps.u_i,\n              grps.uk,\n              MIN(grps.started) AS started,\n              MIN(tps.joined) AS joined,\n              MAX(grps.stopped) AS stopped,\n              COLLECT_LIST(tps.id) AS s_i_l,\n              COLLECT_LIST(tps.p_i_i) AS p_i_i_l\n            FROM\n              grps\n              INNER JOIN d_n.f_p_s fps ON grps.p_i = tps.p_i\n              AND grps.u_i = tps.u_i\n              AND grps.uk = tps.uk\n              AND tps.ds = 'ds'\n              AND grps.started = tps.started\n            GROUP BY\n              grps.p_i,\n              grps.u_i,\n              grps.uk,\n              grps.grp",
+   "targets": [
+    "dev_d_n.f_p_s_m"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_delete::delete_from",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "DELETE FROM a.b WHERE x = 0",
+   "targets": [
+    "a.b"
+   ]
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_delete::delete_without_from_bigquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": null,
+   "sql": "DELETE \"project.dataset.table\" WHERE 1",
+   "targets": [
+    "project.dataset.table"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_delete::delete_from_using",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "b.c"
+   ],
+   "sql": "DELETE FROM a.b AS t\n                USING (\n                    SELECT col\n                    FROM b.c\n                    WHERE col = 'x'\n                ) AS duplicates\n                WHERE a.b.col = duplicates.col",
+   "targets": [
+    "a.b"
+   ]
+  },
+  {
+   "dialect": "mysql",
+   "id": "openlineage/table_lineage/tests_delete::delete_mysql_preserves_previous_inputs",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "t1",
+    "t2"
+   ],
+   "sql": "SELECT * FROM t1;\nDELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id",
+   "targets": [
+    "t1"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_drop::drop_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "DROP TABLE IF EXISTS a.b, c.d",
+   "targets": [
+    "a.b",
+    "c.d"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_error_handling::test_failing_statement_with_insert",
+   "kind": "table",
+   "multi_statement": true,
+   "skipped_upstream": false,
+   "sources": [
+    "temp.table"
+   ],
+   "sql": "FAILING STATEMENT;\nINSERT INTO Persons SELECT key FROM temp.table;\nINSERT ALSO FAILING",
+   "targets": [
+    "Persons"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_values",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "INSERT INTO TEST VALUES(1)",
+   "targets": [
+    "TEST"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_values_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "orders"
+   ],
+   "sql": "INSERT INTO report (total) VALUES ((SELECT count(*) FROM orders))",
+   "targets": [
+    "report"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_cols_values",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "INSERT INTO tbl(col1, col2) VALUES (1, 2), (2, 3)",
+   "targets": [
+    "tbl"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_select_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "TEMP"
+   ],
+   "sql": "INSERT INTO TEST SELECT * FROM TEMP",
+   "targets": [
+    "TEST"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_select_table_2",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "\"b1\".\"b2\"",
+    "\"m\".\"dim\""
+   ],
+   "sql": "insert into \"a1\".\"a2\"\n            select to_date(C_AT),\n                   dm.C_NAME,\n                   P,\n                   count(*)\n            from \"b1\".\"b2\" as s\n                     left join \"m\".\"dim\" as dm on (dm.m_id = s.m_id)\n            where PROCESSED_AT = '2022-04-14'\n            group by to_date(C_AT), dm.C_NAME, P\n            ",
+   "targets": [
+    "\"a1\".\"a2\""
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_nested_select",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "top_delivery_times"
+   ],
+   "sql": "INSERT INTO popular_orders_day_of_week (order_day_of_week, order_placed_on,orders_placed)\n                SELECT EXTRACT(ISODOW FROM order_placed_on) AS order_day_of_week,\n                    order_placed_on,\n                    COUNT(*) AS orders_placed\n                FROM top_delivery_times\n                GROUP BY order_placed_on",
+   "targets": [
+    "popular_orders_day_of_week"
+   ]
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/tests_insert::insert_snowflake_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "INSERT INTO test_orders (ord, str, num) VALUES\n    (1, 'b', 15),\n    (2, 'a', 21),\n    (3, 'b', 7)",
+   "targets": [
+    "test_orders"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "schema.fpsm"
+   ],
+   "sql": "INSERT OVERWRITE TABLE schema.dps\n        PARTITION (ds = '2022-03-30')\n        SELECT\n            pid,\n            uid,\n            pii_userid,\n            NULL as session_id,\n            NULL as session_start_ts,\n            COUNT(1) AS session_cnt,\n            SUM(\n                UNIX_TIMESTAMP(stopped) - UNIX_TIMESTAMP(joined)\n            ) AS time_spent_sec\n        FROM schema.fpsm\n        WHERE ds = '2022-03-30'\n            AND UNIX_TIMESTAMP(stopped) - UNIX_TIMESTAMP(joined) BETWEEN 0 AND 28800\n        GROUP BY\n            pid,\n            uid,\n            pii_userid",
+   "targets": [
+    "schema.dps"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_subqueries",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table2"
+   ],
+   "sql": "INSERT OVERWRITE TABLE mytable\n        PARTITION (ds = '2022-03-31')\n        SELECT\n            *\n        FROM\n        (SELECT * FROM table2) a",
+   "targets": [
+    "mytable"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_multiple_subqueries",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table2",
+    "table3",
+    "table4"
+   ],
+   "sql": "INSERT OVERWRITE TABLE mytable\n        PARTITION (ds = '2022-03-31')\n        SELECT\n            *\n        FROM\n        (SELECT * FROM table2\n         UNION\n         SELECT * FROM table3\n         UNION ALL\n         SELECT * FROM table4) a",
+   "targets": [
+    "mytable"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_partition",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "d_d_n.u_t_250",
+    "d_n_p.g_d_r"
+   ],
+   "sql": "INSERT OVERWRITE TABLE d_d_n.g_d_t_r\n            PARTITION (ds = '2022-02-24')\n            SELECT\n                u.u_i,\n                g.d_r\n            FROM\n                (SELECT * FROM d_d_n.u_t_250 WHERE ds = '2022-02-24') u\n            JOIN\n                (SELECT * FROM d_n_p.g_d_r WHERE ds = '2022-02-24') g\n            ON\n                u.u_i = g.u_i",
+   "targets": [
+    "d_d_n.g_d_t_r"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::set_before_insert",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "SET hive.something=false;\n                INSERT INTO TABLE a.b.c VALUES (1, 2, 3)",
+   "targets": [
+    "a.b.c"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_hive_sets_large",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "d_p.f_p_s",
+    "d_p.f_p_s_merged"
+   ],
+   "sql": "SET hive.auto.convert.join=false;\n                SET hive.tez.auto.reducer.parallelism=false;\n                SET mapred.reduce.tasks=150;\n                INSERT OVERWRITE TABLE d_d_p.d_f_s\n                PARTITION (ds = '2022-05-01')\n                  SELECT\n                      T1.p_id,\n                      T2.s_st_ts\n                      FROM d_p.f_p_s AS T1\n                      INNER JOIN\n                        (SELECT\n                           fpsm.p_id,\n                           MIN(fpsm.ds) as ds\n                           from d_p.f_p_s_merged  AS fpsm\n                           WHERE fpsm.ds = '2022-05-01'\n                           GROUP BY\n                               fpsm.p_id\n                        ) AS T2\n                        ON T1.p_id = T2.p_id",
+   "targets": [
+    "d_d_p.d_f_s"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_group_by",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "\"b1\".\"b2\""
+   ],
+   "sql": "insert into \"a1\".\"a2\"\n            select\n              C_DT,\n              C_NAME,\n              U_C,\n              U_M,\n              U_SOURCE,\n              P,\n              IFF(U_SOURCE is NULL, 'abc', 'def') as D_TYPE,\n              count(*)\n            from\n              \"b1\".\"b2\"\n            where\n              P_AT = '2022-04-14'\n            group by\n              C_DT,\n              C_NAME,\n              U_C,\n              U_M,\n              U_SOURCE,\n              P,\n              U_SOURCE",
+   "targets": [
+    "\"a1\".\"a2\""
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::insert_nested_with_select",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "\"b1\".\"b2\"",
+    "\"c1\".\"c2\"",
+    "\"d1\".\"d2\"",
+    "\"e1\".\"e2\"",
+    "\"f1\".\"f2\""
+   ],
+   "sql": "insert into \"a1\".\"a2\" with a_b_c as (\n          select\n            created_dt,\n            s_id,\n            user_id,\n            match_id,\n            region,\n            x\n          from\n            (\n              (\n                select\n                  created_dt,\n                  s_id,\n                  puuid as user_id,\n                  cast(g_id as string) as match_id,\n                  coalesce(region, '0') as region,\n                  'A' as x\n                from\n                  \"b1\".\"b2\"\n                where\n                  processed_at = '2022-04-14'\n              )\n              union all\n                (\n                  select\n                    created_dt,\n                    s_id,\n                    puuid as user_id,\n                    cast(g_id as string) as match_id,\n                    coalesce(region, '0') as region,\n                    'B' as x\n                  from\n                    \"c1\".\"c2\"\n                  where\n                    processed_at = '2022-04-14'\n                )\n              union all\n                (\n                  select\n                    created_dt,\n                    s_id,\n                    puuid as user_id,\n                    match_id,\n                    coalesce(region, '0') as region,\n                    'C' as x\n                  from\n                    \"d1\".\"d2\"\n                  where\n                    processed_at = '2022-04-14'\n                )\n              union all\n                (\n                  select\n                    created_dt,\n                    s_id,\n                    s_id as user_id,\n                    -- using s_id as proxy to puuid\n                    match_id,\n                    coalesce(region, '0') as region,\n                    'D' as x\n                  from\n                    \"e1\".\"e2\"\n                  where\n                    processed_at = '2022-04-14'\n                )\n              union all\n                (\n                  select\n                    created_dt,\n                    s_id,\n                    user_id,\n                    guid as match_id,\n                    '0' as region,\n                    'E' as x\n                  from\n                    \"f1\".\"f2\"\n                  where\n                    processed_at = '2022-04-14'\n                )\n            )\n          group by\n            created_dt,\n            s_id,\n            user_id,\n            match_id,\n            region,\n            x\n        )\n        select\n          created_dt,\n          region,\n          x,\n          count(*),\n          count(distinct user_id)\n        from\n          a_b_c\n        group by\n          created_dt,\n          region,\n          x",
+   "targets": [
+    "\"a1\".\"a2\""
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::test_multiple_statements_delete_insert",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "DELETE FROM public.\"Employees\";\n            INSERT INTO public.\"Employees\" VALUES (1, 'TALES OF SHIVA', 'Mark', 'mark', 0)",
+   "targets": [
+    "public.\"Employees\""
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::test_multiple_statements_insert_insert",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "INSERT INTO a.a VALUES(1,2);\n            INSERT INTO b.b VALUES(1,2)",
+   "targets": [
+    "a.a",
+    "b.b"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_insert::test_triple_statements_insert_insert_insert",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "a.a"
+   ],
+   "sql": "INSERT INTO a.a VALUES(1,2);\n            INSERT INTO b.b SELECT * FROM a.a;\n            INSERT INTO c.c VALUES(1,2)",
+   "targets": [
+    "a.a",
+    "b.b",
+    "c.c"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_multiple_unions",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "d_d_n.a_p_s_v",
+    "d_d_n.d_p_s_v"
+   ],
+   "sql": "INSERT OVERWRITE TABLE d_d_n.a_p_s_v\n            PARTITION (ds = '2022-05-01')\n            SELECT\n                sub.p_i,\n                MIN(sub.f_a_d) AS session_id,\n                MAX(sub.l_a_d) AS l_a_d\n            FROM\n                (\n                SELECT\n                    p_i,\n                    f_a_d,\n                    l_a_d\n                FROM\n                    d_d_n.d_p_s_v\n                WHERE\n                    ds = '2022-05-01'\n                UNION ALL\n                SELECT\n                    p_i,\n                    f_a_d,\n                    l_a_d\n                FROM\n                    d_d_n.a_p_s_v\n                WHERE\n                    ds = '2022-04-30'\n                    AND l_a_d >= DATE_ADD('2022-05-01', -56)\n                UNION ALL\n                SELECT\n                    p_i,\n                    f_a_d,\n                    l_a_d\n                FROM\n                    d_d_n.a_p_s_v\n                WHERE\n                    ds = '2022-04-24'\n                    AND l_a_d >= DATE_ADD('2022-05-01', -56)\n                UNION ALL\n                SELECT\n                    p_i,\n                    f_a_d,\n                    l_a_d\n                FROM\n                    d_d_n.a_p_s_v\n                WHERE\n                    ds = '2022-04-03'\n                    AND l_a_d >= DATE_ADD('2022-05-01', -56)\n                ) sub\n            GROUP BY\n                sub.p_i,\n                sub.u_i",
+   "targets": [
+    "d_d_n.a_p_s_v"
+   ]
+  },
+  {
+   "dialect": "hive",
+   "id": "openlineage/table_lineage/tests_insert::insert_overwrite_partition_dates",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "ddw.aps2",
+    "ddw.dps"
+   ],
+   "sql": "INSERT OVERWRITE TABLE ddw.aps2\n        PARTITION (ds = '2022-05-01')\n        SELECT\n            sub.pid,\n            sub.uid,\n            sub.userkey,\n            MIN(sub.fs_id) AS session_id,\n            MIN(sub.fs_start_ts) AS session_start_ts,\n            SUM(sub.sc_1d) AS sc_1d,\n            SUM(sub.sc_7d) AS sc_7d,\n            SUM(sub.sc_28d) AS sc_28d,\n            SUM(sub.sc_inf) AS session_cnt_inf,\n            SUM(sub.tss_1d) AS tss_1d,\n            SUM(sub.tss_7d) AS tss_7d,\n            SUM(sub.tss_28d) AS tss_28d,\n            SUM(sub.tss_inf) AS tss_inf,\n            SUM(sub.datelist) AS datelist,\n            MIN(sub.fad) AS fad,\n            MAX(sub.lad) AS lad\n        FROM\n            (\n            SELECT\n                pid,\n                uid,\n                userkey,\n                fs_id,\n                fs_start_ts,\n                session_cnt AS session_cnt_1d,\n                session_cnt AS session_cnt_7d,\n                session_cnt AS session_cnt_28d,\n                session_cnt AS session_cnt_inf,\n                tss AS tss_1d,\n                tss AS tss_7d,\n                tss AS tss_28d,\n                tss AS tss_inf,\n                1 AS datelist,\n                '2022-05-01' AS fad,\n                '2022-05-01' AS lad\n            FROM\n                ddw.dps\n            WHERE\n                ds = '2022-05-01'\n            UNION ALL\n            SELECT\n                pid,\n                uid,\n                userkey,\n                fs_id,\n                fs_start_ts,\n                0 AS session_cnt_1d,\n                session_cnt_7d AS session_cnt_7d,\n                session_cnt_28d AS session_cnt_28d,\n                session_cnt_inf AS session_cnt_inf,\n                0 AS tss_1d,\n                tss_7d AS tss_7d,\n                tss_28d AS tss_28d,\n                tss_inf AS tss_inf,\n                (datelist % 549755813888) * 2 AS datelist,\n                fad AS fad,\n                lad AS lad\n            FROM\n                ddw.aps2\n            WHERE\n                ds = '2022-04-30'\n                AND lad >= DATE_ADD('2022-05-01', -56)\n            UNION ALL\n            SELECT\n                pid,\n                uid,\n                userkey,\n                fs_id,\n                fs_start_ts,\n                0 AS session_cnt_1d,\n                -session_cnt_1d AS session_cnt_7d,\n                0 AS session_cnt_28d,\n                0 AS session_cnt_inf,\n                0 AS tss_1d,\n                -tss_1d AS tss_7d,\n                0 AS tss_28d,\n                0 AS tss_inf,\n                0 AS datelist,\n                fad,\n                lad\n            FROM\n                ddw.aps2\n            WHERE\n                ds = '2022-04-24'\n                AND lad >= DATE_ADD('2022-05-01', -56)\n            UNION ALL\n            SELECT\n                pid,\n                uid,\n                userkey,\n                fs_id,\n                fs_start_ts,\n                0 AS session_cnt_1d,\n                0 AS session_cnt_7d,\n                -session_cnt_1d AS session_cnt_28d,\n                0 AS session_cnt_inf,\n                0 AS tss_1d,\n                0 AS tss_7d,\n                -tss_1d AS tss_28d,\n                0 AS tss_inf,\n                0 AS datelist,\n                fad,\n                lad\n            FROM\n                ddw.aps2\n            WHERE\n                ds = '2022-04-03'\n                AND lad >= DATE_ADD('2022-05-01', -56)\n            ) sub\n        GROUP BY\n            sub.pid,\n            sub.uid,\n            sub.userkey",
+   "targets": [
+    "ddw.aps2"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_merge::merge_subquery_when_not_matched",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "s.foo"
+   ],
+   "sql": "MERGE INTO s.bar as dest\n        USING (\n            SELECT *\n            FROM\n            s.foo\n        ) as stg\n        ON dest.D = stg.D\n          AND dest.E = stg.E\n        WHEN NOT MATCHED THEN\n        INSERT (\n          A,\n          B,\n          C)\n        VALUES\n        (\n            stg.A\n            ,stg.B\n            ,stg.C\n        )",
+   "targets": [
+    "s.bar"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_merge::merge_on_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "lookup",
+    "source"
+   ],
+   "sql": "MERGE INTO target\n             USING source\n             ON target.id IN (SELECT id FROM lookup)\n             WHEN MATCHED THEN UPDATE SET value = source.value",
+   "targets": [
+    "target"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_merge::test_merge_multiple_clauses",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": true,
+   "sources": [
+    "c.u_l_u"
+   ],
+   "sql": "merge into \"m\".\"d\" as d_m using (\n                with f_d_u_l_u as (\n                    select r_number() over (partition by m_id order by c_dt desc) as rownum,\n                        *\n                    from \"c\".\"u_l_u\"\n                    where len(m_id) = 32\n                    and len(c_name) > 1\n                    and p_at = '2022-04-14'\n                        qualify rownum = 1\n                )\n                select\n                c,\n                c_code,\n                c_name,\n                r_code,\n                r_name,\n                z,\n                m_id\n                from f_d_u_l_u\n            ) as src on d_m.m_id = src.m_id\n            when matched then update set\n            d_m.c_name = src.c_name,\n            d_m.c_code = src.c_code,\n            d_m.r_name = src.r_name,\n            d_m.r_code = src.r_code,\n            d_m.c = src.c,\n            d_m.z = src.z\n            when not matched then insert (m_id,c_name,c_code,r_name,r_code,c,z)\n            values (m_id,c_name,c_code,r_name,r_code,c,z)",
+   "targets": [
+    "m.d"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_simple",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table0"
+   ],
+   "sql": "SELECT * FROM table0",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_where_exists_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customers"
+   ],
+   "sql": "SELECT 1 WHERE EXISTS (SELECT 1 FROM customers)",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_having_exists_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customers",
+    "orders"
+   ],
+   "sql": "SELECT count(*)\n             FROM orders\n             HAVING EXISTS (SELECT 1 FROM customers)",
+   "targets": []
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/tests_select::select_qualify_exists_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customers",
+    "orders"
+   ],
+   "sql": "SELECT row_number() OVER (ORDER BY id)\n             FROM orders\n             QUALIFY EXISTS (SELECT 1 FROM customers)",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_aggregate_filter_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customers",
+    "orders"
+   ],
+   "sql": "SELECT count(*) FILTER (\n                 WHERE EXISTS (SELECT 1 FROM customers)\n             ) FROM orders",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_from_schema_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "schema0.table0"
+   ],
+   "sql": "SELECT * FROM schema0.table0",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_join",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table0",
+    "table1"
+   ],
+   "sql": "SELECT col0, col1, col2\n                FROM table0\n                JOIN table1\n                ON t1.col0 = t2.col0",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_join_condition_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "a",
+    "b",
+    "c"
+   ],
+   "sql": "SELECT a.id\n             FROM a\n             JOIN b ON b.id IN (SELECT c.id FROM c)",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_inner_join",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table0",
+    "table1"
+   ],
+   "sql": "SELECT col0, col1, col2\n                FROM table0\n                INNER JOIN table1\n                ON t1.col0 = t2.col0",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_left_join",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table0",
+    "table1"
+   ],
+   "sql": "SELECT col0, col1, col2\n            FROM table0\n            LEFT JOIN table1\n            ON t1.col0 = t2.col0",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_escaping",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "`random-project`.`dbt_test1`.`source_table`"
+   ],
+   "sql": "SELECT *\n            FROM `random-project`.`dbt_test1`.`source_table`\n            WHERE id = 1",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_into",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "table1"
+   ],
+   "sql": "SELECT * INTO table0 FROM table1",
+   "targets": [
+    "table0"
+   ]
+  },
+  {
+   "dialect": "redshift",
+   "id": "openlineage/table_lineage/tests_select::select_redshift",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "[test_schema].[test_table]"
+   ],
+   "sql": "SELECT [col1] FROM [test_schema].[test_table]",
+   "targets": []
+  },
+  {
+   "dialect": "sqlserver",
+   "id": "openlineage/table_lineage/tests_select::select_sqlserver",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "[test_schema].[test_table]"
+   ],
+   "sql": "SELECT [col1] FROM [test_schema].[test_table]",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_with_table_generator",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "test_schema.test_table"
+   ],
+   "sql": "SELECT row_number() OVER (ORDER BY col) row_num, d\n            FROM TABLE(GENERATOR(ROWCOUNT => (12 * 6)))\n            JOIN test_schema.test_table ON test_table.d = row_number()",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_unnest_generate_array",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "test_schema.test_table"
+   ],
+   "sql": "SELECT test_table.col0, n\n            FROM test_schema.test_table\n            CROSS JOIN UNNEST(GENERATE_ARRAY(1, 1000)) AS n",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_unnest_literal_array",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "SELECT * FROM UNNEST([1, 2, 3]) AS n",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_unnest_with_offset",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "test_schema.test_table"
+   ],
+   "sql": "SELECT test_table.col0, n, offset\n            FROM test_schema.test_table\n            CROSS JOIN UNNEST(GENERATE_ARRAY(1, 1000)) AS n WITH OFFSET AS offset",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_unnest_array_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "source_table"
+   ],
+   "sql": "SELECT n FROM UNNEST(ARRAY(SELECT id FROM source_table)) AS n",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_unpivot",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "test_schema.test_table"
+   ],
+   "sql": "SELECT *\n            FROM test_schema.test_table\n            UNPIVOT(sales FOR quarter IN (q1_sales, q2_sales, q3_sales))",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bigquery_unpivot_with_alias",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "test_schema.test_table"
+   ],
+   "sql": "SELECT unpivoted.quarter, unpivoted.sales\n            FROM test_schema.test_table\n            UNPIVOT(sales FOR quarter IN (q1_sales AS 'Q1', q2_sales AS 'Q2')) AS unpivoted",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_window_function",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "foo"
+   ],
+   "sql": "SELECT row_number() OVER (ORDER BY dt DESC), sum(foo) OVER (PARTITION BY a, b ORDER BY c, d ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), avg(bar) OVER (ORDER BY a RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING), sum(bar) OVER (ORDER BY a RANGE BETWEEN INTERVAL '1' DAY PRECEDING AND INTERVAL '1 MONTH' FOLLOWING), COUNT(*) OVER (ORDER BY a RANGE BETWEEN INTERVAL '1 DAY' PRECEDING AND INTERVAL '1 DAY' FOLLOWING), max(baz) OVER (ORDER BY a ROWS UNBOUNDED PRECEDING), sum(qux) OVER (ORDER BY a GROUPS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM foo",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_select::select_bq_array_function",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "my_bq_dataset.my_table_2"
+   ],
+   "sql": "SELECT l.LOCATION[offset(0)] AS my_city FROM my_bq_dataset.my_table_2 AS l",
+   "targets": []
+  },
+  {
+   "dialect": "bigquery",
+   "id": "openlineage/table_lineage/tests_select::select_bq_array_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "source_table"
+   ],
+   "sql": "SELECT ARRAY(SELECT id FROM source_table)",
+   "targets": []
+  },
+  {
+   "dialect": "snowflake",
+   "id": "openlineage/table_lineage/tests_select::select_snowflake_lateral",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "my_snowflake_schema.persons"
+   ],
+   "sql": "SELECT id as ID,\n        f.value AS Contact,\n        f1.value:type AS Type,\n        f1.value:content AS Details\n        FROM my_snowflake_schema.persons p,\n        lateral flatten(input => p.c, path => 'contact') f,\n        lateral flatten(input => f.value:business) f1",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tpcds_cte_query",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "date_dim",
+    "src.customer",
+    "store_sales"
+   ],
+   "sql": "WITH year_total AS\n                (SELECT c_customer_id customer_id,\n                        c_first_name customer_first_name,\n                        c_last_name customer_last_name,\n                        c_preferred_cust_flag customer_preferred_cust_flag,\n                        c_birth_country customer_birth_country,\n                        c_login customer_login,\n                        c_email_address customer_email_address,\n                        d_year dyear,\n                        Sum(((ss_ext_list_price - ss_ext_wholesale_cost - ss_ext_discount_amt)\n                            + ss_ext_sales_price) / 2) year_total,\n                        's' sale_type\n                FROM src.customer,\n                    store_sales,\n                    date_dim\n                WHERE c_customer_sk = ss_customer_sk\n                    AND ss_sold_date_sk = d_date_sk GROUP  BY c_customer_id,\n                                                            c_first_name,\n                                                            c_last_name,\n                                                            c_preferred_cust_flag,\n                                                            c_birth_country,\n                                                            c_login,\n                                                            c_email_address,\n                                                            d_year)\n            SELECT t_s_secyear.customer_id,\n                t_s_secyear.customer_first_name,\n                t_s_secyear.customer_last_name,\n                t_s_secyear.customer_preferred_cust_flag\n            FROM year_total t_s_firstyear,\n                year_total t_s_secyear,\n                year_total t_c_firstyear,\n                year_total t_c_secyear,\n                year_total t_w_firstyear,\n                year_total t_w_secyear\n            WHERE t_s_secyear.customer_id = t_s_firstyear.customer_id\n                AND t_s_firstyear.customer_id = t_c_secyear.customer_id\n                AND t_s_firstyear.customer_id = t_c_firstyear.customer_id\n                AND t_s_firstyear.customer_id = t_w_firstyear.customer_id\n                AND t_s_firstyear.customer_id = t_w_secyear.customer_id\n                AND t_s_firstyear.sale_type = 's'\n                AND t_c_firstyear.sale_type = 'c'\n                AND t_w_firstyear.sale_type = 'w'\n                AND t_s_secyear.sale_type = 's'\n                AND t_c_secyear.sale_type = 'c'\n                AND t_w_secyear.sale_type = 'w'\n                AND t_s_firstyear.dyear = 2001\n                AND t_s_secyear.dyear = 2001 + 1\n                AND t_c_firstyear.dyear = 2001\n                AND t_c_secyear.dyear = 2001 + 1\n                AND t_w_firstyear.dyear = 2001\n                AND t_w_secyear.dyear = 2001 + 1\n                AND t_s_firstyear.year_total > 0\n                AND t_c_firstyear.year_total > 0\n                AND t_w_firstyear.year_total > 0\n                AND CASE WHEN\n                        t_c_firstyear.year_total > 0 THEN t_c_secyear.year_total / t_c_firstyear.year_total\n                        ELSE NULL\n                    END > CASE WHEN\n                        t_s_firstyear.year_total > 0 THEN t_s_secyear.year_total / t_s_firstyear.year_total\n                        ELSE NULL\n                    END\n                AND CASE WHEN\n                        t_c_firstyear.year_total > 0 THEN t_c_secyear.year_total / t_c_firstyear.year_total\n                        ELSE NULL\n                    END > CASE WHEN\n                        t_w_firstyear.year_total > 0 THEN t_w_secyear.year_total / t_w_firstyear.year_total\n                        ELSE NULL\n                    END\n                ORDER  BY t_s_secyear.customer_id,\n                        t_s_secyear.customer_first_name,\n                        t_s_secyear.customer_last_name,\n                        t_s_secyear.customer_preferred_cust_flag\n            LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_1",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customer",
+    "date_dim",
+    "store",
+    "store_returns"
+   ],
+   "sql": "WITH customer_total_return\n             AS (SELECT sr_customer_sk     AS ctr_customer_sk,\n                        sr_store_sk        AS ctr_store_sk,\n                        Sum(sr_return_amt) AS ctr_total_return\n                 FROM   store_returns,\n                        date_dim\n                 WHERE  sr_returned_date_sk = d_date_sk\n                        AND d_year = 2001\n                 GROUP  BY sr_customer_sk,\n                           sr_store_sk)\n        SELECT c_customer_id\n        FROM   customer_total_return ctr1,\n               store,\n               customer\n        WHERE  ctr1.ctr_total_return > (SELECT Avg(ctr_total_return) * 1.2\n                                        FROM   customer_total_return ctr2\n                                        WHERE  ctr1.ctr_store_sk = ctr2.ctr_store_sk)\n               AND s_store_sk = ctr1.ctr_store_sk\n               AND s_state = 'TN'\n               AND ctr1.ctr_customer_sk = c_customer_sk\n        ORDER  BY c_customer_id\n        LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_2",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "catalog_sales",
+    "date_dim",
+    "web_sales"
+   ],
+   "sql": "WITH wscs\n         AS (SELECT sold_date_sk,\n                    sales_price\n             FROM   (SELECT ws_sold_date_sk    sold_date_sk,\n                            ws_ext_sales_price sales_price\n                     FROM   web_sales)\n             UNION ALL\n             (SELECT cs_sold_date_sk    sold_date_sk,\n                     cs_ext_sales_price sales_price\n              FROM   catalog_sales)),\n         wswscs\n         AS (SELECT d_week_seq,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Sunday' ) THEN sales_price\n                          ELSE NULL\n                        END) sun_sales,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Monday' ) THEN sales_price\n                          ELSE NULL\n                        END) mon_sales,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Tuesday' ) THEN sales_price\n                          ELSE NULL\n                        END) tue_sales,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Wednesday' ) THEN sales_price\n                          ELSE NULL\n                        END) wed_sales,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Thursday' ) THEN sales_price\n                          ELSE NULL\n                        END) thu_sales,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Friday' ) THEN sales_price\n                          ELSE NULL\n                        END) fri_sales,\n                    Sum(CASE\n                          WHEN ( d_day_name = 'Saturday' ) THEN sales_price\n                          ELSE NULL\n                        END) sat_sales\n             FROM   wscs,\n                    date_dim\n             WHERE  d_date_sk = sold_date_sk\n             GROUP  BY d_week_seq)\n    SELECT d_week_seq1,\n           Round(sun_sales1 / sun_sales2, 2),\n           Round(mon_sales1 / mon_sales2, 2),\n           Round(tue_sales1 / tue_sales2, 2),\n           Round(wed_sales1 / wed_sales2, 2),\n           Round(thu_sales1 / thu_sales2, 2),\n           Round(fri_sales1 / fri_sales2, 2),\n           Round(sat_sales1 / sat_sales2, 2)\n    FROM   (SELECT wswscs.d_week_seq d_week_seq1,\n                   sun_sales         sun_sales1,\n                   mon_sales         mon_sales1,\n                   tue_sales         tue_sales1,\n                   wed_sales         wed_sales1,\n                   thu_sales         thu_sales1,\n                   fri_sales         fri_sales1,\n                   sat_sales         sat_sales1\n            FROM   wswscs,\n                   date_dim\n            WHERE  date_dim.d_week_seq = wswscs.d_week_seq\n                   AND d_year = 1998) y,\n           (SELECT wswscs.d_week_seq d_week_seq2,\n                   sun_sales         sun_sales2,\n                   mon_sales         mon_sales2,\n                   tue_sales         tue_sales2,\n                   wed_sales         wed_sales2,\n                   thu_sales         thu_sales2,\n                   fri_sales         fri_sales2,\n                   sat_sales         sat_sales2\n            FROM   wswscs,\n                   date_dim\n            WHERE  date_dim.d_week_seq = wswscs.d_week_seq\n                   AND d_year = 1998 + 1) z\n    WHERE  d_week_seq1 = d_week_seq2 - 53\n    ORDER  BY d_week_seq1",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_3",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "date_dim",
+    "item",
+    "store_sales"
+   ],
+   "sql": "SELECT dt.d_year,\n               item.i_brand_id          brand_id,\n               item.i_brand             brand,\n               Sum(ss_ext_discount_amt) sum_agg\n        FROM   date_dim dt,\n               store_sales,\n               item\n        WHERE  dt.d_date_sk = store_sales.ss_sold_date_sk\n               AND store_sales.ss_item_sk = item.i_item_sk\n               AND item.i_manufact_id = 427\n               AND dt.d_moy = 11\n        GROUP  BY dt.d_year,\n                  item.i_brand,\n                  item.i_brand_id\n        ORDER  BY dt.d_year,\n                  sum_agg DESC,\n                  brand_id\n        LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_4",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "catalog_sales",
+    "customer",
+    "date_dim",
+    "store_sales",
+    "web_sales"
+   ],
+   "sql": "WITH year_total\n             AS (SELECT c_customer_id                       customer_id,\n                        c_first_name                        customer_first_name,\n                        c_last_name                         customer_last_name,\n                        c_preferred_cust_flag               customer_preferred_cust_flag\n                        ,\n                        c_birth_country\n                        customer_birth_country,\n                        c_login                             customer_login,\n                        c_email_address                     customer_email_address,\n                        d_year                              dyear,\n                        Sum(( ( ss_ext_list_price - ss_ext_wholesale_cost\n                                - ss_ext_discount_amt\n                              )\n                              +\n                                  ss_ext_sales_price ) / 2) year_total,\n                        's'                                 sale_type\n                 FROM   customer,\n                        store_sales,\n                        date_dim\n                 WHERE  c_customer_sk = ss_customer_sk\n                        AND ss_sold_date_sk = d_date_sk\n                 GROUP  BY c_customer_id,\n                           c_first_name,\n                           c_last_name,\n                           c_preferred_cust_flag,\n                           c_birth_country,\n                           c_login,\n                           c_email_address,\n                           d_year\n                 UNION ALL\n                 SELECT c_customer_id                             customer_id,\n                        c_first_name                              customer_first_name,\n                        c_last_name                               customer_last_name,\n                        c_preferred_cust_flag\n                        customer_preferred_cust_flag,\n                        c_birth_country                           customer_birth_country\n                        ,\n                        c_login\n                        customer_login,\n                        c_email_address                           customer_email_address\n                        ,\n                        d_year                                    dyear\n                        ,\n                        Sum(( ( ( cs_ext_list_price\n                                  - cs_ext_wholesale_cost\n                                  - cs_ext_discount_amt\n                                ) +\n                                      cs_ext_sales_price ) / 2 )) year_total,\n                        'c'                                       sale_type\n                 FROM   customer,\n                        catalog_sales,\n                        date_dim\n                 WHERE  c_customer_sk = cs_bill_customer_sk\n                        AND cs_sold_date_sk = d_date_sk\n                 GROUP  BY c_customer_id,\n                           c_first_name,\n                           c_last_name,\n                           c_preferred_cust_flag,\n                           c_birth_country,\n                           c_login,\n                           c_email_address,\n                           d_year\n                 UNION ALL\n                 SELECT c_customer_id                             customer_id,\n                        c_first_name                              customer_first_name,\n                        c_last_name                               customer_last_name,\n                        c_preferred_cust_flag\n                        customer_preferred_cust_flag,\n                        c_birth_country                           customer_birth_country\n                        ,\n                        c_login\n                        customer_login,\n                        c_email_address                           customer_email_address\n                        ,\n                        d_year                                    dyear\n                        ,\n                        Sum(( ( ( ws_ext_list_price\n                                  - ws_ext_wholesale_cost\n                                  - ws_ext_discount_amt\n                                ) +\n                                      ws_ext_sales_price ) / 2 )) year_total,\n                        'w'                                       sale_type\n                 FROM   customer,\n                        web_sales,\n                        date_dim\n                 WHERE  c_customer_sk = ws_bill_customer_sk\n                        AND ws_sold_date_sk = d_date_sk\n                 GROUP  BY c_customer_id,\n                           c_first_name,\n                           c_last_name,\n                           c_preferred_cust_flag,\n                           c_birth_country,\n                           c_login,\n                           c_email_address,\n                           d_year)\n        SELECT t_s_secyear.customer_id,\n                       t_s_secyear.customer_first_name,\n                       t_s_secyear.customer_last_name,\n                       t_s_secyear.customer_preferred_cust_flag\n        FROM   year_total t_s_firstyear,\n               year_total t_s_secyear,\n               year_total t_c_firstyear,\n               year_total t_c_secyear,\n               year_total t_w_firstyear,\n               year_total t_w_secyear\n        WHERE  t_s_secyear.customer_id = t_s_firstyear.customer_id\n               AND t_s_firstyear.customer_id = t_c_secyear.customer_id\n               AND t_s_firstyear.customer_id = t_c_firstyear.customer_id\n               AND t_s_firstyear.customer_id = t_w_firstyear.customer_id\n               AND t_s_firstyear.customer_id = t_w_secyear.customer_id\n               AND t_s_firstyear.sale_type = 's'\n               AND t_c_firstyear.sale_type = 'c'\n               AND t_w_firstyear.sale_type = 'w'\n               AND t_s_secyear.sale_type = 's'\n               AND t_c_secyear.sale_type = 'c'\n               AND t_w_secyear.sale_type = 'w'\n               AND t_s_firstyear.dyear = 2001\n               AND t_s_secyear.dyear = 2001 + 1\n               AND t_c_firstyear.dyear = 2001\n               AND t_c_secyear.dyear = 2001 + 1\n               AND t_w_firstyear.dyear = 2001\n               AND t_w_secyear.dyear = 2001 + 1\n               AND t_s_firstyear.year_total > 0\n               AND t_c_firstyear.year_total > 0\n               AND t_w_firstyear.year_total > 0\n               AND CASE\n                     WHEN t_c_firstyear.year_total > 0 THEN t_c_secyear.year_total /\n                                                            t_c_firstyear.year_total\n                     ELSE NULL\n                   END > CASE\n                           WHEN t_s_firstyear.year_total > 0 THEN\n                           t_s_secyear.year_total /\n                           t_s_firstyear.year_total\n                           ELSE NULL\n                         END\n               AND CASE\n                     WHEN t_c_firstyear.year_total > 0 THEN t_c_secyear.year_total /\n                                                            t_c_firstyear.year_total\n                     ELSE NULL\n                   END > CASE\n                           WHEN t_w_firstyear.year_total > 0 THEN\n                           t_w_secyear.year_total /\n                           t_w_firstyear.year_total\n                           ELSE NULL\n                         END\n        ORDER  BY t_s_secyear.customer_id,\n                  t_s_secyear.customer_first_name,\n                  t_s_secyear.customer_last_name,\n                  t_s_secyear.customer_preferred_cust_flag\n        LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_5",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "catalog_page",
+    "catalog_returns",
+    "catalog_sales",
+    "date_dim",
+    "store",
+    "store_returns",
+    "store_sales",
+    "web_returns",
+    "web_sales",
+    "web_site"
+   ],
+   "sql": "WITH ssr AS\n            (\n                     SELECT   s_store_id,\n                              Sum(sales_price) AS sales,\n                              Sum(profit)      AS profit,\n                              Sum(return_amt)  AS returns1,\n                              Sum(net_loss)    AS profit_loss\n                     FROM     (\n                                     SELECT ss_store_sk             AS store_sk,\n                                            ss_sold_date_sk         AS date_sk,\n                                            ss_ext_sales_price      AS sales_price,\n                                            ss_net_profit           AS profit,\n                                            Cast(0 AS DECIMAL(7,2)) AS return_amt,\n                                            Cast(0 AS DECIMAL(7,2)) AS net_loss\n                                     FROM   store_sales\n                                     UNION ALL\n                                     SELECT sr_store_sk             AS store_sk,\n                                            sr_returned_date_sk     AS date_sk,\n                                            Cast(0 AS DECIMAL(7,2)) AS sales_price,\n                                            Cast(0 AS DECIMAL(7,2)) AS profit,\n                                            sr_return_amt           AS return_amt,\n                                            sr_net_loss             AS net_loss\n                                     FROM   store_returns ) salesreturns,\n                              date_dim,\n                              store\n                     WHERE    date_sk = d_date_sk\n                     AND      d_date BETWEEN Cast('2002-08-22' AS DATE) AND      (\n                                       Cast('2002-08-22' AS DATE) + INTERVAL '14' day)\n                     AND      store_sk = s_store_sk\n                     GROUP BY s_store_id) , csr AS\n            (\n                     SELECT   cp_catalog_page_id,\n                              sum(sales_price) AS sales,\n                              sum(profit)      AS profit,\n                              sum(return_amt)  AS returns1,\n                              sum(net_loss)    AS profit_loss\n                     FROM     (\n                                     SELECT cs_catalog_page_sk      AS page_sk,\n                                            cs_sold_date_sk         AS date_sk,\n                                            cs_ext_sales_price      AS sales_price,\n                                            cs_net_profit           AS profit,\n                                            cast(0 AS decimal(7,2)) AS return_amt,\n                                            cast(0 AS decimal(7,2)) AS net_loss\n                                     FROM   catalog_sales\n                                     UNION ALL\n                                     SELECT cr_catalog_page_sk      AS page_sk,\n                                            cr_returned_date_sk     AS date_sk,\n                                            cast(0 AS decimal(7,2)) AS sales_price,\n                                            cast(0 AS decimal(7,2)) AS profit,\n                                            cr_return_amount        AS return_amt,\n                                            cr_net_loss             AS net_loss\n                                     FROM   catalog_returns ) salesreturns,\n                              date_dim,\n                              catalog_page\n                     WHERE    date_sk = d_date_sk\n                     AND      d_date BETWEEN cast('2002-08-22' AS date) AND      (\n                                       cast('2002-08-22' AS date) + INTERVAL '14' day)\n                     AND      page_sk = cp_catalog_page_sk\n                     GROUP BY cp_catalog_page_id) , wsr AS\n            (\n                     SELECT   web_site_id,\n                              sum(sales_price) AS sales,\n                              sum(profit)      AS profit,\n                              sum(return_amt)  AS returns1,\n                              sum(net_loss)    AS profit_loss\n                     FROM     (\n                                     SELECT ws_web_site_sk          AS wsr_web_site_sk,\n                                            ws_sold_date_sk         AS date_sk,\n                                            ws_ext_sales_price      AS sales_price,\n                                            ws_net_profit           AS profit,\n                                            cast(0 AS decimal(7,2)) AS return_amt,\n                                            cast(0 AS decimal(7,2)) AS net_loss\n                                     FROM   web_sales\n                                     UNION ALL\n                                     SELECT          ws_web_site_sk          AS wsr_web_site_sk,\n                                                     wr_returned_date_sk     AS date_sk,\n                                                     cast(0 AS decimal(7,2)) AS sales_price,\n                                                     cast(0 AS decimal(7,2)) AS profit,\n                                                     wr_return_amt           AS return_amt,\n                                                     wr_net_loss             AS net_loss\n                                     FROM            web_returns\n                                     LEFT OUTER JOIN web_sales\n                                     ON              (\n                                                                     wr_item_sk = ws_item_sk\n                                                     AND             wr_order_number = ws_order_number) ) salesreturns,\n                              date_dim,\n                              web_site\n                     WHERE    date_sk = d_date_sk\n                     AND      d_date BETWEEN cast('2002-08-22' AS date) AND      (\n                                       cast('2002-08-22' AS date) + INTERVAL '14' day)\n                     AND      wsr_web_site_sk = web_site_sk\n                     GROUP BY web_site_id)\n            SELECT\n                     channel ,\n                     id ,\n                     sum(sales)   AS sales ,\n                     sum(returns1) AS returns1 ,\n                     sum(profit)  AS profit\n            FROM     (\n                            SELECT 'store channel' AS channel ,\n                                   'store'\n                                          || s_store_id AS id ,\n                                   sales ,\n                                   returns1 ,\n                                   (profit - profit_loss) AS profit\n                            FROM   ssr\n                            UNION ALL\n                            SELECT 'catalog channel' AS channel ,\n                                   'catalog_page'\n                                          || cp_catalog_page_id AS id ,\n                                   sales ,\n                                   returns1 ,\n                                   (profit - profit_loss) AS profit\n                            FROM   csr\n                            UNION ALL\n                            SELECT 'web channel' AS channel ,\n                                   'web_site'\n                                          || web_site_id AS id ,\n                                   sales ,\n                                   returns1 ,\n                                   (profit - profit_loss) AS profit\n                            FROM   wsr ) x\n            GROUP BY rollup (channel, id)\n            ORDER BY channel ,\n                     id\n            LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_6",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customer",
+    "customer_address",
+    "date_dim",
+    "item",
+    "store_sales"
+   ],
+   "sql": "SELECT a.ca_state state,\n               Count(*)   cnt\n        FROM   customer_address a,\n               customer c,\n               store_sales s,\n               date_dim d,\n               item i\n        WHERE  a.ca_address_sk = c.c_current_addr_sk\n               AND c.c_customer_sk = s.ss_customer_sk\n               AND s.ss_sold_date_sk = d.d_date_sk\n               AND s.ss_item_sk = i.i_item_sk\n               AND d.d_month_seq = (SELECT DISTINCT ( d_month_seq )\n                                    FROM   date_dim\n                                    WHERE  d_year = 1998\n                                           AND d_moy = 7)\n               AND i.i_current_price > 1.2 * (SELECT Avg(j.i_current_price)\n                                              FROM   item j\n                                              WHERE  j.i_category = i.i_category)\n        GROUP  BY a.ca_state\n        HAVING Count(*) >= 10\n        ORDER  BY cnt\n        LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_7",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customer_demographics",
+    "date_dim",
+    "item",
+    "promotion",
+    "store_sales"
+   ],
+   "sql": "SELECT i_item_id,\n               Avg(ss_quantity)    agg1,\n               Avg(ss_list_price)  agg2,\n               Avg(ss_coupon_amt)  agg3,\n               Avg(ss_sales_price) agg4\n        FROM   store_sales,\n               customer_demographics,\n               date_dim,\n               item,\n               promotion\n        WHERE  ss_sold_date_sk = d_date_sk\n               AND ss_item_sk = i_item_sk\n               AND ss_cdemo_sk = cd_demo_sk\n               AND ss_promo_sk = p_promo_sk\n               AND cd_gender = 'F'\n               AND cd_marital_status = 'W'\n               AND cd_education_status = '2 yr Degree'\n               AND ( p_channel_email = 'N'\n                      OR p_channel_event = 'N' )\n               AND d_year = 1998\n        GROUP  BY i_item_id\n        ORDER  BY i_item_id\n        LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_8",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "customer",
+    "customer_address",
+    "date_dim",
+    "store",
+    "store_sales"
+   ],
+   "sql": "SELECT s_store_name,\n                       Sum(ss_net_profit)\n        FROM   store_sales,\n               date_dim,\n               store,\n               (SELECT ca_zip\n                FROM   (SELECT Substr(ca_zip, 1, 5) ca_zip\n                        FROM   customer_address\n                        WHERE  Substr(ca_zip, 1, 5) IN ( '67436', '26121', '38443',\n                                                         '63157',\n                                                         '68856', '19485', '86425',\n                                                         '26741',\n                                                         '70991', '60899', '63573',\n                                                         '47556',\n                                                         '56193', '93314', '87827',\n                                                         '62017',\n                                                         '85067', '95390', '48091',\n                                                         '43224',\n                                                         '22322', '86959', '68519',\n                                                         '14308',\n                                                         '46501', '81131', '34056',\n                                                         '61991',\n                                                         '19896', '87804', '65774',\n                                                         '92564' )\n                        INTERSECT\n                        SELECT ca_zip\n                        FROM   (SELECT Substr(ca_zip, 1, 5) ca_zip,\n                                       Count(*)             cnt\n                                FROM   customer_address,\n                                       customer\n                                WHERE  ca_address_sk = c_current_addr_sk\n                                       AND c_preferred_cust_flag = 'Y'\n                                GROUP  BY ca_zip\n                                HAVING Count(*) > 10)A1)A2) V1\n        WHERE  ss_store_sk = s_store_sk\n               AND ss_sold_date_sk = d_date_sk\n               AND d_qoy = 2\n               AND d_year = 2000\n               AND ( Substr(s_zip, 1, 2) = Substr(V1.ca_zip, 1, 2) )\n        GROUP  BY s_store_name\n        ORDER  BY s_store_name\n        LIMIT 100",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_tpcds::test_tcpds_query_9",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "reason",
+    "store_sales"
+   ],
+   "sql": "SELECT CASE\n                 WHEN (SELECT Count(*)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 1 AND 20) > 3672 THEN\n                 (SELECT Avg(ss_ext_list_price)\n                  FROM   store_sales\n                  WHERE\n                 ss_quantity BETWEEN 1 AND 20)\n                 ELSE (SELECT Avg(ss_net_profit)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 1 AND 20)\n               END bucket1,\n               CASE\n                 WHEN (SELECT Count(*)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 21 AND 40) > 3392 THEN\n                 (SELECT Avg(ss_ext_list_price)\n                  FROM   store_sales\n                  WHERE\n                 ss_quantity BETWEEN 21 AND 40)\n                 ELSE (SELECT Avg(ss_net_profit)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 21 AND 40)\n               END bucket2,\n               CASE\n                 WHEN (SELECT Count(*)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 41 AND 60) > 32784 THEN\n                 (SELECT Avg(ss_ext_list_price)\n                  FROM   store_sales\n                  WHERE\n                 ss_quantity BETWEEN 41 AND 60)\n                 ELSE (SELECT Avg(ss_net_profit)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 41 AND 60)\n               END bucket3,\n               CASE\n                 WHEN (SELECT Count(*)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 61 AND 80) > 26032 THEN\n                 (SELECT Avg(ss_ext_list_price)\n                  FROM   store_sales\n                  WHERE\n                 ss_quantity BETWEEN 61 AND 80)\n                 ELSE (SELECT Avg(ss_net_profit)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 61 AND 80)\n               END bucket4,\n               CASE\n                 WHEN (SELECT Count(*)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 81 AND 100) > 23982 THEN\n                 (SELECT Avg(ss_ext_list_price)\n                  FROM   store_sales\n                  WHERE\n                 ss_quantity BETWEEN 81 AND 100)\n                 ELSE (SELECT Avg(ss_net_profit)\n                       FROM   store_sales\n                       WHERE  ss_quantity BETWEEN 81 AND 100)\n               END bucket5\n        FROM   reason\n        WHERE  r_reason_sk = 1",
+   "targets": []
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_truncate::truncate_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "TRUNCATE TABLE a.b",
+   "targets": [
+    "a.b"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_update::update_table",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "UPDATE table0 SET col0 = val0 WHERE col1 = val1",
+   "targets": [
+    "table0"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_update::update_table_from",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "dataset.NewArrivals"
+   ],
+   "sql": "UPDATE dataset.Inventory i\n            SET quantity = i.quantity + n.quantity,\n                supply_constrained = false\n            FROM dataset.NewArrivals n\n            WHERE i.product = n.product",
+   "targets": [
+    "dataset.Inventory"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_update::update_table_from_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "dataset.NewArrivals"
+   ],
+   "sql": "UPDATE dataset.Inventory\n            SET quantity = quantity +\n            (SELECT quantity FROM dataset.NewArrivals\n            WHERE Inventory.product = NewArrivals.product),\n            supply_constrained = false\n            WHERE product IN (SELECT product FROM dataset.NewArrivals)",
+   "targets": [
+    "dataset.Inventory"
+   ]
+  },
+  {
+   "dialect": "postgres",
+   "id": "openlineage/table_lineage/tests_update::update_table_from_assignment_subquery",
+   "kind": "table",
+   "multi_statement": false,
+   "skipped_upstream": false,
+   "sources": [
+    "dataset.NewArrivals"
+   ],
+   "sql": "UPDATE dataset.Inventory\n            SET quantity = (SELECT quantity FROM dataset.NewArrivals)",
+   "targets": [
+    "dataset.Inventory"
+   ]
+  }
+ ],
+ "commit": "7a84fd4d48aeed4d0e6f391e2b7fbc11c0ff4fd9",
+ "source": "https://github.com/OpenLineage/OpenLineage (Apache-2.0), integration/sql/impl/tests",
+ "unharvested": [
+  {
+   "test": "table_lineage/tests_alter::alter_snowflake_swap_with",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_copy_into_table",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_copy_into_with_snowflake_stage_locations",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_copy_into_with_snowflake_internal_stages",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_copy_into_location_from_table",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_copy_into_location_from_query",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_pivot_table",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_copy::parse_pivot_derived_table",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_create::create_stage",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_cte::parse_bugged_cte",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_delete::delete_mysql_multiple_tables",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_delete::delete_identifier_function",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_error_handling::test_failing_statement_tokenizer_failes",
+   "why": "expectation is not a table or column lineage literal"
+  },
+  {
+   "test": "table_lineage/tests_merge::merge_identifier_function",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_select::select_parenthesized_join",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_select::select_identifier_function",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_update::update_identifier_function",
+   "why": "sql is not a plain literal"
+  },
+  {
+   "test": "table_lineage/tests_update::update_identifier_function_databricks",
+   "why": "sql is not a plain literal"
+  }
+ ]
+}
