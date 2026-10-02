@@ -27,6 +27,7 @@ from .ast_utils import (
 )
 from .distinct_safety import distinct_is_redundant
 from .lift_subqueries import lift_subqueries
+from .named_windows import inline_named_windows
 from .string_literals import canonical_literals
 
 
@@ -118,7 +119,7 @@ def _parse_single_query(sql: str) -> exp.Expression:
         raise ValueError(
             f"only SELECT/UNION query statements are supported, got {type(statement).__name__}"
         )
-    return statement
+    return inline_named_windows(statement)
 
 
 def _cte_alias(cte: exp.CTE) -> str | None:
