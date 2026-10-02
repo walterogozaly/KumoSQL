@@ -4,7 +4,7 @@
   "score": "22/397 refuted, 122 agree, 0 wrong",
   "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 600 random databases (and every database of at most 2 rows per table) showed no difference (not a proof, not bounded verification).",
   "evidence": "executed",
-  "correctness": "Every refutation was executed on both queries and is stable under row-order shuffles; none are claimed without a database",
+  "correctness": "Every refutation was executed on both queries, is stable under row-order shuffles, and shows with DuckDB's optimizer off too; none are claimed without a database",
   "coverage": {
     "refuted": 22,
     "unknown": 122,

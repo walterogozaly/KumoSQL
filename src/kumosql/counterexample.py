@@ -611,6 +611,16 @@ class Searcher:
 
         expected = (_bag(a), _bag(b))
         try:
+            # DuckDB's optimizer has returned wrong rows for some correlated subqueries: the difference must
+            # also show with the optimizer off, so a counterexample never rests on an engine bug
+            self.db.execute("PRAGMA disable_optimizer")
+            try:
+                self._load(data)
+                plain = (_bag(self.db.execute(self.left_sql).fetchall()), _bag(self.db.execute(self.right_sql).fetchall()))
+            finally:
+                self.db.execute("PRAGMA enable_optimizer")
+            if plain[0] == plain[1]:
+                return False
             for _ in range(3):
                 shuffled = {name: rng.sample(data[name], len(data[name])) for name in self.used}
                 self._load(shuffled)
