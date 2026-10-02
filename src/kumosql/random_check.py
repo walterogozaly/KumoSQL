@@ -23,6 +23,8 @@ from typing import Iterable, Sequence
 
 import sqlglot
 
+from .string_literals import canonical_literals
+
 _DUCK_TYPES = {"int": "BIGINT", "float": "DOUBLE", "text": "VARCHAR", "date": "DATE", "bool": "BOOLEAN"}
 
 
@@ -199,6 +201,8 @@ def _quote_reserved(node):
 
 
 def _duck(sql: str, dialect: str) -> str:
+    if dialect == "bigquery":
+        sql = canonical_literals(sql)
     try:
         tree = sqlglot.parse_one(sql, read=dialect).transform(_floor_to_unit).transform(_quote_reserved)
         return tree.sql(dialect="duckdb")

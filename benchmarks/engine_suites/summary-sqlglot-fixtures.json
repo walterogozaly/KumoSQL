@@ -1,0 +1,88 @@
+{
+ "all": {
+  "cases": 6965,
+  "executed": 2821,
+  "transformed": 1486,
+  "declined": 1335,
+  "unsupported": 4141,
+  "timeout": 1,
+  "error": 2,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 257.6,
+  "p95_ms": 1062.9
+ },
+ "plain": {
+  "cases": 4640,
+  "executed": 593,
+  "transformed": 121,
+  "declined": 472,
+  "unsupported": 4044,
+  "timeout": 1,
+  "error": 2,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 177.6,
+  "p95_ms": 686.0
+ },
+ "amplified": {
+  "cases": 2325,
+  "executed": 2228,
+  "transformed": 1365,
+  "declined": 863,
+  "unsupported": 97,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 279.9,
+  "p95_ms": 1150.7
+ },
+ "dev": {
+  "cases": 6382,
+  "executed": 2341,
+  "transformed": 1247,
+  "declined": 1094,
+  "unsupported": 4038,
+  "timeout": 1,
+  "error": 2,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 237.1,
+  "p95_ms": 1070.7
+ },
+ "held_out": {
+  "cases": 583,
+  "executed": 480,
+  "transformed": 239,
+  "declined": 241,
+  "unsupported": 103,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 421.8,
+  "p95_ms": 1023.0
+ },
+ "duplicates_collapsed": 233,
+ "files_skipped": {},
+ "files_hung": 1,
+ "expected_match": {
+  "True": 464,
+  "None": 2353,
+  "False": 4
+ },
+ "by_rule": {
+  "remove_unused_ctes": 483,
+  "format_sql": 2329,
+  "remove_trivial_predicates": 479,
+  "inline_single_use_ctes": 1059,
+  "remove_redundant_parentheses": 72
+ },
+ "wrong_cases": [],
+ "suite": "sqlglot-fixtures",
+ "revision": "954503e4c6fa5988e81450f6e390244f69fcc97d",
+ "licence": "MIT, Copyright Toby Mao",
+ "files": 29,
+ "seconds": 1271.8
+}

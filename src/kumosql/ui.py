@@ -223,7 +223,7 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/lineage-limits":
             from . import lineage_limits
 
-            self._json(200, lineage_limits.settings())
+            self._json(200, lineage_limits.status())
             return
         if self.path == "/api/schema-fetch":
             from . import schema_fetch
@@ -427,7 +427,7 @@ class UIHandler(BaseHTTPRequestHandler):
         try:
             if not isinstance(payload, dict):
                 raise ValueError("settings must be an object")
-            prover_context.save_settings(payload.get("enabled"), payload.get("timeout_ms"))
+            prover_context.save_settings(payload.get("enabled"), payload.get("timeout_ms"), payload.get("bounded_rows"))
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
@@ -472,7 +472,7 @@ class UIHandler(BaseHTTPRequestHandler):
         except OSError as exc:
             self._json(500, {"error": str(exc)})
             return
-        self._json(200, saved)
+        self._json(200, lineage_limits.status())
 
     def do_PUT(self) -> None:
         if self.path == "/api/schema-fetch":

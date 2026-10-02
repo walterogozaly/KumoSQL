@@ -28,7 +28,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import state
-from .ast_utils import table_parts as _parts
+from .ast_utils import UnmodeledConstruct, faithful_sql, table_parts as _parts
 
 MAX_DECLARATIONS = 2000
 _LOCK = threading.Lock()
@@ -245,4 +245,9 @@ def rewrite_sql(sql: str, items: list[Equivalence] | None = None, columns: dict[
         return sql, []
     tree = sqlglot.parse_one(sql, read=dialect)
     tree, used = rewrite_tree(tree, items, columns)
-    return (tree.sql(dialect=dialect) if used else sql), used
+    if not used:
+        return sql, used
+    try:
+        return faithful_sql(tree, dialect), used
+    except UnmodeledConstruct:
+        return sql, []  # the rewritten query cannot be written down faithfully, so it is not used
