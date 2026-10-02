@@ -5,6 +5,8 @@
 
 Each test gives a materialized view, a query, and Calcite's verdict: ``ok`` (Calcite rewrites the
 query over the view) or ``noMat`` (Calcite finds no rewrite; that is not a proof that none exists).
+A test that calls ``.ok()`` but asserts a plan that never reads ``MV0`` (a scan of the base table,
+or empty ``VALUES``) gets ``ok-without-mv``: Calcite answers it without the view.
 Calcite is Apache-2.0; the SQL text is copied unchanged apart from Java string joining.
 """
 
@@ -118,6 +120,18 @@ def call_args(body: str, start: int) -> tuple[str, int]:
     raise ValueError("unbalanced parentheses")
 
 
+def plan_reads_mv(tail: str, env: dict[str, str]) -> bool:
+    """False when the test asserts plan fragments and none of them scans the materialized view."""
+
+    plans = []
+    for match in re.finditer(r"checkingThatResultContains\(", tail):
+        args, _ = call_args(tail, match.end() - 1)
+        plans += [literal(a, env) for a in split_args(args)]
+    if not plans or None in plans:
+        return True  # nothing asserted, or a plan text that is not read: trust ok()
+    return any("MV0" in plan for plan in plans)
+
+
 def extract(source: str, origin: str) -> tuple[list[dict], list[str]]:
     cases, skipped = [], []
     methods = list(re.finditer(r"((?:@Disabled\s*)?)@Test(?:\s*\(.*?\))?\s+(?:public\s+)?void\s+(\w+)\s*\(\)\s*\{", source, re.S))
@@ -139,6 +153,8 @@ def extract(source: str, origin: str) -> tuple[list[dict], list[str]]:
         elif re.search(r"\.ok\(\)", tail):
             verdict = "ok"
         env = local_strings(body[: call.start()])
+        if verdict == "ok" and not plan_reads_mv(tail, env):
+            verdict = "ok-without-mv"
         texts = [literal(a, env) for a in args]
         if call.group(1) == "fixture":
             # fixture(query).withMaterializations(ImmutableList.of(Pair.of(mv, "MV0")))

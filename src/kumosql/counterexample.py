@@ -16,6 +16,7 @@ consecutive-id columns, and cross-table implications.
 from __future__ import annotations
 
 import datetime as _dt
+import itertools
 import random
 import re
 from collections import Counter
@@ -146,7 +147,7 @@ def _domain(column: Column, constants: Constants) -> list:
             base.update({n - 1, n, n + 1})
         return sorted(base)
     if kind in ("NUMERIC", "DECIMAL", "FLOAT", "DOUBLE"):
-        base = {0, 1, 2, 3, 0.5, 1.5}
+        base = {0, 1, 2, 3, 0.5, 1.5, 0.333, 2.567}
         for n in sorted(constants.ints)[:12]:
             base.update({n - 1, n, n + 1})
         return sorted(base)
@@ -218,13 +219,15 @@ class _Generator:
             visit(name)
         return order
 
-    def database(self, used: set[str], max_rows: int) -> dict[str, list[tuple]] | None:
+    def database(self, used: set[str], max_rows: int, empty: str | None = None) -> dict[str, list[tuple]] | None:
         db: dict[str, list[tuple]] = {}
+        self.shared_hot = {}
+        self.null_p = self.rng.choice([0.15, 0.15, 0.15, 0.5, 0.0])
         for name in self.order:
             if name not in used:
                 db[name] = []
                 continue
-            db[name] = self._rows(self.spec.tables[name], db, max_rows)
+            db[name] = [] if name == empty else self._rows(self.spec.tables[name], db, max_rows)
         for check in self.global_checks:
             if not all(t in used for t in check.tables):
                 continue
@@ -247,13 +250,18 @@ class _Generator:
 
     def _rows(self, table: Table, db, max_rows: int) -> list[tuple]:
         rng = self.rng
-        count = rng.choice([0, 1, 1, 2, 2, 3, 3, 4, 5][: 3 + max_rows * 2])
-        count = min(count, max_rows)
+        if max_rows > 5:  # bulk databases, for counts like HAVING COUNT(*) >= 5
+            count = rng.randint(max_rows - 3, max_rows)
+        else:
+            count = min(rng.choice([0, 1, 1, 2, 2, 3, 3, 4, 5][: 3 + max_rows * 2]), max_rows)
         # a hot subset of each domain makes repeated values (ties, join matches) common
         hot = {}
         for column in table.columns:
             domain = self.domains[(table.name, column.name)]
-            hot[column.name] = rng.sample(domain, min(len(domain), rng.choice([1, 2, 3]))) if domain else [None]
+            key = (column.name.lower(), column.type)
+            if key not in self.shared_hot:  # columns of the same name share their hot values, so joins match
+                self.shared_hot[key] = rng.sample(domain, min(len(domain), rng.choice([1, 2, 3]))) if domain else [None]
+            hot[column.name] = [v for v in self.shared_hot[key] if v in domain] or self.shared_hot[key]
         keys = ([table.primary_key] if table.primary_key else []) + list(table.unique)
         fk_of = {c: (p, pc) for ch, c, p, pc in self.spec.foreign_keys if ch == table.name}
         taken = {i: set() for i in range(len(keys))}
@@ -290,7 +298,7 @@ class _Generator:
             if values:
                 return rng.choice(values)
             raise _NoRow  # no parent row to point at; a NULL reference is not generated (the strict reading)
-        if not column.not_null and column.name not in table.primary_key and rng.random() < 0.2:
+        if not column.not_null and column.name not in table.primary_key and rng.random() < self.null_p:
             return None
         pool = hot[column.name] if rng.random() < 0.8 else self.domains[(table.name, column.name)]
         return rng.choice(pool)
@@ -391,11 +399,28 @@ class Searcher:
                 names.add(table.name.lower())
         by_lower = {n.lower(): n for n in spec.tables}
         self.used = {by_lower[n] for n in names if n in by_lower}
+        self.columns_used, self.star = set(), False
+        for sql in (left, right):
+            tree = sqlglot.parse_one(sql, read=dialect)
+            self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
+            self.star = self.star or any(True for _ in tree.find_all(exp.Star))
         self.db = duckdb.connect(":memory:")
         for name in self.used:
             table = spec.tables[name]
             columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
             self.db.execute(f'CREATE TABLE "{name}" ({columns})')
+
+    def _load(self, data, order=None) -> None:
+        """Replace the contents of every used table (one literal INSERT per table: ``executemany`` is slow)."""
+
+        statements = []
+        for name in self.used:
+            statements.append(f'DELETE FROM "{name}";')
+            rows = data[name]
+            if rows:
+                values = ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in rows)
+                statements.append(f'INSERT INTO "{name}" VALUES {values};')
+        self.db.execute(" ".join(statements))
 
     def runs(self) -> bool:
         """Whether DuckDB accepts both queries on an empty database."""
@@ -407,21 +432,126 @@ class Searcher:
             return False
         return True
 
+    def _small_domain(self, column: Column) -> list:
+        """At most two values for a column (plus NULL when nullable): enough for equal and unequal, below and above."""
+
+        kind = column.type.split("(")[0].upper()
+        c = self.constants
+        if kind == "ENUM":
+            values = list(column.values)[:2]
+        elif kind in ("INT", "INTEGER", "BIGINT", "SMALLINT", "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE"):
+            low, high = (min(c.ints), max(c.ints)) if c.ints else (0, 0)
+            values = [low, high + 1] if low == high else [low, high + 1]
+        elif kind in ("BOOL", "BOOLEAN"):
+            values = [True, False]
+        elif kind == "DATE":
+            values = (sorted(c.dates) + ["2020-01-01", "2020-01-02"])[:2]
+        elif kind == "TIME":
+            values = (sorted(c.times) + ["00:00:00", "12:00:00"])[:2]
+        else:
+            values = (sorted(c.strings) + ["a", "b"])[:2]
+        if not column.not_null and column.name.lower() != "":
+            values = values + [None]
+        return values
+
+    def exhaustive(self, max_rows: int = 2, max_dbs: int = 20000):
+        """Run both queries on *every* small database: each referenced table holds at most ``max_rows`` rows,
+        each referenced column takes one of at most three values (NULL and two drawn from the queries' constants),
+        unreferenced columns hold one fixed value. Returns ``("verified", None)`` when no database separates the
+        queries, ``("found", counterexample)``, or ``("too_large", None)``."""
+
+        generator = _Generator(self.spec, self.constants, random.Random(0))
+        tables = sorted(self.used)
+        referenced = lambda t, col: self.star or col.name.lower() in self.columns_used or col.name in t.primary_key
+        for rows_allowed in range(max_rows, 0, -1):
+            per_table = []
+            for name in tables:
+                table = self.spec.tables[name]
+                pools = []
+                for column in table.columns:
+                    if referenced(table, column):
+                        pools.append(self._small_domain(column))
+                    else:
+                        pools.append(self._small_domain(column)[:1])
+                candidates = []
+                for values in itertools.product(*pools):
+                    row = dict(zip((c.name for c in table.columns), values))
+                    if all(chk.test(row) is True for chk in generator.single_checks.get(name, [])):
+                        candidates.append(tuple(values))
+                keys = ([table.primary_key] if table.primary_key else []) + list(table.unique)
+                index = {c.name: i for i, c in enumerate(table.columns)}
+                sets = []
+                for size in range(rows_allowed + 1):
+                    for combo in itertools.combinations_with_replacement(candidates, size):
+                        ok = True
+                        for key in keys:
+                            seen = [tuple(r[index[k]] for k in key) for r in combo]
+                            real = [v for v in seen if None not in v]
+                            if len(real) != len(set(real)):
+                                ok = False
+                                break
+                        if ok:
+                            sets.append(list(combo))
+                    if len(sets) > max_dbs:
+                        break
+                per_table.append(sets)
+            total = 1
+            for sets in per_table:
+                total *= max(len(sets), 1)
+                if total > max_dbs:
+                    break
+            if total <= max_dbs:
+                break
+        else:
+            return "too_large", None
+        if total > max_dbs:
+            return "too_large", None
+        try:
+            for combo in itertools.product(*per_table):
+                data = dict(zip(tables, combo))
+                if not self._satisfies(data, generator):
+                    continue
+                self._load(data)
+                a = self.db.execute(self.left_sql).fetchall()
+                b = self.db.execute(self.right_sql).fetchall()
+                if _bag(a) != _bag(b) and self._stable(data, a, b, random.Random(1)):
+                    return "found", Counterexample(data, a, b)
+        except duckdb.Error:
+            return "too_large", None
+        return "verified", None
+
+    def _satisfies(self, data, generator) -> bool:
+        for child, column, parent, parent_column in self.spec.foreign_keys:
+            if child not in data:
+                continue
+            ci = [c.name for c in self.spec.tables[child].columns].index(column)
+            pi = [c.name for c in self.spec.tables[parent].columns].index(parent_column)
+            parent_values = {r[pi] for r in data.get(parent, [])} if parent in data else None
+            if parent_values is None:
+                continue
+            if any(r[ci] is not None and r[ci] not in parent_values for r in data[child]):
+                return False
+            if any(r[ci] is None for r in data[child]):
+                return False  # strict reading: a foreign key is not NULL
+        for check in generator.global_checks:
+            if all(t in data for t in check.tables) and not generator._holds(check, data):
+                return False
+        return True
+
     def search(self, trials: int = 150, seed: int = 0) -> Counterexample | None:
         rng = random.Random(seed)
         generator = _Generator(self.spec, self.constants, rng)
+        used = sorted(self.used)
         for trial in range(trials):
-            max_rows = 2 if trial < trials // 3 else 3 if trial < 2 * trials // 3 else 5
-            data = generator.database(self.used, max_rows)
+            largest = max(self.constants.ints, default=0)
+            max_rows = 2 if trial < trials // 3 else 3 if trial < 2 * trials // 3 else 5 if trial < 5 * trials // 6 else max(5, min(8, largest + 1))
+            # the first trials leave each referenced table empty in turn
+            empty = used[trial] if trial < len(used) else None
+            data = generator.database(self.used, max_rows, empty)
             if data is None:
                 continue
             try:
-                for name in self.used:
-                    table = self.spec.tables[name]
-                    self.db.execute(f'DELETE FROM "{name}"')
-                    if data[name]:
-                        marks = ", ".join("?" * len(table.columns))
-                        self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', data[name])
+                self._load(data)
                 a = self.db.execute(self.left_sql).fetchall()
                 b = self.db.execute(self.right_sql).fetchall()
             except duckdb.Error:
@@ -436,13 +566,8 @@ class Searcher:
         expected = (_bag(a), _bag(b))
         try:
             for _ in range(3):
-                for name in self.used:
-                    table = self.spec.tables[name]
-                    rows = list(data[name])
-                    rng.shuffle(rows)
-                    self.db.execute(f'DELETE FROM "{name}"')
-                    if rows:
-                        self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', rows)
+                shuffled = {name: rng.sample(data[name], len(data[name])) for name in self.used}
+                self._load(shuffled)
                 if (_bag(self.db.execute(self.left_sql).fetchall()), _bag(self.db.execute(self.right_sql).fetchall())) != expected:
                     return False
         except duckdb.Error:

@@ -1,0 +1,18 @@
+{
+  "suite": "JOB end to end",
+  "order": 63,
+  "size": 113,
+  "score": "10.8 s (DuckDB's optimizer 15.5 s; true sizes 10.4 s)",
+  "metric": "Total DuckDB runtime of the 113 JOB queries on full IMDB with join trees and hash sides chosen by KumoSQL's DPccp optimizer from its own estimates; Postgres 16 estimates through the same optimizer 11.3 s. 30% faster than DuckDB's own plans, within 4% of plans from true sizes.",
+  "docs": "docs/joinorder.md#job",
+  "command": "python tools/joinorder_bench.py job --repo PATH --psql \"psql -d imdb\" --execute",
+  "date": "2026-10-02",
+  "caveats": "4 threads, one container, best of two runs; queries take 10-700 ms so timing noise is a few percent. Families 1-16 seen during development.",
+  "evidence": "executed",
+  "correctness": "All four plans of every query returned identical rows.",
+  "coverage": {
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "Families 17-33 (54 queries): 6.3 s against DuckDB's 8.4 s and true sizes' 6.2 s"
+}

@@ -47,6 +47,7 @@ from sqlglot import exp
 
 from .canonical import canonical_copy, rename_sources, scope_key, source_names
 from .pipeline import _fingerprint, _select_location
+from .pipeline_duplicates import _fingerprint_hash, _plain_sql
 
 
 @dataclass(frozen=True)
@@ -158,13 +159,17 @@ def find_near_duplicates(
         )
 
     similarity: dict[tuple[int, int], float] = {}
+    sources_of: dict[int, tuple[frozenset[str], str]] = {}  # per variant: one render, not one per candidate pair
     for i, j in sorted(candidates):
         a, b = variants[i], variants[j]
         small, large = sorted((len(a.shingles), len(b.shingles)))
         if small < threshold * large:  # Jaccard <= |A| / |B|
             continue
+        # Same sources first: one cached lookup per variant, against a set intersection per pair
+        if not _same_sources(a, b, sources_of, i, j):
+            continue
         score = _jaccard(a.shingles, b.shingles)
-        if score >= threshold and _has_unnested_pair(a, b) and _same_sources(a, b):
+        if score >= threshold and _has_unnested_pair(a, b):
             similarity[(i, j)] = score
 
     clusters = _star_clusters(variants, similarity)
@@ -203,19 +208,21 @@ def _collect_variants(parsed: dict[str, exp.Expression], min_nodes: int) -> list
     by_fingerprint: dict[str, _Variant] = {}
     for key in sorted(parsed):
         for select in parsed[key].find_all(exp.Select):
-            fingerprint, sql = _fingerprint(select)
+            if sum(1 for _ in select.walk()) < min_nodes:  # its layer is smaller still
+                continue
+            fingerprint = _fingerprint_hash(select)
             variant = by_fingerprint.get(fingerprint)
             if variant is None:
                 layer = _layer(select)
                 if sum(1 for _ in layer.walk()) < min_nodes:
                     continue
-                canonical_layer = _layer(select, canonical=True)
+                canonical_layer = _canonical_or_copy(layer)  # the small layer, not the whole nested query
                 shingles = frozenset(
                     (key, n) for key, count in _shingles(canonical_layer).items() for n in range(count)
                 )
                 variant = by_fingerprint[fingerprint] = _Variant(
                     fingerprint,
-                    sql,
+                    _plain_sql(select),
                     sum(1 for _ in select.walk()),
                     select,
                     layer,
@@ -237,12 +244,6 @@ def _layer(select: exp.Select, *, canonical: bool = False) -> exp.Select:
     and near-duplicate CTEs are clustered at their own level.
     """
 
-    copy = select.copy()
-    if canonical:
-        try:
-            copy = canonical_copy(select)  # aliases by position, so renamed copies shingle alike
-        except Exception:
-            pass
     nested = []
 
     def visit(node: exp.Expression) -> None:
@@ -255,9 +256,24 @@ def _layer(select: exp.Select, *, canonical: bool = False) -> exp.Select:
                 else:
                     visit(child)
 
-    visit(copy)
-    for node in nested:
-        node.replace(exp.Var(this=f"<query {_fingerprint(node)[0][:8]}>"))
+    visit(select)
+    # Copy the level alone: swap each nested query for its token, copy, put the queries back. Copying the
+    # whole tree for every level is quadratic in how deeply CTEs nest.
+    tokens = [(node, exp.Var(this=f"<query {_fingerprint_hash(node)[:8]}>")) for node in nested]
+    for node, token in tokens:
+        node.replace(token)
+    try:
+        copy = select.copy()
+    finally:
+        for node, token in reversed(tokens):
+            token.replace(node)
+    copy.meta.pop("kumosql_fingerprint", None)
+    copy.meta.pop("kumosql_text", None)
+    if canonical:
+        try:
+            copy = canonical_copy(copy)  # aliases by position, so renamed copies shingle alike
+        except Exception:
+            pass
     return copy
 
 
@@ -318,12 +334,16 @@ def _lsh_candidates(
     perms = [(rng.randrange(1, _MERSENNE), rng.randrange(0, _MERSENNE)) for _ in range(num_perm)]
     rows = num_perm // bands
     buckets: dict[tuple, list[int]] = defaultdict(list)
+    permuted: dict[tuple[str, int], list[int]] = {}  # templated pipelines repeat shingles: hash each once
     for index, shingles in enumerate(shingle_sets):
-        hashes = [
-            int.from_bytes(hashlib.blake2b(f"{key}#{n}".encode(), digest_size=8).digest(), "big")
-            for key, n in shingles
-        ]
-        signature = [min((a * h + b) % _MERSENNE for h in hashes) for a, b in perms]
+        columns = []
+        for shingle in shingles:
+            values = permuted.get(shingle)
+            if values is None:
+                h = int.from_bytes(hashlib.blake2b(f"{shingle[0]}#{shingle[1]}".encode(), digest_size=8).digest(), "big")
+                values = permuted[shingle] = [(a * h + b) % _MERSENNE for a, b in perms]
+            columns.append(values)
+        signature = list(map(min, zip(*columns))) if columns else [0] * num_perm
         for band in range(bands):
             buckets[(band, *signature[band * rows : (band + 1) * rows])].append(index)
     pairs: set[tuple[int, int]] = set()
@@ -357,10 +377,15 @@ def _sources_of(variant: "_Variant") -> tuple[frozenset[str], str]:
     return tables, scope_key(variant.select, _render)
 
 
-def _same_sources(a: "_Variant", b: "_Variant") -> bool:
+def _same_sources(
+    a: "_Variant", b: "_Variant", cache: dict[int, tuple[frozenset[str], str]], i: int, j: int
+) -> bool:
     """Logic over different tables is a template, not a copy: only a shared source can be shared."""
 
-    return _sources_of(a) == _sources_of(b)
+    for index, variant in ((i, a), (j, b)):
+        if index not in cache:
+            cache[index] = _sources_of(variant)
+    return cache[i] == cache[j]
 
 
 def _has_unnested_pair(a: _Variant, b: _Variant) -> bool:
