@@ -395,6 +395,18 @@ class _Analyzer:
             return self._strict_columns(cond.this, rel)
         return set()
 
+    def _is_null_tests(self, cond: exp.Expression, rel: _Rel) -> set:
+        """Columns a false ``cond`` proves non-NULL: ``col IS NULL`` (alone or in an OR)."""
+
+        if isinstance(cond, exp.Paren):
+            return self._is_null_tests(cond.this, rel)
+        if isinstance(cond, exp.Or):
+            return self._is_null_tests(cond.left, rel) | self._is_null_tests(cond.right, rel)
+        if isinstance(cond, exp.Is) and isinstance(cond.expression, exp.Null):
+            q = self._resolve(cond.this.this if isinstance(cond.this, exp.Paren) else cond.this, rel.cols)
+            return {q} if q else set()
+        return set()
+
     def _strict_columns(self, node: exp.Expression, rel: _Rel) -> set:
         """Columns whose NULL would make ``node`` NULL (a bare column or arithmetic on columns)."""
 
@@ -478,6 +490,10 @@ class _Analyzer:
                 else:
                     keys.append((frozenset(chosen), prov))
             out.exactly_one = rel.exactly_one
+        if not grouped and not global_agg:
+            for name, expr in projected:
+                if isinstance(expr, exp.Window) and isinstance(expr.this, exp.RowNumber) and not expr.args.get("partition_by"):
+                    keys.append((frozenset({f".{name}"}), frozenset()))  # 1..n, no repeats
         distinct = select.args.get("distinct")
         if isinstance(distinct, exp.Distinct) and not distinct.args.get("on"):
             keys.append((frozenset(out.order), frozenset()))
@@ -506,6 +522,17 @@ class _Analyzer:
         def all_args(n: exp.Expression) -> tuple[bool, Provenance]:
             args = [v for v in (n.args.get("this"), *(n.args.get("expressions") or []), n.args.get("expression")) if isinstance(v, exp.Expression)]
             return combine(*args) if args else none
+
+        def under(tested: set, node: exp.Expression) -> tuple[bool, Provenance]:
+            """``node`` where each tested column is known not to be NULL (an earlier ``col IS NULL`` was false)."""
+
+            saved = {q: rel.cols[q] for q in tested if q in rel.cols}
+            for q in saved:
+                rel.cols[q] = (True, rel.cols[q][1])
+            try:
+                return go(node)
+            finally:
+                rel.cols.update(saved)
 
         def go(n: exp.Expression) -> tuple[bool, Provenance]:
             if isinstance(n, (exp.Paren, exp.Alias)):
@@ -537,14 +564,19 @@ class _Analyzer:
             if isinstance(n, exp.Cast):
                 return none if isinstance(n, exp.TryCast) else go(n.this)
             if isinstance(n, exp.Case):
-                if n.args.get("default") is None:
+                if n.args.get("default") is None or n.this is not None:
                     return none
-                parts = [go(i.args["true"]) for i in n.args["ifs"]] + [go(n.args["default"])]
+                parts, seen_null = [], set()
+                for branch in n.args["ifs"]:
+                    parts.append(under(seen_null, branch.args["true"]))
+                    seen_null |= self._is_null_tests(branch.this, rel)
+                parts.append(under(seen_null, n.args["default"]))
                 return (True, frozenset().union(*(p for _, p in parts))) if all(ok for ok, _ in parts) else none
             if isinstance(n, exp.If):
                 if n.args.get("false") is None:
                     return none
-                return combine(n.args["true"], n.args["false"])
+                tested = self._is_null_tests(n.this, rel)
+                return (lambda a, b: (True, a[1] | b[1]) if a[0] and b[0] else none)(go(n.args["true"]), under(tested, n.args["false"]))
             if isinstance(n, exp.Subquery):
                 try:
                     inner = self.query_rel(n.this)
