@@ -273,13 +273,25 @@ def existence_joins(select: exp.Select) -> exp.Expression | None:
     return None
 
 
-def decorrelation_step(select: exp.Select) -> exp.Expression | None:
+def decorrelation_step(select: exp.Select, not_null: dict[str, frozenset[str]] | None = None, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """The rules above, in order, for ``algebraic_equivalence.normalize``."""
 
-    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in):
+    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null), lambda sel: lift_membership_tests(sel, schema), drop_implied_membership, extreme_of_top_rows):
         rewritten = rule(select)
         if rewritten is not None:
             return rewritten
+    if any(
+        isinstance(n.args.get("query"), exp.Subquery) and isinstance(n.args["query"].this, exp.Select) and n.args["query"].this.args.get("having") is not None
+        for n in select.find_all(exp.In)
+        if n.find_ancestor(exp.Select) is select
+    ):
+        # a grouped IN body that star or CTE inlining exposed after the first pass
+        from .algebraic_equivalence import _grouped_in_to_derived
+
+        before = select.sql()
+        copy = _grouped_in_to_derived(select.copy())
+        if copy.sql() != before:
+            return copy
     if any(isinstance(j.this, exp.Lateral) for j in select.args.get("joins") or []):
         from .algebraic_equivalence import _lateral_joins
 
@@ -426,3 +438,337 @@ def distinct_lateral_to_in(select: exp.Select) -> exp.Expression | None:
         select.set("where", exp.Where(this=_and_all(rest)))
         return select
     return None
+
+
+def _one_row_body(body: exp.Expression) -> bool:
+    """A select with an aggregate and no GROUP BY, HAVING or LIMIT returns exactly one row."""
+
+    if not isinstance(body, exp.Select) or any(body.args.get(k) for k in ("group", "having", "limit", "offset", "fetch", "qualify", "windows", "with_", "with", "order")):
+        return False
+    if any(isinstance(n, exp.Window) for n in body.walk()) or not body.expressions:
+        return False
+    own = [n for n in body.find_all(exp.AggFunc) if n.find_ancestor(exp.Select) is body]
+    is_single_value = [n for n in body.find_all(exp.Anonymous) if n.name.upper() == "SINGLE_VALUE" and n.find_ancestor(exp.Select) is body]
+    return bool(own or is_single_value)
+
+
+def one_row_joins(select: exp.Select) -> exp.Expression | None:
+    """``x LEFT JOIN (SELECT MAX(v) AS m FROM t) AS d ON TRUE`` reads ``d.m`` as the scalar subquery ``(SELECT MAX(v) FROM t)``.
+
+    A global aggregate that reads nothing from the query returns exactly one row, so joining it on
+    TRUE (inner or LEFT) keeps every row once and adds the same values to each.
+    """
+
+    for join in [j for j in select.find_all(exp.Join) if j.find_ancestor(exp.Select) is select]:
+        item = join.this
+        if not isinstance(item, exp.Subquery) or not item.alias or not _one_row_body(item.this):
+            continue
+        side, kind = (join.args.get("side") or "").upper(), (join.args.get("kind") or "").upper()
+        on = join.args.get("on")
+        if side not in ("", "LEFT") or kind not in ("", "INNER", "CROSS", "OUTER") or join.args.get("using") or join.args.get("method"):
+            continue
+        if on is not None and not (isinstance(on, exp.Boolean) and on.this):
+            continue
+        body = item.this
+        if _free_qualifiers(body):
+            continue
+        alias = item.alias.lower()
+        outside = [n for n in select.walk() if n is not item and not _under(n, item)]
+        if any(isinstance(n, (exp.Table, exp.Subquery, exp.Lateral)) and (n.alias_or_name or "").lower() == alias for n in outside):
+            continue
+        names = [e.alias_or_name.lower() for e in body.expressions]
+        if "" in names or len(set(names)) != len(names) or any(isinstance(e.unalias(), exp.Star) for e in body.expressions):
+            continue
+        values = dict(zip(names, (e.unalias() for e in body.expressions)))
+        uses = [n for n in outside if isinstance(n, exp.Column) and n.table.lower() == alias]
+        if any(c.name.lower() not in values for c in uses):
+            continue
+        holder = join.parent
+        if holder is None or join.arg_key != "joins":
+            continue
+        for column in uses:
+            probe = body.copy()
+            probe.set("expressions", [values[column.name.lower()].copy()])
+            value = exp.Subquery(this=probe)
+            column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
+        holder.set("joins", [j for j in holder.args["joins"] if j is not join] or None)
+        wrapper = holder.parent
+        # (t AS a) once its last nested join is gone is t AS a
+        if isinstance(holder, exp.Table) and not holder.args.get("joins") and isinstance(wrapper, exp.Subquery) and not wrapper.alias:
+            wrapper.replace(holder)
+        return select
+    return None
+
+
+def single_value_scalar(select: exp.Select) -> exp.Expression | None:
+    """``(SELECT SINGLE_VALUE(x) FROM t)`` is ``(SELECT x FROM t)``: NULL on no rows, the value on one, an error on more.
+
+    Redundant parentheses around a subquery are dropped too.
+    """
+
+    changed = False
+    for node in list(select.find_all(exp.Subquery)):
+        # ((SELECT ..)) is (SELECT ..)
+        if isinstance(node.this, exp.Subquery) and not node.alias and not node.this.alias and node.find_ancestor(exp.Select) is select:
+            node.replace(node.this)
+            changed = True
+    for node in list(select.find_all(exp.Subquery)):
+        body = node.this
+        if node.find_ancestor(exp.Select) is not select or isinstance(node.parent, (exp.From, exp.Join, exp.In, exp.Lateral)) or node.alias:
+            continue
+        if not isinstance(body, exp.Select) or len(body.expressions) != 1 or any(body.args.get(k) for k in ("group", "having", "limit", "offset", "qualify", "windows", "distinct", "order")):
+            continue
+        value = body.expressions[0].unalias()
+        if not (isinstance(value, exp.Anonymous) and value.name.upper() == "SINGLE_VALUE" and len(value.expressions) == 1):
+            continue
+        if any(n.find_ancestor(exp.Select) is body for n in body.find_all(exp.AggFunc)):
+            continue
+        body.expressions[0].replace(value.expressions[0].copy())
+        changed = True
+    return select if changed else None
+
+
+def self_witnessed_exists(select: exp.Select, not_null: dict[str, frozenset[str]] | None) -> exp.Expression | None:
+    """``FROM t AS x WHERE EXISTS (SELECT .. FROM t AS y WHERE y.c = x.c ..)`` is TRUE: the row ``x`` itself is a witness.
+
+    Every conjunct of the subquery's filter must equate a column of ``y`` with the same column of
+    ``x`` (``=`` on a NOT NULL column, or ``<=>``), and ``x`` must be a real row of ``t`` (not the
+    NULL-extended side of an outer join).
+    """
+
+    where = select.args.get("where")
+    if where is None:
+        return None
+    joins = select.args.get("joins") or []
+    if any(j.args.get("side") in ("RIGHT", "FULL") or (j.args.get("kind") or "").upper() in ("SEMI", "ANTI") for j in joins):
+        return None
+    sources = _sources(select)
+    real = {}
+    for position, source in enumerate(sources):
+        if not isinstance(source, exp.Table) or source.args.get("joins") or not source.alias_or_name:
+            continue
+        if position > 0 and (joins[position - 1].args.get("side") or any(j.args.get("side") for j in joins[:position - 1])):
+            continue
+        real[source.alias_or_name.lower()] = source
+    lowered = {k.lower(): {c.lower() for c in v} for k, v in (not_null or {}).items()}
+    for test in list(where.find_all(exp.Exists)):
+        if test.find_ancestor(exp.Select) is not select:
+            continue
+        body = test.this
+        if not isinstance(body, exp.Select) or any(body.args.get(k) for k in _CLAUSES) or body.args.get("joins"):
+            continue
+        if any(isinstance(n, (exp.AggFunc, exp.Window)) for e in body.expressions for n in e.walk()):
+            continue
+        inner = _sources(body)
+        if len(inner) != 1 or not isinstance(inner[0], exp.Table) or not inner[0].alias_or_name:
+            continue
+        table, alias = inner[0], inner[0].alias_or_name.lower()
+        parts = _conjuncts(body.args["where"].this) if body.args.get("where") is not None else []
+        outer = None
+        ok = bool(parts)
+        for part in parts:
+            if not isinstance(part, (exp.EQ, exp.NullSafeEQ)) or not all(isinstance(o, exp.Column) for o in (part.left, part.right)):
+                ok = False
+                break
+            mine = [o for o in (part.left, part.right) if o.table.lower() == alias]
+            other = [o for o in (part.left, part.right) if o.table.lower() != alias]
+            if len(mine) != 1 or len(other) != 1 or mine[0].name.lower() != other[0].name.lower():
+                ok = False
+                break
+            if outer is None:
+                outer = other[0].table.lower()
+            if other[0].table.lower() != outer:
+                ok = False
+                break
+            if isinstance(part, exp.EQ) and mine[0].name.lower() not in lowered.get(table.name.lower(), set()):
+                ok = False
+                break
+        source = real.get(outer or "")
+        if not ok or source is None or source.name.lower() != table.name.lower() or (source.db or "").lower() != (table.db or "").lower() or (source.catalog or "").lower() != (table.catalog or "").lower():
+            continue
+        if alias in real and alias != outer:
+            continue
+        test.replace(exp.true())
+        return select
+    return None
+
+
+def _closed(node: exp.Expression, schema: dict[str, list[str]] | None) -> bool:
+    """Whether every column under ``node`` is bound inside it (qualified by an alias it declares, or a
+    bare name of the one table it reads, by ``schema``)."""
+
+    declared = _declared(node)
+    for select in node.find_all(exp.Select):
+        tables = [s for s in _sources(select)]
+        for column in select.find_all(exp.Column):
+            if column.find_ancestor(exp.Select) is not select:
+                continue
+            if column.table:
+                if column.table.lower() not in declared:
+                    return False
+                continue
+            if len(tables) != 1 or not isinstance(tables[0], exp.Table):
+                return False
+            known = {k.lower(): [c.lower() for c in v] for k, v in (schema or {}).items()}.get(tables[0].name.lower())
+            if known is None or column.name.lower() not in known:
+                return False
+    return True
+
+
+def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | None) -> exp.Expression | None:
+    """``x IN (SELECT c FROM t WHERE p AND c IN q AND NOT c IN r)`` is ``x IN (SELECT c FROM t WHERE p) AND x IN q AND NOT x IN r``.
+
+    The inner tests read only the column that ``IN`` compares, so for a row with ``c = x`` they are
+    the same tests on ``x`` (a non-NULL ``x``; a NULL ``x`` fails both forms). Only an ``IN`` that is a
+    conjunct of the ``WHERE`` is rewritten, where FALSE and NULL both drop the row; the lifted tests
+    may read no column of the query (uncorrelated subqueries and constants).
+    """
+
+    where = select.args.get("where")
+    if where is None:
+        return None
+    parts = _conjuncts(where.this)
+    for index, part in enumerate(parts):
+        if not isinstance(part, exp.In) or not isinstance(part.args.get("query"), exp.Subquery):
+            continue
+        body = part.args["query"].this
+        if not isinstance(body, exp.Select) or len(body.expressions) != 1 or body.args.get("where") is None:
+            continue
+        if any(body.args.get(k) for k in _CLAUSES if k != "distinct") or isinstance(body.args.get("distinct"), exp.Distinct) and body.args["distinct"].args.get("on"):
+            continue
+        sources = _sources(body)
+        if len(sources) != 1 or not isinstance(sources[0], exp.Table):
+            continue
+        alias = sources[0].alias_or_name.lower()
+        output = body.expressions[0].unalias()
+        while isinstance(output, exp.Paren):
+            output = output.this
+        if not isinstance(output, exp.Column) or (output.table and output.table.lower() != alias):
+            continue
+        name = output.name.lower()
+
+        def is_output(column: exp.Column) -> bool:
+            return column.name.lower() == name and (not column.table or column.table.lower() == alias)
+
+        lifted, kept = [], []
+        for inner in _conjuncts(body.args["where"].this):
+            own = [c for c in inner.find_all(exp.Column) if c.find_ancestor(exp.Select) is body]
+            nested = [n for n in inner.walk() if isinstance(n, exp.Subquery)]
+            liftable = (
+                own
+                and all(is_output(c) for c in own)
+                and not any(isinstance(n, (exp.AggFunc, exp.Window, exp.Rand, exp.Anonymous)) for n in inner.walk())
+                and all(_closed(n.this, schema) for n in nested)
+            )
+            (lifted if liftable else kept).append(inner)
+        if not lifted or any(_under(n, lifted_part) for lifted_part in lifted for n in [part.this] if False):
+            continue
+        probe = part.this
+        if any(isinstance(n, (exp.Subquery, exp.AggFunc, exp.Window, exp.Rand, exp.Anonymous)) for n in probe.walk()):
+            continue
+        tests = []
+        for inner in lifted:
+            inner = inner.copy()
+            for column in [inner] if isinstance(inner, exp.Column) else list(inner.find_all(exp.Column)):
+                if column.find_ancestor(exp.Select) is None and is_output(column):
+                    value = probe.copy()
+                    if column is inner:
+                        inner = value
+                    else:
+                        column.replace(value)
+            tests.append(inner)
+        new_body = body.copy()
+        rest = _and_all([k.copy() for k in kept])
+        new_body.set("where", exp.Where(this=rest) if rest is not None else None)
+        membership = exp.In(this=probe.copy(), query=exp.Subquery(this=new_body))
+        new_parts = parts[:index] + [membership] + tests + parts[index + 1:]
+        select.set("where", exp.Where(this=_and_all(new_parts)))
+        return select
+    return None
+
+
+def _membership_source(part: exp.Expression) -> tuple[str, str, str, bool] | None:
+    """``x IN (SELECT [DISTINCT] c FROM t [WHERE p])`` as (x, table, column, filtered)."""
+
+    if not isinstance(part, exp.In) or not isinstance(part.args.get("query"), exp.Subquery):
+        return None
+    body = part.args["query"].this
+    if not isinstance(body, exp.Select) or len(body.expressions) != 1 or any(body.args.get(k) for k in _CLAUSES if k != "distinct"):
+        return None
+    if isinstance(body.args.get("distinct"), exp.Distinct) and body.args["distinct"].args.get("on"):
+        return None
+    sources = _sources(body)
+    if len(sources) != 1 or not isinstance(sources[0], exp.Table) or sources[0].args.get("joins"):
+        return None
+    output = body.expressions[0].unalias()
+    while isinstance(output, exp.Paren):
+        output = output.this
+    alias = sources[0].alias_or_name.lower()
+    if not isinstance(output, exp.Column) or (output.table and output.table.lower() != alias):
+        return None
+    table = sources[0]
+    key = ".".join(p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None)
+    return part.this.sql(), key, output.name.lower(), body.args.get("where") is not None
+
+
+def drop_implied_membership(select: exp.Select) -> exp.Expression | None:
+    """``x IN (SELECT c FROM t) AND x IN (SELECT c FROM t WHERE p)``: the second test implies the first, which is dropped."""
+
+    where = select.args.get("where")
+    if where is None:
+        return None
+    parts = _conjuncts(where.this)
+    shapes = [_membership_source(p) for p in parts]
+    filtered = {shape[:3] for shape in shapes if shape is not None and shape[3]}
+    for index, shape in enumerate(shapes):
+        if shape is not None and not shape[3] and shape[:3] in filtered:
+            select.set("where", exp.Where(this=_and_all(parts[:index] + parts[index + 1:])))
+            return select
+    return None
+
+
+def extreme_of_top_rows(select: exp.Select) -> exp.Expression | None:
+    """``SELECT MAX(d.x) FROM (q ORDER BY x DESC LIMIT n) AS d`` is ``MAX`` over all of ``q``.
+
+    The top ``n >= 1`` rows by ``x`` descending, NULLs last, hold the largest ``x`` whenever ``q`` has a
+    non-NULL one, and otherwise both sides are NULL (``MIN`` with ascending order alike).
+    """
+
+    if select.args.get("joins") or any(select.args.get(k) for k in ("where", "group", "having", "order", "limit", "offset", "qualify", "windows")):
+        return None
+    from_ = select.args.get("from_") or select.args.get("from")
+    source = from_.this if from_ is not None else None
+    if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+        return None
+    inner = source.this
+    order, limit = inner.args.get("order"), inner.args.get("limit")
+    if order is None or limit is None or inner.args.get("offset") or not order.expressions or isinstance(inner.args.get("distinct"), exp.Distinct) and inner.args["distinct"].args.get("on"):
+        return None
+    count = limit.expression if isinstance(limit, exp.Limit) else None
+    if not (isinstance(count, exp.Literal) and count.is_int and int(count.this) >= 1) or limit.args.get("offset"):
+        return None
+    first = order.expressions[0]
+    key = first.this
+    names = [e.alias_or_name.lower() for e in inner.expressions]
+    if isinstance(key, exp.Literal) and key.is_int and 1 <= int(key.this) <= len(names):
+        name = names[int(key.this) - 1]
+    elif isinstance(key, exp.Column):
+        # the ordered value is an output, named by its alias or spelled as its expression
+        matches = [n for n, e in zip(names, inner.expressions) if e.unalias().sql() == key.sql() or (not key.table and n == key.name.lower())]
+        if len(set(matches)) != 1:
+            return None
+        name = matches[0]
+    else:
+        return None
+    if first.args.get("nulls_first"):
+        return None
+    wanted = exp.Max if first.args.get("desc") else exp.Min
+    calls = [n for n in select.find_all(exp.AggFunc) if n.find_ancestor(exp.Select) is select]
+    if not calls or any(not isinstance(c, wanted) or not (isinstance(c.this, exp.Column) and c.this.name.lower() == name and c.this.table.lower() in ("", source.alias.lower())) for c in calls):
+        return None
+    # every column the select reads sits inside one of those calls
+    if any(c.find_ancestor(exp.AggFunc) is None for c in select.find_all(exp.Column) if c.find_ancestor(exp.Select) is select):
+        return None
+    inner.set("order", None)
+    inner.set("limit", None)
+    return select

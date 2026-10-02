@@ -2,7 +2,15 @@ import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
-from kumosql.decorrelation_rules import distinct_lateral_to_in, existence_joins, merge_correlated_derived, null_comparison_filter, push_filter_to_lateral
+from kumosql.decorrelation_rules import (
+    distinct_lateral_to_in,
+    existence_joins,
+    extreme_of_top_rows,
+    merge_correlated_derived,
+    null_comparison_filter,
+    push_filter_to_lateral,
+    self_witnessed_exists,
+)
 from kumosql.random_check import Column, Schema, Table, find_difference, prover_constraints
 
 SCHEMA = Schema(
@@ -14,7 +22,7 @@ SCHEMA = Schema(
 
 
 def _prove(left: str, right: str) -> bool:
-    return prove_equivalent_algebraic(left, right, schema=SCHEMA.columns, constraints=prover_constraints(SCHEMA), dialect="postgres", compare_names=False).proven
+    return prove_equivalent_algebraic(left, right, schema=SCHEMA.columns, constraints=prover_constraints(SCHEMA), dialect="postgres", compare_names=False, exact_arithmetic=True).proven
 
 
 def _rule(rule, sql: str, inner: bool = True) -> str | None:
@@ -53,6 +61,28 @@ EQUIVALENT = [
     ),
     # comparing with a NULL literal never passes
     ("SELECT e.empno FROM emp AS e WHERE e.sal = NULL", "SELECT e.empno FROM emp AS e WHERE FALSE"),
+    # a one-row global aggregate joined on TRUE is the scalar subquery
+    (
+        "SELECT e.empno, d.m FROM emp AS e LEFT JOIN (SELECT MAX(x.sal) AS m FROM emp AS x WHERE x.deptno = 1) AS d ON TRUE",
+        "SELECT e.empno, (SELECT MAX(x.sal) FROM emp AS x WHERE x.deptno = 1) AS m FROM emp AS e",
+    ),
+    # IN over a DISTINCT set joined on an expression of the outer row
+    (
+        "SELECT e.job FROM emp AS e WHERE e.deptno IN (SELECT x.deptno FROM emp AS x WHERE x.sal + 1 = e.sal + 1)",
+        "SELECT e.job FROM emp AS e JOIN (SELECT x.deptno AS k, x.sal + 1 AS s FROM emp AS x GROUP BY x.deptno, x.sal + 1) AS d ON e.sal + 1 = d.s AND e.deptno = d.k",
+    ),
+    # the outer row witnesses an EXISTS over its own table on a NOT NULL column
+    ("SELECT x.empno FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno = x.empno)", "SELECT x.empno FROM emp AS x"),
+    ("SELECT x.empno FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.deptno IS NOT DISTINCT FROM x.deptno)", "SELECT x.empno FROM emp AS x"),
+    # tests on the compared column inside IN move out to the outer value
+    (
+        "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.sal > 1 AND e.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'a'))",
+        "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.sal > 1) AND d.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'a')",
+    ),
+    (
+        "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'a') AND NOT e.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'b'))",
+        "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'a') AND NOT d.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'b')",
+    ),
 ]
 
 DIFFERENT = [
@@ -73,6 +103,18 @@ DIFFERENT = [
     ),
     # IS NOT DISTINCT FROM NULL is not a NULL comparison
     ("SELECT e.empno FROM emp AS e WHERE e.sal IS NOT DISTINCT FROM NULL", "SELECT e.empno FROM emp AS e WHERE FALSE"),
+    # a nullable column with = does not let the row witness itself
+    ("SELECT x.empno FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.deptno = x.deptno)", "SELECT x.empno FROM emp AS x"),
+    # a NULL-extended row is no witness
+    (
+        "SELECT d.deptno FROM dept AS d LEFT JOIN emp AS x ON x.deptno = d.deptno WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno IS NOT DISTINCT FROM x.empno)",
+        "SELECT d.deptno FROM dept AS d LEFT JOIN emp AS x ON x.deptno = d.deptno",
+    ),
+    # a test on another column of the IN body stays inside
+    (
+        "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.sal IN (SELECT y.sal FROM emp AS y WHERE y.job = 'a'))",
+        "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT e.deptno FROM emp AS e) AND d.deptno IN (SELECT y.sal FROM emp AS y WHERE y.job = 'a')",
+    ),
 ]
 
 
@@ -118,3 +160,27 @@ def test_distinct_lateral_needs_the_value_read_only_by_the_equality():
 def test_null_comparison_filter():
     assert _rule(null_comparison_filter, "SELECT 1 FROM emp WHERE sal > 1 AND sal <> NULL", inner=False) == "SELECT 1 FROM emp WHERE FALSE"
     assert _rule(null_comparison_filter, "SELECT 1 FROM emp WHERE sal > 1 OR sal = NULL", inner=False) is None
+
+
+def test_extreme_of_top_rows_needs_nulls_last_and_the_ordered_column():
+    def rule(sql: str, dialect: str) -> str | None:
+        out = extreme_of_top_rows(sqlglot.parse_one(sql, read=dialect))
+        return out.sql(dialect=dialect) if out is not None else None
+
+    sql = "SELECT MAX(d.s) FROM (SELECT e.sal AS s FROM emp AS e ORDER BY 1 DESC LIMIT 1) AS d"
+    # MySQL sorts NULLs last when descending; PostgreSQL sorts them first, so its top row may be NULL
+    assert rule(sql, "mysql") == "SELECT MAX(d.s) FROM (SELECT e.sal AS s FROM emp AS e) AS d"
+    assert rule(sql, "postgres") is None
+    # ascending, MySQL puts NULLs first and DuckDB last
+    assert rule("SELECT MIN(d.s) FROM (SELECT e.sal AS s FROM emp AS e ORDER BY e.sal LIMIT 3) AS d", "mysql") is None
+    assert rule("SELECT MIN(d.s) FROM (SELECT e.sal AS s FROM emp AS e ORDER BY e.sal LIMIT 3) AS d", "duckdb") is not None
+    assert rule("SELECT MIN(d.s) FROM (SELECT e.sal AS s FROM emp AS e ORDER BY 1 DESC LIMIT 1) AS d", "mysql") is None
+    assert rule("SELECT MAX(d.s), COUNT(*) FROM (SELECT e.sal AS s FROM emp AS e ORDER BY 1 DESC LIMIT 2) AS d", "mysql") is None
+    assert rule("SELECT MAX(d.s) FROM (SELECT e.sal AS s FROM emp AS e ORDER BY 1 DESC LIMIT 0) AS d", "mysql") is None
+    assert rule("SELECT MAX(d.s) FROM (SELECT e.sal AS s, e.deptno AS k FROM emp AS e ORDER BY 2 DESC LIMIT 1) AS d", "mysql") is None
+
+
+def test_self_witnessed_exists_needs_the_same_table_and_column():
+    assert self_witnessed_exists(sqlglot.parse_one("SELECT 1 FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno = x.deptno)"), {"emp": frozenset({"empno", "deptno"})}) is None
+    assert self_witnessed_exists(sqlglot.parse_one("SELECT 1 FROM emp AS x WHERE EXISTS (SELECT 1 FROM dept AS y WHERE y.deptno = x.deptno)"), {"emp": frozenset({"deptno"}), "dept": frozenset({"deptno"})}) is None
+    assert self_witnessed_exists(sqlglot.parse_one("SELECT 1 FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno = x.empno AND y.sal > 1)"), {"emp": frozenset({"empno"})}) is None
