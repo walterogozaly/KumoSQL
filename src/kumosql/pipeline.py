@@ -995,6 +995,8 @@ class _Analysis:
     statements_matched: int = 0
     # Per model: (statements seen, statements analysed), for scoped coverage.
     statements_by_model: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # Tables read from outside the project whose columns were looked up: {"asked", "found", "from_catalog", "unknown"}.
+    schema_lookup: dict[str, int] = field(default_factory=dict)
     # Per model: tables it reads that no model or declared source matches, as spelled.
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
 
@@ -1115,6 +1117,15 @@ class _Analysis:
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
+        # Tables read from outside the project: their columns come from the saved BigQuery catalog or
+        # BigQuery itself, so a ``SELECT *`` over them can be expanded. Unreadable ones stay unknown.
+        from . import schema_fetch
+
+        outside = {name for names in unresolved_tables.values() for name in names if name not in schema}
+        found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
+        for name, columns in found.items():
+            schema[name] = columns
+            _add_table(sqlglot_schema, name, columns)
 
         tracing = Progress("trace columns", len(order))
         # Column tracing copies a model's whole query once per output column, so wide models with
@@ -1358,6 +1369,7 @@ class _Analysis:
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
+            schema_lookup=schema_lookup,
         )
 
 

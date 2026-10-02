@@ -225,6 +225,11 @@ class UIHandler(BaseHTTPRequestHandler):
 
             self._json(200, lineage_limits.settings())
             return
+        if self.path == "/api/schema-fetch":
+            from . import schema_fetch
+
+            self._json(200, schema_fetch.settings())
+            return
         if self.path == "/api/settings":
             self._json(200, {
                 "ui": state.get_section("ui", {}),
@@ -451,7 +456,28 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, saved)
 
+    def _put_schema_fetch(self) -> None:
+        from . import schema_fetch
+
+        payload = self._read_json(MAX_UI_STATE_BYTES)
+        if payload is None:
+            return
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("settings must be an object")
+            saved = schema_fetch.save_settings(payload.get("enabled"))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except OSError as exc:
+            self._json(500, {"error": str(exc)})
+            return
+        self._json(200, saved)
+
     def do_PUT(self) -> None:
+        if self.path == "/api/schema-fetch":
+            self._put_schema_fetch()
+            return
         if self.path == "/api/lineage-limits":
             self._put_lineage_limits()
             return

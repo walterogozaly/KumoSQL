@@ -25,6 +25,19 @@ Source table columns come from `source_schema={"project.dataset.table": {"col": 
 python -m kumosql pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
 
+## Columns of tables outside the project
+
+`SELECT *` over a table the project does not define cannot be expanded, so the columns read through it are lost (the `unexpanded_star` gap) and everything downstream becomes unknown. Before a project is analysed, KumoSQL collects the tables its models read that no model or declared source accounts for and looks up their columns and types (`src/kumosql/schema_fetch.py`):
+
+- The saved BigQuery catalog answers first, with no call to BigQuery.
+- The rest are read from BigQuery table metadata (`tables.get`), which is free and needs no billing project. Every distinct table is asked for once per analysis, in parallel, and the answer is saved in the catalog cache with the usual cache lifetime (48 hours), so the next load asks for nothing. Rows are never read.
+- A table you cannot read, or one that no longer exists, stays unknown; columns are never guessed. A wildcard table (`dataset.prefix_*`) takes the union of the columns of the tables it matches, and stays unknown if any match is unreadable or more than 50 match. With no credentials nothing is looked up.
+- The log carries counts only (`schema lookup: 188 of 201 tables not in the project have known columns`), never table or column names.
+
+It is on by default; **Settings → Analysis** has a checkbox, `GET`/`PUT /api/schema-fetch` (`{"enabled": false}`) does the same, and `KUMOSQL_SCHEMA_FETCH=0` overrides it (tests set this, so they never touch BigQuery). A saved analysis is reused only under the same setting. `Pipeline` analysis reports the counts as `schema_lookup` (`asked`, `found`, `from_catalog`, `unknown`).
+
+On a generated job-log-shaped corpus (`tests/test_schema_fetch.py`: 1,200 statements of `SELECT *` / `SELECT * EXCEPT (...)` over 300 outside tables, 10% of them unreadable) the lookup made one metadata call per distinct readable table, and every statement over a readable table was expanded; the only remaining `unexpanded_star` statements were those over unreadable tables. Without the lookup all 1,200 failed.
+
 ## Table profiles: what each table is
 
 `profile_pipeline(pipeline)` and `profile_query(pipeline, sql)` describe every pipeline model, and a proposed query that is not in the pipeline, in a form that can be compared regardless of names, casing or formatting. A `TableProfile` has three parts, each with a status and, when it cannot be told, a reason. Nothing is guessed and nothing is inferred from names.
