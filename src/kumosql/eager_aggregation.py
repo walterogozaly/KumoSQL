@@ -295,12 +295,16 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
             term = inner_arg if weight is None else exp.Mul(this=exp.Paren(this=inner_arg), expression=weight)
             replacements.append((call, exp.Sum(this=term)))
         elif _count_star(agg):
+            if weight is None and not select.args.get("group"):
+                return None  # a global SUM over no rows is NULL where COUNT(*) is 0
             replacements.append((call, exp.Count(this=exp.Star()) if weight is None else exp.Sum(this=weight)))
         elif isinstance(agg, exp.Count) and agg.this is not None and not isinstance(agg.this, (exp.Star, exp.Distinct)) and not agg.args.get("distinct"):
             # SUM of COUNT(x) counts the rows where x is not NULL; a weight counts only those rows.
             inner_arg = renamed_arg(agg)
             if inner_arg is None:
                 return None
+            if weight is None and not select.args.get("group"):
+                return None  # as above: a global SUM over no rows is NULL, COUNT(x) is 0
             if weight is None:
                 replacements.append((call, exp.Count(this=inner_arg)))
             else:
