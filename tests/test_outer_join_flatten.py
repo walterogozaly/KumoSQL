@@ -95,6 +95,11 @@ EQUIVALENT = [
         "SELECT d.x, b.y FROM (SELECT a.k AS k, a.x AS x FROM a WHERE a.k = 1) AS d LEFT JOIN b ON 1 = b.k",
         id="fixed-column-reads-as-constant-in-on",
     ),
+    pytest.param(
+        "SELECT COUNT(*) FROM (SELECT (a.x > b.y) AS f FROM a LEFT JOIN b ON a.k = b.k) WHERE f",
+        "SELECT COUNT(*) FROM a LEFT JOIN b ON a.k = b.k WHERE a.x > b.y",
+        id="unaliased-derived-table",
+    ),
 ]
 
 NOT_EQUIVALENT = [

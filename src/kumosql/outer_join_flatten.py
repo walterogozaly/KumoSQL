@@ -131,7 +131,9 @@ def flatten_outer_join_derived(select: exp.Select) -> exp.Expression | None:
     if select.args.get("distinct") is not None and select.args["distinct"].args.get("on"):
         return None
     source = from_.this
-    if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select):
+        return None
+    if not source.alias and select.args.get("joins"):
         return None
     if source.args.get("pivots") or source.args.get("laterals") or source.args.get("sample"):
         return None
