@@ -45,6 +45,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
+from .ast_utils import canonical_negation
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -571,10 +572,13 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [s for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        statements = [canonical_negation(s) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
+        if any(statement.find_all(exp.Pivot)):
+            # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
+            raise Unsupported("PIVOT and UNPIVOT are not modeled")
         self._check_nondeterminism(statement)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
@@ -1158,6 +1162,9 @@ class _Compiler:
                 raise Unsupported(f"{key.upper()} inside a predicate subquery")
         if node.args.get("kind"):
             raise Unsupported("subquery shape")
+        if any(c.find_ancestor(exp.Select) is node for c in node.find_all(exp.AggFunc)):
+            # a global aggregate returns one row even over no input, so it is not an existence test on its rows
+            raise Unsupported("aggregate inside a predicate subquery")
         outer_collector, self.collector = self.collector, []
         try:
             states = self._scan(node, self.ctes, env)
@@ -2865,7 +2872,7 @@ def _split_limit(sql: str, dialect: str):
     shape is not handled (``spec`` then says why).
     """
 
-    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
     root = tree
     while isinstance(root, exp.Subquery):
         root = root.this

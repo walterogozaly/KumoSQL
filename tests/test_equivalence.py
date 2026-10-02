@@ -68,6 +68,65 @@ def test_unchanged_window_stays_unproven():
     assert not prove_equivalent(sql, sql).proven
 
 
+def test_tie_stable_windows_are_proven_and_tie_sensitive_ones_are_not():
+    # Analytical benchmarks (TPC-DS, SQLStorm) are full of SUM/RANK OVER (...); those give tied
+    # rows the same value, so a query with one can be proven equal to its inlined form.
+    stable = [
+        "SUM(amount) OVER (PARTITION BY id)",
+        "SUM(amount) OVER (PARTITION BY id ORDER BY day)",
+        "RANK() OVER (PARTITION BY id ORDER BY amount DESC)",
+        "AVG(amount) OVER (ORDER BY day RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)",
+        "COUNT(*) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)",
+    ]
+    unstable = [
+        "ROW_NUMBER() OVER (ORDER BY day)",
+        "SUM(amount) OVER (ORDER BY day ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+        "LAG(amount) OVER (ORDER BY day)",
+        "FIRST_VALUE(amount IGNORE NULLS) OVER (ORDER BY day)",
+        "NTILE(4) OVER (ORDER BY day)",
+    ]
+    for window in stable + unstable:
+        cte = f"WITH w AS (SELECT id, {window} AS v FROM `p.d.t`) SELECT id, v FROM w"
+        inline = f"SELECT id, v FROM (SELECT id, {window} AS v FROM `p.d.t`) AS w"
+        assert prove_equivalent(cte, inline).proven is (window in stable), window
+
+
+def test_same_root_order_by_limit_over_output_columns_is_proven():
+    # Nearly every TPC-DS query ends in ORDER BY ... LIMIT 100. Equal rows under the same
+    # ordering by output columns and the same LIMIT give the same possible results.
+    inner = "SELECT id, SUM(amount) AS total FROM `p.d.t` GROUP BY id"
+    cte = f"WITH c AS ({inner}) SELECT id, total FROM c"
+    inline = f"SELECT id, total FROM ({inner}) AS c"
+    for tail in ("ORDER BY total DESC LIMIT 100", "ORDER BY 2, id LIMIT 5 OFFSET 5", "ORDER BY total DESC, id LIMIT 3"):
+        result = prove_equivalent(f"{cte} {tail}", f"{inline} {tail}")
+        assert result.proven, tail
+        assert "same root" in result.diagnostics[-1]
+    # Ordering by a column that is not returned, a different LIMIT, a random key, or no ORDER BY.
+    for left_tail, right_tail in (
+        ("ORDER BY id LIMIT 10", "ORDER BY id LIMIT 11"),
+        ("ORDER BY RAND() LIMIT 10", "ORDER BY RAND() LIMIT 10"),
+        ("LIMIT 10", "LIMIT 10"),
+    ):
+        assert not prove_equivalent(f"{cte} {left_tail}", f"{inline} {right_tail}").proven
+    hidden = "SELECT id FROM `p.d.t` ORDER BY amount LIMIT 10"
+    assert not prove_equivalent(hidden, "SELECT id FROM (SELECT id, amount FROM `p.d.t`) AS s ORDER BY amount LIMIT 10").proven
+
+
+def test_limit_above_a_global_aggregates_row_count_does_nothing():
+    # TPC-DS q23 and q14 end in "LIMIT 100" over one-row aggregates (and a UNION ALL of them).
+    inner = "SELECT amount FROM `p.d.t` WHERE id > 0"
+    for query in ("SELECT SUM(amount) FROM {} LIMIT 100", "SELECT SUM(amount) FROM {} UNION ALL SELECT MAX(amount) FROM {} LIMIT 2"):
+        cte = "WITH c AS ({}) ".format(inner) + query.format("c", "c")
+        inline = query.format(f"({inner}) AS c", f"({inner}) AS c")
+        assert prove_equivalent(cte, inline).proven, query
+    two_rows = "SELECT SUM(amount) FROM {} UNION ALL SELECT MAX(amount) FROM {} LIMIT 1"
+    assert not prove_equivalent(
+        f"WITH c AS ({inner}) " + two_rows.format("c", "c"), two_rows.format(f"({inner}) AS c", f"({inner}) AS c")
+    ).proven
+    grouped = "SELECT SUM(amount) FROM `p.d.t` GROUP BY id LIMIT 1"
+    assert not prove_equivalent(grouped, grouped).proven
+
+
 def test_does_not_prove_limit_without_schema_constraints():
     result = prove_equivalent(
         "SELECT id FROM `p.d.customers` LIMIT 10",
