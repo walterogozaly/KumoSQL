@@ -46,7 +46,9 @@ from .row_bound_rules import trim_redundant_row_clauses
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join
 from .empty_rules import canonical_empty, propagate_empty
+from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .regroup_arithmetic import regroup_arithmetic
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -4306,7 +4308,7 @@ def normalize(
             constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
                 return constrained
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -4316,7 +4318,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(tree).transform(step)))))), not_null)
+        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
