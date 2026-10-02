@@ -1,0 +1,16 @@
+{
+  "suite": "WeTune GitHub issues",
+  "order": 60,
+  "size": 50,
+  "score": "1/50 developer fixes reproduced, 0 wrong",
+  "metric": "KumoSQL's proven rewrite of the original slow query removes what the developers' fix removed (joins, subqueries, DISTINCT, GROUP BY, ORDER BY, predicates, OR). Separately the prover verifies 5 of the developers' own rewrites and refutes 4 join eliminations that rely on foreign keys (3 undeclared in the schema, 1 declared but not read by the prover yet).",
+  "evidence": "proof",
+  "correctness": "0 unproven rewrites emitted: every KumoSQL rewrite is proven equivalent before it is reported (no data to execute on)",
+  "coverage": {"proven": 5, "unknown": 45},
+  "usefulness": "5 of 50 queries changed, all 5 proven; 1 reproduces the developers' improvement",
+  "held_out": "none",
+  "docs": "docs/rewrite-benchmarks.md#wetunes-50-github-performance-issues",
+  "command": "python tools/wetune_bench.py --wetune WeTune-code",
+  "date": "2026-10-02",
+  "caveats": "Structural match only, no timings (the applications' data is not available). WeTune's 8,518 application queries sit in Git LFS and could not be downloaded here."
+}
