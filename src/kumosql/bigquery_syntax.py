@@ -1,5 +1,7 @@
 """BigQuery syntax that sqlglot's BigQuery parser does not read, added once for every parse in this package.
 
+``DROP TABLE FUNCTION`` is read as dropping a function of kind ``TABLE FUNCTION``.
+
 ``FROM dataset.fn(TABLE dataset.input, option => value)`` passes a whole table to a table-valued function. sqlglot stops at
 ``TABLE`` ("Expecting )"), so the model was reported unparseable and everything it read was lost. Here the argument becomes a
 :data:`TABLE_ARGUMENT` call holding the table, so the table is read like any other and the SQL prints back unchanged.
@@ -89,6 +91,28 @@ def _mark_table_arguments(tokens: list) -> list:
     return out
 
 
+def _merge_table_function_kind(tokens: list) -> list:
+    """``DROP TABLE FUNCTION`` becomes ``DROP`` and one ``FUNCTION`` token spelled ``TABLE FUNCTION``: sqlglot takes the kind
+    of a ``DROP`` from that token's text, so it parses as a dropped function of kind ``TABLE FUNCTION`` and prints back."""
+
+    out: list = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if (
+            token.token_type == TokenType.TABLE
+            and out and out[-1].token_type == TokenType.DROP
+            and i + 1 < len(tokens) and tokens[i + 1].token_type == TokenType.FUNCTION
+        ):
+            end = tokens[i + 1]
+            out.append(Token(TokenType.FUNCTION, "TABLE FUNCTION", line=token.line, col=token.col, start=token.start, end=end.end))
+            i += 2
+            continue
+        out.append(token)
+        i += 1
+    return out
+
+
 def _table_argument(call: exp.Anonymous) -> exp.Expression:
     arguments = call.expressions
     inner = arguments[0] if len(arguments) == 1 else None
@@ -131,8 +155,8 @@ def install() -> None:
             return parse(self, sql, **opts)
         except ParseError:
             tokens = self.tokenize(sql)
-            marked = _mark_table_arguments(tokens)
-            if len(marked) == len(tokens):
+            marked = _mark_table_arguments(_merge_table_function_kind(tokens))
+            if len(marked) == len(tokens) and all(a is b for a, b in zip(marked, tokens)):
                 raise
             return list(_resolve_table_arguments(self.parser(**opts).parse(marked, sql)))
 
