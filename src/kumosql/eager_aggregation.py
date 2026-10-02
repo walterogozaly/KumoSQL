@@ -204,13 +204,16 @@ def _inline(grouped: _Grouped) -> tuple[list[exp.Expression], list[exp.Expressio
 
 
 def _zero_when_empty(call: exp.Expression) -> bool:
-    """``COALESCE(call, 0)``: the NULL a SUM gives over no rows already reads as the 0 a COUNT gives."""
+    """``COALESCE(call, 0)`` or ``NULLIF(call, 0)``: the NULL a SUM gives over no rows and the 0 a COUNT gives read
+    the same."""
+
+    def zero(node: exp.Expression | None) -> bool:
+        return isinstance(node, exp.Literal) and not node.is_string and node.this == "0"
 
     parent = call.parent
-    return (
-        isinstance(parent, exp.Coalesce) and parent.this is call and len(parent.expressions) == 1
-        and isinstance(parent.expressions[0], exp.Literal) and parent.expressions[0].this == "0"
-    )
+    if isinstance(parent, exp.Nullif):
+        return parent.this is call and zero(parent.expression)
+    return isinstance(parent, exp.Coalesce) and parent.this is call and len(parent.expressions) == 1 and zero(parent.expressions[0])
 
 
 def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:

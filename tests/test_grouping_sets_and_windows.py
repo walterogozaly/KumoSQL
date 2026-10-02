@@ -153,3 +153,29 @@ def test_rollup_over_a_union_of_named_columns_prunes_like_a_star():
         "GROUP BY ROLLUP(deptno, job)"
     )
     assert _proven(left, right)
+
+
+def test_a_constant_of_a_null_extended_derived_table_is_not_inlined():
+    # an unmatched p row reads d.i as NULL, not 1
+    schema = {"p": ["id", "k"], "q": ["id", "k"]}
+    for body in ("SELECT k, 1 AS i FROM q", "SELECT q.k, 1 AS i FROM q", "SELECT q.k, COALESCE(q.id, 0) AS i FROM q"):
+        left = f"SELECT p.id FROM p LEFT JOIN ({body}) AS d ON p.k = d.k WHERE d.i IS NULL"
+        assert not prove_equivalent_algebraic(left, "SELECT p.id FROM p WHERE 1 = 2", schema=schema, dialect="mysql").proven
+    # an expression that is NULL on NULL input still folds in
+    assert prove_equivalent_algebraic(
+        "SELECT p.id, d.i FROM p LEFT JOIN (SELECT q.k, q.id + 1 AS i FROM q) AS d ON p.k = d.k",
+        "SELECT p.id, q.id + 1 AS i FROM p LEFT JOIN q ON p.k = q.k",
+        schema=schema, dialect="mysql",
+    ).proven
+
+
+def test_global_sum_of_counts_under_nullif_is_the_count():
+    # NULLIF(.., 0) reads the NULL of an empty SUM and the 0 of an empty COUNT alike
+    def proven(right: str) -> bool:
+        return prove_equivalent_algebraic(
+            "SELECT AVG(sal) FROM emp", right, schema=SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True
+        ).proven
+
+    right = "SELECT SUM(t.s) / NULLIF(SUM(t.n), 0) FROM (SELECT deptno, SUM(sal) AS s, COUNT(sal) AS n FROM emp GROUP BY deptno) AS t"
+    assert proven(right)
+    assert not proven(right.replace("NULLIF(SUM(t.n), 0)", "NULLIF(SUM(t.n), 1)"))

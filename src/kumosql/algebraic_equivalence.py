@@ -710,6 +710,33 @@ def _within(node: exp.Expression, ancestor: exp.Expression) -> bool:
     return False
 
 
+def _null_extended(select: exp.Select, source: exp.Expression) -> bool:
+    """Whether an outer join of ``select`` can fill ``source``'s columns with NULL."""
+
+    joins = select.args.get("joins") or []
+    if isinstance(source.parent, exp.Join):
+        return (source.parent.side or "").upper() in ("LEFT", "FULL")
+    return any((j.side or "").upper() in ("RIGHT", "FULL") for j in joins)
+
+
+def _null_on_null(node: exp.Expression) -> bool:
+    """Whether ``node`` is NULL whenever every column in it is NULL."""
+
+    if isinstance(node, exp.Column):
+        return not isinstance(node.this, exp.Star)
+    if isinstance(node, (exp.Paren, exp.Neg, exp.Not)) or (isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast)):
+        return _null_on_null(node.this)
+    if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)):
+        return _null_on_null(node.left) or _null_on_null(node.right)
+    if isinstance(node, exp.Case):
+        # whichever branch is taken (or none: NULL), its value is NULL
+        results = [i.args.get("true") for i in node.args.get("ifs") or []] + ([node.args["default"]] if node.args.get("default") else [])
+        return all(r is not None and _null_on_null(r) for r in results)
+    if isinstance(node, exp.Coalesce):
+        return all(_null_on_null(a) for a in [node.this, *node.expressions])
+    return False
+
+
 def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
     """``(SELECT f(a) AS x FROM t) AS d`` joined in: read ``t AS d`` and replace ``d.x`` by ``f(d.a)``.
 
@@ -742,6 +769,9 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
         qualifier = table.alias_or_name
         # Columns of the new relation are the table's columns, so every use of ``d.x`` is replaced.
         by_name = {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, inner.expressions)}
+        # on the NULL side of an outer join an unmatched row reads NULL for d.x, but f(NULL) need not be NULL
+        if _null_extended(select, source) and not all(_null_on_null(e) for e in by_name.values()):
+            continue
         # the bodies of derived tables name their own sources' columns, not this derived table's
         bodies = [s for s in _sources_of(select) if isinstance(s, exp.Subquery)]
         own = [c for c in select.find_all(exp.Column) if not any(_within(c, body) for body in bodies)]
