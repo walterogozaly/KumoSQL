@@ -33,7 +33,8 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation
+from .ast_utils import canonical_negation, check_modeled
+from .set_operations import positional_sql_pair
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -1420,6 +1421,57 @@ def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], d
     return copy if changed else None
 
 
+_EXACT_TYPE = re.compile(r"^\s*(tinyint|smallint|mediumint|int|integer|bigint|int2|int4|int8|int64|numeric|decimal|bignumeric)\b", re.I)
+
+
+def _shifted_sums(select: exp.Select, types: dict[str, dict[str, str]]) -> exp.Expression | None:
+    """``SUM(x + c)`` is ``SUM(x) + c * COUNT(x)`` for a constant ``c`` and an exact-typed column ``x``.
+
+    Rows where ``x`` is NULL count in neither; with no such rows both sides are NULL
+    (``NULL + c * 0``). Only declared integer and decimal columns qualify, so no rounding differs.
+    """
+
+    def split(arg: exp.Expression):
+        node = arg.unnest() if isinstance(arg, exp.Paren) else arg
+        if not isinstance(node, (exp.Add, exp.Sub)):
+            return None
+        left, right = node.this, node.expression
+        number = lambda e: isinstance(e, exp.Literal) and not e.is_string and re.fullmatch(r"\d+(\.\d+)?", e.this or "")
+        if isinstance(left, exp.Column) and number(right):
+            return left, right, isinstance(node, exp.Sub)
+        if isinstance(node, exp.Add) and number(left) and isinstance(right, exp.Column):
+            return right, left, False
+        return None
+
+    if not types:
+        return None
+    sums = [
+        s for s in select.find_all(exp.Sum)
+        if s.find_ancestor(exp.Select) is select and not isinstance(s.parent, exp.Window) and not s.args.get("distinct")
+        and not isinstance(s.this, exp.Distinct) and split(s.this) is not None
+    ]
+    if not sums:
+        return None
+    copy = select.copy()
+    changed = False
+    for node in [
+        s for s in copy.find_all(exp.Sum)
+        if s.find_ancestor(exp.Select) is copy and not isinstance(s.parent, exp.Window) and not isinstance(s.this, exp.Distinct)
+    ]:
+        parts = split(node.this)
+        if parts is None:
+            continue
+        column, constant, minus = parts
+        declared = _origin_type(copy, column, types)
+        if not declared or not _EXACT_TYPE.match(declared):
+            continue
+        shift = exp.Mul(this=constant.copy(), expression=exp.Count(this=column.copy()))
+        total = exp.Sub(this=exp.Sum(this=column.copy()), expression=shift) if minus else exp.Add(this=exp.Sum(this=column.copy()), expression=shift)
+        node.replace(exp.Paren(this=total))
+        changed = True
+    return copy if changed else None
+
+
 def _order_grouped_columns(select: exp.Select) -> exp.Expression | None:
     """List a grouped derived table's group keys first, then its aggregates, each in a fixed order.
 
@@ -2484,6 +2536,33 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
             tree = outer
         else:
             select.replace(outer)
+    return tree
+
+
+def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
+    """``SELECT * FROM (q) a`` with no other clause is ``q`` itself, at the root of the statement.
+
+    The wrapper returns exactly ``q``'s rows and columns, so a query that ends in
+    ``ORDER BY .. LIMIT`` inside such wrappers (CTE chains of ``SELECT *``) is
+    read with its limit at the top.
+    """
+
+    while isinstance(tree, exp.Select):
+        from_ = tree.args.get("from_") or tree.args.get("from")
+        if from_ is None or not isinstance(from_.this, exp.Subquery) or not isinstance(from_.this.this, exp.Query):
+            return tree
+        source = from_.this
+        if source.args.get("lateral") or (source.args.get("alias") is not None and source.args["alias"].args.get("columns")):
+            return tree
+        if any(tree.args.get(k) for k in ("joins", "where", "group", "having", "qualify", "order", "limit", "offset", "distinct", "windows", "with_", "with", "laterals", "pivots")):
+            return tree
+        if len(tree.expressions) != 1:
+            return tree
+        item = tree.expressions[0]
+        alias = source.alias_or_name.lower()
+        if not (isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias and alias)):
+            return tree
+        tree = source.this.copy()
     return tree
 
 
@@ -4153,11 +4232,12 @@ def normalize(
     can hide a match the first attempt finds.
     """
 
-    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
+    tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
+    tree = _peel_star_wrappers(tree)
     tree = _bigquery_sugar(tree)
     tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
@@ -4196,7 +4276,7 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
@@ -4220,6 +4300,9 @@ def normalize(
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result."""
 
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
+    if problem:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
     if result.proven or not (kwargs.get("constraints") or {}):
         return result

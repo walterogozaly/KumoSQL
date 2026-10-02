@@ -79,7 +79,7 @@ _NEGATED = {"ne", "not_in"}
 
 #: Fields of a pipeline model, and the extra fields a table profile adds.
 #: ``tag`` lists the object's tags (see :mod:`kumosql.tags`).
-MODEL_FIELDS = ("project", "dataset", "table", "name", "model", "kind", "path", "depends_on", "tag")
+MODEL_FIELDS = ("project", "dataset", "table", "name", "model", "kind", "path", "depends_on", "tag", "catalog")
 PROFILE_FIELDS = ("grain_status", "grain_keys", "columns", "column_count", "profile_complete", "row_filters")
 #: Fields every job-history record carries, beside its source-specific ones.
 JOB_FIELDS = ("job_id", "creation_time", "destination", "referenced_tables")
@@ -711,10 +711,13 @@ def discover_fields(
 
         from . import data_sources
 
+        from .catalogs import lookup as catalog_lookup
+
         tags = tag_lookup(pipeline)
         sources = data_sources.join_index()
+        catalogs = catalog_lookup(pipeline)
         for key in pipeline.models:  # type: ignore[attr-defined]
-            note("model", pipeline.model_record(key, tags=tags, sources=sources))  # type: ignore[attr-defined]
+            note("model", pipeline.model_record(key, tags=tags, sources=sources, catalogs=catalogs))  # type: ignore[attr-defined]
         for key, profile in (profiles or {}).items():
             note("profile", profile_record(profile))
     for index, row in enumerate(observed_reads):

@@ -42,7 +42,7 @@ Families, from a handful of models to thousands (`--scale` runs 100, 1,000 and 3
 
 | Group | Families |
 | --- | --- |
-| dev | passthrough and rename with aliases and qualified or bare names, columns used only in a filter, expressions, aggregates with `HAVING`, joins (columns used only in `ON`), CTE chains, `SELECT *` over known schemas, sources with no declared schema |
+| dev | passthrough and rename with aliases and qualified or bare names, columns used only in a filter, expressions, aggregates with `HAVING`, joins (columns used only in `ON`), CTE chains, `SELECT *` over known schemas, sources with no declared schema, `UNION ALL [FULL / LEFT / INNER] BY NAME` and `CORRESPONDING` (added after a user report: before the fix 200 of 377 of its columns traced to the wrong sources) |
 | held-out | `UNION ALL`, window functions, `IN (SELECT ...)`, `SELECT * EXCEPT ... REPLACE ...`, `SELECT *` inside a CTE, nested subqueries |
 | special | unparseable SQL and `SELECT *` over undeclared columns (must be unknown), dependency cycles (must be flagged, must not crash) |
 
@@ -50,7 +50,7 @@ Measured, and reported separately:
 
 | | Score |
 | --- | --- |
-| Correctness | 2,644/2,644 columns traced to exactly the right sources, 0 wrong; 700/700 drop-column answers exact, 0 impacted models missed; 0 columns called dead that are read; 18/18 cycles flagged; 0 unreadable models traced anyway |
+| Correctness | 2,737/2,737 columns traced to exactly the right sources, 0 wrong; 696/696 drop-column answers exact, 0 impacted models missed; 0 columns called dead that are read; 18/18 cycles flagged; 0 unreadable models traced anyway |
 | Analysis quality | edges precision/recall 1.000/1.000; reads 1.000/1.000; table dependencies 1.000/1.000; impacted models precision 1.000, recall 0.937 (the rest are listed as unknown readers); dead columns found 26/83 on dev (it declines to call a column dead when any reader is unknown) |
 | Coverage | 100% of readable columns traced |
 | Performance | 100 models 0.34 s, 64 MB peak; 1,000 models 3.2 s, 101 MB; 3,000 models 9.7 s, 159 MB (peak resident memory including the generator) |
@@ -66,3 +66,7 @@ Bugs the suite found, all fixed with regression tests in `tests/test_lineage_reg
 ## Credit
 
 SQLLineage's test cases are used under its MIT licence; the licence and copyright notice are recorded in `tests/fixtures/sqllineage/cases.json` (`source`) and in `tools/sqllineage_harvest.py`.
+
+## Set operations that match columns by name
+
+`UNION [ALL|DISTINCT] BY NAME`, `FULL` / `LEFT` / `INNER ... [OUTER]` and `CORRESPONDING` pair columns by name, while sqlglot's lineage pairs them by position. `kumosql.set_operations.positionalize` rewrites them to the positional form (each branch projected to the output columns in order, `NULL AS col` for a column a branch lacks) before tracing, pruning or proving, so it does not depend on the sqlglot version. A branch with an unexpanded star or duplicate names, or a plain `BY NAME` whose branches have different columns (an error in BigQuery), is reported as unknown (`by_name_set_operation`) rather than traced. The provers and the output-property and table-profile analyses do the same: they prove only after positionalizing, and otherwise return not proven. Tests: `tests/test_set_by_name.py` and the `union_by_name` family above.

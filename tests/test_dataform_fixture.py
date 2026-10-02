@@ -37,3 +37,13 @@ def test_byte_order_mark_and_js_comments_do_not_hide_config(tmp_path):
     (tmp_path / "definitions" / "c.sqlx").write_text('config { type: "assertion" }\nselect 1 from ${ref("a")} where false\n')
     keys = set(load_sqlx_project(tmp_path).models)
     assert {"p.marts.a", "p.marts.b", "p.checks.c"} <= keys, keys
+
+
+def test_fixture_declarations_resolve_from_files_or_stay_unresolved(tmp_path):
+    out = tmp_path / "fx"
+    fixture.generate(out, models=400, seed=3)
+    keys = set(load_sqlx_project(out).sources)
+    assert any(k.endswith("raw_loop.loop_declared_a") for k in keys)
+    assert not any("computed_declared" in k for k in keys)  # computed in JavaScript: only the Dataform API can say
+    via_api = load_sqlx_project(out, compiled_targets=lambda: [(("p", "raw_computed", "computed_declared_a"), True)])
+    assert any(k.endswith("raw_computed.computed_declared_a") for k in via_api.sources)

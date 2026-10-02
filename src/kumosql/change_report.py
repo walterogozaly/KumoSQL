@@ -126,6 +126,7 @@ def build_change_report(
     head_label: str = "head",
     generated_at: str | None = None,
     scope: Scope | None = None,
+    owned: tuple | None = None,
     overlaps: bool = True,
 ) -> dict[str, object]:
     """Compare two pipelines and return the documented ``report`` payload.
@@ -186,6 +187,8 @@ def build_change_report(
             readers = {"models": [], "complete": False}
             cost = {"basis": "unavailable"}
         change = {"model": name, "kind": kind, "verification": verification, "cost": cost, "consumers": readers}
+        if owned is not None:  # (base, head) catalogs.owned(): a removed model is owned by what owned it before
+            change["owned"] = key in owned[0 if kind == "removed" else 1]
         changes.append(change)
         if kind in ("added", "modified"):
             compare.append((change, key))

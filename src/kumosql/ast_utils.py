@@ -7,6 +7,27 @@ import logging
 
 import sqlglot
 from sqlglot import ErrorLevel, exp
+from sqlglot.errors import UnsupportedError
+
+
+class _UnknownSubqueryScope(logging.Filter):
+    """sqlglot warns (with the SQL text) for every subquery lineage cannot scope; say it once, at debug, without the SQL."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.count = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not str(record.msg).startswith("Unknown subquery scope"):
+            return True
+        self.count += 1
+        if self.count == 1:
+            logging.getLogger("kumosql.lineage").debug("a subquery had no scope for lineage and was skipped (reported once)")
+        return False
+
+
+_scope_filter = _UnknownSubqueryScope()
+logging.getLogger("sqlglot.lineage").addFilter(_scope_filter)
 
 
 @contextmanager
@@ -50,6 +71,55 @@ def canonical_negation(tree: exp.Expression) -> exp.Expression:
             if node is tree:
                 return exp.Not(this=positive)
             node.replace(exp.Not(this=positive))
+    return tree
+
+
+class UnmodeledConstruct(UnsupportedError):
+    """The query carries a sqlglot flag or clause that the provers do not model."""
+
+
+# (node class, arg) pairs that change what a query returns and that neither prover reads. A query
+# carrying one is declined, never proved with the flag ignored.
+_UNMODELED_ARGS = (
+    (exp.Between, "symmetric"),
+    (exp.Cast, "format"),
+    (exp.TryCast, "format"),
+    (exp.Join, "match_condition"),
+    (exp.Lateral, "ordinality"),
+    (exp.Ordered, "with_fill"),
+    (exp.Select, "exclude"),
+    (exp.Table, "version"),
+    (exp.Table, "system_time"),
+    (exp.Table, "when"),
+    (exp.Table, "partition"),
+    (exp.Table, "changes"),
+    (exp.Table, "rows_from"),
+    (exp.Table, "only"),
+    (exp.Table, "pattern"),
+    (exp.Table, "ordinality"),
+)
+
+
+def check_modeled(tree: exp.Expression) -> exp.Expression:
+    """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
+
+    Covers ``TABLESAMPLE``, time travel, ``SYMMETRIC`` ranges, ``WITH TIES`` and ``PERCENT``
+    limits, ``OUTER APPLY`` and the like. sqlglot versions differ in which of these they parse, so
+    anything carried on the node is refused whichever version produced it.
+    """
+
+    for node in tree.walk():
+        for kind, arg in _UNMODELED_ARGS:
+            if isinstance(node, kind) and node.args.get(arg):
+                raise UnmodeledConstruct(f"{kind.__name__}.{arg} is not modeled")
+        if getattr(node, "arg_types", None) and "sample" in node.arg_types and node.args.get("sample"):
+            raise UnmodeledConstruct(f"{type(node).__name__}.sample is not modeled")
+        if isinstance(node, exp.Lateral) and node.args.get("cross_apply") is False:
+            raise UnmodeledConstruct("OUTER APPLY is not modeled")
+        if isinstance(node, exp.Fetch) and (node.args.get("percent") or node.args.get("with_ties")):
+            raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
+        if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
+            raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
     return tree
 
 

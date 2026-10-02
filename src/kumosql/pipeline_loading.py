@@ -6,7 +6,7 @@ from collections import defaultdict
 import json
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Callable, Iterable, Mapping
 
 from sqlglot import exp
 
@@ -254,13 +254,170 @@ def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
     return "", ""
 
 
-def _parse_ref_args(args: str, default: Target, known: dict[str, list[Target]] | None = None) -> Target:
+# ------------------------------------------------------- JavaScript declarations
+
+_JS_CALL_RE = re.compile(r"(?<![\w.$])(declare|publish)\s*\(")
+_JS_IDENT_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
+
+
+def _call_arguments(text: str, opening: int) -> str:
+    """The text between the parenthesis at ``opening`` and its match (strings skipped); empty if unbalanced."""
+
+    depth, quote, index = 0, "", opening
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return text[opening + 1:index]
+        index += 1
+    return ""
+
+
+def _split_top_level(text: str) -> list[str]:
+    """``text`` split on commas that are not inside brackets or strings."""
+
+    parts, depth, quote, start, index = [], 0, "", 0, 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(text[start:index])
+            start = index + 1
+        index += 1
+    parts.append(text[start:])
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _js_string(expression: str) -> str | None:
+    match = re.fullmatch(r"""\s*(['"`])((?:\\.|(?!\1)[^$])*)\1\s*""", expression)
+    return match.group(2) if match and "${" not in match.group(2) else None
+
+
+def _js_bindings(text: str, name: str) -> list[str] | None:
+    """The literal strings the identifier ``name`` can hold in this file, or None when it cannot be known."""
+
+    found: list[list[str]] = []
+    for match in re.finditer(rf"\bconst\s+{re.escape(name)}\s*=\s*(?P<value>['\"`][^'\"`$]*['\"`])\s*[;\n]", text):
+        found.append([match.group("value")[1:-1]])
+    loops = (
+        rf"\[(?P<a>[^\[\]]*)\]\s*\.forEach\(\s*\(?\s*{re.escape(name)}\b",
+        rf"\bfor\s*\(\s*(?:const|let|var)\s+{re.escape(name)}\s+of\s*\[(?P<a>[^\[\]]*)\]",
+    )
+    for pattern in loops:
+        for match in re.finditer(pattern, text):
+            items = _split_top_level(match.group("a"))
+            values = [_js_string(item) for item in items]
+            if not items or any(value is None for value in values):
+                return None
+            found.append([value for value in values if value is not None])
+    # Any other binding of the same identifier (a parameter, a computed value) makes it unknowable.
+    others = len(re.findall(rf"\b(?:const|let|var)\s+{re.escape(name)}\b", text))
+    others += len(re.findall(rf"[(,]\s*{re.escape(name)}\s*(?:,[^)]*)?\)\s*=>", text))
+    others += len(re.findall(rf"\bfunction\s*\w*\s*\([^)]*\b{re.escape(name)}\b", text))
+    if len(found) != 1 or others > 1:
+        return None
+    return found[0]
+
+
+def _js_field(config: str, text: str, key: str) -> list[str] | None | str:
+    """Possible values of ``key`` in a config object: a list, ``""`` when absent, None when not knowable."""
+
+    inner = config.strip()
+    inner = inner[1:-1] if inner.startswith("{") and inner.endswith("}") else inner
+    for entry in _split_top_level(inner):
+        pair = re.match(r"""^(?:['"`]?)([\w$]+)(?:['"`]?)\s*(?::\s*(.*))?$""", entry, re.S)
+        if not pair or pair.group(1) != key:
+            continue
+        value = pair.group(2)
+        if value is None:  # shorthand ``{ name }``
+            return _js_bindings(text, key)
+        literal = _js_string(value)
+        if literal is not None:
+            return [literal]
+        if _JS_IDENT_RE.match(value.strip()):
+            return _js_bindings(text, value.strip())
+        return None
+    return ""
+
+
+def js_declared_targets(text: str, default: Target) -> tuple[list[Target], list[Target], bool]:
+    """Declarations and named actions found in one Dataform JavaScript file.
+
+    Returns ``(declared, actions, complete)``. ``declared`` are ``declare({...})`` targets and ``actions`` the
+    ``publish("name", {...})`` ones, both with project defaults filled in. ``complete`` is False when a call's
+    name, schema or database cannot be read without running the code (computed in a function, a loop over a
+    list that is not literal): the file then may declare tables that are not listed.
+    """
+
+    declared: list[Target] = []
+    actions: list[Target] = []
+    complete = True
+    for match in _JS_CALL_RE.finditer(text):
+        kind = match.group(1)
+        args = _split_top_level(_call_arguments(text, match.end() - 1))
+        if kind == "declare":
+            config = args[0] if args else ""
+            names = _js_field(config, text, "name") if config.startswith("{") else None
+        else:
+            if not args:
+                continue
+            config = args[1] if len(args) > 1 and args[1].startswith("{") else "{}"
+            first = _js_string(args[0])
+            names = [first] if first is not None else (_js_bindings(text, args[0]) if _JS_IDENT_RE.match(args[0]) else None)
+        schemas = _js_field(config, text, "schema") if config.startswith("{") else ""
+        databases = _js_field(config, text, "database") if config.startswith("{") else ""
+        if not names or schemas is None or databases is None:
+            complete = False
+            continue
+        for name in names:
+            for database in (databases or [default.database]):
+                for schema in (schemas or [default.schema]):
+                    (declared if kind == "declare" else actions).append(Target(database, schema, name))
+    return declared, actions, complete
+
+
+def _parse_ref_args(
+    args: str,
+    default: Target,
+    known: dict[str, list[Target]] | None = None,
+    *,
+    names_may_be_missing: bool = False,
+) -> Target:
     """The target a ``ref()`` names.
 
     Dataform finds ``ref("name")`` by the action's name, wherever its config put
     it, so a name that ``known`` (every action and declaration by name) holds
-    once resolves to that target; otherwise the project defaults apply.
+    once resolves to that target; otherwise the project defaults apply. A name that
+    several targets hold, or one that no action names while ``names_may_be_missing``
+    (JavaScript declarations that could not be read), is not guessed: it raises.
     """
+
+    def unresolved(name: str, schema: str | None = None) -> None:
+        matches = [t for t in (known or {}).get(name, []) if schema is None or t.schema == schema]
+        if len(matches) > 1:
+            raise ValueError("ref() names several tables; it was left unresolved")
+        if not matches and names_may_be_missing:
+            raise ValueError("ref() names a table that a declaration may define; it was left unresolved")
 
     def by_name(name: str, schema: str | None = None) -> Target | None:
         matches = [
@@ -277,12 +434,19 @@ def _parse_ref_args(args: str, default: Target, known: dict[str, list[Target]] |
             found = by_name(name, schema)
             if found is not None:
                 return found
+            unresolved(name, schema)
         return Target(database or default.database, schema or default.schema, name)
     parts = [match.group(2) for match in _STRING_RE.finditer(args)]
     if len(parts) == 1:
-        return by_name(parts[0]) or Target(default.database, default.schema, parts[0])
+        found = by_name(parts[0])
+        if found is None:
+            unresolved(parts[0])
+        return found or Target(default.database, default.schema, parts[0])
     if len(parts) == 2:
-        return by_name(parts[1], parts[0]) or Target(default.database, parts[0], parts[1])
+        found = by_name(parts[1], parts[0])
+        if found is None:
+            unresolved(parts[1], parts[0])
+        return found or Target(default.database, parts[0], parts[1])
     if len(parts) >= 3:
         return Target(parts[0], parts[1], parts[2])
     raise ValueError("unsupported ref() arguments")
@@ -292,6 +456,7 @@ def load_sqlx_project(
     root: str | Path,
     *,
     source_schema: dict[str, dict[str, str]] | None = None,
+    compiled_targets: Callable[[], Iterable[tuple[tuple[str, str, str], bool]]] | None = None,
 ) -> Pipeline:
     """Load a Dataform project (``definitions/**.sqlx``) or a folder of ``.sql`` files.
 
@@ -371,21 +536,22 @@ def load_sqlx_project(
         dependencies: list[Target] = []
 
         def substitute(match: re.Match[str]) -> str:
-            ref = _parse_ref_args(match.group("args"), default, known)
+            try:
+                ref = _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js)
+            except ValueError as exc:
+                diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
+                return match.group(0)  # left masked like any other interpolation
             dependencies.append(ref)
             return ref.sql()
 
-        try:
-            body = _REF_RE.sub(substitute, body)
-        except ValueError as exc:
-            diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
+        body = _REF_RE.sub(substitute, body)
         body = _SELF_RE.sub(target.sql(), body)
         # Dataform evaluates ref() in pre_operations and post_operations too, so what they ref is a dependency.
         for kind_, section in sections:
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section):
                 for match in _REF_RE.finditer(section):
                     try:
-                        ref = _parse_ref_args(match.group("args"), default, known)
+                        ref = _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js)
                     except ValueError as exc:
                         diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
                         continue
@@ -394,14 +560,14 @@ def load_sqlx_project(
 
         def resolve(match: re.Match[str]) -> str:
             try:
-                return _parse_ref_args(match.group("args"), default, known).sql()
+                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js).sql()
             except ValueError:
                 return match.group(0)  # computed argument: left masked like any other interpolation
 
         body = _RESOLVE_RE.sub(resolve, body)
         for entry in _config_dependencies(config):
             try:
-                declared = _parse_ref_args(entry, default, known)
+                declared = _parse_ref_args(entry, default, known, names_may_be_missing=incomplete_js)
             except ValueError as exc:
                 diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", f"config dependencies: {exc}"))
                 continue
@@ -426,6 +592,43 @@ def load_sqlx_project(
         diagnostics.append(PipelineDiagnostic(
             relative, "asset_unreadable",
             f"could not be analyzed ({type(exc).__name__}: {exc}); asset was skipped"))
+
+    incomplete_js = False
+    for path in find_assets(root, (".js",), unlistable):
+        relative_parts = path.relative_to(root).parts
+        if "node_modules" in relative_parts or ".git" in relative_parts:
+            continue
+        text, _reason = read_text_or_reason(path)
+        if text is None or not _JS_CALL_RE.search(text):
+            continue
+        declared, actions, complete = js_declared_targets(text, Target(database, dataset, ""))
+        for target in declared:
+            known.setdefault(target.name, []).append(target)
+            sources[target.key] = target
+        for target in actions:
+            known.setdefault(target.name, []).append(target)
+        if not complete:
+            incomplete_js = True
+            diagnostics.append(PipelineDiagnostic(
+                str(path.relative_to(root)), "js_declaration_dynamic",
+                "declares or names tables that cannot be read without running the code; refs to unlisted names were left unresolved"))
+
+    if incomplete_js and compiled_targets is not None:
+        # Dataform's own compilation lists every action, which settles what the JavaScript could not.
+        try:
+            fetched = list(compiled_targets())
+        except Exception as exc:  # noqa: BLE001 - no credentials, offline, no matching repository: stay unresolved
+            diagnostics.append(PipelineDiagnostic(
+                "", "compiled_graph_unavailable",
+                f"the Dataform compilation could not be read ({type(exc).__name__}); refs to unlisted names stay unresolved"))
+        else:
+            for (target_db, target_schema, target_name), is_declaration in fetched:
+                target = Target(target_db, target_schema, target_name)
+                if target not in known.setdefault(target.name, []):
+                    known[target.name].append(target)
+                if is_declaration:
+                    sources[target.key] = target
+            incomplete_js = False
 
     pending = []
     for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):

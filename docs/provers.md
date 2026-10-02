@@ -68,7 +68,7 @@ Install the engine with `pip install -e ".[execution]"` (it is included in `.[de
 
 `kumosql.prove_equivalent_smt(left_sql, right_sql)` proves semantic equivalence with Z3 instead of comparing syntax, so it accepts rewrites such as filter pushdown into a CTE, join reordering, `DISTINCT` to `GROUP BY`, `CASE` to `IF`, redundant predicates, and self-join elimination under `DISTINCT`. Install it with the optional extra: `pip install -e ".[smt]"`.
 
-It models inner and cross joins, `WHERE`, derived tables and CTEs, `GROUP BY`/`HAVING` with `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, `COUNTIF`, `LOGICAL_AND`/`LOGICAL_OR`, `UNION ALL`/`UNION DISTINCT`, `SELECT DISTINCT`, and NULLs with three-valued logic. Other deterministic functions are uninterpreted: equal inputs give equal outputs. Anything else (outer joins, windows, `LIMIT`, predicate subqueries, nondeterministic functions) returns `not_proven`.
+It models inner and cross joins, `WHERE`, derived tables and CTEs, `GROUP BY`/`HAVING` with `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, `COUNTIF`, `LOGICAL_AND`/`LOGICAL_OR`, `UNION ALL`/`UNION DISTINCT`, `SELECT DISTINCT`, and NULLs with three-valued logic. Other deterministic functions are uninterpreted: equal inputs give equal outputs. `UNION ... BY NAME` and `CORRESPONDING` are rewritten to the positional form first (`kumosql.set_operations`); when a branch's columns are not known (`SELECT *`, duplicate names) or differ under a plain `BY NAME`, the result is `not_proven`. Anything else (outer joins, windows, `LIMIT`, predicate subqueries, nondeterministic functions) returns `not_proven`.
 
 The result is one of:
 
