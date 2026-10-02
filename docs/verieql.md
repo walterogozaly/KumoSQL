@@ -14,7 +14,7 @@ Everything is deterministic Python: `kumosql.counterexample` (a constraint-respe
 | `unknown` | none | The pair could not be run (a query DuckDB rejects, unreadable constraints). |
 | `wrong` | | An `equivalent` verdict contradicted by a counterexample (our own second search, or VeriEQL's published counterexample replayed on DuckDB). Must stay 0. |
 
-VeriEQL itself is *bounded* model checking: "verified" there means no counterexample exists up to a bound on table size, so a VeriEQL pass is weaker than an unbounded proof. The scoreboard keeps the levels apart: the **proof** rows count `equivalent`, the **executed** rows count `different` plus `agrees`. KumoSQL does not implement bounded verification yet, so there are no bounded rows.
+VeriEQL itself is *bounded* model checking: "verified" there means no counterexample exists up to a bound on table size, so a VeriEQL pass is weaker than an unbounded proof. The scoreboard keeps the levels apart: the **proof** rows count `equivalent`, the **executed** rows count `different` plus `agrees`. KumoSQL's own bounded checker ([bounded-verification.md](bounded-verification.md)) is run on all three suites and scored in separate **bounded** rows.
 
 ## Counterexample generator
 
