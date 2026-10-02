@@ -110,7 +110,7 @@ def test_committed_case_file_matches_its_seed():
 
     path = Path(__file__).parent / "fixtures" / "unsafe_rewrite_cases.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert rows == [json.loads(json.dumps(c.__dict__)) for c in unsafe_fuzz.build_cases("unsafe", 3, 1)]
+    assert rows == [json.loads(json.dumps(c.__dict__)) for c in unsafe_fuzz.build_cases("unsafe", 20, 1)]
 
 
 def test_normalizer_keeps_or_condition_parenthesised_when_pushed_into_a_derived_distinct():
