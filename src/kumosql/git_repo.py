@@ -55,7 +55,7 @@ _ALLOWED_PROTOCOLS = "https:http:ssh:git:file"
 _REMOTE = re.compile(r"^(?:https?://|ssh://|git://|file://|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:|/|[A-Za-z]:[\\/]|\\\\)")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _CONFIG_FILES = ("workflow_settings.yaml", "workflow_settings.yml", "dataform.json")
-_SUFFIXES = (".sqlx", ".sql")
+_SUFFIXES = (".sqlx", ".sql", ".js")  # .js: declare() calls and publish() names that refs resolve against
 
 
 class GitRepoError(ValueError):
@@ -343,6 +343,8 @@ def _tree_blobs(checkout: Path) -> dict[str, str]:
         meta, _, path = entry.partition("\t")
         parts = meta.split()
         if len(parts) != 3 or parts[1] != "blob" or parts[0] == "120000":
+            continue
+        if "node_modules/" in f"/{path}":
             continue
         if path.lower().endswith(_SUFFIXES) or path in _CONFIG_FILES:
             blobs[path] = parts[2]

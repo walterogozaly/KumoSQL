@@ -17,8 +17,8 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 
 | Eval | Evidence | Size | Score | Correctness | Held-out | As of | Caveats |
 | --- | --- | ---: | --- | --- | --- | --- | --- |
-| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 232 | **204/232, 0 wrong**: Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 60 random DuckDB databases. | 0 false proofs (re-checked on 60 random DuckDB databases) | none | 2026-10-02 | Rules were developed against these pairs (tuned on test). |
-| [SQLSolver Spark SQL](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 127 | **120/127, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-02 | Tuned on test. |
+| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 232 | **212/232, 0 wrong**: Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 60 random DuckDB databases. | 0 false proofs (re-checked on 60 random DuckDB databases) | none | 2026-10-02 | Rules were developed against these pairs (tuned on test). |
+| [SQLSolver Spark SQL](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 127 | **122/127, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-02 | Tuned on test. |
 | [SQLSolver TPC-H](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 22 | **22/22, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-01 | Tuned on test. |
 | [SQLSolver TPC-C](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 19 | **19/19, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-01 | Tuned on test. |
 | [R-Bot Calcite rewrites](docs/sqlsolver.md#r-bots-calcite-pairs) | Unbounded proof | 45 | **19/45 proved, 0 wrong**: (Query, Calcite rewrite) pairs proved equivalent; 2 more are shown different by a counterexample, 24 unknown. | 0 false proofs; 2 counterexamples, each re-run in DuckDB | none | 2026-10-02 | R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test). |
@@ -78,8 +78,8 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 
 | Eval | Proven | Refuted | Unknown | Unsupported | Timeout | Error |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | 204 | – | 28 | – | – | – |
-| [SQLSolver Spark SQL](docs/sqlsolver.md#benchmark-coverage) | 120 | – | 7 | – | – | – |
+| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | 212 | – | 20 | – | – | – |
+| [SQLSolver Spark SQL](docs/sqlsolver.md#benchmark-coverage) | 122 | – | 5 | – | – | – |
 | [SQLSolver TPC-H](docs/sqlsolver.md#benchmark-coverage) | 22 | – | 0 | – | – | – |
 | [SQLSolver TPC-C](docs/sqlsolver.md#benchmark-coverage) | 19 | – | 0 | – | – | – |
 | [R-Bot Calcite rewrites](docs/sqlsolver.md#r-bots-calcite-pairs) | 19 | 2 | 24 | – | – | – |
@@ -349,7 +349,7 @@ python tools/run_tests.py --no-evals  # everything except the floors
 python -m pytest                      # plain serial run
 ```
 
-`run_tests.py` is `python -m pytest -n <cpus> --dist loadgroup` with the right marker; extra arguments go to pytest and `-j N` sets the workers. The whole fast suite took 35 minutes serially and about 9 on 4 CPUs; the longest single test (QED, about 5 minutes) is the floor. Tests must not share state: keep files under `tmp_path`, never write next to the sources, and reset module globals in a fixture (`tests/conftest.py` already isolates the state directory, the loaded project and the redactor). `tests/conftest.py` starts the slowest test files first under xdist (`HEAVY_FILES`) and marks the benchmark files `eval` (`EVAL_FILES`): add a new eval file to `EVAL_FILES`. Optionally `pip install sqlglotc` (the same version as `sqlglot`) compiles sqlglot and speeds the suite up by about 15%.
+`run_tests.py` is `python -m pytest -n <cpus> --dist loadgroup` with the right marker; extra arguments go to pytest and `-j N` sets the workers. The whole fast suite took 35 minutes serially and about 9 on 4 CPUs; the longest single test (QED, about 5 minutes) is the floor. Tests must not share state: keep files under `tmp_path`, never write next to the sources, and reset module globals in a fixture (`tests/conftest.py` already isolates the state directory, the loaded project and the redactor). `tests/conftest.py` starts the slowest test files first under xdist (`HEAVY_FILES`) and marks the benchmark files `eval` (`EVAL_FILES`): add a new eval file to `EVAL_FILES` (`tests/test_scoreboard.py` fails when a test that loads an eval script from a results file's `command` is missing). Optionally `pip install sqlglotc` (the same version as `sqlglot`) compiles sqlglot and speeds the suite up by about 15%.
 
 Use `python -m pytest` rather than bare `pytest` so the repository root is importable. CI (`.github/workflows/tests.yml`) runs `python -m pytest -m "not slow" -n auto --dist loadgroup` on the floor and the current `sqlglot` releases.
 
