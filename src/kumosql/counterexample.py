@@ -22,7 +22,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .duckdb_load import insert_rows
+from .duckdb_load import insert_rows, run_unoptimized
 
 import sqlglot
 from sqlglot import exp
@@ -220,15 +220,28 @@ class _Generator:
             visit(name)
         return order
 
+    def _with_parents(self, used: set[str]) -> set[str]:
+        """``used`` plus every table a foreign key of theirs points at: a child row needs a parent row to exist."""
+
+        needed, todo = set(), list(used)
+        while todo:
+            name = todo.pop()
+            if name in needed:
+                continue
+            needed.add(name)
+            todo.extend(parent for child, _, parent, _ in self.spec.foreign_keys if child == name)
+        return needed
+
     def database(self, used: set[str], max_rows: int) -> dict[str, list[tuple]] | None:
         db: dict[str, list[tuple]] = {}
+        needed = self._with_parents(used)
         for name in self.order:
-            if name not in used:
+            if name not in needed:
                 db[name] = []
                 continue
             db[name] = self._rows(self.spec.tables[name], db, max_rows)
         for check in self.global_checks:
-            if not all(t in used for t in check.tables):
+            if not all(t in needed for t in check.tables):
                 continue
             if not self._holds(check, db):
                 return None
@@ -313,6 +326,18 @@ def _bag(rows) -> Counter:
     return Counter(tuple(_norm(v) for v in row) for row in rows)
 
 
+def _grouping_keys(item: exp.Expression):
+    """The key expressions of one GROUP BY item, looking inside GROUPING SETS, ROLLUP and CUBE."""
+
+    if isinstance(item, (exp.GroupingSets, exp.Rollup, exp.Cube, exp.Tuple)):
+        for inner in item.expressions:
+            yield from _grouping_keys(inner)
+    elif isinstance(item, exp.Paren):
+        yield from _grouping_keys(item.this)
+    else:
+        yield item
+
+
 def relax_grouping(tree: exp.Expression) -> exp.Expression:
     """MySQL lets a grouped query read columns that are not grouped (they are arbitrary within the group).
 
@@ -327,7 +352,7 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
             continue
         projections = select.expressions
         grouped = set()
-        for item in group.expressions:
+        for item in (key for entry in group.expressions for key in _grouping_keys(entry)):
             if isinstance(item, exp.Literal) and not item.is_string:
                 position = int(item.this) - 1
                 if 0 <= position < len(projections):
@@ -341,8 +366,8 @@ def relax_grouping(tree: exp.Expression) -> exp.Expression:
         def inside_aggregate(node) -> bool:
             parent = node.parent
             while parent is not None and parent is not select:
-                if isinstance(parent, (exp.AggFunc, exp.Window)):
-                    return True
+                if isinstance(parent, (exp.AggFunc, exp.Window, exp.Filter)):
+                    return True  # an aggregate's FILTER (WHERE ...) reads the group's rows too
                 if isinstance(parent, exp.Select):
                     return True  # belongs to a nested select
                 parent = parent.parent
@@ -374,15 +399,97 @@ def _date_functions(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _calcite_forms(tree: exp.Expression) -> exp.Expression:
+    """Calcite-only forms (benchmark SQL printed by Calcite) spelled the way DuckDB accepts them.
+
+    * ``COUNT(a, b)`` counts rows where every argument is non-NULL.
+    * ``FIRST_VALUE(x)`` / ``LAST_VALUE(x)`` used as plain aggregates are DuckDB's ``first`` / ``last``
+      (an arbitrary pick unless ``x`` is constant in the group; ``Searcher`` drops differences that
+      depend on row order).
+    * ``SINGLE_VALUE(x)`` is ``x`` of the only row, NULL with no rows, and an error with more than one;
+      the error makes that database unusable, so ``Searcher`` skips it.
+    * ``ORDER BY NULL`` (a MySQL idiom for "no order") is dropped; DuckDB refuses it.
+    """
+
+    for node in list(tree.find_all(exp.Count)):
+        if node.expressions and not isinstance(node.this, exp.Distinct):
+            arguments = [node.this, *node.expressions]
+            test = exp.and_(*(exp.Not(this=exp.Is(this=a.copy(), expression=exp.Null())) for a in arguments))
+            node.replace(exp.Count(this=exp.Case(ifs=[exp.If(this=test, true=exp.Literal.number(1))])))
+    for node in list(tree.find_all(exp.FirstValue, exp.LastValue)):
+        if not isinstance(node.parent, exp.Window):
+            name = "first" if isinstance(node, exp.FirstValue) else "last"
+            node.replace(exp.Anonymous(this=name, expressions=[node.this.copy()]))
+    for node in list(tree.find_all(exp.Anonymous)):
+        if str(node.this).upper() == "SINGLE_VALUE" and len(node.expressions) == 1:
+            many = exp.GT(this=exp.Count(this=exp.Star()), expression=exp.Literal.number(1))
+            fail = exp.Anonymous(this="error", expressions=[exp.Literal.string("SINGLE_VALUE: more than one row")])
+            node.replace(exp.Case(ifs=[exp.If(this=many, true=fail)], default=exp.AnyValue(this=node.expressions[0].copy())))
+    for order in list(tree.find_all(exp.Order)):
+        kept = [o for o in order.expressions if not (isinstance(o, exp.Ordered) and isinstance(o.this, exp.Null))]
+        if len(kept) != len(order.expressions):
+            if kept:
+                order.set("expressions", kept)
+            else:
+                order.pop()
+    return tree
+
+
+def _fill_empty_select_lists(tree: exp.Expression) -> exp.Expression:
+    """Calcite prints a zero-column projection as ``SELECT FROM t``, which DuckDB refuses.
+
+    One constant column keeps the row count, which is all a zero-column result holds. When such a
+    select is a derived table read by ``*``, the star excludes that column again.
+    """
+
+    filler = "$empty"
+    for select in list(tree.find_all(exp.Select)):
+        if select.expressions:
+            continue
+        select.set("expressions", [exp.alias_(exp.Literal.number(1), filler, quoted=True)])
+        holder = select.parent
+        if isinstance(holder, exp.Subquery) and isinstance(holder.parent, exp.Lateral):
+            holder = holder.parent
+        outer = holder.parent.parent if holder is not None and isinstance(holder.parent, (exp.From, exp.Join)) else None
+        if isinstance(outer, exp.Select):
+            for star in outer.expressions:
+                if isinstance(star, exp.Star):
+                    key = "except_" if "except_" in exp.Star.arg_types else "except"  # renamed in sqlglot 30
+                    star.set(key, [*(star.args.get(key) or []), exp.column(filler, quoted=True)])
+    return tree
+
+
+_PLAIN_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _quote_unusual_names(tree: exp.Expression) -> exp.Expression:
+    """Quote identifiers DuckDB's parser cannot read bare, such as Calcite's ``$f0`` and ``EXPR$0``.
+
+    DuckDB matches quoted identifiers case-insensitively, so quoting changes nothing else.
+    """
+
+    for identifier in tree.find_all(exp.Identifier):
+        if not identifier.quoted and not _PLAIN_NAME.match(identifier.name):
+            identifier.set("quoted", True)
+    return tree
+
+
 def to_duckdb(sql: str, dialect: str = "mysql") -> str:
     tree = sqlglot.parse_one(sql, read=dialect)
-    return relax_grouping(_date_functions(tree)).sql(dialect="duckdb")
+    tree = relax_grouping(_fill_empty_select_lists(_calcite_forms(_date_functions(tree))))
+    return _quote_unusual_names(tree).sql(dialect="duckdb")
 
 
 class Searcher:
     """Reusable search over one schema: parse once, then try many databases."""
 
-    def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql"):
+    def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql", predicates: dict[str, int] | None = None):
+        """``predicates`` names uninterpreted boolean functions (name to arity) the queries call.
+
+        Each gets one fixed, arbitrary interpretation (a hash of its arguments), so a difference found
+        with it refutes the pair for every interpretation's sake: the pair must agree under all of them.
+        """
+
         self.spec = spec
         self.constants = constants_of(left, right, dialect=dialect)
         self.left_sql = to_duckdb(left, dialect)
@@ -394,6 +501,12 @@ class Searcher:
         by_lower = {n.lower(): n for n in spec.tables}
         self.used = {by_lower[n] for n in names if n in by_lower}
         self.db = duckdb.connect(":memory:")
+        for name, arity in (predicates or {}).items():
+            if not _PLAIN_NAME.match(name):
+                raise ValueError(f"predicate name {name!r}")
+            parameters = [f"p{i}" for i in range(arity)]
+            hashed = ", ".join([*parameters, _literal(name.lower())])
+            self.db.execute(f"CREATE MACRO {name}({', '.join(parameters)}) AS (hash({hashed}) % 2 = 0)")
         for name in self.used:
             table = spec.tables[name]
             columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
@@ -425,10 +538,19 @@ class Searcher:
                 a = self.db.execute(self.left_sql).fetchall()
                 b = self.db.execute(self.right_sql).fetchall()
             except duckdb.Error:
-                return None
-            if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+                continue  # a runtime error on this database (a failed cast, SINGLE_VALUE of two rows): try the next
+            if _bag(a) != _bag(b) and self._optimizer_agrees(a, b) and self._stable(data, a, b, rng):
                 return Counterexample({n: data[n] for n in self.used}, a, b)
         return None
+
+    def _optimizer_agrees(self, a, b) -> bool:
+        """The same rows with DuckDB's optimizer off (see ``duckdb_load.run_unoptimized``)."""
+
+        try:
+            plain_a, plain_b = run_unoptimized(self.db, self.left_sql, self.right_sql)
+        except duckdb.Error:
+            return False
+        return _bag(plain_a) == _bag(a) and _bag(plain_b) == _bag(b)
 
     def _stable(self, data, a, b, rng) -> bool:
         """The difference must not depend on row order or on an arbitrary pick: shuffle and compare again."""

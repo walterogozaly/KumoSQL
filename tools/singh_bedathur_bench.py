@@ -341,7 +341,7 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows
+    from kumosql.duckdb_load import insert_rows, run_unoptimized
 
     kinds = column_kinds(trees, pair.tables)
     domains = literal_domains(trees)
@@ -364,6 +364,8 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
                 insert_rows(db, f'"{table}"', rows)
             a = normalise(db.execute(left_sql).fetchall())
             b = normalise(db.execute(right_sql).fetchall())
+            if a != b and [normalise(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         except duckdb.Error:
             failures += 1  # a data-dependent error (a scalar subquery with two rows) or a misfit proposed database
             continue

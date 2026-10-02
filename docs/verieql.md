@@ -20,7 +20,44 @@ VeriEQL itself is *bounded* model checking: "verified" there means no counterexa
 
 `kumosql.counterexample.find_counterexample(spec, left, right)` returns a `Counterexample` (the rows of every table plus both result bags, and `.script(spec)` for a runnable `CREATE`/`INSERT` script). Databases are small (up to 5 rows per table); values come from small domains seeded with the literals of the two queries (the constant, one below, one above, string and date literals), a "hot subset" per column makes ties and join matches common, and NULLs appear on nullable columns. Constraints are respected by construction (keys, foreign keys by drawing from parent rows, consecutive ids) or by rejection (`CHECK`-style predicates and implications; a NULL never satisfies one, which is the strict reading and therefore valid under both).
 
-MySQL lets a grouped query read ungrouped columns; DuckDB refuses. Such columns are wrapped in `ANY_VALUE`, and any difference found must be stable under shuffling the input rows, so only functionally determined columns can produce a counterexample.
+MySQL lets a grouped query read ungrouped columns; DuckDB refuses. Such columns are wrapped in `ANY_VALUE`, and any difference found must be stable under shuffling the input rows, so only functionally determined columns can produce a counterexample. Keys inside `GROUPING SETS`, `ROLLUP` and `CUBE` count as grouped, and columns inside an aggregate's `FILTER (WHERE ...)` are left alone.
+
+A table that a foreign key points at gets rows even when neither query reads it, so a query over a child table alone (EMP, whose DEPTNO references DEPT) is searched with a non-empty child. A database on which a query raises an error (a failed cast, `SINGLE_VALUE` over two rows) is skipped, and the search goes on with the next one.
+
+Every difference is run a second time with DuckDB's optimizer turned off (`kumosql.duckdb_load.run_unoptimized`) and counts only when both runs return the same rows. DuckDB 1.5's optimizer returns wrong rows for some correlated subqueries (for example `EXISTS (SELECT 1 FROM u WHERE u.d <> t.a AND t.b > u.c)` when the tables hold NULLs), which would otherwise refute an equivalent pair or fail a correct proof. The same recheck guards `sqlsolver_bench.differ` (SQLSolver, QED, R-Bot, Calcite-mined, Cosette, SPES), the Singh & Bedathur search and `kumosql.random_check`.
+
+## Scores
+
+Measured 2026-10-02 (`python tools/verieql_bench.py <suite> --audit`):
+
+| Suite | Proved equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Calcite-397 | 229 | 27 | 131 | 10 | 0 |
+| Literature (64) | 15 | 18 | 27 | 4 | 0 |
+| LeetCode sample (1,000, every 24th) | 198 | 203 | 517 | 82 | 0 |
+
+The harness translation below took Calcite-397 from 197 proved, 14 refuted and 96 not run to these numbers, and Literature from 10 proved to 15. VeriEQL marks four of our Calcite refutations equivalent (pairs 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows).
+
+## Harness translation
+
+The Calcite-397 queries are printed by Calcite, and some of its spellings mean nothing to DuckDB or to the prover. Each translation below has one reading; anything else is left as written, so the pair stays `unknown` instead of being scored under a guess.
+
+| Calcite spelling | Run as | Where |
+| --- | --- | --- |
+| `$f0`, `EXPR$1`, `$cor0` | quoted identifiers | `counterexample.to_duckdb` |
+| `COUNT(a, b)` | `COUNT(CASE WHEN a IS NOT NULL AND b IS NOT NULL THEN 1 END)` | `to_duckdb` |
+| `FIRST_VALUE(x)` / `LAST_VALUE(x)` as an aggregate | DuckDB `first(x)` / `last(x)` (differences that depend on row order are dropped) | `to_duckdb` |
+| `SINGLE_VALUE(x)` | `x` of the only row, NULL with none, an error (database skipped) with two | `to_duckdb` |
+| `SELECT FROM t` (no columns) | one constant column, excluded again from an outer `*` | `to_duckdb` |
+| `ORDER BY NULL` | dropped | `to_duckdb` |
+| `$cor0.$f0`, where `$f0` is a column of the LATERAL subquery, not of `$cor0` | that subquery's alias, when exactly one source has the column | `tools/bench_sql_repairs.py` |
+| `SELECT *` over a join with a repeated column, inside a derived table | the columns spelled out, later copies named `SAL_1` as DuckDB names them (`t.SAL` is the first copy, as in Calcite) | `bench_sql_repairs.py` |
+
+Literature pairs call uninterpreted predicates on whole rows (`B1(X)` where `X` names a FROM item). The harness spells each out over the row's columns (`B1(X.a, X.b)`): the prover reads it as an uninterpreted function, and DuckDB runs it as a macro with one fixed, arbitrary interpretation (a hash of the arguments). A difference under that interpretation refutes the pair, since an equivalent pair must agree under every interpretation.
+
+The prover gets the schema's foreign keys on a second attempt, after a first attempt with keys and NOT NULL columns alone (the foreign-key rules can rewrite one side out of the shape the other side's proof needs).
+
+Left unknown on purpose: 5 pairs whose Calcite text lost a correlated column (`WHERE * = t5.DEPTNO`), 2 with a subquery in an outer join's `ON` (DuckDB cannot run it), 1 comparing VARCHAR with INT (MySQL coerces, DuckDB refuses), 1 that names a renamed lateral column (`$cor0.SAL0`), 1 with `||` (Calcite's concatenation, MySQL's OR), and 2 malformed Literature pairs.
 
 ## Running
 
