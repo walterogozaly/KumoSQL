@@ -1,17 +1,18 @@
 {
   "suite": "Incremental divergence detection",
   "order": 140,
-  "size": 33,
-  "score": "33/33 diverging cases refuted, 0 wrong",
+  "size": 34,
+  "score": "33/34 diverging cases refuted, 0 wrong",
   "metric": "Dataform incremental models that stop matching their full refresh under an allowed kind of source change; each is refuted with a minimised, replayable insert/update/delete sequence found without the case's script. Held out: 9/9.",
   "docs": "docs/incremental.md#scores",
   "command": "python tools/incremental_bench.py",
   "date": "2026-10-02",
-  "caveats": "Authored cases (pg_ivm-adapted cases not in yet). Search generator and proof rules were developed on the 37 dev cases; the 12 held-out cases were written after the rules were frozen and run once (two of them had authoring bugs, caught by the replay check and fixed in the case, not the checker). Labels are the author's, checked by replay.",
+  "caveats": "Authored cases (pg_ivm-adapted cases not in yet). Search generator and proof rules were developed on the 37 dev cases; the 12 held-out cases were written after the rules were frozen and run once (two of them had authoring bugs, caught by the replay check and fixed in the case, not the checker). Labels are the author's, checked by replay. The 34th, a pre-operation reload window relabelled from safe (2026-10-02), diverges only when one run adds rows more than its 2-hour window apart; the change generator steps new rows one hour at a time, so it stays unknown.",
   "evidence": "executed",
   "correctness": "0 false alarms: every counterexample is re-run from scratch in the DuckDB model of Dataform's run cycle and diverges; 0 safe cases refuted",
   "coverage": {
-    "refuted": 33
+    "refuted": 33,
+    "unknown": 1
   },
   "held_out": "9/9 refuted, 0 wrong (12 blind cases in all)",
   "analysis": "Counterexamples average 1.9 source statements (1 to 4) after minimisation",

@@ -52,6 +52,8 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - `CREATE TABLE/VIEW ... AS SELECT`, `INSERT ... SELECT` and `EXPORT DATA ... AS SELECT` in `.sql` files had no reads in the graph; they do now.
 - A `.sql` file with a `config { }` block is loaded as an action instead of failing to parse.
 - Analytical corpora ([analytical-sql-coverage.md](analytical-sql-coverage.md)) found that the formatter re-cased unquoted table and column names (BigQuery table names are case sensitive), and that windows and `ORDER BY ... LIMIT` blocked every proof; the `query/analytical_*` cases cover them.
+- Formatting a statement sqlglot cannot parse or keeps as an opaque command (DDL for reservations, policies and indexes, `LOAD DATA`, `CALL`, `REPEAT`, `CHANGES(TABLE ...)`) was never proven, so it could not be accepted. A change that only moves whitespace and re-cases reserved keywords and built-in calls is now proven by comparing tokens. Formatting also re-cased user-defined function names (`f(x)` became `F(x)`), which are case sensitive; it now keeps them.
+- Cleanup rewrote pipe-syntax queries into sqlglot's standard-SQL translation, and once into a broken query (`FROM t |> AS u` lost its table). Pipe syntax is now left as written.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
 
 ## Gaps that are not fixed here
@@ -59,6 +61,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - **sqlglot** keeps procedural statements (`DECLARE`, `IF`, `LOOP`, `BEGIN ... END`, `CALL`, `EXECUTE IMMEDIATE`) and many `ALTER`/`DROP`/`CREATE` forms (reservations, indexes, aggregate and remote functions) as opaque commands, and cannot parse `LOAD DATA`, `CHANGES`/`APPENDS`, `UNION ... CORRESPONDING` and some pipe operators. KumoSQL leaves such statements untouched and says so. Which cases fail differs between sqlglot 26.0.0 and the latest, so `known_gaps.json` holds the union of both.
 - **Graph reads of DML and scripts** (`MERGE ... USING`, `UPDATE ... FROM`, `DELETE ... WHERE EXISTS`, scripts) are not extracted, so a model written as a script shows unknown reads.
 - **Cleanup on `BEGIN ... END` and procedure bodies** is refused (`source_splice_error`): the statements cannot be mapped back to their source text, so the file is left as written.
+- **sqlfluff** cannot parse `GRANT`/`REVOKE`, `EXPORT MODEL`, remote functions and models, property graphs, some literals and a few other statements, so they are not formatted (`parse_error`).
 - **Project layouts**: `projectSuffix`/`datasetSuffix`/`namePrefix` are ignored, the Dataform JavaScript API in `.js` files and `actions.yaml` are not read (`tests/test_bq_syntax_projects.py`, as xfail).
 - **Computed references**: a `ref()` whose argument is computed in JavaScript is reported as unresolved rather than guessed.
 - **Prover** (owned by the SQLSolver work): unknown, never wrong, for `LIMIT`, window functions, `TABLESAMPLE`, unaliased subqueries and nondeterministic aggregates.
@@ -68,14 +71,14 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 <!-- coverage-table:start -->
 | Family | Cases | parse | load | graph | fingerprint | cleanup | format | prover | dry run |
 |---|---:|---|---|---|---|---|---|---|---|
-| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 5 ✅ 3 ⚪ | n/a | 1 ✅ 7 ⚠ |
+| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 7 ✅ 1 ⚪ | n/a | 1 ✅ 7 ⚠ |
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 4 ✅ 1 ⚪ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
-| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 71 ✅ 3 ⚪ | n/a | 72 ✅ 2 ⚪ | 45 ✅ 29 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
-| dml | 16 | 16 ✅ | 16 ✅ | 10 ✅ 6 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 134 | 127 ✅ 7 ⚪ | 134 ✅ | 134 ✅ | 126 ✅ | 130 ✅ 4 ⚪ | 127 ✅ 7 ⚪ | 105 ✅ 21 ⚪ | 115 ✅ 16 ⚠ 3 – |
-| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 19 ✅ 3 ⚪ | n/a | 16 ✅ 6 ⚪ | 16 ✅ 6 ⚪ | n/a | 20 ✅ 2 ⚠ |
+| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 74 ✅ | n/a | 72 ✅ 2 ⚪ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| dml | 16 | 16 ✅ | 16 ✅ | 13 ✅ 3 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
+| query | 134 | 127 ✅ 7 ⚪ | 134 ✅ | 134 ✅ | 126 ✅ | 134 ✅ | 131 ✅ 3 ⚪ | 104 ✅ 22 ⚪ | 115 ✅ 16 ⚠ 3 – |
+| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 20 ✅ 2 ⚪ | n/a | 16 ✅ 6 ⚪ | 20 ✅ 2 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 261 | 203 ✅ 58 ⚪ | 261 ✅ | 248 ✅ 13 ⚪ | 126 ✅ | 249 ✅ 12 ⚪ | 211 ✅ 50 ⚪ | 105 ✅ 21 ⚪ | 202 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 261 | 203 ✅ 58 ⚪ | 261 ✅ | 255 ✅ 6 ⚪ | 126 ✅ | 253 ✅ 8 ⚪ | 241 ✅ 20 ⚪ | 104 ✅ 22 ⚪ | 202 ✅ 45 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
@@ -105,20 +108,19 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | parse | sqlglot | sqlglot keeps LOOP as an opaque command | 1 | `script/loop_leave_iterate` |
 | parse | sqlglot | sqlglot keeps WHILE as an opaque command | 1 | `script/while_loop` |
 | load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
-| graph | kumosql | reads of this DML, script or non-query statement are not extracted | 13 | `dcl/revoke_table`, `ddl/create_table_clone`, `ddl/create_table_copy` |
+| graph | kumosql | reads of this DML, script or non-query statement are not extracted | 6 | `dcl/revoke_table`, `dml/merge_cte_source`, `dml/merge_full` |
 | cleanup | kumosql | source_splice_error | 7 | `dataform/operations_ddl_script`, `ddl/create_procedure_options`, `script/begin_end_block` |
 | cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
-| cleanup | kumosql | equivalence could not be proven for every changed statement | 4 | `dataform/table_with_qualify_cte`, `query/pipe_as_alias`, `query/pipe_call_tablesample` |
 | cleanup | kumosql | recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_pars | 2 | `ddl/create_procedure_sql`, `script/case_when` |
-| cleanup | kumosql | recovered_parse | 2 | `query/pipe_extend_set_drop`, `query/pipe_with_cte` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
-| format | kumosql | equivalence could not be proven for every changed statement | 53 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
+| cleanup | kumosql | equivalence could not be proven for every changed statement | 1 | `dataform/table_with_qualify_cte` |
 | format | sqlfluff | parse_error | 20 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
 | prover | prover | unsupported: LIMIT is not modeled | 9 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
 | prover | prover | unsupported: WINDOW is not modeled | 7 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pseudo_columns_row_number` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT) | 2 | `query/pipe_call_tablesample`, `query/tablesample` |
 | prover | prover | unsupported: nondeterministic: ARRAY_AGG(DISTINCT state) | 1 | `query/aggregate_filter_modifiers` |
 | prover | prover | unsupported: nondeterministic: ANY_VALUE(city) | 1 | `query/aggregate_functions` |
+| prover | prover | unsupported: unaliased subquery in FROM | 1 | `query/pipe_pivot_unpivot` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (50 PERCENT) | 1 | `query/tablesample_with_join` |
 | refs | kumosql | ref() inside a js block is not resolved: raw_users | 1 | `dataform/js_block_with_ref_in_helper` |
 <!-- coverage-table:end -->

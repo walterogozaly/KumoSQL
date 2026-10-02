@@ -302,3 +302,25 @@ def test_counterexample_does_not_leave_a_key_column_null():
         constraints=constraints,
     )
     assert result.status is not SmtStatus.NOT_EQUIVALENT
+
+
+def test_timestamp_literals_are_compared_as_time():
+    schema = {"e": ["id", "ts"]}
+    a = "SELECT id FROM e WHERE ts >= '2012-11-23 20:14:25' AND ts <= '2013-01-01 00:00:00'"
+    same = "SELECT id FROM e WHERE ts <= '2013-01-01 00:00:00' AND ts >= '2012-11-23 20:14:25'"
+    assert prove_equivalent_smt(a, same, schema=schema).proven
+    assert prove_equivalent_smt(a, a.replace("20:14:25", "20:14:26"), schema=schema).status is not SmtStatus.PROVEN_EQUIVALENT
+    # a cast of the same literal is the same constant on both sides
+    cast = "SELECT id FROM e WHERE ts >= CAST('2012-11-23 20:14:25' AS TIMESTAMP)"
+    assert prove_equivalent_smt(cast, cast + " AND 1 = 1", schema=schema).proven
+
+
+def test_dates_and_timestamps_are_not_mixed_in_one_proof():
+    schema = {"e": ["id", "ts"]}
+    result = prove_equivalent_smt(
+        "SELECT id FROM e WHERE ts > '2012-01-01'",
+        "SELECT id FROM e WHERE ts > '2012-01-01 00:00:00'",
+        schema=schema,
+    )
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT
+    assert "timestamps" in result.reason or "unsupported" in result.reason

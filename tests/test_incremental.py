@@ -18,6 +18,7 @@ from kumosql.incremental import (  # noqa: E402
     replay,
     search_divergence,
 )
+from kumosql.incremental_rules import prove_more  # noqa: E402
 
 _path = Path(__file__).resolve().parent.parent / "tools" / "incremental_bench.py"
 _spec = importlib.util.spec_from_file_location("incremental_bench", _path)
@@ -95,8 +96,10 @@ def test_proven_cases_never_diverge_under_a_deeper_search():
     for case in bench.load_cases():
         m, sources = bench.build(case)
         contract = case["contract"]
-        if prove_watermark(m, sources, frozenset(contract["kinds"])) is not None:
-            found = search_divergence(m, sources, contract["kinds"], seeds=25, batches=5, seed=7, tables=tuple(contract.get("tables") or ()) or None)
+        tables = tuple(contract.get("tables") or ()) or None
+        kinds = frozenset(contract["kinds"])
+        if (prove_watermark(m, sources, kinds) or prove_more(m, sources, kinds, tables)) is not None:
+            found = search_divergence(m, sources, contract["kinds"], seeds=25, batches=5, seed=7, tables=tables)
             assert found is None, case["id"]
 
 
@@ -106,7 +109,7 @@ def test_corpus_floor_and_zero_wrong():
     assert result["wrong"] == []
     assert result["fidelity_failures"] == []
     assert result["coverage"]["refuted"] >= 33
-    assert result["coverage"]["proven"] >= 11
+    assert result["coverage"]["proven"] >= 15
     assert result["coverage"]["error"] == 0
 
 
