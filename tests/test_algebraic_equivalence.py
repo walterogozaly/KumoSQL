@@ -263,7 +263,24 @@ def test_the_same_scalar_subquery_on_both_sides_is_one_value():
         "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT MAX(sal) FROM emp WHERE deptno > 3) = sal",
     )
     assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # a global aggregate returns exactly one row, so nothing is assumed about its size
+    assert "scalar subqueries return at most one row" not in " ".join(result.assumptions)
+
+
+def test_a_scalar_subquery_that_may_return_several_rows_is_listed_as_an_assumption():
+    left = "SELECT empno FROM emp WHERE sal = (SELECT sal FROM emp WHERE empno = 7) AND deptno = 1"
+    right = "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT sal FROM emp WHERE empno = 7) = sal"
+    result = _prove(left, right)
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
     assert "scalar subqueries return at most one row" in " ".join(result.assumptions)
+    from kumosql.smt_equivalence import TableConstraints
+
+    keyed = prove_equivalent_algebraic(
+        left, right, schema=SCHEMA, compare_names=False, dialect="mysql",
+        constraints={"emp": TableConstraints(not_null=frozenset({"empno"}), keys=(("empno",),))},
+    )
+    assert keyed.status is SmtStatus.PROVEN_EQUIVALENT, keyed.reason
+    assert "scalar subqueries return at most one row" not in " ".join(keyed.assumptions)
 
 
 def test_differently_written_equivalent_scalar_subqueries_are_matched():
@@ -1296,3 +1313,235 @@ def test_select_list_tuple_in_is_exists_when_all_columns_are_not_null():
         compare_names=False,
     )
     assert result.proven, result.reason
+
+
+GROUPING_SCHEMA = {"t": ["a", "b", "v"]}
+GROUPING_PROVEN = {
+    "sets are a union all": (
+        "SELECT a, b, SUM(v) FROM t GROUP BY GROUPING SETS ((a), (b))",
+        "SELECT a, NULL, SUM(v) FROM t GROUP BY a UNION ALL SELECT NULL, b, SUM(v) FROM t GROUP BY b",
+    ),
+    "grouping is a bit mask": (
+        "SELECT a, b, GROUPING(a, b) AS g, COUNT(*) FROM t GROUP BY GROUPING SETS ((a, b), (a), ())",
+        "SELECT a, b, 0, COUNT(*) FROM t GROUP BY a, b UNION ALL SELECT a, NULL, 1, COUNT(*) FROM t GROUP BY a UNION ALL SELECT NULL, NULL, 3, COUNT(*) FROM t",
+    ),
+}
+GROUPING_NOT_PROVEN = {
+    "grouping flag has the other value": (
+        "SELECT a, GROUPING(a, b) AS g, COUNT(*) FROM t GROUP BY GROUPING SETS ((a), (b))",
+        "SELECT a, 0, COUNT(*) FROM t GROUP BY a UNION ALL SELECT NULL, 2, COUNT(*) FROM t GROUP BY b",
+    ),
+    "an empty set always returns its row": (
+        "SELECT COUNT(*) FROM t GROUP BY GROUPING SETS (())",
+        "SELECT COUNT(*) FROM t GROUP BY a",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", GROUPING_PROVEN)
+def test_grouping_sets_are_a_union_of_grouped_selects(name):
+    left, right = GROUPING_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=GROUPING_SCHEMA, dialect="bigquery", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", GROUPING_NOT_PROVEN)
+def test_grouping_sets_keep_their_boundaries(name):
+    left, right = GROUPING_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=GROUPING_SCHEMA, dialect="bigquery", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+CONSTANT_SCHEMA = {"t": ["a", "b"]}
+CONSTANT_PROVEN = {
+    "constant derived column": (
+        "SELECT d.a FROM (SELECT a, TRUE AS keep FROM t) AS d WHERE d.keep",
+        "SELECT a FROM t",
+    ),
+    "case on a constant flag": (
+        "SELECT a, CASE WHEN 1 = 1 THEN b END FROM t",
+        "SELECT a, b FROM t",
+    ),
+    "count of nothing in an aggregated select": (
+        "SELECT COUNT(a), COUNT(NULL) FROM t",
+        "SELECT COUNT(a), 0 FROM t",
+    ),
+    "constant source": (
+        "SELECT c.x + t.a FROM (SELECT 5 AS x) AS c, t",
+        "SELECT 5 + a FROM t",
+    ),
+    "intersect with an empty side": (
+        "SELECT a FROM t INTERSECT SELECT a FROM t WHERE 1 = 2",
+        "SELECT a FROM t WHERE 1 = 2",
+    ),
+}
+CONSTANT_NOT_PROVEN = {
+    "count of nothing alone keeps its row": (
+        "SELECT COUNT(NULL) FROM t",
+        "SELECT 0 FROM t",
+    ),
+    "constant flag that is false": (
+        "SELECT d.a FROM (SELECT a, FALSE AS keep FROM t) AS d WHERE d.keep",
+        "SELECT a FROM t",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", CONSTANT_PROVEN)
+def test_constants_fold_through_derived_tables_and_set_operations(name):
+    left, right = CONSTANT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=CONSTANT_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", CONSTANT_NOT_PROVEN)
+def test_constant_folding_keeps_its_boundaries(name):
+    left, right = CONSTANT_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=CONSTANT_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+def test_constant_folding_rewrites_preserve_results_on_random_databases():
+    rng = random.Random(91)
+    forms = [pair[0] for pair in CONSTANT_PROVEN.values()] + [pair[0] for pair in CONSTANT_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=CONSTANT_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE t (a INT, b INT)")
+        for _ in range(rng.choice([0, 1, 4])):
+            db.execute("INSERT INTO t VALUES (?, ?)", [rng.choice([None, 1, 2]), rng.choice([None, 0, 5])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            assert Counter(db.execute(plain).fetchall()) == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+def test_constant_column_of_a_null_extended_derived_table_is_not_inlined():
+    # d.i is NULL for a p row with no match, so "d.i IS NULL" is not FALSE
+    result = prove_equivalent_algebraic(
+        "SELECT p.id FROM p LEFT JOIN (SELECT k, 1 AS i FROM q) AS d ON p.k = d.k WHERE d.i IS NULL",
+        "SELECT p.id FROM p WHERE 1 = 2",
+        schema=IN_LIST_SCHEMA,
+        dialect="mysql",
+        compare_names=False,
+    )
+    assert not result.proven
+
+
+BOOLEAN_SCHEMA = {"t": ["a", "b"]}
+BOOLEAN_PROVEN = {
+    "is null of a null test": ("SELECT * FROM t WHERE (a IS NULL) IS NULL", "SELECT * FROM t WHERE 1 = 2"),
+    "is not null of a null test": ("SELECT * FROM t WHERE ((a IS NULL) IS NOT NULL) OR NULL", "SELECT * FROM t"),
+    "false and unknown": ("SELECT * FROM t WHERE FALSE AND NULL", "SELECT * FROM t WHERE 1 = 2"),
+    "cast of a null test above one": ("SELECT * FROM t WHERE CAST((a IS NULL) AS SIGNED) > 1000", "SELECT * FROM t WHERE 1 = 2"),
+    "cast of a null test below": ("SELECT * FROM t WHERE CAST((a IS NULL) AS SIGNED) < 1000", "SELECT * FROM t"),
+    "group by in an in test": (
+        "SELECT * FROM t WHERE (a, b) IN (SELECT a, b FROM t GROUP BY a, b) OR a < 40 + 60",
+        "SELECT * FROM t WHERE (a, b) IN (SELECT a, b FROM t) OR a < 100",
+    ),
+    "group by in an exists test": (
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t AS u GROUP BY u.a)",
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t AS u)",
+    ),
+}
+BOOLEAN_NOT_PROVEN = {
+    "cast of a null test inside the range": (
+        "SELECT * FROM t WHERE CAST((a IS NULL) AS SIGNED) > 0",
+        "SELECT * FROM t WHERE 1 = 2",
+    ),
+    "true and unknown is unknown": ("SELECT * FROM t WHERE TRUE AND NULL", "SELECT * FROM t"),
+    "global count under exists keeps its row": (
+        "SELECT * FROM t WHERE EXISTS (SELECT COUNT(*) FROM t AS u WHERE u.a > 100)",
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t AS u WHERE u.a > 100)",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", BOOLEAN_PROVEN)
+def test_boolean_constant_folds_and_membership_group_by(name):
+    left, right = BOOLEAN_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=BOOLEAN_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", BOOLEAN_NOT_PROVEN)
+def test_boolean_constant_folds_keep_their_boundaries(name):
+    left, right = BOOLEAN_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=BOOLEAN_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+def test_boolean_folds_preserve_results_on_random_databases():
+    rng = random.Random(5)
+    forms = [pair[0] for pair in BOOLEAN_PROVEN.values()] + [pair[0] for pair in BOOLEAN_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=BOOLEAN_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE t (a INT, b INT)")
+        for _ in range(rng.choice([0, 1, 4])):
+            db.execute("INSERT INTO t VALUES (?, ?)", [rng.choice([None, 1, 2, 150]), rng.choice([None, 0, 5])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            try:
+                expected = Counter(db.execute(plain).fetchall())
+            except sqlite3.OperationalError:
+                continue  # SQLite lacks row-value IN over a subquery in old versions
+            assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+EMPTY_SIDE_SCHEMA = {"p": ["id", "k"], "q": ["id", "k"]}
+EMPTY_SIDE_PROVEN = {
+    "right join to an empty left": (
+        "SELECT e.id, e.k, q.id, q.k FROM (SELECT * FROM p WHERE FALSE) AS e RIGHT JOIN q ON e.k = q.k",
+        "SELECT CAST(NULL AS SIGNED), CAST(NULL AS SIGNED), q.id, q.k FROM q",
+    ),
+    "left join to an empty right": (
+        "SELECT p.id, e.id FROM p LEFT JOIN (SELECT * FROM q WHERE 1 = 2) AS e ON p.k = e.k",
+        "SELECT p.id, NULL FROM p",
+    ),
+}
+EMPTY_SIDE_NOT_PROVEN = {
+    "inner join to an empty side has no rows": (
+        "SELECT p.id FROM p JOIN (SELECT * FROM q WHERE FALSE) AS e ON p.k = e.k",
+        "SELECT p.id FROM p",
+    ),
+    "empty preserved side of a left join": (
+        "SELECT e.id FROM (SELECT * FROM p WHERE FALSE) AS e LEFT JOIN q ON e.k = q.k",
+        "SELECT p.id FROM p",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", EMPTY_SIDE_PROVEN)
+def test_empty_null_extended_side_of_an_outer_join(name):
+    left, right = EMPTY_SIDE_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=EMPTY_SIDE_SCHEMA, dialect="mysql", compare_names=False)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", EMPTY_SIDE_NOT_PROVEN)
+def test_empty_side_rules_keep_their_boundaries(name):
+    left, right = EMPTY_SIDE_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=EMPTY_SIDE_SCHEMA, dialect="mysql", compare_names=False)
+    assert not result.proven
+
+
+def test_empty_side_rules_preserve_results_on_random_databases():
+    rng = random.Random(8)
+    forms = [pair[0] for pair in EMPTY_SIDE_PROVEN.values()] + [pair[0] for pair in EMPTY_SIDE_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=EMPTY_SIDE_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(40):
+        db = sqlite3.connect(":memory:")
+        for table in ("p", "q"):
+            db.execute(f"CREATE TABLE {table} (id INT, k INT)")
+            for n in range(rng.choice([0, 1, 4])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?)", [n, rng.choice([None, 0, 1])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            try:
+                expected = Counter(db.execute(plain).fetchall())
+            except sqlite3.OperationalError:
+                continue  # old SQLite without RIGHT JOIN
+            assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
