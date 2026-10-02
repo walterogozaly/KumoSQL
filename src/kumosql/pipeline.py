@@ -36,6 +36,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
+from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
@@ -865,6 +866,8 @@ def _apply_target_columns(statement: exp.Expression, query: exp.Query) -> None:
         names.append(name)
     first = query
     while isinstance(first, exp.SetOperation):
+        if is_by_name(first):
+            return  # the first branch need not carry the output columns
         first = first.left
     first = first.unnest() if isinstance(first, exp.Subquery) else first
     if not isinstance(first, exp.Select) or len(first.expressions) != len(names):
@@ -1136,6 +1139,15 @@ class _Analysis:
                 opaque_readers_of.update(upstream.get(key, ()))
                 continue
 
+            by_name_problems: list[str] = []
+            before_by_name = None
+            if any(is_by_name(node) for node in qualified.find_all(exp.SetOperation)):
+                # BY NAME / CORRESPONDING match columns by name; everything below reads by position.
+                before_by_name = qualified.copy()
+                qualified, by_name_problems = positionalize(qualified)
+                for problem in by_name_problems:
+                    diagnostics.append(PipelineDiagnostic(key, "by_name_set_operation", problem))
+
             if _has_unexpanded_star(qualified):
                 diagnostics.append(
                     PipelineDiagnostic(
@@ -1183,6 +1195,14 @@ class _Analysis:
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
                         used.add(ColumnRef(owner, column.name))
+            if before_by_name is not None:
+                # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
+                for scope in traverse_scope(before_by_name):
+                    for column in scope.columns:
+                        table = _source_table(scope, column)
+                        if table is not None:
+                            owner = pipeline.resolve(table) or _table_name_for_schema(table)
+                            used.add(ColumnRef(owner, column.name))
             used.update(excepted)
             consumed[key] = frozenset(used)
 
@@ -1218,6 +1238,11 @@ class _Analysis:
                     continue
                 if name == "*":
                     records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                    continue
+                if by_name_problems:
+                    # Positional tracing would attribute columns to the wrong branch column.
+                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "by_name_set_operation")
+                    direct[ref] = frozenset(used)
                     continue
                 try:
                     node = lineage(
@@ -1381,6 +1406,14 @@ def _scan_lineage(
             reason = reason or "unresolved_column"
         elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
             literal_unnest = True  # UNNEST of literals reads no column
+        elif (
+            item is not node
+            and isinstance(item.source, exp.Query)
+            and not isinstance(item.expression, exp.Star)
+            and not isinstance(getattr(item.expression, "this", None), exp.Star)
+            and item.expression.find(exp.Column) is None
+        ):
+            literal_unnest = True  # a derived column like COUNT(*) or 1 reads no column
         elif item is not node:
             reason = reason or "untraceable_source"
     if reason is None and not leaves and reads_column and not literal_unnest:

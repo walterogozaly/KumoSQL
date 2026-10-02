@@ -46,6 +46,7 @@ import sys
 import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled
+from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -541,6 +542,10 @@ class _AggCtx:
         self.calls: list[_AggCall] = []
 
 
+# Every outer join doubles the cases a select is compiled into; past this many the compiler gives up, not memory.
+MAX_OUTER_JOIN_CASES = 256
+
+
 class _Compiler:
     def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
         self.dialect = dialect
@@ -802,6 +807,8 @@ class _Compiler:
                         _State(list(b_occs), b_conds + [_Pred(z3.Not(atom), atom)], env2, b_subs + [anti])
                     )
             states = new_states
+            if len(states) > MAX_OUTER_JOIN_CASES:
+                raise Unsupported(f"more than {MAX_OUTER_JOIN_CASES} outer-join cases in one select")
         if len(states) > 1 and outer is not None:
             raise Unsupported("outer join inside a subquery")
         for st in states:
@@ -1620,13 +1627,14 @@ class _Prover:
         return self._nice_model(solver, occs) or base
 
     def _nice_model(self, solver, occs):
-        """Prefer integer-valued counterexamples; they fit INT64 and FLOAT64."""
+        """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
+        column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
         values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
-        for extra in (integral + numeric, integral):
+        for extra in (integral + numeric, numeric, integral):
             solver.push()
             solver.add(*extra)
             model = solver.model() if solver.check() == z3.sat else None
@@ -1956,10 +1964,16 @@ class _Prover:
         agg_pairs = []
         for call_b in b.aggs:
             arg_b = _subst_val(call_b.arg, pairs) if call_b.arg is not None else None
+            first = None
             for call_a in a.aggs:
                 if self._same_aggregate(a, call_a, call_b.func, call_b.distinct, arg_b, facts):
-                    agg_pairs.extend([(call_b.var.null, call_a.var.null), (call_b.var.val, call_a.var.val)])
-                    break
+                    if first is None:
+                        first = call_a
+                        agg_pairs.extend([(call_b.var.null, call_a.var.null), (call_b.var.val, call_a.var.val)])
+                    else:
+                        # another call of ``a`` that agrees with the same call of ``b`` (COUNT(x) and COUNT(y) over NOT NULL columns)
+                        own_pairs.extend([(call_a.var.null, first.var.null), (call_a.var.val, first.var.val)])
+        own_pairs = [p for p in own_pairs if not p[0].eq(p[1])]
         all_pairs = pairs + [p for p in agg_pairs if not p[0].eq(p[1])]
         # Aggregate values are left free: the claim must hold for any group.
         guard = z3.BoolVal(True) if a.is_global else a.cond.t
@@ -1982,7 +1996,13 @@ class _Prover:
             return not distinct and self.valid(z3.Implies(a.cond.t, z3.Not(present.null)), a.occs, facts)
         if arg is None:
             return True
-        return self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts)
+        if self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts):
+            return True
+        if func == "COUNT" and not distinct:
+            # COUNT of two columns that are never NULL is the same count of rows.
+            both = z3.And(z3.Not(call_a.arg.null), z3.Not(arg.null))
+            return self.valid(z3.Implies(a.cond.t, both), a.occs, facts)
+        return False
 
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
@@ -2971,6 +2991,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     """
 
     dialect = kwargs.get("dialect", "bigquery")
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
+    if problem:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     try:
         left_core, left_spec = _split_limit(left_sql, dialect)
         right_core, right_spec = _split_limit(right_sql, dialect)

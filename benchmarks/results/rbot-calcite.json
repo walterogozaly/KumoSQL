@@ -4,7 +4,7 @@
   "size": 45,
   "score": "19/45 proved, 0 wrong",
   "metric": "(Query, Calcite rewrite) pairs proved equivalent; 2 more are shown different by a counterexample, 24 unknown.",
-  "docs": "docs/sqlsolver.md#rbots-calcite-pairs",
+  "docs": "docs/sqlsolver.md#r-bots-calcite-pairs",
   "command": "python tools/rbot_bench.py",
   "date": "2026-10-02",
   "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test).",

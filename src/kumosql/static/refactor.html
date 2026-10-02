@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Refactor · KumoSQL</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/shell.css">
+  <script src="/assets/shell.js"></script>
+  <link rel="stylesheet" href="/assets/refactor.css">
+  <script defer src="/assets/refactor.js"></script>
+</head>
+<body>
+  <main class="rf-page" aria-label="Refactor">
+    <header class="rf-head">
+      <h1>Refactor</h1>
+      <span id="rf-status" class="rf-status" role="status" aria-live="polite"></span>
+      <button id="rf-save" type="button" class="secondary-button" disabled>Save</button>
+      <button id="rf-run" type="button" class="primary-button" disabled>Find simpler pipelines</button>
+    </header>
+    <section class="rf-classes" aria-label="Classes">
+      <div class="rf-class"><h2>Protected</h2><div id="rf-scopes-protected" class="rf-scopes"></div></div>
+      <div class="rf-class"><h2>Editable</h2><div id="rf-scopes-editable" class="rf-scopes"></div></div>
+    </section>
+    <section class="rf-models" aria-label="Models">
+      <div class="rf-toolbar">
+        <input id="rf-filter" type="search" placeholder="Filter models" aria-label="Filter models">
+        <label>Set shown to
+          <select id="rf-bulk" aria-label="Set shown models to">
+            <option value="">…</option><option value="protected">Protected</option><option value="editable">Editable</option><option value="frozen">Neither</option>
+          </select>
+        </label>
+      </div>
+      <div id="rf-list" class="rf-list"></div>
+    </section>
+    <section id="rf-results" class="rf-results" aria-label="Results"></section>
+  </main>
+</body>
+</html>

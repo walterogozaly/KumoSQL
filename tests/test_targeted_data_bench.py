@@ -45,3 +45,18 @@ def test_university_set_floors():
     assert result["configs"]["suite"]["score"] >= 0.80
     assert result["configs"]["suite"]["killed"] > result["configs"]["random_8"]["killed"]
     assert result["configs"]["single_seed"]["killed"] < result["configs"]["suite"]["killed"]
+
+
+def test_unsafe_rewrite_variants_are_all_caught():
+    items, suite = bench._unsafe_items("all")
+    records = [bench.process((item, suite)) for item in items]
+    result = bench.score(records)
+    assert result["mutants"] >= 339
+    assert result["configs"]["suite"]["killed"] == result["mutants"]
+
+
+def test_intersect_against_a_join_needs_null_keys_and_is_caught():
+    items, suite = bench._unsafe_items("all")
+    item = next(i for i in items if i["index"] == "union-intersect-5")
+    entry = bench.process((item, suite))["mutants"][0]
+    assert "suite" in entry["kills"]

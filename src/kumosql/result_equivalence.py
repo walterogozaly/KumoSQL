@@ -680,8 +680,14 @@ def check_result_equivalence(
     check_column_names: bool = True,
     float_digits: int = 12,
     use_query_constants: bool = True,
+    targeted: bool = False,
 ) -> ResultEquivalence:
     """Run both queries over several synthetic datasets and compare results.
+
+    With ``targeted`` the random databases are followed by the targeted suite built
+    around the left query (:func:`kumosql.targeted_data.database_suite`: corner cases,
+    rows at each comparison's boundary, each table empty in turn); it only adds
+    databases, so it can only turn "equivalent" into "different".
 
     With ``use_query_constants`` the generated values include the queries' own constants
     (see :func:`query_constants`), so their filters match some rows.
@@ -696,10 +702,22 @@ def check_result_equivalence(
     checked: list[int] = []
     left_sql_out: list[str] = []
     right_sql_out: list[str] = []
-    for seed in seeds:
-        dataset = generate_synthetic_dataset(
-            schema, seed=seed, rows_per_table=rows_per_table, null_rate=null_rate, extra_values=extras
-        )
+    def _datasets():
+        for seed in seeds:
+            yield seed, generate_synthetic_dataset(
+                schema, seed=seed, rows_per_table=rows_per_table, null_rate=null_rate, extra_values=extras
+            )
+        if targeted:
+            from .targeted_data import database_suite
+
+            try:
+                suite = database_suite(left_sql, schema, random_seeds=())
+            except (ValueError, sqlglot.errors.SqlglotError):
+                suite = []
+            for labeled in suite:
+                yield labeled.dataset.seed, labeled.dataset
+
+    for seed, dataset in _datasets():
         try:
             left_output, left_sql_out = execute_on_dataset(
                 left_sql, schema, dataset, run_tag=f"left_{seed}"
