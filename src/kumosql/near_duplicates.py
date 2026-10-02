@@ -45,6 +45,7 @@ import re
 
 from sqlglot import exp
 
+from .canonical import canonical_copy, rename_sources, scope_key, source_names
 from .pipeline import _fingerprint, _select_location
 
 
@@ -163,7 +164,7 @@ def find_near_duplicates(
         if small < threshold * large:  # Jaccard <= |A| / |B|
             continue
         score = _jaccard(a.shingles, b.shingles)
-        if score >= threshold and _has_unnested_pair(a, b):
+        if score >= threshold and _has_unnested_pair(a, b) and _same_sources(a, b):
             similarity[(i, j)] = score
 
     clusters = _star_clusters(variants, similarity)
@@ -172,7 +173,7 @@ def find_near_duplicates(
     for members in clusters:
         # Copies that differ only inside a nested query are reported through
         # that query's own cluster, where the difference is visible.
-        if len({_QUERY_TOKEN.sub("<query>", _render(variants[m].layer)) for m in members}) == 1:
+        if len({_QUERY_TOKEN.sub("<query>", _render(variants[m].canonical_layer)) for m in members}) == 1:
             continue
         result.append(_describe_cluster([variants[m] for m in members], members, similarity))
 
@@ -192,6 +193,7 @@ class _Variant:
     node_count: int
     select: exp.Select  # first occurrence, used for clause comparison
     layer: exp.Select  # ``select`` with nested queries collapsed to tokens
+    canonical_layer: exp.Select  # the same with aliases and operand order canonical, for comparison
     selects: list[exp.Select]
     occurrences: list[tuple[str, str]]
     shingles: frozenset[tuple[str, int]]  # multiset as (shingle, copy number)
@@ -207,8 +209,9 @@ def _collect_variants(parsed: dict[str, exp.Expression], min_nodes: int) -> list
                 layer = _layer(select)
                 if sum(1 for _ in layer.walk()) < min_nodes:
                     continue
+                canonical_layer = _layer(select, canonical=True)
                 shingles = frozenset(
-                    (key, n) for key, count in _shingles(layer).items() for n in range(count)
+                    (key, n) for key, count in _shingles(canonical_layer).items() for n in range(count)
                 )
                 variant = by_fingerprint[fingerprint] = _Variant(
                     fingerprint,
@@ -216,6 +219,7 @@ def _collect_variants(parsed: dict[str, exp.Expression], min_nodes: int) -> list
                     sum(1 for _ in select.walk()),
                     select,
                     layer,
+                    canonical_layer,
                     [],
                     [],
                     shingles,
@@ -225,7 +229,7 @@ def _collect_variants(parsed: dict[str, exp.Expression], min_nodes: int) -> list
     return sorted(by_fingerprint.values(), key=lambda v: v.fingerprint)
 
 
-def _layer(select: exp.Select) -> exp.Select:
+def _layer(select: exp.Select, *, canonical: bool = False) -> exp.Select:
     """A copy of one query level, with each nested query replaced by a token.
 
     The token names the nested query's fingerprint, so a SELECT is compared
@@ -234,6 +238,11 @@ def _layer(select: exp.Select) -> exp.Select:
     """
 
     copy = select.copy()
+    if canonical:
+        try:
+            copy = canonical_copy(select)  # aliases by position, so renamed copies shingle alike
+        except Exception:
+            pass
     nested = []
 
     def visit(node: exp.Expression) -> None:
@@ -334,6 +343,26 @@ def _is_ancestor(outer: exp.Expression, inner: exp.Expression) -> bool:
     return False
 
 
+def _sources_of(variant: "_Variant") -> tuple[frozenset[str], str]:
+    """The tables a SELECT reads at its own level (nested queries are compared at theirs).
+
+    A CTE defined outside the SELECT counts by what it contains: the same text over two different
+    CTEs is not one logic.
+    """
+
+    tables = frozenset(
+        ".".join(part for part in (t.catalog, t.db, t.name) if part).lower()
+        for t in variant.canonical_layer.find_all(exp.Table)
+    )
+    return tables, scope_key(variant.select, _render)
+
+
+def _same_sources(a: "_Variant", b: "_Variant") -> bool:
+    """Logic over different tables is a template, not a copy: only a shared source can be shared."""
+
+    return _sources_of(a) == _sources_of(b)
+
+
 def _has_unnested_pair(a: _Variant, b: _Variant) -> bool:
     """A SELECT and a thin wrapper around it are not duplicates of each other."""
 
@@ -350,7 +379,7 @@ def _star_clusters(
     Single-linkage clustering would chain A~B~C into one cluster even when A
     and C have little in common. Instead, the variant with the most
     unassigned neighbours (then the highest total similarity, then the most
-    occurrences) becomes a centre and takes its unassigned neighbours; this
+    occurrences, then the smallest query, so variants read as additions to it) becomes a centre and takes its unassigned neighbours; this
     repeats until no pair is left. Each cluster lists its centre first.
     """
 
@@ -368,7 +397,7 @@ def _star_clusters(
             free = {other: score for other, score in near.items() if other not in assigned}
             if not free:
                 continue
-            key = (len(free), sum(free.values()), len(variants[index].occurrences), -index)
+            key = (len(free), sum(free.values()), len(variants[index].occurrences), -variants[index].node_count, -index)
             if best is None or key > best[0]:
                 best = (key, index, free)
         if best is None:
@@ -389,8 +418,8 @@ def _render(node: exp.Expression) -> str:
     try:
         return canonical.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
     except AssertionError:
-        # sqlglot's BigQuery generator walks scopes and rejects a layer whose subqueries were swapped for tokens
-        # (an UNNEST over a subquery); the neutral dialect renders the same layer, equally on both sides of a comparison.
+        # A nested query replaced by a token inside ``FROM (...) AS s`` is not a source sqlglot's
+        # BigQuery generator can scope; the text is only compared, so any consistent rendering does.
         return canonical.sql(normalize=True, normalize_functions="upper", comments=False)
 
 
@@ -550,7 +579,9 @@ def _describe_cluster(
 ) -> NearDuplicateCluster:
     """Compare each variant with the first, the cluster's centre."""
 
-    layers = [_clauses(v.layer) for v in ordered]
+    # Every variant is compared, and merged, in the centre's own aliases and with operands in one order.
+    names = source_names(ordered[0].select)
+    layers = [_clauses(rename_sources(v.canonical_layer.copy(), names)) for v in ordered]
     diffs = [_differences(layers[0], c) for c in layers]
     changed = {d.clause for ds in diffs for d in ds}
 
@@ -564,7 +595,7 @@ def _describe_cluster(
         kind = "literal_parameters"
         shared_sql, parameters = parameterized
     elif changed and changed <= {"columns", "where"}:
-        clauses = [_clauses(v.select) for v in ordered]
+        clauses = [_clauses(rename_sources(_canonical_or_copy(v.select), names)) for v in ordered]
         suggestion = _merge_columns_and_filters(ordered, clauses, changed)
         if suggestion is not None:
             shared_sql, residuals = suggestion
@@ -586,6 +617,13 @@ def _describe_cluster(
         for variant, index, diff, residual in zip(ordered, indexes, diffs, residuals)
     )
     return NearDuplicateCluster(kind, described[0], described, shared_sql, parameters)
+
+
+def _canonical_or_copy(select: exp.Select) -> exp.Select:
+    try:
+        return canonical_copy(select)
+    except Exception:
+        return select.copy()
 
 
 def _merge_columns_and_filters(

@@ -1,0 +1,20 @@
+{
+  "suite": "Shared-model refactors: proved ready",
+  "order": 62,
+  "size": 137,
+  "score": "136/137 ready, 0 unsafe (fresh seed, 600 models)",
+  "metric": "Proposed extractions of repeated SELECTs into a shared model whose every consumer is proven unchanged (prover, or the copy is the shared SELECT after canonicalization); 450/450 families with equal copies get a verified refactor.",
+  "evidence": "proof",
+  "correctness": "0 refactors marked ready that change results when executed; a copy reading a CTE its model defines outside it is never ready",
+  "coverage": {
+    "proven": 136,
+    "unknown": 1
+  },
+  "held_out": "Seed 1, 3,000 models (tuned on): 714/749 ready, 0 unsafe; 450/450 families",
+  "caveats": "Generated cases. Ready needs a proof: the prover, canonical identity, or merging the shared SELECT back into each copy. One extra-filter refactor still cannot be proven and stays not ready (it agrees when executed). Before this work every proposal was Not ready.",
+  "usefulness": "450/450 families with at least two equal copies have a verified refactor offered (3,000 models)",
+  "performance": "3,000 models: exact 18 s, near-duplicates 77 s, repeated work 8 s, refactor verification 64 s (600 models: 4 s, 6 s, 2 s, 14 s)",
+  "date": "2026-10-02",
+  "docs": "docs/duplicate-detection.md",
+  "command": "python tools/dup_bench.py --sizes 600 --seed 2"
+}

@@ -1,0 +1,16 @@
+{
+  "suite": "Shared-model refactors: executed",
+  "order": 63,
+  "size": 137,
+  "score": "137/137 agree, 0 disagree (fresh seed, 600 models)",
+  "metric": "Each proposed refactor run as it would ship (the shared SELECT as a table, each edited model reading it) and compared with the original on 6 random DuckDB databases.",
+  "evidence": "executed",
+  "correctness": "0 disagreeing refactors; a negative-control test confirms the checker fails on a refactor that changes results",
+  "coverage": {},
+  "held_out": "Seed 1, 3,000 models (tuned on): 749/749 agree",
+  "caveats": "Agreement on random data is evidence, not proof, and is never what makes a refactor ready. Generated cases.",
+  "performance": "3,000 models: exact 18 s, near-duplicates 77 s, repeated work 8 s, refactor verification 64 s (600 models: 4 s, 6 s, 2 s, 14 s)",
+  "date": "2026-10-02",
+  "docs": "docs/duplicate-detection.md",
+  "command": "python tools/dup_bench.py --sizes 600 --seed 2"
+}
