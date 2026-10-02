@@ -331,3 +331,18 @@ def test_git_never_downloads_lfs_objects(monkeypatch):
     monkeypatch.setattr(git_repo.subprocess, "run", fake_run)
     git_repo._git(["--version"])
     assert seen["env"]["GIT_LFS_SKIP_SMUDGE"] == "1" and "filter.lfs.required=false" in seen["command"]
+
+
+def test_javascript_declarations_are_read_so_a_one_argument_ref_finds_them(remote):
+    bare, work = remote
+    commit(work, {
+        "definitions/sources/loop.js": 'const schema = "raw_loop";\n["loop_a"].forEach((t) => declare({ schema, name: t }));\n',
+        "definitions/uses_loop.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("loop_a")}',
+        "node_modules/pkg/index.js": 'declare({ schema: "ignored", name: "never" });',
+    }, "declarations")
+    fetched = git_repo.fetch_project(str(bare), refresh=True)
+    assert "definitions/sources/loop.js" in fetched["files"]
+    assert not any(path.startswith("node_modules/") for path in fetched["files"])
+    pipeline = live_graph.pipeline_from_files(fetched["files"])
+    assert any(key.endswith("raw_loop.loop_a") for key in pipeline.sources)  # the declared schema, not the default dataset
+    assert not any(key.endswith("d.loop_a") for key in pipeline.sources)

@@ -273,3 +273,36 @@ def test_saved_analysis_is_not_reused_under_other_limits(monkeypatch, tmp_path):
     first = live_graph._snapshot_file("k")
     monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "50")
     assert live_graph._snapshot_file("k") != first
+
+
+def test_limits_report_the_value_in_force_and_which_are_locked(monkeypatch, tmp_path):
+    from kumosql import lineage_limits
+
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    monkeypatch.delenv("KUMOSQL_LINEAGE_MODEL_SECONDS", raising=False)
+    monkeypatch.delenv("KUMOSQL_LINEAGE_SECONDS", raising=False)
+    lineage_limits.save_settings(model_seconds=30)
+    assert lineage_limits.status()["model_seconds"] == 30 and lineage_limits.status()["locked"] == []
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "5")
+    status = lineage_limits.status()
+    assert status["model_seconds"] == 5 and status["locked"] == ["model_seconds"]
+
+
+def test_a_generated_project_analyses_within_its_time_budget(tmp_path, monkeypatch):
+    """A guard against silent slowdowns in parsing and lineage. 500 generated models (one is deliberately wide) take about seven
+    seconds here; the budget leaves four times that for slow runners."""
+
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "make_large_project", Path(__file__).resolve().parents[1] / "tools" / "make_large_project.py"
+    )
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    generator.generate(tmp_path / "p", 500, 7, True)
+    files = {p.relative_to(tmp_path / "p").as_posix(): p.read_text(errors="ignore") for p in (tmp_path / "p").rglob("*") if p.is_file()}
+    start = time.perf_counter()
+    pipeline = live_graph.pipeline_from_files(files)
+    pipeline.report(include_duplicates=False)
+    assert time.perf_counter() - start < 30

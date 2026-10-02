@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import os
 import re
 import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Iterator
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
@@ -73,6 +75,37 @@ def _save_disk() -> None:
         os.replace(temp, path)
     except OSError:
         pass  # the cache is an optimization; never fail a request over it
+
+
+_batching = 0
+_dirty = False
+
+
+def _changed() -> None:
+    """Save the cache now, or once the enclosing :func:`batched_saves` block ends. Call with ``_lock`` held."""
+
+    global _dirty
+    if _batching:
+        _dirty = True
+    else:
+        _save_disk()
+
+
+@contextmanager
+def batched_saves() -> Iterator[None]:
+    """Write the cache file once at the end instead of after every answer (it is rewritten whole each time)."""
+
+    global _batching, _dirty
+    with _lock:
+        _batching += 1
+    try:
+        yield
+    finally:
+        with _lock:
+            _batching -= 1
+            if not _batching and _dirty:
+                _dirty = False
+                _save_disk()
 
 
 def clear_cache() -> None:
@@ -181,7 +214,7 @@ def cached(key: str, fetch, refresh: bool = False) -> dict:
         raise
     with _lock:
         _memory[key] = {"at": now, "data": data}
-        _save_disk()
+        _changed()
     return {"data": data, "fetchedAt": now, "cached": False, "stale": False, "refreshing": False}
 
 
@@ -195,15 +228,26 @@ def forget_table(project: str, dataset: str, table: str) -> None:
             _save_disk()
 
 
+_token_lock = threading.Lock()
+token_refreshes = 0  # times a new access token was fetched in this process (a count for the log, never the token)
+
+
 def _token_cached() -> str:
-    global _token
+    """One access token for every request, refreshed once when it ages out (safe from many threads)."""
+
+    global _token, token_refreshes
     if os.environ.get("BQ_ACCESS_TOKEN"):
         return access_token()
-    if _token and time.time() < _token[1]:
-        return _token[0]
-    value = access_token()
-    _token = (value, time.time() + _TOKEN_SECONDS)
-    return value
+    current = _token
+    if current and time.time() < current[1]:
+        return current[0]
+    with _token_lock:  # concurrent callers wait for one refresh instead of each doing their own
+        if _token and time.time() < _token[1]:
+            return _token[0]
+        value = access_token()
+        token_refreshes += 1
+        _token = (value, time.time() + _TOKEN_SECONDS)
+        return value
 
 
 def _note_path(path: str) -> None:
@@ -498,8 +542,10 @@ def list_tables(project: str, dataset: str) -> list[dict[str, str]]:
 
 def get_table(project: str, dataset: str, table: str) -> dict:
     """Return table metadata with its BigQuery schema."""
+    # tables.get reads metadata only, never rows, so a table that requires a partition filter is no problem.
     payload = _get(
-        f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables/{quote(table, safe='')}"
+        f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables/{quote(table, safe='')}",
+        {"fields": "tableReference,type,numRows,schema,tableConstraints"},
     )
     reference = payload.get("tableReference", {})
     return {

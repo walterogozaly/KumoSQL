@@ -69,11 +69,11 @@ _spec.loader.exec_module(bench)
 
 pytest.importorskip("duckdb")
 
-FLOOR = 10
+FLOOR = 23
 
 
 def test_labelled_corpus_has_no_wrong_proofs_and_keeps_its_floor():
-    result = bench.run("cases.json", trials=40)
+    result = bench.run("cases.json")
     assert result["wrong"] == [] and result["label_wrong"] == [], (result["wrong"], result["label_wrong"])
     assert result["error"] == 0
     assert result["exact_guarantees"] >= FLOOR, result["exact_guarantees"]

@@ -29,6 +29,11 @@ def _filtered(current: dict, scope_name: str | None):
 
         reads = [row for row in reads if plan.jobs.matches(job_record(row))]
     keep = current["pipeline"].scope_keys(plan.models) if plan and plan.models is not None else None
+    from . import catalogs
+
+    mine = catalogs.model_keys(current["pipeline"])
+    if mine is not None:
+        keep = mine if keep is None else keep & mine
     return plan, reads, keep
 
 
@@ -285,8 +290,10 @@ def compare_branch(base_branch: object, refresh: bool = False, scope_name: str |
             head_pipeline = load_sqlx_project(head_dir)
         except Exception as exc:  # loader errors are user-facing
             raise ProjectError(str(exc) or "project could not be loaded") from exc
+        from . import catalogs
+
         report = build_change_report(
-            base_pipeline, head_pipeline, base_root=Path(base_dir), head_root=Path(head_dir),
+            base_pipeline, head_pipeline, owned=(catalogs.owned(base_pipeline), catalogs.owned(head_pipeline)), base_root=Path(base_dir), head_root=Path(head_dir),
             title=f"{base['branch']} → {head['branch']}",
             base_label=f"{base['branch']} @ {base['commit']}", head_label=f"{head['branch']} @ {head['commit']}",
             scope=scope,

@@ -1,23 +1,11 @@
 {
- "data/export_data::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "data/export_data::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 19."
  },
- "data/export_data_connection::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "data/export_data_connection::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 16."
- },
- "data/export_data_pubsub::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "data/export_data_pubsub::parse": {
   "owner": "sqlglot",
@@ -35,17 +23,9 @@
   "owner": "kumosql",
   "reason": "parse_error; parse_error; parse_error; parse_error; parse_error; parse_error"
  },
- "data/load_data::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "data/load_data::parse": {
   "owner": "sqlglot",
   "reason": "AttributeError: 'NoneType' object has no attribute 'name'"
- },
- "data/load_data_overwrite::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "data/load_data_overwrite::parse": {
   "owner": "sqlglot",
@@ -55,10 +35,6 @@
   "owner": "kumosql",
   "reason": "parse_error; parse_error; parse_error; parse_error; parse_error; parse_error"
  },
- "data/load_data_partition_columns::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "data/load_data_partition_columns::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 175."
@@ -66,10 +42,6 @@
  "data/load_data_temp_table::cleanup": {
   "owner": "kumosql",
   "reason": "parse_error; parse_error; parse_error; parse_error; parse_error; parse_error"
- },
- "data/load_data_temp_table::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "data/load_data_temp_table::parse": {
   "owner": "sqlglot",
@@ -135,10 +107,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 37."
  },
- "ddl/alter_materialized_view::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/alter_materialized_view::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
@@ -151,17 +119,9 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
  },
- "ddl/alter_organization::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/alter_organization::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
- },
- "ddl/alter_project::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/alter_project::parse": {
   "owner": "sqlglot",
@@ -171,10 +131,6 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
  },
- "ddl/alter_schema::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/alter_schema::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
@@ -183,17 +139,9 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
  },
- "ddl/alter_table_alter_column::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/alter_table_alter_column::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
- },
- "ddl/alter_table_constraints::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/alter_table_constraints::parse": {
   "owner": "sqlglot",
@@ -203,53 +151,25 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
- "ddl/alter_view_alter_column::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/alter_view_alter_column::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps ALTER as an opaque command"
- },
- "ddl/create_aggregate_function::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_aggregate_function::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
  },
- "ddl/create_assignment::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/create_assignment::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
- },
- "ddl/create_capacity_reservation::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_capacity_reservation::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
  },
- "ddl/create_external_table_with_schema::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/create_external_table_with_schema::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
- },
- "ddl/create_function_js::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "ddl/create_function_js_library::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_function_remote::format": {
   "owner": "sqlfluff",
@@ -283,10 +203,6 @@
   "owner": "kumosql",
   "reason": "recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovere"
  },
- "ddl/create_procedure_sql::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/create_procedure_sql::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 69."
@@ -299,33 +215,17 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
  },
- "ddl/create_reservation::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/create_reservation::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
- },
- "ddl/create_row_access_policy::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_row_access_policy::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
  },
- "ddl/create_search_index::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/create_search_index::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
- },
- "ddl/create_snapshot_table::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_snapshot_table::parse": {
   "owner": "sqlglot",
@@ -334,26 +234,6 @@
  "ddl/create_table_all_types::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
- },
- "ddl/create_table_clone::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
- "ddl/create_table_copy::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
- "ddl/create_table_like::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
- "ddl/create_temp_function::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "ddl/create_vector_index::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "ddl/create_vector_index::parse": {
   "owner": "sqlglot",
@@ -395,10 +275,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 16."
  },
- "dml/delete_exists::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_order_items"
- },
  "dml/merge_cte_source::graph": {
   "owner": "kumosql",
   "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
@@ -410,14 +286,6 @@
  "dml/merge_insert_row::graph": {
   "owner": "kumosql",
   "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
- "dml/update_from_join::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_order_items"
- },
- "dml/update_subquery::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_order_items"
  },
  "query/aggregate_filter_modifiers::prover": {
   "owner": "prover",
@@ -451,10 +319,6 @@
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
  },
- "query/changes_function::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/changes_function::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 61."
@@ -475,10 +339,6 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
- "query/ml_data_functions_detect_anomalies::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/ml_data_functions_detect_anomalies::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 74."
@@ -487,17 +347,9 @@
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"
  },
- "query/ml_forecast_ai::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/ml_forecast_ai::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 71."
- },
- "query/ml_generate_text::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/ml_generate_text::parse": {
   "owner": "sqlglot",
@@ -507,10 +359,6 @@
   "owner": "kumosql",
   "reason": "parse_error; parse_error; parse_error; parse_error; parse_error; parse_error"
  },
- "query/object_table_function::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/object_table_function::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 87."
@@ -519,33 +367,13 @@
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
  },
- "query/pipe_aggregate_group_alias::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_aggregate_group_alias::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
  },
- "query/pipe_as_alias::cleanup": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/pipe_as_alias::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_as_alias::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
- },
- "query/pipe_call_tablesample::cleanup": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/pipe_call_tablesample::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/pipe_call_tablesample::parse": {
   "owner": "sqlglot",
@@ -555,45 +383,21 @@
   "owner": "prover",
   "reason": "unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT)"
  },
- "query/pipe_distinct::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_distinct::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
- },
- "query/pipe_extend_set_drop::cleanup": {
-  "owner": "kumosql",
-  "reason": "recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse"
- },
- "query/pipe_extend_set_drop::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/pipe_extend_set_drop::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Unsupported pipe syntax operator: 'SET'.. Line 1, Col: 75."
  },
- "query/pipe_from_select::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_from_select::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
  },
- "query/pipe_join::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_join::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 45."
- },
- "query/pipe_pivot_unpivot::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/pipe_pivot_unpivot::parse": {
   "owner": "sqlglot",
@@ -603,10 +407,6 @@
   "owner": "prover",
   "reason": "unsupported: unaliased subquery in FROM"
  },
- "query/pipe_select_window_qualify::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_select_window_qualify::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 46."
@@ -615,21 +415,9 @@
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"
  },
- "query/pipe_set_ops::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_set_ops::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
- },
- "query/pipe_where_aggregate::cleanup": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/pipe_where_aggregate::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/pipe_where_aggregate::parse": {
   "owner": "sqlglot",
@@ -639,21 +427,9 @@
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
  },
- "query/pipe_window::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_window::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 46."
- },
- "query/pipe_with_cte::cleanup": {
-  "owner": "kumosql",
-  "reason": "recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse"
- },
- "query/pipe_with_cte::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/pipe_with_cte::parse": {
   "owner": "sqlglot",
@@ -667,25 +443,13 @@
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"
  },
- "query/set_corresponding::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/set_corresponding::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Required keyword: 'expression' missing for <class 'sqlglot.expressions.Union'>. Line 1, Col: 79."
  },
- "query/set_left_mode::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/set_left_mode::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 60."
- },
- "query/set_strict_corresponding_inner::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/set_strict_corresponding_inner::parse": {
   "owner": "sqlglot",
@@ -706,10 +470,6 @@
  "query/unquoted_dashed_project::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
- },
- "query/vector_search::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/vector_search::parse": {
   "owner": "sqlglot",
@@ -743,33 +503,17 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
  },
- "script/begin_end_with_tempobjects::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
  "script/begin_exception::cleanup": {
   "owner": "kumosql",
   "reason": "source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error; source_splice_error"
- },
- "script/begin_exception::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "script/begin_exception::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
  },
- "script/call_procedure::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "script/call_procedure::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CALL as an opaque command"
- },
- "script/call_with_dml::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "script/call_with_dml::parse": {
   "owner": "sqlglot",
@@ -838,10 +582,6 @@
  "script/raise::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
- },
- "script/repeat_until::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "script/repeat_until::parse": {
   "owner": "sqlglot",

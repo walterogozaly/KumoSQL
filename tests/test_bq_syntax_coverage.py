@@ -22,14 +22,30 @@ GAPS = coverage.load_known_gaps()
 CASE_STAGES = [(case["id"], stage) for case in CASES for stage in coverage.stages_for(case)]
 
 
-@pytest.fixture(scope="module")
+BY_ID = {case["id"]: case for case in CASES}
+_RESULTS: dict[str, dict] = {}
+
+
+@pytest.fixture
 def results():
-    mp = pytest.MonkeyPatch()
-    mp.setenv("KUMOSQL_TIMING", "0")
-    try:
-        return coverage.run_all(CASES)
-    finally:
-        mp.undo()
+    """Stage results by case id, each case run on first use.
+
+    Running every case up front made each parallel worker repeat the whole ~1 minute run; a case now
+    runs once per worker, and ``xdist_group`` on ``test_stage`` keeps a case's stages on one worker.
+    """
+
+    class Lazy(dict):
+        def __missing__(self, case_id):
+            if case_id not in _RESULTS:
+                mp = pytest.MonkeyPatch()
+                mp.setenv("KUMOSQL_TIMING", "0")
+                try:
+                    _RESULTS[case_id] = coverage.run_case(BY_ID[case_id])
+                finally:
+                    mp.undo()
+            return _RESULTS[case_id]
+
+    return Lazy()
 
 
 def test_manifest_lists_every_fixture_file_once():
@@ -67,7 +83,10 @@ def test_dry_run_results_cover_the_manifest_when_recorded():
     assert not rejected, rejected
 
 
-@pytest.mark.parametrize("case_id,stage", CASE_STAGES, ids=[f"{c}::{s}" for c, s in CASE_STAGES])
+@pytest.mark.parametrize(
+    "case_id,stage",
+    [pytest.param(c, s, id=f"{c}::{s}", marks=pytest.mark.xdist_group(c)) for c, s in CASE_STAGES],
+)
 def test_stage(results, case_id, stage):
     status, detail = results[case_id][stage]
     gap = GAPS.get(f"{case_id}::{stage}")

@@ -38,6 +38,7 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from fractions import Fraction
 import argparse
+import hashlib
 import itertools
 import json
 import re
@@ -45,7 +46,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised by the import itself
@@ -156,6 +157,7 @@ _SUPPORTED_AGGREGATES = {
 }
 _DATEISH = re.compile(r"^\s*[+-]?\d{1,5}-\d{1,2}-\d{1,2}")
 _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CANONICAL_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
 
@@ -574,6 +576,7 @@ class _Compiler:
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
         self.string_literals: set[str] = set()
+        self.timestamp_literals: set[str] = set()
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -581,14 +584,19 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [canonical_negation(s) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        try:
+            statements = [expand_alias_columns(check_modeled(canonical_negation(s)), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        except UnmodeledConstruct as error:
+            raise Unsupported(str(error)) from error
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
         if any(statement.find_all(exp.Pivot)):
             # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
             raise Unsupported("PIVOT and UNPIVOT are not modeled")
-        self._check_nondeterminism(statement)
+        # Inside a comparison of two opaque bodies (``_unify_opaque``) the kqw* markers are renamed away;
+        # a window there still raises Unsupported wherever it would be evaluated, or sits in an opaque body.
+        self._check_nondeterminism(statement, allow_windows=_nesting[0] > 0)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
 
@@ -948,6 +956,9 @@ class _Compiler:
         except Unsupported:
             del self.facts[saved:]
             return self._opaque(body, ctes, occs)
+        one_row = self._one_row_source(sub, body, ctes)
+        if one_row is not None:
+            return one_row
         if len(sub.branches) == 1 and isinstance(sub.branches[0], _Spj) and not sub.branches[0].distinct:
             branch = sub.branches[0]
             if len(set(branch.names)) != len(branch.names) or "" in branch.names:
@@ -964,6 +975,41 @@ class _Compiler:
             if is_set and names and len(set(names)) == len(names) and "" not in names:
                 return self._set_source(branch, names, conds)
         return self._opaque(body, ctes, occs)
+
+    def _one_row_source(self, sub: _Union, body, ctes) -> _Source | None:
+        """A derived global aggregate (no GROUP BY, no HAVING) always has exactly one row.
+
+        Joined into a query it changes no multiplicity, so it is read as one row
+        of values that may be anything an aggregate returns, the same values
+        wherever the same relation (by its CTE-expanded SQL) appears; COUNT is a
+        number of at least zero.
+        """
+
+        if len(sub.branches) != 1 or sub.distinct:
+            return None
+        block = sub.branches[0]
+        if not isinstance(block, _Agg) or not block.is_global or block.having is not None or block.subs:
+            return None
+        names = list(block.names)
+        if not names or "" in names or len(set(names)) != len(names):
+            return None
+        expanded = self._expand_ctes(body.copy(), ctes)
+        self._check_nondeterminism(expanded)
+        self.uses_uf = True  # the values are free: a model is not a database, so no counterexample
+        key = _canonical_aliases(expanded, self.schema).sql(dialect="bigquery", normalize_functions="upper")
+        tag = hashlib.sha1(key.encode()).hexdigest()[:16]
+        V = _value_sort()
+        counts = {id(call.var): call for call in block.aggs if call.func in ("COUNT", "COUNTIF")}
+        cols = {}
+        for index, (name, output) in enumerate(zip(names, block.outputs)):
+            call = next((c for c in counts.values() if c.var.val.eq(output.val) and c.var.null.eq(output.null)), None)
+            val = z3.Const(f"one{tag}.{index}", V)
+            if call is not None:
+                self.facts.append(z3.And(V.is_Num(val), V.num(val) >= 0))
+                cols[name] = _Val(z3.BoolVal(False), val)
+            else:
+                cols[name] = _Val(z3.Bool(f"one{tag}.{index}#null"), val)
+        return _Source(cols=cols, order=names)
 
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
@@ -1354,6 +1400,12 @@ class _Compiler:
             return _Val(v.null, val_fn(*self._uf_args([v])))
         if isinstance(e, (exp.Func, exp.Binary, exp.Unary)):
             return self._generic(e, env, agg, aliases)
+        if isinstance(e, exp.Interval) and all(isinstance(n, (exp.Interval, exp.Literal, exp.Var)) for n in e.walk()):
+            # A constant interval is one fixed value, named by its text; date arithmetic over it stays
+            # uninterpreted, and two spellings of one interval may read as different values, so no
+            # counterexample is reported from it.
+            self.uses_uf = True
+            return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
 
     def _numeric(self, v: _Val) -> None:
@@ -1364,8 +1416,10 @@ class _Compiler:
         if e.is_string:
             text = e.this
             self.string_literals.add(text)
-            if _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
-                raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' is modeled)")
+            if _CANONICAL_TIMESTAMP.match(text):
+                self.timestamp_literals.add(text)  # fixed width, so string order is time order among timestamps
+            elif _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
+                raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' and 'YYYY-MM-DD HH:MM:SS' are modeled)")
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal(text)))
         value = _parse_number(e.this)
         if negate:
@@ -2730,7 +2784,9 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
         return
 
     def tables(sql: str) -> frozenset:
-        return frozenset(t.name.lower() for t in sqlglot.parse_one(sql, read="bigquery").find_all(exp.Table))
+        tree = sqlglot.parse_one(sql, read="bigquery")
+        ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+        return frozenset(t.name.lower() for t in tree.find_all(exp.Table)) - ctes
 
     representatives: list[str] = []
     mapping: dict[str, str] = {}
@@ -2743,7 +2799,8 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
             budget -= 1
             _nesting[0] += 1
             try:
-                result = _prove_core(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
+                # The LIMIT-aware entry point: a body may end in ORDER BY .. LIMIT on both sides.
+                result = prove_equivalent_smt(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
             finally:
                 _nesting[0] -= 1
             if result.status is SmtStatus.PROVEN_EQUIVALENT:
@@ -2808,6 +2865,9 @@ def _prove_core(
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
         )
+        if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
+            # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)
         extra = compiler.order_facts()
         if extra:
             for union in (left, right):
@@ -2907,7 +2967,10 @@ def _split_limit(sql: str, dialect: str):
     shape is not handled (``spec`` then says why).
     """
 
-    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
+    try:
+        tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
+    except UnmodeledConstruct:
+        return sql, None
     root = tree
     while isinstance(root, exp.Subquery):
         root = root.this
@@ -2969,7 +3032,7 @@ def _split_limit(sql: str, dialect: str):
         tuple(ordering),
         covers,
     )
-    return core.sql(dialect=dialect), spec
+    return faithful_sql(core, dialect), spec
 
 
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
@@ -2999,6 +3062,14 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         reason = left_spec if left_core is None else right_spec
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {reason}")
     if left_spec is None or right_spec is None:
+        # The limited query may sit inside the other one as a derived table: compare with it wrapped.
+        wrapped = [
+            sql if spec is None else f"SELECT * FROM ({sql}) AS kq_limited"
+            for sql, spec in ((left_sql, left_spec), (right_sql, right_spec))
+        ]
+        result = _prove_core(wrapped[0], wrapped[1], **kwargs)
+        if result.proven:
+            return result
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
     if left_spec[:3] != right_spec[:3]:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")

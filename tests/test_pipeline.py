@@ -87,8 +87,9 @@ def test_ref_by_name_finds_a_model_in_its_own_dataset(tmp_path):
     assert pipeline.upstream["proj.staging.stg"] == {"lake.raw.events"}
     assert pipeline.upstream["proj.marts.kpi"] == {"proj.staging.stg"}
     assert pipeline.upstream["proj.analytics.obj"] == {"proj.marts.kpi", "proj.staging.stg"}
-    # A name two actions share is ambiguous: the project defaults apply, as before.
-    assert [dep.key for dep in pipeline.models["proj.analytics.uses_dup"].declared_dependencies] == ["proj.analytics.dup"]
+    # A name two actions share is ambiguous (Dataform refuses to compile it): it is not guessed.
+    assert pipeline.models["proj.analytics.uses_dup"].declared_dependencies == ()
+    assert any(d.code == "unsupported_ref" for d in pipeline.diagnostics)
 
 
 def test_ctx_ref_resolve_and_config_dependencies_are_edges(tmp_path):
