@@ -51,6 +51,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - The formatter upper-cased backticked routine paths (``DROP FUNCTION `p.d.f` `` became `` `P.D.F` ``), and the equivalence check called that proven. Quoted names are now restored exactly.
 - `CREATE TABLE/VIEW ... AS SELECT`, `INSERT ... SELECT` and `EXPORT DATA ... AS SELECT` in `.sql` files had no reads in the graph; they do now.
 - A `.sql` file with a `config { }` block is loaded as an action instead of failing to parse.
+- Table-valued function calls that pass a table (`FROM dataset.fn(TABLE dataset.input, option => value)`) failed to parse ("Expecting )") in sqlglot's BigQuery parser, so the model lost every read. `kumosql.bigquery_syntax` teaches the parser the `TABLE` argument once for the whole package; the table is read, the SQL prints back unchanged, and the columns the function returns are reported unknown (`untraceable_source`), never attributed to a table named like the function. Covered by `tests/test_table_function_arguments.py`.
 - Analytical corpora ([analytical-sql-coverage.md](analytical-sql-coverage.md)) found that the formatter re-cased unquoted table and column names (BigQuery table names are case sensitive), and that windows and `ORDER BY ... LIMIT` blocked every proof; the `query/analytical_*` cases cover them.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
 

@@ -1557,7 +1557,10 @@ def _scan_lineage(
             if _TRANSFORM_RANK.get(kind, 0) > _TRANSFORM_RANK[transform]:
                 transform = kind
             continue
-        if isinstance(item.source, exp.Table):
+        if isinstance(item.source, exp.Table) and isinstance(item.source.this, exp.Func):
+            # ``FROM dataset.fn(TABLE t, ...)``: the columns the function returns are not columns of a table named fn.
+            reason = reason or "untraceable_source"
+        elif isinstance(item.source, exp.Table):
             owner = pipeline.resolve(item.source) or _table_name_for_schema(item.source)
             column_name = item.name.split(".")[-1].strip('"`')
             parent = parent_of.get(id(item))

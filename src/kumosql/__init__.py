@@ -1,5 +1,6 @@
 """KumoSQL."""
 
+from . import bigquery_syntax as _bigquery_syntax  # noqa: F401  (teaches sqlglot TABLE arguments of table-valued functions)
 from .lift_subqueries import (
     LiftDiagnostic,
     LiftResult,

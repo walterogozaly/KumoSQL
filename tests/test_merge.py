@@ -194,3 +194,23 @@ def test_rules_leave_a_merge_untouched():
     sql = merge("WHEN MATCHED AND 1 = 1 THEN UPDATE SET t.v = (s.v)")
     result = kumosql.apply_rules(list(kumosql.available_rules()), sql)
     assert "MERGE" in result.sql.upper() and "UPDATE SET" in result.sql.upper()
+
+
+WALTER_MERGE = """MERGE `p.d.tgt` T USING (SELECT k, v FROM `p.d.src`) S ON T.k = S.k
+WHEN MATCHED THEN UPDATE SET v = S.v
+WHEN NOT MATCHED THEN INSERT (k, v) VALUES (S.k, S.v)"""
+
+
+@pytest.mark.parametrize("kind", ["table", "incremental", "operations"])
+def test_the_trivial_merge_from_a_user_report_is_one_statement_with_its_source_upstream(kind):
+    """It used to be reported as a script of two queries, analysed by its last one, found to have no query, and given up on;
+    `p.d.src` was not a read, so the table the MERGE builds had no upstream."""
+
+    from kumosql.scripts import analyse_script, split_script
+
+    assert len(split_script(WALTER_MERGE)) == 1
+    assert sum(analyse_script(WALTER_MERGE).counts().values()) == 1
+    pl = Pipeline({"p.d.tgt": Model(Target("p", "d", "tgt"), kind, WALTER_MERGE)}, {"p.d.src": Target("p", "d", "src")}, {})
+    assert pl.upstream["p.d.tgt"] == {"p.d.src"}
+    assert not codes(pl) and pl.completeness()["complete"]
+    assert lineage(pl, "p.d.tgt") == {"k": {"p.d.src.k"}, "v": {"p.d.src.v"}}
