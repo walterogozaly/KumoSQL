@@ -15,7 +15,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["calcite_mined_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOOR = 361
+FLOOR = 363
 
 
 @pytest.mark.slow
