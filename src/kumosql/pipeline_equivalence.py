@@ -193,7 +193,10 @@ def prove_models(
         if direct.status is SmtStatus.PROVEN_EQUIVALENT:
             used_declared[:] = [i for i in {*(flat[0][1]), *(flat[1][1])}]
             return finish("inlined", direct)
-    outcome = PipelineResult("unknown", result.reason, "", notes)
+    # The layer attempt compares a model with its rewritten copy, which read different tables, so its reason says
+    # little; when the flat queries were compared too, theirs is the reason the proof failed.
+    why = direct.reason if flat[0] and flat[1] else result.reason
+    outcome = PipelineResult("unknown", why, "", notes)
     if bounded_check is not None:
         pair = (flat[0][0], flat[1][0]) if flat[0] and flat[1] else (left_sql, right_sql)
         outcome.bounded = bounded_check(*pair)

@@ -196,7 +196,30 @@ def consolidate_tables(
     if ok:
         return ConsolidationResult("equivalent", "proved equal to the original by the pipeline prover", target_key,
                                    members, sql, original, assumptions, notes)
+    hidden = _star_without_columns(pipeline, [*members, target_key], schema)
+    if hidden:
+        why = f"{why}; SELECT * reads {', '.join(hidden)}, whose columns are not declared (declare them or load the BigQuery catalog)"
     return ConsolidationResult("unknown", why or "not proved", target_key, members, sql, original, [], notes)
+
+
+def _star_without_columns(pipeline, keys: list[str], schema: ProverSchema | None) -> list[str]:
+    """Tables read by a ``SELECT *`` in the given models whose columns the prover does not know."""
+
+    known = {name.lower() for name in (schema.columns if schema else {})}
+    found: list[str] = []
+    for key in keys:
+        try:
+            tree = _parse(pipeline.models[key].sql)
+        except sqlglot.errors.SqlglotError:
+            continue
+        for select in tree.find_all(exp.Select):
+            if not any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+                continue
+            for table in select.find_all(exp.Table):
+                name = pipeline.resolve(table) or table.name
+                if name.lower() not in known and name not in found:
+                    found.append(name)
+    return found
 
 
 def consolidate_loaded(tables: object, target: object) -> dict:
