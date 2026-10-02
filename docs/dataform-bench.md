@@ -6,7 +6,7 @@ Rewrites must never touch what they do not understand. This eval builds SQLX fil
 
 ## What is built
 
-Each file has a `config` block (with nested braces, braces and apostrophes inside strings and comments, `columns`, `bigquery`, `assertions`, `tags`), and some of: `js` blocks (template literals, comments with braces, several blocks), `${ref(...)}` in every form (`"a"`, `'a'`, `"schema", "a"`, `{schema, name}`, `ctx.ref`, extra spaces), nested interpolation (`${when(incremental(), \`... ${self()} ...\`)}` and a `ref()` inside it), `pre_operations` and `post_operations` with `${self()}` and `${ref()}`, incremental branches, templates KumoSQL cannot resolve (`FROM ${tbl}`, `${ref(variable)}`, `${helpers.table('x')}`, a computed ref), and text forms (CRLF, a byte-order mark, tabs, unicode). The SQL part holds a subquery and a trivial predicate that rewrite rules can fix.
+Each file has a `config` block (with nested braces, braces and apostrophes inside strings and comments, `columns`, `bigquery`, `assertions`, `tags`), and some of: `js` blocks (template literals, comments with braces, several blocks), `${ref(...)}` in every form (`"a"`, `'a'`, `"schema", "a"`, `{schema, name}`, `ctx.ref`, extra spaces), nested interpolation (`${when(incremental(), \`... ${self()} ...\`)}` and a `ref()` inside it), `pre_operations` and `post_operations` with `${self()}` and `${ref()}`, incremental branches, templates KumoSQL cannot resolve (`FROM ${tbl}`, `${ref(variable)}`, `${helpers.table('x')}`, a computed ref), and text forms (CRLF, a byte-order mark, tabs, unicode). The `declared_refs` family reads tables declared outside the default schema or database, by a `declaration` sqlx file, a `declare()` call, a loop over a literal list, or constants; the expected dependency is the exact `database.schema.name`. A declaration computed in JavaScript must leave the ref unresolved and flagged, never the default schema. The SQL part holds a subquery and a trivial predicate that rewrite rules can fix.
 
 ## What is scored
 
@@ -17,7 +17,7 @@ Each file has a `config` block (with nested braces, braces and apostrophes insid
 | Coverage | Templates resolved, templates flagged as unsupported, and SQL parts still fixed by a rewrite around protected text |
 | Performance | Seconds to load 500 and 2,000 files |
 
-**Score: 6,744/6,744 protected-text checks kept, 0 damaged; 339/339 dependencies found, 0 wrong; 36/36 unresolvable templates flagged; 216/216 fixable files still rewritten around protected text.** Loading takes 2.1 s for 496 files and 7.7 s for 2,000.
+**Score: 7,032/7,032 protected-text checks kept, 0 damaged; 370/370 dependencies found, 0 wrong; 36/36 unresolvable templates flagged; 216/216 fixable files still rewritten around protected text.** Loading takes 2.1 s for 496 files and 7.7 s for 2,000.
 
 **Held-out families, first run** (144 files): 0 protected spans damaged and 0 wrong dependencies, but dependency recall was 108/144: every `ref()` inside `pre_operations` was missed. Fixed afterwards, so those families no longer count as held out. Before the dev fixes below, the dev families rewrote 108 of 144 fixable files; the rest were declined safely.
 
@@ -26,6 +26,8 @@ Each file has a `config` block (with nested braces, braces and apostrophes insid
 1. `ref()` inside `pre_operations` or `post_operations` was not a dependency (only the SQL sections were read), so the graph and change impact missed the edge.
 2. A table named by an unresolved template (`FROM ${tbl}`) showed up as an external table called `__sqlx_token_000__`, an internal placeholder. It is now an `unresolved_template` gap ("Template not resolved"): its dependency is unknown, it is an unknown reader for every change, and no column in the pipeline is called dead while it exists.
 3. `WHERE a > 0 ${when(incremental(), \`AND b > 1\`)}`, the usual incremental idiom, could not be parsed around, so every rule declined the file. The placeholder now continues the condition and the rules rewrite the SQL around it; the `${...}` text still comes out byte for byte.
+
+4. `ref()` to a table declared in a `.js` file (`declare(...)`, in a loop or in `includes/`) fell back to the default schema and named the wrong table. Declarations are now read from JavaScript; a ref KumoSQL cannot settle (a name declared in two schemas, or any unlisted name while a file declares tables by computation) is left unresolved, or settled from Dataform's own compilation when credentials allow (see docs/dataform-repositories.md). This family was added with that fix and is a dev family.
 
 ## Limits
 

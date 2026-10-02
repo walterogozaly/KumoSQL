@@ -195,15 +195,26 @@ def forget_table(project: str, dataset: str, table: str) -> None:
             _save_disk()
 
 
+_token_lock = threading.Lock()
+token_refreshes = 0  # times a new access token was fetched in this process (a count for the log, never the token)
+
+
 def _token_cached() -> str:
-    global _token
+    """One access token for every request, refreshed once when it ages out (safe from many threads)."""
+
+    global _token, token_refreshes
     if os.environ.get("BQ_ACCESS_TOKEN"):
         return access_token()
-    if _token and time.time() < _token[1]:
-        return _token[0]
-    value = access_token()
-    _token = (value, time.time() + _TOKEN_SECONDS)
-    return value
+    current = _token
+    if current and time.time() < current[1]:
+        return current[0]
+    with _token_lock:  # concurrent callers wait for one refresh instead of each doing their own
+        if _token and time.time() < _token[1]:
+            return _token[0]
+        value = access_token()
+        token_refreshes += 1
+        _token = (value, time.time() + _TOKEN_SECONDS)
+        return value
 
 
 def _note_path(path: str) -> None:
@@ -498,8 +509,10 @@ def list_tables(project: str, dataset: str) -> list[dict[str, str]]:
 
 def get_table(project: str, dataset: str, table: str) -> dict:
     """Return table metadata with its BigQuery schema."""
+    # tables.get reads metadata only, never rows, so a table that requires a partition filter is no problem.
     payload = _get(
-        f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables/{quote(table, safe='')}"
+        f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables/{quote(table, safe='')}",
+        {"fields": "tableReference,type,numRows,schema,tableConstraints"},
     )
     reference = payload.get("tableReference", {})
     return {

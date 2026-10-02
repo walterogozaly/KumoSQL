@@ -341,6 +341,8 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
 
     import duckdb
 
+    from kumosql.duckdb_load import insert_rows
+
     kinds = column_kinds(trees, pair.tables)
     domains = literal_domains(trees)
     sizes = _row_counts(trees)
@@ -359,8 +361,7 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
             for table in used:
                 db.execute(f'DELETE FROM "{table}"')
                 rows = data.get(table, [])
-                if rows:
-                    db.executemany(f'INSERT INTO "{table}" VALUES ({", ".join("?" * len(pair.tables[table]))})', rows)
+                insert_rows(db, f'"{table}"', rows)
             a = normalise(db.execute(left_sql).fetchall())
             b = normalise(db.execute(right_sql).fetchall())
         except duckdb.Error:

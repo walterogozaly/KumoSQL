@@ -44,3 +44,15 @@ def test_local_folder_with_a_very_long_path_loads(tmp_path):
     pipeline = load_sqlx_project(tmp_path)
     assert any(len(m.path or "") > 260 for m in pipeline.models.values())
     assert not [d for d in pipeline.diagnostics if d.code in resilience.ASSET_FAILURE_CODES]
+
+
+def test_local_folder_decodes_latin1_files_like_the_git_reader(tmp_path):
+    (tmp_path / "definitions").mkdir()
+    (tmp_path / "workflow_settings.yaml").write_text("defaultProject: p\ndefaultDataset: d\n")
+    (tmp_path / "definitions" / "old.sqlx").write_bytes('config { type: "table" }\n-- caf\xe9\nselect 1 as id\n'.encode("latin-1"))
+    (tmp_path / "definitions" / "bom.sqlx").write_bytes(b'\xef\xbb\xbfconfig { type: "table" }\nselect 2 as id\n')
+    pipeline = load_sqlx_project(tmp_path)
+    assert {"p.d.old", "p.d.bom"} <= set(pipeline.models)
+    assert not [d for d in pipeline.diagnostics if d.code == "read_error"]
+    assert resilience.decode_text(b"caf\xe9") == "caf\xe9"
+    assert resilience.decode_text(b"\xef\xbb\xbfx") == "x"

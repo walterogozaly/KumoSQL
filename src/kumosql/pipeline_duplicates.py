@@ -21,19 +21,45 @@ def _select_location(select: exp.Expression) -> str:
     return f"nested:{type(parent).__name__.lower()}"
 
 
+def _plain_sql(node: exp.Expression) -> str:
+    return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
+
+
+def _remembered(select: exp.Expression, key: str, compute):
+    """Compute once per parsed select: exact, near-duplicate and repeated-work analysis all ask again.
+
+    The result lives in the node's own ``meta``, so it goes away with the parsed tree, and it is only
+    kept for a select that has not been changed since (callers fingerprint the trees they parsed, and
+    copies they edit are fingerprinted before the edit).
+    """
+
+    meta = select.meta
+    if key not in meta:
+        meta[key] = compute()
+    return meta[key]
+
+
+def _fingerprint_hash(select: exp.Expression) -> str:
+    """A hash of the select's canonical text (aliases, conjunct order and the like ignored).
+
+    Rendering a select costs a deep copy and a full render, so callers that only need the hash use this
+    rather than :func:`_fingerprint`, which also renders the select's own text.
+    """
+
+    def compute() -> str:
+        try:
+            canonical = _plain_sql(canonical_copy(select)) + scope_key(select, _plain_sql)
+        except Exception:  # a shape the canonicalizer cannot follow keeps its literal text
+            canonical = _plain_sql(select)
+        return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
+
+    return _remembered(select, "kumosql_fingerprint", compute)
+
+
 def _fingerprint(select: exp.Expression) -> tuple[str, str]:
-    """A hash of the select's canonical text (aliases, conjunct order and the like ignored) and its own text."""
+    """The canonical fingerprint of a select and its own normalized text."""
 
-    def text(node: exp.Expression) -> str:
-        return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
-
-    sql = text(select)
-    try:
-        canonical = text(canonical_copy(select))
-        canonical += scope_key(select, text)
-    except Exception:  # a shape the canonicalizer cannot follow keeps its literal text
-        canonical = sql
-    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16], sql
+    return _fingerprint_hash(select), _remembered(select, "kumosql_text", lambda: _plain_sql(select))
 
 
 def _find_duplicates(parsed: dict[str, exp.Expression], *, min_nodes: int) -> list[DuplicateGroup]:

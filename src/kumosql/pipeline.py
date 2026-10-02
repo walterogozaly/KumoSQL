@@ -36,6 +36,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
+from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
@@ -223,7 +224,7 @@ class Pipeline:
         """Every table each query model reads: pipeline models and declared sources by key, others as spelled."""
 
         analysis = self._analyse()
-        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed}
+        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed or parents}
         for key, tables in analysis.external_reads.items():
             reads.setdefault(key, set()).update(tables)
         return {key: frozenset(tables) for key, tables in reads.items()}
@@ -539,11 +540,12 @@ class Pipeline:
 
     def model_record(
         self, key: str, profile: object | None = None, tags: "Mapping[str, list[str]] | None" = None,
-        sources: "list | None" = None,
+        sources: "list | None" = None, catalogs: "Mapping[str, list[str]] | None" = None,
     ) -> dict[str, object]:
         """The fields a scope rule can use on model ``key``; a table ``profile`` adds its own.
 
         ``tags`` is :func:`kumosql.tags.tag_lookup` (computed once for many models); ``tag`` is empty without it.
+        ``catalogs`` is :func:`kumosql.catalogs.lookup`; ``catalog`` is empty without it.
         ``sources`` is :func:`kumosql.data_sources.join_index` (built once for many models): the columns of data
         sources with a ``full_name`` column join the model's own ``project.dataset.name``.
         """
@@ -563,6 +565,7 @@ class Pipeline:
             "path": model.path,
             "depends_on": [dep.key for dep in model.declared_dependencies],
             "tag": list((tags or {}).get(key.strip().casefold(), ())),
+            "catalog": list((catalogs or {}).get(key.strip().casefold(), ())),
         }
         if profile is not None:
             record.update(profile_record(profile))
@@ -597,8 +600,13 @@ class Pipeline:
             from .tags import tag_lookup
 
             tags = tag_lookup(self)
+        catalogs = None
+        if {"catalog"} & set(map(str.casefold, scope.fields_used())):
+            from .catalogs import lookup
+
+            catalogs = lookup(self)
         index = data_sources.join_index()
-        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index))}
+        return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index, catalogs))}
 
     def assess_schema_change(self, kind: str, table: str, column: str, **kwargs):
         """Which models break, and which change their output columns or types, if ``table`` gains, loses, renames or retypes ``column``."""
@@ -615,6 +623,7 @@ class Pipeline:
         *,
         scope: "SavedScope | None" = None,
         observed_reads: Iterable[object] = (),
+        owned=None,
     ):
         """Blast radius of a drop, rename, changed expression or dropped table.
 
@@ -627,7 +636,7 @@ class Pipeline:
 
         from .impact import assess_change
 
-        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads)
+        return assess_change(self, kind, target, column, scope=scope, observed_reads=observed_reads, owned=owned)
 
     def _scoped(self, report: dict, scope: "SavedScope") -> dict:
         keep = self.scope_keys(scope)
@@ -796,6 +805,7 @@ def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expres
     with _quiet_parser():
         statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
     queries = []
+    readers: list[exp.Expression] = []
     unread = 0
     for statement in statements:
         # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` and ``EXPORT DATA ... AS SELECT`` read what their query reads.
@@ -814,14 +824,44 @@ def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expres
             queries.append(query)
         elif _may_read_tables(statement):
             unread += 1
+        if not isinstance(query, exp.Query) and (reader := _statement_reads(statement)) is not None:
+            readers.append(reader)
     query = queries[-1] if queries else None
     if query is not None:
         _name_unaliased_casts(query)
-    return query, max(len(queries) - 1, 0) + unread, queries[:-1]
+    return query, max(len(queries) - 1, 0) + unread, [*queries[:-1], *readers]
 
 
 _TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
 _COMMAND_READS = re.compile(r"\b(?:from|join|into|update|merge|using)\b", re.IGNORECASE)
+
+
+def _statement_reads(statement: exp.Expression) -> exp.Expression | None:
+    """A copy of a statement that is not a query but reads tables, with the table it writes marked.
+
+    ``DELETE ... USING``, ``UPDATE ... FROM``, a subquery inside ``DELETE``/``UPDATE``/``INSERT ... VALUES`` and
+    ``CREATE TABLE ... LIKE|CLONE`` read the tables they name; the table written is not one of them (``write_target``).
+    Only the tables are taken: columns of such statements are not traced. ``MERGE`` is handled where it is built.
+    """
+
+    target = None
+    if isinstance(statement, (exp.Delete, exp.Update)):
+        target = statement.this
+    elif isinstance(statement, exp.Insert):
+        target = statement.this.this if isinstance(statement.this, exp.Schema) else statement.this
+    elif isinstance(statement, exp.Create) and not isinstance(statement.expression, exp.Command):
+        like = statement.find(exp.LikeProperty)
+        if statement.args.get("clone") is None and like is None:
+            return None
+        target = statement.this.this if isinstance(statement.this, exp.Schema) else statement.this
+    else:
+        return None
+    if not isinstance(target, exp.Table):
+        return None
+    copy = statement.copy()
+    marked = copy.this.this if isinstance(copy.this, exp.Schema) else copy.this
+    marked.meta["write_target"] = True
+    return copy
 
 
 def _may_read_tables(statement: exp.Expression) -> bool:
@@ -865,6 +905,8 @@ def _apply_target_columns(statement: exp.Expression, query: exp.Query) -> None:
         names.append(name)
     first = query
     while isinstance(first, exp.SetOperation):
+        if is_by_name(first):
+            return  # the first branch need not carry the output columns
         first = first.left
     first = first.unnest() if isinstance(first, exp.Subquery) else first
     if not isinstance(first, exp.Select) or len(first.expressions) != len(names):
@@ -953,6 +995,21 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
     return found
 
 
+def _star_in_set_operation(query: exp.Expression) -> bool:
+    """True when a branch of a set operation still has a ``*`` (its table's columns are unknown)."""
+
+    def branch_has_star(branch: exp.Expression) -> bool:
+        while isinstance(branch, exp.Subquery):
+            branch = branch.this
+        if isinstance(branch, exp.SetOperation):
+            return branch_has_star(branch.this) or branch_has_star(branch.expression)
+        return isinstance(branch, exp.Select) and any(
+            projection.is_star or isinstance(projection.unalias(), exp.Star) for projection in branch.expressions
+        )
+
+    return any(branch_has_star(node) for node in query.find_all(exp.SetOperation) if not isinstance(node.parent, exp.SetOperation))
+
+
 def _has_unexpanded_star(query: exp.Expression) -> bool:
     return any(
         isinstance(node, exp.Star) and isinstance(node.parent, (exp.Select, exp.Column))
@@ -984,6 +1041,8 @@ class _Analysis:
     statements_matched: int = 0
     # Per model: (statements seen, statements analysed), for scoped coverage.
     statements_by_model: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # Tables read from outside the project whose columns were looked up: {"asked", "found", "from_catalog", "unknown"}.
+    schema_lookup: dict[str, int] = field(default_factory=dict)
     # Per model: tables it reads that no model or declared source matches, as spelled.
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
 
@@ -1033,6 +1092,7 @@ class _Analysis:
                 for dep in model.declared_dependencies
                 if (resolved := pipeline.resolve(dep.key)) and resolved != key
             }
+            earlier: list[exp.Expression] = []
             if model.is_query:
                 try:
                     query, skipped, earlier = _parse_script(model.sql)
@@ -1055,12 +1115,16 @@ class _Analysis:
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
                 if query is not None:
                     parsed[key] = query
-                    # Tables read by the script's earlier queries are dependencies too, even though
-                    # only the last query is traced column by column.
-                    for each in (*earlier, query):
+                elif model.sql.strip():
+                    diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
+                if query is not None or earlier:
+                    # Tables read by the script's earlier queries (and by statements that are not queries, such
+                    # as DELETE and UPDATE) are dependencies too, even though only the last query is traced
+                    # column by column.
+                    for each in (*earlier, *([query] if query is not None else [])):
                         cte_names = {cte.alias_or_name.lower() for cte in each.find_all(exp.CTE)}
                         for table in each.find_all(exp.Table):
-                            if not table.db and table.name.lower() in cte_names:
+                            if table.meta.get("write_target") or (not table.db and table.name.lower() in cte_names):
                                 continue
                             resolved = pipeline.resolve(table)
                             if resolved and resolved != key:
@@ -1075,8 +1139,6 @@ class _Analysis:
                                     else unresolved_tables
                                 )
                                 bucket.setdefault(key, set()).add(_table_name_for_schema(table))
-                elif model.sql.strip():
-                    diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
             elif model.sql.strip():
                 diagnostics.append(
                     PipelineDiagnostic(
@@ -1104,6 +1166,15 @@ class _Analysis:
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
+        # Tables read from outside the project: their columns come from the saved BigQuery catalog or
+        # BigQuery itself, so a ``SELECT *`` over them can be expanded. Unreadable ones stay unknown.
+        from . import schema_fetch
+
+        outside = {name for names in unresolved_tables.values() for name in names if name not in schema}
+        found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
+        for name, columns in found.items():
+            schema[name] = columns
+            _add_table(sqlglot_schema, name, columns)
 
         tracing = Progress("trace columns", len(order))
         # Column tracing copies a model's whole query once per output column, so wide models with
@@ -1136,6 +1207,16 @@ class _Analysis:
                 opaque_readers_of.update(upstream.get(key, ()))
                 continue
 
+            by_name_problems: list[str] = []
+            before_by_name = None
+            if any(is_by_name(node) for node in qualified.find_all(exp.SetOperation)):
+                # BY NAME / CORRESPONDING match columns by name; everything below reads by position.
+                before_by_name = qualified.copy()
+                qualified, by_name_problems = positionalize(qualified)
+                for problem in by_name_problems:
+                    diagnostics.append(PipelineDiagnostic(key, "by_name_set_operation", problem))
+
+            union_star = _star_in_set_operation(qualified)
             if _has_unexpanded_star(qualified):
                 diagnostics.append(
                     PipelineDiagnostic(
@@ -1183,6 +1264,14 @@ class _Analysis:
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
                         used.add(ColumnRef(owner, column.name))
+            if before_by_name is not None:
+                # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
+                for scope in traverse_scope(before_by_name):
+                    for column in scope.columns:
+                        table = _source_table(scope, column)
+                        if table is not None:
+                            owner = pipeline.resolve(table) or _table_name_for_schema(table)
+                            used.add(ColumnRef(owner, column.name))
             used.update(excepted)
             consumed[key] = frozenset(used)
 
@@ -1218,6 +1307,13 @@ class _Analysis:
                     continue
                 if name == "*":
                     records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                    continue
+                if by_name_problems or union_star:
+                    # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
+                    # an unknown table counts as one column, so every position after it is off).
+                    reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
+                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason)
+                    direct[ref] = frozenset(used)
                     continue
                 try:
                     node = lineage(
@@ -1325,6 +1421,7 @@ class _Analysis:
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
+            schema_lookup=schema_lookup,
         )
 
 
@@ -1381,6 +1478,14 @@ def _scan_lineage(
             reason = reason or "unresolved_column"
         elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
             literal_unnest = True  # UNNEST of literals reads no column
+        elif (
+            item is not node
+            and isinstance(item.source, exp.Query)
+            and not isinstance(item.expression, exp.Star)
+            and not isinstance(getattr(item.expression, "this", None), exp.Star)
+            and item.expression.find(exp.Column) is None
+        ):
+            literal_unnest = True  # a derived column like COUNT(*) or 1 reads no column
         elif item is not node:
             reason = reason or "untraceable_source"
     if reason is None and not leaves and reads_column and not literal_unnest:
