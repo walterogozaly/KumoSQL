@@ -33,6 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
+from .ast_utils import canonical_negation
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -3579,7 +3580,7 @@ def normalize(
     column ordinal (see ``_drop_constant_groupings``).
     """
 
-    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
