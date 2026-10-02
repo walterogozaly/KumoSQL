@@ -549,6 +549,8 @@ def _parse_number(text: str) -> Fraction:
     return value
 
 
+_INTEGER_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.Type.SMALLINT, exp.DataType.Type.TINYINT}
+
 # Scalar functions that return NULL whenever an argument is NULL, in every dialect.
 _STRICT_FUNCTIONS = tuple(
     getattr(exp, name) for name in ("Round", "Abs", "Floor", "Ceil", "Sqrt", "Ln", "Exp", "Upper", "Lower") if hasattr(exp, name)
@@ -1451,6 +1453,9 @@ class _Compiler:
             inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
             if type(inner) is exp.Cast and inner.args["to"] == to:
                 # A cast to the type a value already has is the value: CAST(CAST(x AS T) AS T) is CAST(x AS T).
+                return self._val(inner, env, agg, aliases)
+            if isinstance(inner, exp.IntDiv) and to.this in _INTEGER_TYPES:
+                # Integer division already gives an integer (overflow is not modeled).
                 return self._val(inner, env, agg, aliases)
             if (
                 isinstance(e.this, exp.Literal)
