@@ -42,7 +42,7 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 - 1,356 GoogleSQL queries do not parse in sqlglot's BigQuery dialect (GoogleSQL-only features: protos, enums, graph queries, `FLOAT32`, newer pipe and table syntax). They are counted as unsupported, not hidden.
 - The 81 pipe-syntax (`|>`) queries are left as written. sqlglot parses pipe syntax into nested CTEs, so the rewrites that used to count for 7 of them were of that translation, printed as standard SQL.
 - Most GoogleSQL cases are declined because KumoSQL has nothing to rewrite in a bare `SELECT`; the handled count measures rewrites that happened and held.
-- Still wanted on real BigQuery (to run on the work-laptop replica): every rewritten before/after pair from the edge suite (`--failures` lists none; use `evaluate()` for the pairs), especially the CTE-inlining cases with `RAND()`, `GENERATE_UUID()` and `CURRENT_*`, and `SAFE_`/cast cases whose result a DuckDB transpile may not model.
+- Still wanted on real BigQuery (to run on the laptop replica): every rewritten before/after pair from the edge suite (`--failures` lists none; use `evaluate()` for the pairs), especially the CTE-inlining cases with `RAND()`, `GENERATE_UUID()` and `CURRENT_*`, and `SAFE_`/cast cases whose result a DuckDB transpile may not model.
 
 ## Scores (2026-10-02)
 
