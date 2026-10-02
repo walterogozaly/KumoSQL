@@ -2,19 +2,19 @@
   "suite": "SQLancer-style TLP / NoREC fuzzing",
   "order": 300,
   "size": 1268,
-  "score": "0 false proofs; 255/691 equivalent pairs proved; 256/457 different pairs refuted with a replayable counterexample",
-  "metric": "Seeded TLP, NoREC and mutated pairs over random predicates, joins and CTE queries; the prover must never prove a pair that a random database separates, and each counterexample must separate the queries when replayed in DuckDB. 425/457 different pairs are found when KumoSQL's executed check is added.",
+  "score": "0 false proofs; 569/751 equivalent pairs proved; 309/517 different pairs refuted with a replayable counterexample",
+  "metric": "Seeded TLP, NoREC and mutated pairs over random predicates, joins and CTE queries; the prover must never prove a pair that a random database separates, and each counterexample must separate the queries when replayed in DuckDB. 487/517 different pairs are found when KumoSQL's executed check is added.",
   "evidence": "proof",
-  "correctness": "0 false proofs, 0 counterexamples that fail to replay, 0 generator label errors (seed 2, count 60; seeds 3 also 0). Ground truth is a 40-database DuckDB search, so a difference it misses can hide a false proof.",
+  "correctness": "0 false proofs, 0 counterexamples that fail to replay, 0 generator label errors (seed 2, count 60). Ground truth is a 40-database DuckDB search, so a difference it misses can hide a false proof; 6 pairs it calls equivalent are refuted by a counterexample that replays, so the search under-reports differences.",
   "coverage": {
-    "proven": 255,
-    "refuted": 260,
-    "unknown": 579,
+    "proven": 569,
+    "refuted": 315,
+    "unknown": 330,
     "unsupported": 54
   },
-  "held_out": "TLP aggregate and NoREC families: 108/420 equivalent pairs proved, 0 false proofs",
+  "held_out": "TLP aggregate and NoREC families: 342/420 equivalent pairs proved, 0 false proofs (were 108/420 before the partition rules; the seed-2 held-out cases were not looked at, the rules were developed on dev TLP WHERE pairs and on seed 101)",
   "docs": "docs/fuzzing.md",
   "command": "python tools/unsafe_fuzz.py fuzz --count 60 --seed 2",
   "date": "2026-10-02",
-  "caveats": "120 of 1,268 cases run in neither engine and are excluded from coverage. Rerun on 2026-10-02 after the generator gained new shapes (cd9e832): the previous record (1,258 cases, 281/701 proved, 310/437 refuted) no longer matched its command. Prover counts depend on Z3 timeouts, so a run on a busy machine can prove or refute a few fewer pairs. Aggregate-recombination TLP is mostly unknown (prover cannot relate SUM over a UNION ALL of partitions). Found and fixed in earlier runs: normalizer OR precedence bug, counterexample values not loadable into INT columns."
+  "caveats": "Rerun after the generator change in cd9e832 and the partition-recombination rules (src/kumosql/partition_rules.py): before them seed 2 scored 238/691 proved and 258/457 refuted. The generator now writes UNION DISTINCT (bare UNION does not parse in BigQuery), so the 120 TLP DISTINCT pairs that ran in neither engine are now scored; 59 of them are unknown until UNION DISTINCT of same-source filters is merged. Remaining NoREC unknowns need COUNT(CASE WHEN p THEN 1 END) read as COUNT(*) WHERE p (the structural aggregate rules) and derived tables over a LEFT JOIN flattened."
 }

@@ -40,6 +40,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC, unsafe-rewrite detection, rewrite composition |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking, counterexample minimization |
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
+| [MV-based rewriting benchmark](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS |
 | [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors |
 | [Lineage and change impact](lineage-bench.md) | SQLLineage cases and generated lineage pipelines |
 | [Dataform preservation](dataform-bench.md) | Protected SQLX text and dependencies |
