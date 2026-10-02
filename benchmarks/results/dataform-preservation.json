@@ -1,0 +1,20 @@
+{
+  "suite": "Dataform preservation (generated)",
+  "order": 220,
+  "size": 288,
+  "score": "6744/6744 protected-text checks kept, 0 damaged; 339/339 dependencies found, 0 wrong",
+  "metric": "SQLX files built from known config, js, pre/post_operations and ${...} parts. Every rewrite rule is applied to each file; every protected span must come out byte for byte, and every ref() Dataform would evaluate must be a dependency.",
+  "evidence": "executed",
+  "correctness": "0 protected spans changed, moved, lost or duplicated by any of the 8 rules; 0 crashes; 0 dependencies claimed that the file does not have; 36/36 templates KumoSQL cannot resolve were flagged, none silently, and no column is called dead near one",
+  "coverage": {
+    "proven": 252,
+    "unsupported": 36
+  },
+  "held_out": "First run of the held-out families (144 files): 0 protected spans damaged and 0 wrong dependencies, but dependency recall was 108/144: every ref() inside pre_operations was missed. Fixed afterwards, so those families no longer count as held out.",
+  "docs": "docs/dataform-bench.md",
+  "command": "python tools/dataform_bench.py --scale --write-results",
+  "date": "2026-10-02",
+  "caveats": "Files are generated from templates its author wrote; real projects have more shapes. Dependency truth is how Dataform compiles an action (every evaluated ref(), including those in pre_operations, post_operations and when() arguments). Dev families were tuned against.",
+  "analysis": "Dependencies: precision 1.000, recall 1.000. Fixable SQL around protected text still rewritten: 216/216 files.",
+  "performance": "496 files: 2.05 s to load; 2,000 files: 7.71 s to load"
+}

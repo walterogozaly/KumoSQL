@@ -1,0 +1,20 @@
+{
+  "suite": "Lineage and change impact (generated)",
+  "order": 210,
+  "size": 948,
+  "score": "2644/2644 columns traced exactly, 0 wrong; 700/700 impact answers exact, 0 unsafe",
+  "metric": "Pipelines generated in Python with the answer known by construction: every output column must trace to exactly the right source columns, dropping a column must reach every model that reads it, and no column that is read may be called dead.",
+  "evidence": "executed",
+  "correctness": "0 columns traced to a wrong set of sources; 0 impacted models missed; 0 read columns called dead; every dependency cycle flagged (18/18); 0 unreadable models traced anyway",
+  "coverage": {
+    "proven": 2644,
+    "unknown": 0
+  },
+  "held_out": "First run of the held-out families (474 models, 1,151 columns): 0 columns traced wrongly, but 83 impacted models missed and 13 live columns called dead, all from SELECT * EXCEPT (...) columns that were not counted as read. Fixed afterwards, so those families no longer count as held out.",
+  "docs": "docs/lineage-bench.md#lineage-and-change-impact",
+  "command": "python tools/lineage_bench.py --scale --write-results",
+  "date": "2026-10-02",
+  "caveats": "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of. Dev families were tuned against; bugs they found were fixed in the same change.",
+  "analysis": "Edges: precision 1.000, recall 1.000. Reads (columns a model names anywhere): precision 1.000, recall 1.000. Table dependencies: precision 1.000, recall 1.000. Impacted models: precision 1.000, recall 0.937 (the rest are reported as unknown readers). Dead columns found: 26/83 (it declines to call a column dead when any reader is unknown).",
+  "performance": "100 models: 0.34 s, 64 MB peak; 1,000 models: 3.19 s, 101 MB peak; 3,000 models: 9.73 s, 159 MB peak"
+}
