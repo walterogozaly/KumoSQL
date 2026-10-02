@@ -1409,3 +1409,122 @@ def test_constant_column_of_a_null_extended_derived_table_is_not_inlined():
         compare_names=False,
     )
     assert not result.proven
+
+
+BOOLEAN_SCHEMA = {"t": ["a", "b"]}
+BOOLEAN_PROVEN = {
+    "is null of a null test": ("SELECT * FROM t WHERE (a IS NULL) IS NULL", "SELECT * FROM t WHERE 1 = 2"),
+    "is not null of a null test": ("SELECT * FROM t WHERE ((a IS NULL) IS NOT NULL) OR NULL", "SELECT * FROM t"),
+    "false and unknown": ("SELECT * FROM t WHERE FALSE AND NULL", "SELECT * FROM t WHERE 1 = 2"),
+    "cast of a null test above one": ("SELECT * FROM t WHERE CAST((a IS NULL) AS SIGNED) > 1000", "SELECT * FROM t WHERE 1 = 2"),
+    "cast of a null test below": ("SELECT * FROM t WHERE CAST((a IS NULL) AS SIGNED) < 1000", "SELECT * FROM t"),
+    "group by in an in test": (
+        "SELECT * FROM t WHERE (a, b) IN (SELECT a, b FROM t GROUP BY a, b) OR a < 40 + 60",
+        "SELECT * FROM t WHERE (a, b) IN (SELECT a, b FROM t) OR a < 100",
+    ),
+    "group by in an exists test": (
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t AS u GROUP BY u.a)",
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t AS u)",
+    ),
+}
+BOOLEAN_NOT_PROVEN = {
+    "cast of a null test inside the range": (
+        "SELECT * FROM t WHERE CAST((a IS NULL) AS SIGNED) > 0",
+        "SELECT * FROM t WHERE 1 = 2",
+    ),
+    "true and unknown is unknown": ("SELECT * FROM t WHERE TRUE AND NULL", "SELECT * FROM t"),
+    "global count under exists keeps its row": (
+        "SELECT * FROM t WHERE EXISTS (SELECT COUNT(*) FROM t AS u WHERE u.a > 100)",
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t AS u WHERE u.a > 100)",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", BOOLEAN_PROVEN)
+def test_boolean_constant_folds_and_membership_group_by(name):
+    left, right = BOOLEAN_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=BOOLEAN_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", BOOLEAN_NOT_PROVEN)
+def test_boolean_constant_folds_keep_their_boundaries(name):
+    left, right = BOOLEAN_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=BOOLEAN_SCHEMA, dialect="mysql", compare_names=False, exact_arithmetic=True)
+    assert not result.proven
+
+
+def test_boolean_folds_preserve_results_on_random_databases():
+    rng = random.Random(5)
+    forms = [pair[0] for pair in BOOLEAN_PROVEN.values()] + [pair[0] for pair in BOOLEAN_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=BOOLEAN_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE t (a INT, b INT)")
+        for _ in range(rng.choice([0, 1, 4])):
+            db.execute("INSERT INTO t VALUES (?, ?)", [rng.choice([None, 1, 2, 150]), rng.choice([None, 0, 5])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            try:
+                expected = Counter(db.execute(plain).fetchall())
+            except sqlite3.OperationalError:
+                continue  # SQLite lacks row-value IN over a subquery in old versions
+            assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+EMPTY_SIDE_SCHEMA = {"p": ["id", "k"], "q": ["id", "k"]}
+EMPTY_SIDE_PROVEN = {
+    "right join to an empty left": (
+        "SELECT e.id, e.k, q.id, q.k FROM (SELECT * FROM p WHERE FALSE) AS e RIGHT JOIN q ON e.k = q.k",
+        "SELECT CAST(NULL AS SIGNED), CAST(NULL AS SIGNED), q.id, q.k FROM q",
+    ),
+    "left join to an empty right": (
+        "SELECT p.id, e.id FROM p LEFT JOIN (SELECT * FROM q WHERE 1 = 2) AS e ON p.k = e.k",
+        "SELECT p.id, NULL FROM p",
+    ),
+}
+EMPTY_SIDE_NOT_PROVEN = {
+    "inner join to an empty side has no rows": (
+        "SELECT p.id FROM p JOIN (SELECT * FROM q WHERE FALSE) AS e ON p.k = e.k",
+        "SELECT p.id FROM p",
+    ),
+    "empty preserved side of a left join": (
+        "SELECT e.id FROM (SELECT * FROM p WHERE FALSE) AS e LEFT JOIN q ON e.k = q.k",
+        "SELECT p.id FROM p",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", EMPTY_SIDE_PROVEN)
+def test_empty_null_extended_side_of_an_outer_join(name):
+    left, right = EMPTY_SIDE_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=EMPTY_SIDE_SCHEMA, dialect="mysql", compare_names=False)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", EMPTY_SIDE_NOT_PROVEN)
+def test_empty_side_rules_keep_their_boundaries(name):
+    left, right = EMPTY_SIDE_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=EMPTY_SIDE_SCHEMA, dialect="mysql", compare_names=False)
+    assert not result.proven
+
+
+def test_empty_side_rules_preserve_results_on_random_databases():
+    rng = random.Random(8)
+    forms = [pair[0] for pair in EMPTY_SIDE_PROVEN.values()] + [pair[0] for pair in EMPTY_SIDE_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=EMPTY_SIDE_SCHEMA, dialect="mysql") for f in forms]
+    for _ in range(40):
+        db = sqlite3.connect(":memory:")
+        for table in ("p", "q"):
+            db.execute(f"CREATE TABLE {table} (id INT, k INT)")
+            for n in range(rng.choice([0, 1, 4])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?)", [n, rng.choice([None, 0, 1])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            try:
+                expected = Counter(db.execute(plain).fetchall())
+            except sqlite3.OperationalError:
+                continue  # old SQLite without RIGHT JOIN
+            assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
