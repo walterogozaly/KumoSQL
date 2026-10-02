@@ -16,5 +16,5 @@
   "date": "2026-10-02",
   "caveats": "Files are generated from templates its author wrote; real projects have more shapes. Dependency truth is how Dataform compiles an action (every evaluated ref(), including those in pre_operations, post_operations and when() arguments). Dev families were tuned against.",
   "analysis": "Dependencies: precision 1.000, recall 1.000. Fixable SQL around protected text still rewritten: 216/216 files.",
-  "performance": "496 files: 2.05 s to load; 2,000 files: 7.71 s to load"
+  "performance": "496 files: 1.87 s to load; 2,000 files: 7.67 s to load"
 }

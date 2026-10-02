@@ -8,7 +8,14 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
+
+
+@pytest.fixture(autouse=True)
+def quiet_timing(monkeypatch):
+    monkeypatch.setenv("KUMOSQL_TIMING", "0")  # per-stage timing lines slow thousands of small analyses
 
 
 def _load(name: str):

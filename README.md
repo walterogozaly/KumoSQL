@@ -41,7 +41,7 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 | [SQL-IQ Equivalence Judge](docs/sql-iq.md#scores) | – | – | – | – | – | – |
 | [SQL-IQ SQL Judge](docs/sql-iq.md#sql-judge-and-sql-error-classification) | – | – | – | – | – | – |
 | [SQL-IQ Error Classification](docs/sql-iq.md#sql-judge-and-sql-error-classification) | – | – | – | – | – | – |
-| [SQLLineage test cases](docs/lineage-bench.md#sqllineage-test-cases) | 235 | – | 44 | – | – | 0 |
+| [SQLLineage test cases](docs/lineage-bench.md#sqllineage-test-cases) | 235 | – | 44 | – | – | – |
 | [Lineage and change impact (generated)](docs/lineage-bench.md#lineage-and-change-impact) | 2644 | – | 0 | – | – | – |
 | [Dataform preservation (generated)](docs/dataform-bench.md) | 252 | – | – | 36 | – | – |
 
@@ -49,9 +49,9 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 
 | Eval | Usefulness | Analysis quality | Performance |
 | --- | --- | --- | --- |
-| [SQLLineage test cases](docs/lineage-bench.md#sqllineage-test-cases) | – | Column edges: precision 0.993, recall 0.839 (recall counts edges KumoSQL reports as unknown) | 279 cases in 6.5 s |
-| [Lineage and change impact (generated)](docs/lineage-bench.md#lineage-and-change-impact) | – | Edges: precision 1.000, recall 1.000. Reads (columns a model names anywhere): precision 1.000, recall 1.000. Table dependencies: precision 1.000, recall 1.000. Impacted models: precision 1.000, recall 0.937 (the rest are reported as unknown readers). Dead columns found: 26/83 (it declines to call a column dead when any reader is unknown). | 100 models: 0.34 s, 64 MB peak; 1,000 models: 3.19 s, 101 MB peak; 3,000 models: 9.73 s, 159 MB peak |
-| [Dataform preservation (generated)](docs/dataform-bench.md) | – | Dependencies: precision 1.000, recall 1.000. Fixable SQL around protected text still rewritten: 216/216 files. | 496 files: 2.05 s to load; 2,000 files: 7.71 s to load |
+| [SQLLineage test cases](docs/lineage-bench.md#sqllineage-test-cases) | – | Column edges: precision 0.993, recall 0.839 (recall counts edges KumoSQL reports as unknown) | 279 cases in 6.7 s |
+| [Lineage and change impact (generated)](docs/lineage-bench.md#lineage-and-change-impact) | – | Edges: precision 1.000, recall 1.000. Reads (columns a model names anywhere): precision 1.000, recall 1.000. Table dependencies: precision 1.000, recall 1.000. Impacted models: precision 1.000, recall 0.959 (the rest are reported as unknown readers). Dead columns found: 26/83 (it declines to call a column dead when any reader is unknown). | 100 models: 0.32 s, 64 MB peak; 1,000 models: 3.17 s, 101 MB peak; 3,000 models: 10.04 s, 159 MB peak |
+| [Dataform preservation (generated)](docs/dataform-bench.md) | – | Dependencies: precision 1.000, recall 1.000. Fixable SQL around protected text still rewritten: 216/216 files. | 496 files: 1.87 s to load; 2,000 files: 7.67 s to load |
 <!-- scoreboard:end -->
 
 Evidence levels are kept apart: unbounded proof, bounded verification and agreement on executed datasets. Each row comes from one file in `benchmarks/results/` (format in [benchmarks/README.md](benchmarks/README.md)); the command in that file reruns the eval. After a change that moves a score, edit that eval's file (`score`, `size`, `date`, `caveats`) and run `python tools/scoreboard.py` to regenerate the table; `python tools/scoreboard.py --check` fails if it is stale. A new eval adds a new results file in the same PR. On a merge conflict in the table, keep either side and rerun the script. Evals still being added (VeriEQL, QED, Singh and Bedathur, DSB and SQLStorm coverage, rewriting, join ordering and cardinality) appear once their harness is merged.

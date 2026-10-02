@@ -32,8 +32,6 @@ import tempfile
 import time
 from pathlib import Path
 
-os.environ.setdefault("KUMOSQL_TIMING", "0")
-logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from kumosql import apply_rule, available_rules, load_sqlx_project  # noqa: E402
@@ -410,7 +408,15 @@ def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
     )
 
 
+def _quiet() -> None:
+    """Command-line runs print results, not per-stage timings or sqlglot warnings (kept out of module import so tests are unaffected)."""
+
+    os.environ.setdefault("KUMOSQL_TIMING", "0")
+    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
+
+
 def main(argv: list[str]) -> None:
+    _quiet()
     if "--write-results" in argv:
         write_results(run_families(DEV_FAMILIES), run_families(HELD_OUT_FAMILIES), scale((500, 2000)))
     for name, families in (("dev", DEV_FAMILIES), ("held-out", HELD_OUT_FAMILIES)):

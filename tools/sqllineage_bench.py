@@ -38,8 +38,6 @@ import sys
 import logging
 import os
 
-os.environ.setdefault("KUMOSQL_TIMING", "0")
-logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 import sqlglot
 from sqlglot import exp
@@ -285,7 +283,15 @@ def write_results(result: dict, seconds: float) -> None:
     )
 
 
+def _quiet() -> None:
+    """Command-line runs print results, not per-stage timings or sqlglot warnings (kept out of module import so tests are unaffected)."""
+
+    os.environ.setdefault("KUMOSQL_TIMING", "0")
+    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
+
+
 def main() -> None:
+    _quiet()
     start = time.perf_counter()
     result = run()
     seconds = time.perf_counter() - start

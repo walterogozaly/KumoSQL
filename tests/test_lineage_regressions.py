@@ -41,8 +41,10 @@ def test_columns_named_in_star_except_are_read():
 def test_a_cycle_does_not_make_the_columns_it_reads_look_dead():
     pl = pipeline(x="SELECT id FROM `p.d.y`", y="SELECT id FROM `p.d.x`")
     assert pl.dead_columns() == {}
-    impact = assess_change(pl, "drop_column", "p.d.x", "id")
-    assert {u.model for u in impact.unknown} >= {"p.d.y"}
+    # Whichever member was analysed first could not see its input's columns, so it is an unknown reader, not a safe one.
+    for dropped in ("p.d.x", "p.d.y"):
+        impact = assess_change(pl, "drop_column", dropped, "id")
+        assert {a.model for a in impact.affected} | {u.model for u in impact.unknown} == {"p.d.x", "p.d.y"}
 
 
 def test_cte_before_insert_resolves_to_its_source_tables():

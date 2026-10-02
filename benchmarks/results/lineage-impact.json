@@ -15,6 +15,6 @@
   "command": "python tools/lineage_bench.py --scale --write-results",
   "date": "2026-10-02",
   "caveats": "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of. Dev families were tuned against; bugs they found were fixed in the same change.",
-  "analysis": "Edges: precision 1.000, recall 1.000. Reads (columns a model names anywhere): precision 1.000, recall 1.000. Table dependencies: precision 1.000, recall 1.000. Impacted models: precision 1.000, recall 0.937 (the rest are reported as unknown readers). Dead columns found: 26/83 (it declines to call a column dead when any reader is unknown).",
-  "performance": "100 models: 0.34 s, 64 MB peak; 1,000 models: 3.19 s, 101 MB peak; 3,000 models: 9.73 s, 159 MB peak"
+  "analysis": "Edges: precision 1.000, recall 1.000. Reads (columns a model names anywhere): precision 1.000, recall 1.000. Table dependencies: precision 1.000, recall 1.000. Impacted models: precision 1.000, recall 0.959 (the rest are reported as unknown readers). Dead columns found: 26/83 (it declines to call a column dead when any reader is unknown).",
+  "performance": "100 models: 0.32 s, 64 MB peak; 1,000 models: 3.17 s, 101 MB peak; 3,000 models: 10.04 s, 159 MB peak"
 }

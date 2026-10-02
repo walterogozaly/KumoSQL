@@ -38,8 +38,6 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("KUMOSQL_TIMING", "0")
-logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from kumosql.impact import assess_change  # noqa: E402
@@ -668,7 +666,15 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
     )
 
 
+def _quiet() -> None:
+    """Command-line runs print results, not per-stage timings or sqlglot warnings (kept out of module import so tests are unaffected)."""
+
+    os.environ.setdefault("KUMOSQL_TIMING", "0")
+    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
+
+
 def main(argv: list[str]) -> None:
+    _quiet()
     if "--one-scale" in argv:
         import json
 

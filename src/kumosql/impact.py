@@ -190,9 +190,10 @@ def assess_change(
 
     def reader_problem(model: str) -> str | None:
         codes = codes_by_model.get(model, set())
-        for reason in ("unresolved_template", "cycle"):
-            if reason in codes:
-                return reason  # what it reads is unknown: a template that was not resolved, or inputs in a dependency cycle
+        if "unresolved_template" in codes:
+            return "unresolved_template"  # it reads a table named by a template, which might be the target
+        if "cycle" in codes and not a.consumed.get(model):
+            return "cycle"  # a cycle member analysed before its input's columns were known cannot say which it reads
         if model in a.consumed and "*" not in a.outputs.get(model, ()):
             return None
         return next((c for c in _READER_REASONS if c in codes), "unparsed_model")
