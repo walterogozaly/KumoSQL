@@ -165,7 +165,6 @@ class SyntheticDataset:
     tables: Mapping[str, SyntheticTable] = field(default_factory=dict)
 
 
-<<<<<<< HEAD
 @dataclass(frozen=True)
 class DataRules:
     """Declared facts a generated database must respect (names lower-case).
@@ -200,7 +199,8 @@ def respect_rules(
             seen[n].add(mark)
         kept.append(row)
     return kept
-=======
+
+
 _MAX_CONSTANTS_PER_TYPE = 24
 
 
@@ -264,7 +264,6 @@ def _draw(rng: random.Random, col_type: str, extras: Mapping[str, tuple[Any, ...
     if extras.get(col_type) and rng.random() < 0.5:
         return rng.choice(extras[col_type])
     return rng.choice(_DOMAINS[col_type])
->>>>>>> origin/master
 
 
 def generate_synthetic_dataset(
@@ -273,11 +272,8 @@ def generate_synthetic_dataset(
     seed: int,
     rows_per_table: int = 25,
     null_rate: float = 0.15,
-<<<<<<< HEAD
     rules: Mapping[str, DataRules] | None = None,
-=======
     extra_values: Mapping[str, Iterable[Any]] | None = None,
->>>>>>> origin/master
 ) -> SyntheticDataset:
     """Generate reproducible synthetic rows for every table in ``schema``.
 
