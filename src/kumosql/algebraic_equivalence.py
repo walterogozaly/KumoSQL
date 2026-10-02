@@ -3834,6 +3834,10 @@ def _in_over_union(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+# sqlglot 26 has no EndsWith node; ENDS_WITH there parses as a plain function call.
+_PREFIX_SUFFIX_TESTS = tuple(t for t in (exp.StartsWith, getattr(exp, "EndsWith", None)) if t is not None)
+
+
 def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
     """``COUNTIF(c)`` is ``COUNT(CASE WHEN c THEN 1 END)``; ``SAFE_DIVIDE(a, b)`` is ``IF(b = 0, NULL, a / b)``;
     ``STARTS_WITH(x, 'p')`` is ``x LIKE 'p%'`` (and ``ENDS_WITH`` ``'%p'``) for a pattern without wildcards."""
@@ -3845,7 +3849,7 @@ def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
             return exp.Trim(this=type(node)(this=node.this.this.copy()))
         if isinstance(node, exp.CountIf):
             return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this.copy(), true=exp.Literal.number(1))]))
-        if isinstance(node, (exp.StartsWith, exp.EndsWith)):
+        if isinstance(node, _PREFIX_SUFFIX_TESTS):
             pattern = node.expression
             if isinstance(pattern, exp.Literal) and pattern.is_string and not set(pattern.name) & set("%_\\"):
                 text = pattern.name + "%" if isinstance(node, exp.StartsWith) else "%" + pattern.name

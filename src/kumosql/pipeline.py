@@ -1186,7 +1186,13 @@ def _scan_lineage(
     transform = "passthrough"
     reads_column = False
     literal_unnest = False
+    # ``WITH f AS (SELECT * FROM t) SELECT f.x`` traces f.x to a ``*`` leaf on t; the column
+    # read through that star is the one asked for one step up (t.x).
+    parent_of = {id(child): item for item in node.walk() for child in item.downstream}
+    phantoms = _phantom_star_sources(node)
     for item in node.walk():
+        if any(id(n) in phantoms for n in _ancestors(item, parent_of)):
+            continue
         if item.downstream:
             projection = item.expression
             if isinstance(projection, exp.Alias):
@@ -1199,7 +1205,13 @@ def _scan_lineage(
             continue
         if isinstance(item.source, exp.Table):
             owner = pipeline.resolve(item.source) or _table_name_for_schema(item.source)
-            leaf = ColumnRef(owner, item.name.split(".")[-1].strip('"`'))
+            column_name = item.name.split(".")[-1].strip('"`')
+            parent = parent_of.get(id(item))
+            if column_name == "*" and parent is not None and sum(id(d) not in phantoms for d in parent.downstream) == 1:
+                asked = parent.name.split(".")[-1].strip('"`')
+                if asked != "*":
+                    column_name = asked
+            leaf = ColumnRef(owner, column_name)
             known = {c.lower() for c in schema.get(owner, {})}
             if known and leaf.column.lower() not in known:
                 reason = reason or "unknown_column"
@@ -1214,6 +1226,41 @@ def _scan_lineage(
     if reason is None and not leaves and reads_column and not literal_unnest:
         reason = "unresolved_column"
     return leaves, reason, "union" if is_union else transform
+
+
+def _ancestors(item, parent_of: dict):
+    while item is not None:
+        yield item
+        item = parent_of.get(id(item))
+
+
+def _phantom_star_sources(node) -> set[int]:
+    """Lineage nodes a ``SELECT *`` inside a WITH does not actually read.
+
+    sqlglot expands the star of ``f AS (SELECT * FROM t)`` over every source visible to
+    that CTE, which includes the CTEs defined before it; only the relations in its own
+    FROM and JOIN clauses are read.
+    """
+
+    phantoms: set[int] = set()
+    root = node.source if isinstance(node.source, exp.Expression) else None
+    ctes = {cte.this.sql(): cte.alias_or_name for cte in root.find_all(exp.CTE)} if root is not None else {}
+    for item in node.walk():
+        select = item.source
+        if len(item.downstream) < 2 or not isinstance(item.expression, exp.Star) or not isinstance(select, exp.Select):
+            continue
+        read = {
+            source.alias_or_name
+            for source in [getattr(select.args.get("from_") or select.args.get("from"), "this", None),
+                           *[j.this for j in select.args.get("joins") or []]]
+            if source is not None
+        }
+        for child in item.downstream:
+            source = child.source
+            name = source.alias_or_name if isinstance(source, exp.Table) else ctes.get(source.sql())
+            if name is not None and name not in read:
+                phantoms.add(id(child))
+    return phantoms
 
 
 def _transform_kind(projection: exp.Expression, name: str) -> str:

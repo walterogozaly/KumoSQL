@@ -1,0 +1,1 @@
+WITH UserTotals AS (SELECT oi.user_id AS UserId, SUM(oi.sale_price) AS TotalSales FROM `kumosql.kumosql_messy.raw_order_items` AS oi GROUP BY oi.user_id) SELECT UserId, TotalSales FROM UserTotals ORDER BY TotalSales DESC, UserId LIMIT 10

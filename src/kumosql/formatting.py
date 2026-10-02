@@ -106,6 +106,22 @@ def save_preferences(prefs: FormatPreferences) -> None:
     state.set_section("format", prefs.to_json())
 
 
+# Rules that change what the SQL means in BigQuery, so a group such as ``capitalisation``
+# never pulls them in. ``capitalisation.identifiers`` (CP02) re-cases unquoted names, but
+# BigQuery table and dataset names are case sensitive and an alias's case is the output
+# column's name. They run only when named on their own in ``rules``.
+_MEANING_CHANGING_RULES = {"CP02": "capitalisation.identifiers"}
+
+
+def _excluded_rules(prefs: FormatPreferences) -> tuple[str, ...]:
+    named = {rule.lower() for rule in prefs.rules}
+    extra = tuple(
+        code for code, name in _MEANING_CHANGING_RULES.items()
+        if code.lower() not in named and name not in named
+    )
+    return tuple(dict.fromkeys(prefs.exclude_rules + extra))
+
+
 def _config(prefs: FormatPreferences):
     from sqlfluff.core import FluffConfig
 
@@ -114,7 +130,7 @@ def _config(prefs: FormatPreferences):
         "core": {
             "dialect": DIALECT,
             "rules": ",".join(prefs.rules),
-            "exclude_rules": ",".join(prefs.exclude_rules) or None,
+            "exclude_rules": ",".join(_excluded_rules(prefs)) or None,
             "max_line_length": prefs.max_line_length,
         },
         "indentation": {"indent_unit": prefs.indent_unit, "tab_space_size": prefs.tab_space_size},
