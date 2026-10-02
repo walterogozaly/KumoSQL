@@ -2,8 +2,8 @@
   "suite": "Singh & Bedathur LeetCode pairs",
   "order": 25,
   "size": 2800,
-  "score": "2581/2800, 0 wrong",
-  "metric": "Pairs decided from SQL and column names alone: 707 proved equivalent, 1874 proved different by a counterexample database, 219 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
+  "score": "2586/2800, 0 wrong",
+  "metric": "Pairs decided from SQL and column names alone: 712 proved equivalent, 1874 proved different by a counterexample database, 214 unknown. All 2,800 pairs are also in VeriEQL's LeetCode set, which keeps the keys these files drop.",
   "docs": "docs/singh-bedathur.md#scores",
   "command": "python tools/singh_bedathur_bench.py",
   "date": "2026-10-02",
@@ -11,10 +11,10 @@
   "evidence": "proof",
   "correctness": "0 wrong: every proof re-checked on 900 random DuckDB databases; every 'different' carries a database on which DuckDB returns different bags (numbers compared as rounded floats, fractions exact in binary)",
   "coverage": {
-    "proven": 707,
+    "proven": 712,
     "refuted": 1874,
-    "unknown": 207,
-    "unsupported": 12
+    "unknown": 203,
+    "unsupported": 11
   },
   "held_out": "534/580, 0 wrong (held-out fifth, by hash of the pair)"
 }
