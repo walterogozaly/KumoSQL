@@ -1,0 +1,18 @@
+{
+ "note": "Development cases the prover does not prove yet (label: equivalent). Kept as regression cases: the floor test fails if one starts being proved without this list being updated, and never if it stays unknown.",
+ "unproved": [
+  "rollup/average_from_sum_count/1",
+  "rollup/average_from_sum_count/3",
+  "rollup/average_from_sum_count/6",
+  "join_staging/left_left/1",
+  "join_staging/left_left/3",
+  "join_staging/left_left/6"
+ ],
+ "held_out_unproved_at_baseline": [
+  "union_split/distinct_push_filter/1",
+  "union_split/distinct_push_filter/4",
+  "union_split/distinct_push_filter/10",
+  "latest_per_key/partition_key_filter/1",
+  "latest_per_key/partition_key_filter/5"
+ ]
+}
