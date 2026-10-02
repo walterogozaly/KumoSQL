@@ -1042,7 +1042,7 @@ function renderReport(data, report, root) {
       : h("span", {}, h("span", { class: "mono", text: `${money(change.cost.before)} → ${money(change.cost.after)}` }), " ", basisTag(change.cost.basis));
     const consumers = change.consumers.models;
     return h("tr", {},
-      h("td", {}, h("span", { class: "mono", text: change.model }), h("br"), h("span", { class: "muted small", text: change.kind })),
+      h("td", {}, h("span", { class: "mono", text: change.model }), h("br"), h("span", { class: "muted small", text: change.kind }), change.owned === false ? tag("Other owner", "idle") : null),
       h("td", {}, E.pill(label), h("p", { class: "muted small reason", text: change.verification.reason }),
         change.verification.checks.length ? h("div", { class: "ev-checks" }, change.verification.checks.map(E.checkChip)) : null,
         E.assumptions(change.verification.checks)),
