@@ -28,6 +28,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import state
+from .ast_utils import table_parts as _parts
 
 MAX_DECLARATIONS = 2000
 _LOCK = threading.Lock()
@@ -151,10 +152,6 @@ def remove(right: object) -> bool:
             return False
         _save(kept)
     return True
-
-
-def _parts(table: exp.Table) -> list[str]:
-    return [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
 
 
 def _matches(parts: list[str], key: str) -> bool:
