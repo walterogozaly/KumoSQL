@@ -347,10 +347,6 @@
   "owner": "kumosql",
   "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
  },
- "ddl/create_table_partition_ingestion_time::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "ddl/create_temp_function::format": {
   "owner": "kumosql",
   "reason": "equivalence could not be proven for every changed statement"
@@ -471,38 +467,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 66."
  },
- "query/information_schema_column_field_paths::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/information_schema_columns::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/information_schema_region_jobs::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/information_schema_routines::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/information_schema_table_storage::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/information_schema_tables::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/information_schema_views::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/join_cross::prover": {
-  "owner": "prover",
-  "reason": "unsupported: LIMIT is not modeled"
- },
  "query/limit_in_subquery_order::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
@@ -539,14 +503,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 78."
  },
- "query/ml_predict_function::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
- "query/nested_with_in_subquery::prover": {
-  "owner": "prover",
-  "reason": "unsupported: unaliased subquery in FROM"
- },
  "query/object_table_function::cleanup": {
   "owner": "kumosql",
   "reason": "parse_error; parse_error; parse_error; parse_error; parse_error; parse_error"
@@ -558,10 +514,6 @@
  "query/object_table_function::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Expecting ). Line 1, Col: 87."
- },
- "query/partition_pseudo_columns::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/partition_pseudo_columns::prover": {
   "owner": "prover",
@@ -647,14 +599,6 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 43."
  },
- "query/pipe_pivot_unpivot::prover": {
-  "owner": "prover",
-  "reason": "unsupported: unaliased subquery in FROM"
- },
- "query/pipe_select_window_qualify::cleanup": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_select_window_qualify::format": {
   "owner": "kumosql",
   "reason": "equivalence could not be proven for every changed statement"
@@ -691,10 +635,6 @@
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
  },
- "query/pipe_window::cleanup": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
- },
  "query/pipe_window::format": {
   "owner": "kumosql",
   "reason": "equivalence could not be proven for every changed statement"
@@ -702,10 +642,6 @@
  "query/pipe_window::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 46."
- },
- "query/pipe_window::prover": {
-  "owner": "prover",
-  "reason": "unsupported: WINDOW is not modeled"
  },
  "query/pipe_with_cte::cleanup": {
   "owner": "kumosql",
@@ -726,10 +662,6 @@
  "query/qualify::prover": {
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"
- },
- "query/select_basic::prover": {
-  "owner": "prover",
-  "reason": "unsupported: LIMIT is not modeled"
  },
  "query/set_corresponding::format": {
   "owner": "kumosql",
@@ -759,10 +691,6 @@
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
  },
- "query/table_function_unnest_in_from_chain::prover": {
-  "owner": "prover",
-  "reason": "unsupported: LIMIT is not modeled"
- },
  "query/tablesample::prover": {
   "owner": "prover",
   "reason": "unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT)"
@@ -786,10 +714,6 @@
  "query/wildcard_table::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
- },
- "query/wildcard_table_suffix_function::format": {
-  "owner": "kumosql",
-  "reason": "equivalence could not be proven for every changed statement"
  },
  "query/window_frames::prover": {
   "owner": "prover",
