@@ -45,3 +45,11 @@ def test_university_set_floors():
     assert result["configs"]["suite"]["score"] >= 0.80
     assert result["configs"]["suite"]["killed"] > result["configs"]["random_8"]["killed"]
     assert result["configs"]["single_seed"]["killed"] < result["configs"]["suite"]["killed"]
+
+
+def test_unsafe_rewrite_variants_are_all_caught():
+    items, suite = bench._unsafe_items("all")
+    records = [bench.process((item, suite)) for item in items]
+    result = bench.score(records)
+    assert result["mutants"] >= 51
+    assert result["configs"]["suite"]["killed"] == result["mutants"]
