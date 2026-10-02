@@ -34,6 +34,7 @@ import re
 import sqlglot
 from sqlglot import exp
 from .ast_utils import canonical_negation
+from .set_operations import positional_sql_pair
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -4220,6 +4221,9 @@ def normalize(
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result."""
 
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
+    if problem:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
     if result.proven or not (kwargs.get("constraints") or {}):
         return result

@@ -46,6 +46,7 @@ import sys
 import sqlglot
 from sqlglot import exp
 from .ast_utils import canonical_negation
+from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -2984,6 +2985,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     """
 
     dialect = kwargs.get("dialect", "bigquery")
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
+    if problem:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     try:
         left_core, left_spec = _split_limit(left_sql, dialect)
         right_core, right_spec = _split_limit(right_sql, dialect)
