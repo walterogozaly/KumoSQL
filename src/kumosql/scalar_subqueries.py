@@ -17,6 +17,8 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import select_sources as _sources
+
 ASSUMPTION = "uncorrelated scalar subqueries return at most one row"
 MAX_PROOFS = 8
 PLACEHOLDER = "kumosql_scalar"
@@ -36,13 +38,6 @@ def _select_names(select: exp.Expression) -> list[str] | None:
             return None
         names.append(name.lower())
     return names
-
-
-def _sources(select: exp.Select) -> list[exp.Expression]:
-    from_ = select.args.get("from_") or select.args.get("from")
-    found = [from_.this] if from_ is not None else []
-    found += [join.this for join in select.args.get("joins") or []]
-    return found
 
 
 def _table_key(table: exp.Table) -> str:
