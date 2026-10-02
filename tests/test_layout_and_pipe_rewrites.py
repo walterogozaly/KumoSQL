@@ -1,6 +1,7 @@
 """Rewrites of statements sqlglot cannot read: layout-only proofs and pipe syntax."""
 
 import pytest
+from sqlglot.tokens import TokenType
 
 from kumosql import rewrite
 from kumosql.formatting import format_sql
@@ -72,6 +73,7 @@ def test_cleanup_leaves_pipe_syntax_as_written():
     assert rewrite.apply_rules(CLEANUP, with_cte).sql == with_cte
 
 
+@pytest.mark.skipif(not hasattr(TokenType, "PIPE_GT"), reason="sqlglot 26.0.0 has no pipe syntax")
 def test_prover_still_reads_pipe_syntax():
     from kumosql.equivalence import prove_equivalent
 

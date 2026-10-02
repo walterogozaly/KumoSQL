@@ -19,13 +19,14 @@ from __future__ import annotations
 from sqlglot import exp
 
 # Aggregates that ignore duplicates whether or not they are written with DISTINCT.
+# sqlglot 26.0.0 has no BitwiseAndAgg/BitwiseOrAgg classes (BIT_AND is an unknown function there), so they are optional.
 _SET_FUNCTIONS = {
-    exp.Min: "MIN",
-    exp.Max: "MAX",
-    exp.LogicalAnd: "LOGICAL_AND",
-    exp.LogicalOr: "LOGICAL_OR",
-    exp.BitwiseAndAgg: "BIT_AND",
-    exp.BitwiseOrAgg: "BIT_OR",
+    getattr(exp, cls): name
+    for cls, name in (
+        ("Min", "MIN"), ("Max", "MAX"), ("LogicalAnd", "LOGICAL_AND"), ("LogicalOr", "LOGICAL_OR"),
+        ("BitwiseAndAgg", "BIT_AND"), ("BitwiseOrAgg", "BIT_OR"),
+    )
+    if hasattr(exp, cls)
 }
 # Aggregates that read the set of values only with DISTINCT (or over a source that never repeats).
 _COUNTING_FUNCTIONS = {exp.Count: "COUNT", exp.Sum: "SUM", exp.Avg: "AVG"}
