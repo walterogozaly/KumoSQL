@@ -584,7 +584,7 @@ python -m kumosql pipeline-report path/to/dataform --source-schema sources.json 
 
 ## Refactor: keep some tables, rearrange the rest
 
-The **Refactor** page and `python -m kumosql refactor DIR` take a classification of models (protected tables that must stay equivalent, editable ones that may be dropped, merged or inlined, everything else read-only) and return the Pareto front of simpler pipelines over total sqlfluff complexity and model count, each with every protected table proved equal to the original. See [docs/refactor.md](docs/refactor.md).
+The **Refactor** page and `python -m kumosql refactor DIR` take a classification of models (protected tables that must stay equivalent, editable ones that may be dropped, merged or inlined, everything else read-only) and return the Pareto front of simpler pipelines over total sqlfluff complexity and model count, each with every protected table proved equal to the original. `python -m kumosql consolidate-tables DIR D A B C` folds chosen intermediate tables into the table that ends the chain and proves the result equal to the original, and refuses when something else still reads a folded table. See [docs/refactor.md](docs/refactor.md).
 
 ## Table profiles: what each table is
 
@@ -784,6 +784,7 @@ Every command prints `--help`.
 | `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries |
 | `python -m kumosql prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
 | `python -m kumosql refactor DIR [--protect M] [--editable M]` | Find simpler pipelines that keep the protected tables proved equivalent |
+| `python -m kumosql consolidate-tables DIR TARGET TABLE...` | Fold intermediate tables into the table that ends the chain and prove the rewritten table equivalent |
 | `python -m kumosql prove-tables LEFT RIGHT --project DIR` | Prove two models of a Dataform project equivalent, layer by layer, using saved equivalences |
 | `python -m kumosql equivalence list\|add\|remove` | Saved "column X of table A is column Y of table B" declarations |
 | `python -m kumosql pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
