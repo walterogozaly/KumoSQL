@@ -690,7 +690,7 @@ def _prepare_query(
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
     _parse_single_query(sql)
-    lifted = lift_subqueries(sql)
+    lifted = lift_subqueries(sql, rewrite_pipe_syntax=True)
     if lifted.diagnostics:
         details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)
         raise ValueError(f"query could not be normalized without diagnostics: {details}")

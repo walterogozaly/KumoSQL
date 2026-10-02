@@ -228,3 +228,15 @@ def test_a_required_list_that_is_computed_stays_unresolved(tmp_path):
     })
     assert reads(pl) == set()
     assert "js_declaration_dynamic" in {d.code for d in pl.diagnostics}
+
+
+def test_an_unresolved_ref_adds_no_placeholder_node_to_the_graph(tmp_path):
+    from kumosql.graph import build_query_graph
+
+    pl = project(tmp_path, {
+        "definitions/decl.js": 'getTables().forEach((t) => declare({ schema: "raw", name: t }));\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("orders")}',
+    })
+    graph = build_query_graph(pl).to_json()
+    assert not any("sqlx_token" in node["id"] for node in graph["nodes"])
+    assert "unresolved_template" in {d.code for d in pl.all_diagnostics()}
