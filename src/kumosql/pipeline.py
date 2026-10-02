@@ -1406,24 +1406,19 @@ def _scan_lineage(
             reason = reason or "unresolved_column"
         elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
             literal_unnest = True  # UNNEST of literals reads no column
-        elif item is not node and _reads_no_column(item):
-            continue  # a literal or NULL in one branch of a union reads nothing
+        elif (
+            item is not node
+            and isinstance(item.source, exp.Query)
+            and not isinstance(item.expression, exp.Star)
+            and not isinstance(getattr(item.expression, "this", None), exp.Star)
+            and item.expression.find(exp.Column) is None
+        ):
+            literal_unnest = True  # a derived column like COUNT(*) or 1 reads no column
         elif item is not node:
             reason = reason or "untraceable_source"
     if reason is None and not leaves and reads_column and not literal_unnest:
         reason = "unresolved_column"
     return leaves, reason, "union" if is_union else transform
-
-
-def _reads_no_column(item) -> bool:
-    projection = item.expression
-    if isinstance(projection, exp.Alias):
-        projection = projection.this
-    return (
-        isinstance(item.source, exp.Select)
-        and isinstance(projection, exp.Expression)
-        and projection.find(exp.Column, exp.Star) is None
-    )
 
 
 def _ancestors(item, parent_of: dict):

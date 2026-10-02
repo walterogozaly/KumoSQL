@@ -542,6 +542,10 @@ class _AggCtx:
         self.calls: list[_AggCall] = []
 
 
+# Every outer join doubles the cases a select is compiled into; past this many the compiler gives up, not memory.
+MAX_OUTER_JOIN_CASES = 256
+
+
 class _Compiler:
     def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
         self.dialect = dialect
@@ -800,6 +804,8 @@ class _Compiler:
                         _State(list(b_occs), b_conds + [_Pred(z3.Not(atom), atom)], env2, b_subs + [anti])
                     )
             states = new_states
+            if len(states) > MAX_OUTER_JOIN_CASES:
+                raise Unsupported(f"more than {MAX_OUTER_JOIN_CASES} outer-join cases in one select")
         if len(states) > 1 and outer is not None:
             raise Unsupported("outer join inside a subquery")
         for st in states:
@@ -1618,13 +1624,14 @@ class _Prover:
         return self._nice_model(solver, occs) or base
 
     def _nice_model(self, solver, occs):
-        """Prefer integer-valued counterexamples; they fit INT64 and FLOAT64."""
+        """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
+        column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
         values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
-        for extra in (integral + numeric, integral):
+        for extra in (integral + numeric, numeric, integral):
             solver.push()
             solver.add(*extra)
             model = solver.model() if solver.check() == z3.sat else None
