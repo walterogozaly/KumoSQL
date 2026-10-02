@@ -30,6 +30,7 @@ from contextlib import contextmanager
 
 from . import console
 from .pipeline import Pipeline, load_sqlx_project
+from .resilience import extended_path
 from .timing import stage
 
 MAX_FILES = 20_000  # real enterprise Dataform repositories have thousands of files
@@ -571,9 +572,7 @@ class _Checkout:
 
     def __enter__(self) -> str:
         self._created = tempfile.mkdtemp(prefix="kumosql-project-")
-        if os.name == "nt":
-            return "\\\\?\\" + str(Path(self._created).resolve())
-        return self._created
+        return str(extended_path(Path(self._created).resolve()))
 
     def __exit__(self, *exc: object) -> None:
         shutil.rmtree(self._created, ignore_errors=True)
