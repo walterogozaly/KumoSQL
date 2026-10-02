@@ -110,6 +110,7 @@ class Constants:
     strings: set = field(default_factory=set)
     dates: set = field(default_factory=set)
     times: set = field(default_factory=set)
+    counts: set = field(default_factory=set)  # n in a ``COUNT(..) > n``-style test: groups of n to n + 2 rows matter
 
 
 def constants_of(*queries: str, dialect: str = "mysql") -> Constants:
@@ -119,6 +120,11 @@ def constants_of(*queries: str, dialect: str = "mysql") -> Constants:
             tree = sqlglot.parse_one(query, read=dialect)
         except sqlglot.errors.SqlglotError:
             continue
+        for compare in tree.find_all(exp.GT, exp.GTE, exp.EQ, exp.LT, exp.LTE, exp.NEQ):
+            if compare.find(exp.Count):
+                for literal in compare.find_all(exp.Literal):
+                    if not literal.is_string and literal.this.isdigit() and 1 <= int(literal.this) <= 12:
+                        found.counts.add(int(literal.this))
         for literal in tree.find_all(exp.Literal):
             text = literal.this
             if literal.is_string:
@@ -137,7 +143,7 @@ def constants_of(*queries: str, dialect: str = "mysql") -> Constants:
     return found
 
 
-def _domain(column: Column, constants: Constants) -> list:
+def _domain(column: Column, constants: Constants, wide: bool = False) -> list:
     kind = column.type.split("(")[0].upper()
     if kind == "ENUM":
         return list(column.values)
@@ -145,11 +151,15 @@ def _domain(column: Column, constants: Constants) -> list:
         base = {0, 1, 2, 3}
         for n in sorted(constants.ints)[:12]:
             base.update({n - 1, n, n + 1})
+            if wide and n > 3:
+                base.add(n // 2)  # two halves reach a ``SUM(..) >= n`` threshold exactly
         return sorted(base)
     if kind in ("NUMERIC", "DECIMAL", "FLOAT", "DOUBLE"):
         base = {0, 1, 2, 3, 0.5, 1.5, 0.333, 2.567}
         for n in sorted(constants.ints)[:12]:
             base.update({n - 1, n, n + 1})
+            if wide and n > 3:
+                base.add(n // 2)
         return sorted(base)
     if kind == "BOOL" or kind == "BOOLEAN":
         return [True, False]
@@ -186,11 +196,14 @@ class _NoRow(Exception):
 
 
 class _Generator:
-    def __init__(self, spec: Spec, constants: Constants, rng: random.Random):
-        self.spec, self.rng = spec, rng
+    def __init__(self, spec: Spec, constants: Constants, rng: random.Random, wide: bool = False):
+        self.spec, self.rng, self.wide = spec, rng, wide
         self.domains = {
-            (t.name, c.name): _domain(c, constants) for t in spec.tables.values() for c in t.columns
+            (t.name, c.name): _domain(c, constants, wide) for t in spec.tables.values() for c in t.columns
         }
+        # wide databases: tables of 3 to 8 rows and past any COUNT threshold in the queries, and some
+        # columns drawn from their whole domain, for groups with many distinct values
+        self.sizes = [3, 4, 5, 6, 8] + [m for n in sorted(constants.counts) for m in (n, n + 1, n + 2)]
         self.order = self._table_order()
         self.single_checks: dict[str, list[Check]] = {}
         self.global_checks: list[Check] = []
@@ -250,7 +263,9 @@ class _Generator:
 
     def _rows(self, table: Table, db, max_rows: int) -> list[tuple]:
         rng = self.rng
-        if max_rows > 5:  # bulk databases, for counts like HAVING COUNT(*) >= 5
+        if self.wide:
+            count = rng.choice(self.sizes)
+        elif max_rows > 5:  # bulk databases, for counts like HAVING COUNT(*) >= 5
             count = rng.randint(max_rows - 3, max_rows)
         else:
             count = min(rng.choice([0, 1, 1, 2, 2, 3, 3, 4, 5][: 3 + max_rows * 2]), max_rows)
@@ -260,7 +275,8 @@ class _Generator:
             domain = self.domains[(table.name, column.name)]
             key = (column.name.lower(), column.type)
             if key not in self.shared_hot:  # columns of the same name share their hot values, so joins match
-                self.shared_hot[key] = rng.sample(domain, min(len(domain), rng.choice([1, 2, 3]))) if domain else [None]
+                size = rng.choice([1, 2, 3, len(domain)] if self.wide else [1, 2, 3])
+                self.shared_hot[key] = rng.sample(domain, min(len(domain), size)) if domain else [None]
             hot[column.name] = [v for v in self.shared_hot[key] if v in domain] or self.shared_hot[key]
         keys = ([table.primary_key] if table.primary_key else []) + list(table.unique)
         fk_of = {c: (p, pc) for ch, c, p, pc in self.spec.foreign_keys if ch == table.name}
@@ -399,11 +415,12 @@ class Searcher:
                 names.add(table.name.lower())
         by_lower = {n.lower(): n for n in spec.tables}
         self.used = {by_lower[n] for n in names if n in by_lower}
-        self.columns_used, self.star = set(), False
+        self.columns_used, self.star, self.having = set(), False, False
         for sql in (left, right):
             tree = sqlglot.parse_one(sql, read=dialect)
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
+            self.having = self.having or tree.find(exp.Having) is not None
         self.db = duckdb.connect(":memory:")
         for name in self.used:
             table = spec.tables[name]
@@ -538,9 +555,11 @@ class Searcher:
                 return False
         return True
 
-    def search(self, trials: int = 150, seed: int = 0) -> Counterexample | None:
+    def search(self, trials: int = 150, seed: int = 0, *, wide: bool = False) -> Counterexample | None:
+        """``wide`` draws bigger tables with more distinct values (see ``_Generator``)."""
+
         rng = random.Random(seed)
-        generator = _Generator(self.spec, self.constants, rng)
+        generator = _Generator(self.spec, self.constants, rng, wide=wide)
         used = sorted(self.used)
         for trial in range(trials):
             largest = max(self.constants.ints, default=0)
@@ -555,7 +574,7 @@ class Searcher:
                 a = self.db.execute(self.left_sql).fetchall()
                 b = self.db.execute(self.right_sql).fetchall()
             except duckdb.Error:
-                return None
+                continue  # a data-dependent error (a scalar subquery returning two rows) rules out this database only
             if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
                 return Counterexample({n: data[n] for n in self.used}, a, b)
         return None
