@@ -240,13 +240,14 @@ def minimize_failure(
     dialect: str = "bigquery",
     time_limit: float = 30.0,
     compare: Mapping[str, Any] | None = None,
+    runner_class=DatasetRunner,
 ) -> Minimized:
     """Reduce the pair and database; raises ``ValueError`` if the pair does not differ on ``dataset``."""
 
     compare = dict(compare or {"check_column_names": False})
     start = time.monotonic()
     deadline = start + time_limit
-    with DatasetRunner(schema) as runner:
+    with runner_class(schema) as runner:
         if not _differs(runner, left_sql, right_sql, dataset, **compare):
             raise ValueError("the query pair does not differ on the given database")
         before = measure(left_sql, right_sql, dataset, dialect)
@@ -303,7 +304,7 @@ def to_json(case: Minimized) -> dict:
     }
 
 
-def replay(document: Mapping[str, Any], **compare) -> bool:
+def replay(document: Mapping[str, Any], *, runner_class=DatasetRunner, **compare) -> bool:
     """True when the document's queries differ on its database, on a fresh engine."""
 
     compare = compare or {"check_column_names": False}
@@ -315,5 +316,5 @@ def replay(document: Mapping[str, Any], **compare) -> bool:
         for k, v in document["tables"].items()
     }
     dataset = SyntheticDataset(0, tables)
-    with DatasetRunner(document["schema"]) as runner:
+    with runner_class(document["schema"]) as runner:
         return _differs(runner, document["left"], document["right"], dataset, **compare)

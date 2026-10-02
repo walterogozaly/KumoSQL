@@ -454,6 +454,7 @@ def _parse_ref_args(
     known: dict[str, list[Target]] | None = None,
     *,
     names_may_be_missing: bool = False,
+    schema_settles: bool = False,
 ) -> Target:
     """The target a ``ref()`` names.
 
@@ -469,6 +470,8 @@ def _parse_ref_args(
         if len(matches) > 1:
             raise ValueError("ref() names several tables; it was left unresolved")
         if not matches and names_may_be_missing:
+            if schema is not None and schema_settles:
+                return  # the ref names its dataset and no declaration sets a database: the project default is exact
             raise ValueError("ref() names a table that a declaration may define; it was left unresolved")
 
     def by_name(name: str, schema: str | None = None) -> Target | None:
@@ -589,7 +592,7 @@ def load_sqlx_project(
 
         def substitute(match: re.Match[str]) -> str:
             try:
-                ref = _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js)
+                ref = _parse_ref_args(match.group("args"), default, known, **unknown_names())
             except ValueError as exc:
                 diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
                 return match.group(0)  # left masked like any other interpolation
@@ -606,7 +609,7 @@ def load_sqlx_project(
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section):
                 for match in _REF_RE.finditer(section):
                     try:
-                        ref = _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js)
+                        ref = _parse_ref_args(match.group("args"), default, known, **unknown_names())
                     except ValueError as exc:
                         diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
                         continue
@@ -615,7 +618,7 @@ def load_sqlx_project(
 
         def resolve(match: re.Match[str]) -> str:
             try:
-                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js).sql()
+                return _parse_ref_args(match.group("args"), default, known, **unknown_names()).sql()
             except ValueError:
                 return match.group(0)  # computed argument: left masked like any other interpolation
 
@@ -638,7 +641,7 @@ def load_sqlx_project(
                     operations.append(inner)
         for entry in _config_dependencies(config):
             try:
-                declared = _parse_ref_args(entry, default, known, names_may_be_missing=incomplete_js)
+                declared = _parse_ref_args(entry, default, known, **unknown_names())
             except ValueError as exc:
                 diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", f"config dependencies: {exc}"))
                 continue
@@ -665,6 +668,11 @@ def load_sqlx_project(
             f"could not be analyzed ({type(exc).__name__}: {exc}); asset was skipped"))
 
     incomplete_js = False
+    js_sets_database = False
+
+    def unknown_names() -> dict:
+        return {"names_may_be_missing": incomplete_js, "schema_settles": not js_sets_database}
+
     js_files: dict[str, str] = {}
     for path in find_assets(root, (".js",), unlistable):
         relative_parts = path.relative_to(root).parts
@@ -688,10 +696,15 @@ def load_sqlx_project(
             known.setdefault(target.name, []).append(target)
         if not complete:
             incomplete_js = True
+            js_sets_database = js_sets_database or bool(re.search(r"\bdatabase\b", text))
             diagnostics.append(PipelineDiagnostic(
                 str(path.relative_to(root)), "js_declaration_dynamic",
                 "declares or names tables that cannot be read without running the code; refs to unlisted names were left unresolved"))
 
+    if incomplete_js and compiled_targets is None:
+        diagnostics.append(PipelineDiagnostic(
+            "", "compiled_graph_not_requested",
+            "no Dataform repository is connected to this load, so computed declarations were not resolved from Dataform's compilation"))
     if incomplete_js and compiled_targets is not None:
         # Dataform's own compilation lists every action, which settles what the JavaScript could not.
         try:

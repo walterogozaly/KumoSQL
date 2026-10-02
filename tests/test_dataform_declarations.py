@@ -240,3 +240,20 @@ def test_an_unresolved_ref_adds_no_placeholder_node_to_the_graph(tmp_path):
     graph = build_query_graph(pl).to_json()
     assert not any("sqlx_token" in node["id"] for node in graph["nodes"])
     assert "unresolved_template" in {d.code for d in pl.all_diagnostics()}
+
+
+def test_a_two_part_ref_to_an_unlisted_name_is_exact_when_no_declaration_sets_a_database(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/decl.js": 'getTables().forEach((t) => declare({ schema: "raw", name: t }));\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("raw", "orders")} JOIN ${ref("orders2")} USING (id)',
+    })
+    assert {d.key for d in pl.models["proj.analytics.m"].declared_dependencies} == {"proj.raw.orders"}
+    assert {"js_declaration_dynamic", "unsupported_ref", "compiled_graph_not_requested"} <= {d.code for d in pl.diagnostics}
+
+
+def test_a_two_part_ref_stays_unresolved_when_a_computed_declaration_may_set_the_database(tmp_path):
+    pl = project(tmp_path, {
+        "definitions/decl.js": 'getTables().forEach((t) => declare({ database: t.db, schema: "raw", name: t.name }));\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("raw", "orders")}',
+    })
+    assert pl.models["proj.analytics.m"].declared_dependencies == ()

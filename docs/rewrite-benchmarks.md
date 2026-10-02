@@ -120,3 +120,32 @@ python tools/clickbench_bench.py --clickbench ClickBench --db clickbench --gener
 | Q36 | `GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3` becomes `GROUP BY ClientIP` | yes | 1.04x |
 
 3 of 43 queries are rewritten, all 3 are proven and return the same rows, 1 is at least 10% faster (geometric mean 1.68x over the 3); the other 40 are left unchanged (single-table scans with nothing provably redundant).
+
+## Cost-recommendation validity
+
+Does a rewrite KumoSQL recommends keep the query's meaning, and does it save what the cost estimate says? `tools/cost_validity_bench.py` collects the recommendations of two sources for every statement of a workload and judges them in a fixed order:
+
+1. **Correctness.** The evidence label KumoSQL attaches (proven, or not), then execution: original and rewrite run on PostgreSQL 16 and must return the same bag of rows. Under a top-level `ORDER BY` the sequence of sort-key values must also match; rows that tie on every key may come back in any order.
+2. **Estimated benefit.** PostgreSQL's `EXPLAIN` total cost before and after, the local stand-in for a BigQuery dry run. "Cheaper" means at least 2% lower.
+3. **Observed benefit.** Median of five alternating runs after a warm-up. "Faster" means at least 10%.
+
+A benefit is counted only for rewrites that passed step 1, and estimates and observations are reported separately.
+
+The sources are the rule pipeline (`canonical_rule_order()` without `format_sql`; it works on BigQuery SQL, so each query is transpiled to BigQuery and back and the round-tripped original is the baseline) and `query_optimizer.optimize` with the cost guard and the database's catalog. The workload is TPC-DS (99 templates, 103 statements) and DSB (53 statements) generated with DSB's `dsqgen` (seed 7, PostgreSQL templates) at scale factor 1; the generated queries are not stored here.
+
+```
+python tools/cost_validity_bench.py --workload tpcds=TPCDS_QUERY_DIR --workload dsb=DSB_QUERY_DIR --jobs 4 --out results.json
+python tools/cost_validity_bench.py --workload ... --rejudge results.json --out results2.json   # execute the same recommendations again
+```
+
+| Source | Recommended | Proven | Same rows | Different rows | Not judged | Estimated cheaper | Faster | Slower | Geomean speedup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Rule pipeline | 44 | 40 | 37 | 0 | 7 | 0 | 0 | 0 | 1.006x |
+| Optimizer | 26 | 26 | 26 | 0 | 0 | 1 | 1 | 1 | 0.997x |
+
+* **0 wrong.** Every judged rewrite returned the same rows. The 4 unproven rule rewrites (single-use CTE inlining around window functions in TPC-DS q47, q51 and q57, plus q21) are labelled unproven, so they are never presented as safe; the three that could run returned the same rows.
+* **Not judged.** For 7 TPC-DS queries (q2, q5, q21, q40, q77, q78, q80) the round-tripped original does not run on PostgreSQL (`ROUND(double precision, int)`, interval arithmetic written as `- 30 AS days`); these are transpiler limits, not rule results.
+* **Estimate versus observation.** The rule recommendations (27 parenthesis removals, 24 single-use CTE inlinings) never change PostgreSQL's estimate and never moved runtime by 10%; they make SQL easier to read, not cheaper. The optimizer's one estimated saving (DSB `multi_block_queries-query069`, a dropped redundant predicate, estimate -11%) ran 1.30x faster. Of the 25 optimizer rewrites with an unchanged estimate, none ran faster and one ran 0.90x (TPC-DS q58, 1.06x in the first run), which is timing noise. So on this workload the estimate predicted the one real saving and no false ones.
+* In the first run, the optimizer's TPC-DS q44 rewrite (dropping `rnk < 11` on one side of a join on `rnk`, implied by the other side) compared as different rows because tied rows came back in another order; re-run, both returned the same 10 rows in the same order. The tie-aware comparison above came from this case.
+
+BigQuery dry-run bytes for the same recommendations need real BigQuery access and have not been measured yet.
