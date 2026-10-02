@@ -14,6 +14,9 @@
   to ``x op ANY (q)``, ``x op ALL (q)`` or ``x IN (q)`` only when a small z3 check proves it
   has the same value (TRUE, FALSE or NULL; or the same TRUE/FALSE where only that matters)
   for every possible aggregate state, so a differently written or wrong expansion is left as is.
+  The same check reads ``MIN(TRUE)`` over the rows (NULL only when there are none) as ``EXISTS``,
+  and Calcite's constant ``c IN (q)``, the first row of ``(y IS NOT NULL, COUNT(*))`` grouped over
+  the rows of ``q`` where ``y = c OR y IS NULL``, as ``c IN (q)``.
 """
 
 from __future__ import annotations
@@ -530,6 +533,8 @@ def _classify(column: exp.Column, select: exp.Select, schema, not_null, groups: 
     if lineage is None or lineage.expr is None or not lineage.hops:
         return None
     expr, body, hops = lineage.expr, lineage.select, lineage.hops
+    if any(_query_select(source.this if isinstance(source, exp.Lateral) else source).args.get("limit") for _, source in hops):
+        return _probe(lineage, schema, groups)
     if isinstance(expr, exp.AggFunc) and expr.parent is not None and _global_aggregate(body):
         if lineage.nullable or body.args.get("distinct"):
             return None
@@ -568,12 +573,14 @@ def _indicator(body: exp.Select, hops: tuple, schema, not_null, groups: dict) ->
     group_by = body.args.get("group")
     if len(body.expressions) != 2 or any(body.args.get(k) for k in ("having", "qualify", "limit", "offset", "windows")):
         return None
-    if group_by is not None and len(group_by.expressions) != 1:
+    # Constants in the GROUP BY (Calcite writes ``GROUP BY y, TRUE``) do not split groups.
+    grouped = [g for g in group_by.expressions if not isinstance(g, (exp.Boolean, exp.Literal))] if group_by is not None else None
+    if grouped is not None and len(grouped) != 1:
         return None
     if any(a.find_ancestor(exp.Select) is body for e in body.expressions for a in e.find_all(exp.AggFunc, exp.Window)):
         return None
     keys = [e for e in body.expressions if not isinstance(e.unalias(), exp.Boolean)]
-    if len(keys) != 1 or (group_by is not None and keys[0].unalias().sql() != group_by.expressions[0].sql()):
+    if len(keys) != 1 or (grouped is not None and keys[0].unalias().sql() != grouped[0].sql()):
         return None
     y = keys[0].unalias()
     key_name = keys[0].alias_or_name.lower()
@@ -618,6 +625,169 @@ def _indicator(body: exp.Select, hops: tuple, schema, not_null, groups: dict) ->
     return group, "i"
 
 
+def _unparen(node: exp.Expression | None) -> exp.Expression | None:
+    while isinstance(node, exp.Paren):
+        node = node.this
+    return node
+
+
+def _limit_one(select: exp.Select) -> bool:
+    limit = select.args.get("limit")
+    value = limit.expression if isinstance(limit, exp.Limit) else None
+    return not select.args.get("offset") and isinstance(value, exp.Literal) and not value.is_string and value.this == "1"
+
+
+_ROW_CHANGING = ("group", "having", "distinct", "qualify", "windows", "limit", "offset", "order", "laterals")
+
+
+def _keeps_rows(select: exp.Select) -> bool:
+    """A plain projection/filter/join: no grouping, DISTINCT, LIMIT or aggregate of its own."""
+
+    if any(select.args.get(k) for k in _ROW_CHANGING):
+        return False
+    return not any(a.find_ancestor(exp.Select) is select for e in select.expressions for a in e.find_all(exp.AggFunc, exp.Window))
+
+
+def _probe(lineage: _Lineage, schema, groups: dict) -> tuple | None:
+    """Calcite's ``c IN (q)`` for a constant ``c``: the first row of
+    ``SELECT y IS NOT NULL AS g, COUNT(*) AS n FROM q WHERE c = y OR y IS NULL GROUP BY g ORDER BY g IS NULL DESC, g DESC LIMIT 1``
+    LEFT JOINed ON TRUE. ``g`` is TRUE when some ``y = c``, FALSE when there is none but a NULL ``y``,
+    and both columns are NULL when there is neither.
+    """
+
+    hops = lineage.hops
+    index = next(i for i, (_, source) in enumerate(hops) if _query_select(source.this if isinstance(source, exp.Lateral) else source).args.get("limit"))
+    outer, source = hops[index]
+    if isinstance(source, exp.Lateral) or index + 1 >= len(hops) or _path_null(hops, index):
+        return None
+    top = _query_select(source)
+    sources = _source_map(outer)
+    entry = sources.get(_alias_of(source)) if sources else None
+    join = entry[2] if entry else None
+    if join is None or (join.args.get("side") or "").upper() != "LEFT" or not _true(join.args.get("on")):
+        return None
+    if not _limit_one(top) or any(top.args.get(k) for k in ("where", "group", "having", "joins", "laterals", "distinct", "qualify", "windows")):
+        return None
+    if hops[index + 1][0] is not top:
+        return None
+    counted_source = hops[index + 1][1]
+    counted = _query_select(counted_source)
+    alias = _alias_of(counted_source)
+    group = counted.args.get("group") if counted is not None else None
+    if group is None or len(group.expressions) != 1 or any(counted.args.get(k) for k in ("where", "having", "joins", "laterals", "distinct", "qualify", "windows", "order", "limit", "offset")):
+        return None
+    key = group.expressions[0]
+    if not isinstance(key, exp.Column) or len(counted.expressions) != 2:
+        return None
+    g_items = [e for e in counted.expressions if isinstance(e.unalias(), exp.Column) and e.unalias().sql() == key.sql()]
+    n_items = [e for e in counted.expressions if isinstance(e.unalias(), exp.Count) and isinstance(e.unalias().this, exp.Star)]
+    if len(g_items) != 1 or len(n_items) != 1:
+        return None
+    g_name = g_items[0].alias_or_name.lower()
+    if any(not isinstance(e.unalias(), exp.Column) or e.unalias().table.lower() != alias for e in top.expressions):
+        return None
+    order = top.args.get("order")
+    keys = [o for o in order.expressions] if order is not None else []
+
+    def reads_g(node):
+        node = _unparen(node)
+        return isinstance(node, exp.Column) and node.table.lower() == alias and node.name.lower() == g_name
+
+    # TRUE first; g is never NULL, so a leading ``g IS NULL DESC`` changes nothing.
+    if not keys or not all(k.args.get("desc") for k in keys) or not reads_g(keys[-1].this):
+        return None
+    first = _unparen(keys[0].this)
+    if len(keys) > 2 or (len(keys) == 2 and not (isinstance(first, exp.Is) and isinstance(first.expression, exp.Null) and reads_g(first.this))):
+        return None
+    # The marked rows: SELECT y IS NOT NULL AS g FROM rows, under renaming layers.
+    marking = _resolve(key, counted, schema)
+    if marking is None or marking.expr is None or marking.nullable or not marking.hops:
+        return None
+    mark, marked = _unparen(marking.expr), marking.select
+    if not (isinstance(mark, exp.Not) and isinstance(_unparen(mark.this), exp.Is) and isinstance(_unparen(mark.this).expression, exp.Null)):
+        return None
+    y = _unparen(_unparen(mark.this).this)
+    if not isinstance(y, exp.Column) or not all(_keeps_rows(o) for o, _ in marking.hops[1:]) or not _keeps_rows(marked):
+        return None
+    marked_hops = hops[: index + 2] + marking.hops
+    # Which column is read: the count, or the mark.
+    if lineage.select is counted and isinstance(lineage.expr, exp.Count):
+        role = "pn"
+    elif lineage.select is marked and lineage.expr is marking.expr and len(hops) == len(marked_hops) and all(
+        a[1] is b[1] for a, b in zip(hops, marked_hops)
+    ):
+        role = "pg"
+    else:
+        return None
+    found = groups.get(id(top))
+    if found is None:
+        found = groups[id(top)] = _Group("probe", marked, marked_hops)
+        found.key = None
+        filtered = _probe_filter(marked, y, schema)
+        rows = _rows_select(marked, y, marked_hops, schema, drop_group=False) if filtered is not None else None
+        if rows is not None:
+            conjunct, constant = filtered
+            matches = [
+                n for w in rows.find_all(exp.Where) for n in (w.this.flatten() if isinstance(w.this, exp.And) else [w.this])
+                if n.sql() == conjunct.sql()
+            ]
+            if len(matches) == 1:
+                _drop_conjunct(matches[0])
+                found.rows = rows
+                found.key = _canonical(rows)
+                found.x = constant.copy()
+                found.y = y
+    if found.key is None:
+        return None
+    return found, role
+
+
+def _probe_filter(select: exp.Select, y: exp.Column, schema) -> tuple[exp.Expression, exp.Expression] | None:
+    """The ``c = y OR y IS NULL`` filter (``c`` a non-NULL literal) on the rows that ``y`` reads, and ``c``."""
+
+    column = y
+    while True:
+        if not _keeps_rows(select):
+            return None
+        where = select.args.get("where")
+        for part in (where.this.flatten() if isinstance(where.this, exp.And) else [where.this]) if where is not None else []:
+            node = _unparen(part)
+            if not isinstance(node, exp.Or):
+                continue
+            left, right = _unparen(node.this), _unparen(node.expression)
+            if isinstance(left, exp.Is):
+                left, right = right, left
+            if not (isinstance(left, exp.EQ) and isinstance(right, exp.Is) and isinstance(right.expression, exp.Null)):
+                continue
+            if _unparen(right.this).sql() != column.sql():
+                continue
+            sides = [_unparen(left.this), _unparen(left.expression)]
+            constants = [s for s in sides if isinstance(s, exp.Literal)]
+            if len(constants) == 1 and any(s.sql() == column.sql() for s in sides):
+                return part, constants[0]
+        sources = _source_map(select)
+        if sources is None:
+            return None
+        alias = column.table.lower() if column.table else _local_source(column, select, schema)
+        source = sources.get(alias, (None,))[0] if alias else None
+        body = _query_select(source) if isinstance(source, exp.Subquery) else None
+        item = _outputs(body, column.name.lower()) if body is not None else None
+        if item is None or not isinstance(item.unalias(), exp.Column):
+            return None
+        select, column = body, item.unalias()
+
+
+def _drop_conjunct(node: exp.Expression) -> None:
+    where = node
+    while not isinstance(where, exp.Where):
+        where = where.parent
+    rest = [p for p in (where.this.flatten() if isinstance(where.this, exp.And) else [where.this]) if p is not node]
+    if rest:
+        where.set("this", exp.and_(*rest, copy=False))
+    else:
+        where.pop()
+
+
 _BOOLEAN_SHAPES = (exp.And, exp.Or, exp.Not, exp.Is, exp.Boolean, exp.In, exp.Exists, exp.Between, exp.NullSafeEQ, exp.NullSafeNEQ) + tuple(_OPS)
 
 
@@ -660,6 +830,13 @@ class _Encoder:
             else:
                 self.state[role] = (z3.Bool(f"q_{role}_null"), z3.Real(f"q_{role}"))
         return self.state[role]
+
+    def present(self):
+        """A probe's first group exists: some ``y`` equals the constant, or some ``y`` is NULL."""
+
+        _, c = self.agg("c")
+        _, ck = self.agg("ck")
+        return z3.Or(self.agg("i"), ck < c)
 
     def atom(self, node: exp.Expression, kind: str):
         key = _key(node)
@@ -732,6 +909,9 @@ class _Encoder:
                 return z3.BoolVal(True), z3.BoolVal(False)
             if role == "i":
                 return self.agg("i"), z3.BoolVal(False)
+            if role == "pg":
+                hit = self.agg("i")
+                return hit, z3.And(self.present(), z3.Not(hit))
             raise _Unsupported("aggregate read as a condition")
         if self.has_ref(node):
             raise _Unsupported(type(node).__name__)
@@ -756,6 +936,12 @@ class _Encoder:
                 return self.agg(role)
             if role == "i":
                 return z3.Not(self.agg("i")), z3.RealVal(1)
+            if role == "pg":
+                return z3.Not(self.present()), z3.RealVal(1)
+            if role == "pn":
+                count = z3.Int("q_pn")
+                self.facts.append(count >= 1)
+                return z3.Not(self.present()), z3.ToReal(count)
             return z3.BoolVal(False), z3.RealVal(1)
         if isinstance(node, exp.Case) and not _boolean_shaped(node):
             return self._case(node, self.val, lambda a: a[0])
@@ -858,7 +1044,7 @@ def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: 
 
     if not any(
         isinstance(s.parent, (exp.Subquery, exp.Lateral))
-        and (_global_aggregate(s) or (s.args.get("group") and any(isinstance(e.unalias(), exp.Boolean) for e in s.expressions)))
+        and (_global_aggregate(s) or _limit_one(s) or (s.args.get("group") and any(isinstance(e.unalias(), exp.Boolean) for e in s.expressions)))
         for s in tree.find_all(exp.Select)
     ):
         return tree
@@ -923,6 +1109,8 @@ def _at_most_one_match(join: exp.Join, select: exp.Select, schema, keys: dict) -
     body = _query_select(source) if isinstance(source, exp.Subquery) else None
     if body is None:
         return False
+    if _limit_one(body):
+        return True
     alias = _alias_of(source)
     equated = []
     on = join.args.get("on")
@@ -939,7 +1127,8 @@ def _at_most_one_match(join: exp.Join, select: exp.Select, schema, keys: dict) -
     group = body.args.get("group")
     if group is not None and not body.args.get("having"):
         outputs = {e.alias_or_name.lower(): e.unalias().sql() for e in body.expressions}
-        if {e.sql() for e in group.expressions} <= {outputs.get(c.name.lower()) for c in equated}:
+        grouped = {e.sql() for e in group.expressions if not isinstance(e, (exp.Boolean, exp.Literal))}
+        if grouped <= {outputs.get(c.name.lower()) for c in equated}:
             return True
     found = [_filtered_base(column, select, schema) for column in equated]
     if not found or any(f is None for f in found) or len({id(t) for t, _ in found}) != 1:
@@ -1036,14 +1225,15 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
     groups = {id(refs[id(c)][0]): refs[id(c)][0] for c in columns if refs[id(c)][0] is not None}
     aggregates = [g for g in groups.values() if g.kind == "agg"]
     indicators = [g for g in groups.values() if g.kind == "ind"]
-    if len(aggregates) > 1 or len(indicators) > 1:
+    probes = [g for g in groups.values() if g.kind == "probe"]
+    if len(aggregates) > 1 or len(indicators) > 1 or len(probes) > 1 or (probes and len(groups) > 1):
         return None
     if indicators and aggregates and indicators[0].key != aggregates[0].key:
         return None
-    rows_group = indicators[0] if indicators else aggregates[0]
+    rows_group = indicators[0] if indicators else probes[0] if probes else aggregates[0]
     roles = {id(c): refs[id(c)][1] for c in columns}
     y_select = rows_group.select
-    y_never_null = _never_null(rows_group.y, y_select, schema, not_null) if isinstance(rows_group.y, exp.Column) else False
+    y_never_null = _never_null(rows_group.y, y_select, schema, not_null)
     base = _filtered_base(rows_group.y, y_select, schema) if isinstance(rows_group.y, exp.Column) else None
     y_unique = base is not None and _is_key(base[0], {base[1]}, keys)
     mode = _mode(node)
@@ -1055,6 +1245,13 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
         encoder = _Encoder(roles, never)
         return encoder, encoder.pred(node)
 
+    if probes:
+        x = probes[0].x
+        encoder, condition = encoder_for(x)
+        x_value = encoder.val(x)
+        if _same(encoder, condition, _in_semantics(encoder, x_value), mode, _state_facts(encoder, y_never_null, y_unique)):
+            return exp.In(this=_operand(x), query=exp.Subquery(this=rows_group.rows.copy()))
+        return None
     if indicators:
         x = indicators[0].x
         encoder, condition = encoder_for(x)
@@ -1085,4 +1282,12 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
                 if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique)):
                     quantifier = exp.All if quantifier_all else exp.Any
                     return _compare(op, _operand(x), quantifier(this=exp.Subquery(this=rows_group.rows.copy())))
+    # A condition that only asks whether the rows are there, such as MIN(TRUE) IS NOT NULL.
+    for negated in (False, True):
+        encoder, condition = encoder_for(None)
+        _, c = encoder.agg("c")
+        semantics = (c == 0, c >= 1) if negated else (c >= 1, c == 0)
+        if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique)):
+            test = exp.Exists(this=rows_group.rows.copy())
+            return exp.Not(this=test) if negated else test
     return None

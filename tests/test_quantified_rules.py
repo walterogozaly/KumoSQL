@@ -106,6 +106,11 @@ _ANY_OR = (
 )
 _ANY_CASE = "CASE WHEN s.c = 0 THEN FALSE WHEN (s.a {op} s.m) IS TRUE THEN TRUE WHEN s.c > s.ck THEN NULL ELSE (s.a {op} s.m) END"
 _IN_CASE = "CASE WHEN s.c = 0 THEN FALSE WHEN s.a IS NULL THEN NULL WHEN s.i IS NOT NULL THEN TRUE WHEN s.ck < s.c THEN NULL ELSE FALSE END"
+_PROBE_CASE = "CASE WHEN s.n IS NULL THEN FALSE WHEN s.g = FALSE THEN NULL WHEN s.g IS NOT NULL THEN TRUE ELSE FALSE END"
+_PROBE_MUTATIONS = [
+    ("THEN NULL", "THEN FALSE"), ("(1 = u.c", "(2 = u.c"), ("IS NOT NULL) AS g", "IS NULL) AS g"), ("m.g DESC LIMIT", "m.g LIMIT"),
+    ("OR u.c IS NULL", "OR u.d IS NULL"), ("LIMIT 1", "LIMIT 2"), ("s.n IS NULL THEN FALSE", "s.n IS NULL THEN NULL"),
+]
 _WHERES = ["", "WHERE u.d > 1"]
 _MUTATIONS = [
     ("s.c <> 0", "s.c >= 0"), ("NULL AND", "FALSE AND"), ("s.c > s.ck", "s.c >= s.ck"), ("s.c <= s.ck", "s.c < s.ck"),
@@ -137,9 +142,9 @@ def _expansions():
             expansion = _wrap(form.format(op=op), place, negate).format(source=source)
             cases.append((original, expansion, not wrong_agg))
             cases += [(original, expansion.replace(a, b, 1), False) for a, b in _MUTATIONS if a in expansion]
-    for where, place, negate, grouped in itertools.product(_WHERES, ["where", "select"], [False, True], [True, False]):
+    for where, place, negate, group in itertools.product(_WHERES, ["where", "select"], [False, True], [" GROUP BY u.c", " GROUP BY u.c, TRUE", ""]):
         original = _original(f"t.a IN (SELECT u.c FROM u {where})", place, negate)
-        group = " GROUP BY u.c" if grouped else ""
+        grouped = bool(group)
         source = (
             f"(SELECT t.a, t.b, g.c, g.ck, ind.i FROM t INNER JOIN (SELECT COUNT(*) AS c, COUNT(u.c) AS ck FROM u {where}) AS g ON TRUE "
             f"LEFT JOIN (SELECT u.c AS k, TRUE AS i FROM u {where}{group}) AS ind ON t.a = ind.k) AS s"
@@ -147,10 +152,39 @@ def _expansions():
         expansion = _wrap(_IN_CASE, place, negate).format(source=source)
         cases.append((original, expansion, grouped))
         cases += [(original, expansion.replace(a, b, 1), False) for a, b in _MUTATIONS if a in expansion]
+    # Calcite's constant IN: the first group of (y IS NOT NULL, COUNT(*)) over the rows equal to the constant or NULL.
+    for where, place, negate in itertools.product(_WHERES, ["where", "select"], [False, True]):
+        original = _original(f"1 IN (SELECT u.c FROM u {where})", place, negate)
+        filtered = f"{where} AND" if where else "WHERE"
+        source = (
+            "(SELECT t.a, t.b, p.g, p.n FROM t LEFT JOIN (SELECT m.g, m.n FROM (SELECT f.g, COUNT(*) AS n FROM "
+            f"(SELECT (u.c IS NOT NULL) AS g FROM u {filtered} (1 = u.c OR u.c IS NULL)) AS f GROUP BY f.g) AS m "
+            "ORDER BY (m.g IS NULL) DESC, m.g DESC LIMIT 1) AS p ON TRUE) AS s"
+        )
+        expansion = _wrap(_PROBE_CASE, place, negate).format(source=source)
+        cases.append((original, expansion, True))
+        cases += [(original, expansion.replace(a, b, 1), False) for a, b in _PROBE_MUTATIONS if a in expansion]
     return cases
 
 
 _CASES = _expansions()
+
+
+def test_min_of_true_is_an_existence_test():
+    """Calcite marks existence with MIN(TRUE) over the rows: NULL when there are none."""
+
+    exists = "SELECT t.a, t.b FROM t WHERE {neg}EXISTS (SELECT 1 FROM u WHERE u.d > 1)"
+    joined = "SELECT t.a, t.b FROM t LEFT JOIN (SELECT MIN({y}) AS m FROM u WHERE u.d > 1) AS g ON TRUE WHERE g.m IS {neg}NULL"
+    assert prove_equivalent_algebraic(exists.format(neg=""), joined.format(y="TRUE", neg="NOT "), schema=SCHEMA).proven
+    assert prove_equivalent_algebraic(exists.format(neg="NOT "), joined.format(y="TRUE", neg=""), schema=SCHEMA).proven
+    # MIN of a nullable column is NULL also when every value is NULL.
+    assert not prove_equivalent_algebraic(exists.format(neg=""), joined.format(y="u.c", neg="NOT "), schema=SCHEMA).proven
+    assert not prove_equivalent_algebraic(exists.format(neg=""), joined.format(y="TRUE", neg=""), schema=SCHEMA).proven
+    value = "SELECT t.a, g.m IS NOT NULL AS v FROM t LEFT JOIN (SELECT MIN(TRUE) AS m FROM u WHERE u.d > 1) AS g ON TRUE"
+    assert prove_equivalent_algebraic("SELECT t.a, EXISTS (SELECT 1 FROM u WHERE u.d > 1) AS v FROM t", value, schema=SCHEMA).proven
+    for k in range(20):
+        con = _database(9000 + k)
+        assert _bag(con, exists.format(neg="")) == _bag(con, joined.format(y="TRUE", neg="NOT "))
 
 
 @pytest.mark.parametrize("block", range(4))
