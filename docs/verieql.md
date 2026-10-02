@@ -33,4 +33,6 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 `--audit` also compares with VeriEQL's published per-case outcomes (`NEQ` with a counterexample, `TMO` timeout and so on) and replays VeriEQL's counterexample against every pair we called equivalent. The suites are downloaded once into `~/.cache/kumosql/verieql` (set `KUMOSQL_VERIEQL_CACHE` to change it). The data is CC BY-NC-SA 4.0, so it is not copied into this repository, and none of VeriEQL's code is vendored (its licence is also CC BY-NC-SA 4.0); only its benchmark files are read. Please cite the VeriEQL paper when using these numbers.
 
+Calcite-397 (2026-10-02): **210 pairs proved equivalent, 0 wrong** (197 before derived tables holding an outer join were flattened and their computed columns lifted, see `docs/sqlsolver.md`; the scoreboard's earlier 176 predates other prover rules).
+
 `tests/test_verieql_benchmarks.py` pins floors on small samples (skipped when the data cannot be downloaded).

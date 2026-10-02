@@ -1,0 +1,463 @@
+"""Derived tables that hold an outer join, read through instead of kept whole.
+
+The prover merges a derived table only when it compiles to one select-project-join block, which
+an outer join never is, so such a table stays an opaque relation compared by its text, and two
+spellings that wrap the same join in different projection layers never meet. Calcite's plans
+wrap every outer join that way.
+
+* ``flatten_outer_join_derived``: ``SELECT .. FROM (SELECT f(b.y) AS v .. FROM a LEFT JOIN b ON c
+  WHERE w) AS d [JOIN ..] WHERE p(d.v)`` reads ``a LEFT JOIN b ON c [JOIN ..] WHERE w AND p(f(b.y))``.
+  The derived table returns one row per row of its join that passes ``w``; its columns are
+  deterministic expressions of that row. Joins after it extend the join (left-deep), and a
+  grouped select is re-wrapped in ``_wrap_outer_join_aggregate``'s positional form.
+* ``lift_derived_expressions``: a computed column of a derived outer join read by another join
+  is computed above it instead; on a NULL-extended side only when the expression is NULL on the
+  padded row (``null_when_inputs_null``).
+* ``order_derived_columns``: the plain columns of a derived outer join in a fixed order, since the
+  prover matches its columns by position.
+* ``indicator_joins_after_flattening``: Calcite's LEFT JOIN indicator test, once flattening has
+  brought it next to its ``IS NULL`` test.
+"""
+
+from __future__ import annotations
+
+from sqlglot import exp
+
+_OUTER_SIDES = {"LEFT", "RIGHT", "FULL"}
+_NONDETERMINISTIC = (exp.Rand,)
+_NONDETERMINISTIC_NAMES = {"RAND", "RANDOM", "UUID", "GENERATE_UUID", "NEWID"}
+
+
+def _from(select: exp.Select) -> exp.From | None:
+    return select.args.get("from_") or select.args.get("from")
+
+
+def _sources(select: exp.Select) -> list[exp.Expression]:
+    from_ = _from(select)
+    return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
+
+
+def _plain(select: exp.Select, *, allow_group: bool = False) -> bool:
+    banned = ("order", "limit", "offset", "qualify", "windows", "with_", "with", "kind", "into", "locks", "sample", "settings")
+    if not allow_group:
+        banned += ("distinct", "group", "having")
+    return not any(select.args.get(key) for key in banned)
+
+
+def _deterministic(node: exp.Expression) -> bool:
+    for sub in node.walk():
+        if isinstance(sub, _NONDETERMINISTIC):
+            return False
+        if isinstance(sub, exp.Anonymous) and (sub.name or "").upper() in _NONDETERMINISTIC_NAMES:
+            return False
+    return True
+
+
+_SCOPED = (exp.Subquery, exp.Select, exp.Exists, exp.Lateral, exp.Unnest, exp.Window, exp.AggFunc, exp.Star)
+
+
+def _grouped(select: exp.Select) -> bool:
+    if select.args.get("group") is not None or select.args.get("having") is not None:
+        return True
+    return any(agg.find_ancestor(exp.Select) is select for e in select.expressions for agg in e.find_all(exp.AggFunc))
+
+
+def _clauses(select: exp.Select) -> list[exp.Expression]:
+    """The select list, WHERE and ON conditions: everything but the sources."""
+
+    parts = list(select.expressions)
+    for key in ("where", "group", "having"):
+        if select.args.get(key) is not None:
+            parts.append(select.args[key])
+    parts.extend(j.args["on"] for j in select.args.get("joins") or [] if j.args.get("on") is not None)
+    return parts
+
+
+def _inner_join_shape(inner: exp.Select) -> list[str] | None:
+    """The inner select's source aliases when it is a filter and projection over a join with an outer join."""
+
+    if not _plain(inner) or not inner.args.get("joins"):
+        return None
+    joins = inner.args["joins"]
+    if not any((j.args.get("side") or "").upper() in _OUTER_SIDES for j in joins):
+        return None
+    for join in joins:
+        kind = (join.args.get("kind") or "").upper()
+        if kind not in ("", "INNER", "CROSS", "OUTER") or join.args.get("using") is not None or join.args.get("method"):
+            return None
+        if kind == "OUTER" and not join.args.get("side"):
+            return None
+    sources = _sources(inner)
+    aliases = []
+    for source in sources:
+        if not isinstance(source, (exp.Table, exp.Subquery)) or not source.alias_or_name:
+            return None
+        if isinstance(source, exp.Table) and (source.args.get("joins") or source.args.get("pivots") or source.args.get("laterals") or not isinstance(source.this, exp.Identifier)):
+            return None
+        if isinstance(source, exp.Subquery) and not source.alias:
+            return None
+        aliases.append(source.alias_or_name.lower())
+    if len(set(aliases)) != len(aliases):
+        return None
+    # Subqueries in the select list, WHERE or ON would need their scopes followed.
+    for part in _clauses(inner):
+        if any(isinstance(n, _SCOPED) for n in part.walk()):
+            return None
+        # Every column the inner select reads names one of its own sources.
+        for column in part.find_all(exp.Column):
+            if isinstance(column.this, exp.Star) or not column.table or column.table.lower() not in aliases:
+                return None
+    return aliases
+
+
+def flatten_outer_join_derived(select: exp.Select) -> exp.Expression | None:
+    """``SELECT .. FROM (SELECT .. FROM a LEFT JOIN b ON c WHERE w) AS d WHERE p`` reads the join directly.
+
+    The derived table must be the select's FROM item; joins after it extend the flattened join
+    (``(a LEFT JOIN b) LEFT JOIN x ON q`` is ``a LEFT JOIN b LEFT JOIN x ON q``). A later RIGHT or
+    FULL join can pad ``d`` with NULLs, so then ``d`` must not filter and every computed column
+    read must be NULL on the padded row; a later join of any kind needs every column qualified.
+    """
+
+    from_ = _from(select)
+    if from_ is None or not _plain(select, allow_group=True):
+        return None
+    if select.args.get("distinct") is not None and select.args["distinct"].args.get("on"):
+        return None
+    source = from_.this
+    if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+        return None
+    if source.args.get("pivots") or source.args.get("laterals") or source.args.get("sample"):
+        return None
+    alias_node = source.args.get("alias")
+    if alias_node is not None and alias_node.args.get("columns"):
+        return None
+    inner = source.this
+    inner_aliases = _inner_join_shape(inner)
+    if inner_aliases is None:
+        return None
+    names = [e.alias_or_name.lower() for e in inner.expressions]
+    if "" in names or len(set(names)) != len(names):
+        return None
+    if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in inner.expressions):
+        return None
+    if not all(_deterministic(e) for e in inner.expressions):
+        return None
+    joins = select.args.get("joins") or []
+    grouped = _grouped(select)
+    if grouped and not joins and all(isinstance(e.this if isinstance(e, exp.Alias) else e, exp.Column) for e in inner.expressions):
+        return None  # plain columns under a grouping are already the canonical shape (_wrap_outer_join_aggregate)
+    later = _sources(select)[1:]
+    for join in joins:
+        kind = (join.args.get("kind") or "").upper()
+        if kind not in ("", "INNER", "CROSS", "OUTER") or join.args.get("using") is not None or join.args.get("method"):
+            return None
+        if kind == "OUTER" and not join.args.get("side"):
+            return None
+        if not isinstance(join.this, (exp.Table, exp.Subquery)) or not join.this.alias_or_name or join.this.args.get("laterals") or join.this.args.get("pivots"):
+            return None
+    if {s.alias_or_name.lower() for s in later} & (set(inner_aliases) | {source.alias.lower()}):
+        return None
+    padded = any((j.args.get("side") or "").upper() in ("RIGHT", "FULL") for j in joins)
+    if padded and inner.args.get("where") is not None:
+        return None
+    # The reading select: no subqueries or windows of its own (aggregates and COUNT(*) are fine).
+    clauses = _clauses(select)
+    for node in (n for part in clauses for n in part.walk()):
+        if isinstance(node, exp.Star) and isinstance(node.parent, exp.Count):
+            continue
+        if isinstance(node, _SCOPED) and not isinstance(node, exp.AggFunc):
+            return None
+    outputs = {e.alias.lower() for e in select.expressions if isinstance(e, exp.Alias)}
+    late = [c for key in ("group", "having") if select.args.get(key) is not None for c in select.args[key].find_all(exp.Column)]
+    if any(not c.table and c.name.lower() in outputs for c in late):
+        return None  # GROUP BY or HAVING may name an output of the select
+    alias = source.alias.lower()
+    by_name = {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, inner.expressions)}
+    for column in (c for part in clauses for c in part.find_all(exp.Column)):
+        table = column.table.lower()
+        if table and table != alias:
+            # A correlated reference to an enclosing query (or a later source): it must not be captured by an inner alias.
+            if table in inner_aliases:
+                return None
+            continue
+        if not table and joins:
+            return None  # an unqualified column could belong to a later source, or become ambiguous
+        if column.name.lower() not in by_name:
+            return None
+        if padded and not null_when_inputs_null(by_name[column.name.lower()]):
+            return None
+    copy = select.copy()
+    # Select-list items keep their output names once their columns become expressions.
+    for index, item in enumerate(list(copy.expressions)):
+        if isinstance(item, exp.Column):
+            copy.expressions[index].replace(exp.alias_(item.copy(), item.name))
+    for column in [c for part in _clauses(copy) for c in part.find_all(exp.Column)]:
+        table = column.table.lower()
+        if table and table != alias:
+            continue
+        replacement = by_name[column.name.lower()].copy()
+        column.replace(exp.Paren(this=replacement) if isinstance(replacement, (exp.Binary, exp.Not)) else replacement)
+    new_inner = inner.copy()
+    copy.set("from_" if "from_" in copy.args else "from", new_inner.args.get("from_") or new_inner.args.get("from"))
+    copy.set("joins", (new_inner.args.get("joins") or []) + list(copy.args.get("joins") or []))
+    conditions = [w.this for w in (new_inner.args.get("where"), copy.args.get("where")) if w is not None]
+    if conditions:
+        where = conditions[0]
+        for part in conditions[1:]:
+            where = exp.And(this=exp.Paren(this=where) if isinstance(where, exp.Or) else where, expression=exp.Paren(this=part) if isinstance(part, exp.Or) else part)
+        copy.set("where", exp.Where(this=where))
+    if grouped:
+        # The prover reads an aggregate over an outer join through a derived table of plain columns.
+        from .algebraic_equivalence import _wrap_outer_join_aggregate
+
+        wrapped = _wrap_outer_join_aggregate(copy)
+        return wrapped if wrapped is not None and wrapped.sql() != select.sql() else None
+    return copy
+
+
+def indicator_joins_after_flattening(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
+    """Read a LEFT JOIN indicator as ``EXISTS`` once flattening has brought it next to its ``IS NULL`` test.
+
+    ``_left_join_indicator_to_exists`` runs once before derived tables are merged; Calcite writes the
+    indicator join inside a derived table and tests it one select above, so it is tried again here.
+    """
+
+    from .algebraic_equivalence import _indicator_join
+
+    if not select.args.get("joins"):
+        return None
+    key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
+    copy = select.copy()
+    changed = False
+    progress = True
+    while progress:
+        progress = False
+        for join in list(copy.args.get("joins") or []):
+            if _indicator_join(copy, join, key_sets):
+                changed = progress = True
+                break
+    return copy if changed else None
+
+
+def outer_join_rules(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
+    """The rules of this module, as one entry of the normalizer's rule list."""
+
+    return flatten_outer_join_derived(select) or lift_derived_expressions(select) or order_derived_columns(select) or indicator_joins_after_flattening(select, keys)
+
+
+# --- NULL propagation -----------------------------------------------------------------
+
+_STRICT_BINARY = (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.IntDiv, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Like)
+_STRICT_UNARY = (exp.Paren, exp.Neg, exp.Not, exp.BitwiseNot, exp.Cast, exp.TryCast, exp.Abs, exp.Upper, exp.Lower, exp.Length, exp.Floor, exp.Ceil, exp.Sqrt, exp.Ln, exp.Exp)
+
+
+def null_when_inputs_null(expr: exp.Expression) -> bool:
+    """True when ``expr`` is NULL whenever every column it reads is NULL.
+
+    Such an expression can be computed above an outer join instead of inside its NULL-extended
+    side: the padded row gives NULL either way. Constants, ``IS NULL``, ``COALESCE`` and a ``CASE``
+    with a non-NULL arm reachable from NULL inputs are not; unknown functions are assumed not.
+    """
+
+    if isinstance(expr, exp.Column):
+        return not isinstance(expr.this, exp.Star)
+    if isinstance(expr, exp.Null):
+        return True
+    if isinstance(expr, _STRICT_BINARY):
+        return null_when_inputs_null(expr.this) or null_when_inputs_null(expr.expression)
+    if isinstance(expr, (exp.And, exp.Or)):
+        # NULL AND FALSE is FALSE, NULL OR TRUE is TRUE: only NULL on both sides is NULL.
+        return null_when_inputs_null(expr.this) and null_when_inputs_null(expr.expression)
+    if isinstance(expr, _STRICT_UNARY) and not expr.args.get("expressions") and not expr.args.get("expression"):
+        return null_when_inputs_null(expr.this)
+    if isinstance(expr, exp.Case):
+        operand = expr.this
+        default = expr.args.get("default")
+        rest = default is None or null_when_inputs_null(default)
+        if operand is not None and null_when_inputs_null(operand):
+            return rest  # every WHEN compares with NULL, none is taken
+        for branch in expr.args.get("ifs") or []:
+            # a condition that is NULL never selects its arm; any other may
+            if operand is not None or not null_when_inputs_null(branch.this):
+                if not null_when_inputs_null(branch.args["true"]):
+                    return False
+        return rest
+    if isinstance(expr, exp.If):
+        false = expr.args.get("false")
+        rest = false is None or null_when_inputs_null(false)
+        if null_when_inputs_null(expr.this):
+            return rest
+        return null_when_inputs_null(expr.args["true"]) and rest
+    return False
+
+
+# --- lifting computed columns out of a derived outer join -----------------------------
+
+
+def _padded(select: exp.Select, source: exp.Expression) -> bool:
+    """Whether a join of ``select`` can NULL-extend ``source``."""
+
+    joins = select.args.get("joins") or []
+    sides = [(j.args.get("side") or "").upper() for j in joins]
+    if source is _from(select).this:
+        return any(s in ("RIGHT", "FULL") for s in sides)
+    position = next(i for i, j in enumerate(joins) if j.this is source)
+    return sides[position] in ("LEFT", "FULL") or any(s in ("RIGHT", "FULL") for s in sides[position + 1:])
+
+
+def lift_derived_expressions(select: exp.Select) -> exp.Expression | None:
+    """``a JOIN (SELECT f(b.x) AS y FROM b LEFT JOIN c ON ..) AS d ON .. d.y ..`` computes ``f(d.x)`` above instead.
+
+    A derived table holding an outer join stays opaque to the prover, so two queries that compute
+    the same expression inside it and above it differ by text. Every computed output is replaced by
+    the columns it reads, and each use ``d.y`` by the expression over them. Where a join of the
+    reading select can NULL-extend ``d``, the expression must be NULL on the padded row
+    (``null_when_inputs_null``), unless it is only read in ``d``'s own ON clause, which sees real
+    rows only.
+    """
+
+    from_ = _from(select)
+    if from_ is None or not select.args.get("joins"):
+        return None
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    sources = _sources(select)
+    aliases = [(s.alias_or_name or "").lower() for s in sources]
+    if "" in aliases or len(set(aliases)) != len(aliases):
+        return None
+    for position, source in enumerate(sources):
+        if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select) or not source.alias:
+            continue
+        alias_node = source.args.get("alias")
+        if alias_node is not None and alias_node.args.get("columns"):
+            continue
+        inner = source.this
+        if _inner_join_shape(inner) is None:
+            continue
+        names = [e.alias_or_name.lower() for e in inner.expressions]
+        if "" in names or len(set(names)) != len(names):
+            continue
+        alias = aliases[position]
+        derived = [s for s in sources if isinstance(s, exp.Subquery)]
+        uses = []
+        clean = True
+        for column in select.find_all(exp.Column):
+            if any(column is not s and _inside(column, s) for s in derived):
+                continue
+            if column.find_ancestor(exp.Select) is not select:
+                if column.table.lower() == alias or (not column.table and column.name.lower() in names):
+                    clean = False  # read from a nested scope
+                continue
+            if not column.table and column.name.lower() in names:
+                clean = False  # could be d's column
+            elif column.table.lower() == alias:
+                uses.append(column)
+        if not clean:
+            continue
+        own_on = sources[position].parent.args.get("on") if position > 0 else None
+        padded = _padded(select, source)
+        lift = {}
+        for name, item in zip(names, inner.expressions):
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Column) or not _deterministic(value):
+                continue
+            columns = list(value.find_all(exp.Column))
+            if not columns or any(isinstance(n, _SCOPED) for n in value.walk()):
+                continue
+            reads = [c for c in uses if c.name.lower() == name]
+            if padded and not null_when_inputs_null(value) and not all(own_on is not None and _inside(c, own_on) for c in reads):
+                continue
+            lift[name] = value
+        if not lift:
+            continue
+        copy = select.copy()
+        copy_source = _sources(copy)[position]
+        copy_inner = copy_source.this
+        passthrough = {}
+        for item in copy_inner.expressions:
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Column):
+                passthrough.setdefault((value.table.lower(), value.name.lower()), item.alias_or_name)
+        taken = set(names)
+        new_items = []
+        replacements = {}
+        for item in copy_inner.expressions:
+            name = item.alias_or_name.lower()
+            if name not in lift:
+                new_items.append(item)
+                continue
+            value = lift[name].copy()
+            first = True
+            for column in list(value.find_all(exp.Column)):
+                key = (column.table.lower(), column.name.lower())
+                if key not in passthrough:
+                    # the first column takes the lifted output's name, so its position is kept
+                    out = item.alias_or_name if first else _fresh(f"{name}_{column.name.lower()}", taken)
+                    first = False
+                    taken.add(out.lower())
+                    passthrough[key] = out
+                    new_items.append(exp.alias_(exp.column(column.name, table=column.table), out))
+                column.replace(exp.column(passthrough[key], table=copy_source.alias))
+            replacements[name] = value
+        copy_inner.set("expressions", new_items)
+        for column in list(copy.find_all(exp.Column)):
+            if column.find_ancestor(exp.Select) is not copy or column.table.lower() != alias:
+                continue
+            if column.name.lower() not in replacements:
+                continue
+            value = replacements[column.name.lower()].copy()
+            value = exp.Paren(this=value) if isinstance(value, (exp.Binary, exp.Not)) else value
+            column.replace(exp.alias_(value, column.name) if column.parent is copy else value)
+        if copy.sql() != select.sql():
+            return copy
+    return None
+
+
+def _inside(node: exp.Expression, root: exp.Expression) -> bool:
+    while node is not None:
+        if node is root:
+            return True
+        node = node.parent
+    return False
+
+
+def _fresh(base: str, taken: set[str]) -> str:
+    name, n = base, 1
+    while name.lower() in taken:
+        name, n = f"{base}_{n}", n + 1
+    return name
+
+
+def order_derived_columns(select: exp.Select) -> exp.Expression | None:
+    """List the plain columns of a derived outer join in one order: by source, then column name.
+
+    The prover keeps such a derived table whole and matches its columns by position, so two
+    spellings that list the same columns in another order would not match. The select reads
+    the columns by name (no ``*``), so their order does not change its result.
+    """
+
+    if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
+        return None
+    copy = None
+    for position, source in enumerate(_sources(select)):
+        if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select) or not source.alias:
+            continue
+        alias_node = source.args.get("alias")
+        if alias_node is not None and alias_node.args.get("columns"):
+            continue
+        inner = source.this
+        aliases = _inner_join_shape(inner)
+        if aliases is None:
+            continue
+        values = [item.this if isinstance(item, exp.Alias) else item for item in inner.expressions]
+        if not all(isinstance(v, exp.Column) for v in values):
+            continue
+        keys = [(aliases.index(v.table.lower()), v.name.lower(), item.alias_or_name.lower()) for v, item in zip(values, inner.expressions)]
+        if keys == sorted(keys):
+            continue
+        copy = copy or select.copy()
+        target = _sources(copy)[position].this
+        items = list(target.expressions)
+        target.set("expressions", [item for _, item in sorted(zip(keys, items), key=lambda pair: pair[0])])
+    return copy
