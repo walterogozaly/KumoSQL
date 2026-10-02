@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from bench_sql_repairs import (  # noqa: E402
     expand_row_predicates,
     fold_table_names,
+    pipes_as_concat,
     rebind_correlation_variables,
     uniquify_star_columns,
 )
@@ -121,6 +122,13 @@ def test_table_names_fold_only_when_a_pair_spells_them_two_ways():
     left, right = fold_table_names("SELECT * FROM a x", "SELECT * FROM A y")
     assert right == "SELECT * FROM a AS y" and left == "SELECT * FROM a x"
     assert fold_table_names("SELECT * FROM EMP", "SELECT * FROM EMP") == ["SELECT * FROM EMP", "SELECT * FROM EMP"]
+
+
+def test_calcite_pipes_concatenate():
+    sql = pipes_as_concat("SELECT DEPTNO || 'x' || SAL AS c FROM EMP WHERE DEPTNO || '' = '10' AND 'a||b' <> ''")
+    assert sql == "SELECT CONCAT(CONCAT(DEPTNO, 'x'), SAL) AS c FROM EMP WHERE CONCAT(DEPTNO, '') = '10' AND 'a||b' <> ''"
+    assert sorted(runs(sql), key=repr) == [("10x5",), (None,)]
+    assert pipes_as_concat("SELECT a || b | c FROM t") == "SELECT a || b | c FROM t", "a query that also uses | is left alone"
 
 
 EXISTS_SQL = "SELECT t.a FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.d <> t.a AND t.b > u.c)"

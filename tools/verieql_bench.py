@@ -46,7 +46,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from kumosql import counterexample as cx  # noqa: E402
-from bench_sql_repairs import expand_row_predicates, rebind_correlation_variables, uniquify_star_columns  # noqa: E402
+from bench_sql_repairs import expand_row_predicates, pipes_as_concat, rebind_correlation_variables, uniquify_star_columns  # noqa: E402
 
 COMMIT = "493cbb81000205e33b0623cfd1c39106fa035fae"
 BASE = f"https://raw.githubusercontent.com/VeriEQL/VeriEQL/{COMMIT}"
@@ -238,8 +238,8 @@ def _or(values):
 def repaired_pair(case: dict, spec: cx.Spec) -> tuple[str, str, dict[str, int]]:
     """The case's two queries as the harness runs and proves them, plus any uninterpreted predicates.
 
-    See ``tools/bench_sql_repairs.py``. Calcite-397 gets its correlation variables rebound and its
-    repeated star columns named; Literature gets its whole-row predicates spelled out over the row's
+    See ``tools/bench_sql_repairs.py``. Calcite-397 gets ``||`` read as concatenation, its correlation
+    variables rebound and its repeated star columns named; Literature gets its whole-row predicates spelled out over the row's
     columns. Each repair has one reading; when it cannot apply, the query is kept as written.
     """
 
@@ -249,6 +249,10 @@ def repaired_pair(case: dict, spec: cx.Spec) -> tuple[str, str, dict[str, int]]:
     for sql in case["pair"]:
         try:
             if suite == "calcite":
+                try:
+                    sql = pipes_as_concat(sql)
+                except Exception:
+                    pass
                 sql = uniquify_star_columns(rebind_correlation_variables(sql, tables) if "$cor" in sql else sql, tables)
             elif suite == "literature":
                 sql, arities = expand_row_predicates(sql, tables)
