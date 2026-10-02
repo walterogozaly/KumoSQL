@@ -108,3 +108,16 @@ def test_corpus_floor_and_zero_wrong():
     assert result["coverage"]["refuted"] >= 33
     assert result["coverage"]["proven"] >= 11
     assert result["coverage"]["error"] == 0
+
+
+def test_pgivm_workloads_are_adapted_with_provenance_and_refuted():
+    import json
+
+    path = Path(__file__).resolve().parent / "fixtures" / "incremental" / "pgivm_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
+    assert len(cases) >= 336 and sum("adapted" in c for c in cases) >= 110
+    assert all(c["source"]["commit"].startswith("22b4b45") and c["original"]["query"] for c in cases)
+    assert all("unsupported" in c or "adapted" in c for c in cases)
+    result = bench.run_pgivm(seeds=10, limit=12)
+    assert result["wrong"] == [] and result["coverage"]["proven"] == 0
+    assert result["coverage"]["refuted"] >= 10
