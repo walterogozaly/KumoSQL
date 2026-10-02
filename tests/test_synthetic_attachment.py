@@ -51,7 +51,9 @@ def test_agreement_is_recorded_but_never_trusts_an_unproven_result():
     assert attached.verification.status is VerificationStatus.UNPROVEN
     assert not attached.verification.trusted and not attached.success
     assert dict(check.evidence)["seeds"] == tuple(range(8))
-    assert dict(check.evidence)["seeds_checked"] == tuple(range(8))
+    checked = dict(check.evidence)["seeds_checked"]
+    assert checked[:8] == tuple(range(8))  # the random seeds, then the targeted databases
+    assert len(checked) > 8
     assert dict(check.evidence)["failing_seed"] is None
 
 
