@@ -1966,6 +1966,58 @@ class DuckDBReplay:
             return None
 
 
+class SQLiteReplay:
+    """The same judge on SQLite (standard library), for queries written in SQLite's dialect.
+
+    Both queries run exactly as written over the model's database; the shuffle and bag rules are DuckDBReplay's.
+    """
+
+    def __init__(self, schema: BoundedSchema, left: str, right: str, shuffles: int = 3):
+        import sqlite3
+
+        from . import counterexample as cx
+
+        self.schema = schema
+        self.shuffles = shuffles
+        self.sqlite3 = sqlite3
+        self.cx = cx
+        self.db = sqlite3.connect(":memory:")
+        for name, table in schema.tables.items():
+            columns = ", ".join(f'"{c.name}" {_sqlite_type(c)}' for c in table.columns)
+            self.db.execute(f'CREATE TABLE "{name}" ({columns})')
+        self.left, self.right = left, right
+
+    def _run(self, data: dict[str, list[tuple]]):
+        for name, table in self.schema.tables.items():
+            self.db.execute(f'DELETE FROM "{name}"')
+            rows = data.get(name) or []
+            if rows:
+                marks = ", ".join("?" * len(table.columns))
+                self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', rows)
+        return self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+
+    def differ(self, data: dict[str, list[tuple]]) -> bool | None:
+        try:
+            a, b = self._run(data)
+            expected = (self.cx._bag(a), self.cx._bag(b))
+            if expected[0] == expected[1]:
+                return False
+            rng = random.Random(0)
+            for _ in range(self.shuffles):
+                shuffled = {n: rng.sample(rows, len(rows)) for n, rows in data.items()}
+                a2, b2 = self._run(shuffled)
+                if (self.cx._bag(a2), self.cx._bag(b2)) != expected:
+                    return None
+            return True
+        except self.sqlite3.Error:
+            return None
+
+
+def _sqlite_type(column: BColumn) -> str:
+    kind = kind_of(column.type)
+    return {"int": "INTEGER", "real": "REAL", "str": "TEXT", "bool": "INTEGER", "date": "TEXT", "time": "TEXT", "datetime": "TEXT", None: "INTEGER"}[kind]
+
+
 def _duck_type(column: BColumn) -> str:
     kind = kind_of(column.type)
     return {"int": "BIGINT", "real": "DOUBLE", "str": "VARCHAR", "bool": "BOOLEAN", "date": "DATE", "time": "TIME", "datetime": "TIMESTAMP", None: "BIGINT"}[kind]
@@ -1994,7 +2046,7 @@ class BoundedResult:
         return f"bounded, {self.bound} {'row' if self.bound == 1 else 'rows'}" if self.bounded_equivalent else self.status.value
 
 
-def check_bounded(
+def _check_bounded(
     left_sql: str,
     right_sql: str,
     schema: BoundedSchema,
@@ -2131,3 +2183,13 @@ def _cell(value, kind: str):
     if kind == "str":
         return z3.StringVal(value)
     return z3.IntVal(value)
+
+
+def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs) -> BoundedResult:
+    """See :func:`_check_bounded`. For SQLite only a counterexample is offered: the encoding's LIKE (case-sensitive)
+    and ``/`` (exact) differ from SQLite's, so "no counterexample" would not carry over."""
+
+    result = _check_bounded(left_sql, right_sql, schema, **kwargs)
+    if kwargs.get("dialect") == "sqlite" and result.bounded_equivalent:
+        return BoundedResult(BoundedStatus.UNKNOWN, "SQLite: no equivalence claim (its LIKE and integer division differ from the encoding)", result.bound, None, result.seconds)
+    return result

@@ -219,12 +219,23 @@ def _bag(rows) -> Counter:
     return Counter(tuple(round(float(v), 6) if isinstance(v, (float, Decimal)) else v for v in row) for row in rows)
 
 
+def calcite_operators(sql: str) -> str:
+    """Calcite's ``||`` concatenates strings; read as MySQL it would be OR (see ``tools/bench_sql_repairs.py``)."""
+
+    from bench_sql_repairs import pipes_as_concat
+
+    try:
+        return pipes_as_concat(sql)
+    except (sqlglot.errors.SqlglotError, ValueError):
+        return sql
+
+
 def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows
+    from kumosql.duckdb_load import insert_rows, run_unoptimized
 
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
@@ -252,6 +263,8 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
                 insert_rows(db, f'"{table.name}"', rows)
             a = _bag(db.execute(left_sql).fetchall())
             b = _bag(db.execute(right_sql).fetchall())
+            if a != b and [_bag(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         except duckdb.Error:
             return False
         if a != b:
@@ -307,6 +320,8 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     start = time.time()
     db = new_database(tables)
     for index, (left, right) in enumerate(pairs):
+        if name in CONSTANT_GROUPING:
+            left, right = calcite_operators(left), calcite_operators(right)
         try:
             proof = prove(left, right, tables, name in CONSTANT_GROUPING) if name in CONSTANT_GROUPING else prove(left, right, tables)
         except Exception as error:  # a crash is a failure to prove, never a proof
@@ -327,6 +342,12 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
 
 
 def default_prove(left: str, right: str, tables: dict[str, Table], constants: bool = False) -> bool:
+    return prove_result(left, right, tables, constants).proven
+
+
+def prove_result(left: str, right: str, tables: dict[str, Table], constants: bool = False):
+    """The prover's full result (status, reason and any counterexample) for one pair."""
+
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 
     from kumosql.smt_equivalence import TableConstraints
@@ -341,7 +362,7 @@ def default_prove(left: str, right: str, tables: dict[str, Table], constants: bo
     }
     return prove_equivalent_algebraic(
         spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants
-    ).proven
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -27,6 +27,7 @@ from .overlap_report import MAX_COMPARED_MODELS, OverlapChecker, mark_retiring, 
 from .resilience import extended_path
 from .pipeline import Model, Pipeline, load_compiled_graph, load_sqlx_project
 from .rewrite import verify_rewrite
+from .table_profile import profile_pipeline
 from .scopes import Scope, get_scope
 
 COST_BASES = ("measured", "estimate", "upper_bound")
@@ -224,6 +225,8 @@ def _attach_overlaps(
     try:
         changed = {key: str(change["kind"]) for change, key in compare}
         removed = set(base.models) - set(head.models)
+        # What a changed model computes is already profiled in head; profiling its SQL again against base re-analyses its upstream per model.
+        head_profiles = profile_pipeline(head) if removed else {}
         checker = OverlapChecker(head, scope=scope, name_of=lambda k: _display(head.models[k]) if k in head.models else k)
         base_checker = None
         if removed:
@@ -243,7 +246,7 @@ def _attach_overlaps(
         section = checker.section(key, changed=changed)
         if base_checker is not None and section.get("status") == "ok":
             try:
-                extra = base_checker.retired_matches(head.models[key].sql, removed)
+                extra = base_checker.retired_matches(head.models[key].sql, removed, head_profiles.get(key))
                 section = mark_retiring(section, extra, "retired in this change")
             except Exception:  # noqa: BLE001
                 pass
