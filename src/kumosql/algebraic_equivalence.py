@@ -47,6 +47,7 @@ from .window_rules import window_rules
 from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .row_bound_rules import trim_redundant_row_clauses
+from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .empty_rules import canonical_empty, propagate_empty
@@ -1388,6 +1389,84 @@ def _qualify_outer_join_columns(tree: exp.Expression, schema: dict[str, list[str
     return tree
 
 
+def _column_owners(select: exp.Select, schema: dict[str, list[str]]) -> dict[str, list[str]] | None:
+    """Each column name readable in ``select``'s FROM and JOINs, with the sources that have it; None if one is unknown."""
+
+    owners: dict[str, list[str]] = {}
+    for source in _sources_of(select):
+        alias = source.alias_or_name
+        if isinstance(source, exp.Table):
+            parts = [p.name for p in (source.args.get("catalog"), source.args.get("db"), source.this) if p is not None]
+            columns = schema.get(".".join(parts).lower())
+        elif isinstance(source, exp.Subquery):
+            columns = _select_names(source.this)
+        else:
+            columns = None
+        if columns is None or not alias:
+            return None
+        for column in columns:
+            owners.setdefault(column, []).append(alias)
+    return owners
+
+
+def _could_expose(source: exp.Expression, name: str, schema: dict[str, list[str]]) -> bool:
+    """Whether reading derived table ``source`` as the tables inside it could bring a column ``name`` into scope."""
+
+    if not isinstance(source, exp.Subquery):
+        return False
+    for table in source.find_all(exp.Table):
+        parts = [p.name for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None]
+        columns = schema.get(".".join(parts).lower())
+        if columns is None or name in columns:
+            return True
+    return False
+
+
+def _qualify_correlated_columns(tree: exp.Expression, schema: dict[str, list[str]]) -> exp.Expression:
+    """Write ``d.x`` for a bare ``x`` in a subquery that reads ``x`` from an enclosing query's source ``d``.
+
+    Once a derived table inside the subquery is read as its base table, that table's own ``x`` would
+    capture the bare name. A column is qualified only when a derived table on the way reads a table with
+    a column of that name, every source on the way is known and exactly one enclosing source has it; a
+    source on the way also called ``d`` makes the query unmodeled.
+    """
+
+    schema = {key.lower(): [c.lower() for c in cols] for key, cols in schema.items()}
+    owners_of: dict[int, dict[str, list[str]] | None] = {}
+
+    def owners(select: exp.Select) -> dict[str, list[str]] | None:
+        if id(select) not in owners_of:
+            owners_of[id(select)] = _column_owners(select, schema)
+        return owners_of[id(select)]
+
+    for column in list(tree.find_all(exp.Column)):
+        if column.table or isinstance(column.this, exp.Star):
+            continue
+        name = column.name.lower()
+        scope = column.find_ancestor(exp.Select)
+        if scope is None or any(isinstance(e, exp.Alias) and e.alias.lower() == name for e in scope.expressions):
+            continue
+        passed: list[exp.Select] = []
+        while scope is not None:
+            found = owners(scope)
+            if found is None:
+                break
+            if name in found:
+                rivals = [source for p in passed for source in _sources_of(p)]
+                rivals += [source for source in _sources_of(scope) if source.alias_or_name not in found[name]]
+                if passed and len(found[name]) == 1 and any(_could_expose(source, name, schema) for source in rivals):
+                    qualifier = found[name][0]
+                    if any(s.alias_or_name.lower() == qualifier.lower() for p in passed for s in _sources_of(p)):
+                        raise UnmodeledConstruct(f"a subquery reuses the name {qualifier} of the source its column {name} reads")
+                    column.set("table", exp.to_identifier(qualifier))
+                break
+            if isinstance(scope.parent, exp.Subquery) and isinstance(scope.parent.parent, (exp.From, exp.Join)):
+                break  # a derived table sees no enclosing query's columns
+            passed.append(scope)
+            scope = scope.find_ancestor(exp.Select)
+    return tree
+
+
 _INTEGER_DIGITS = {"TINYINT": 3, "SMALLINT": 5, "INT": 10, "INTEGER": 10, "MEDIUMINT": 8, "BIGINT": 19, "INT64": 19}
 
 
@@ -2310,8 +2389,8 @@ def _expand_stars(tree: exp.Expression, schema: dict[str, list[str]]) -> exp.Exp
         if not any(isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star)) for i in select.expressions):
             continue
         from_ = select.args.get("from_") or select.args.get("from")
-        if from_ is None:
-            continue
+        if from_ is None or any(j.args.get("using") is not None or _natural(j) for j in select.args.get("joins") or []):
+            continue  # a USING or NATURAL join lists its merged columns once, first (_using_to_on)
         sources = [from_.this] + [j.this for j in select.args.get("joins") or []]
         known = []
         for source in sources:
@@ -2748,9 +2827,14 @@ def _inline_ctes(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _natural(join: exp.Join) -> bool:
+    return str(join.args.get("method") or "").upper() == "NATURAL"
+
+
 def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> exp.Expression:
     """``a JOIN b USING (k)`` is ``a JOIN b ON a.k = b.k`` with the merged column ``k`` read from ``a``
-    (from ``b`` for a RIGHT JOIN, ``COALESCE(a.k, b.k)`` for FULL). ``SELECT *`` lists the merged columns first."""
+    (from ``b`` for a RIGHT JOIN, ``COALESCE(a.k, b.k)`` for FULL). ``SELECT *`` lists the merged columns first.
+    ``NATURAL JOIN`` is ``USING`` over the column names both sides share (a cross join when they share none)."""
 
     if not schema:
         return tree
@@ -2765,10 +2849,13 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
 
     for select in list(tree.find_all(exp.Select))[::-1]:
         joins = select.args.get("joins") or []
-        if not any(j.args.get("using") is not None for j in joins):
+        if not any(j.args.get("using") is not None or _natural(j) for j in joins):
             continue
         from_ = select.args.get("from_") or select.args.get("from")
         sources = [from_.this] + [j.this for j in joins]
+        for position, src in enumerate(sources):
+            if isinstance(src, exp.Subquery) and not src.alias:
+                src.set("alias", exp.TableAlias(this=exp.to_identifier(f"kumosql_using_{position}")))
         known = [columns_of(src) for src in sources]
         aliases = [(src.alias_or_name or "").lower() for src in sources]
         if from_ is None or any(k is None for k in known) or "" in aliases or len(set(aliases)) != len(aliases):
@@ -2784,6 +2871,19 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
         for index, join in enumerate(joins, start=1):
             using = join.args.get("using")
             side = join.args.get("side")
+            if _natural(join) and using is None and join.args.get("on") is None:
+                # NATURAL JOIN is USING over every column name both sides have.
+                have = {c for c, _ in running}
+                using = [exp.to_identifier(c) for c in known[index] if c in have]
+                join = join.copy()
+                join.set("method", None)
+                if not using:
+                    new_join = join.copy()
+                    if side:
+                        new_join.set("on", exp.true())
+                    running += [(c, exp.column(c, table=exp.to_identifier(aliases[index]))) for c in known[index]]
+                    new_joins.append(new_join)
+                    continue
             if using is None:
                 running += [(c, exp.column(c, table=exp.to_identifier(aliases[index]))) for c in known[index]]
                 new_joins.append(join)
@@ -4507,7 +4607,7 @@ def normalize(
     tree = _values_to_union(tree)
     tree = _name_derived_columns(tree)
     if schema:
-        tree = _expand_stars(tree, schema)
+        tree = _using_to_on(_expand_stars(tree, schema), schema)  # USING over a derived table read once its stars are known
     tree = _except_of_same_table_filters(tree, schema)
     tree = _probe_and_nth_value(tree)
     tree = _name_derived_columns(_lateral_joins(tree))
@@ -4517,7 +4617,7 @@ def normalize(
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source
-        tree = _qualify_outer_join_columns(tree, schema)
+        tree = _qualify_correlated_columns(_qualify_outer_join_columns(tree, schema), schema)
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
 
@@ -4546,7 +4646,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys)):
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
