@@ -1,13 +1,13 @@
 {
   "suite": "VeriEQL LeetCode (1,000-case sample) (proofs)",
   "order": 44,
-  "score": "190/1000, 0 wrong",
+  "score": "203/1000, 0 wrong",
   "metric": "Pairs proved equivalent by the z3 prover over all databases meeting the declared keys and NOT NULL columns, with no LLM sample of 1,000 of the 23,994 pairs, every 24th. Inequivalent pairs stay out of this count.",
   "evidence": "proof",
   "correctness": "0 false proofs: every proof survives 600 further random DuckDB databases and VeriEQL's published counterexamples replayed on DuckDB",
   "coverage": {
-    "proven": 190,
-    "unknown": 810
+    "proven": 203,
+    "unknown": 797
   },
   "caveats": "Sample only (every 24th pair); the full corpus has not been run yet. No labels. Dialect: MySQL source, DuckDB execution.",
   "size": 1000,
