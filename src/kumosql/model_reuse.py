@@ -359,7 +359,10 @@ def _mappings(model_tables: list[tuple[str, str]], query_tables: list[tuple[str,
 def _combine(parts: list[exp.Expression]) -> exp.Expression | None:
     result = None
     for part in parts:
-        result = part.copy() if result is None else exp.And(this=result, expression=part.copy())
+        part = part.copy()
+        if isinstance(part, (exp.Or, exp.Xor)) and len(parts) > 1:
+            part = exp.Paren(this=part)  # AND binds tighter than OR
+        result = part if result is None else exp.And(this=result, expression=part)
     return result
 
 
