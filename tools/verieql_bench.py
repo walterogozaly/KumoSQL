@@ -318,7 +318,7 @@ class Verdict:
     seconds: float = 0.0
 
 
-def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
+def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, wide_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
     """The program's verdict for one case: search for a counterexample, else try to prove, else unknown."""
 
     start = time.time()
@@ -350,12 +350,17 @@ def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_tr
             return Verdict(index, AGREES, f"prover crash: {type(error).__name__}", time.time() - start)
         if result.proven:
             again = searcher.search(recheck_trials, seed=index + 1_000_003)
+            if again is None and wide_trials and searcher.having:
+                again = searcher.search(wide_trials // 2, seed=index + 4_000_003, wide=True)
             if again is not None:
                 return Verdict(index, WRONG, "proved, then refuted by a counterexample", time.time() - start)
             return Verdict(index, EQUIVALENT, "proof", time.time() - start)
         # not proven: look harder for a counterexample, then try every small database (<= 2 rows per table)
         if searcher.search(more_trials, seed=index + 2_000_003) is not None:
             return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
+        # filtered groups: bigger databases with more distinct values (groups past a COUNT or SUM threshold)
+        if wide_trials and searcher.having and searcher.search(wide_trials, seed=index + 3_000_003, wide=True) is not None:
+            return Verdict(index, DIFFERENT, "counterexample (wide search)", time.time() - start)
         try:
             outcome, _ = searcher.exhaustive(2, 3000)
         except _Timeout:
