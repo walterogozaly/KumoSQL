@@ -23,7 +23,7 @@ from typing import Any, Mapping, Sequence
 
 from sqlglot import exp
 
-from .pipeline import ColumnRef, Model, Pipeline, Target, _table_name_for_schema
+from .pipeline import ColumnRef, Model, Pipeline, Target, _parse_script, _table_name_for_schema
 from .set_operations import is_by_name
 
 __all__ = [
@@ -203,7 +203,7 @@ def profile_query(
         key = _QUERY_KEY
         while key in pipeline.models:
             key += "_"
-        models = dict(pipeline.models)
+        models = _upstream_models(pipeline, sql)
         models[key] = Model(Target("", "", key), "table", sql if isinstance(sql, str) else "")
         scratch = Pipeline(
             models,
@@ -216,6 +216,33 @@ def profile_query(
         return profiler.profile(key, label="<query>")
     except Exception as exc:
         return _failed("<query>", exc)
+
+
+def _upstream_models(pipeline: Pipeline, sql: object) -> dict[str, Model]:
+    """The models ``sql`` reads, directly or not; every model when that cannot be told.
+
+    A query profile depends only on what sits upstream of it, so the scratch pipeline built for one
+    need not re-analyse the rest of the project (seconds per call on a large one).
+    """
+
+    try:
+        query, analysis = _parse_script(sql if isinstance(sql, str) else "")
+        if query is None:
+            raise ValueError("no query")
+        upstream = pipeline._analyse().upstream
+        stack = []
+        for table in (*query.find_all(exp.Table), *analysis.all_reads()):
+            if (resolved := pipeline.resolve(table)) and resolved in pipeline.models:
+                stack.append(resolved)
+        keep: set[str] = set()
+        while stack:
+            key = stack.pop()
+            if key not in keep:
+                keep.add(key)
+                stack.extend(upstream.get(key, ()))
+        return {key: model for key, model in pipeline.models.items() if key in keep}
+    except Exception:  # noqa: BLE001 - fall back to the whole project
+        return dict(pipeline.models)
 
 
 def _failed(table: str, exc: BaseException) -> TableProfile:

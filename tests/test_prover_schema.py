@@ -82,9 +82,10 @@ def test_settings_default_validate_and_persist(monkeypatch):
     store = {}
     monkeypatch.setattr(prover_context.state, "get_section", lambda name, default=None: store.get(name, default))
     monkeypatch.setattr(prover_context.state, "set_section", lambda name, value: store.__setitem__(name, value))
-    assert prover_context.settings() == {"enabled": True, "timeout_ms": 5000}
-    assert prover_context.save_settings(enabled=False, timeout_ms=2000) == {"enabled": False, "timeout_ms": 2000}
-    assert prover_context.settings() == {"enabled": False, "timeout_ms": 2000}
+    assert prover_context.settings() == {"enabled": True, "timeout_ms": 5000, "bounded_rows": 3}
+    assert prover_context.save_settings(enabled=False, timeout_ms=2000) == {"enabled": False, "timeout_ms": 2000, "bounded_rows": 3}
+    assert prover_context.settings() == {"enabled": False, "timeout_ms": 2000, "bounded_rows": 3}
+    assert prover_context.save_settings(bounded_rows=0)["bounded_rows"] == 0
     for bad in ({"enabled": "yes"}, {"timeout_ms": 5}, {"timeout_ms": True}):
         with pytest.raises(ValueError):
             prover_context.save_settings(**bad)

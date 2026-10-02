@@ -51,6 +51,7 @@ class Table:
     columns: list[Column]
     primary_key: tuple[str, ...] = ()
     unique: list[tuple[str, ...]] = field(default_factory=list)
+    foreign: list[tuple[str, str, str]] = field(default_factory=list)  # (column, parent table, parent column)
 
 
 def load_schema(path: Path) -> dict[str, Table]:
@@ -67,6 +68,10 @@ def load_schema(path: Path) -> dict[str, Table]:
                 constraint_sql = " ".join(k.sql().upper() for k in item.args.get("constraints") or [])
                 column = Column(item.name.lower(), item.args["kind"].sql(dialect="mysql").upper())
                 column.not_null = "NOT NULL" in constraint_sql or "PRIMARY KEY" in constraint_sql
+                for constraint in item.args.get("constraints") or []:
+                    reference = constraint.args.get("kind")
+                    if isinstance(reference, exp.Reference) and isinstance(reference.this, exp.Schema) and reference.this.expressions:
+                        table.foreign.append((column.name, reference.this.this.name.lower(), reference.this.expressions[0].name.lower()))
                 if "PRIMARY KEY" in constraint_sql:
                     table.primary_key = (column.name,)
                 table.columns.append(column)
@@ -75,6 +80,10 @@ def load_schema(path: Path) -> dict[str, Table]:
                 for column in table.columns:
                     if column.name in table.primary_key:
                         column.not_null = True
+            elif isinstance(item, exp.ForeignKey) and item.args.get("reference") is not None:
+                reference = item.args["reference"]
+                if isinstance(reference.this, exp.Schema) and len(item.expressions) == 1 == len(reference.this.expressions):
+                    table.foreign.append((item.expressions[0].name.lower(), reference.this.this.name.lower(), reference.this.expressions[0].name.lower()))
             elif isinstance(item, exp.UniqueColumnConstraint):
                 table.unique.append(tuple(e.name.lower() for e in item.this.expressions))
         tables[name] = table
@@ -215,7 +224,7 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows
+    from kumosql.duckdb_load import insert_rows, run_unoptimized
 
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
@@ -243,11 +252,42 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
                 insert_rows(db, f'"{table.name}"', rows)
             a = _bag(db.execute(left_sql).fetchall())
             b = _bag(db.execute(right_sql).fetchall())
+            if a != b and [_bag(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         except duckdb.Error:
             return False
         if a != b:
             return (left_sql, right_sql, a, b)
-    return None
+    return targeted_differ(left_sql, right_sql, used)
+
+
+_TARGETED_TYPES = {"VARCHAR": "STRING", "DOUBLE": "FLOAT64", "DATE": "DATE", "BIGINT": "INT64"}
+
+
+def targeted_differ(left_sql: str, right_sql: str, used: list[Table]):
+    """The targeted suite (kumosql.refute) as a last look; same result shape as ``differ``."""
+
+    import os
+
+    if os.environ.get("KUMOSQL_TARGETED", "1") == "0":
+        return None
+    from kumosql.refute import find_targeted_difference
+    from kumosql.result_equivalence import DataRules
+
+    names = {t.name for t in used}
+    schema = {t.name: {c.name: _TARGETED_TYPES[_duck_type(c)] for c in t.columns} for t in used}
+    rules = {
+        t.name: DataRules(
+            frozenset(c.name for c in t.columns if c.not_null),
+            tuple(k for k in ([t.primary_key] if t.primary_key else []) + list(t.unique)),
+        )
+        for t in used
+    }
+    foreign = [(t.name, c, p, pc) for t in used for c, p, pc in t.foreign if p in names]
+    found = find_targeted_difference(left_sql, right_sql, schema, rules, foreign_keys=foreign, dialect="duckdb", budget=20.0)
+    if found is None:
+        return None
+    return (left_sql, right_sql, Counter(found.left.rows), Counter(found.right.rows))
 
 
 @dataclass
@@ -289,6 +329,12 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
 
 
 def default_prove(left: str, right: str, tables: dict[str, Table], constants: bool = False) -> bool:
+    return prove_result(left, right, tables, constants).proven
+
+
+def prove_result(left: str, right: str, tables: dict[str, Table], constants: bool = False):
+    """The prover's full result (status, reason and any counterexample) for one pair."""
+
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 
     from kumosql.smt_equivalence import TableConstraints
@@ -303,7 +349,7 @@ def default_prove(left: str, right: str, tables: dict[str, Table], constants: bo
     }
     return prove_equivalent_algebraic(
         spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants
-    ).proven
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
