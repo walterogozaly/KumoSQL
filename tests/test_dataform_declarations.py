@@ -72,3 +72,65 @@ def test_a_name_declared_in_two_schemas_is_not_guessed(tmp_path):
 def test_without_any_declaration_the_default_schema_still_applies(tmp_path):
     pl = project(tmp_path, {"definitions/m.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("t")}'})
     assert {d.key for d in pl.models["proj.analytics.m"].declared_dependencies} == {"proj.analytics.t"}
+
+
+DYNAMIC = {
+    "definitions/decl.js": 'getTables().forEach((t) => declare({ schema: "raw", name: t }));\n',
+    "definitions/m.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("orders")}',
+}
+
+
+def load(tmp_path, compiled):
+    (tmp_path / "workflow_settings.yaml").write_text("defaultProject: proj\ndefaultDataset: analytics\n")
+    for name, text in DYNAMIC.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return load_sqlx_project(tmp_path, compiled_targets=compiled)
+
+
+def test_dynamic_declarations_fall_back_to_the_compiled_graph(tmp_path):
+    pl = load(tmp_path, lambda: [(("lake", "raw", "orders"), True)])
+    assert reads(pl) == {"lake.raw.orders"}
+    assert "lake.raw.orders" in pl.sources
+    assert not any(d.code == "unsupported_ref" for d in pl.diagnostics)
+
+
+def test_an_unreachable_compiled_graph_leaves_refs_unresolved(tmp_path):
+    def broken():
+        raise RuntimeError("no credentials")
+
+    pl = load(tmp_path, broken)
+    assert reads(pl) == set()
+    assert {"compiled_graph_unavailable", "unsupported_ref"} <= {d.code for d in pl.diagnostics}
+
+
+def test_the_compiled_graph_is_not_asked_when_the_files_are_enough(tmp_path):
+    def forbidden():
+        raise AssertionError("should not be called")
+
+    pl = project(tmp_path, {"definitions/m.sqlx": 'config { type: "table" }\nSELECT 1 FROM ${ref("t")}'})
+    assert pl is not None
+    (tmp_path / "definitions/decl.js").write_text('declare({ schema: "raw", name: "t" });')
+    assert load_sqlx_project(tmp_path, compiled_targets=forbidden) is not None
+
+
+def test_compiled_targets_reads_the_newest_release_compilation(monkeypatch):
+    from kumosql import workflow_configs as wc
+
+    monkeypatch.setattr(wc, "search_for", lambda url: {"projects": ["p"], "location": "l"})
+    monkeypatch.setattr(wc, "find_repositories", lambda *a: (["projects/p/locations/l/repositories/r"], []))
+    seen = []
+
+    def fake_list(url, key):
+        seen.append(url)
+        if key == "releaseConfigs":
+            return [{"releaseCompilationResult": "projects/p/locations/l/repositories/r/compilationResults/c1"}]
+        return [
+            {"target": {"database": "d", "schema": "raw", "name": "orders"}, "declaration": {}},
+            {"target": {"database": "d", "schema": "m", "name": "x"}, "relation": {}},
+        ]
+
+    monkeypatch.setattr(wc, "_list_all", fake_list)
+    assert wc.compiled_targets("https://github.com/o/r") == [(("d", "raw", "orders"), True), (("d", "m", "x"), False)]
+    assert seen[-1].endswith("compilationResults/c1:query")
