@@ -41,7 +41,7 @@ def _run(module, args, tmp_path):
 def test_adapted_shared_model_reuse_floor(tmp_path):
     summary = _run(mv_bench, ["--source", "adapted", "--all"], tmp_path)["adapted"]
     assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
-    assert summary["rewritten_of_expected"] >= 19 and summary["no_rewrite_of_none"] == summary["expect_none"]
+    assert summary["rewritten_of_expected"] >= 20 and summary["no_rewrite_of_none"] == summary["expect_none"]
 
 
 def test_aggregate_decomposition_floor(tmp_path):
@@ -55,14 +55,14 @@ def test_aggregate_decomposition_floor(tmp_path):
 def test_calcite_materialized_view_floor(tmp_path):
     summary = _run(mv_bench, ["--source", "calcite", "--all"], tmp_path)["calcite"]
     assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
-    assert summary["rewritten_of_expected"] >= 83
+    assert summary["rewritten_of_expected"] >= 109
 
 
 @pytest.mark.slow
 def test_containment_floor(tmp_path):
     summary = _run(containment_bench, ["--all"], tmp_path)["all"]
     assert summary["wrong"] == 0
-    assert summary["decided_correctly"] >= 603
+    assert summary["decided_correctly"] >= 628
 
 
 def test_containment_sample_has_no_wrong_answers(tmp_path):

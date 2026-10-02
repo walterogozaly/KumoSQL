@@ -22,14 +22,24 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
-| Baseline, development (existing prover alone) | 8/110 | 30/30 | 0 | 0 |
-| Development | 62/110 | 30/30 | 25 | 0 |
-| Held out | 21/39 | 9/9 | 4 | 0 |
-| All (196 cases, 8 disabled) | 83/149 (supported subset 83/129) | 39/39 | 29 | 0 |
+| Baseline, development (existing prover alone) | 8/108 | 32/32 | 0 | 0 |
+| Development | 82/108 | 32/32 | 14 | 0 |
+| Held out | 27/39 | 9/9 | 3 | 0 |
+| All (196 cases, 8 disabled) | 109/147 (supported subset 109/139) | 41/41 | 17 | 0 |
 
-86 of 196 queries were changed; 85 were verified on random databases and 1 could not be run. Adapted cases: 19/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
+112 of 196 queries were changed; 105 were verified on random databases and 7 could not be run (DuckDB does not read `FLOOR(x TO unit)`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 
-Not read yet: unique/foreign-key joins, outer joins, INTERSECT, CUBE/ROLLUP, FLOOR-TO-unit.
+What the proposer reads beyond select-project-join and rollups:
+
+* a filter over a grouped derived table is merged into one grouped query (the outer filter becomes `HAVING`);
+* a model it cannot read (a set operation, a join of grouped derived tables) is still tried as the whole answer and as a column subset matched by where each output comes from;
+* at the model's own grain a distinct aggregate is read from the model's column, or computed again over the model grouped by its keys; a model key the query fixes to a constant (`WHERE name = 'hello'`) does not count as a finer grain;
+* a `COUNT` rolled up as `SUM` of counts gets `COALESCE(.., 0)` whenever the grouping has an empty set (`CUBE`, `ROLLUP`, `GROUPING SETS (.., ())`), since that group exists even over no rows;
+* literal `IN` lists.
+
+The `COALESCE` fix matters for correctness: the prover currently proves `COUNT(*)` equal to a `SUM` of grouped counts even over an empty table, so before it five CUBE/ROLLUP rewrites were accepted and failed the random-database check (reported to the prover's soundness owners).
+
+Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
 
 ## Query containment
 
@@ -42,9 +52,9 @@ Cases are generated (`tools/make_containment_cases.py`, 318 cases, labels checke
 | | Decided correctly | Proven | Refuted | Unknown | Unsupported | Wrong |
 | --- | --- | --- | --- | --- | --- | --- |
 | Baseline, development | 435/582 | 26 | 409 | 147 | 0 | 0 |
-| Development | 559/582 | 150 | 409 | 0 | 23 | 0 |
-| Held out | 44/54 | 24 | 20 | 6 | 4 | 0 |
-| All | 603/636 | 174 | 429 | 6 | 27 | 0 |
+| Development | 582/582 | 173 | 409 | 0 | 0 | 0 |
+| Held out | 46/54 | 26 | 20 | 6 | 2 | 0 |
+| All | 628/636 | 199 | 429 | 6 | 2 | 0 |
 
 ## Aggregate decomposition
 
