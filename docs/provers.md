@@ -30,6 +30,10 @@ CLI usage:
 python -m kumosql prove-sql-equivalent left.sql right.sql --verifier-sql verify.sql
 ```
 
+The command runs the structural proof first and, when row order does not matter, the SMT-based prover (with the algebraic normalizer, see below) for what the structure check cannot see: a CTE against an inline subquery, a `LIKE` that another `LIKE` covers, `USING` against `ON`, an unused aggregate column. A proof from the second step says `SMT proof:` and lists its assumptions as `assumption:` lines. A pair it cannot prove stays `not_proven`, even when the SMT-based prover finds a counterexample; run `prove-sql-smt` to see that.
+
+Two `CREATE [OR REPLACE] TABLE|VIEW name AS query` statements are compared as a write whose query is analysed (`kumosql.statement_proof`): everything except the query (kind, name, `OR REPLACE`, `TEMP`, partitioning, clustering, options) must match as text, and the two queries must be proven. Functions, procedures, scripts and a `CREATE` without a query are not unwrapped.
+
 ## Result equivalence on synthetic data
 
 The static prover only accepts rewrites whose normalized ASTs match. To test rewrites it cannot prove, `kumosql.check_result_equivalence(left_sql, right_sql, schema)` runs both sides against the same deterministic synthetic tables in a local DuckDB engine (BigQuery SQL is translated with `sqlglot`) and compares the results as multisets, including column names.
@@ -93,6 +97,8 @@ Pass `schema={"t": ["id", "a"]}` to enable `SELECT *` and unqualified columns in
 ```shell
 python -m kumosql prove-sql-smt left.sql right.sql --schema schema.json
 ```
+
+The command runs the algebraic normalizer in front of the solver (the same prover as **Compare queries**) and unwraps `CREATE TABLE|VIEW ... AS` statements as described above. Without a schema it still handles `LEFT`/`RIGHT`/`FULL` joins (the unmatched side reads as NULL in every column; `SELECT *` over it needs the schema), `JOIN ... USING (k)` for a select that lists its columns, and a `LIKE 'ab%'` test beside `LIKE 'a%'` on the same column (patterns that are a literal with one trailing `%`; `_`, escapes and `ILIKE` are left alone).
 
 `tests/test_smt_fuzz.py` checks the prover against SQLite on random queries and databases: every proof must hold and every counterexample must separate the queries.
 
