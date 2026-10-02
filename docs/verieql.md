@@ -10,7 +10,7 @@ Everything is deterministic Python: `kumosql.counterexample` (a constraint-respe
 | --- | --- | --- |
 | `equivalent` | **unbounded proof** | The z3 prover proved the result bags equal on every database that satisfies the declared keys and NOT NULL columns. After a proof, 1,000 more random databases (a different seed) must still agree, or the case counts as `wrong`. |
 | `different` | **executed counterexample** | A database satisfying every constraint was built and both queries were run on it with different result bags. The difference has to survive three row-order shuffles, so it never rests on `LIMIT` ties or on MySQL's arbitrary pick for a non-grouped column, and both queries have to return the same rows with DuckDB's optimizer switched off (`PRAGMA disable_optimizer`), because the optimizer has returned wrong rows for some correlated subqueries. Re-checking the full LeetCode run this way dropped 3 of 5,519 refutations; Calcite and Literature did not change. |
-| `agrees` | **executed datasets only** | Not proven, and 600 random databases (200, then 400 more for pairs that are not proven) showed no difference. This is not a proof and not bounded verification. |
+| `agrees` | **executed datasets only** | Not proven, and 600 random databases (200, then 400 more for pairs that are not proven; 400 wider ones when a query has `HAVING`) showed no difference. This is not a proof and not bounded verification. |
 | `unknown` | none | The pair could not be run (a query DuckDB rejects, unreadable constraints). |
 | `wrong` | | An `equivalent` verdict contradicted by a counterexample (our own second search, or VeriEQL's published counterexample replayed on DuckDB). Must stay 0. |
 
@@ -18,7 +18,7 @@ VeriEQL itself is *bounded* model checking: "verified" there means no counterexa
 
 ## Counterexample generator
 
-`kumosql.counterexample.find_counterexample(spec, left, right)` returns a `Counterexample` (the rows of every table plus both result bags, and `.script(spec)` for a runnable `CREATE`/`INSERT` script). Databases are small (up to 5 rows per table); values come from small domains seeded with the literals of the two queries (the constant, one below, one above, string and date literals), a "hot subset" per column makes ties and join matches common, and NULLs appear on nullable columns. Constraints are respected by construction (keys, foreign keys by drawing from parent rows, consecutive ids) or by rejection (`CHECK`-style predicates and implications; a NULL never satisfies one, which is the strict reading and therefore valid under both).
+`kumosql.counterexample.find_counterexample(spec, left, right)` returns a `Counterexample` (the rows of every table plus both result bags, and `.script(spec)` for a runnable `CREATE`/`INSERT` script). Databases are small (up to 5 rows per table); values come from small domains seeded with the literals of the two queries (the constant, one below, one above, string and date literals), a "hot subset" per column makes ties and join matches common, and NULLs appear on nullable columns. When a query filters groups (`HAVING`) and nothing else settled the pair, a wider search follows: tables of 3 to 8 rows, plus n to n + 2 rows for each `COUNT(..) > n`-style test up to 12; some columns drawn from their whole domain, so one group can hold many distinct values; and half of each integer literal, so two values can sum to a `SUM(..) >= n` threshold exactly. Proofs of such pairs are re-checked on 200 of these wider databases too. Constraints are respected by construction (keys, foreign keys by drawing from parent rows, consecutive ids) or by rejection (`CHECK`-style predicates and implications; a NULL never satisfies one, which is the strict reading and therefore valid under both).
 
 MySQL lets a grouped query read ungrouped columns; DuckDB refuses. Such columns are wrapped in `ANY_VALUE`, and any difference found must be stable under shuffling the input rows, so only functionally determined columns can produce a counterexample. Keys inside `GROUPING SETS`, `ROLLUP` and `CUBE` count as grouped, and columns inside an aggregate's `FILTER (WHERE ...)` are left alone.
 
@@ -65,7 +65,7 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Literature | 64 | 15 | 23 | 22 | 4 | 0 |
+| Literature | 64 | 15 | 25 | 20 | 4 | 0 |
 | Calcite-397 | 397 | 247 | 29 | 112 | 9 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,392 | 5,652 | 12,878 | 1,072 | 0 |
 
