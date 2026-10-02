@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import os
 import re
 import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Iterator
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
@@ -73,6 +75,37 @@ def _save_disk() -> None:
         os.replace(temp, path)
     except OSError:
         pass  # the cache is an optimization; never fail a request over it
+
+
+_batching = 0
+_dirty = False
+
+
+def _changed() -> None:
+    """Save the cache now, or once the enclosing :func:`batched_saves` block ends. Call with ``_lock`` held."""
+
+    global _dirty
+    if _batching:
+        _dirty = True
+    else:
+        _save_disk()
+
+
+@contextmanager
+def batched_saves() -> Iterator[None]:
+    """Write the cache file once at the end instead of after every answer (it is rewritten whole each time)."""
+
+    global _batching, _dirty
+    with _lock:
+        _batching += 1
+    try:
+        yield
+    finally:
+        with _lock:
+            _batching -= 1
+            if not _batching and _dirty:
+                _dirty = False
+                _save_disk()
 
 
 def clear_cache() -> None:
@@ -181,7 +214,7 @@ def cached(key: str, fetch, refresh: bool = False) -> dict:
         raise
     with _lock:
         _memory[key] = {"at": now, "data": data}
-        _save_disk()
+        _changed()
     return {"data": data, "fetchedAt": now, "cached": False, "stale": False, "refreshing": False}
 
 

@@ -32,7 +32,7 @@ The Calcite-397 queries are printed by Calcite, and some of its spellings mean n
 
 | Calcite spelling | Run as | Where |
 | --- | --- | --- |
-| `$f0`, `EXPR$1`, `$cor0` | quoted identifiers | `counterexample.to_duckdb` |
+| `$f0`, `EXPR$1`, `$cor0` | `_S_f0`, `EXPR_S_1`, `_S_cor0` (DuckDB rejects `$` in bare names) | `counterexample.to_duckdb` |
 | `COUNT(a, b)` | `COUNT(CASE WHEN a IS NOT NULL AND b IS NOT NULL THEN 1 END)` | `to_duckdb` |
 | `FIRST_VALUE(x)` / `LAST_VALUE(x)` as an aggregate | DuckDB `first(x)` / `last(x)` (differences that depend on row order are dropped) | `to_duckdb` |
 | `SINGLE_VALUE(x)` | `x` of the only row, NULL with none, an error (database skipped) with two | `to_duckdb` |
@@ -66,8 +66,8 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Literature | 64 | 15 | 23 | 22 | 4 | 0 |
 | Calcite-397 | 397 | 229 | 27 | 131 | 10 | 0 |
-| LeetCode (all pairs) | 23,994 | 4,380 | 5,516 | 12,175 | 1,923 | 0 |
+| LeetCode (all pairs) | 23,994 | 4,392 | 5,652 | 12,878 | 1,072 | 0 |
 
 The [harness translation](#harness-translation) took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks four of our Calcite refutations equivalent (pairs 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows).
 
-On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,283 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax).
+On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,400 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores (the figures above are the full run, with the 1,923 pairs that DuckDB first rejected re-run after the translation fixes). Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (a table the schema names differently, `GROUP BY` positions that name aggregates, Calcite-only syntax). Translation handles bare words used as strings, `$` in names, unqualified `GROUP BY` names that DuckDB calls ambiguous, `SUBDATE`/`ADDDATE`, `CROSS JOIN .. ON` and MySQL's ungrouped columns.

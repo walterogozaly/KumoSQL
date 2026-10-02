@@ -28,6 +28,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | --- | --- |
 | [SQLSolver and the algebraic prover](sqlsolver.md) | SQLSolver Calcite, Spark, TPC-H and TPC-C; R-Bot; QED; Cosette and SPES |
 | [VeriEQL](verieql.md) | VeriEQL LeetCode, Literature and Calcite suites |
+| [Engine test suites](engine-suites.md) | DuckDB and SQLite SQLLogicTest and SQLGlot fixtures run through every rewrite, checked by execution |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | 850 lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification |
@@ -40,6 +41,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC, unsafe-rewrite detection, rewrite composition |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking, counterexample minimization |
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
+| [MV-based rewriting benchmark](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS |
 | [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors |
 | [Lineage and change impact](lineage-bench.md) | SQLLineage cases and generated lineage pipelines |
 | [Dataform preservation](dataform-bench.md) | Protected SQLX text and dependencies |

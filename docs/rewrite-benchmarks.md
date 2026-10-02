@@ -52,25 +52,29 @@ python tools/rewrite_bench.py --bench benchmark --method kumosql --cost --jobs 3
 
 | Measure | KumoSQL | Reference rewrites |
 | --- | ---: | ---: |
-| CGOQ@N (all 180) | **28.69** | 40.42 (paper: 41.00) |
-| Rewritten | 130 (all proven, all return the same rows) | 180 |
+| CGOQ@N (all 180) | **30.72** | 40.42 (paper: 41.00) |
+| Rewritten | 142 (all proven, all return the same rows) | 180 |
 | Unsafe / non-executable | 0 / 0 | 0 / 0 |
-| Geometric-mean speedup over rewritten cases | 1.96x | 2.04x |
-| At least 10% faster | 49 | |
-| Held-out split (35 cases) | 24.23 | |
+| Geometric-mean speedup over rewritten cases | 1.90x | 2.04x |
+| At least 10% faster | 54 | |
+| Held-out split (35 cases) | 27.61 | |
 
 | Pool | Cases | Rewritten | CGOQ |
 | --- | ---: | ---: | ---: |
-| PERF | 44 | 35 | 73.33 |
-| PG-AWARE | 30 | 15 | 22.22 |
-| ROBUST | 58 | 49 | 15.79 |
-| EQUIV | 48 | 31 | 7.40 |
+| PERF | 44 | 40 | 81.03 |
+| PG-AWARE | 30 | 13 | 18.82 |
+| ROBUST | 58 | 53 | 15.82 |
+| EQUIV | 48 | 36 | 10.06 |
+
+History: 28.69 (130 rewritten) in the first run; 30.72 after the prover kept grouped window queries whole and matched `ORDER BY .. LIMIT` bodies written differently on the two sides, and the runner completed each case's schema profile from the database catalog (the profiles omit some tables, so stars over them could not be expanded). Two cases lost a rewrite in that run (PG-AWARE-018, ROBUST-021) through prover changes merged on master in between. PG-AWARE-018 is proven again after two fixes in this step: the outer-join wrapping rule kept a bare output column's name, and a constant `INTERVAL` reads as one fixed value. ROBUST-021 still gets only a smaller rewrite. The table above is from the run before those fixes.
 
 Data is scale factor 1, not the benchmark's 10, so speedups differ from the paper's machine. Each statement ran once to warm up, then five times alternating with the other, and the medians are compared, so drift in the machine's speed affects both alike (the reference run predates alternation). Cases numbered 4, 9, 14, ... in each pool were held out while writing the rules and never inspected.
 
 What moved the score: the PERF and PG-AWARE pools wrap the real query in layers of `SELECT *` CTEs and cross joins with `COUNT(*)` aggregates whose only use is `count >= 0`. Removing those (`passthrough`, `unused_cte`, `one_row_join`) is where the large speedups come from (up to 66x). Most other rewrites only shorten the statement and run at the same speed. One rewrite is slower (ROBUST-028, 0.74x: an inner `ORDER BY` that PostgreSQL used for a cheaper plan is dropped).
 
-The 50 cases left unchanged are mostly ones the prover cannot read yet: window functions (8), `SELECT *` over derived tables (4), `LIMIT` without a full `ORDER BY`, `ROLLUP`/`GROUPING`, and others, or rewrites whose proof did not finish.
+The 38 cases left unchanged are mostly ones the prover cannot read yet: window functions over plain rows, `LIMIT` without a full `ORDER BY`, `ROLLUP`/`GROUPING`, `STDDEV`, dates written `'2001-5-01'`, and others, or rewrites whose proof did not finish.
+
+With `--cost`, the runner also reads `information_schema` (columns, types, NOT NULL, primary keys) for tables a case's profile leaves out.
 
 
 ## WeTune's 50 GitHub performance issues

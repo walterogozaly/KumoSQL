@@ -118,3 +118,10 @@ def test_format_sql_never_turns_spaced_signs_into_a_comment():
     for sql in ("SELECT 1 * - - - 5\n", "SELECT 1 * - - 5 AS c, 2 AS d\n"):
         assert format_sql(sql, prefs) == sql
     assert format_sql("select a,b from t -- why\n", prefs) == "select a, b from t -- why\n"
+
+def test_formatting_never_fuses_unary_minus_into_a_comment():
+    # found by the DuckDB suite: sqlfluff turned "- -i" into "--i", a comment
+    from kumosql import get_rule
+
+    out = get_rule("format_sql").apply("SELECT - -i FROM test")
+    assert "--" not in out.sql

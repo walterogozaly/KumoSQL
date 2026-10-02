@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 import random
 import re
@@ -126,16 +127,27 @@ def new_database(tables: dict[str, Table]):
     return db
 
 
-def random_rows(table: Table, rng: random.Random) -> list[list]:
-    """A few rows with small value domains so joins and ties are common."""
+def random_rows(table: Table, rng: random.Random, numbers: list | None = None) -> list[list]:
+    """A few rows with small value domains so joins and ties are common.
+
+    With ``numbers`` (a few values near the queries' literals, shared by every table of the database),
+    numeric columns draw from them, and each non-key column from one or two values about half the time,
+    so rows sharing a join key or a whole row repeat often.
+    """
 
     rows, keys = [], set()
-    for _ in range(rng.choice([0, 0, 1, 2, 3, 4])):
+    domains = {}
+    key_columns = {c for key in ([table.primary_key] if table.primary_key else []) + list(table.unique) for c in key}
+    for column in table.columns:
+        kind = _duck_type(column)
+        domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES}.get(kind, numbers or [0, 1, 2, 3])
+        if numbers is not None and column.name not in key_columns and rng.random() < 0.5:
+            domain = rng.sample(domain, min(len(domain), rng.choice([1, 2])))
+        domains[column.name] = domain
+    for _ in range(rng.choice([0, 0, 1, 2, 3, 4] if numbers is None else [1, 2, 3, 4, 5])):
         row = []
         for column in table.columns:
-            kind = _duck_type(column)
-            domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES}.get(kind, [0, 1, 2, 3])
-            value = rng.choice(domain)
+            value = rng.choice(domains[column.name])
             if not column.not_null and rng.random() < 0.25:
                 value = None
             row.append(value)
@@ -192,6 +204,12 @@ def name_values(sql: str) -> str:
     return tree.sql(dialect="mysql")
 
 
+def _bag(rows) -> Counter:
+    """Rows as a bag; numbers compared as floats rounded to 6 places (DuckDB returns DECIMAL as Decimal, DOUBLE as float)."""
+
+    return Counter(tuple(round(float(v), 6) if isinstance(v, (float, Decimal)) else v for v in row) for row in rows)
+
+
 def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
@@ -210,15 +228,22 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
         used = [tables[n] for n in sorted(referenced_tables(left, right)) if n in tables]
     except sqlglot.errors.SqlglotError:
         return False
-    for _ in range(trials):
+    numbers = {0, 1, 2, 3}
+    for literal in [lit for sql in (left, right) for lit in sqlglot.parse_one(sql, read="mysql").find_all(exp.Literal)]:
+        if not literal.is_string and re.fullmatch(r"-?\d+", literal.this) and abs(int(literal.this)) < 10**6:
+            numbers.update({int(literal.this) - 1, int(literal.this), int(literal.this) + 1})
+    # Plain databases first, then skewed ones whose numbers sit next to the queries' literals
+    for trial in range(2 * trials):
+        # every table of a skewed database draws its numbers from the same few, so join keys meet
+        shared = rng.sample(sorted(numbers), min(len(numbers), rng.choice([2, 3, 4]))) if trial >= trials else None
         try:
             for table in used:
                 db.execute(f'DELETE FROM "{table.name}"')
-                rows = random_rows(table, rng)
+                rows = random_rows(table, rng, shared if trial >= trials else None)
                 insert_rows(db, f'"{table.name}"', rows)
-            a = Counter(db.execute(left_sql).fetchall())
-            b = Counter(db.execute(right_sql).fetchall())
-            if a != b and [Counter(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+            a = _bag(db.execute(left_sql).fetchall())
+            b = _bag(db.execute(right_sql).fetchall())
+            if a != b and [_bag(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
                 continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         except duckdb.Error:
             return False

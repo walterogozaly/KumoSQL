@@ -32,7 +32,9 @@ its published **BigQuery reference queries** as realistic inputs for KumoSQL's o
 | cleanup, format | rewrite | each cleanup rule and the formatter run on every query; a change is checked by the prover |
 
 Outcomes per stage over the whole corpus are passed, failed, unsupported, timeout and error, plus the score on the
-supported subset (passed out of passed + failed). For rewrites the table reports how many queries each rule changed, how
+supported subset (passed out of passed + failed). A query times out after 60 CPU seconds (the slowest takes about 9),
+with a 600 s wall-clock backstop for a query that blocks; measuring CPU rather than wall time keeps a busy machine,
+such as a parallel test run, from timing queries out. For rewrites the table reports how many queries each rule changed, how
 many of those changes the prover proved equivalent (`verified`), and how many were damaged (disproved). Changes the
 prover cannot prove are never applied. There is no execution evidence: the data are public BigQuery tables, so
 correctness rests on proof and on construction.
