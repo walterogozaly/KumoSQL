@@ -76,6 +76,8 @@ The result is one of:
 - `not_equivalent`: `counterexample.tables` is a small database on which the queries return different rows (`left_rows`, `right_rows`). It is only reported when no uninterpreted function is involved.
 - `not_proven`: outside the subset, or no proof was found.
 
+**Executed counterexamples.** The solver's model gives no counterexample for outer joins, duplicate-producing joins, `NOT IN` with NULLs or set operations of different shapes, so such pairs used to stay `not_proven`. `prove_equivalent_algebraic(..., search_counterexample=True)` (on for **Compare queries** and `POST /api/prove-queries`) then runs both queries on the corner-case, targeted and random databases of `kumosql.targeted_data`, built around both queries and respecting declared NOT NULL columns, keys and foreign keys, and returns the first database on which the result bags differ, shrunk row by row, as a `not_equivalent` counterexample (`src/kumosql/executed_refutation.py`). It is a refutation that needs no trust in the prover: anyone can replay it. To keep it a refutation of the BigQuery queries rather than of DuckDB's reading of them, the search runs only when every column type is declared, both queries stay within an allow-list whose DuckDB translation evaluates as in BigQuery (joins, set operations, subqueries, comparisons, arithmetic, `CASE`/`IF`/`COALESCE`, plain aggregates and aggregate windows; no `LIMIT`, string or date functions, `LIKE`, arrays, `ROW_NUMBER` or nondeterministic functions), a zero divisor fails the run instead of returning infinity, and the difference survives rounding floats to 6 digits and reversing every table's rows. Finding nothing proves nothing.
+
 ```python
 from kumosql import prove_equivalent_smt
 
@@ -111,6 +113,17 @@ Schema facts strengthen proofs: pass `constraints={"orders": TableConstraints(no
 A query split into partitions by a filter is put back together (`src/kumosql/partition_rules.py`): `UNION ALL` branches that are the same query except for WHERE filters no row can make TRUE twice are one branch filtered by their `OR`, dropped when the `OR` is always TRUE (`p`, `NOT p`, `p IS NULL` under three-valued logic, as in SQLancer's TLP), and a global `SUM` of `COUNT`s, `SUM` of `SUM`s, `MIN` of `MIN`s or `MAX` of `MAX`es over a `UNION ALL` of global aggregates is one aggregate over the `UNION ALL` of their arguments. See [docs/fuzzing.md](fuzzing.md#partition-recombination).
 
 `AVG`, `DISTINCT`, outer joins, `LIMIT` and `UNION DISTINCT` are left alone. `tests/test_algebraic_equivalence.py` runs every rewrite on random SQLite databases (empty tables and NULLs included) to check normalization never changes results.
+
+**Declined, never guessed.** A construct the provers cannot read faithfully makes the result `not_proven`, never a proof:
+
+- Rewritten queries pass between the provers as text, and some sqlglot generators change meaning when they print (MySQL writes `a DIV b` as `CAST(a / b AS SIGNED)`, which rounds where `DIV` truncates, `CAST(x AS BOOLEAN)` as an integer cast, and `FULL JOIN` as a `LEFT`/`RIGHT` union that is wrong under an aggregate). `kumosql.ast_utils.faithful_sql` prints a query, parses it back and compares the two trees; when no spelling reads back the same, the pair is declined.
+- A column list on a table alias (`FROM dept AS d(name, x)`, on a table, CTE or derived table) renames by position and is spelled out as explicit renames before proving; a list that cannot be resolved (unknown table, star select, too many names) is declined.
+- A derived table folded into the query that reads it keeps its output names, and a rewrite that would rename a derived table's outputs is not applied.
+- On the NULL-padded side of an outer join only expressions that are NULL whenever their columns are (columns, arithmetic, comparisons, a `CASE`/`IF`/`COALESCE` whose every result is such an expression) are folded into the outer query; constants, `IS NULL` and the like stay in the derived table.
+- `GROUP BY 2` and `ORDER BY 2` are spelled out as the second output's expression first, so a constant folded into those clauses later is not read back as a column position.
+- A table function handed a CTE by name (DuckDB's `histogram_values(cte, l)`, BigQuery's `TABLE cte`) is declined by every prover, since such a read is not a table reference and the CTE would look unused.
+
+`tests/test_soundness_regressions.py` keeps each wrong proof found so far, with the database on which DuckDB shows the two queries differ, next to equivalent near misses that must stay proven.
 
 [docs/singh-bedathur.md](singh-bedathur.md) scores the 2,800 public LeetCode pairs from Singh and Bedathur's SQL-equivalence study with no model at run time (`python tools/singh_bedathur_bench.py`): each pair is proved equivalent, shown different by a DuckDB counterexample database, or left unknown. `kumosql.canonical_rules.canonicalize` holds the constraint-free rewrites (merging a select into the one derived table it reads, `DISTINCT` over selected group keys, `IN` over a grouped table as a join) that the harness tries when the prover finds no proof.
 

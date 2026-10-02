@@ -21,6 +21,7 @@ from typing import Callable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import table_parts
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, TableConstraints
 
 
@@ -100,7 +101,7 @@ def tables_of(*queries: str, dialect: str = "bigquery") -> set[str]:
     names: set[str] = set()
     for sql in queries:
         for table in sqlglot.parse_one(sql, read=dialect).find_all(exp.Table):
-            parts = [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
+            parts = table_parts(table)
             names.update(".".join(parts[i:]) for i in range(len(parts)))
     return names
 

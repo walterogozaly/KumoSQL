@@ -478,3 +478,16 @@ SELECT id FROM ${ref("orders")} WHERE 1 = 1 AND (id > 0)"""
     assert '${ref("orders")}' in result.sql
     assert "1 = 1" not in result.sql
     assert result.verification.status is PROVEN
+
+
+def test_unused_cte_kept_when_its_name_is_used_as_a_value():
+    # found by the DuckDB suite: a table passed to a table function by bare name
+    sql = "WITH cte AS (SELECT 1 AS l) SELECT * FROM HISTOGRAM_VALUES(cte, l)"
+    assert apply_rule("remove_unused_ctes", sql).sql == sql
+
+
+def test_trivial_filter_clause_is_not_emptied():
+    # found by the SQLGlot fixtures: FILTER (WHERE TRUE) lost its condition
+    sql = "SELECT COUNT(*) FILTER (WHERE TRUE) FROM x"
+    result = apply_rule("remove_trivial_predicates", sql)
+    assert sqlglot.parse_one(result.sql, read="bigquery") is not None and "WHERE" in result.sql.upper()
