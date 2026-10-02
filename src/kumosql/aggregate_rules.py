@@ -535,6 +535,8 @@ def _filter_into_having(select: exp.Select) -> exp.Expression | None:
 
     from .algebraic_equivalence import _and_all, _conjuncts
 
+    if select.find_ancestor(exp.In, exp.Exists) is not None:
+        return None  # _grouped_in_to_derived reads a membership test's HAVING as this very shape
     where = select.args.get("where")
     source = _from(select)
     if where is None or select.args.get("joins") or not isinstance(source, exp.Subquery) or not source.alias:
