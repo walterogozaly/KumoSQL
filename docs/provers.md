@@ -141,3 +141,5 @@ python -m kumosql prove-sql-sqlsolver --check                                   
 The SQLSolver stage needs a schema listing every table with columns, optionally typed: `{"proj.ds.orders": [["id", "INT64"], ["status", "STRING"]]}`. It is tested against a stand-in for Java; end-to-end runs against a real SQLSolver build are the next step in the plan.
 
 SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are scored with these provers and hand-written rules and no language model: `python tools/sqliq_bench.py --data <SQL-IQ checkout>` (see [docs/sql-iq.md](sql-iq.md); the SQL Judge and Error Classification rules were tuned on SQL-IQ's own data, so those two scores are tuned-on-test).
+
+`kumosql.bounded_equivalence` is a third level between a proof and executed datasets: a z3 check that two queries agree on every database with at most N rows per table, written from the VeriEQL paper (OOPSLA 2024) and sharing none of its code. Its answer reads "bounded, N rows" and is never called a proof; every counterexample is replayed on DuckDB. See [bounded-verification.md](bounded-verification.md).

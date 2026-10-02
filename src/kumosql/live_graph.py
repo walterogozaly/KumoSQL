@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from . import console
 from .pipeline import Pipeline, load_sqlx_project
 from .resilience import extended_path
+from .scripts import expand_script_jobs
 from .timing import stage
 
 MAX_FILES = 20_000  # real enterprise Dataform repositories have thousands of files
@@ -43,7 +44,7 @@ NOT_LOADED = "load a project first"
 
 _LOCK = threading.Lock()
 _LOADED: dict | None = None
-_JOBS: dict = {"records": (), "label": "", "restored_from": None}
+_JOBS: dict = {"records": (), "label": "", "restored_from": None, "scripts": None}
 
 
 class ProjectError(ValueError):
@@ -55,7 +56,7 @@ _PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
 _PROJECT_CACHE_SIZE = 3
 _ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
 _ACTIVITY_IDS = iter(range(1, 1 << 62))
-_CACHE_VERSION = "3"
+_CACHE_VERSION = "5"
 _CACHE_KEEP = 12
 _SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
@@ -445,8 +446,10 @@ def set_report(report: dict | None) -> None:
             _LOADED["report"] = report
 
 
-def parse_job_history(text: object, filename: object = "") -> list[dict]:
+def parse_job_history(text: object, filename: object = "", *, expand: bool = True) -> list[dict]:
     """Records from an exported job history: a JSON array, JSON lines or CSV.
+
+    With ``expand`` (the default) script jobs are reduced to the real tables they read and wrote.
 
     Exports name the destination ``destination_table``; the graph reads
     ``destination``, so it is filled in. CSV cells holding JSON are decoded.
@@ -484,26 +487,29 @@ def parse_job_history(text: object, filename: object = "") -> list[dict]:
         out.append(row)
     if not out:
         raise ProjectError("the job history file has no jobs")
+    if expand:
+        out, _summary = expand_script_jobs(out)
     return out
 
 
 def load_job_history(text: object, filename: object = "") -> int:
     """Load a job-history export for the loaded project; returns the number of jobs."""
 
-    records = parse_job_history(text, filename)
+    raw = parse_job_history(text, filename, expand=False)
+    records, scripts = expand_script_jobs(raw)
     label = str(filename or "job history")[:120]
     with _LOCK:
         if _LOADED is None:
             raise ProjectError("load a project before its job history")
-        _JOBS.update(records=tuple(records), label=label)
+        _JOBS.update(records=tuple(records), label=label, scripts=scripts)
         _LOADED["report"] = None
         _save_jobs(records, label)
-    return len(records)
+    return len(raw)
 
 
 def clear_job_history() -> None:
     with _LOCK:
-        _JOBS.update(records=(), label="")
+        _JOBS.update(records=(), label="", scripts=None)
         _forget_saved_jobs()
 
 
@@ -514,10 +520,13 @@ def source_info() -> dict:
     if current is None:
         return {"kind": "none", "label": "", "jobs": None}
     count = len(current["observed_reads"])
+    jobs = {"label": current["jobs_label"], "count": count} if count else None
+    if jobs and _JOBS.get("scripts") and _JOBS["scripts"].get("scripts"):
+        jobs["scripts"] = _JOBS["scripts"]
     return {
         "kind": "project", "label": current["label"],
         "git": bool(current.get("remote")),
-        "jobs": {"label": current["jobs_label"], "count": count} if count else None,
+        "jobs": jobs,
     }
 
 
