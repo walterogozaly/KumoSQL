@@ -55,7 +55,7 @@ _PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
 _PROJECT_CACHE_SIZE = 3
 _ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
 _ACTIVITY_IDS = iter(range(1, 1 << 62))
-_CACHE_VERSION = "1"
+_CACHE_VERSION = "2"
 _CACHE_KEEP = 12
 _SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
@@ -96,8 +96,8 @@ def _cache_file(pipeline: Pipeline):
     try:
         import sqlglot
 
-        from . import __version__
-        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{key}".encode()).hexdigest()[:32]
+        from . import __version__, lineage_limits
+        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{lineage_limits.cache_tag()}|{key}".encode()).hexdigest()[:32]
         return state.data_path("analysis-cache", f"{tag}.json")
     except OSError:
         return None
@@ -153,8 +153,8 @@ def _snapshot_file(key: str):
     try:
         import sqlglot
 
-        from . import __version__
-        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{key}".encode()).hexdigest()[:32]
+        from . import __version__, lineage_limits
+        tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{lineage_limits.cache_tag()}|{key}".encode()).hexdigest()[:32]
         return state.data_path("parse-cache", f"{tag}.pkl")
     except OSError:
         return None
