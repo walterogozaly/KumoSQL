@@ -33,7 +33,21 @@ Run: `python tools/targeted_data_bench.py [--split dev|heldout|all]`; detail goe
 
 See the README scoreboard (rows *Targeted test data*, *Multi-database semantic suite*, *Counterexample minimization*) and `benchmarks/targeted_data/summary-*.json` for per-operator and per-suite tables.
 
-__RESULTS__
+| | Dev (Calcite, Spark, university) | Held out (TPC-H, TPC-C) |
+| --- | ---: | ---: |
+| Original queries run / unsupported | 623 / 72 | 82 / 0 |
+| Mutants (adapted cases) | 4,542 | 2,846 |
+| Proven equivalent, discarded | 678 | 270 |
+| Invalid (error) / timeout | 215 / 0 | 10 / 585 |
+| Scored denominator | 3,647 | 1,981 |
+| Single random seed kills | 11.2% | 4.4% |
+| Default 8 random databases (baseline) | 46.3% | 10.4% |
+| Targeted databases only | 71.2% | 62.5% |
+| Multi-database suite | 71.8% | 62.8% |
+| Median counterexample rows (8 random / suite) | 38 / 5 | 27 / 5 |
+| Survived, not proven equivalent | 1,011 | 737 |
+
+The baseline (the checker before this work: eight random databases) was measured before any targeting code was tuned. Most unclassified survivors on the development split are `DISTINCT` toggles (677 in the first run) that are equivalent under keys but that the prover cannot show; they stay in the denominator. Minimization: 150 dev cases 692 to 216 rows, 100 held-out cases 595 to 250 rows, all replayed, median 0.14 s and 0.45 s.
 
 ## Regression cases
 
