@@ -224,7 +224,7 @@ class Pipeline:
         """Every table each query model reads: pipeline models and declared sources by key, others as spelled."""
 
         analysis = self._analyse()
-        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed}
+        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed or parents}
         for key, tables in analysis.external_reads.items():
             reads.setdefault(key, set()).update(tables)
         return {key: frozenset(tables) for key, tables in reads.items()}
@@ -805,6 +805,7 @@ def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expres
     with _quiet_parser():
         statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
     queries = []
+    readers: list[exp.Expression] = []
     unread = 0
     for statement in statements:
         # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` and ``EXPORT DATA ... AS SELECT`` read what their query reads.
@@ -823,14 +824,44 @@ def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expres
             queries.append(query)
         elif _may_read_tables(statement):
             unread += 1
+        if not isinstance(query, exp.Query) and (reader := _statement_reads(statement)) is not None:
+            readers.append(reader)
     query = queries[-1] if queries else None
     if query is not None:
         _name_unaliased_casts(query)
-    return query, max(len(queries) - 1, 0) + unread, queries[:-1]
+    return query, max(len(queries) - 1, 0) + unread, [*queries[:-1], *readers]
 
 
 _TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
 _COMMAND_READS = re.compile(r"\b(?:from|join|into|update|merge|using)\b", re.IGNORECASE)
+
+
+def _statement_reads(statement: exp.Expression) -> exp.Expression | None:
+    """A copy of a statement that is not a query but reads tables, with the table it writes marked.
+
+    ``DELETE ... USING``, ``UPDATE ... FROM``, a subquery inside ``DELETE``/``UPDATE``/``INSERT ... VALUES`` and
+    ``CREATE TABLE ... LIKE|CLONE`` read the tables they name; the table written is not one of them (``write_target``).
+    Only the tables are taken: columns of such statements are not traced. ``MERGE`` is handled where it is built.
+    """
+
+    target = None
+    if isinstance(statement, (exp.Delete, exp.Update)):
+        target = statement.this
+    elif isinstance(statement, exp.Insert):
+        target = statement.this.this if isinstance(statement.this, exp.Schema) else statement.this
+    elif isinstance(statement, exp.Create) and not isinstance(statement.expression, exp.Command):
+        like = statement.find(exp.LikeProperty)
+        if statement.args.get("clone") is None and like is None:
+            return None
+        target = statement.this.this if isinstance(statement.this, exp.Schema) else statement.this
+    else:
+        return None
+    if not isinstance(target, exp.Table):
+        return None
+    copy = statement.copy()
+    marked = copy.this.this if isinstance(copy.this, exp.Schema) else copy.this
+    marked.meta["write_target"] = True
+    return copy
 
 
 def _may_read_tables(statement: exp.Expression) -> bool:
@@ -1083,12 +1114,16 @@ class _Analysis:
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
                 if query is not None:
                     parsed[key] = query
-                    # Tables read by the script's earlier queries are dependencies too, even though
-                    # only the last query is traced column by column.
-                    for each in (*earlier, query):
+                elif model.sql.strip():
+                    diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
+                if query is not None or earlier:
+                    # Tables read by the script's earlier queries (and by statements that are not queries, such
+                    # as DELETE and UPDATE) are dependencies too, even though only the last query is traced
+                    # column by column.
+                    for each in (*earlier, *([query] if query is not None else [])):
                         cte_names = {cte.alias_or_name.lower() for cte in each.find_all(exp.CTE)}
                         for table in each.find_all(exp.Table):
-                            if not table.db and table.name.lower() in cte_names:
+                            if table.meta.get("write_target") or (not table.db and table.name.lower() in cte_names):
                                 continue
                             resolved = pipeline.resolve(table)
                             if resolved and resolved != key:
@@ -1103,8 +1138,6 @@ class _Analysis:
                                     else unresolved_tables
                                 )
                                 bucket.setdefault(key, set()).add(_table_name_for_schema(table))
-                elif model.sql.strip():
-                    diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
             elif model.sql.strip():
                 diagnostics.append(
                     PipelineDiagnostic(
