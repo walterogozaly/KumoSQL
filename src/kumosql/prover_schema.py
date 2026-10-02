@@ -70,6 +70,7 @@ class _Builder:
         self.columns: dict[str, list[str]] = {}
         self.not_null: dict[str, set[str]] = {}
         self.keys: dict[str, list[tuple[str, ...]]] = {}
+        self.foreign_keys: dict[str, list[tuple]] = {}
         self.types: dict[str, dict[str, str]] = {}
         self.sources: set[str] = set()
 
@@ -81,6 +82,7 @@ class _Builder:
         keys: Iterable[Iterable[str]] = (),
         source: str = "",
         types: Mapping[str, str] | None = None,
+        foreign_keys: Iterable[tuple] = (),
     ) -> None:
         name = name.strip("`").lower()
         if not name:
@@ -93,6 +95,10 @@ class _Builder:
             key = tuple(c.lower() for c in key)
             if key and key not in self.keys.setdefault(name, []):
                 self.keys[name].append(key)
+        for cols, parent, parent_cols in foreign_keys:
+            fk = (tuple(c.lower() for c in cols), parent.strip("`").lower(), tuple(c.lower() for c in parent_cols))
+            if fk[0] and len(fk[0]) == len(fk[2]) and fk not in self.foreign_keys.setdefault(name, []):
+                self.foreign_keys[name].append(fk)
         if types:
             self.types.setdefault(name, {}).update({c.lower(): t for c, t in types.items()})
         if source:
@@ -100,7 +106,7 @@ class _Builder:
 
     def build(self) -> ProverSchema:
         by_suffix: dict[str, set[str]] = {}
-        names = set(self.columns) | {n for n, v in self.not_null.items() if v} | {n for n, v in self.keys.items() if v}
+        names = set(self.columns) | {n for n, v in self.not_null.items() if v} | {n for n, v in self.keys.items() if v} | {n for n, v in self.foreign_keys.items() if v}
         for name in names:
             parts = name.split(".")
             for start in range(len(parts)):
@@ -117,8 +123,9 @@ class _Builder:
             facts = TableConstraints(
                 not_null=frozenset(self.not_null.get(owner, ())),
                 keys=tuple(self.keys.get(owner, ())),
+                foreign_keys=tuple(self.foreign_keys.get(owner, ())),
             )
-            if facts.not_null or facts.keys:
+            if facts.not_null or facts.keys or facts.foreign_keys:
                 schema.constraints[spelling] = facts
         schema.table_count = len(self.columns)
         schema.constrained_count = len(
@@ -137,10 +144,18 @@ def _add_bigquery(builder: _Builder, project: str, dataset: str, table: str, dat
         if primary:
             keys.append(primary)
             not_null = not_null + list(primary)
+    foreign = []
+    if isinstance(constraints, Mapping):
+        for fk in constraints.get("foreignKeys") or []:
+            ref = fk.get("referencedTable") or {}
+            refs = fk.get("columnReferences") or []
+            if ref.get("tableId") and refs:
+                parent = ".".join(str(ref[k]) for k in ("projectId", "datasetId", "tableId") if ref.get(k))
+                foreign.append(([r["referencingColumn"] for r in refs], parent, [r["referencedColumn"] for r in refs]))
     exact = {"INTEGER": "BIGINT", "INT64": "BIGINT", "NUMERIC": "DECIMAL(38, 9)", "DECIMAL": "DECIMAL(38, 9)"}
     types = {f["name"]: exact[str(f.get("type", "")).upper()] for f in fields if str(f.get("type", "")).upper() in exact}
     builder.add(
-        f"{project}.{dataset}.{table}", [f["name"] for f in fields], not_null, keys, source="bigquery", types=types
+        f"{project}.{dataset}.{table}", [f["name"] for f in fields], not_null, keys, source="bigquery", types=types, foreign_keys=foreign
     )
 
 

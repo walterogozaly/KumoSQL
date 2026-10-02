@@ -206,6 +206,11 @@ class UIHandler(BaseHTTPRequestHandler):
 
             self._json(200, prover_context.status())
             return
+        if self.path == "/api/lineage-limits":
+            from . import lineage_limits
+
+            self._json(200, lineage_limits.settings())
+            return
         if self.path == "/api/settings":
             self._json(200, {
                 "ui": state.get_section("ui", {}),
@@ -405,7 +410,30 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, prover_context.status())
 
+    def _put_lineage_limits(self) -> None:
+        from . import lineage_limits
+
+        payload = self._read_json(MAX_UI_STATE_BYTES)
+        if payload is None:
+            return
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("settings must be an object")
+            saved = lineage_limits.save_settings(
+                model_seconds=payload.get("model_seconds"), total_seconds=payload.get("total_seconds")
+            )
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except OSError as exc:
+            self._json(500, {"error": str(exc)})
+            return
+        self._json(200, saved)
+
     def do_PUT(self) -> None:
+        if self.path == "/api/lineage-limits":
+            self._put_lineage_limits()
+            return
         if self.path == "/api/prover":
             self._put_prover()
             return

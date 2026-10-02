@@ -92,6 +92,27 @@ def describe_os_error(exc: BaseException) -> str:
     return f"unexpected {type(exc).__name__}"
 
 
+def _extended_text(text: str) -> str:
+    if text.startswith("\\\\?\\"):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
+def extended_path(path: str | Path) -> Path:
+    """``path`` made absolute, with Windows' extended-length prefix so paths over 260 characters work.
+
+    No administrator setting is needed. Elsewhere the path is returned unchanged. Applied to a folder
+    root, every path derived from it (``/``, ``rglob``, ``os.walk``) keeps the prefix.
+    """
+
+    path = Path(path)
+    if os.name != "nt":
+        return path
+    return Path(_extended_text(os.path.abspath(path)))
+
+
 def read_text_or_reason(path: Path) -> tuple[str | None, str | None]:
     """Return ``(text, None)`` or ``(None, reason)``; never raises for I/O errors."""
 

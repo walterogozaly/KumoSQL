@@ -23,6 +23,7 @@ from enum import Enum
 import math
 import random
 import re
+import threading
 from typing import Any, Iterable, Mapping
 
 import sqlglot
@@ -96,6 +97,10 @@ class ExecutionError(RuntimeError):
     """Raised when SQL cannot be translated or executed locally."""
 
 
+class QueryTimeout(ExecutionError):
+    """A query ran past its time limit and was interrupted."""
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data
 # ---------------------------------------------------------------------------
@@ -158,6 +163,42 @@ class SyntheticDataset:
 
     seed: int
     tables: Mapping[str, SyntheticTable] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DataRules:
+    """Declared facts a generated database must respect (names lower-case).
+
+    ``not_null`` columns never hold NULL; each tuple in ``keys`` is a set of
+    columns whose non-NULL combinations are unique across rows.
+    """
+
+    not_null: frozenset = frozenset()
+    keys: tuple = ()
+
+
+def respect_rules(
+    columns: tuple[tuple[str, str], ...], rows: Iterable[Row], rules: DataRules | None
+) -> list[Row]:
+    """Drop rows that break ``rules`` (a NULL in a NOT NULL column, a repeated key)."""
+
+    if rules is None:
+        return list(rows)
+    names = [name.lower() for name, _ in columns]
+    required = [i for i, n in enumerate(names) if n in rules.not_null]
+    keys = [[names.index(c) for c in key if c in names] for key in rules.keys]
+    seen: list[set] = [set() for _ in keys]
+    kept: list[Row] = []
+    for row in rows:
+        if any(row[i] is None for i in required):
+            continue
+        marks = [tuple(row[i] for i in key) for key in keys]
+        if any(None not in mark and mark in seen[n] for n, mark in enumerate(marks)):
+            continue
+        for n, mark in enumerate(marks):
+            seen[n].add(mark)
+        kept.append(row)
+    return kept
 
 
 _MAX_CONSTANTS_PER_TYPE = 24
@@ -231,6 +272,7 @@ def generate_synthetic_dataset(
     seed: int,
     rows_per_table: int = 25,
     null_rate: float = 0.15,
+    rules: Mapping[str, DataRules] | None = None,
     extra_values: Mapping[str, Iterable[Any]] | None = None,
 ) -> SyntheticDataset:
     """Generate reproducible synthetic rows for every table in ``schema``.
@@ -238,7 +280,9 @@ def generate_synthetic_dataset(
     Seed 0 is always an empty dataset, which catches rewrites that differ only
     when an input is empty (for example aggregates without ``GROUP BY``).
     Every other seed includes NULLs and at least one exact duplicate row per
-    non-empty table, so bag semantics are exercised.
+    non-empty table, so bag semantics are exercised. With ``rules`` (declared
+    NOT NULL columns and keys, by lower-case table name) rows that break a rule
+    are dropped, and a table with a key gets no exact duplicate row.
     """
 
     rng = random.Random(seed)
@@ -260,7 +304,9 @@ def generate_synthetic_dataset(
                     for _, col_type in columns
                 )
             )
-        if rows:
+        table_rules = rules.get(table_name.lower()) if rules is not None else None
+        rows = respect_rules(columns, rows, table_rules)
+        if rows and not (table_rules and table_rules.keys):
             rows.append(rng.choice(rows))
             rng.shuffle(rows)
         tables[table_name] = SyntheticTable(columns=columns, rows=tuple(rows))
@@ -399,6 +445,10 @@ def prepare_statements(
                 raise ExecutionError(
                     f"statement {index + 1} references table {key!r}, which is not in the synthetic schema"
                 )
+            if not table.alias and table.name and not isinstance(table.this, exp.Func):
+                # Columns may be qualified by the table's own name (``t.a``);
+                # keep that name usable after the table is renamed.
+                table.set("alias", exp.TableAlias(this=exp.to_identifier(table.name)))
             table.set("catalog", None)
             table.set("db", None)
             table.set("this", exp.to_identifier(local))
@@ -496,6 +546,79 @@ def execute_on_dataset(
     return QueryOutput(columns=columns, rows=rows), statements
 
 
+class DatasetRunner:
+    """Run many single-statement queries over many datasets on one DuckDB connection.
+
+    ``execute_on_dataset`` opens a fresh connection per run; scoring thousands
+    of query variants over dozens of databases needs the tables created once and
+    only their rows swapped. A query must be one SELECT over physical tables in
+    ``schema`` (scripts and writes still go through ``execute_on_dataset``).
+    """
+
+    def __init__(self, schema: Schema):
+        self.schema = schema
+        self._connection = _connect()
+        self._loaded: SyntheticDataset | None = None
+        columns_by_table = {key: tuple((n, _normalize_type(t)) for n, t in cols.items()) for key, cols in schema.items()}
+        for key, columns in columns_by_table.items():
+            column_sql = ", ".join(f'"{name}" {_DUCKDB_TYPES[t]}' for name, t in columns)
+            self._connection.execute(f'CREATE TABLE "{_local_name(key)}" ({column_sql})')
+        self._prepared: dict[str, str] = {}
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "DatasetRunner":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def prepare(self, sql: str) -> str:
+        """The DuckDB text of ``sql`` (cached); raises ``ExecutionError`` if it is not one query."""
+
+        cached = self._prepared.get(sql)
+        if cached is None:
+            statements, last_target = prepare_statements(sql, self.schema, run_tag="runner")
+            if len(statements) != 1 or last_target is not None:
+                raise ExecutionError("a dataset runner takes exactly one query")
+            cached = self._prepared[sql] = statements[0]
+        return cached
+
+    def load(self, dataset: SyntheticDataset) -> None:
+        if dataset is self._loaded:
+            return
+        for key, table in dataset.tables.items():
+            local = _local_name(key)
+            self._connection.execute(f'DELETE FROM "{local}"')
+            if table.rows:
+                values_sql = ", ".join(
+                    "(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows
+                )
+                self._connection.execute(f'INSERT INTO "{local}" VALUES {values_sql}')
+        self._loaded = dataset
+
+    def run(self, sql: str, dataset: SyntheticDataset, *, timeout: float | None = None) -> QueryOutput:
+        text = self.prepare(sql)
+        self.load(dataset)
+        timer = None
+        if timeout is not None:
+            timer = threading.Timer(timeout, self._connection.interrupt)
+            timer.start()
+        try:
+            cursor = self._connection.execute(text)
+            columns = tuple(column[0] for column in cursor.description)
+            rows = tuple(tuple(row) for row in cursor.fetchall())
+        except Exception as exc:
+            if timer is not None and not timer.is_alive():
+                raise QueryTimeout(f"query ran longer than {timeout} s") from exc
+            raise ExecutionError(f"DuckDB failed on {text!r}: {exc}") from exc
+        finally:
+            if timer is not None:
+                timer.cancel()
+        return QueryOutput(columns=columns, rows=rows)
+
+
 def _normalize_value(value: Any, float_digits: int) -> Any:
     if isinstance(value, float):
         if math.isnan(value):
@@ -557,8 +680,14 @@ def check_result_equivalence(
     check_column_names: bool = True,
     float_digits: int = 12,
     use_query_constants: bool = True,
+    targeted: bool = False,
 ) -> ResultEquivalence:
     """Run both queries over several synthetic datasets and compare results.
+
+    With ``targeted`` the random databases are followed by the targeted suite built
+    around the left query (:func:`kumosql.targeted_data.database_suite`: corner cases,
+    rows at each comparison's boundary, each table empty in turn); it only adds
+    databases, so it can only turn "equivalent" into "different".
 
     With ``use_query_constants`` the generated values include the queries' own constants
     (see :func:`query_constants`), so their filters match some rows.
@@ -573,10 +702,22 @@ def check_result_equivalence(
     checked: list[int] = []
     left_sql_out: list[str] = []
     right_sql_out: list[str] = []
-    for seed in seeds:
-        dataset = generate_synthetic_dataset(
-            schema, seed=seed, rows_per_table=rows_per_table, null_rate=null_rate, extra_values=extras
-        )
+    def _datasets():
+        for seed in seeds:
+            yield seed, generate_synthetic_dataset(
+                schema, seed=seed, rows_per_table=rows_per_table, null_rate=null_rate, extra_values=extras
+            )
+        if targeted:
+            from .targeted_data import database_suite
+
+            try:
+                suite = database_suite(left_sql, schema, random_seeds=())
+            except (ValueError, sqlglot.errors.SqlglotError):
+                suite = []
+            for labeled in suite:
+                yield labeled.dataset.seed, labeled.dataset
+
+    for seed, dataset in _datasets():
         try:
             left_output, left_sql_out = execute_on_dataset(
                 left_sql, schema, dataset, run_tag=f"left_{seed}"

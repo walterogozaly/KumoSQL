@@ -18,3 +18,4 @@ data/
 !tests/fixtures/
 !tests/fixtures/*.csv
 *.parquet
+benchmarks/targeted_data/detail-*.json
