@@ -91,8 +91,12 @@ def status() -> dict:
     }
 
 
-def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True) -> SmtEquivalenceResult:
-    """Prove two queries return the same rows, using the project's declared facts."""
+def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True, search_counterexample: bool = False) -> SmtEquivalenceResult:
+    """Prove two queries return the same rows, using the project's declared facts.
+
+    ``search_counterexample`` also runs an unproven pair on databases built for it
+    (needs declared column types) and returns any database that tells them apart.
+    """
 
     from . import equivalences
     from .algebraic_equivalence import prove_equivalent_algebraic
@@ -115,6 +119,7 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
         constraints=facts.constraints or None,
         types=facts.types or None,
         timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
+        search_counterexample=search_counterexample,
     )
     if (facts.notes or used) and result.status is SmtStatus.PROVEN_EQUIVALENT:
         wanted = [*facts.notes]

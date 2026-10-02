@@ -692,7 +692,7 @@ def _prepare_query(
     # partially recovered AST.
     if table_function_reads_cte(_parse_single_query(sql)):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
-    lifted = lift_subqueries(sql)
+    lifted = lift_subqueries(sql, rewrite_pipe_syntax=True)
     if lifted.diagnostics:
         details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)
         raise ValueError(f"query could not be normalized without diagnostics: {details}")

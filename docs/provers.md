@@ -76,6 +76,8 @@ The result is one of:
 - `not_equivalent`: `counterexample.tables` is a small database on which the queries return different rows (`left_rows`, `right_rows`). It is only reported when no uninterpreted function is involved.
 - `not_proven`: outside the subset, or no proof was found.
 
+**Executed counterexamples.** The solver's model gives no counterexample for outer joins, duplicate-producing joins, `NOT IN` with NULLs or set operations of different shapes, so such pairs used to stay `not_proven`. `prove_equivalent_algebraic(..., search_counterexample=True)` (on for **Compare queries** and `POST /api/prove-queries`) then runs both queries on the corner-case, targeted and random databases of `kumosql.targeted_data`, built around both queries and respecting declared NOT NULL columns, keys and foreign keys, and returns the first database on which the result bags differ, shrunk row by row, as a `not_equivalent` counterexample (`src/kumosql/executed_refutation.py`). It is a refutation that needs no trust in the prover: anyone can replay it. To keep it a refutation of the BigQuery queries rather than of DuckDB's reading of them, the search runs only when every column type is declared, both queries stay within an allow-list whose DuckDB translation evaluates as in BigQuery (joins, set operations, subqueries, comparisons, arithmetic, `CASE`/`IF`/`COALESCE`, plain aggregates and aggregate windows; no `LIMIT`, string or date functions, `LIKE`, arrays, `ROW_NUMBER` or nondeterministic functions), a zero divisor fails the run instead of returning infinity, and the difference survives rounding floats to 6 digits and reversing every table's rows. Finding nothing proves nothing.
+
 ```python
 from kumosql import prove_equivalent_smt
 

@@ -4452,16 +4452,50 @@ def normalize(
 
 
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
-    """Normalize both queries algebraically, then run the SMT prover on the result."""
+    """Normalize both queries algebraically, then run the SMT prover on the result.
 
+    With ``search_counterexample=True`` an unproven pair the solver cannot refute is
+    run on databases built for it (:mod:`kumosql.executed_refutation`); a database
+    on which the results differ comes back as a ``NOT_EQUIVALENT`` counterexample.
+    """
+
+    search = kwargs.pop("search_counterexample", False)
+    original = (left_sql, right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
-    if result.proven or not (kwargs.get("constraints") or {}):
-        return result
-    retry = _prove_algebraic(left_sql, right_sql, True, **kwargs)
-    return retry if retry.proven else result
+    if not result.proven and (kwargs.get("constraints") or {}):
+        retry = _prove_algebraic(left_sql, right_sql, True, **kwargs)
+        if retry.proven:
+            return retry
+    if result.status is SmtStatus.NOT_PROVEN:
+        from .semijoin_rules import semijoin_reading
+
+        dialect = kwargs.get("dialect", "bigquery")
+        semi = semijoin_reading(left_sql, dialect), semijoin_reading(right_sql, dialect)
+        if semi != (None, None):
+            retry = _prove_algebraic(semi[0] or left_sql, semi[1] or right_sql, False, **kwargs)
+            if retry.proven:
+                return retry
+    if search and result.status is SmtStatus.NOT_PROVEN:
+        from . import executed_refutation
+
+        counterexample = executed_refutation.search_counterexample(
+            *original,
+            schema=kwargs.get("schema"),
+            types=kwargs.get("types"),
+            constraints=kwargs.get("constraints"),
+            dialect=kwargs.get("dialect", "bigquery"),
+        )
+        if counterexample is not None:
+            return SmtEquivalenceResult(
+                SmtStatus.NOT_EQUIVALENT,
+                "the queries return different rows on the attached database (found by running both)",
+                counterexample=counterexample,
+                assumptions=(executed_refutation.ASSUMPTION,),
+            )
+    return result
 
 
 def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: bool, **kwargs) -> SmtEquivalenceResult:
