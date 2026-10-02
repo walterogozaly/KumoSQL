@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 import re
 
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
-from .layout_equivalence import restore_function_case, tokenize_exactly
+from .layout_equivalence import layout_only_change, restore_function_case, tokenize_exactly
 from .sqlx import looks_like_sqlx
 
 DIALECT = "bigquery"
@@ -303,6 +303,9 @@ def _same_meaning(before: str, after: str) -> bool:
 
     import sqlglot
 
+    if layout_only_change(before, after):
+        # Same tokens and comments: covers statements sqlglot keeps as raw text, whose parse holds the whitespace.
+        return True
     try:
         left = sqlglot.parse(before, read="bigquery")
     except Exception:
