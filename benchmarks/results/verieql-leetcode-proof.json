@@ -9,7 +9,7 @@
     "proven": 4380,
     "unknown": 19614
   },
-  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,923 pairs are not run (DuckDB rejects them, mostly bare words used as strings or ambiguous columns). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning.",
+  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,923 pairs are not run (DuckDB rejects them, mostly bare words used as strings or ambiguous columns). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. Measured before the cast, constant and NATURAL JOIN rules (cast_rules.py, PR #331); not rerun with them yet.",
   "size": 23994,
   "docs": "docs/verieql.md",
   "command": "python tools/verieql_bench.py leetcode --jobs 4 --audit",
