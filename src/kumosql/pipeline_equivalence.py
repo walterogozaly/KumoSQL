@@ -264,6 +264,7 @@ def prove_queries(left: object, right: object) -> dict:
     """``POST /api/prove-queries``: prove two pasted queries return the same rows."""
 
     from . import prover_context
+    from .result_equivalence import DataRules
     from .smt_equivalence import SmtStatus
 
     if not isinstance(left, str) or not isinstance(right, str) or not left.strip() or not right.strip():
@@ -284,6 +285,20 @@ def prove_queries(left: object, right: object) -> dict:
             "left_rows": [list(row) for row in example.left_rows],
             "right_rows": [list(row) for row in example.right_rows],
         }
+    if result.status is not SmtStatus.PROVEN_EQUIVALENT:
+        from .refute import counterexample_from_search
+
+        facts = prover_context.current_schema()
+        rules = {
+            name: DataRules(not_null=frozenset(c.not_null), keys=tuple(c.keys))
+            for name, c in facts.constraints.items()
+        }
+        found = counterexample_from_search(left, right, facts.columns, rules, facts.types)
+        size = lambda c: sum(len(r) for r in c["tables"].values())
+        if found is not None and ("counterexample" not in data or size(found) < size(data["counterexample"])):
+            data["status"] = "not_equivalent"
+            data["reason"] = "the queries return different rows on a small database"
+            data["counterexample"] = found
     return data
 
 

@@ -11,13 +11,13 @@ The scoreboard rows live in [benchmarks/results/](../benchmarks/results) (`sqlli
 `python tools/sqllineage_bench.py [--details] [--write-results]` turns each case into a one-model pipeline (named after the `INSERT` / `CREATE TABLE AS` target, with the case's schemas as `source_schema`) and compares KumoSQL's table dependencies (`Pipeline.table_reads()`) and column lineage (`explain_lineage()`) with the expected graph. A case ends in one of:
 
 - `exact`: every expected edge and table, nothing extra
-- `unknown`: KumoSQL said it could not trace something (a `SELECT *` over a table with no known columns, `UPDATE`, `MERGE`, procedures, a script that creates a view and reads it) and claimed no wrong edge. An edge from `table.*` counts as honest: it says "some column of this table"
+- `unknown`: KumoSQL said it could not trace something (a `SELECT *` over a table with no known columns, `UPDATE`, procedures, a script that creates a view and reads it) and claimed no wrong edge. An edge from `table.*` counts as honest: it says "some column of this table"
 - `missed`: confident, but an expected edge is missing
 - `wrong`: confident, and an edge or table that is not expected is claimed
 
 Cases that are not about BigQuery lineage are left out and listed with the reason: other dialects (read as BigQuery, which is what the tool does with every project; reported apart so they never move the headline), lateral column alias references, SQL BigQuery does not accept (bare `UNION`, double-quoted identifiers, `::` casts), `INSERT` columns mapped by the target table's column order, and `DROP`/`RENAME` table lifecycles.
 
-**Score: 235/279 exact, 0 wrong, 44 unknown, 0 missed** (table cases 89/108, column cases 146/171). Column edge precision 0.993 and recall 0.839 (recall counts what is reported unknown). The first run was 211/282 exact with 21 wrong.
+**Score: 256/279 exact, 0 wrong, 23 unknown, 0 missed** (table cases 100/108, column cases 156/171). Column edge precision 0.993 and recall 0.876 (recall counts what is reported unknown). The first run was 211/282 exact with 21 wrong; MERGE support (all of SQLLineage's MERGE cases, table and column) moved it from 235/279. The harness names a `MERGE` target as the case's destination, as it does for `INSERT` and `CREATE ... AS`.
 
 This is a floor, not a held-out score: bugs it found were fixed in the same change. What it found:
 
@@ -26,7 +26,7 @@ This is a floor, not a held-out score: bugs it found were fixed in the same chan
 - An unaliased `CAST(a AS T)` was named `a`; BigQuery names it `f0_`, so it now gets a generated name that cannot be mistaken for the column.
 - Statements of a script other than the last were ignored: now the tables they read are dependencies, and DML or raw-text statements that might read tables are counted in the `skipped_statements` diagnostic instead of vanishing.
 
-Known gaps (reported as unknown, not guessed): `UPDATE`/`MERGE`/procedures, views and temporary tables created earlier in the same script, `INSERT` without a column list into a table whose schema is known.
+Known gaps (reported as unknown, not guessed): `UPDATE`/procedures, views and temporary tables created earlier in the same script, `INSERT` without a column list into a table whose schema is known.
 
 ## Lineage and change impact
 
