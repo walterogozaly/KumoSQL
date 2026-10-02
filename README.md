@@ -780,7 +780,7 @@ Every command prints `--help`.
 | `python -m kumosql.ui` | Local browser UI (`--project DIR`, `--git URL`, `--branch`, `--refresh`, `--jobs FILE`, `--port`, `--no-browser`) |
 | `python -m kumosql rewrite-sql` | Apply rules with verification, optional idempotence, planner and synthetic checks |
 | `python -m kumosql lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
-| `python -m kumosql prove-sql-equivalent` | Structural equivalence proof for two queries |
+| `python -m kumosql prove-sql-equivalent` | Structural equivalence proof for two queries, then the SMT prover; unwraps `CREATE TABLE/VIEW AS` |
 | `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries |
 | `python -m kumosql prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
 | `python -m kumosql refactor DIR [--protect M] [--editable M]` | Find simpler pipelines that keep the protected tables proved equivalent |

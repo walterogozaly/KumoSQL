@@ -46,7 +46,9 @@ from .having_rules import key_having_to_where
 from .window_rules import window_rules
 from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
+from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
+from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
@@ -4582,7 +4584,8 @@ def normalize(
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
-    tree = _using_to_on(tree, schema)
+    tree = using_to_on_unqualified(_using_to_on(tree, schema))
+    tree = drop_subsumed_like(tree)
     tree = _semi_joins_to_exists(tree)
     tree = exists_over_aggregate(tree)
     tree = fold_grouped_count_cases(tree, not_null)
