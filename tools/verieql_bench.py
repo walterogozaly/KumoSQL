@@ -27,6 +27,8 @@ vendored here, only its benchmark files are read.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import http.client
 import json
 import multiprocessing
 import os
@@ -54,14 +56,46 @@ SUITES = {
 CACHE = Path(os.environ.get("KUMOSQL_VERIEQL_CACHE", Path.home() / ".cache" / "kumosql" / "verieql"))
 
 
-def fetch(path: str) -> Path:
+SHA256 = {
+    "benchmarks/calcite/calcite2.jsonlines": "5fc6e0740134220856e93743147038cacaf22cb9d9823e7d6b8da2b461939ac4",
+    "benchmarks/leetcode/leetcode.jsonlines": "b97fc1293701682a25a2f6345f3630b3482ce49912463a7f4b76ab52665a13c9",
+    "benchmarks/literature/literature.jsonlines": "2c6b6a1bc38863b8e882aed6c333c39b1d41e69dac8c3598551ee5c7c097538b",
+    "experiments/2025_10_31/calcite.out": "55808f33238d7b9ec6387d6e537418a00fa26d51cda2b34a883ec28964209f7c",
+    "experiments/2025_10_31/leetcode.out": "3a0f67ed9225ea0f6455f8a455f799c21dde6693c1caa03d32bc602fb6ee56c6",
+    "experiments/2025_10_31/literature.out": "d97935d48f89b070fadb6678b349f950e6e2b81616c461bc18388d4e5f22191f",
+}
+
+
+class DataUnavailable(OSError):
+    """The benchmark files could not be downloaded or failed their checksum."""
+
+
+def _intact(path: Path, name: str) -> bool:
+    return path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == SHA256[name]
+
+
+def fetch(path: str, attempts: int = 4) -> Path:
+    """The cached file, downloading it (with retries, a checksum and an atomic write) when missing or damaged."""
+
     target = CACHE / path
-    if not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(f"{BASE}/{path}", timeout=120) as response:
-            data = response.read()
-        target.write_bytes(data)
-    return target
+    if _intact(target, path):
+        return target
+    last = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(f"{BASE}/{path}", timeout=120) as response:
+                data = response.read()
+            if hashlib.sha256(data).hexdigest() != SHA256[path]:
+                raise DataUnavailable(f"checksum mismatch for {path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_suffix(target.suffix + ".part")
+            partial.write_bytes(data)
+            partial.replace(target)
+            return target
+        except (OSError, http.client.HTTPException) as error:  # IncompleteRead and friends are not OSErrors
+            last = error
+            time.sleep(2 * (attempt + 1))
+    raise DataUnavailable(f"VeriEQL data unavailable ({path}): {type(last).__name__}: {last}")
 
 
 def load_cases(suite: str) -> list[dict]:
@@ -237,7 +271,7 @@ class Verdict:
     seconds: float = 0.0
 
 
-def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
+def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
     """The program's verdict for one case: search for a counterexample, else try to prove, else unknown."""
 
     start = time.time()
@@ -272,6 +306,17 @@ def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_
             if again is not None:
                 return Verdict(index, WRONG, "proved, then refuted by a counterexample", time.time() - start)
             return Verdict(index, EQUIVALENT, "proof", time.time() - start)
+        # not proven: look harder for a counterexample, then try every small database (<= 2 rows per table)
+        if searcher.search(more_trials, seed=index + 2_000_003) is not None:
+            return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
+        try:
+            outcome, _ = searcher.exhaustive(2, 3000)
+        except _Timeout:
+            raise
+        except Exception:
+            outcome = "too_large"
+        if outcome == "found":
+            return Verdict(index, DIFFERENT, "counterexample (all small databases)", time.time() - start)
         return Verdict(index, AGREES, result.reason[:80], time.time() - start)
     except _Timeout:
         return Verdict(index, AGREES if searched else UNKNOWN, "time budget", time.time() - start)
@@ -379,7 +424,7 @@ def main(argv=None) -> int:
     parser.add_argument("--every", type=int, default=1, help="take every Nth case")
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--audit", action="store_true", help="compare with VeriEQL's published outcomes")
-    parser.add_argument("--trials", type=int, default=150)
+    parser.add_argument("--trials", type=int, default=200)
     parser.add_argument("--timeout-ms", type=int, default=3000)
     parser.add_argument("--dump", help="write one JSON line per case to this file")
     args = parser.parse_args(argv)

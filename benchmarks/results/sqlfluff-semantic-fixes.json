@@ -1,0 +1,22 @@
+{
+  "suite": "SQLFluff semantic fixes (AL, AM, CV, RF, ST)",
+  "order": 330,
+  "size": 397,
+  "score": "214/369 meaning-keeping fixes proved (214/225 on the pairs the prover can read), 0 wrong; 18/28 fixes that change meaning by design refuted, none proved",
+  "metric": "Each fail/fix pair from sqlfluff 4.3.0's structure rules (aliasing, ambiguity, conventions, references, structure): the prover must prove the fixes that keep the meaning and must never prove the ones that change it by design (= NULL to IS NULL, reordering the select list, USING or RIGHT JOIN under a bare *).",
+  "evidence": "proof",
+  "correctness": "0 false proofs: every proof re-run on 360 random DuckDB databases, and no by-design change proved. Labels come from what each rule does, never from a verdict. 4 pairs that should keep their meaning are refuted because sqlglot reads BigQuery string escapes and doubled backticks differently from BigQuery (a parser finding, listed in the docs).",
+  "coverage": {
+    "proven": 214,
+    "refuted": 22,
+    "unknown": 11,
+    "unsupported": 150,
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "50/83 meaning-keeping fixes proved (50/50 on the supported ones) and 6/6 by-design changes refuted, 0 wrong; rules AL01, AM05, CV02, CV04, CV05, CV06, CV08, TQ02 held out by hash of the rule code",
+  "docs": "docs/sqlfluff-fixtures.md#semantic-fixes",
+  "command": "python tools/sqlfluff_fixtures_bench.py semantic",
+  "date": "2026-10-02",
+  "caveats": "The fixtures have no schema: one is read off the queries (the columns they mention plus two placeholders), so a verdict holds for tables with those columns. Fixtures are authored by sqlfluff, not ground-truth equivalence. 150 pairs are unsupported as written (Jinja, dialects or syntax sqlglot cannot read, queries with columns but no FROM, DML); 33 of them were also compared query by query in an adapted form (24 proved, 1 refuted, 8 unsupported), which is not in the score. No implementation changed: the baseline is the final run. One held-out case was read after it exposed a labelling error."
+}
