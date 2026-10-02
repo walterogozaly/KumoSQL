@@ -34,6 +34,7 @@ ASSET_FAILURE_CODES = frozenset(
         "section_failed",
         "cycle",
         "unknown_reads",
+        "unresolved_template",
         "skipped_statements",
         "unparsed_operation",
         "ambiguous_reference",
@@ -47,6 +48,7 @@ VIEWS = ("graph", "lineage", "impact", "dead_columns")
 _EFFECTS = {
     "cycle": ("graph", "impact"),
     "external_tables": ("lineage",),
+    "unresolved_template": ("graph", "lineage", "impact", "dead_columns"),
     "lineage_skipped": ("lineage", "impact", "dead_columns"),
 }
 
@@ -66,6 +68,7 @@ _GAP_KINDS = {
     "ambiguous_reference": "unmatched_reference",
     "external_tables": "unmatched_reference",
     "unknown_reads": "unattributed_reads",
+    "unresolved_template": "unmatched_reference",
 }
 
 
