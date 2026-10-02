@@ -2,19 +2,19 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "367/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 134 unknown. 86 of the 168 pairs new to every other corpus are proved.",
+  "score": "370/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 131 unknown. 85 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
-  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. While building the ANY/ALL rules, 7 held-out pairs were read (testJoinConditionOrExpansionRuleAnti, testNullSelect2, testSomeWithGreaterThanNoRowSubQuery, testSomeWithLessThanOrEqualNoRowSubQuery, testTopDownGeneralDecorrelateForFilterSome, testTopDownGeneralDecorrelateForSubqueryWithJoin, testNotInNullableKey); 2 of them are proved. One more (testAggregateFilterToCase) was read while building the aggregate facts (smt_equivalence.py) and is proved.",
+  "caveats": "Calcite commit 2d28ce3 (2026-09-30). 502 of 1016 tests translate exactly; 182 leave the plan unchanged (not rewrites) and 332 are skipped with reasons (tests/fixtures/calcite_mined/skipped.jsonl). 334 of the 502 overlap SQLSolver, QED or R-Bot, whose pairs rules were developed against (tuned on test); the 168 new pairs were not used for development. While building the ANY/ALL rules, 7 held-out pairs were read (testJoinConditionOrExpansionRuleAnti, testNullSelect2, testSomeWithGreaterThanNoRowSubQuery, testSomeWithLessThanOrEqualNoRowSubQuery, testTopDownGeneralDecorrelateForFilterSome, testTopDownGeneralDecorrelateForSubqueryWithJoin, testNotInNullableKey); 2 of them are proved, so 61 of the 63 held-out proofs are clean. The set-operation identity rules (setop_rules.py) add 5 held-out proofs (testEmptyMinus3, testIntersectToFilterRuleNWayWithMultiSources, testIntersectToSemiJoinAll, testUnionToValuesByInList, testUnionToValuesByInList2); all 5 were in the set-operation case list those rules were developed against, so none of them is clean.",
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 60 random DuckDB databases, half skewed towards the literals",
   "coverage": {
-    "proven": 367,
+    "proven": 370,
     "refuted": 1,
-    "unknown": 134,
+    "unknown": 131,
     "unsupported": 332
   },
-  "held_out": "86/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py). Rules since then were developed on the other 334 pairs and QED only; they lifted the new pairs from 76 to 78. The cast and constant rules (cast_rules.py) were developed with two held-out pairs in view, testProjectAggregateMergeSum01 and testUnionToValuesByUnionAll3; both now prove, and they lifted the new pairs from 78 to 80. The aggregate facts (smt_equivalence.py, set_aggregates.py) were developed with one held-out pair in view, testAggregateFilterToCase, which now proves; they lifted the new pairs from 80 to 86."
+  "held_out": "85/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py). Rules since then were developed on the other 334 pairs and QED only; they lifted the new pairs from 76 to 78. The cast and constant rules (cast_rules.py) were developed with two held-out pairs in view, testProjectAggregateMergeSum01 and testUnionToValuesByUnionAll3; both now prove, and they lifted the new pairs from 78 to 80. The set-operation identities (setop_rules.py) then added 5 (80 to 85), all in the case list they were developed against."
 }

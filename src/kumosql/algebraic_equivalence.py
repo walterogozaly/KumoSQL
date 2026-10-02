@@ -46,13 +46,15 @@ from .having_rules import key_having_to_where
 from .window_rules import window_rules
 from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
+from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
+from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from . import set_aggregates
 from .empty_rules import canonical_empty, propagate_empty
-from .set_filters import _flatten as _flatten_projections, merge_same_source, set_operation_to_exists
+from .setop_rules import _sf_flatten as _flatten_projections, merge_same_source, normalize_set_operations, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
 from .lone_source import lift_derived_expressions
@@ -4598,7 +4600,8 @@ def normalize(
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
-    tree = _using_to_on(tree, schema)
+    tree = using_to_on_unqualified(_using_to_on(tree, schema))
+    tree = drop_subsumed_like(tree)
     tree = _semi_joins_to_exists(tree)
     tree = exists_over_aggregate(tree)
     tree = fold_grouped_count_cases(tree, not_null)
@@ -4678,7 +4681,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null), not_null)
+        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step))))))), not_null), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
