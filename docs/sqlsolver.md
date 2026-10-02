@@ -85,6 +85,8 @@ A `GROUP BY` of exactly the selected columns inside an `IN` or `EXISTS` test is 
 
 A `WHERE EXISTS` on a key the query already joins to is dropped when an inner-joined copy of that same set carries the equality. An inner join to a grouped derived table that is read only through its keys, and a `LEFT JOIN` read only through `IS NULL`, become `EXISTS` / `NOT EXISTS` (the group keys must be covered, so at most one row matches). A grouping or `DISTINCT` aggregate over a `(.. LIMIT 1)` derived table does nothing, since it sees one row, and is dropped.
 
+Constructs the provers do not model are declined, never proved with the flag ignored: `FOR SYSTEM_TIME AS OF` and other time travel, `TABLESAMPLE`, `FETCH .. WITH TIES` / `PERCENT`, `OUTER APPLY`, `SYMMETRIC` ranges, `CAST .. FORMAT`, `WITH FILL`, `SELECT * EXCEPT`, `ASOF` match conditions (`ast_utils.check_modeled`, called by both provers after parsing). The scores above are for sqlglot 30.x; on sqlglot 26.0.0 the same suites prove fewer pairs (Calcite 176, Spark 116, TPC-H 12, TPC-C 18) because 26.0.0 parses some constructs differently, and the floors test uses those numbers there. `sqlglot` is pinned below 31 until the encoders are checked against it.
+
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.
 
 ## R-Bot's Calcite pairs
