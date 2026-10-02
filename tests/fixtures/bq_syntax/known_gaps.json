@@ -599,6 +599,10 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 43."
  },
+ "query/pipe_pivot_unpivot::prover": {
+  "owner": "prover",
+  "reason": "unsupported: unaliased subquery in FROM"
+ },
  "query/pipe_select_window_qualify::format": {
   "owner": "kumosql",
   "reason": "equivalence could not be proven for every changed statement"
