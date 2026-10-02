@@ -2,14 +2,14 @@
   "suite": "SQLancer-style TLP / NoREC fuzzing",
   "order": 300,
   "size": 1268,
-  "score": "0 false proofs; 569/751 equivalent pairs proved; 309/517 different pairs refuted with a replayable counterexample",
+  "score": "0 false proofs; 573/751 equivalent pairs proved; 309/517 different pairs refuted with a replayable counterexample",
   "metric": "Seeded TLP, NoREC and mutated pairs over random predicates, joins and CTE queries; the prover must never prove a pair that a random database separates, and each counterexample must separate the queries when replayed in DuckDB. 487/517 different pairs are found when KumoSQL's executed check is added.",
   "evidence": "proof",
   "correctness": "0 false proofs, 0 counterexamples that fail to replay, 0 generator label errors (seed 2, count 60). Ground truth is a 40-database DuckDB search, so a difference it misses can hide a false proof; 6 pairs it calls equivalent are refuted by a counterexample that replays, so the search under-reports differences.",
   "coverage": {
-    "proven": 569,
+    "proven": 573,
     "refuted": 315,
-    "unknown": 330,
+    "unknown": 326,
     "unsupported": 54
   },
   "held_out": "TLP aggregate and NoREC families: 342/420 equivalent pairs proved, 0 false proofs (were 108/420 before the partition rules; the seed-2 held-out cases were not looked at, the rules were developed on dev TLP WHERE pairs and on seed 101)",

@@ -40,7 +40,7 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Literature | 64 | 10 | 22 | 21 | 11 | 0 |
-| Calcite-397 | 397 | 197 | 15 | 89 | 96 | 0 |
+| Calcite-397 | 397 | 202 | 15 | 84 | 96 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,380 | 5,516 | 12,175 | 1,923 | 0 |
 
-On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,283 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax).
+The LeetCode row predates the aggregate facts in `docs/provers.md`; on the 1,000-pair sample (every 24th pair) they raise proofs from 198 to 215, so 4,380 is a lower bound until the full run is repeated. On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,283 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax).
