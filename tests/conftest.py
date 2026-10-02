@@ -19,6 +19,9 @@ def no_project_loaded(monkeypatch):
     if module is not None:
         monkeypatch.setattr(module, "_LOADED", None)
         monkeypatch.setattr(module, "_JOBS", {"records": (), "label": "", "restored_from": None})
+        # Parsed projects are cached in memory by content: a later test loading the same files would hit the
+        # cache and never write its own snapshot into its own data folder.
+        monkeypatch.setattr(module, "_PROJECT_CACHE", type(module._PROJECT_CACHE)())
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +73,7 @@ EVAL_FILES = {
     "test_dup_bench.py",
     "test_incremental.py",
     "test_lineage_benchmarks.py",
+    "test_lineage_goldens_bench.py",
     "test_model_reuse_evals.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",

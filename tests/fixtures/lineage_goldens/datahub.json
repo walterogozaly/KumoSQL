@@ -1,0 +1,4462 @@
+{
+ "cases": [
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [],
+   "id": "datahub/test_invalid_sql",
+   "query_type": "UNKNOWN",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "SELECT as '\nFROM snowflake_sample_data.tpch_sf1.orders o",
+   "targets": [],
+   "test": "test_invalid_sql"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "mysql",
+   "edges": [
+    [
+     [
+      "mytable",
+      "col1"
+     ],
+     [
+      "__select__",
+      "max_col"
+     ]
+    ],
+    [
+     [
+      "mytable",
+      "col2"
+     ],
+     [
+      "__select__",
+      "max_col"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_max",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "mytable"
+   ],
+   "sql": "SELECT max(col1, COL2) as max_col\nFROM mytable",
+   "targets": [],
+   "test": "test_select_max"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "mysql",
+   "edges": [
+    [
+     [
+      "mytable",
+      "col1"
+     ],
+     [
+      "__select__",
+      "max_col"
+     ]
+    ],
+    [
+     [
+      "mytable",
+      "col2"
+     ],
+     [
+      "__select__",
+      "max_col"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_max_with_schema",
+   "query_type": "SELECT",
+   "schemas": {
+    "mytable": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "mytable"
+   ],
+   "sql": "SELECT max(`col1`, COL2, `this_will_not_resolve`) as max_col\nFROM mytable",
+   "targets": [],
+   "test": "test_select_max_with_schema"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "mysql",
+   "edges": [
+    [
+     [
+      "mytable",
+      "col1"
+     ],
+     [
+      "__select__",
+      "max_col"
+     ]
+    ],
+    [
+     [
+      "mytable",
+      "col2"
+     ],
+     [
+      "__select__",
+      "max_col"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_max_with_schema_all_resolved",
+   "query_type": "SELECT",
+   "schemas": {
+    "mytable": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "mytable"
+   ],
+   "sql": "SELECT max(`col1`, COL2) as max_col\nFROM mytable",
+   "targets": [],
+   "test": "test_select_max_with_schema_all_resolved"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "mysql",
+   "edges": [
+    [
+     [
+      "something_prd.fact_complaint_snapshot",
+      "etl_data_dt_id"
+     ],
+     [
+      "__select__",
+      "COUNT(`fact_complaint_snapshot`.`etl_data_dt_id`)"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_count",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "something_prd.fact_complaint_snapshot"
+   ],
+   "sql": "SELECT\n  COUNT(etl_data_dt_id)\nFROM something_prd.fact_complaint_snapshot\nWHERE\n  etl_data_dt_id = 20230317",
+   "targets": [],
+   "test": "test_select_count"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "oracle",
+   "edges": [
+    [
+     [
+      "table1",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "col3"
+     ],
+     [
+      "__select__",
+      "col3"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_with_ctes",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "table1",
+    "table2"
+   ],
+   "sql": "WITH cte1 AS (\n    SELECT col1, col2\n    FROM table1\n    WHERE col1 = 'value1'\n), cte2 AS (\n    SELECT col3, col4\n    FROM table2\n    WHERE col2 = 'value2'\n)\nSELECT cte1.col1, cte2.col3\nFROM cte1\nJOIN cte2 ON cte1.col2 = cte2.col4",
+   "targets": [],
+   "test": "test_select_with_ctes"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "oracle",
+   "edges": [
+    [
+     [
+      "table1",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "table2",
+      "col3"
+     ],
+     [
+      "__select__",
+      "col3"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_with_complex_ctes",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "table1",
+    "table2"
+   ],
+   "sql": "WITH cte1 AS (\n    SELECT col1, col2\n    FROM table1\n    WHERE col1 = 'value1'\n    GROUP BY 1, 2\n), cte2 AS (\n    SELECT col3, col4\n    FROM table2\n    WHERE col2 = 'value2'\n    GROUP BY col3, col4\n)\nSELECT cte1.col1, cte2.col3\nFROM cte1\nJOIN cte2 ON cte1.col2 = cte2.col4",
+   "targets": [],
+   "test": "test_select_with_complex_ctes"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "mysql",
+   "edges": [
+    [
+     [
+      "x",
+      "a"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ],
+    [
+     [
+      "x",
+      "b"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ],
+    [
+     [
+      "x",
+      "c"
+     ],
+     [
+      "__select__",
+      "y"
+     ]
+    ]
+   ],
+   "id": "datahub/test_multiple_select_subqueries",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "x"
+   ],
+   "sql": "SELECT SUM((SELECT max(a) a from x) + (SELECT min(b) b from x) + c) AS y FROM x",
+   "targets": [],
+   "test": "test_multiple_select_subqueries"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "mysql",
+   "edges": [
+    [
+     [
+      "scott.emp",
+      "deptno"
+     ],
+     [
+      "vsal",
+      "Department"
+     ]
+    ],
+    [
+     [
+      "scott.emp",
+      "sal"
+     ],
+     [
+      "vsal",
+      "Salary"
+     ]
+    ]
+   ],
+   "id": "datahub/test_create_view_as_select",
+   "query_type": "CREATE_VIEW",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "scott.emp"
+   ],
+   "sql": "CREATE VIEW vsal\nAS\n  SELECT a.deptno                  \"Department\",\n         a.num_emp / b.total_count \"Employees\",\n         a.sal_sum / b.total_sal   \"Salary\"\n  FROM   (SELECT deptno,\n                 Count()  num_emp,\n                 SUM(sal) sal_sum\n          FROM   scott.emp\n          WHERE  city = 'NYC'\n          GROUP  BY deptno) a,\n         (SELECT Count()  total_count,\n                 SUM(sal) total_sal\n          FROM   scott.emp\n          WHERE  city = 'NYC') b\n;",
+   "targets": [
+    "vsal"
+   ],
+   "test": "test_create_view_as_select"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "my_db.my_schema.my_view",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "name"
+     ],
+     [
+      "my_db.my_schema.my_view",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_create_view_with_tag",
+   "query_type": "CREATE_VIEW",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table"
+   ],
+   "sql": "CREATE OR REPLACE VIEW my_db.my_schema.my_view\nWITH TAG (cost_center = 'engineering', classification = 'internal')\nAS\nSELECT id, name FROM my_db.my_schema.my_table",
+   "targets": [
+    "my_db.my_schema.my_view"
+   ],
+   "test": "test_snowflake_create_view_with_tag"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_source_table",
+      "col_bool"
+     ],
+     [
+      "my_view",
+      "col_bool"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_source_table",
+      "col_num"
+     ],
+     [
+      "my_view",
+      "col_num"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_source_table",
+      "col_str"
+     ],
+     [
+      "my_view",
+      "col_str"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_source_table",
+      "col_ts"
+     ],
+     [
+      "my_view",
+      "col_ts"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_create_view_copy_grants_with_casts",
+   "query_type": "CREATE_DDL",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_source_table"
+   ],
+   "sql": "CREATE OR REPLACE VIEW my_view\nCOPY GRANTS\n                (\n    \"COL_STR\",\n    \"COL_NUM\",\n    \"COL_TS\",\n    \"COL_BOOL\"\n)\nAS SELECT\n    \"COL_STR\"::VARCHAR(134217728) AS \"COL_STR\",\n    \"COL_NUM\"::NUMBER(19,0) AS \"COL_NUM\",\n    \"COL_TS\"::TIMESTAMP_NTZ(6) AS \"COL_TS\",\n    \"COL_BOOL\"::BOOLEAN AS \"COL_BOOL\"\nFROM my_db.my_schema.my_source_table\nWHERE _FIVETRAN_DELETED != TRUE",
+   "targets": [
+    "my_view"
+   ],
+   "test": "test_snowflake_create_view_copy_grants_with_casts"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "my_view",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "name"
+     ],
+     [
+      "my_view",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_create_view_block_semicolon_with_comment",
+   "query_type": "CREATE_VIEW",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table"
+   ],
+   "sql": "CREATE VIEW my_view AS SELECT id, name FROM my_db.my_schema.my_table\nWHERE active = TRUE; -- end of view",
+   "targets": [
+    "my_view"
+   ],
+   "test": "test_create_view_block_semicolon_with_comment"
+  },
+  {
+   "default_db": "dev",
+   "default_schema": "public",
+   "dialect": "redshift",
+   "edges": [
+    [
+     [
+      "dev.public.base_table",
+      "age"
+     ],
+     [
+      "dev.public.my_view",
+      "age"
+     ]
+    ],
+    [
+     [
+      "dev.public.base_table",
+      "id"
+     ],
+     [
+      "dev.public.my_view",
+      "id"
+     ]
+    ],
+    [
+     [
+      "dev.public.base_table",
+      "name"
+     ],
+     [
+      "dev.public.my_view",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_create_view_as_block_statement",
+   "query_type": "CREATE_VIEW",
+   "schemas": {
+    "dev.public.base_table": [
+     "id",
+     "name",
+     "age"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "dev.public.base_table"
+   ],
+   "sql": "CREATE VIEW my_view AS (SELECT id, name, age FROM base_table);\n        ;",
+   "targets": [
+    "dev.public.my_view"
+   ],
+   "test": "test_create_view_as_block_statement"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.source_table",
+      "id"
+     ],
+     [
+      "my_db.my_schema.target_table",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.source_table",
+      "name"
+     ],
+     [
+      "my_db.my_schema.target_table",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_create_table_as_select_with_tag",
+   "query_type": "CREATE_TABLE_AS_SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.source_table"
+   ],
+   "sql": "CREATE OR REPLACE TABLE my_db.my_schema.target_table\nWITH TAG (cost_center = 'engineering')\nAS\nSELECT id, name FROM my_db.my_schema.source_table",
+   "targets": [
+    "my_db.my_schema.target_table"
+   ],
+   "test": "test_snowflake_create_table_as_select_with_tag"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "hive",
+   "edges": [
+    [
+     [
+      "date_dim",
+      "d_week_seq"
+     ],
+     [
+      "query72",
+      "d_week_seq"
+     ]
+    ],
+    [
+     [
+      "promotion",
+      "p_promo_sk"
+     ],
+     [
+      "query72",
+      "no_promo"
+     ]
+    ],
+    [
+     [
+      "promotion",
+      "p_promo_sk"
+     ],
+     [
+      "query72",
+      "promo"
+     ]
+    ]
+   ],
+   "id": "datahub/test_insert_as_select",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "catalog_returns",
+    "catalog_sales",
+    "customer_demographics",
+    "date_dim",
+    "household_demographics",
+    "inventory",
+    "item",
+    "promotion",
+    "warehouse"
+   ],
+   "sql": "insert into query72\nselect i_item_desc\n     , w_warehouse_name\n     , d1.d_week_seq\n     , sum(case when promotion.p_promo_sk is null then 1 else 0 end)     no_promo\n     , sum(case when promotion.p_promo_sk is not null then 1 else 0 end) promo\n     , count(*)                                                          total_cnt\nfrom catalog_sales\n         join inventory on (cs_item_sk = inv_item_sk)\n         join warehouse on (w_warehouse_sk = inv_warehouse_sk)\n         join item on (i_item_sk = cs_item_sk)\n         join customer_demographics on (cs_bill_cdemo_sk = cd_demo_sk)\n         join household_demographics on (cs_bill_hdemo_sk = hd_demo_sk)\n         join date_dim d1 on (cs_sold_date_sk = d1.d_date_sk)\n         join date_dim d2 on (inv_date_sk = d2.d_date_sk)\n         join date_dim d3 on (cs_ship_date_sk = d3.d_date_sk)\n         left outer join promotion on (cs_promo_sk = p_promo_sk)\n         left outer join catalog_returns on (cr_item_sk = cs_item_sk and cr_order_number = cs_order_number)\nwhere d1.d_week_seq = d2.d_week_seq\n  and inv_quantity_on_hand < cs_quantity\n  and hd_buy_potential = '>10000'\n  and cd_marital_status = 'D'\ngroup by i_item_desc, w_warehouse_name, d1.d_week_seq\norder by total_cnt desc, i_item_desc, w_warehouse_name, d_week_seq\nlimit 100;",
+   "targets": [
+    "query72"
+   ],
+   "test": "test_insert_as_select"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "redshift",
+   "edges": [
+    [
+     [
+      "upstream2",
+      "a"
+     ],
+     [
+      "downstream",
+      "a"
+     ]
+    ],
+    [
+     [
+      "upstream2",
+      "c"
+     ],
+     [
+      "downstream",
+      "c"
+     ]
+    ]
+   ],
+   "id": "datahub/test_insert_with_column_list",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "upstream2"
+   ],
+   "sql": "insert into downstream (a, c) select a, c from upstream2",
+   "targets": [
+    "downstream"
+   ],
+   "test": "test_insert_with_column_list"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "tsql",
+   "edges": [
+    [
+     [
+      "db.schema.source_table",
+      "id"
+     ],
+     [
+      "db.schema.target_table",
+      "id"
+     ]
+    ],
+    [
+     [
+      "db.schema.source_table",
+      "name"
+     ],
+     [
+      "db.schema.target_table",
+      "name"
+     ]
+    ],
+    [
+     [
+      "db.schema.source_table",
+      "value"
+     ],
+     [
+      "db.schema.target_table",
+      "value"
+     ]
+    ]
+   ],
+   "id": "datahub/test_insert_with_cte",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db.schema.source_table"
+   ],
+   "sql": "WITH temp_cte AS (\n    SELECT id, name, value\n    FROM db.schema.source_table\n)\nINSERT INTO db.schema.target_table (id, name, value)\nSELECT id, name, value FROM temp_cte",
+   "targets": [
+    "db.schema.target_table"
+   ],
+   "test": "test_insert_with_cte"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "tsql",
+   "edges": [
+    [
+     [
+      "source_db.dbo.source_table",
+      "source_col_x"
+     ],
+     [
+      "target_db.dbo.target_table",
+      "target_col_a"
+     ]
+    ],
+    [
+     [
+      "source_db.dbo.source_table",
+      "source_col_y"
+     ],
+     [
+      "target_db.dbo.target_table",
+      "target_col_b"
+     ]
+    ]
+   ],
+   "id": "datahub/test_mssql_insert_column_name_mapping",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "source_db.dbo.source_table"
+   ],
+   "sql": "INSERT INTO target_db.dbo.target_table (target_col_a, target_col_b)\nSELECT source_col_x, source_col_y\nFROM source_db.dbo.source_table",
+   "targets": [
+    "target_db.dbo.target_table"
+   ],
+   "test": "test_mssql_insert_column_name_mapping"
+  },
+  {
+   "default_db": "my-bq-ProjectName",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-bq-ProjectName.data_reporting.abcde_transformed",
+      "post_id"
+     ],
+     [
+      "__select__",
+      "post_id"
+     ]
+    ],
+    [
+     [
+      "my-bq-ProjectName.data_reporting.abcde_transformed",
+      "widget.asset.id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_with_full_col_name",
+   "query_type": "SELECT",
+   "schemas": {
+    "my-bq-ProjectName.data_reporting.abcde_transformed": [
+     "post_id",
+     "widget"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-bq-ProjectName.data_reporting.abcde_transformed"
+   ],
+   "sql": "SELECT distinct post_id , widget.asset.id\nFROM data_reporting.abcde_transformed\nWHERE post_id LIKE '%268662%'",
+   "targets": [],
+   "test": "test_select_with_full_col_name"
+  },
+  {
+   "default_db": "my-bq-proj",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "post_id"
+     ],
+     [
+      "__select__",
+      "post_id"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget.asset.id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget.metric.metricA"
+     ],
+     [
+      "__select__",
+      "min_metric"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget.metric.metric_b"
+     ],
+     [
+      "__select__",
+      "min_metric"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_from_struct_subfields",
+   "query_type": "SELECT",
+   "schemas": {
+    "my-bq-proj.data_reporting.abcde_transformed": [
+     "post_id",
+     "widget",
+     "widget.asset.id",
+     "widget.metric.metricA",
+     "widget.metric.metric_b"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-bq-proj.data_reporting.abcde_transformed"
+   ],
+   "sql": "SELECT distinct post_id ,\n    widget.asset.id,\n    min(widget.metric.metricA, widget.metric.metric_b) as min_metric\nFROM data_reporting.abcde_transformed\nWHERE post_id LIKE '%12345%'",
+   "targets": [],
+   "test": "test_select_from_struct_subfields"
+  },
+  {
+   "default_db": "my-bq-proj",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "post_id"
+     ],
+     [
+      "__select__",
+      "post_id"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget.asset.id"
+     ],
+     [
+      "__select__",
+      "asset_id"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget.metric.metricA"
+     ],
+     [
+      "__select__",
+      "min_metric"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget.metric.metric_b"
+     ],
+     [
+      "__select__",
+      "min_metric"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_struct_subfields_from_cte",
+   "query_type": "SELECT",
+   "schemas": {
+    "my-bq-proj.data_reporting.abcde_transformed": [
+     "post_id",
+     "widget",
+     "widget.asset.id",
+     "widget.metric.metricA",
+     "widget.metric.metric_b"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-bq-proj.data_reporting.abcde_transformed"
+   ],
+   "sql": "WITH cte AS (\n    SELECT\n        post_id,\n        widget.asset.id AS asset_id,\n        min(widget.metric.metricA, widget.metric.metric_b) AS min_metric\n    FROM data_reporting.abcde_transformed\n)\nSELECT post_id, asset_id, min_metric\nFROM cte",
+   "targets": [],
+   "test": "test_select_struct_subfields_from_cte"
+  },
+  {
+   "default_db": "my-bq-proj",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "post_id"
+     ],
+     [
+      "__select__",
+      "post_id"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.data_reporting.abcde_transformed",
+      "widget"
+     ],
+     [
+      "__select__",
+      "asset_id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_struct_subfield_through_cte_passthrough",
+   "query_type": "SELECT",
+   "schemas": {
+    "my-bq-proj.data_reporting.abcde_transformed": [
+     "post_id",
+     "widget",
+     "widget.asset.id"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-bq-proj.data_reporting.abcde_transformed"
+   ],
+   "sql": "WITH cte AS (\n    SELECT post_id, widget\n    FROM data_reporting.abcde_transformed\n)\nSELECT post_id, widget.asset.id AS asset_id\nFROM cte",
+   "targets": [],
+   "test": "test_select_struct_subfield_through_cte_passthrough"
+  },
+  {
+   "default_db": "my-bq-proj",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-bq-proj.my_schema.table_a",
+      "widget"
+     ],
+     [
+      "__select__",
+      "a_color"
+     ]
+    ],
+    [
+     [
+      "my-bq-proj.my_schema.table_b",
+      "widget"
+     ],
+     [
+      "__select__",
+      "b_size"
+     ]
+    ]
+   ],
+   "id": "datahub/test_join_struct_subfields_shared_base_name",
+   "query_type": "SELECT",
+   "schemas": {
+    "my-bq-proj.my_schema.table_a": [
+     "id",
+     "widget",
+     "widget.color"
+    ],
+    "my-bq-proj.my_schema.table_b": [
+     "a_id",
+     "widget",
+     "widget.size"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-bq-proj.my_schema.table_a",
+    "my-bq-proj.my_schema.table_b"
+   ],
+   "sql": "SELECT\n    a.widget.color AS a_color,\n    b.widget.size AS b_size\nFROM my_schema.table_a a\nJOIN my_schema.table_b b ON a.id = b.a_id",
+   "targets": [],
+   "test": "test_join_struct_subfields_shared_base_name"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf10.orders",
+      "totalprice"
+     ],
+     [
+      "__select__",
+      "total_agg"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf100.orders",
+      "totalprice"
+     ],
+     [
+      "__select__",
+      "total_agg"
+     ]
+    ]
+   ],
+   "id": "datahub/test_select_from_union",
+   "query_type": "SELECT",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf10.orders": [
+     "orderkey",
+     "totalprice"
+    ],
+    "snowflake_sample_data.tpch_sf100.orders": [
+     "orderkey",
+     "totalprice"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf10.orders",
+    "snowflake_sample_data.tpch_sf100.orders"
+   ],
+   "sql": "SELECT\n    'orders_10' as label,\n    SUM(totalprice) as total_agg\nFROM snowflake_sample_data.tpch_sf10.orders\nUNION ALL\nSELECT\n    'orders_100' as label,\n    SUM(totalprice) as total_agg,\nFROM snowflake_sample_data.tpch_sf100.orders",
+   "targets": [],
+   "test": "test_select_from_union"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "hive",
+   "edges": [],
+   "id": "datahub/test_select_ambiguous_column_no_schema",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "t1",
+    "t2"
+   ],
+   "sql": "        select A, B, C from t1 inner join t2 on t1.id = t2.id\n        ",
+   "targets": [],
+   "test": "test_select_ambiguous_column_no_schema"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [],
+   "id": "datahub/test_merge_from_union",
+   "query_type": "MERGE",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "demo-pipelines-stg.referrer.prep_from_ios",
+    "demo-pipelines-stg.referrer.prep_from_web"
+   ],
+   "sql": "    merge into `demo-pipelines-stg`.`referrer`.`base_union` as DBT_INTERNAL_DEST\n        using (\nSELECT * FROM `demo-pipelines-stg`.`referrer`.`prep_from_ios` WHERE partition_time = \"2018-03-03\"\nUNION ALL\nSELECT * FROM `demo-pipelines-stg`.`referrer`.`prep_from_web` WHERE partition_time = \"2018-03-03\"\n        ) as DBT_INTERNAL_SOURCE\n        on FALSE\n\n    when not matched by source\n         and timestamp_trunc(DBT_INTERNAL_DEST.partition_time, day) in (\n              timestamp('2018-03-03')\n          )\n        then delete\n\n    when not matched then insert\n        (`platform`, `pageview_id`, `query`, `referrer`, `partition_time`)\n    values\n        (`platform`, `pageview_id`, `query`, `referrer`, `partition_time`)",
+   "targets": [
+    "demo-pipelines-stg.referrer.base_union"
+   ],
+   "test": "test_merge_from_union"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "clerk"
+     ],
+     [
+      "__select__",
+      "clerk"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "comment"
+     ],
+     [
+      "__select__",
+      "comment"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "custkey"
+     ],
+     [
+      "__select__",
+      "custkey"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "orderdate"
+     ],
+     [
+      "__select__",
+      "orderdate"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "orderkey"
+     ],
+     [
+      "__select__",
+      "orderkey"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "orderpriority"
+     ],
+     [
+      "__select__",
+      "orderpriority"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "orderstatus"
+     ],
+     [
+      "__select__",
+      "orderstatus"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "shippriority"
+     ],
+     [
+      "__select__",
+      "shippriority"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "totalprice"
+     ],
+     [
+      "__select__",
+      "total_agg"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "totalprice"
+     ],
+     [
+      "__select__",
+      "totalprice"
+     ]
+    ]
+   ],
+   "id": "datahub/test_expand_select_star_basic",
+   "query_type": "SELECT",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "custkey",
+     "orderstatus",
+     "totalprice",
+     "orderdate",
+     "orderpriority",
+     "clerk",
+     "shippriority",
+     "comment"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "SELECT\n    SUM(totalprice) as total_agg,\n    *\nFROM snowflake_sample_data.tpch_sf1.orders\nWHERE orderdate = '1992-01-01'",
+   "targets": [],
+   "test": "test_expand_select_star_basic"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "sqlite",
+   "edges": [],
+   "id": "datahub/test_create_table_ddl",
+   "query_type": "CREATE_DDL",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "CREATE TABLE IF NOT EXISTS costs (\n    id INTEGER PRIMARY KEY,\n    month TEXT NOT NULL,\n    total_cost REAL NOT NULL,\n    area REAL NOT NULL\n)",
+   "targets": [
+    "costs"
+   ],
+   "test": "test_create_table_ddl"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "__select__",
+      "total_agg"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "__select__",
+      "total_avg"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "__select__",
+      "total_max"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "__select__",
+      "total_min"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_column_normalization",
+   "query_type": "SELECT",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "TotalPrice"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "SELECT\n    SUM(o.\"totalprice\") as total_agg,\n    AVG(\"TotalPrice\") as total_avg,\n    MIN(\"TOTALPRICE\") as total_min,\n    MAX(TotalPrice)   as total_max\nFROM snowflake_sample_data.tpch_sf1.orders o",
+   "targets": [],
+   "test": "test_snowflake_column_normalization"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "snowflake_sample_data.tpch_sf1.orders_normalized",
+      "TOTAL_MIN"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "snowflake_sample_data.tpch_sf1.orders_normalized",
+      "Total_Agg"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "snowflake_sample_data.tpch_sf1.orders_normalized",
+      "total_avg"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "TotalPrice"
+     ],
+     [
+      "snowflake_sample_data.tpch_sf1.orders_normalized",
+      "total_max"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_ctas_column_normalization",
+   "query_type": "CREATE_TABLE_AS_SELECT",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "TotalPrice"
+    ],
+    "snowflake_sample_data.tpch_sf1.orders_normalized": [
+     "Total_Agg",
+     "total_avg",
+     "TOTAL_MIN"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "CREATE TABLE snowflake_sample_data.tpch_sf1.orders_normalized\nAS\nSELECT\n    SUM(o.\"totalprice\") as Total_Agg,\n    AVG(\"TotalPrice\") as TOTAL_AVG,\n    MIN(\"TOTALPRICE\") as TOTAL_MIN,\n    MAX(TotalPrice)   as Total_Max\nFROM snowflake_sample_data.tpch_sf1.orders o",
+   "targets": [
+    "snowflake_sample_data.tpch_sf1.orders_normalized"
+   ],
+   "test": "test_snowflake_ctas_column_normalization"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "db.sch.tbl",
+      "CustomerName"
+     ],
+     [
+      "__select__",
+      "fullname"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_case_sensitive_quoted_column_lineage",
+   "query_type": "SELECT",
+   "schemas": {
+    "db.sch.tbl": [
+     "CustomerName"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "db.sch.tbl"
+   ],
+   "sql": "SELECT \"CustomerName\" AS \"FullName\"\nFROM db.sch.tbl",
+   "targets": [],
+   "test": "test_snowflake_case_sensitive_quoted_column_lineage"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "db.sch.tbl",
+      "CustomerName"
+     ],
+     [
+      "__select__",
+      "fullname"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_case_sensitive_column_through_cte",
+   "query_type": "SELECT",
+   "schemas": {
+    "db.sch.tbl": [
+     "CustomerName"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "db.sch.tbl"
+   ],
+   "sql": "WITH staged AS (\n    SELECT \"CustomerName\" FROM db.sch.tbl\n)\nSELECT \"CustomerName\" AS \"FullName\"\nFROM staged",
+   "targets": [],
+   "test": "test_snowflake_case_sensitive_column_through_cte"
+  },
+  {
+   "default_db": "hive_metastore",
+   "default_schema": "bronze_kambi",
+   "dialect": "databricks",
+   "edges": [
+    [
+     [
+      "hive_metastore.bronze_kambi.bet",
+      "betStatusId"
+     ],
+     [
+      "__select__",
+      "betStatusId"
+     ]
+    ],
+    [
+     [
+      "hive_metastore.bronze_kambi.bet",
+      "channelId"
+     ],
+     [
+      "__select__",
+      "channelId"
+     ]
+    ]
+   ],
+   "id": "datahub/test_databricks_case_sensitive_column_lineage",
+   "query_type": "SELECT",
+   "schemas": {
+    "hive_metastore.bronze_kambi.bet": [
+     "betStatusId",
+     "channelId"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "hive_metastore.bronze_kambi.bet"
+   ],
+   "sql": "SELECT * FROM hive_metastore.bronze_kambi.bet",
+   "targets": [],
+   "test": "test_databricks_case_sensitive_column_lineage"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "is_payment_successful"
+     ],
+     [
+      "__select__",
+      "total_price_success"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "totalprice"
+     ],
+     [
+      "__select__",
+      "total_price_category"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "totalprice"
+     ],
+     [
+      "__select__",
+      "total_price_success"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_case_statement",
+   "query_type": "SELECT",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "totalprice",
+     "is_payment_successful"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "SELECT\n    CASE\n        WHEN o.\"totalprice\" > 1000 THEN 'high'\n        WHEN o.\"totalprice\" > 100 THEN 'medium'\n        ELSE 'low'\n    END as total_price_category,\n    -- Also add a case where the column is in the THEN clause.\n    CASE\n        WHEN o.\"is_payment_successful\" THEN o.\"totalprice\"\n        ELSE 0\n    END as total_price_success\nFROM snowflake_sample_data.tpch_sf1.orders o",
+   "targets": [],
+   "test": "test_snowflake_case_statement"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "bq-proj.dataset.table1",
+      "by_product.product_code"
+     ],
+     [
+      "__select__",
+      "product"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table1",
+      "by_product.product_code_dau"
+     ],
+     [
+      "__select__",
+      "daily_active_users"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table1",
+      "reporting_day"
+     ],
+     [
+      "__select__",
+      "day"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table2",
+      "other_field"
+     ],
+     [
+      "__select__",
+      "other_field"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table2",
+      "other_field"
+     ],
+     [
+      "__select__",
+      "product"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_unnest_columns",
+   "query_type": "SELECT",
+   "schemas": {
+    "bq-proj.dataset.table1": [
+     "reporting_day",
+     "by_product"
+    ],
+    "bq-proj.dataset.table2": [
+     "product_code",
+     "other_field"
+    ]
+   },
+   "skipped_upstream": true,
+   "sources": [
+    "bq-proj.dataset.table1",
+    "bq-proj.dataset.table2"
+   ],
+   "sql": "SELECT\n  DATE(reporting_day) AS day,\n  CASE\n    WHEN p.product_code IN ('A', 'B', 'C')\n    THEN pr.other_field\n    ELSE 'Other'\n  END AS product,\n  pr.other_field AS other_field,\n  SUM(p.product_code_dau) AS daily_active_users\nFROM `bq-proj`.dataset.table1\nLEFT JOIN UNNEST(by_product) AS p\nLEFT JOIN (\n  SELECT DISTINCT\n    product_code,\n    other_field\n  FROM `bq-proj`.dataset.table2\n) AS pr\n--  USING (product_code)\nON p.product_code = pr.product_code",
+   "targets": [],
+   "test": "test_bigquery_unnest_columns"
+  },
+  {
+   "default_db": "my-proj-1",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-proj-1.dataset.table1",
+      "col1"
+     ],
+     [
+      "my-proj-2.dataset.my_view",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my-proj-1.dataset.table1",
+      "col2"
+     ],
+     [
+      "my-proj-2.dataset.my_view",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "my-proj-1.dataset.table2",
+      "col3"
+     ],
+     [
+      "my-proj-2.dataset.my_view",
+      "col3"
+     ]
+    ],
+    [
+     [
+      "my-proj-1.dataset.table3",
+      "col5"
+     ],
+     [
+      "my-proj-2.dataset.my_view",
+      "col5"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_create_view_with_cte",
+   "query_type": "CREATE_VIEW",
+   "schemas": {
+    "my-proj-1.dataset.table1": [
+     "col1",
+     "col2"
+    ],
+    "my-proj-1.dataset.table2": [
+     "col3",
+     "col4"
+    ],
+    "my-proj-1.dataset.table3": [
+     "col5",
+     "join_key"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-proj-1.dataset.table1",
+    "my-proj-1.dataset.table2",
+    "my-proj-1.dataset.table3"
+   ],
+   "sql": "CREATE VIEW `my-proj-2`.dataset.my_view AS\nWITH cte1 AS (\n    SELECT *\n    FROM dataset.table1\n    WHERE col1 = 'value1'\n), cte2 AS (\n    SELECT col3, col4 as join_key\n    FROM dataset.table2\n    WHERE col3 = 'value2'\n)\nSELECT col5, cte1.*, col3\nFROM dataset.table3\nJOIN cte1 ON table3.col5 = cte1.col2\nJOIN cte2 USING (join_key)",
+   "targets": [
+    "my-proj-2.dataset.my_view"
+   ],
+   "test": "test_bigquery_create_view_with_cte"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "bq-proj.dataset.table1",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table1",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_nested_subqueries",
+   "query_type": "SELECT",
+   "schemas": {
+    "bq-proj.dataset.table1": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "bq-proj.dataset.table1"
+   ],
+   "sql": "SELECT *\nFROM (\n    SELECT *\n    FROM (\n        SELECT *\n        FROM `bq-proj`.dataset.table1\n    )\n)",
+   "targets": [],
+   "test": "test_bigquery_nested_subqueries"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "bq-proj.dataset.table_yyyymmdd",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table_yyyymmdd",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_sharded_table_normalization",
+   "query_type": "SELECT",
+   "schemas": {
+    "bq-proj.dataset.table_yyyymmdd": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "bq-proj.dataset.table_yyyymmdd"
+   ],
+   "sql": "SELECT *\nFROM `bq-proj.dataset.table_20230101`",
+   "targets": [],
+   "test": "test_bigquery_sharded_table_normalization"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "bq-proj.dataset.table_yyyymmdd",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.table_yyyymmdd",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_from_sharded_table_wildcard",
+   "query_type": "SELECT",
+   "schemas": {
+    "bq-proj.dataset.table_yyyymmdd": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "bq-proj.dataset.table_yyyymmdd"
+   ],
+   "sql": "SELECT *\nFROM `bq-proj.dataset.table_2023*`",
+   "targets": [],
+   "test": "test_bigquery_from_sharded_table_wildcard"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "bq-proj.dataset.my-table",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "bq-proj.dataset.my-table",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_partitioned_table_insert",
+   "query_type": "SELECT",
+   "schemas": {
+    "bq-proj.dataset.my-table": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "bq-proj.dataset.my-table"
+   ],
+   "sql": "SELECT *\nFROM `bq-proj.dataset.my-table$__UNPARTITIONED__`",
+   "targets": [],
+   "test": "test_bigquery_partitioned_table_insert"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my-project2.my-dataset2.test_physical_table",
+      "col1"
+     ],
+     [
+      "my-project.my-dataset.test_table",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my-project2.my-dataset2.test_physical_table",
+      "col2"
+     ],
+     [
+      "my-project.my-dataset.test_table",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "my-project2.my-dataset2.test_physical_table",
+      "something"
+     ],
+     [
+      "my-project.my-dataset.test_table",
+      "something"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_star_with_replace",
+   "query_type": "CREATE_VIEW",
+   "schemas": {
+    "my-project2.my-dataset2.test_physical_table": [
+     "col1",
+     "col2",
+     "something"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my-project2.my-dataset2.test_physical_table"
+   ],
+   "sql": "CREATE VIEW `my-project.my-dataset.test_table` AS\nSELECT\n  * REPLACE(\n    LOWER(something) AS something)\nFROM\n  `my-project2.my-dataset2.test_physical_table`;",
+   "targets": [
+    "my-project.my-dataset.test_table"
+   ],
+   "test": "test_bigquery_star_with_replace"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "my_project_2.my_dataset_2.sometable",
+      "col1"
+     ],
+     [
+      "my_view",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my_project_2.my_dataset_2.sometable",
+      "col2"
+     ],
+     [
+      "my_view",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "my_project_2.my_dataset_2.sometable2",
+      "col1"
+     ],
+     [
+      "my_view",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my_project_2.my_dataset_2.sometable2",
+      "col2"
+     ],
+     [
+      "my_view",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_view_from_union",
+   "query_type": "CREATE_VIEW",
+   "schemas": {
+    "my_project_2.my_dataset_2.sometable": [
+     "col1",
+     "col2"
+    ],
+    "my_project_2.my_dataset_2.sometable2": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_project_2.my_dataset_2.sometable",
+    "my_project_2.my_dataset_2.sometable2"
+   ],
+   "sql": "CREATE VIEW my_view as\nselect * from my_project_2.my_dataset_2.sometable\nunion all\nselect * from my_project_2.my_dataset_2.sometable2 as a",
+   "targets": [
+    "my_view"
+   ],
+   "test": "test_bigquery_view_from_union"
+  },
+  {
+   "default_db": "long_tail_companions",
+   "default_schema": "analytics",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "long_tail_companions.analytics.customer_last_purchase_date",
+      "EMAIL"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "email"
+     ]
+    ],
+    [
+     [
+      "long_tail_companions.analytics.customer_last_purchase_date",
+      "LAST_PURCHASE_DATE"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "last_purchase_date"
+     ]
+    ],
+    [
+     [
+      "long_tail_companions.analytics.customer_last_purchase_date",
+      "USER_FK"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "user_fk"
+     ]
+    ],
+    [
+     [
+      "long_tail_companions.ecommerce.purchases",
+      "pk"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "average_purchase_amount"
+     ]
+    ],
+    [
+     [
+      "long_tail_companions.ecommerce.purchases",
+      "pk"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "lifetime_purchase_count"
+     ]
+    ],
+    [
+     [
+      "long_tail_companions.ecommerce.purchases",
+      "purchase_amount"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "average_purchase_amount"
+     ]
+    ],
+    [
+     [
+      "long_tail_companions.ecommerce.purchases",
+      "purchase_amount"
+     ],
+     [
+      "long_tail_companions.analytics.active_customer_ltv",
+      "lifetime_purchase_amount"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_default_normalization",
+   "query_type": "CREATE_TABLE_AS_SELECT",
+   "schemas": {
+    "long_tail_companions.analytics.customer_last_purchase_date": [
+     "USER_FK",
+     "EMAIL",
+     "LAST_PURCHASE_DATE"
+    ],
+    "long_tail_companions.ecommerce.purchases": [
+     "pk",
+     "USER_FK",
+     "status",
+     "purchase_amount",
+     "tax_AMOUNT",
+     "TOTAL_AMOUNT",
+     "CREATED_AT",
+     "UPDATED_AT"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "long_tail_companions.analytics.customer_last_purchase_date",
+    "long_tail_companions.ecommerce.purchases"
+   ],
+   "sql": "create table active_customer_ltv as (\n\nwith active_customers as (\n  select * from customer_last_purchase_date\n  where\n    last_purchase_date >= current_date - interval '90 days'\n)\n\n, purchases as (\n  select * from ecommerce.purchases\n)\n\nselect\n  active_customers.user_fk\n  , active_customers.email\n  , active_customers.last_purchase_date\n  , sum(purchases.purchase_amount) as lifetime_purchase_amount\n  , count(distinct(purchases.pk)) as lifetime_purchase_count\n  , sum(purchases.purchase_amount) / count(distinct(purchases.pk)) as average_purchase_amount\nfrom\n  active_customers\njoin\n  purchases\n  on active_customers.user_fk = purchases.user_fk\ngroup by 1,2,3\n\n)",
+   "targets": [
+    "long_tail_companions.analytics.active_customer_ltv"
+   ],
+   "test": "test_snowflake_default_normalization"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "o_orderkey"
+     ],
+     [
+      "__select__",
+      "orderkey"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "o_totalprice"
+     ],
+     [
+      "__select__",
+      "total_cast_float"
+     ]
+    ],
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "o_totalprice"
+     ],
+     [
+      "__select__",
+      "total_cast_int"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_column_cast",
+   "query_type": "SELECT",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "totalprice"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "SELECT\n    o.o_orderkey::NUMBER(20,0) as orderkey,\n    CAST(o.o_totalprice AS INT) as total_cast_int,\n    CAST(o.o_totalprice AS NUMBER(16,4)) as total_cast_float\nFROM snowflake_sample_data.tpch_sf1.orders o\nLIMIT 10",
+   "targets": [],
+   "test": "test_snowflake_column_cast"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "table1",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "table3",
+      "col6"
+     ],
+     [
+      "__select__",
+      "col6"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_unused_cte",
+   "query_type": "SELECT",
+   "schemas": {
+    "table1": [
+     "col1",
+     "col2"
+    ],
+    "table2": [
+     "col3",
+     "col4"
+    ],
+    "table3": [
+     "col5",
+     "col6"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "table1",
+    "table2",
+    "table3"
+   ],
+   "sql": "WITH cte1 AS (\n    SELECT col1, col2\n    FROM table1\n    WHERE col1 = 'value1'\n), cte2 AS (\n    SELECT col3, col4\n    FROM table2\n    WHERE col2 = 'value2'\n)\nSELECT cte1.col1, table3.col6\nFROM cte1\nJOIN table3 ON table3.col5 = cte1.col2",
+   "targets": [],
+   "test": "test_snowflake_unused_cte"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.table2",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table3",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_cte_name_collision",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.table1": [
+     "col1",
+     "col2"
+    ],
+    "my_db.my_schema.table2": [
+     "col2"
+    ],
+    "my_db.my_schema.table3": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.table1",
+    "my_db.my_schema.table2",
+    "my_db.my_schema.table3"
+   ],
+   "sql": "WITH cte_alias AS (\n    SELECT col1, col2\n    FROM table1\n)\nSELECT table2.col2, cte_alias.col1\nFROM table2\nJOIN table3 AS cte_alias ON table2.col2 = cte_alias.col2",
+   "targets": [],
+   "test": "test_snowflake_cte_name_collision"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.table1",
+      "USER_ID"
+     ],
+     [
+      "__select__",
+      "user_id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table2",
+      "OTHER_COL"
+     ],
+     [
+      "__select__",
+      "other_col"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.users_table",
+      "NAME"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_join_with_cte_involved_tables",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.table1": [
+     "ID",
+     "USER_ID"
+    ],
+    "my_db.my_schema.table2": [
+     "ID",
+     "OTHER_COL"
+    ],
+    "my_db.my_schema.users_table": [
+     "ID",
+     "NAME"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.table1",
+    "my_db.my_schema.table2",
+    "my_db.my_schema.users_table"
+   ],
+   "sql": "WITH cte_alias AS (\n    SELECT t1.id as t1_id_alias, t1.user_id, t2.other_col\n    FROM my_db.my_schema.table1 t1\n    JOIN my_db.my_schema.table2 t2 ON t1.id = t2.id\n)\nSELECT users.name, cte_alias.user_id, cte_alias.other_col\nFROM my_db.my_schema.users_table users\nJOIN cte_alias ON users.id = cte_alias.user_id",
+   "targets": [],
+   "test": "test_snowflake_join_with_cte_involved_tables"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.t2",
+      "VALUE"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.users",
+      "COL"
+     ],
+     [
+      "__select__",
+      "col"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_cte_chain_join_tables",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.t1": [
+     "ID",
+     "NAME"
+    ],
+    "my_db.my_schema.t2": [
+     "ID",
+     "VALUE"
+    ],
+    "my_db.my_schema.users": [
+     "ID",
+     "COL"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.t1",
+    "my_db.my_schema.t2",
+    "my_db.my_schema.users"
+   ],
+   "sql": "WITH cte1 AS (\n    SELECT t1.id, t1.name\n    FROM my_db.my_schema.t1\n),\ncte2 AS (\n    SELECT cte1.id, t2.value\n    FROM cte1\n    JOIN my_db.my_schema.t2 ON cte1.id = t2.id\n)\nSELECT users.col, cte2.value\nFROM my_db.my_schema.users\nJOIN cte2 ON users.id = cte2.id",
+   "targets": [],
+   "test": "test_snowflake_cte_chain_join_tables"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "__select__",
+      "id_gt_100"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "struct_field.field1"
+     ],
+     [
+      "__select__",
+      "struct_field1"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_full_table_name_col_reference",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.my_db.my_schema.my_table": [
+     "id",
+     "struct_field"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table"
+   ],
+   "sql": "SELECT\n    my_db.my_schema.my_table.id,\n    case when my_db.my_schema.my_table.id > 100 then 1 else 0 end as id_gt_100,\n    my_db.my_schema.my_table.struct_field.field1 as struct_field1,\nFROM my_db.my_schema.my_table",
+   "targets": [],
+   "test": "test_snowflake_full_table_name_col_reference"
+  },
+  {
+   "default_db": null,
+   "default_schema": "dbc",
+   "dialect": "teradata",
+   "edges": [
+    [
+     [
+      "myteradata.demo_user.pima_patient_diagnoses",
+      "PatientId"
+     ],
+     [
+      "myteradata.demo_user.test_lineage2",
+      "PatientId"
+     ]
+    ],
+    [
+     [
+      "myteradata.demo_user.pima_patient_features",
+      "BMI"
+     ],
+     [
+      "myteradata.demo_user.test_lineage2",
+      "BMI"
+     ]
+    ]
+   ],
+   "id": "datahub/test_default_schema_normalization",
+   "query_type": "CREATE_TABLE_AS_SELECT",
+   "schemas": {
+    "myteradata.demo_user.pima_patient_diagnoses": [
+     "HasDiabetes",
+     "PatientId"
+    ],
+    "myteradata.demo_user.pima_patient_features": [
+     "Age",
+     "BMI",
+     "BloodP",
+     "DiPedFunc",
+     "NumTimesPrg",
+     "PatientId",
+     "PlGlcConc",
+     "SkinThick",
+     "TwoHourSerIns"
+    ],
+    "myteradata.demo_user.test_lineage2": [
+     "BMI",
+     "PatientId"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "myteradata.demo_user.pima_patient_diagnoses",
+    "myteradata.demo_user.pima_patient_features"
+   ],
+   "sql": "create table demo_user.test_lineage2 as\n (\n    select\n        ppd.PatientId,\n        ppf.bmi\n    from\n        demo_user.pima_patient_features ppf\n    join demo_user.pima_patient_diagnoses ppd on\n        ppd.PatientId = ppf.PatientId\n ) with data;",
+   "targets": [
+    "myteradata.demo_user.test_lineage2"
+   ],
+   "test": "test_default_schema_normalization"
+  },
+  {
+   "default_db": null,
+   "default_schema": "dbc",
+   "dialect": "teradata",
+   "edges": [
+    [
+     [
+      "dbc.table1",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "dbc.table1",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "dbc.table2",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "dbc.table2",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_dialect_specific_operators",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "dbc.table1",
+    "dbc.table2"
+   ],
+   "sql": "sel col1, col2 from dbc.table1\nwhere col1 eq 'value1'\nminus\nselect col1, col2 from dbc.table2",
+   "targets": [],
+   "test": "test_dialect_specific_operators"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [],
+   "id": "datahub/test_snowflake_update_hardcoded",
+   "query_type": "UPDATE",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "totalprice"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "UPDATE snowflake_sample_data.tpch_sf1.orders\nSET orderkey = 1, totalprice = 2\nWHERE orderkey = 3",
+   "targets": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "test": "test_snowflake_update_hardcoded"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.table1",
+      "col1"
+     ],
+     [
+      "my_db.my_schema.my_table",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table1",
+      "col1"
+     ],
+     [
+      "my_db.my_schema.my_table",
+      "col2"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table1",
+      "col2"
+     ],
+     [
+      "my_db.my_schema.my_table",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table2",
+      "col2"
+     ],
+     [
+      "my_db.my_schema.my_table",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_update_from_table",
+   "query_type": "UPDATE",
+   "schemas": {
+    "my_db.my_schema.my_table": [
+     "id",
+     "col1",
+     "col2"
+    ],
+    "my_db.my_schema.table1": [
+     "id",
+     "col1",
+     "col2"
+    ],
+    "my_db.my_schema.table2": [
+     "id",
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table",
+    "my_db.my_schema.table1",
+    "my_db.my_schema.table2"
+   ],
+   "sql": "UPDATE my_table\nSET\n    col1 = t1.col1 || t1.col2,\n    col2 = t1.col1 || t2.col2\nFROM table1 t1\nJOIN table2 t2 ON t1.id = t2.id\nWHERE my_table.id = t1.id;",
+   "targets": [
+    "my_db.my_schema.my_table"
+   ],
+   "test": "test_snowflake_update_from_table"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "orderkey"
+     ],
+     [
+      "snowflake_sample_data.tpch_sf1.orders",
+      "orderkey"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_update_self",
+   "query_type": "UPDATE",
+   "schemas": {
+    "snowflake_sample_data.tpch_sf1.orders": [
+     "orderkey",
+     "totalprice"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "sql": "UPDATE snowflake_sample_data.tpch_sf1.orders\nSET orderkey = orderkey + 1",
+   "targets": [
+    "snowflake_sample_data.tpch_sf1.orders"
+   ],
+   "test": "test_snowflake_update_self"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.table1",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table1",
+      "b"
+     ],
+     [
+      "__select__",
+      "b"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.table2",
+      "c"
+     ],
+     [
+      "__select__",
+      "c"
+     ]
+    ]
+   ],
+   "id": "datahub/test_postgres_select_subquery",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.table1": [
+     "id",
+     "a",
+     "b"
+    ],
+    "my_db.my_schema.table2": [
+     "id",
+     "c"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.table1",
+    "my_db.my_schema.table2"
+   ],
+   "sql": "SELECT\n    a,\n    b,\n    (SELECT c FROM table2 WHERE table2.id = table1.id) as c\nFROM table1",
+   "targets": [],
+   "test": "test_postgres_select_subquery"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.employees",
+      "name"
+     ],
+     [
+      "my_db.my_schema.accounts",
+      "sales_person_name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_postgres_update_subselect",
+   "query_type": "UPDATE",
+   "schemas": {
+    "my_db.my_schema.accounts": [
+     "id",
+     "sales_person_id",
+     "sales_person_name"
+    ],
+    "my_db.my_schema.employees": [
+     "id",
+     "name"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.accounts",
+    "my_db.my_schema.employees"
+   ],
+   "sql": "UPDATE accounts SET sales_person_name =\n    (SELECT name FROM employees\n     WHERE employees.id = accounts.sales_person_id)",
+   "targets": [
+    "my_db.my_schema.accounts"
+   ],
+   "test": "test_postgres_update_subselect"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "redshift",
+   "edges": [
+    [
+     [
+      "customer",
+      "cust_id"
+     ],
+     [
+      "mv_total_orders",
+      "cust_id"
+     ]
+    ],
+    [
+     [
+      "customer",
+      "first_name"
+     ],
+     [
+      "mv_total_orders",
+      "first_name"
+     ]
+    ],
+    [
+     [
+      "orders",
+      "amount"
+     ],
+     [
+      "mv_total_orders",
+      "total_amount"
+     ]
+    ]
+   ],
+   "id": "datahub/test_redshift_materialized_view_auto_refresh",
+   "query_type": "CREATE_VIEW",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "customer",
+    "orders"
+   ],
+   "sql": "CREATE MATERIALIZED VIEW mv_total_orders\nAUTO REFRESH YES -- Add this clause to auto refresh the MV\nAS\n SELECT c.cust_id,\n        c.first_name,\n        sum(o.amount) as total_amount\n FROM orders o\n JOIN customer c\n    ON c.cust_id = o.customer_id\n GROUP BY c.cust_id,\n          c.first_name;",
+   "targets": [
+    "mv_total_orders"
+   ],
+   "test": "test_redshift_materialized_view_auto_refresh"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "redshift",
+   "edges": [
+    [
+     [
+      "my_db.other_schema.table1",
+      "col1"
+     ],
+     [
+      "my_db.my_schema.#my_custom_name",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "my_db.other_schema.table1",
+      "col2"
+     ],
+     [
+      "my_db.my_schema.#my_custom_name",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_redshift_temp_table_shortcut",
+   "query_type": "CREATE_TABLE_AS_SELECT",
+   "schemas": {
+    "my_db.other_schema.table1": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.other_schema.table1"
+   ],
+   "sql": "CREATE TABLE #my_custom_name\ndistkey (1)\nsortkey (1,2)\nAS\nWITH cte AS (\nSELECT *\nFROM other_schema.table1\n)\nSELECT * FROM cte",
+   "targets": [
+    "my_db.my_schema.#my_custom_name"
+   ],
+   "test": "test_redshift_temp_table_shortcut"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": null,
+   "dialect": "redshift",
+   "edges": [],
+   "id": "datahub/test_redshift_union_view",
+   "query_type": "CREATE_VIEW",
+   "schemas": {
+    "my_db.public.sales": [
+     "col1",
+     "col2"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.public.sales",
+    "my_db.spectrum.sales"
+   ],
+   "sql": "CREATE VIEW sales_vw AS SELECT * FROM public.sales UNION ALL SELECT * FROM spectrum.sales WITH NO SCHEMA BINDING",
+   "targets": [
+    "my_db.sales_vw"
+   ],
+   "test": "test_redshift_union_view"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": null,
+   "dialect": "redshift",
+   "edges": [],
+   "id": "datahub/test_redshift_system_automove",
+   "query_type": "CREATE_TABLE_AS_SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.public.permanent_1"
+   ],
+   "sql": "CREATE TABLE \"pg_automv\".\"mv_tbl__auto_mv_12708107__0_recomputed\"\nBACKUP YES\nDISTSTYLE KEY\nDISTKEY(2)\nAS (\n    SELECT\n        COUNT(CAST(1 AS INT4)) AS \"aggvar_3\",\n        COUNT(CAST(1 AS INT4)) AS \"num_rec\"\n    FROM\n        \"public\".\"permanent_1\" AS \"permanent_1\"\n    WHERE (\n        (CAST(\"permanent_1\".\"insertxid\" AS INT8) <= 41990135)\n        AND (CAST(\"permanent_1\".\"deletexid\" AS INT8) > 41990135)\n    )\n    OR (\n        CAST(FALSE AS BOOL)\n        AND (CAST(\"permanent_1\".\"insertxid\" AS INT8) = 0)\n        AND (CAST(\"permanent_1\".\"deletexid\" AS INT8) <> 0)\n    )\n)",
+   "targets": [
+    "my_db.pg_automv.mv_tbl__auto_mv_12708107__0_recomputed"
+   ],
+   "test": "test_redshift_system_automove"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table_b",
+      "address"
+     ],
+     [
+      "__select__",
+      "address"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table_b",
+      "my_json"
+     ],
+     [
+      "__select__",
+      "userinfo"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table_b",
+      "name"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_with_unnamed_column_from_udf_call",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table",
+    "my_db.my_schema.my_table_b"
+   ],
+   "sql": "SELECT\n  A.ID,\n  B.NAME,\n  PARSE_JSON(B.MY_JSON) AS :userInfo,\n  B.ADDRESS\nFROM my_db.my_schema.my_table AS A\nLEFT JOIN my_db.my_schema.my_table_B AS B\n  ON A.ID = B.ID",
+   "targets": [],
+   "test": "test_snowflake_with_unnamed_column_from_udf_call"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "sqlite",
+   "edges": [],
+   "id": "datahub/test_sqlite_insert_into_values",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "INSERT INTO my_table (id, month, total_cost, area)\n    VALUES\n        (1, '2021-01', 100, 10),\n        (2, '2021-02', 200, 20),\n        (3, '2021-03', 300, 30)",
+   "targets": [
+    "my_table"
+   ],
+   "test": "test_sqlite_insert_into_values"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "teradata",
+   "edges": [],
+   "id": "datahub/test_teradata_insert_into_values",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "INSERT INTO operations_temp.loss_backup (val_name, amount_type, field_number, amount_status, col_status, duration, time_code) \nVALUES (9, '2011-04-17', 42, 42.34, '1980-12-29 15:11:17', '1994-08-19 21:28:09', 'garden')",
+   "targets": [
+    "operations_temp.loss_backup"
+   ],
+   "test": "test_teradata_insert_into_values"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "clustering_ordinal_position"
+     ],
+     [
+      "__select__",
+      "clustering_ordinal_position"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "column_name"
+     ],
+     [
+      "__select__",
+      "column_name"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "data_type"
+     ],
+     [
+      "__select__",
+      "data_type"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "is_hidden"
+     ],
+     [
+      "__select__",
+      "is_hidden"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "is_nullable"
+     ],
+     [
+      "__select__",
+      "is_nullable"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "is_partitioning_column"
+     ],
+     [
+      "__select__",
+      "is_partitioning_column"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "ordinal_position"
+     ],
+     [
+      "__select__",
+      "ordinal_position"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "table_catalog"
+     ],
+     [
+      "__select__",
+      "table_catalog"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "table_name"
+     ],
+     [
+      "__select__",
+      "table_name"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+      "table_schema"
+     ],
+     [
+      "__select__",
+      "table_schema"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS",
+      "field_path"
+     ],
+     [
+      "__select__",
+      "data_type"
+     ]
+    ],
+    [
+     [
+      "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS",
+      "field_path"
+     ],
+     [
+      "__select__",
+      "field_path"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_information_schema_query",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMNS",
+    "acryl-staging-2.smoke_test_db_4.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS"
+   ],
+   "sql": "select\n  c.table_catalog as table_catalog,\n  c.table_schema as table_schema,\n  c.table_name as table_name,\n  c.column_name as column_name,\n  c.ordinal_position as ordinal_position,\n  cfp.field_path as field_path,\n  c.is_nullable as is_nullable,\n  CASE WHEN CONTAINS_SUBSTR(cfp.field_path, \".\") THEN NULL ELSE c.data_type END as data_type,\n  description as comment,\n  c.is_hidden as is_hidden,\n  c.is_partitioning_column as is_partitioning_column,\n  c.clustering_ordinal_position as clustering_ordinal_position,\nfrom\n  `acryl-staging-2`.`smoke_test_db_4`.INFORMATION_SCHEMA.COLUMNS c\n  join `acryl-staging-2`.`smoke_test_db_4`.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS as cfp on cfp.table_name = c.table_name\n  and cfp.column_name = c.column_name\nORDER BY\n  table_catalog, table_schema, table_name, ordinal_position ASC, data_type DESC",
+   "targets": [],
+   "test": "test_bigquery_information_schema_query"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [],
+   "id": "datahub/test_bigquery_alter_table_column",
+   "query_type": "UNKNOWN",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "ALTER TABLE `my-bq-project.covid_data.covid_deaths` drop COLUMN patient_name\n    ",
+   "targets": [
+    "my-bq-project.covid_data.covid_deaths"
+   ],
+   "test": "test_bigquery_alter_table_column"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "sqlite",
+   "edges": [],
+   "id": "datahub/test_sqlite_drop_table",
+   "query_type": "UNKNOWN",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "DROP TABLE my_schema.my_table",
+   "targets": [
+    "my_schema.my_table"
+   ],
+   "test": "test_sqlite_drop_table"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "sqlite",
+   "edges": [],
+   "id": "datahub/test_sqlite_drop_view",
+   "query_type": "UNKNOWN",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "DROP VIEW my_schema.my_view",
+   "targets": [
+    "my_schema.my_view"
+   ],
+   "test": "test_sqlite_drop_view"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [],
+   "id": "datahub/test_snowflake_drop_schema",
+   "query_type": "UNKNOWN",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "DROP SCHEMA my_schema",
+   "targets": [],
+   "test": "test_snowflake_drop_schema"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [
+    [
+     [
+      "invent_dw.UserDetail",
+      "source"
+     ],
+     [
+      "__select__",
+      "source"
+     ]
+    ],
+    [
+     [
+      "invent_dw.UserDetail",
+      "user_id"
+     ],
+     [
+      "__select__",
+      "user_id"
+     ]
+    ],
+    [
+     [
+      "invent_dw.UserDetail",
+      "user_source"
+     ],
+     [
+      "__select__",
+      "user_source"
+     ]
+    ]
+   ],
+   "id": "datahub/test_bigquery_subquery_column_inference",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "invent_dw.UserDetail"
+   ],
+   "sql": "SELECT user_id, source, user_source\nFROM (\n    SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY __partition_day DESC) AS rank_\n    FROM invent_dw.UserDetail\n) source_user\nWHERE rank_ = 1",
+   "targets": [],
+   "test": "test_bigquery_subquery_column_inference"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "sqlite",
+   "edges": [],
+   "id": "datahub/test_sqlite_attach_database",
+   "query_type": "UNKNOWN",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [],
+   "sql": "ATTACH DATABASE ':memory:' AS aux1",
+   "targets": [],
+   "test": "test_sqlite_attach_database"
+  },
+  {
+   "default_db": "NewData",
+   "default_schema": null,
+   "dialect": "mssql",
+   "edges": [
+    [
+     [
+      "newdata.foo.persons",
+      "Age"
+     ],
+     [
+      "__select__",
+      "age"
+     ]
+    ],
+    [
+     [
+      "newdata.foo.persons",
+      "Name"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ],
+    [
+     [
+      "newdata.foo.persons",
+      "Uppercased_Col"
+     ],
+     [
+      "__select__",
+      "uppercased_col"
+     ]
+    ]
+   ],
+   "id": "datahub/test_mssql_casing_resolver",
+   "query_type": "SELECT",
+   "schemas": {
+    "newdata.foo.persons": [
+     "Age",
+     "Name",
+     "Uppercased_Col"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "newdata.foo.persons"
+   ],
+   "sql": "SELECT Age, name, UPPERCASED_COL, COUNT(*) as Count\nFROM Foo.Persons\nGROUP BY Age",
+   "targets": [],
+   "test": "test_mssql_casing_resolver"
+  },
+  {
+   "default_db": "NewData",
+   "default_schema": null,
+   "dialect": "mssql",
+   "edges": [
+    [
+     [
+      "newdata.foo.persons",
+      "Age"
+     ],
+     [
+      "newdata.foo.age_dist",
+      "AGE"
+     ]
+    ]
+   ],
+   "id": "datahub/test_mssql_select_into",
+   "query_type": "SELECT",
+   "schemas": {
+    "newdata.foo.age_dist": [
+     "AGE",
+     "Count"
+    ],
+    "newdata.foo.persons": [
+     "Age",
+     "Name"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "newdata.foo.persons"
+   ],
+   "sql": "SELECT age as AGE, COUNT(*) as Count\nINTO Foo.age_dist\nFROM Foo.Persons\nGROUP BY Age",
+   "targets": [
+    "newdata.foo.age_dist"
+   ],
+   "test": "test_mssql_select_into"
+  },
+  {
+   "default_db": "playground-1",
+   "default_schema": null,
+   "dialect": "bigquery",
+   "edges": [],
+   "id": "datahub/test_bigquery_indirect_references",
+   "query_type": "SELECT",
+   "schemas": {
+    "playground-1.my_schema.external_users": [
+     "id",
+     "name",
+     "created_at"
+    ],
+    "playground-1.my_schema.main_users": [
+     "id",
+     "name",
+     "created_at"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "playground-1.my_schema.external_users",
+    "playground-1.my_schema.main_users"
+   ],
+   "sql": "-- Merge users from the main_users and external_users tables.\nSELECT\n    1 as constant1,\n    IF (main.id is not null, main, extras).* REPLACE (\n        least(main.created_at, extras.created_at) as created_at\n    ),\n    2 as constant2\nFROM my_schema.main_users main\nFULL JOIN my_schema.external_users extras\n    USING (id)",
+   "targets": [],
+   "test": "test_bigquery_indirect_references"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "oracle",
+   "edges": [
+    [
+     [
+      "abc.employees",
+      "employee_type"
+     ],
+     [
+      "__select__",
+      "employee_type_number"
+     ]
+    ],
+    [
+     [
+      "abc.employees",
+      "job_title"
+     ],
+     [
+      "__select__",
+      "employee_type_number"
+     ]
+    ]
+   ],
+   "id": "datahub/test_oracle_case_insensitive_cols",
+   "query_type": "SELECT",
+   "schemas": {
+    "abc.employees": [
+     "employee_type",
+     "job_title"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "abc.employees"
+   ],
+   "sql": "SELECT\nCASE WHEN (employee_TYPE = 'Manager')\n     THEN (CASE\n             WHEN job_title in ('Engineer') THEN '12'\n             ELSE '11'\n           END)\n     ELSE (CASE\n             WHEN job_title in ('Engineer') THEN '02'\n             ELSE '01'\n           END)\nEND AS employee_type_number\nFROM ABC.employees ;",
+   "targets": [],
+   "test": "test_oracle_case_insensitive_cols"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "__select__",
+      "current_value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "id"
+     ],
+     [
+      "__select__",
+      "value_1_day_ago"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "ts"
+     ],
+     [
+      "__select__",
+      "current_value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "ts"
+     ],
+     [
+      "__select__",
+      "value_1_day_ago"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "value"
+     ],
+     [
+      "__select__",
+      "current_value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table",
+      "value"
+     ],
+     [
+      "__select__",
+      "value_1_day_ago"
+     ]
+    ]
+   ],
+   "id": "datahub/test_self_join_with_cte",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.my_table": [
+     "id",
+     "value",
+     "ts"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table"
+   ],
+   "sql": "WITH table_1_day_ago AS (\n    SELECT * FROM my_table\n    WHERE ts < CURRENT_TIMESTAMP() - INTERVAL '1 DAY'\n)\nSELECT\n    my_table.id,\n    LAST_VALUE(my_table.value) OVER (PARTITION BY my_table.id ORDER BY my_table.ts) as current_value,\n    LAST_VALUE(table_1_day_ago.value) OVER (PARTITION BY table_1_day_ago.id ORDER BY table_1_day_ago.ts) as value_1_day_ago \nFROM my_table\nJOIN table_1_day_ago ON my_table.id = table_1_day_ago.id",
+   "targets": [],
+   "test": "test_self_join_with_cte"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "value"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table2",
+      "name"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_cross_join",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.my_table1": [
+     "id",
+     "value"
+    ],
+    "my_db.my_schema.my_table2": [
+     "id",
+     "name"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table1",
+    "my_db.my_schema.my_table2"
+   ],
+   "sql": "SELECT * FROM my_table1\nCROSS JOIN my_table2",
+   "targets": [],
+   "test": "test_cross_join"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "id"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "name"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table2",
+      "id"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table2",
+      "value"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ]
+   ],
+   "id": "datahub/test_lateral_join",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.my_table1": [
+     "id",
+     "name"
+    ],
+    "my_db.my_schema.my_table2": [
+     "id",
+     "value"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table1",
+    "my_db.my_schema.my_table2"
+   ],
+   "sql": "SELECT t1.id, t1.name, t2.value\nFROM my_table1 t1,\nLATERAL (SELECT value FROM my_table2 WHERE t1.id = my_table2.id LIMIT 1) t2",
+   "targets": [],
+   "test": "test_lateral_join"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "name"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table2",
+      "value"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ]
+   ],
+   "id": "datahub/test_right_join",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.my_table1": [
+     "id",
+     "name"
+    ],
+    "my_db.my_schema.my_table2": [
+     "id",
+     "value"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table1",
+    "my_db.my_schema.my_table2"
+   ],
+   "sql": "SELECT t1.id, t1.name, t2.value\nFROM my_table1 t1\nRIGHT JOIN my_table2 t2 ON t1.id = t2.id",
+   "targets": [],
+   "test": "test_right_join"
+  },
+  {
+   "default_db": "my_db",
+   "default_schema": "my_schema",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table1",
+      "name"
+     ],
+     [
+      "__select__",
+      "name"
+     ]
+    ],
+    [
+     [
+      "my_db.my_schema.my_table2",
+      "value"
+     ],
+     [
+      "__select__",
+      "value"
+     ]
+    ]
+   ],
+   "id": "datahub/test_natural_join",
+   "query_type": "SELECT",
+   "schemas": {
+    "my_db.my_schema.my_table1": [
+     "id",
+     "name"
+    ],
+    "my_db.my_schema.my_table2": [
+     "id",
+     "value"
+    ]
+   },
+   "skipped_upstream": false,
+   "sources": [
+    "my_db.my_schema.my_table1",
+    "my_db.my_schema.my_table2"
+   ],
+   "sql": "SELECT t1.id, t1.name, t2.value\nFROM my_table1 t1\nNATURAL JOIN my_table2 t2",
+   "targets": [],
+   "test": "test_natural_join"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "dremio",
+   "edges": [
+    [
+     [
+      "mysource.sales.customers",
+      "customer_name"
+     ],
+     [
+      "__select__",
+      "customer_name"
+     ]
+    ],
+    [
+     [
+      "mysource.sales.orders",
+      "order_id"
+     ],
+     [
+      "__select__",
+      "order_id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_dremio_quoted_identifiers",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "mysource.sales.customers",
+    "mysource.sales.orders"
+   ],
+   "sql": "WITH \"cte_orders\" AS (\n    SELECT * FROM \"MySource\".\"sales\".\"orders\"\n    WHERE \"status\" = 'completed'\n)\nSELECT \"cte_orders\".\"order_id\", \"customers\".\"customer_name\"\nFROM \"cte_orders\"\nJOIN \"MySource\".\"sales\".\"customers\" ON \"cte_orders\".\"customer_id\" = \"customers\".\"customer_id\"",
+   "targets": [],
+   "test": "test_dremio_quoted_identifiers"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "b",
+      "a"
+     ],
+     [
+      "__select__",
+      "a"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_semantic_view_query",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "b"
+   ],
+   "sql": "SELECT a FROM SEMANTIC_VIEW(b FACTS c)",
+   "targets": [],
+   "test": "test_snowflake_semantic_view_query"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "product_metrics.semantic.sv_board_opens",
+      "active_users"
+     ],
+     [
+      "__select__",
+      "active_users"
+     ]
+    ],
+    [
+     [
+      "product_metrics.semantic.sv_board_opens",
+      "month"
+     ],
+     [
+      "__select__",
+      "month"
+     ]
+    ],
+    [
+     [
+      "product_metrics.semantic.sv_board_opens",
+      "organization_id"
+     ],
+     [
+      "__select__",
+      "organization_id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_semantic_view_query_with_metrics",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "product_metrics.semantic.sv_board_opens"
+   ],
+   "sql": "select\n    organization_id,\n    month,\n    active_users\nfrom semantic_view(\n    product_metrics.semantic.sv_board_opens\n    metrics active_users\n    dimensions organization_id, date_trunc('month', time) as month\n)\norder by organization_id, month desc",
+   "targets": [],
+   "test": "test_snowflake_semantic_view_query_with_metrics"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "mydb.myschema.mytable",
+      "col1"
+     ],
+     [
+      "__select__",
+      "col1"
+     ]
+    ],
+    [
+     [
+      "mydb.myschema.mytable",
+      "col2"
+     ],
+     [
+      "__select__",
+      "col2"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_semantic_view_qualified_table",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "mydb.myschema.mytable"
+   ],
+   "sql": "SELECT col1, col2 FROM SEMANTIC_VIEW(mydb.myschema.mytable FACTS fact_col)",
+   "targets": [],
+   "test": "test_snowflake_semantic_view_qualified_table"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "sales_data",
+      "total_revenue"
+     ],
+     [
+      "__select__",
+      "total_revenue"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_semantic_view_with_metrics_only",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "sales_data"
+   ],
+   "sql": "SELECT total_revenue FROM SEMANTIC_VIEW(sales_data METRICS total_revenue)",
+   "targets": [],
+   "test": "test_snowflake_semantic_view_with_metrics_only"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "sales_data",
+      "product"
+     ],
+     [
+      "__select__",
+      "product"
+     ]
+    ],
+    [
+     [
+      "sales_data",
+      "region"
+     ],
+     [
+      "__select__",
+      "region"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_semantic_view_with_dimensions_only",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "sales_data"
+   ],
+   "sql": "SELECT region, product FROM SEMANTIC_VIEW(sales_data DIMENSIONS region, product)",
+   "targets": [],
+   "test": "test_snowflake_semantic_view_with_dimensions_only"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "snowflake",
+   "edges": [
+    [
+     [
+      "events",
+      "activity"
+     ],
+     [
+      "__select__",
+      "activity"
+     ]
+    ],
+    [
+     [
+      "events",
+      "user_id"
+     ],
+     [
+      "__select__",
+      "user_id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_snowflake_semantic_view_with_where",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "events"
+   ],
+   "sql": "SELECT user_id, activity FROM SEMANTIC_VIEW(events FACTS activity) WHERE user_id > 100",
+   "targets": [],
+   "test": "test_snowflake_semantic_view_with_where"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "col_id"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "dict_domain"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "dict_type"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "default.my_dict"
+     ],
+     [
+      "__select__",
+      "dict_domain"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "default.my_dict"
+     ],
+     [
+      "__select__",
+      "dict_type"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_dictget_lineage",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.events",
+    "default.my_dict"
+   ],
+   "sql": "SELECT\n    col_id,\n    DICTGET(default.my_dict, 'type', col_id) AS dict_type,\n    DICTGET(default.my_dict, 'domain', col_id) AS dict_domain\nFROM db1.events",
+   "targets": [],
+   "test": "test_clickhouse_dictget_lineage"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "db1.events",
+      "category_id"
+     ],
+     [
+      "__select__",
+      "dict_name"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "event_id"
+     ],
+     [
+      "__select__",
+      "event_id"
+     ]
+    ],
+    [
+     [
+      "db1.users",
+      "user_name"
+     ],
+     [
+      "__select__",
+      "user_name"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_dictget_with_multiple_tables",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.events",
+    "db1.users",
+    "default.my_dict"
+   ],
+   "sql": "SELECT\n    e.event_id,\n    u.user_name,\n    DICTGETORDEFAULT(default.my_dict, 'name', e.category_id, 'Unknown') AS dict_name\nFROM db1.events e\nJOIN db1.users u ON e.user_id = u.id",
+   "targets": [],
+   "test": "test_clickhouse_dictget_with_multiple_tables"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "col_id"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "dict_type"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_dictget_string_literal",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.events",
+    "default.my_dict"
+   ],
+   "sql": "SELECT\n    col_id,\n    DICTGET('default.my_dict', 'type', col_id) AS dict_type\nFROM db1.events",
+   "targets": [],
+   "test": "test_clickhouse_dictget_string_literal"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "col_id"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "col_id"
+     ],
+     [
+      "__select__",
+      "dict_type"
+     ]
+    ],
+    [
+     [
+      "db1.events",
+      "my_dict"
+     ],
+     [
+      "__select__",
+      "dict_type"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_dictget_unqualified",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.events",
+    "my_dict"
+   ],
+   "sql": "SELECT\n    col_id,\n    DICTGET(my_dict, 'type', col_id) AS dict_type\nFROM db1.events",
+   "targets": [],
+   "test": "test_clickhouse_dictget_unqualified"
+  },
+  {
+   "default_db": null,
+   "default_schema": "db1",
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "db1.events",
+      "id"
+     ],
+     [
+      "db1.target",
+      "id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_table_function_is_not_a_table",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.events"
+   ],
+   "sql": "INSERT INTO target\nSELECT e.id, r.name\nFROM db1.events e\nJOIN mysql('host:3306', 'remote_db', 'remote_table', 'user', 'pass') r ON e.id = r.id",
+   "targets": [
+    "db1.target"
+   ],
+   "test": "test_clickhouse_table_function_is_not_a_table"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "s.a",
+      "id"
+     ],
+     [
+      "s.target",
+      "id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_postgres_table_function_without_default_schema",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "s.a"
+   ],
+   "sql": "INSERT INTO s.target\nSELECT a.id, g.n FROM s.a CROSS JOIN generate_series(1, 10) AS g(n)",
+   "targets": [
+    "s.target"
+   ],
+   "test": "test_postgres_table_function_without_default_schema"
+  },
+  {
+   "default_db": "db1",
+   "default_schema": "public",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "db1.public.a",
+      "id"
+     ],
+     [
+      "db1.public.target",
+      "id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_postgres_qualified_table_function",
+   "query_type": "INSERT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.public.a"
+   ],
+   "sql": "INSERT INTO public.target\nSELECT a.id, f.v FROM public.a a JOIN public.my_fn(1) f ON a.id = f.id",
+   "targets": [
+    "db1.public.target"
+   ],
+   "test": "test_postgres_qualified_table_function"
+  },
+  {
+   "default_db": "db1",
+   "default_schema": "s",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "db1.s.a",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_postgres_join_through_subquery_with_table_function",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.s.a",
+    "db1.s.b"
+   ],
+   "sql": "SELECT a.id FROM s.a a\nJOIN (SELECT b.id, b.v, g.x FROM s.b b CROSS JOIN generate_series(1, 3) g(x)) s2\n  ON a.id = s2.id AND a.n = s2.x",
+   "targets": [],
+   "test": "test_postgres_join_through_subquery_with_table_function"
+  },
+  {
+   "default_db": "db1",
+   "default_schema": "s",
+   "dialect": "postgres",
+   "edges": [],
+   "id": "datahub/test_postgres_cross_join_table_function_is_not_a_self_join",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.s.b"
+   ],
+   "sql": "SELECT 1\nFROM (SELECT b.id, g.x FROM s.b b CROSS JOIN generate_series(1, 3) g(x)) t\nCROSS JOIN s.b",
+   "targets": [],
+   "test": "test_postgres_cross_join_table_function_is_not_a_self_join"
+  },
+  {
+   "default_db": "db1",
+   "default_schema": "s",
+   "dialect": "postgres",
+   "edges": [
+    [
+     [
+      "db1.s.a",
+      "id"
+     ],
+     [
+      "__select__",
+      "id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_postgres_lateral_table_function_is_not_a_self_join",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.s.a"
+   ],
+   "sql": "SELECT a.id, l.n FROM s.a a, LATERAL (SELECT n FROM generate_series(1, 3) AS g(n)) l",
+   "targets": [],
+   "test": "test_postgres_lateral_table_function_is_not_a_self_join"
+  },
+  {
+   "default_db": "p",
+   "default_schema": "d",
+   "dialect": "bigquery",
+   "edges": [],
+   "id": "datahub/test_bigquery_table_inside_table_function",
+   "query_type": "SELECT",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "p.d.features",
+    "p.d.model"
+   ],
+   "sql": "SELECT * FROM ML.PREDICT(MODEL `p.d.model`, TABLE `p.d.features`)",
+   "targets": [],
+   "test": "test_bigquery_table_inside_table_function"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "db1.raw_events",
+      "category_id"
+     ],
+     [
+      "__select__",
+      "category_name"
+     ]
+    ],
+    [
+     [
+      "db1.raw_events",
+      "default.my_dict"
+     ],
+     [
+      "__select__",
+      "category_name"
+     ]
+    ],
+    [
+     [
+      "db1.raw_events",
+      "event_id"
+     ],
+     [
+      "__select__",
+      "event_id"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_dictget_in_materialized_view",
+   "query_type": "CREATE_VIEW",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "db1.raw_events",
+    "default.my_dict"
+   ],
+   "sql": "CREATE MATERIALIZED VIEW db1.mv_enriched TO db1.events_enriched\nAS SELECT\n    event_id,\n    DICTGET(default.my_dict, 'name', category_id) AS category_name\nFROM db1.raw_events",
+   "targets": [
+    "db1.events_enriched",
+    "db1.mv_enriched"
+   ],
+   "test": "test_clickhouse_dictget_in_materialized_view"
+  },
+  {
+   "default_db": null,
+   "default_schema": null,
+   "dialect": "clickhouse",
+   "edges": [
+    [
+     [
+      "analytics.events",
+      "timestamp"
+     ],
+     [
+      "analytics.agg_daily_stats",
+      "date"
+     ]
+    ]
+   ],
+   "id": "datahub/test_clickhouse_materialized_view_to_table",
+   "query_type": "CREATE_DDL",
+   "schemas": null,
+   "skipped_upstream": false,
+   "sources": [
+    "analytics.events"
+   ],
+   "sql": "CREATE MATERIALIZED VIEW analytics.mv_daily_stats TO analytics.agg_daily_stats\n(date Date, total_events UInt64)\nAS SELECT\n    toDate(timestamp) AS date,\n    count(*) AS total_events\nFROM analytics.events\nGROUP BY date",
+   "targets": [
+    "analytics.agg_daily_stats"
+   ],
+   "test": "test_clickhouse_materialized_view_to_table"
+  }
+ ],
+ "commit": "8a117ba1f5331b4133976fae4d5a99e20c3b67da",
+ "source": "https://github.com/datahub-project/datahub (Apache-2.0), metadata-ingestion/tests/unit/sql_parsing/test_sqlglot_lineage.py and goldens",
+ "unharvested": [
+  {
+   "test": "test_teradata_cast_syntax",
+   "why": "FileNotFoundError"
+  },
+  {
+   "test": "test_postgres_complex_update",
+   "why": "FileNotFoundError"
+  }
+ ]
+}

@@ -45,3 +45,4 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | [Schema-change compatibility](schema-change-bench.md) | Which models break when a column changes |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors |
 | [Spider 2.0](spider2-bench.md) | Spider 2.0 BigQuery reference queries as inputs to KumoSQL's analyses |
+| [Lineage goldens](lineage-goldens-bench.md) | DataHub and OpenLineage lineage tests, scored against KumoSQL (OpenLineage is the independent oracle) |
