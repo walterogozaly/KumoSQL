@@ -27,6 +27,8 @@ vendored here, only its benchmark files are read.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import http.client
 import json
 import multiprocessing
 import os
@@ -54,14 +56,46 @@ SUITES = {
 CACHE = Path(os.environ.get("KUMOSQL_VERIEQL_CACHE", Path.home() / ".cache" / "kumosql" / "verieql"))
 
 
-def fetch(path: str) -> Path:
+SHA256 = {
+    "benchmarks/calcite/calcite2.jsonlines": "5fc6e0740134220856e93743147038cacaf22cb9d9823e7d6b8da2b461939ac4",
+    "benchmarks/leetcode/leetcode.jsonlines": "b97fc1293701682a25a2f6345f3630b3482ce49912463a7f4b76ab52665a13c9",
+    "benchmarks/literature/literature.jsonlines": "2c6b6a1bc38863b8e882aed6c333c39b1d41e69dac8c3598551ee5c7c097538b",
+    "experiments/2025_10_31/calcite.out": "55808f33238d7b9ec6387d6e537418a00fa26d51cda2b34a883ec28964209f7c",
+    "experiments/2025_10_31/leetcode.out": "3a0f67ed9225ea0f6455f8a455f799c21dde6693c1caa03d32bc602fb6ee56c6",
+    "experiments/2025_10_31/literature.out": "d97935d48f89b070fadb6678b349f950e6e2b81616c461bc18388d4e5f22191f",
+}
+
+
+class DataUnavailable(OSError):
+    """The benchmark files could not be downloaded or failed their checksum."""
+
+
+def _intact(path: Path, name: str) -> bool:
+    return path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == SHA256[name]
+
+
+def fetch(path: str, attempts: int = 4) -> Path:
+    """The cached file, downloading it (with retries, a checksum and an atomic write) when missing or damaged."""
+
     target = CACHE / path
-    if not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(f"{BASE}/{path}", timeout=120) as response:
-            data = response.read()
-        target.write_bytes(data)
-    return target
+    if _intact(target, path):
+        return target
+    last = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(f"{BASE}/{path}", timeout=120) as response:
+                data = response.read()
+            if hashlib.sha256(data).hexdigest() != SHA256[path]:
+                raise DataUnavailable(f"checksum mismatch for {path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_suffix(target.suffix + ".part")
+            partial.write_bytes(data)
+            partial.replace(target)
+            return target
+        except (OSError, http.client.HTTPException) as error:  # IncompleteRead and friends are not OSErrors
+            last = error
+            time.sleep(2 * (attempt + 1))
+    raise DataUnavailable(f"VeriEQL data unavailable ({path}): {type(last).__name__}: {last}")
 
 
 def load_cases(suite: str) -> list[dict]:
