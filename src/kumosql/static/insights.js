@@ -203,6 +203,7 @@ async function setupScopePicker() {
     return;
   }
   await window.KumoScopes.mountPicker($("scope-picker"), { onChange: () => location.reload() });
+  document.addEventListener("kumosql:catalogs-changed", () => location.reload());
 }
 
 /** Say what the active scope did to this view, including when it could not apply. */
@@ -389,7 +390,7 @@ function overlapList(section, name) {
     unknown.length ? h("div", {},
       h("h3", { text: `Could not be compared (${unknown.length})` }),
       h("ul", { class: "plain-list" }, unknown.map((item) => h("li", { class: "reader" }, name(item.table, item.key),
-        h("span", { class: "edge-meta" }, E.pill("unknown"), h("span", { class: "muted small", text: (item.reason || "").split(":").slice(1).join(":").trim() || item.reason }))))))
+        h("span", { class: "edge-meta" }, E.pill("unknown"), otherOwner(item), h("span", { class: "muted small", text: (item.reason || "").split(":").slice(1).join(":").trim() || item.reason }))))))
       : null,
     skipped.length ? h("p", { class: "muted small", text: "Skipped: " + skipped.map(([reason, count]) => `${count} ${reason.replaceAll("_", " ")}`).join(", ") + ". A skipped table was not checked; it is not a “no match”." }) : null,
     (section.rollups || []).length ? h("div", {},
@@ -577,7 +578,7 @@ function renderGraph(data, root) {
     columns.map((list) => h("div", { class: "graph-col" },
       list.sort((a, b) => a.id.localeCompare(b.id)).map((node) =>
         h("button", {
-          type: "button", class: `gnode kind-${node.kind}${graph.gaps.has(node.id) ? " is-gap" : ""}${node.schedules ? " is-scheduled" : ""}`, "data-id": node.id,
+          type: "button", class: `gnode kind-${node.kind}${graph.gaps.has(node.id) ? " is-gap" : ""}${node.schedules ? " is-scheduled" : ""}${node.owned === false ? " not-owned" : ""}`, "data-id": node.id,
           title: node.schedules ? scheduleText(node.schedules) : undefined,
           onclick: () => select(node.id, null),
         },
@@ -764,12 +765,13 @@ function renderGraph(data, root) {
         body = h("div", {}, heading,
           h("p", { class: "muted small", text: entry?.error || (state.column ? "Assessing the change…" : "Pick a column to assess.") }));
       } else {
+        const otherOwner = (item) => (item.owned === false ? tag("Other owner", "idle") : null);
         const depthNote = (item) => (item.depth > 1 ? `${item.depth} hops` : "direct");
         body = h("div", {}, heading,
           h("h3", { text: `Affected (${impact.affected.length})` }),
           impact.affected.length ? h("ul", { class: "plain-list" }, impact.affected.map((item) =>
             h("li", { class: "reader" }, nodeLink(item.model),
-              h("span", { class: "edge-meta" }, effectTag(item.effect),
+              h("span", { class: "edge-meta" }, effectTag(item.effect), otherOwner(item),
                 h("span", { class: "muted small", text: depthNote(item) }),
                 item.columns?.length ? h("span", { class: "muted small", text: `uses ${item.columns.join(", ")}` }) : null))))
             : h("p", { class: "muted small", text: "No declared model uses this column." }),
@@ -780,7 +782,7 @@ function renderGraph(data, root) {
           impact.observed.length ? h("h3", { text: `Seen in job history (${impact.observed.length})` }) : null,
           impact.observed.length ? h("ul", { class: "plain-list" }, impact.observed.map((item) =>
             h("li", { class: "reader" }, nodeLink(item.model),
-              h("span", { class: "edge-meta" }, tag("Observed", "info", EDGE_SOURCES.observed[1]), effectTag(item.effect),
+              h("span", { class: "edge-meta" }, tag("Observed", "info", EDGE_SOURCES.observed[1]), effectTag(item.effect), otherOwner(item),
                 tag(`${item.confidence} confidence`, CONFIDENCE_TONE[item.confidence] || "idle"),
                 h("span", { class: "muted small", text: item.last_seen ? `last seen ${shortDate(item.last_seen)}` : "not seen in window" }),
                 h("span", { class: "muted small", text: `${depthNote(item)} via ${item.via}` }))))) : null,

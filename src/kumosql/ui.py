@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import console, live_graph, redact
 from . import live_insights
-from . import bigquery_catalog, data_sources, scope_queries
+from . import bigquery_catalog, catalogs, data_sources, scope_queries
 from . import scopes as scope_store
 from . import state, tags, version
 from .formatting import FormatSqlRule, complexity, load_preferences, parse_preferences, save_preferences
@@ -52,6 +52,7 @@ ASSETS = {
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/tags.js": ("tags.js", "text/javascript; charset=utf-8"),
+    "/assets/catalogs.js": ("catalogs.js", "text/javascript; charset=utf-8"),
     "/assets/datasources.js": ("datasources.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
@@ -230,6 +231,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 "format": load_preferences().to_json(),
                 "scopes": [scope.to_json() for scope in scope_store.list_scopes()],
                 "tag_rules": tags.list_rules(),
+                "catalogs": catalogs.list_catalogs(builtin=False),
                 "data_sources": [source.to_json() for source in data_sources.list_sources()],
             })
             return
@@ -241,6 +243,12 @@ class UIHandler(BaseHTTPRequestHandler):
                 "billing_project": scope_queries.billing_project(),
                 "tag_fields": data_sources.tag_fields(),
             })
+            return
+        if self.path == "/api/catalogs":
+            try:
+                self._json(200, catalogs.snapshot())
+            except Exception as exc:  # noqa: BLE001 - the page shows this instead of silently having no catalogs
+                self._json(500, {"error": f"could not work out catalogs: {type(exc).__name__}: {exc}"})
             return
         if self.path == "/api/tags":
             try:
@@ -492,7 +500,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(exc)})
             return
         section = self.path.removeprefix("/api/settings/")
-        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules", "data_sources", "refactor") or section == self.path:
+        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules", "catalogs", "data_sources", "refactor") or section == self.path:
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
@@ -512,6 +520,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 saved = scope_queries.save_settings(payload).to_json()
             elif section == "tag_rules":
                 saved = tags.save_rules(payload)
+            elif section == "catalogs":
+                saved = catalogs.save_catalogs(payload)
             elif section == "data_sources":
                 saved = [source.to_json() for source in data_sources.save_sources(payload)]
             elif section == "refactor":
@@ -586,7 +596,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/jobs", "/api/jobs/clear", "/api/changes/compare", "/api/scope-queries",
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
-            "/api/tag-rules/preview", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries",
+            "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries",
             "/api/refactor/run",
         ):
             self._json(404, {"error": "not found"})
@@ -622,6 +632,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {**data_sources.populate(source, refresh=payload.get("refresh") is True).status(), "id": source.id}
             elif self.path == "/api/tag-rules/preview":
                 result = tags.preview_rule(payload)
+            elif self.path == "/api/catalogs/preview":
+                result = catalogs.preview(payload)
+            elif self.path == "/api/catalogs/active":
+                result = {"active": catalogs.set_active(payload.get("active"))}
             elif self.path == "/api/refactor/run":
                 from . import refactor
 
