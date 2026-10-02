@@ -1,0 +1,514 @@
+{"name":"testAggregateConstantKeyRuleInVolcano","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableProject","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testAggregateDynamicFunction","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAggregateExtractProjectRuleWithGroupingSets","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAggregateExtractProjectRuleWithGroupingSets2","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAggregateGroupingSetsProjectMerge","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAggregateGroupingSetsToUnionRule","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testAggregateGroupingSetsToUnionRuleGroupingGrouId","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testAggregateJoinRemove10","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAggregateMerge2","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAggregateRemove1","source":"RelOptRulesTest","reason":"unsupported aggregate BIT_AND","in_sqlsolver":false,"in_qed":true,"in_rbot":true,"new":false}
+{"name":"testAggregateRemoveLiteralAggRuleWithAnySubQuery","source":"RelOptRulesTest","reason":"CAST from VARCHAR to INTEGER","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testAggregateRemoveLiteralAggRuleWithOnlyLiteralAgg","source":"RelOptRulesTest","reason":"LITERAL_AGG without group keys","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testAntiCorrelateWithLeftEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAntiCorrelateWithRightEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testAnyInProjectNullable","source":"RelOptRulesTest","reason":"CAST from VARCHAR to INTEGER","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testArrayConcat","source":"RelOptRulesTest","reason":"unsupported operator ARRAY","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testArrayRepeat","source":"RelOptRulesTest","reason":"unsupported operator ARRAY_REPEAT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testArrayToString","source":"RelOptRulesTest","reason":"unsupported operator ARRAY","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testBitAndReuseDistinctAttrWithMixedOptionality","source":"RelOptRulesTest","reason":"unsupported aggregate BIT_AND","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testBitOrReuseDistinctAttrWithMixedOptionality","source":"RelOptRulesTest","reason":"unsupported aggregate BIT_OR","in_sqlsolver":false,"in_qed":true,"in_rbot":true,"new":false}
+{"name":"testCartesianProductForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCastInAggregateExpandDistinctAggregatesRule","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testCastInAggregateReduceFunctions","source":"RelOptRulesTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testCeilDayToRangeAfterNoon","source":"RelOptRulesTest","reason":"flag argument to CEIL","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testChainJoinDphypJoinReorder","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testComplexPredicateForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testConvertMultiJoinRule","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testConvertMultiJoinRuleOuterJoins","source":"RelOptRulesTest","reason":"table CATALOG.SALES.A outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testConvertMultiJoinRuleOuterJoins2","source":"RelOptRulesTest","reason":"table CATALOG.SALES.A outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testConvertMultiJoinRuleOuterJoins3","source":"RelOptRulesTest","reason":"table CATALOG.SALES.A outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testConvertMultiJoinRuleOuterJoins4","source":"RelOptRulesTest","reason":"table CATALOG.SALES.A outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCorrelateWithoutCorrelationToEmptyInVolcano","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableValues","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCorrelatedVariableAtSecondLevel","source":"RelOptRulesTest","reason":"unsupported aggregate SINGLE_VALUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCrossJoinWithTimeStampSingleRowOnLeft","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCrossJoinWithTimeStampSingleRowOnRight","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCustomColumnResolvingInCorrelatedSubQuery","source":"RelOptRulesTest","reason":"table CATALOG.STRUCT.T outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testCustomColumnResolvingInCorrelatedSubQuery2","source":"RelOptRulesTest","reason":"table CATALOG.STRUCT.T outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testCustomColumnResolvingInNonCorrelatedSubQuery","source":"RelOptRulesTest","reason":"table CATALOG.STRUCT.T outside the modelled catalogs","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testCustomDecorrelate","source":"RelOptRulesTest","reason":"nonstandard test resources","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testCycleJoinDphypJoinReorder","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDecorrelateFilterWithFetchOneDesc1","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDecorrelateFilterWithMultiKeyAndFetchOne","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDecorrelateProjectWithFetchExpression","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDecorrelateProjectWithMultiKeyAndFetchOne","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDecorrelateProjectWithMultiKeyAndFetchOne1","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDigestOfApproximateDistinctAggregateCall","source":"RelOptRulesTest","reason":"aggregate call shape 'COUNT(APPROXIMATE DISTINCT $1)'","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCount2","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCount3","source":"RelOptRulesTest","reason":"unsupported aggregate GROUPING","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountGroupingSets1","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountGroupingSets2","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountMixed","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountMixed2","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountMixedJoin","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountMultiple","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountMultipleNoGroup","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountMultipleViaJoin","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctCountWithExpandSumType","source":"RelOptRulesTest","reason":"custom type system","in_sqlsolver":false,"in_qed":true,"in_rbot":true,"new":false}
+{"name":"testDistinctCountWithoutGroupBy","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctNonDistinctAggregatesWithGroupingSets","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDistinctNonDistinctAggregatesWithGroupingSets2","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDistinctNonDistinctAggregatesWithGroupingSets3","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDistinctWithDiffFiltersAndSameGroupSet","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctWithFilterAndGroupBy","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctWithFilterWithoutGroupBy","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctWithMultipleInputs","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDistinctWithMultipleInputsAndGroupby","source":"RelOptRulesTest","reason":"multi-column COUNT(DISTINCT)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testDoubleReduction2","source":"RelOptRulesTest","reason":"non-finite floating-point literal","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testDynamicStarWithUnion","source":"RelOptRulesTest","reason":"dynamic-star table (schema unknown)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testEmptyAggregateEmptyKeyWithAggregateValuesRule","source":"RelOptRulesTest","reason":"VALUES column of untyped NULLs","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testEmptySort2","source":"RelOptRulesTest","reason":"both plans are empty relations of unknown row type","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testEmptyTable","source":"RelOptRulesTest","reason":"table is empty only by catalog convention (not expressible in a schema)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testEmptyTableTransformsComplexQueryToSingleTableScan","source":"RelOptRulesTest","reason":"table is empty only by catalog convention (not expressible in a schema)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testEmptyWindow","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testEnumerableCalcRule","source":"RelOptRulesTest","reason":"dynamic-star table (schema unknown)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testEnumerableFilterRule","source":"RelOptRulesTest","reason":"dynamic-star table (schema unknown)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testEnumerableMergeUnionRule","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testEnumerableProjectRule","source":"RelOptRulesTest","reason":"dynamic-star table (schema unknown)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExchangeRemoveConstantKeysRule","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalSortExchange","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExistsDecorrelationProducesSingleValues","source":"RelOptRulesTest","reason":"join type left_mark","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExpandFilterNestedExistsCorrelatingTwoLevels","source":"RelOptRulesTest","reason":"table CATALOG.SALES.EMP_ADDRESS outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExpandFilterNestedExistsWithTwoSiblingInnerExists","source":"RelOptRulesTest","reason":"table CATALOG.SALES.EMP_ADDRESS outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExpandFilterScalar","source":"RelOptRulesTest","reason":"unsupported aggregate SINGLE_VALUE","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testExpandJoinIn","source":"RelOptRulesTest","reason":"input ref out of range (plan refers past its input row)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExpandJoinInComposite","source":"RelOptRulesTest","reason":"input ref out of range (plan refers past its input row)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testExpandJoinScalar","source":"RelOptRulesTest","reason":"unsupported aggregate SINGLE_VALUE","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testExpandProjectScalar","source":"RelOptRulesTest","reason":"unsupported aggregate SINGLE_VALUE","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testExpressionInWindowFunction","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFilterAndProjectWithMultiJoin","source":"RelOptRulesTest","reason":"unsupported relational operator MyProject","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFilterReduceCrash","source":"RelOptRulesTest","reason":"CAST from DOUBLE to INTEGER","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFilterSampleTransposeWithBernoulli","source":"RelOptRulesTest","reason":"unsupported relational operator Sample","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFilterSampleTransposeWithSystem","source":"RelOptRulesTest","reason":"unsupported relational operator Sample","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFilterSampleTransposeWithSystemAndSeed","source":"RelOptRulesTest","reason":"unsupported relational operator Sample","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFilterTableFunctionScanTranspose","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalTableFunctionScan","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFloorDayToRangeAfterNoon","source":"RelOptRulesTest","reason":"flag argument to FLOOR","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testFullLeftSemiJoinTypeForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testHeterogeneousConversion","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalCalc","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testHypergraph0","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testHypergraph1","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testHypergraph2","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testInnerCorrelateWithLeftEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testInnerCorrelateWithRightEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testInnerJoinWithTimeStampSingleRowOnLeft","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testInnerJoinWithTimeStampSingleRowOnRight","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testInnerLeftSemiJoinTypeForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testIntersectReorderRule","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableIntersect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testIntersectReorderRuleAll","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableIntersect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testIntersectReorderRuleSameRowCount","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableIntersect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testIntersectToSemiJoin2","source":"RelOptRulesTest","reason":"CAST from INTEGER to VARCHAR","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testIsNullPushDown","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":true,"new":false}
+{"name":"testIsNullPushDown2","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":true,"new":false}
+{"name":"testJoinConditinExpandIsNotDistinctFromRuleArray","source":"RelOptRulesTest","reason":"custom catalog reader (tables not in MockCatalogReaderSimple)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinConditionOrExpansionRule2","source":"RelOptRulesTest","reason":"unsupported operator LN","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinConditionOrExpansionRuleMultiOr","source":"RelOptRulesTest","reason":"unsupported operator LN","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinConditionPushdown4","source":"RelOptRulesTest","reason":"comparison across type families (TINYINT vs VARCHAR)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testJoinProjectTransposeWindow","source":"RelOptRulesTest","reason":"CAST from VARCHAR to BIGINT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testJoinPushTransitivePredicatesNullabilityIssue","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinSubQueryRemoveRuleWithAndNotExists","source":"RelOptRulesTest","reason":"join with correlation variables","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinSubQueryRemoveRuleWithNotExists","source":"RelOptRulesTest","reason":"join with correlation variables","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinSubQueryRemoveRuleWithOrExists","source":"RelOptRulesTest","reason":"join with correlation variables","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinSubQueryRemoveRuleWithOrNotExists","source":"RelOptRulesTest","reason":"join with correlation variables","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinToMultiJoinDoesNotMatchAntiJoin","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testJoinToMultiJoinDoesNotMatchSemiJoin","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLeftCorrelateWithBothEmpty1","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftCorrelateWithBothEmpty2","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftCorrelateWithBothEmpty3","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftCorrelateWithLeftEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftCorrelateWithRightEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftEmptyAntiJoin","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftEmptySemiJoin","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testLeftInnerSemiJoinTypeForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLeftJoinWithTimeStampSingleRowOnRight","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLeftMarkJoinWithSingleValues","source":"RelOptRulesTest","reason":"join type left_mark","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitMerge","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitMerge1","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitMerge2","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitMerge3","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitMergeBigint","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSort","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableLimitSort","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSortOnlyLimit","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSortOnlyOffset","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSortOnlyOrderBy","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableSort","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSortOrderByLimit","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableLimitSort","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSortOrderByOffset","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableLimitSort","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLimitSortOrderByOffsetLimit","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableLimitSort","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLoptOptimizeJoinRulePrioritizeSelfJoin","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLoptOptimizeJoinRuleWithDefaultCost","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLoptOptimizeJoinRuleWithSpecialCost","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testLpad","source":"RelOptRulesTest","reason":"unsupported operator LPAD","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testManyFiltersOnTopOfMultiJoinShouldCollapse","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMarkJoinMarkerColumnTypeNullableMismatch","source":"RelOptRulesTest","reason":"join type left_mark","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMeasureAggregate","source":"RelOptRulesTest","reason":"measure expression (Calcite-specific)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMeasureJoin","source":"RelOptRulesTest","reason":"measure expression (Calcite-specific)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMeasureSort","source":"RelOptRulesTest","reason":"measure expression (Calcite-specific)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMeasureWithoutGroupByWithOrderBy","source":"RelOptRulesTest","reason":"measure expression (Calcite-specific)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMergeFilterWithJoinCondition","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalCalc","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMergeJoinCollation","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableProject","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMinusToAntiJoinRuleMultiInputs","source":"RelOptRulesTest","reason":"CAST from INTEGER to VARCHAR","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMinusToFilterNWayWithSubquery","source":"RelOptRulesTest","reason":"unbound correlation variable $cor0","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testMultiJoinOptimizeBushyThreeFactorCondition","source":"RelOptRulesTest","reason":"unsupported relational operator MultiJoin","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testNestedAggregates","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testNestedConstantWindow","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testNondeterministicFetchPreventsTopDownDecorrelation","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testNotPushFilterPastWindowWhenPredicateNotOnPartitionKey","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":true,"new":false}
+{"name":"testNotUniqueWithNoRowSubQuery","source":"RelOptRulesTest","reason":"unsupported subquery operator UNIQUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testNullSelect","source":"RelOptRulesTest","reason":"VALUES column of untyped NULLs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testOuterJoinForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPredicatePull","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectCorrelateTranspose","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectCorrelateTransposeRuleAntiCorrelate","source":"RelOptRulesTest","reason":"projection with no columns","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testProjectCorrelateTransposeRuleSemiCorrelate","source":"RelOptRulesTest","reason":"projection with no columns","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testProjectCorrelateTransposeWithExprCond","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectCorrelateTransposeWithOver","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectFilterTransposeRuleOnEmptyRowType","source":"RelOptRulesTest","reason":"projection with no columns","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testProjectJoinTransposeItem","source":"RelOptRulesTest","reason":"dynamic-star table (schema unknown)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testProjectJoinTransposeRuleOnAggWithNoFieldsWithTrimmer","source":"RelOptRulesTest","reason":"nonstandard test resources","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectJoinTransposeWithZeroColumnLeftInput","source":"RelOptRulesTest","reason":"projection with no columns","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectJoinTransposeWithZeroColumnRightInput","source":"RelOptRulesTest","reason":"projection with no columns","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectOverWithAvg","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectSetOpTranspose","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testProjectToWindowRuleForMultiOver","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectToWindowRuleForMultipleWindows","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectToWindowRuleForNestedOver","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectWindowTransposeRule","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testProjectWindowTransposeRuleWithConstants","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPruneEmptyRuleForLeftMarkJoin","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPullConstantThroughAggregatePermutedInVolcano","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableProject","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPullConstantThroughUnionInVolcano","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableProject","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPullFilterThroughAggregateGroupingSets","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushAggregateThroughJoin7","source":"RelOptRulesTest","reason":"unsupported aggregate ANY_VALUE","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushAggregateThroughJoin8","source":"RelOptRulesTest","reason":"unsupported aggregate SINGLE_VALUE","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushAvgGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushBoolAndBoolOrThroughUnion","source":"RelOptRulesTest","reason":"unsupported aggregate BOOL_AND","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushCountNullableGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushCountStarGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushFilterPastAggFour","source":"RelOptRulesTest","reason":"CAST from CHAR to INTEGER","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushFilterPastAggWithGroupingSets2","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":true,"new":false}
+{"name":"testPushFilterPastAggWithGroupingSetsNonLeadingKeys","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPushFilterPastWindowWithDoubleWindows","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPushFilterPastWindowWithOnePartitionColumn","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPushFilterPastWindowWithTwoPartitionColumns","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalWindow","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPushFilterThroughJoinWithNonDeterministic","source":"RelOptRulesTest","reason":"non-deterministic function RAND","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testPushMaxNullableGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushMinGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushProjectWithOverPastJoin1","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushProjectWithOverPastJoin2","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushProjectWithOverPastJoin3","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushSumConstantGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushSumCountStarGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushSumNullConstantGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testPushSumNullableGroupingSetsThroughUnion","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testRand","source":"RelOptRulesTest","reason":"non-deterministic function RAND","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceAggregateFunctionsByGroup","source":"RelOptRulesTest","reason":"unsupported aggregate ANY_VALUE","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceAllAggregateFunctions","source":"RelOptRulesTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceAverageAndSumWithNoReduceStddevAndVar","source":"RelOptRulesTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceAverageAndVarWithNoReduceStddev","source":"RelOptRulesTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceCasts","source":"RelOptRulesTest","reason":"string CAST that may truncate or pad","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceCastsNullable","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalTableModify","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceConstants","source":"RelOptRulesTest","reason":"unsupported operator ROW","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceConstantsCalc","source":"RelOptRulesTest","reason":"CHAR-padded string literal (Calcite CHAR semantics)","in_sqlsolver":true,"in_qed":false,"in_rbot":true,"new":false}
+{"name":"testReduceConstantsWindow","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceConstantsWithMultipleOrderByWindow","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceConstantsWithRow","source":"RelOptRulesTest","reason":"unsupported operator ARRAY","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceDecimal","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalCalc","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceDynamic","source":"RelOptRulesTest","reason":"non-deterministic function USER","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReduceLambdaBodyBooleanConstantFolding","source":"RelOptRulesTest","reason":"lambda expression","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceLambdaBodyConstantFolding","source":"RelOptRulesTest","reason":"lambda expression","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceLambdaBodyDeepNestedConstantFolding","source":"RelOptRulesTest","reason":"lambda expression","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceLambdaBodyModConstantFolding","source":"RelOptRulesTest","reason":"lambda expression","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceLambdaBodyNegativeConstantFolding","source":"RelOptRulesTest","reason":"lambda expression","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceLambdaBodyOrConstantFolding","source":"RelOptRulesTest","reason":"lambda expression","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceValuesNull","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalTableModify","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReduceWithNonTypePredicate","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testReducingConstantsInferredFromCorrelate","source":"RelOptRulesTest","reason":"unsupported relational operator LogicalTableFunctionScan","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testRelFnWithVolcanoPlanner","source":"RelOptRulesTest","reason":"unsupported relational operator EnumerableFilter","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testRemoveDistinctOnAgg","source":"RelOptRulesTest","reason":"unsupported aggregate BIT_AND","in_sqlsolver":false,"in_qed":true,"in_rbot":true,"new":false}
+{"name":"testRemoveSemiJoinRightWithFilter","source":"RelOptRulesTest","reason":"custom catalog reader (tables not in MockCatalogReaderSimple)","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testRepeat","source":"RelOptRulesTest","reason":"unsupported operator REPEAT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testReplace","source":"RelOptRulesTest","reason":"unsupported operator REPLACE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testRightEmptyAntiJoin","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testRightEmptyAntiJoinNonEqui","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testRightEmptySemiJoin","source":"RelOptRulesTest","reason":"empty LogicalValues under a join (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testRightJoinWithTimeStampSingleRowOnLeft","source":"RelOptRulesTest","reason":"non-deterministic function CURRENT_TIMESTAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testRpad","source":"RelOptRulesTest","reason":"unsupported operator RPAD","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSampleToFilter","source":"RelOptRulesTest","reason":"unsupported relational operator Sample","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSampleToFilterWithSeed","source":"RelOptRulesTest","reason":"unsupported relational operator Sample","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSemiCorrelateWithLeftEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSemiCorrelateWithRightEmpty","source":"RelOptRulesTest","reason":"empty LogicalValues under a correlate (row width not in the digest)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSemiJoinForDphyp","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSomeWithTwoCorrelatedSubQueries","source":"RelOptRulesTest","reason":"LITERAL_AGG without group keys","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSortJoinTranspose10","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortJoinTranspose6","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSortRemoveWhenInputAggregateMaxRowCntLessOrEqualLimitFetch","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortRemoveWhenInputValuesMaxRowCntLessOrEqualLimitFetch","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortRemoveWhenInputValuesMaxRowCntLessOrEqualLimitFetch2","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortRemoveWhenLimitMaxRowCntIsOne","source":"RelOptRulesTest","reason":"LIMIT/OFFSET without ORDER BY (nondeterministic)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortUnionTransposePushesParameterizedFetchExpression","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortUnionTransposePushesParameterizedOffsetExpression","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSortWithDynamicParamPushesOnce","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSpace","source":"RelOptRulesTest","reason":"unsupported operator SPACE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSpatialContainsPoint","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSpatialDWithinLine","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSpatialDWithinReversed","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSpatialDWithinToHilbert","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSpatialDWithinToHilbertNegative","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSpatialDWithinToHilbertZero","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSpatialReduce","source":"RelOptRulesTest","reason":"table CATALOG.GEO.RESTAURANTS outside the modelled catalogs","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testSplit","source":"RelOptRulesTest","reason":"unsupported operator SPLIT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSplitNull","source":"RelOptRulesTest","reason":"unsupported operator SPLIT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSplitNull1","source":"RelOptRulesTest","reason":"unsupported operator SPLIT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSplitNull2","source":"RelOptRulesTest","reason":"unsupported operator SPLIT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testStarJoinDphypJoinReorder","source":"RelOptRulesTest","reason":"unsupported relational operator HyperGraph","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSubQueryWithDynamicStarHang","source":"RelOptRulesTest","reason":"dynamic-star table (schema unknown)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testSumAndDistinctSumWithExpandSumType","source":"RelOptRulesTest","reason":"custom type system","in_sqlsolver":false,"in_qed":true,"in_rbot":true,"new":false}
+{"name":"testSwapOuterJoinFieldAccess","source":"RelOptRulesTest","reason":"table CATALOG.SALES.DEPT_NESTED outside the modelled catalogs","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForFilterNotIn","source":"RelOptRulesTest","reason":"join type left_mark","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForMeasure","source":"RelOptRulesTest","reason":"DECIMAL division (Calcite result scale not modelled)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForProjectExists","source":"RelOptRulesTest","reason":"join type left_mark","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForProjectIn","source":"RelOptRulesTest","reason":"join type left_mark","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForSubqueryWithCube","source":"RelOptRulesTest","reason":"grouping sets","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForSubqueryWithOffsetExpression","source":"RelOptRulesTest","reason":"non-literal LIMIT/OFFSET","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTopDownGeneralDecorrelateForSubqueryWithSort","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testTwoLevelDecorrelate","source":"RelOptRulesTest","reason":"unsupported aggregate SINGLE_VALUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUniqueWithNoRowSubQuery","source":"RelOptRulesTest","reason":"unsupported subquery operator UNIQUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUnnestDecorrelate","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUnnestDecorrelate2","source":"RelOptRulesTest","reason":"unsupported operator ARRAY","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUnnestDecorrelate3","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUnnestDecorrelate4","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUnnestDecorrelate5","source":"RelOptRulesTest","reason":"unsupported relational operator Uncollect","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testUnnestInternalMissingParameter","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testVarianceStddevWithFilter","source":"RelOptRulesTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testWindowFunctionOnAggregations","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testWindowInParenthesis","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testWindowMissingConstantInDigest","source":"RelOptRulesTest","reason":"window function","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testWithinDistinct","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctCountDistinct","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctFilteredAggs","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctFilteredAggsSameFilter","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctFilteredAggsUniformDistinctKeys","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctFilteredAggsUniformDistinctKeysNoThrow","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctNoThrow","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctPreservesNonDistinctAggFilters","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testWithinDistinctPreservesNonDistinctCollation","source":"RelOptRulesTest","reason":"CHAR-padded string literal (Calcite CHAR semantics)","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testWithinDistinctUniformDistinctKeys","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"testWithinDistinctUniformDistinctKeysNoThrow","source":"RelOptRulesTest","reason":"aggregate WITHIN DISTINCT","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testAggregateFunctionOfGroupByKeys","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate ANY_VALUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testMultipleStatisticalFunctions","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate STDDEV_SAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionNullableExpression","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate STDDEV_SAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionNullableGroupKey","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionStddevPopOfGroupByKey","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionStddevSampOfGroupByKey","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate STDDEV_SAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionVarPopOfGroupByKey","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate VAR_POP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionVarSampOfGroupByKey","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate VAR_SAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithBinaryExpression","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate VAR_POP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithConstantExpression","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate STDDEV_POP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithMultipleGroupByKeys","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","reason":"unsupported aggregate VAR_SAMP","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateRemoveDuplicateKeysRuleTest.testRemoveMultipleRedundantGroupKeys","source":"AggregateRemoveDuplicateKeysRuleTest","reason":"unsupported aggregate ANY_VALUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateRemoveDuplicateKeysRuleTest.testRemoveOneRedundantGroupKey","source":"AggregateRemoveDuplicateKeysRuleTest","reason":"unsupported aggregate ANY_VALUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"AggregateRemoveDuplicateKeysRuleTest.testRemoveRedundantComputedGroupKey","source":"AggregateRemoveDuplicateKeysRuleTest","reason":"unsupported aggregate ANY_VALUE","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testNoSharedExpressionsDifferentFilters","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testNoSharedExpressionsDifferentGroupByKeys","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testNoSharedExpressionsDifferentJoinTypes","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testNoSharedExpressionsDifferentJoins","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testNoSharedExpressionsDifferentTables","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedAggregationBase","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedComplexJoin","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedFilter","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedFilterJoinAggregate","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedFilterWithDifferentProjections","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedJoin","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedJoinThenAggregation","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"CombineRelOptRulesTest.testSharedMultipleFilters","source":"CombineRelOptRulesTest","reason":"unsupported relational operator Combine","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"OuterJoinToAntiJoinRuleTest.testCorrelatedLeftJoin","source":"OuterJoinToAntiJoinRuleTest","reason":"join with correlation variables","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true}
+{"name":"testAggregateCaseToFilterNoMatch","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateCaseToFilterWithCustomNullAwareUdaf","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateConstantKeyRule2","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateExtractProjectRuleWithFilter","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateMerge3","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateMerge4","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateMerge5","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateMerge6","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateMerge7","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateRemove4","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateRemove5","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateRemove6","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateUnionTransposeWithAllInputsUnique","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateValuesRuleWithAggregation","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateValuesRuleWithDifferentRowTypes","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAggregateWithDynamicParam","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAsofOpt","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testAsofOptJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testBushyJoinRule","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCallOverCorrelationVariableIsNotFlattened","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCanNotPushAntiJoinConditionsToLeft","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCanNotPushAntiJoinConditionsToRight","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCanNotPushSemiJoinToLeftJoinRightInput","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCanNotPushSemiJoinToRightJoinLeftInput","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCastRemove","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testConstantWindow","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testCorrelationScalarAggAndFilter","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testDecorrelateAggWithMultiParamsAggCall","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testDecorrelateAggWithMultiParamsAggCall2","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testDecorrelateTwoScalar","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testDecorrelationWithSort","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testDoNotPushFilterThroughAggregateWithoutGroupKeys","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testEmptyAggregateEmptyKey","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testExpressionPreceding","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testExpressionSimplification3","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterCalcMergeRule","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterProjectTransposePreventedByCorrelation","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterProjectTransposeRule2","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterSortTransposeFetch","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterSortTransposeOffset","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterToCalc","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFilterWithNonDeterministicConditionDoesNotDropTuples","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testFullJoinToLeftAndRightJoinNonDeterministic","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testIncorrectInType","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testInnerCorrelateWithNoneEmpty","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testIntersectToExistsRuleWithAll","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testIssue6332","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinAssociateRuleWithBottomAlwaysTrueConditionDisallowed","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinAssociateRuleWithTopAlwaysTrueConditionDisallowed","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinCommuteRuleWithAlwaysTrueConditionDisallowed","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinConditionPushdown3","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinConditionPushdown5","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule10","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule11","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule13","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule14","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule6","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule7","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule8","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinDeriveIsNotNullFilterRule9","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTranspose2","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTranspose3","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTranspose4","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTranspose5","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTranspose6","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTransposeDoesNotMatchAntiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTransposeDoesNotMatchLeftMarkJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinProjectTransposeDoesNotMatchSemiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinPushTransitivePredicatesRule","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinPushTransitivePredicatesRule2","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":true,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testJoinToSemiJoinRuleOnAntiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testLateralTransposeWithDecorrelateFalse","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testLateralTransposeWithDecorrelateTrue","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testLimitMerge6","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testMeasureWithoutGroupBy","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testMergeMinusRightDeep","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testMergeSetOpMixed","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testMergeUnionMixed","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testMinusToFilterRuleFourWayWithForSources","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testNoReduceAverage","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testNoReduceDynamic","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testNoReduceSum","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testNondeterministicFetchPreventsDecorrelation","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testNotPushExpression","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectAggregateMergeNoOp","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectAggregateMergeNoOpForNonSum","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectAggregateMergeNonNumericLiteral","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectCalcMergeRule","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectCorrelateTransposeDynamic","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectJoinRemove2","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectJoinRemove3","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectJoinRemove5","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectJoinRemove6","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectJoinRemove8","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectJoinRemove9","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectMergeRuleWithCorrelation","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectMergeShouldIgnoreOver","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectToCalc","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testProjectToSemiJoinRuleOnAntiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPullConstantThroughUnion2","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushAggregateThroughJoin3","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushAggregateThroughOuterJoin10","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushAggregateThroughOuterJoin11","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushDistinctAggregateIntoJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushFilterPastAggThree","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushFilterPastAggWithGroupingSets1","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushFilterPastAggWithGroupingSetsNonLeadingKeysEquals","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushFilterPastAggWithGroupingSetsNonLeadingKeysIsNull","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushFilterWithRank","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushFilterWithRankExpr","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushJoinConditionWithNonDeterministic","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushJoinThroughUnionOnRightDoesNotMatchAntiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushJoinThroughUnionOnRightDoesNotMatchSemiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushProjectPastFilter3","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testPushSemiJoinConditionsToLeft","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceCaseWhenWithCast","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceCastTimeUnchanged","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceConstants2","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceConstantsDynamicFunction","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceConstantsIsNotNull","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":true,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceConstantsNonDeterministicFunction","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceExpressionsNot","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceInValuesNonOrdered","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceLambda","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceNot","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceNullableCase","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testReduceNullableCase2","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSemiJoinRuleDoNotMatchAggregate","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSemiJoinRuleFull","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSemiJoinRuleRight","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSimplifyItemIsNotNull","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSimplifyItemIsNull","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortJoinTranspose3","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortJoinTranspose5","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortJoinTranspose8","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortJoinTranspose9","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortNotRemoveWhenIsOrderAndLimit","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortNotRemoveWhenLimitFetchIsZeroHasOrder","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortNotRemoveWhenLimitFetchIsZeroWithoutOrder","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortProjectTranspose3","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortRemoveConstantKeyDoesNotRemoveOrderByRand","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortRemoveConstantKeyDoesNotRemoveOrderByRandInteger","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortRemoveConstantKeyDoesNotRemoveOrderByRandom","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortRemoveWhenHasOffset","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortUnionTransposeWithNonDeterministicFetch","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSortUnionTransposeWithNonDeterministicOffset","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSwapAntiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testSwapSemiJoin","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testTransitiveInferenceConstantEquiPredicate","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testTransitiveInferenceFullOuterJoin","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testTransitiveInferenceNoPullUpExprs","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testTransitiveInferencePreventProjectPullUp","source":"RelOptRulesTest","in_sqlsolver":true,"in_qed":false,"in_rbot":false,"new":false,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testTransitiveInferenceUnion3wayOr","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testUncorrelatedCallBelowNonComparisonOpIsNotFlattened","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testUnionEliminatorRuleIntersect","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (plans differ only in names or annotations; identical SQL)"}
+{"name":"testUnionEliminatorRuleMinus","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (plans differ only in names or annotations; identical SQL)"}
+{"name":"testUnionEliminatorRuleUnion","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (plans differ only in names or annotations; identical SQL)"}
+{"name":"testUnionToFilterRuleWithNonDeterministicProject","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"testUnionToFilterRuleWithSubqueryProject","source":"RelOptRulesTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateFilterToFilteredAggregateRuleTest.testAggregateNoSupportingFilter","source":"AggregateFilterToFilteredAggregateRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateFilterToFilteredAggregateRuleTest.testSingleColumnAggregateWithGroupBy","source":"AggregateFilterToFilteredAggregateRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateFilterToFilteredAggregateRuleTest.testSingleColumnAggregateWithGroupingSets","source":"AggregateFilterToFilteredAggregateRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testAggregateFunctionOfGroupByKeysNoChange","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testAggregateFunctionWithMixedColumnsNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testAggregateFunctionWithMixedGroupByColumnsNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testAggregateFunctionWithNonGroupByColumnNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithComplexMixNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithMixedColumnsNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithNonGroupByColumnNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateReduceFunctionsOnGroupKeysRuleTest.testStatisticalFunctionWithPartialExpressionNoOptimization","source":"AggregateReduceFunctionsOnGroupKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"AggregateRemoveDuplicateKeysRuleTest.testKeepsNonRedundantGroupKeys","source":"AggregateRemoveDuplicateKeysRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"JoinAggregateTransposeRuleTest.testNoPullAggregateWithEmptyGroupSetOnEmptyInput","source":"JoinAggregateTransposeRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"JoinAggregateTransposeRuleTest.testNoPullAggregateWithEmptyGroupSetOnPotentiallyEmptyInput","source":"JoinAggregateTransposeRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"JoinAggregateTransposeRuleTest.testNoPullGroupByAboveNonEquiJoin","source":"JoinAggregateTransposeRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"JoinAggregateTransposeRuleTest.testNoPullGroupByWhenRightJoinKeysNotUnique","source":"JoinAggregateTransposeRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testCorrelatedRightJoin","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testIsNullInDisjunction","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testIsNullOnPreservedInput","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testNonDeterministicFilter","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testNonDeterministicJoinCondition","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testNullSafeJoinCondition","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
+{"name":"OuterJoinToAntiJoinRuleTest.testNullableNonJoinColumn","source":"OuterJoinToAntiJoinRuleTest","in_sqlsolver":false,"in_qed":false,"in_rbot":false,"new":true,"reason":"unchanged (no planAfter, or planAfter == planBefore)"}
