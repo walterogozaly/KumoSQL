@@ -35,7 +35,7 @@ Optional extras add capabilities; install them the same way, for example `python
 | `smt` | The Z3 prover for filter, join and `DISTINCT` rewrites the structural prover cannot canonicalize | Those rewrites stay `unproven` |
 | `execution` | Local DuckDB for comparing results on synthetic data | The synthetic check reports `not_run` |
 | `bigquery` | Google auth for dry runs and the BigQuery catalog page | Those features report that credentials are unavailable |
-| `dev` | pytest, DuckDB and Z3, for working on KumoSQL itself | |
+| `dev` | pytest (with xdist), DuckDB and Z3, for working on KumoSQL itself | |
 
 ## 2. Rewrite one query and see the evidence
 
@@ -133,6 +133,7 @@ This starts a local server at `http://127.0.0.1:8765/` and opens your browser. U
 - **Query graph.** With `--project demo` this shows your own models, their readers, the impact of a change (**Assess a change**), column lineage, and tables that already provide the same thing (**Already elsewhere**). The graph opens in **Explorer** view (zoom and pan with the mouse or the + / − buttons, **Fit** for the whole graph, a minimap in the corner, **Focus selection** to show just one asset's upstream and downstream, and **Collapse by dataset** to fold large datasets into one box; click a folded box to open it). The **Dataform tags** filter keeps only assets carrying the ticked `tags` from their config blocks. The wheel zooms quickly, and **Full screen** (top-right of the graph, Esc to exit) fills the screen with the graph. Switch to **Simple** for the original fixed layout. On a large repository the graph shows first; Cost and Change reports say "Analyzing your models" until the background search for repeated work is done. The console prints a timing line for each stage (`analyse: 3.87s`); send those lines along if a load feels slow. A strip warns whenever something could not be analyzed. To use your own repository, open **Settings → Repositories** and connect a Dataform git remote (an https URL such as `https://github.com/owner/repo.git` works for private repositories through your own git credentials, and so does an SSH remote where SSH is allowed). It is saved and reloaded each time KumoSQL starts. `python -m kumosql.ui --git URL` does a one-off load instead.
 - **Settings** (bottom of the sidebar, or Ctrl/⌘ + `,`). Appearance, and SQL formatting: keyword case, indentation, line length and the full list of sqlfluff rules, with named configurations you can switch between.
 - **Scopes** (*Settings → Scopes*, also linked under the Pipeline strip). Saved rules that limit which models, job rows or tables an analysis covers. Pick the active scope with the *Scope* picker on the Query graph, Cost and Change reports pages.
+- **Catalogs** (*Settings → Catalogs*). Saved rules for what your team owns, including BigQuery tables and routines written outside Dataform. The *Dataform repository* catalog is active by default; activate your own to change what the graph, impact and Cost pages treat as yours.
 - **Cost** lists repeated work in your models; with job history (**Load job history**, or `python -m kumosql.ui --project demo --jobs jobs.json`) it adds measured cost per asset. **Change reports** compare the loaded git project against another branch (**Compare**). Both show what to load instead of example numbers when they have nothing yet.
 
 Preferences and scopes are saved on your computer; the *Saved state* paragraph in the [UI guide](ui.md) says where and how to change it.
@@ -168,10 +169,11 @@ Only these features contact BigQuery, and only when you ask.
 
 ```shell
 python -m pip install -e ".[dev]"
-python -m pytest
+python tools/run_tests.py        # parallel; --evals for the benchmark floors only
+python -m pytest                 # serial
 ```
 
-Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
+`tools/run_tests.py` uses pytest-xdist on every CPU (about 9 minutes instead of 35 on 4 CPUs); see the README's testing section. Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
 
 ## Where to go next
 

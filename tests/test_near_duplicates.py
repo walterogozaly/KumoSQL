@@ -216,3 +216,21 @@ def test_logic_over_different_tables_is_not_a_near_duplicate():
     other = BASE.replace("`proj.raw.customers`", "`proj.raw.vendors`")
 
     assert find_near_duplicates({"a": parse(BASE), "b": parse(other + " AND o.amount < 9")}) == []
+
+
+def test_long_cte_chains_fingerprint_without_rendering_every_upstream_cte_again():
+    import time
+
+    import sqlglot
+
+    from kumosql.pipeline_duplicates import _fingerprint, _fingerprint_hash
+
+    ctes = ["c0 AS (SELECT id, amount, created_at FROM raw.orders WHERE amount > 0)"]
+    for i in range(1, 40):
+        ctes.append(f"c{i} AS (SELECT id, amount + {i} AS amount, created_at FROM c{i - 1} WHERE id IS NOT NULL)")
+    query = sqlglot.parse_one("WITH " + ", ".join(ctes) + " SELECT id, SUM(amount) AS total FROM c39 GROUP BY id", dialect="bigquery")
+    started = time.monotonic()
+    hashes = [_fingerprint_hash(select) for select in query.find_all(sqlglot.exp.Select)]
+    assert time.monotonic() - started < 10  # each CTE chain used to be rendered once per SELECT that reads it
+    assert _fingerprint(next(iter(query.find_all(sqlglot.exp.Select))))[0] == _fingerprint_hash(next(iter(query.find_all(sqlglot.exp.Select))))
+    assert len(hashes) == 41

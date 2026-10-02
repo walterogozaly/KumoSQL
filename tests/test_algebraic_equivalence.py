@@ -1629,3 +1629,29 @@ def test_printed_normal_form_keeps_or_inside_and_parenthesized():
     assert "(b = 2 OR a < 2)" in _parenthesize_boolean(tree).sql()
     negated = exp.Not(this=parse_one("a = 1 OR b = 2"))
     assert parse_one(_parenthesize_boolean(negated).sql()) == parse_one("NOT (a = 1 OR b = 2)")
+
+
+UNMODELED = [
+    ("bigquery", "SELECT a FROM t FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP()", "SELECT a FROM t"),
+    ("mysql", "SELECT a FROM t ORDER BY a FETCH FIRST 2 ROWS WITH TIES", "SELECT a FROM t ORDER BY a FETCH FIRST 2 ROWS ONLY"),
+    ("mysql", "SELECT a FROM t TABLESAMPLE (10 PERCENT)", "SELECT a FROM t"),
+]
+
+
+@pytest.mark.parametrize("dialect,left,right", UNMODELED)
+def test_constructs_the_provers_do_not_model_are_declined(dialect, left, right):
+    from kumosql.smt_equivalence import prove_equivalent_smt
+
+    for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+        assert not prove(left, right, schema={"t": ["a", "b"]}, dialect=dialect).proven
+    assert prove_equivalent_algebraic(right, right, schema={"t": ["a", "b"]}, dialect=dialect).proven
+
+
+def test_check_modeled_names_the_flag():
+    import sqlglot
+    from kumosql.ast_utils import UnmodeledConstruct, check_modeled
+
+    with pytest.raises(UnmodeledConstruct):
+        check_modeled(sqlglot.parse_one("SELECT a FROM t FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP()", read="bigquery"))
+    plain = sqlglot.parse_one("SELECT a FROM t WHERE a IS NOT NULL", read="mysql")
+    assert check_modeled(plain) is plain

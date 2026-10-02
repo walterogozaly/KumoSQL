@@ -27,14 +27,12 @@ def _assets(report):
     return {d["asset"]: d for d in report["diagnostics"]}
 
 
-def test_undecodable_file_is_a_diagnostic_and_rest_renders(tmp_path):
+def test_non_utf8_file_is_read_as_latin1_like_the_git_reader_and_rest_renders(tmp_path):
     defs = _project(tmp_path)
     (defs / "bad.sqlx").write_bytes(b"SELECT '" + SECRET.encode() + b"' \xff\xfe\xfd")
     report = load_sqlx_project(tmp_path).report()
-    entry = _assets(report)["definitions/bad.sqlx"]
-    assert entry["code"] == "read_error" and entry["analysis_incomplete"]
+    assert not [d for d in report["diagnostics"] if d["code"] == "read_error"]
     assert "p.d.good" in report["order"] and "p.d.reader" in report["order"]
-    assert report["diagnostic_summary"]["assets_not_analyzed"] == 1
     assert SECRET not in json.dumps(report["diagnostics"])
 
 

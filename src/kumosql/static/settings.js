@@ -31,6 +31,7 @@
     { id: "diagnostics", label: "Diagnostics", icon: '<path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/>' },
     { id: "analysis", label: "Analysis", icon: '<path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/>' },
     { id: "solver", label: "Solver", icon: '<path d="M4 20h16M6 20V9l6-5 6 5v11M10 20v-6h4v6"/>' },
+    { id: "catalogs", label: "Catalogs", icon: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/>' },
     { id: "tagrules", label: "Tag rules", icon: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/>' },
   ];
 
@@ -404,6 +405,14 @@
     window.KumoDataSources.render(body, { onStatus: setStatus });
   }
 
+  function renderCatalogs(body) {
+    if (!window.KumoCatalogs) {
+      body.append(h("p", { class: "sp-lede", text: "Catalogs could not be loaded on this page." }));
+      return;
+    }
+    window.KumoCatalogs.renderManager(body, { onStatus: setStatus });
+  }
+
   function renderTagRules(body) {
     if (!window.KumoTags) {
       body.append(h("p", { class: "sp-lede", text: "Tag rules could not be loaded on this page." }));
@@ -623,6 +632,17 @@
       h("div", { class: "sp-inline" }, total, h("span", { text: "seconds in total (0 for none)" })),
     );
     try { draw(await repoCall("GET", "/api/lineage-limits")); } catch (error) { setStatus(error.message, true); }
+
+    const fetchColumns = h("input", { type: "checkbox", id: "schema-fetch", "aria-label": "Look up columns of unknown tables" });
+    fetchColumns.addEventListener("change", async () => {
+      setStatus("Saving…");
+      try { fetchColumns.checked = (await repoCall("PUT", "/api/schema-fetch", { enabled: fetchColumns.checked })).enabled; setStatus("Saved"); } catch (error) { setStatus(error.message, true); }
+    });
+    body.append(
+      h("h3", { class: "sp-heading", text: "Unknown tables" }),
+      h("label", { class: "sp-inline", for: "schema-fetch" }, fetchColumns, h("span", { text: "Look up their columns in BigQuery" })),
+    );
+    try { fetchColumns.checked = (await repoCall("GET", "/api/schema-fetch")).enabled; } catch (error) { setStatus(error.message, true); }
   }
 
   async function renderSolver(body) {
@@ -749,7 +769,7 @@
     body.append(h("div", { class: "repo-form" }, copy), hint, preview);
   }
 
-  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, datasources: renderDataSources, analysis: renderAnalysis, solver: renderSolver, scopes: renderScopes, tagrules: renderTagRules };
+  const RENDERERS = { diagnostics: renderDiagnostics, appearance: renderAppearance, formatting: renderFormatting, storage: renderStorage, repositories: renderRepositories, bigquery: renderBigQuery, datasources: renderDataSources, analysis: renderAnalysis, solver: renderSolver, scopes: renderScopes, catalogs: renderCatalogs, tagrules: renderTagRules };
 
   function show(id) {
     current = RENDERERS[id] ? id : "appearance";
@@ -775,6 +795,7 @@
     scopes: "scopes scope rule rules filter condition submitter project dataset field limit active",
     analysis: "analysis lineage column tracing time limit seconds timeout slow model budget",
     solver: "solver prover proof prove equivalent equivalence z3 smt rewrite verification keys not null time limit",
+    catalogs: "catalog catalogs owned owns team ownership tables views functions udf procedures dataform workbooks rule rules",
     tagrules: "tag tags rules rule label retired batch tagging dataset schema table view function udf procedure objects",
     formatting: `sql formatting sqlfluff configuration profile ${FORMAT_FIELDS.map((field) => `${field.label} ${field.hint}`).join(" ")}`.toLowerCase(),
   };

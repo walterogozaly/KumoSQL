@@ -1,71 +1,71 @@
 {
  "schemas": {
-  "warehouse": {
+  "library": {
    "tables": {
-    "users": {
+    "authors": {
      "columns": {
-      "user_id": "INT64",
-      "plan": "STRING",
+      "author_id": "INT64",
+      "name": "STRING",
       "country": "STRING"
      },
      "not_null": [
-      "user_id",
-      "plan"
+      "author_id",
+      "name"
      ],
      "keys": [
       [
-       "user_id"
+       "author_id"
       ]
      ]
     },
-    "sessions": {
+    "books": {
      "columns": {
-      "session_id": "INT64",
-      "user_id": "INT64",
-      "started": "DATE",
-      "duration": "INT64"
+      "book_id": "INT64",
+      "author_id": "INT64",
+      "title": "STRING",
+      "pages": "INT64"
      },
      "not_null": [
-      "session_id",
-      "user_id",
-      "started"
+      "book_id",
+      "author_id",
+      "title"
      ],
      "keys": [
       [
-       "session_id"
+       "book_id"
       ]
      ]
     },
-    "payments": {
+    "loans": {
      "columns": {
-      "payment_id": "INT64",
-      "session_id": "INT64",
-      "amount": "INT64",
-      "currency": "STRING"
+      "loan_id": "INT64",
+      "book_id": "INT64",
+      "member_id": "INT64"
      },
      "not_null": [
-      "payment_id",
-      "amount",
-      "currency"
+      "loan_id",
+      "book_id",
+      "member_id"
      ],
      "keys": [
       [
-       "payment_id"
+       "loan_id"
       ]
      ]
     },
-    "plan_prices": {
+    "members": {
      "columns": {
-      "plan": "STRING",
-      "price": "INT64"
+      "member_id": "INT64",
+      "tier": "STRING",
+      "joined": "INT64"
      },
      "not_null": [
-      "plan",
-      "price"
+      "member_id",
+      "joined"
      ],
      "keys": [
       [
-       "plan"
+       "member_id"
       ]
      ]
     }
@@ -74,575 +74,249 @@
  },
  "cases": [
   {
-   "id": "h-avg-group",
+   "id": "l-group",
    "group": "aggregates",
-   "sql": "SELECT plan, COUNT(*) AS c, AVG(user_id) AS a FROM users GROUP BY plan",
+   "sql": "SELECT author_id, COUNT(*) AS n, MAX(pages) AS mp FROM books GROUP BY author_id",
    "claims": [
     [
      "unique",
      [
-      "plan"
+      "author_id"
      ],
      true
     ],
-    [
-     "non_null",
-     "plan",
-     true
-    ],
-    [
-     "non_null",
-     "a",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-avg-global",
-   "group": "aggregates",
-   "sql": "SELECT AVG(duration) AS d FROM sessions",
-   "claims": [
-    [
-     "non_null",
-     "d",
-     false
-    ],
-    [
-     "rows",
-     "exactly_one",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-count-distinct",
-   "group": "aggregates",
-   "sql": "SELECT COUNT(DISTINCT user_id) AS n FROM sessions",
-   "claims": [
     [
      "non_null",
      "n",
      true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-join-key-right",
-   "group": "joins",
-   "sql": "SELECT p.payment_id, s.started FROM payments p JOIN sessions s ON p.session_id = s.session_id",
-   "claims": [
-    [
-     "unique",
-     [
-      "payment_id"
-     ],
-     true
     ],
     [
      "non_null",
-     "started",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-left-join",
-   "group": "joins",
-   "sql": "SELECT p.payment_id, s.user_id FROM payments p LEFT JOIN sessions s ON p.session_id = s.session_id",
-   "claims": [
-    [
-     "unique",
-     [
-      "payment_id"
-     ],
-     true
-    ],
-    [
-     "non_null",
-     "user_id",
-     false
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-join-child-key",
-   "group": "joins",
-   "sql": "SELECT s.session_id, p.payment_id FROM sessions s JOIN payments p ON p.session_id = s.session_id",
-   "claims": [
-    [
-     "unique",
-     [
-      "payment_id"
-     ],
-     true
-    ],
-    [
-     "unique",
-     [
-      "session_id"
-     ],
-     false
-    ],
-    [
-     "unique",
-     [
-      "session_id",
-      "payment_id"
-     ],
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-fanout",
-   "group": "joins",
-   "sql": "SELECT u.user_id FROM users u JOIN sessions s ON s.user_id = u.user_id",
-   "claims": [
-    [
-     "unique",
-     [
-      "user_id"
-     ],
+     "mp",
      false
     ],
     [
      "non_null",
-     "user_id",
+     "author_id",
      true
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-fanout-distinct",
+   "id": "l-join",
    "group": "joins",
-   "sql": "SELECT DISTINCT u.user_id FROM users u JOIN sessions s ON s.user_id = u.user_id",
+   "sql": "SELECT b.book_id, a.name FROM books b JOIN authors a ON a.author_id = b.author_id",
    "claims": [
     [
      "unique",
      [
-      "user_id"
-     ],
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-lookup-join",
-   "group": "joins",
-   "sql": "SELECT u.user_id, u.plan, pp.price FROM users u JOIN plan_prices pp ON pp.plan = u.plan",
-   "claims": [
-    [
-     "unique",
-     [
-      "user_id"
+      "book_id"
      ],
      true
     ],
     [
      "non_null",
-     "price",
+     "name",
      true
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-lookup-left-join",
+   "id": "l-left-join",
    "group": "joins",
-   "sql": "SELECT u.user_id, pp.price FROM users u LEFT JOIN plan_prices pp ON pp.plan = u.plan",
+   "sql": "SELECT b.book_id, a.name FROM books b LEFT JOIN authors a ON a.author_id = b.author_id",
    "claims": [
     [
      "unique",
      [
-      "user_id"
+      "book_id"
      ],
      true
     ],
     [
      "non_null",
-     "price",
+     "name",
      false
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-null-filter-group",
-   "group": "aggregates",
-   "sql": "SELECT country, COUNT(*) AS n FROM users WHERE country IS NOT NULL GROUP BY country",
+   "id": "l-fanout",
+   "group": "joins",
+   "sql": "SELECT a.author_id, b.title FROM authors a JOIN books b ON b.author_id = a.author_id",
    "claims": [
     [
-     "non_null",
-     "country",
-     true
+     "unique",
+     [
+      "author_id"
+     ],
+     false
     ],
     [
      "unique",
      [
-      "country"
+      "title"
      ],
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-key-lookup",
-   "group": "cardinality",
-   "sql": "SELECT * FROM payments WHERE payment_id = 1",
-   "claims": [
-    [
-     "rows",
-     "at_most_one",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-nonkey-lookup",
-   "group": "cardinality",
-   "sql": "SELECT amount FROM payments WHERE currency = 'EUR'",
-   "claims": [
-    [
-     "rows",
-     "at_most_one",
      false
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-is-not-null",
+   "id": "l-filter",
    "group": "expressions",
-   "sql": "SELECT session_id FROM payments WHERE session_id IS NOT NULL",
+   "sql": "SELECT member_id, tier FROM members WHERE tier IS NOT NULL",
    "claims": [
     [
      "non_null",
-     "session_id",
+     "tier",
+     true
+    ],
+    [
+     "unique",
+     [
+      "member_id"
+     ],
      true
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-group-sum",
-   "group": "aggregates",
-   "sql": "SELECT session_id, SUM(amount) AS t FROM payments GROUP BY session_id",
+   "id": "l-case-guard",
+   "group": "expressions",
+   "sql": "SELECT CASE WHEN tier IS NULL THEN 'none' ELSE tier END AS t FROM members",
    "claims": [
     [
      "non_null",
      "t",
      true
-    ],
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-if-guard",
+   "group": "expressions",
+   "sql": "SELECT IF(pages IS NULL, 0, pages) AS p FROM books",
+   "claims": [
     [
      "non_null",
-     "session_id",
+     "p",
+     true
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-case-no-else",
+   "group": "expressions",
+   "sql": "SELECT CASE WHEN pages > 100 THEN pages END AS p FROM books",
+   "claims": [
+    [
+     "non_null",
+     "p",
      false
-    ],
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-row-number-partition",
+   "group": "expressions",
+   "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY author_id ORDER BY book_id) AS rn FROM books",
+   "claims": [
     [
      "unique",
      [
-      "session_id"
+      "rn"
      ],
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-filtered-sum",
-   "group": "aggregates",
-   "sql": "SELECT SUM(amount) AS t FROM payments WHERE currency = 'EUR'",
-   "claims": [
-    [
-     "non_null",
-     "t",
      false
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-coalesce",
-   "group": "expressions",
-   "sql": "SELECT COALESCE(country, 'unknown') AS c FROM users",
-   "claims": [
-    [
-     "non_null",
-     "c",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-arithmetic",
-   "group": "expressions",
-   "sql": "SELECT user_id * 2 AS d, duration * 2 AS e FROM sessions",
-   "claims": [
-    [
-     "non_null",
-     "d",
-     true
     ],
-    [
-     "non_null",
-     "e",
-     false
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-case-guarded",
-   "group": "expressions",
-   "sql": "SELECT CASE WHEN duration IS NULL THEN 0 ELSE duration END AS d FROM sessions",
-   "claims": [
-    [
-     "non_null",
-     "d",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-row-number",
-   "group": "expressions",
-   "sql": "SELECT ROW_NUMBER() OVER (ORDER BY started) AS rn, session_id FROM sessions",
-   "claims": [
     [
      "non_null",
      "rn",
      true
-    ],
-    [
-     "unique",
-     [
-      "session_id"
-     ],
-     true
-    ],
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-row-number",
+   "group": "expressions",
+   "sql": "SELECT book_id, ROW_NUMBER() OVER (ORDER BY book_id) AS rn FROM books",
+   "claims": [
     [
      "unique",
      [
       "rn"
      ],
      true
+    ],
+    [
+     "non_null",
+     "rn",
+     true
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-cte-left-join",
-   "group": "joins",
-   "sql": "WITH latest AS (SELECT user_id, MAX(started) AS last FROM sessions GROUP BY user_id) SELECT u.user_id, l.last FROM users u LEFT JOIN latest l ON l.user_id = u.user_id",
+   "id": "l-count-filtered",
+   "group": "aggregates",
+   "sql": "SELECT COUNT(*) AS c FROM loans WHERE member_id = 3",
    "claims": [
     [
-     "unique",
-     [
-      "user_id"
-     ],
+     "rows",
+     "exactly_one",
      true
     ],
     [
      "non_null",
-     "last",
-     false
+     "c",
+     true
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-cte-inner-join",
-   "group": "joins",
-   "sql": "WITH latest AS (SELECT user_id, MAX(started) AS last FROM sessions GROUP BY user_id) SELECT u.user_id, l.last FROM users u JOIN latest l ON l.user_id = u.user_id",
+   "id": "l-min-global",
+   "group": "aggregates",
+   "sql": "SELECT MIN(joined) AS j FROM members",
    "claims": [
-    [
-     "unique",
-     [
-      "user_id"
-     ],
-     true
-    ],
     [
      "non_null",
-     "last",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-scalar-key",
-   "group": "cardinality",
-   "sql": "SELECT p.amount FROM payments p WHERE p.payment_id = s.session_id",
-   "claims": [
-    [
-     "rows",
-     "at_most_one",
-     true
-    ]
-   ],
-   "outer": "sessions s",
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-scalar-nonkey",
-   "group": "cardinality",
-   "sql": "SELECT p.amount FROM payments p WHERE p.session_id = s.session_id",
-   "claims": [
-    [
-     "rows",
-     "at_most_one",
+     "j",
      false
-    ]
-   ],
-   "outer": "sessions s",
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-scalar-aggregate",
-   "group": "cardinality",
-   "sql": "SELECT MAX(p.amount) FROM payments p WHERE p.session_id = s.session_id",
-   "claims": [
+    ],
     [
      "rows",
      "exactly_one",
      true
     ]
    ],
-   "outer": "sessions s",
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-union-all",
-   "group": "sets",
-   "sql": "SELECT user_id FROM users UNION ALL SELECT user_id FROM sessions",
-   "claims": [
-    [
-     "non_null",
-     "user_id",
-     true
-    ],
-    [
-     "unique",
-     [
-      "user_id"
-     ],
-     false
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-intersect",
-   "group": "sets",
-   "sql": "SELECT user_id FROM sessions INTERSECT DISTINCT SELECT user_id FROM users",
-   "claims": [
-    [
-     "unique",
-     [
-      "user_id"
-     ],
-     true
-    ],
-    [
-     "non_null",
-     "user_id",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-filtered-lookup",
-   "group": "expressions",
-   "sql": "SELECT plan, price FROM plan_prices WHERE price > 0",
-   "claims": [
-    [
-     "non_null",
-     "price",
-     true
-    ],
-    [
-     "unique",
-     [
-      "plan"
-     ],
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-group-join",
-   "group": "aggregates",
-   "sql": "SELECT u.country, COUNT(*) AS n FROM users u JOIN sessions s ON s.user_id = u.user_id GROUP BY u.country",
-   "claims": [
-    [
-     "unique",
-     [
-      "country"
-     ],
-     true
-    ],
-    [
-     "non_null",
-     "country",
-     false
-    ],
-    [
-     "non_null",
-     "n",
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-self-cross",
-   "group": "joins",
-   "sql": "SELECT a.user_id FROM users a CROSS JOIN users b",
-   "claims": [
-    [
-     "unique",
-     [
-      "user_id"
-     ],
-     false
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-cross-scalar",
-   "group": "joins",
-   "sql": "SELECT t.n, u.user_id FROM (SELECT COUNT(*) AS n FROM sessions) AS t CROSS JOIN users u",
-   "claims": [
-    [
-     "unique",
-     [
-      "user_id"
-     ],
-     true
-    ]
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-key-const-join",
+   "id": "l-nonkey-lookup",
    "group": "cardinality",
-   "sql": "SELECT s.session_id, p.amount FROM sessions s JOIN payments p ON p.session_id = s.session_id WHERE p.payment_id = 7",
+   "sql": "SELECT loan_id FROM loans WHERE book_id = 1",
+   "claims": [
+    [
+     "rows",
+     "at_most_one",
+     false
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-key-lookup",
+   "group": "cardinality",
+   "sql": "SELECT * FROM members WHERE member_id = 9",
    "claims": [
     [
      "rows",
@@ -650,7 +324,116 @@
      true
     ]
    ],
-   "schema": "warehouse"
+   "schema": "library"
+  },
+  {
+   "id": "l-join-filter",
+   "group": "joins",
+   "sql": "SELECT l.loan_id, m.tier FROM loans l JOIN members m ON m.member_id = l.member_id WHERE m.tier = 'gold'",
+   "claims": [
+    [
+     "non_null",
+     "tier",
+     true
+    ],
+    [
+     "unique",
+     [
+      "loan_id"
+     ],
+     true
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-cte-left",
+   "group": "joins",
+   "sql": "WITH per_book AS (SELECT book_id, COUNT(*) AS n FROM loans GROUP BY book_id) SELECT b.book_id, p.n FROM books b LEFT JOIN per_book p ON p.book_id = b.book_id",
+   "claims": [
+    [
+     "unique",
+     [
+      "book_id"
+     ],
+     true
+    ],
+    [
+     "non_null",
+     "n",
+     false
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-fanout-2",
+   "group": "joins",
+   "sql": "SELECT b.author_id FROM books b JOIN loans l ON l.book_id = b.book_id",
+   "claims": [
+    [
+     "unique",
+     [
+      "author_id"
+     ],
+     false
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-scalar",
+   "group": "cardinality",
+   "sql": "SELECT a.name FROM authors a WHERE a.author_id = b.author_id",
+   "claims": [
+    [
+     "rows",
+     "at_most_one",
+     true
+    ]
+   ],
+   "outer": "books b",
+   "schema": "library"
+  },
+  {
+   "id": "l-union-all",
+   "group": "sets",
+   "sql": "SELECT member_id FROM members UNION ALL SELECT member_id FROM loans",
+   "claims": [
+    [
+     "non_null",
+     "member_id",
+     true
+    ],
+    [
+     "unique",
+     [
+      "member_id"
+     ],
+     false
+    ]
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-distinct",
+   "group": "sets",
+   "sql": "SELECT DISTINCT tier FROM members",
+   "claims": [
+    [
+     "unique",
+     [
+      "tier"
+     ],
+     true
+    ],
+    [
+     "non_null",
+     "tier",
+     false
+    ]
+   ],
+   "schema": "library"
   }
  ]
 }

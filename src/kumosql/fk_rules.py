@@ -30,6 +30,25 @@ def _same_table(spelled: str, declared: str) -> bool:
 
 
 def drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expression | None:
+    result = _drop_fk_join(select, keys, not_null, foreign_keys)
+    if result is not None or not foreign_keys:
+        return result
+    # INNER JOIN is symmetric. The parent may be the FROM source instead.
+    source = select.args.get("from_") or select.args.get("from")
+    joins = select.args.get("joins") or []
+    if source is None or len(joins) != 1 or not isinstance(source.this, exp.Table):
+        return None
+    join = joins[0]
+    if (not isinstance(join.this, exp.Table) or join.side or join.kind not in ("", "INNER")
+            or join.args.get("using") or select.args.get("laterals")):
+        return None
+    swapped = select.copy()
+    swapped.args["joins"][0].set("this", source.this.copy())
+    (swapped.args.get("from_") or swapped.args.get("from")).set("this", join.this.copy())
+    return _drop_fk_join(swapped, keys, not_null, foreign_keys)
+
+
+def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expression | None:
     if not foreign_keys:
         return None
     joins = select.args.get("joins") or []
@@ -69,6 +88,13 @@ def drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expres
             continue
         child_name, parent_name = child.name.lower(), parent.name.lower()
         declared = {c.lower() for c in (not_null or {}).get(child_name, frozenset())}
+        where = select.args.get("where")
+        for part in (_conjuncts(where.this) if where is not None else []):
+            # a WHERE conjunct ``child.col IS NOT NULL`` makes the column non-NULL for every row that is kept
+            if isinstance(part, exp.Not) and isinstance(part.this, exp.Is) and isinstance(part.this.expression, exp.Null):
+                column = part.this.this
+                if isinstance(column, exp.Column) and column.table.lower() == child_alias:
+                    declared.add(column.name.lower())
         wanted = {child_col: parent_col for parent_col, child_col in pairs.items()}
         covered = any(
             _same_table(parent_name, fk_parent) and {c.lower(): p.lower() for c, p in zip(cols, parent_cols)} == wanted
@@ -78,6 +104,7 @@ def drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expres
             continue
         copy = select.copy()
         copy_join = copy.args["joins"][index]
+        output_names = [item.output_name for item in copy.expressions]
         replaced = False
         if any(not c.table for c in copy.find_all(exp.Column) if c.find_ancestor(exp.Join) is not copy_join):
             continue  # an unqualified column may be the parent's
@@ -90,6 +117,8 @@ def drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expres
             column.replace(exp.column(pairs[column.name.lower()], table=child.alias_or_name))
         if replaced is None:
             continue
+        copy.set("expressions", [exp.alias_(item, name) if name and item.output_name != name else item
+                                 for item, name in zip(copy.expressions, output_names)])
         copy.set("joins", [j for i, j in enumerate(copy.args["joins"]) if i != index] or None)
         return copy
     return None

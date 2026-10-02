@@ -38,6 +38,7 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from fractions import Fraction
 import argparse
+import hashlib
 import itertools
 import json
 import re
@@ -45,7 +46,8 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import canonical_negation
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled
+from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -541,6 +543,10 @@ class _AggCtx:
         self.calls: list[_AggCall] = []
 
 
+# Every outer join doubles the cases a select is compiled into; past this many the compiler gives up, not memory.
+MAX_OUTER_JOIN_CASES = 256
+
+
 class _Compiler:
     def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
         self.dialect = dialect
@@ -576,7 +582,10 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [canonical_negation(s) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        try:
+            statements = [check_modeled(canonical_negation(s)) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        except UnmodeledConstruct as error:
+            raise Unsupported(str(error)) from error
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
@@ -799,6 +808,8 @@ class _Compiler:
                         _State(list(b_occs), b_conds + [_Pred(z3.Not(atom), atom)], env2, b_subs + [anti])
                     )
             states = new_states
+            if len(states) > MAX_OUTER_JOIN_CASES:
+                raise Unsupported(f"more than {MAX_OUTER_JOIN_CASES} outer-join cases in one select")
         if len(states) > 1 and outer is not None:
             raise Unsupported("outer join inside a subquery")
         for st in states:
@@ -941,6 +952,9 @@ class _Compiler:
         except Unsupported:
             del self.facts[saved:]
             return self._opaque(body, ctes, occs)
+        one_row = self._one_row_source(sub, body, ctes)
+        if one_row is not None:
+            return one_row
         if len(sub.branches) == 1 and isinstance(sub.branches[0], _Spj) and not sub.branches[0].distinct:
             branch = sub.branches[0]
             if len(set(branch.names)) != len(branch.names) or "" in branch.names:
@@ -957,6 +971,41 @@ class _Compiler:
             if is_set and names and len(set(names)) == len(names) and "" not in names:
                 return self._set_source(branch, names, conds)
         return self._opaque(body, ctes, occs)
+
+    def _one_row_source(self, sub: _Union, body, ctes) -> _Source | None:
+        """A derived global aggregate (no GROUP BY, no HAVING) always has exactly one row.
+
+        Joined into a query it changes no multiplicity, so it is read as one row
+        of values that may be anything an aggregate returns, the same values
+        wherever the same relation (by its CTE-expanded SQL) appears; COUNT is a
+        number of at least zero.
+        """
+
+        if len(sub.branches) != 1 or sub.distinct:
+            return None
+        block = sub.branches[0]
+        if not isinstance(block, _Agg) or not block.is_global or block.having is not None or block.subs:
+            return None
+        names = list(block.names)
+        if not names or "" in names or len(set(names)) != len(names):
+            return None
+        expanded = self._expand_ctes(body.copy(), ctes)
+        self._check_nondeterminism(expanded)
+        self.uses_uf = True  # the values are free: a model is not a database, so no counterexample
+        key = _canonical_aliases(expanded, self.schema).sql(dialect="bigquery", normalize_functions="upper")
+        tag = hashlib.sha1(key.encode()).hexdigest()[:16]
+        V = _value_sort()
+        counts = {id(call.var): call for call in block.aggs if call.func in ("COUNT", "COUNTIF")}
+        cols = {}
+        for index, (name, output) in enumerate(zip(names, block.outputs)):
+            call = next((c for c in counts.values() if c.var.val.eq(output.val) and c.var.null.eq(output.null)), None)
+            val = z3.Const(f"one{tag}.{index}", V)
+            if call is not None:
+                self.facts.append(z3.And(V.is_Num(val), V.num(val) >= 0))
+                cols[name] = _Val(z3.BoolVal(False), val)
+            else:
+                cols[name] = _Val(z3.Bool(f"one{tag}.{index}#null"), val)
+        return _Source(cols=cols, order=names)
 
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
@@ -1954,10 +2003,16 @@ class _Prover:
         agg_pairs = []
         for call_b in b.aggs:
             arg_b = _subst_val(call_b.arg, pairs) if call_b.arg is not None else None
+            first = None
             for call_a in a.aggs:
                 if self._same_aggregate(a, call_a, call_b.func, call_b.distinct, arg_b, facts):
-                    agg_pairs.extend([(call_b.var.null, call_a.var.null), (call_b.var.val, call_a.var.val)])
-                    break
+                    if first is None:
+                        first = call_a
+                        agg_pairs.extend([(call_b.var.null, call_a.var.null), (call_b.var.val, call_a.var.val)])
+                    else:
+                        # another call of ``a`` that agrees with the same call of ``b`` (COUNT(x) and COUNT(y) over NOT NULL columns)
+                        own_pairs.extend([(call_a.var.null, first.var.null), (call_a.var.val, first.var.val)])
+        own_pairs = [p for p in own_pairs if not p[0].eq(p[1])]
         all_pairs = pairs + [p for p in agg_pairs if not p[0].eq(p[1])]
         # Aggregate values are left free: the claim must hold for any group.
         guard = z3.BoolVal(True) if a.is_global else a.cond.t
@@ -1980,7 +2035,13 @@ class _Prover:
             return not distinct and self.valid(z3.Implies(a.cond.t, z3.Not(present.null)), a.occs, facts)
         if arg is None:
             return True
-        return self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts)
+        if self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts):
+            return True
+        if func == "COUNT" and not distinct:
+            # COUNT of two columns that are never NULL is the same count of rows.
+            both = z3.And(z3.Not(call_a.arg.null), z3.Not(arg.null))
+            return self.valid(z3.Implies(a.cond.t, both), a.occs, facts)
+        return False
 
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
@@ -2888,7 +2949,10 @@ def _split_limit(sql: str, dialect: str):
     shape is not handled (``spec`` then says why).
     """
 
-    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
+    try:
+        tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
+    except UnmodeledConstruct:
+        return sql, None
     root = tree
     while isinstance(root, exp.Subquery):
         root = root.this
@@ -2966,6 +3030,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     """
 
     dialect = kwargs.get("dialect", "bigquery")
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
+    if problem:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     try:
         left_core, left_spec = _split_limit(left_sql, dialect)
         right_core, right_spec = _split_limit(right_sql, dialect)
@@ -2977,6 +3044,14 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         reason = left_spec if left_core is None else right_spec
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {reason}")
     if left_spec is None or right_spec is None:
+        # The limited query may sit inside the other one as a derived table: compare with it wrapped.
+        wrapped = [
+            sql if spec is None else f"SELECT * FROM ({sql}) AS kq_limited"
+            for sql, spec in ((left_sql, left_spec), (right_sql, right_spec))
+        ]
+        result = _prove_core(wrapped[0], wrapped[1], **kwargs)
+        if result.proven:
+            return result
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
     if left_spec[:3] != right_spec[:3]:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")

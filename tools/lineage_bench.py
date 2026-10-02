@@ -46,7 +46,7 @@ from kumosql.pipeline import Pipeline  # noqa: E402
 from kumosql.pipeline_types import ColumnRef, Model, Target  # noqa: E402
 
 PROJECT, DATASET = "p", "d"
-DEV_FAMILIES = ("project", "filter", "expr", "agg", "join", "cte", "star", "no_schema")
+DEV_FAMILIES = ("project", "filter", "expr", "agg", "join", "cte", "star", "no_schema", "union_by_name")
 HELD_OUT_FAMILIES = ("union", "window", "semi_join", "star_modifiers", "cte_star", "nested_subquery")
 SPECIAL = ("opaque", "cycle")
 VOCAB = ["id", "name", "amount", "qty", "price", "region", "status", "created", "updated", "score", "kind", "code", "label", "total", "rate", "flag"]
@@ -253,6 +253,42 @@ class Generator:
         self._read(node, left, *lp)
         self._read(node, right, *rp)
         node.sql = f"SELECT {', '.join(lp)} FROM {left.ref} UNION ALL SELECT {', '.join(rp)} FROM {right.ref}"
+        return node
+
+    def union_by_name(self, pool):
+        """``UNION ALL [FULL|LEFT] [OUTER] BY NAME`` / ``INNER ... CORRESPONDING``: columns match by name, not position.
+
+        Added after a user report that positional tracing attributed columns to the wrong branch column.
+        """
+
+        left, right = self._parent(pool, 3), self._parent(pool, 3)
+        node = Node(self._new_name("m"), [], family="union_by_name")
+        shared = [c for c in left.columns if c in right.columns]
+        mode = self.rng.choice(["FULL OUTER", "LEFT OUTER", "INNER"] if shared else ["FULL OUTER", "LEFT OUTER"])
+        lp = self.rng.sample(left.columns, self.rng.randint(2, len(left.columns)))
+        rp = self.rng.sample(right.columns, self.rng.randint(2, len(right.columns)))
+        if shared and not set(lp) & set(rp):
+            lp = lp + [c for c in shared[:1] if c not in lp]
+            rp = rp + [c for c in shared[:1] if c not in rp]
+        if mode == "FULL OUTER":
+            node.columns = lp + [c for c in rp if c not in lp]
+        elif mode == "LEFT OUTER":
+            node.columns = list(lp)
+        else:
+            node.columns = [c for c in lp if c in rp]
+            if not node.columns:  # no name in common: fall back to a mode that always works
+                mode = "FULL OUTER"
+                node.columns = lp + [c for c in rp if c not in lp]
+        for out in node.columns:
+            node.edges[out] = set()
+            if out in lp:
+                node.edges[out].add((left.key, out))
+            if out in rp:
+                node.edges[out].add((right.key, out))
+        self._read(node, left, *lp)
+        self._read(node, right, *rp)
+        keyword = "INNER UNION ALL CORRESPONDING" if mode == "INNER" else f"{mode} UNION ALL BY NAME"
+        node.sql = f"SELECT {', '.join(lp)} FROM {left.ref} {keyword} SELECT {', '.join(rp)} FROM {right.ref}"
         return node
 
     def window(self, pool):
@@ -646,7 +682,8 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
                 "date": today(),
                 "caveats": (
                     "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of. "
-                    "Dev families were tuned against; bugs they found were fixed in the same change."
+                    "Dev families were tuned against; bugs they found were fixed in the same change. "
+                    "The by-name union family came from a user report: before the fix it traced 200 of 377 columns to the wrong sources."
                 ),
                 "analysis": (
                     f"Edges: precision {dev['edge_precision']:.3f}, recall {dev['edge_recall']:.3f}. Reads (columns a model names anywhere): precision {dev['read_precision']:.3f}, recall {dev['read_recall']:.3f}. "
