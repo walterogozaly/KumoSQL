@@ -2,19 +2,19 @@
   "suite": "SQLancer-style TLP / NoREC fuzzing",
   "order": 300,
   "size": 1268,
-  "score": "0 false proofs; 575/735 equivalent pairs proved; 532/533 different pairs refuted with a replayable counterexample",
+  "score": "0 false proofs; 587/735 equivalent pairs proved; 532/533 different pairs refuted with a replayable counterexample",
   "metric": "Seeded TLP, NoREC and mutated pairs over random predicates, joins and CTE queries; the prover must never prove a pair that a random database separates, and each counterexample must separate the queries when replayed in DuckDB. Of the 532 refutations, 315 come from the solver's model and 217 from the prover's executed counterexample search (search_counterexample=True, declared INT64 columns); the one pair left is found by KumoSQL's executed check.",
   "evidence": "proof",
   "correctness": "0 false proofs, 0 counterexamples that fail to replay, 0 generator label errors (seed 2, count 60). Ground truth is a 40-database DuckDB search plus any replayed counterexample: 16 pairs the search calls equivalent are separated by a replayed prover database and counted as different, so a difference both miss can still hide a false proof.",
   "coverage": {
-    "proven": 575,
+    "proven": 587,
     "refuted": 532,
-    "unknown": 143,
-    "unsupported": 18
+    "unknown": 129,
+    "unsupported": 20
   },
-  "held_out": "TLP aggregate and NoREC families: 342/420 equivalent pairs proved, 0 false proofs (were 108/420 before the partition rules; the seed-2 held-out cases were not looked at, the rules were developed on dev TLP WHERE pairs and on seed 101)",
+  "held_out": "TLP aggregate and NoREC families: 359/420 equivalent pairs proved, 0 false proofs (were 108/420 before the partition rules; the partition rules were developed on dev TLP WHERE pairs and on seed 101; the outer-join flattening rule for unaliased derived tables was written from another thread's description of the NoREC shape, so the NoREC gain from it is not a clean held-out result)",
   "docs": "docs/evals/fuzzing.md",
   "command": "python tools/unsafe_fuzz.py fuzz --count 60 --seed 2",
   "date": "2026-10-02",
-  "caveats": "Before the executed counterexample search (master 0ce126d plus the partition rules) seed 2 scored 569/751 proved and 309/517 refuted. Rerun after the generator change in cd9e832 and the partition-recombination rules (src/kumosql/partition_rules.py): before them seed 2 scored 238/691 proved and 258/457 refuted. The generator now writes UNION DISTINCT (bare UNION does not parse in BigQuery), so the 120 TLP DISTINCT pairs that ran in neither engine are now scored; 59 of them are unknown until UNION DISTINCT of same-source filters is merged. Remaining NoREC unknowns need COUNT(CASE WHEN p THEN 1 END) read as COUNT(*) WHERE p (the structural aggregate rules) and derived tables over a LEFT JOIN flattened."
+  "caveats": "Before the executed counterexample search (master 0ce126d plus the partition rules) seed 2 scored 569/751 proved and 309/517 refuted. Rerun after the generator change in cd9e832 and the partition-recombination rules (src/kumosql/partition_rules.py): before them seed 2 scored 238/691 proved and 258/457 refuted. The generator now writes UNION DISTINCT (bare UNION does not parse in BigQuery), so the 120 TLP DISTINCT pairs that ran in neither engine are now scored; 59 of them are unknown until UNION DISTINCT of same-source filters is merged. Remaining NoREC unknowns need COUNT(CASE WHEN p THEN 1 END) read as COUNT(*) WHERE p (the structural aggregate rules). Measured on master 9ba22c8, the merge of the outer-join flattening rules (#375)."
 }

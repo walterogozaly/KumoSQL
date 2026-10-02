@@ -126,8 +126,10 @@ def test_layout_fixes_and_kumosql_rules():
     formats = [v.outcome for v in result["format"].values()]
     assert "wrong" not in formats, [k for k, v in result["format"].items() if v.outcome == "wrong"]
     assert formats.count("reproduced") >= FLOORS["format_reproduced"]
-    # sqlfluff's fixer turns `- - -5` into the comment `--5` (issue #313); format_sql must leave such text alone
+    # sqlfluff before 4.4 turns `- - -5` into the comment `--5` (issue #313), and format_sql must then leave the text
+    # alone; sqlfluff 4.4 spaces the signs correctly, so the fixture's own fix is reproduced and proven
     for case_id in ("LT01-operators/fail_consecutive_sign_indicators_outer_spacing", "LT01-operators/fail_consecutive_sign_indicators_trailing_code"):
-        assert result["format"][case_id].outcome == "different" and result["format"][case_id].verified == "unchanged", result["format"][case_id]
+        verdict = result["format"][case_id]
+        assert (verdict.outcome, verdict.verified) in {("different", "unchanged"), ("reproduced", "proven")}, verdict
     for records in result["rules"].values():
         assert all(r["outcome"] != "wrong" for r in records), records

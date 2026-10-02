@@ -114,9 +114,14 @@ def test_identifier_capitalisation_runs_only_when_named():
 def test_format_sql_never_turns_spaced_signs_into_a_comment():
     """sqlfluff's LT01 would write `- - -5` as `---5`, and `--5` starts a comment that swallows the line."""
 
+    import sqlglot
+
     prefs = FormatPreferences(rules=("LT01",), keyword_case="consistent")
     for sql in ("SELECT 1 * - - - 5\n", "SELECT 1 * - - 5 AS c, 2 AS d\n"):
-        assert format_sql(sql, prefs) == sql
+        # sqlfluff 4.4 also tightens the last sign (`- - -5`); any spacing is fine as long as no `--` appears
+        formatted = format_sql(sql, prefs)
+        assert "--" not in formatted
+        assert sqlglot.parse_one(formatted, read="bigquery") == sqlglot.parse_one(sql, read="bigquery")
     assert format_sql("select a,b from t -- why\n", prefs) == "select a, b from t -- why\n"
 
 def test_formatting_never_fuses_unary_minus_into_a_comment():
