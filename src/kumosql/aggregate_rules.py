@@ -611,9 +611,12 @@ def _lift_aggregate_expressions(select: exp.Select) -> exp.Expression | None:
 
     The derived table outputs one row per group; computing ``f`` of its aggregates inside or outside
     gives the same value on every row it joins. Only inner joins qualify (a NULL-extended row would
-    compute ``f(NULL)`` outside but NULL inside), and ``f`` reads only aggregates and constants.
+    compute ``f(NULL)`` outside but NULL inside), ``f`` reads only aggregates, constants and output
+    keys. Not inside ``IN``/``EXISTS``, whose decorrelated shapes keep the expression inside.
     """
 
+    if select.find_ancestor(exp.In, exp.Exists) is not None:
+        return None
     joins = select.args.get("joins") or []
     if any(j.args.get("side") or (j.args.get("kind") or "").upper() not in ("", "INNER", "CROSS") or j.args.get("using") for j in joins):
         return None
