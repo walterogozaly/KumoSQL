@@ -243,10 +243,21 @@ class LiftSubqueriesRule(RewriteRule):
 _RULE = LiftSubqueriesRule()
 
 
-def lift_subqueries(sql: str) -> LiftResult:
-    """Lift relational subqueries in BigQuery SQL or Dataform SQLX."""
+class _AnalysisLiftRule(LiftSubqueriesRule):
+    rewrite_pipe_syntax = True
 
-    output = _RULE.apply(sql)
+
+_ANALYSIS_RULE = _AnalysisLiftRule()
+
+
+def lift_subqueries(sql: str, *, rewrite_pipe_syntax: bool = False) -> LiftResult:
+    """Lift relational subqueries in BigQuery SQL or Dataform SQLX.
+
+    Pipe syntax is left as written unless ``rewrite_pipe_syntax`` asks for sqlglot's standard-SQL
+    translation of it, which the prover normalizes but a user should not be shown.
+    """
+
+    output = (_ANALYSIS_RULE if rewrite_pipe_syntax else _RULE).apply(sql)
     return LiftResult(
         sql=output.sql,
         statements=output.statements,

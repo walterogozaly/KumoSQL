@@ -157,6 +157,7 @@ _SUPPORTED_AGGREGATES = {
 }
 _DATEISH = re.compile(r"^\s*[+-]?\d{1,5}-\d{1,2}-\d{1,2}")
 _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CANONICAL_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
 
@@ -575,6 +576,7 @@ class _Compiler:
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
         self.string_literals: set[str] = set()
+        self.timestamp_literals: set[str] = set()
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -592,7 +594,9 @@ class _Compiler:
         if any(statement.find_all(exp.Pivot)):
             # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
             raise Unsupported("PIVOT and UNPIVOT are not modeled")
-        self._check_nondeterminism(statement)
+        # Inside a comparison of two opaque bodies (``_unify_opaque``) the kqw* markers are renamed away;
+        # a window there still raises Unsupported wherever it would be evaluated, or sits in an opaque body.
+        self._check_nondeterminism(statement, allow_windows=_nesting[0] > 0)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
 
@@ -1396,6 +1400,12 @@ class _Compiler:
             return _Val(v.null, val_fn(*self._uf_args([v])))
         if isinstance(e, (exp.Func, exp.Binary, exp.Unary)):
             return self._generic(e, env, agg, aliases)
+        if isinstance(e, exp.Interval) and all(isinstance(n, (exp.Interval, exp.Literal, exp.Var)) for n in e.walk()):
+            # A constant interval is one fixed value, named by its text; date arithmetic over it stays
+            # uninterpreted, and two spellings of one interval may read as different values, so no
+            # counterexample is reported from it.
+            self.uses_uf = True
+            return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
 
     def _numeric(self, v: _Val) -> None:
@@ -1406,8 +1416,10 @@ class _Compiler:
         if e.is_string:
             text = e.this
             self.string_literals.add(text)
-            if _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
-                raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' is modeled)")
+            if _CANONICAL_TIMESTAMP.match(text):
+                self.timestamp_literals.add(text)  # fixed width, so string order is time order among timestamps
+            elif _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
+                raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' and 'YYYY-MM-DD HH:MM:SS' are modeled)")
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal(text)))
         value = _parse_number(e.this)
         if negate:
@@ -2772,7 +2784,9 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
         return
 
     def tables(sql: str) -> frozenset:
-        return frozenset(t.name.lower() for t in sqlglot.parse_one(sql, read="bigquery").find_all(exp.Table))
+        tree = sqlglot.parse_one(sql, read="bigquery")
+        ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+        return frozenset(t.name.lower() for t in tree.find_all(exp.Table)) - ctes
 
     representatives: list[str] = []
     mapping: dict[str, str] = {}
@@ -2785,7 +2799,8 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
             budget -= 1
             _nesting[0] += 1
             try:
-                result = _prove_core(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
+                # The LIMIT-aware entry point: a body may end in ORDER BY .. LIMIT on both sides.
+                result = prove_equivalent_smt(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
             finally:
                 _nesting[0] -= 1
             if result.status is SmtStatus.PROVEN_EQUIVALENT:
@@ -2850,6 +2865,9 @@ def _prove_core(
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
         )
+        if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
+            # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)
         extra = compiler.order_facts()
         if extra:
             for union in (left, right):

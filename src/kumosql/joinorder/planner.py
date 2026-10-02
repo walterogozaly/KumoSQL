@@ -52,13 +52,18 @@ class Plan:
         return self.left.joins() + self.right.joins() + [self]
 
 
+def _swap(out: float, left: Plan, right: Plan) -> bool:
+    """Swap so the right input, which a hash join builds, is the smaller one."""
+    return left.card < right.card
+
+
 def _join_cost(model: str, out: float, left: Plan, right: Plan) -> tuple[float, bool]:
     """Cost of joining two sub-plans; second value says whether to swap sides."""
     if model == "cout":
-        return out, left.card < right.card
+        return out, _swap(out, left, right)
     # hash join: probe the larger side, build the smaller (right) side.
     small, big = sorted((left.card, right.card))
-    return out + big + 2.0 * small, left.card < right.card
+    return out + big + 2.0 * small, _swap(out, left, right)
 
 
 def optimize(query: JoinQuery, card: CardFn, model: str = "cout",
@@ -213,11 +218,11 @@ def to_sql(query: JoinQuery, plan: Plan, dialect: str = "duckdb") -> str:
     """The query with its FROM clause rewritten as the plan's explicit join tree."""
     used: set[int] = set()
 
-    def build(p: Plan) -> exp.Expression:
+    def build(p: Plan) -> str:
         if p.is_leaf:
             alias = next(iter(p.aliases))
             return exp.Table(this=exp.to_identifier(query.tables[alias]),
-                             alias=exp.TableAlias(this=exp.to_identifier(alias)))
+                             alias=exp.TableAlias(this=exp.to_identifier(alias))).sql(dialect=dialect, identify=True)
         left, right = build(p.left), build(p.right)
         conds: list[exp.Expression] = []
         for e in query.edges_between(p.left.aliases, p.right.aliases):
@@ -228,15 +233,15 @@ def to_sql(query: JoinQuery, plan: Plan, dialect: str = "duckdb") -> str:
                 conds.append(node.copy())
         on = exp.and_(*conds) if conds else exp.true()
         if not p.left.is_leaf:
-            left = exp.Paren(this=left)
+            left = f"({left})"
         if not p.right.is_leaf:
-            right = exp.Paren(this=right)
-        return _JoinTree(this=left, expression=right, on=on)
+            right = f"({right})"
+        return f"{left} JOIN {right} ON {on.sql(dialect=dialect, identify=True)}"
 
     tree = build(plan)
     where = [f.copy() for fl in query.filters.values() for f in fl]
     select = ", ".join(s.sql(dialect=dialect, identify=True) for s in query.select) or "COUNT(*)"
-    sql = f"SELECT {select} FROM {_render(tree, dialect)}"
+    sql = f"SELECT {select} FROM {tree}"
     if where:
         sql += " WHERE " + exp.and_(*where).sql(dialect=dialect, identify=True)
     for key in ("group", "having", "order", "limit"):
@@ -244,16 +249,3 @@ def to_sql(query: JoinQuery, plan: Plan, dialect: str = "duckdb") -> str:
         if node is not None:
             sql += " " + node.sql(dialect=dialect, identify=True)
     return sql
-
-
-class _JoinTree(exp.Expression):
-    arg_types = {"this": True, "expression": True, "on": True}
-
-
-def _render(node: exp.Expression, dialect: str) -> str:
-    if isinstance(node, exp.Paren):
-        return "(" + _render(node.this, dialect) + ")"
-    if isinstance(node, _JoinTree):
-        return (f"{_render(node.this, dialect)} JOIN {_render(node.expression, dialect)} "
-                f"ON {node.args['on'].sql(dialect=dialect, identify=True)}")
-    return node.sql(dialect=dialect, identify=True)
