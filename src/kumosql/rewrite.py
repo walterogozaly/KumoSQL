@@ -185,10 +185,6 @@ def _verify_sql(
     if layout_only_change(before, after):
         # Only whitespace and the case of reserved words and built-in calls changed: proven for any
         # statement, including ones sqlglot cannot parse or keeps as an opaque command.
-        if smt_checks is not None:
-            smt_checks.append(
-                VerificationCheck("layout", "passed", "only whitespace and the case of keywords changed")
-            )
         return True, []
     try:
         left = parse_statements(before)
