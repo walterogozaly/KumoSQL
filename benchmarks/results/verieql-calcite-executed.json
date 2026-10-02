@@ -1,13 +1,13 @@
 {
   "suite": "VeriEQL Calcite-397 (counterexamples)",
   "order": 43,
-  "score": "14/397 refuted, 111 agree, 0 wrong",
+  "score": "14/397 refuted, 85 agree, 0 wrong",
   "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 150 random databases showed no difference (not a proof, not bounded verification).",
   "evidence": "executed",
   "correctness": "Every refutation was executed on both queries and is stable under row-order shuffles; none are claimed without a database",
   "coverage": {
     "refuted": 14,
-    "unknown": 111,
+    "unknown": 85,
     "unsupported": 96
   },
   "caveats": "No labels. 96 pairs are not run because DuckDB rejects Calcite-only syntax. One pair (a correlated EXISTS with an unqualified column) is read differently by DuckDB than by VeriEQL. 'unknown' here counts pairs that agree on every random database; 'unsupported' counts pairs DuckDB or the parser rejects.",

@@ -33,4 +33,6 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 `--audit` also compares with VeriEQL's published per-case outcomes (`NEQ` with a counterexample, `TMO` timeout and so on) and replays VeriEQL's counterexample against every pair we called equivalent. The suites are downloaded once into `~/.cache/kumosql/verieql` (set `KUMOSQL_VERIEQL_CACHE` to change it). The data is CC BY-NC-SA 4.0, so it is not copied into this repository, and none of VeriEQL's code is vendored (its licence is also CC BY-NC-SA 4.0); only its benchmark files are read. Please cite the VeriEQL paper when using these numbers.
 
+Scores on 2026-10-02 (0 wrong in every suite): Literature 13/64 proved, 18 refuted, 22 agree; Calcite-397 202/397 proved, 14 refuted, 85 agree; LeetCode sample (every 24th pair) 208/1000 proved, 203 refuted, 507 agree. The cast, constant and `NATURAL JOIN` rules in `cast_rules.py` added 3 Literature proofs; the Calcite and LeetCode counts were last recorded before several other prover changes, so those rises are not all theirs.
+
 `tests/test_verieql_benchmarks.py` pins floors on small samples (skipped when the data cannot be downloaded).

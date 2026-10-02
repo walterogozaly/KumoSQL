@@ -1,13 +1,13 @@
 {
   "suite": "VeriEQL Literature (counterexamples)",
   "order": 41,
-  "score": "18/64 refuted, 25 agree, 0 wrong",
+  "score": "18/64 refuted, 22 agree, 0 wrong",
   "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 150 random databases showed no difference (not a proof, not bounded verification).",
   "evidence": "executed",
   "correctness": "Every refutation was executed on both queries and is stable under row-order shuffles; none are claimed without a database",
   "coverage": {
     "refuted": 18,
-    "unknown": 25,
+    "unknown": 22,
     "unsupported": 11
   },
   "caveats": "Pairs carry no labels; wrongness is checked against VeriEQL's published counterexamples and a second random search. 14 of the 64 pairs differ between our file and the published outcomes file and were not audited. Developed against these pairs (tuned on test). 'unknown' here counts pairs that agree on every random database; 'unsupported' counts pairs DuckDB or the parser rejects.",

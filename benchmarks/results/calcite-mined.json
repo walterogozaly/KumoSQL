@@ -2,8 +2,8 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "268/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 233 unknown. 53 of the 168 pairs new to every other corpus are proved.",
+  "score": "277/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 224 unknown. 58 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
@@ -11,10 +11,10 @@
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 30 random DuckDB databases",
   "coverage": {
-    "proven": 268,
+    "proven": 277,
     "refuted": 1,
-    "unknown": 233,
+    "unknown": 224,
     "unsupported": 332
   },
-  "held_out": "53/168 on pairs new to every other corpus (not used for development)"
+  "held_out": "58/168 on pairs new to every other corpus; 2 of the 5 gained in cluster 10 (testProjectAggregateMergeSum01, testUnionToValuesByUnionAll3) were looked at during development"
 }

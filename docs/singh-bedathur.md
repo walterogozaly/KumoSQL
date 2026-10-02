@@ -41,19 +41,19 @@ DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A
 
 Measured 2026-10-02 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`, about 25 minutes on 4 cores):
 
-**2434/2800, 0 wrong**: 640 proved equivalent, 1,794 proved different, 366 unknown.
+**2442/2800, 0 wrong**: 648 proved equivalent, 1,794 proved different, 358 unknown.
 
 | Outcome | Pairs |
 | --- | ---: |
-| Proven equivalent | 640 |
+| Proven equivalent | 648 |
 | Refuted (counterexample) | 1,794 |
-| Unknown | 328 |
-| Unsupported (the prover cannot read a query, and no counterexample) | 38 |
+| Unknown | 321 |
+| Unsupported (the prover cannot read a query, and no counterexample) | 37 |
 | Timeout | 0 |
 | Error | 0 |
 | Wrong | 0 |
 
-Supported subset: 2434/2762. Held-out fifth (pairs whose text hash is divisible by 5): **509/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+Supported subset: 2442/2763. Held-out fifth (pairs whose text hash is divisible by 5): **509/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
 
 What moved the score:
 
@@ -62,6 +62,7 @@ What moved the score:
 | Prover alone, random search on small tables | 2,211 |
 | + prover counterexamples, canonical rewrites, bigger tables for `COUNT` thresholds | 2,317 |
 | + skewed databases, fractional decimals, `LIMIT` over a full ordering, MySQL NULL order and case rules | 2,434 |
+| + identity casts, `x * 1.0`, `ROUND(x)` as `ROUND(x, 0)`, `NATURAL JOIN` (`cast_rules.py`) | 2,442 |
 
 ### Against the published labels
 
