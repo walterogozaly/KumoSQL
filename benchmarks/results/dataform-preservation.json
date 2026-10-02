@@ -11,7 +11,7 @@
     "unsupported": 36
   },
   "held_out": "First run of the held-out families (144 files): 0 protected spans damaged and 0 wrong dependencies, but dependency recall was 108/144: every ref() inside pre_operations was missed. Fixed afterwards, so those families no longer count as held out.",
-  "docs": "docs/dataform-bench.md",
+  "docs": "docs/evals/dataform-bench.md",
   "command": "python tools/dataform_bench.py --scale --write-results",
   "date": "2026-10-02",
   "caveats": "Files are generated from templates its author wrote; real projects have more shapes. Dependency truth is how Dataform compiles an action (every evaluated ref(), including those in pre_operations, post_operations and when() arguments). Dev families were tuned against. The declared_refs family (refs to tables declared in sqlx or JavaScript, including a computed list that must stay unresolved) was added with the declaration fix and is a dev family; the Dataform API fallback is not exercised by this eval.",

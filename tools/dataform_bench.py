@@ -15,7 +15,7 @@ it (the query, ``pre_operations``, ``post_operations``, inside ``when(...)`` arg
 ``dependencies``) becomes a dependency; ``resolve()`` and ``self()`` do not.
 
 ``dev`` families were used while building the suite; ``held-out`` families were written afterwards and not tuned
-against (see ``docs/dataform-bench.md``).
+against (see ``docs/evals/dataform-bench.md``).
 
     python tools/dataform_bench.py
 """
@@ -427,7 +427,7 @@ def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
                 ),
                 "coverage": {"proven": files - held["unsupported"], "unsupported": held["unsupported"]},
                 "held_out": HELD_OUT_FIRST_RUN,
-                "docs": "docs/dataform-bench.md",
+                "docs": "docs/evals/dataform-bench.md",
                 "command": "python tools/dataform_bench.py --scale --write-results",
                 "date": today(),
                 "caveats": (

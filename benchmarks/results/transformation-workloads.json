@@ -12,7 +12,7 @@
     "unsupported": 1
   },
   "held_out": "38/39 same on real data, 0 wrong (hash-held-out fifth; no implementation changes were made in this work, only harness fixes)",
-  "docs": "docs/transformation-bench.md#results",
+  "docs": "docs/evals/transformation-bench.md#results",
   "command": "python tools/benchmark_corpora.py fetch sqlstorm tpch-data tpcds-data job-data && python tools/transformation_bench.py tpch tpcds job",
   "date": "2026-10-02",
   "caveats": "Original queries only (one instance per template from SQLStorm v0.0 and gregrahn/join-order-benchmark); TPC-H query 13 is left out because sqlglot cannot convert it. The same TPC queries also appear in the Analytical SQL coverage sample. proven = rewritten and same when executed; unknown = unchanged; unsupported = not runnable. DuckDB is the oracle, not BigQuery. Formatting changes almost every query, so the structural-rule counts are under usefulness.",

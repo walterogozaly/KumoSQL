@@ -11,7 +11,7 @@
     "unknown": 0
   },
   "held_out": "First run of the held-out families (474 models, 1,151 columns): 0 columns traced wrongly, but 83 impacted models missed and 13 live columns called dead, all from SELECT * EXCEPT (...) columns that were not counted as read. Fixed afterwards, so those families no longer count as held out.",
-  "docs": "docs/lineage-bench.md#lineage-and-change-impact",
+  "docs": "docs/evals/lineage-bench.md#lineage-and-change-impact",
   "command": "python tools/lineage_bench.py --scale --write-results",
   "date": "2026-10-02",
   "caveats": "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of. Dev families were tuned against; bugs they found were fixed in the same change. The by-name union family came from a user report: before the fix it traced 200 of 377 columns to the wrong sources.",
