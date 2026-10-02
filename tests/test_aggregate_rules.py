@@ -164,7 +164,8 @@ def test_joined_copies_of_one_grouped_query_merge():
     assert _rule(rules._merge_joined_aggregates, right.replace("SELECT deptno, MAX(comm) AS m FROM emp AS e GROUP BY deptno", "SELECT deptno, MAX(comm) AS m FROM emp AS e GROUP BY deptno, mgr")) is None
     assert not _proven(left, right.replace("<=>", "="))
     globals_ = "SELECT a.s, b.m FROM (SELECT SUM(sal) AS s FROM emp) AS a JOIN (SELECT MAX(comm) AS m FROM emp) AS b ON TRUE"
-    assert _proven("SELECT SUM(sal), MAX(comm) FROM emp", globals_)
+    # (normalize now reads a single-row source as a scalar subquery before this rule sees it)
+    assert _rule(rules._merge_joined_aggregates, globals_) == "SELECT a.kumosql_j0, a.kumosql_j1 FROM (SELECT SUM(sal) AS kumosql_j0, MAX(comm) AS kumosql_j1 FROM emp) AS a"
 
 
 def test_filter_over_a_union_with_aggregating_branches_is_distributed():
