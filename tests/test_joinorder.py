@@ -99,7 +99,9 @@ def test_forced_plan_sql_gives_the_same_answer():
     q = parse_join_query(STAR)
     expected = con.execute(STAR).fetchone()[0]
     plan = optimize(q, lambda s: float(len(s)))
-    con.execute("SET disabled_optimizers='join_order'")
+    from kumosql.joinorder.bench.endtoend import FORCED_PLAN_SETTINGS
+
+    con.execute(FORCED_PLAN_SETTINGS)
     assert con.execute(to_sql(q, plan)).fetchone()[0] == expected
 
 
@@ -138,3 +140,34 @@ def test_frequent_keys_are_pinned_when_sampling():
     assert users.pinned == 3
     assert 0 in {r["id"] for r in users.sample[:users.pinned]}
     assert users.weight == pytest.approx((300 - 3) / 100)
+
+
+def test_lookup_filters_fold_into_the_table_they_describe():
+    """A filter on a lookup (company) moves the estimate of a join it is not part of."""
+    from kumosql.joinorder.stats import collect_statistics
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE company (id INT, name VARCHAR)")
+    con.execute("CREATE TABLE movie_company (movie_id INT, company_id INT)")
+    con.execute("CREATE TABLE movie_link (movie_id INT, other INT)")
+    con.executemany("INSERT INTO company VALUES (?, ?)", [[i, "big" if i == 0 else f"c{i}"] for i in range(50)])
+    rows, links = [], []
+    for m in range(2000):
+        rows.append([m, 0 if m < 100 else 1 + m % 49])
+        # the big company's movies are linked many times, the others rarely
+        links += [[m, j] for j in range(20 if m < 100 else (1 if m % 10 == 0 else 0))]
+    con.executemany("INSERT INTO movie_company VALUES (?, ?)", rows)
+    con.executemany("INSERT INTO movie_link VALUES (?, ?)", links)
+    sql = ("SELECT COUNT(*) FROM company AS c, movie_company AS mc, movie_link AS ml "
+           "WHERE c.id = mc.company_id AND mc.movie_id = ml.movie_id AND c.name = 'big'")
+    q = parse_join_query(sql)
+    true = con.execute(sql).fetchone()[0]
+    stats = collect_statistics(con, ["company", "movie_company", "movie_link"],
+                               [(("movie_company", "company_id"), ("company", "id")),
+                                (("movie_company", "movie_id"), ("movie_link", "movie_id"))],
+                               sample_rows=10_000, heavy_bins=0, range_bins=20)
+    full = frozenset(q.tables)
+    folded = FactorEstimator(stats).estimate(q, full)
+    plain = FactorEstimator(stats, fold=False).estimate(q, full)
+    assert abs(folded / true - 1) < 0.2
+    assert plain < true / 3  # without folding, independence underestimates
