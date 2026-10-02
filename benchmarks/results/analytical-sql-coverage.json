@@ -2,19 +2,19 @@
   "suite": "Analytical SQL coverage (TPC-DS, DSB, SQLStorm)",
   "order": 50,
   "size": 475,
-  "score": "334/475 (70.3%) through every stage, 0 wrong",
+  "score": "354/475 (74.5%) through every stage, 0 wrong",
   "metric": "Queries that every KumoSQL stage (parse, lineage, fingerprint, cleanup, format, self-equivalence, DuckDB execution of each rewrite) handles with a real answer; the rest declined honestly.",
   "evidence": "executed",
   "correctness": "0 proven rewrites returned different rows in DuckDB on generated tables (3 seeds, values include each query's constants); 0 crashes, 0 timeouts, 0 lost reads; 475/475 clean",
   "coverage": {
-    "unsupported": 141,
+    "unsupported": 121,
     "timeout": 0,
     "error": 0
   },
-  "held_out": "50/70 (71.4%) on the hash-held-out fifth of this sample, 0 wrong (seen during development; see caveats)",
+  "held_out": "53/70 (75.7%) on the hash-held-out fifth of this sample, 0 wrong (seen during development; see caveats)",
   "docs": "docs/analytical-sql-coverage.md#results",
   "command": "python tools/benchmark_corpora.py fetch sqlstorm dsb && python tools/analytical_coverage.py --split all --limit 60",
   "date": "2026-10-02",
-  "caveats": "Our own score, not an official one. Sample of 60 queries from each of 8 corpora (of ~214k); 5 queries sqlglot could not convert from Postgres are excluded. Baseline before the fixes was 243/475 (51.2%). The held-out split was introduced after this sample was used for development.",
+  "caveats": "Our own score, not an official one. Sample of 60 queries from each of 8 corpora (of ~214k); 5 queries sqlglot could not convert from Postgres are excluded. Baseline before the fixes was 243/475 (51.2%); 334/475 when first merged, 354/475 after later prover merges made 20 more TPC-DS cleanup rewrites provable. The held-out split was introduced after this sample was used for development.",
   "performance": "about 5 s per query on one core; format_sql (sqlfluff) is about half of it"
 }
