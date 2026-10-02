@@ -121,6 +121,15 @@ WRONG_PROOFS = [
         {"emp": [(1, "a", "j", 1, 10), (30, "b", "j", 1, 20)]},
         id="in-to-exists-keeps-a-shadowed-alias-outside",
     ),
+    pytest.param(
+        "SELECT name FROM dept WHERE EXISTS (SELECT 1 FROM (SELECT 2 * deptno AS f FROM dept) AS t WHERE deptno = t.f)",
+        "SELECT name FROM dept WHERE EXISTS (SELECT 1 FROM dept AS t WHERE t.deptno = 2 * t.deptno)",
+        CALCITE,
+        None,
+        CALCITE_DDL,
+        {"dept": [(2, "a"), (4, "b")]},
+        id="merged-derived-table-keeps-the-correlated-column-outside",
+    ),
 ]
 
 
@@ -258,3 +267,11 @@ def test_a_bare_column_keeps_its_source_when_a_derived_table_is_read_as_its_base
     assert normalize(left, schema=schema, dialect="mysql").startswith("SELECT t.a ")
     assert prove_equivalent_algebraic(left, "SELECT t.a FROM t JOIN u AS g ON g.k = t.k", schema=schema, dialect="mysql").proven
     assert not prove_equivalent_algebraic(left, "SELECT g.a FROM t JOIN u AS g ON g.k = t.k", schema=schema, dialect="mysql").proven
+
+
+def test_a_correlated_column_whose_table_name_is_reused_inside_is_declined():
+    left = "SELECT name FROM dept WHERE EXISTS (SELECT 1 FROM (SELECT 2 * deptno AS f FROM dept) AS dept WHERE deptno = dept.f)"
+    right = "SELECT o.name FROM dept AS o WHERE EXISTS (SELECT 1 FROM dept AS t WHERE o.deptno = 2 * t.deptno)"
+    assert not prove_equivalent_algebraic(left, right, schema=CALCITE, dialect="mysql", compare_names=False).proven
+    fixed = "SELECT name FROM dept WHERE EXISTS (SELECT 1 FROM (SELECT 2 * deptno AS f FROM dept) AS t WHERE deptno = t.f)"
+    assert prove_equivalent_algebraic(fixed, right, schema=CALCITE, dialect="mysql", compare_names=False).proven
