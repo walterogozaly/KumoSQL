@@ -37,8 +37,10 @@ def _from(select: exp.Select):
     return select.args.get("from_") or select.args.get("from")
 
 
-def _plain(select: exp.Select, *, grouped: bool) -> bool:
-    banned = ["distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with", "having"]
+def _plain(select: exp.Select, *, grouped: bool, allow_having: bool = False) -> bool:
+    banned = ["distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with"]
+    if not allow_having:
+        banned.append("having")
     if not grouped:
         banned += ["group"]
     if any(select.args.get(key) for key in banned):
@@ -204,7 +206,7 @@ def _inline(grouped: _Grouped) -> tuple[list[exp.Expression], list[exp.Expressio
 def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
     """Rewrite an aggregate over a join with a grouped derived table into the flat aggregate."""
 
-    if not _plain(select, grouped=True):
+    if not _plain(select, grouped=True, allow_having=True):
         return None
     if not (select.args.get("group") or _own_aggregates(select)):
         return None
@@ -294,6 +296,16 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
             replacements.append((call, exp.Sum(this=term)))
         elif _count_star(agg):
             replacements.append((call, exp.Count(this=exp.Star()) if weight is None else exp.Sum(this=weight)))
+        elif isinstance(agg, exp.Count) and agg.this is not None and not isinstance(agg.this, (exp.Star, exp.Distinct)) and not agg.args.get("distinct"):
+            # SUM of COUNT(x) counts the rows where x is not NULL; a weight counts only those rows.
+            inner_arg = renamed_arg(agg)
+            if inner_arg is None:
+                return None
+            if weight is None:
+                replacements.append((call, exp.Count(this=inner_arg)))
+            else:
+                present = exp.Case(ifs=[exp.If(this=exp.Not(this=exp.Is(this=inner_arg.copy(), expression=exp.Null())), true=weight.copy())])
+                replacements.append((call, exp.Sum(this=present)))
         else:
             return None
     # No reference to an aggregate column may survive outside the replaced calls.
@@ -317,8 +329,9 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
     result_calls = [
         node for node in result.find_all(exp.AggFunc) if node.find_ancestor(exp.Select) is result
     ]
+    position_of = {id(call): index for index, call in enumerate(outer_calls)}  # identity: equal calls are distinct nodes
     for call, new in replacements:
-        result_calls[outer_calls.index(call)].replace(new.copy())
+        result_calls[position_of[id(call)]].replace(new.copy())
     for column in list(result.find_all(exp.Column)):
         if column.table.lower() == alias and column.name.lower() in key_exprs and column.find_ancestor(exp.Select) is result:
             column.replace(key_exprs[column.name.lower()].copy())

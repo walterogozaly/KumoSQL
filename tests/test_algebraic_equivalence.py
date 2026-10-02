@@ -263,7 +263,24 @@ def test_the_same_scalar_subquery_on_both_sides_is_one_value():
         "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT MAX(sal) FROM emp WHERE deptno > 3) = sal",
     )
     assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
+    # a global aggregate returns exactly one row, so nothing is assumed about its size
+    assert "scalar subqueries return at most one row" not in " ".join(result.assumptions)
+
+
+def test_a_scalar_subquery_that_may_return_several_rows_is_listed_as_an_assumption():
+    left = "SELECT empno FROM emp WHERE sal = (SELECT sal FROM emp WHERE empno = 7) AND deptno = 1"
+    right = "SELECT empno FROM emp WHERE deptno = 1 AND (SELECT sal FROM emp WHERE empno = 7) = sal"
+    result = _prove(left, right)
+    assert result.status is SmtStatus.PROVEN_EQUIVALENT, result.reason
     assert "scalar subqueries return at most one row" in " ".join(result.assumptions)
+    from kumosql.smt_equivalence import TableConstraints
+
+    keyed = prove_equivalent_algebraic(
+        left, right, schema=SCHEMA, compare_names=False, dialect="mysql",
+        constraints={"emp": TableConstraints(not_null=frozenset({"empno"}), keys=(("empno",),))},
+    )
+    assert keyed.status is SmtStatus.PROVEN_EQUIVALENT, keyed.reason
+    assert "scalar subqueries return at most one row" not in " ".join(keyed.assumptions)
 
 
 def test_differently_written_equivalent_scalar_subqueries_are_matched():
@@ -1528,3 +1545,87 @@ def test_empty_side_rules_preserve_results_on_random_databases():
             except sqlite3.OperationalError:
                 continue  # old SQLite without RIGHT JOIN
             assert expected == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+SEMI_SCHEMA2 = {"p": ["id", "k", "a"], "q": ["id", "k", "b"]}
+SEMI_KEYS2 = {"p": TableConstraints(keys=(("id",),)), "q": TableConstraints(keys=(("id",),))}
+SEMI2_PROVEN = {
+    "exists witnessed by a join": (
+        "SELECT p.id FROM p JOIN q ON p.k = q.k WHERE EXISTS (SELECT 1 FROM q AS w WHERE w.k = p.k)",
+        "SELECT p.id FROM p JOIN q ON p.k = q.k",
+    ),
+    "inner join to a grouped set is an exists": (
+        "SELECT p.id FROM p JOIN (SELECT k FROM q GROUP BY k) AS g ON p.k = g.k",
+        "SELECT p.id FROM p WHERE EXISTS (SELECT 1 FROM q WHERE q.k = p.k)",
+    ),
+    "left join indicator is null is not exists": (
+        "SELECT p.id FROM p LEFT JOIN (SELECT 1 AS i, k FROM q WHERE b < 3 GROUP BY k) AS g ON p.k = g.k WHERE g.i IS NULL",
+        "SELECT p.id FROM p WHERE NOT EXISTS (SELECT 1 FROM q WHERE b < 3 AND q.k = p.k)",
+    ),
+}
+SEMI2_NOT_PROVEN = {
+    "join to a plain table repeats rows": (
+        "SELECT p.id FROM p JOIN q ON p.k = q.k",
+        "SELECT p.id FROM p WHERE EXISTS (SELECT 1 FROM q WHERE q.k = p.k)",
+    ),
+    "exists with another condition is not witnessed": (
+        "SELECT p.id FROM p JOIN q ON p.k = q.k WHERE EXISTS (SELECT 1 FROM q AS w WHERE w.k = p.k AND w.b > 5)",
+        "SELECT p.id FROM p JOIN q ON p.k = q.k",
+    ),
+    "select star lists the joined set": (
+        "SELECT * FROM p JOIN (SELECT k FROM q GROUP BY k) AS g ON p.k = g.k",
+        "SELECT p.id, p.k, p.a FROM p WHERE EXISTS (SELECT 1 FROM q WHERE q.k = p.k)",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", SEMI2_PROVEN)
+def test_semi_join_shapes_prove(name):
+    left, right = SEMI2_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=SEMI_SCHEMA2, constraints=SEMI_KEYS2, dialect="mysql", compare_names=False)
+    assert result.proven, result.reason
+
+
+@pytest.mark.parametrize("name", SEMI2_NOT_PROVEN)
+def test_semi_join_shapes_keep_their_boundaries(name):
+    left, right = SEMI2_NOT_PROVEN[name]
+    result = prove_equivalent_algebraic(left, right, schema=SEMI_SCHEMA2, constraints=SEMI_KEYS2, dialect="mysql", compare_names=False)
+    assert not result.proven
+
+
+def test_semi_join_shapes_preserve_results_on_random_databases():
+    rng = random.Random(12)
+    forms = [pair[0] for pair in SEMI2_PROVEN.values()] + [pair[0] for pair in SEMI2_NOT_PROVEN.values()]
+    normalized = [normalize(f, schema=SEMI_SCHEMA2, dialect="mysql", keys={"p": [("id",)], "q": [("id",)]}) for f in forms]
+    for _ in range(60):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE p (id INT, k INT, a INT)")
+        db.execute("CREATE TABLE q (id INT, k INT, b INT)")
+        for table in ("p", "q"):
+            for n in range(rng.choice([0, 1, 4, 6])):
+                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [n, rng.choice([None, 0, 1, 2]), rng.choice([None, 0, 2, 7])])
+        for sql, norm in zip(forms, normalized):
+            plain = sqlglot.transpile(sql, read="mysql", write="sqlite")[0]
+            runnable = sqlglot.transpile(norm, read="mysql", write="sqlite")[0]
+            assert Counter(db.execute(plain).fetchall()) == Counter(db.execute(runnable).fetchall()), (sql, norm)
+
+
+def test_single_row_source_grouping_is_dropped_and_near_misses_kept():
+    from kumosql.algebraic_equivalence import normalize
+
+    one = "SELECT k FROM (SELECT a AS k FROM t ORDER BY a LIMIT 1) AS d GROUP BY k"
+    assert "GROUP BY" not in normalize(one).upper()
+    two = "SELECT k FROM (SELECT a AS k FROM t ORDER BY a LIMIT 2) AS d GROUP BY k"
+    assert "GROUP BY" in normalize(two).upper() or "DISTINCT" in normalize(two).upper()
+    glob = "SELECT COUNT(*) FROM (SELECT a AS k FROM t ORDER BY a LIMIT 1) AS d GROUP BY k"
+    assert "GROUP BY" in normalize(glob).upper()
+
+
+def test_printed_normal_form_keeps_or_inside_and_parenthesized():
+    from kumosql.algebraic_equivalence import _parenthesize_boolean
+    from sqlglot import exp, parse_one
+
+    tree = exp.And(this=parse_one("a >= 1"), expression=parse_one("b = 2 OR a < 2"))
+    assert "(b = 2 OR a < 2)" in _parenthesize_boolean(tree).sql()
+    negated = exp.Not(this=parse_one("a = 1 OR b = 2"))
+    assert parse_one(_parenthesize_boolean(negated).sql()) == parse_one("NOT (a = 1 OR b = 2)")

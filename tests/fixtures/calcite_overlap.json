@@ -1,0 +1,2147 @@
+{
+ "generated_by": "tools/calcite_overlap.py",
+ "repo_fixtures_at": "working tree on origin/master 88fc10e10f0bb87dd3b5e7af3103112825bb0d43",
+ "sources": {
+  "sqlsolver": {
+   "file": "tests/fixtures/sqlsolver/calcite_pairs.txt",
+   "names": "by position from SPES testData/calcite_tests.json",
+   "upstream": "https://github.com/SJTU-IPADS/SQLSolver"
+  },
+  "spes": {
+   "file": "testData/calcite_tests.json",
+   "upstream": "https://github.com/georgia-tech-db/spes",
+   "commit": "8049f98d8e64a5c2c43d1ed581e7d5b6e0a006e2"
+  },
+  "spes_only": {
+   "file": "tests/fixtures/spes/spes_only_pairs.jsonl"
+  },
+  "cosette_json": {
+   "file": "examples/calcite/calcite_tests.json",
+   "upstream": "https://github.com/uwdb/Cosette",
+   "commit": "7a951aa3b1a70a8b310c676e524740b7114975c3"
+  },
+  "cosette": {
+   "file": "tests/fixtures/cosette/cosette_cases.jsonl (source_dir calcite)",
+   "upstream": "https://github.com/uwdb/Cosette",
+   "commit": "7a951aa3b1a70a8b310c676e524740b7114975c3"
+  },
+  "rbot": {
+   "file": "tests/fixtures/rbot/calcite.jsonl",
+   "upstream": "https://github.com/curtis-sun/LLM4Rewrite"
+  },
+  "qed": {
+   "file": "tests/fixtures/qed/qed_calcite_pairs.jsonl",
+   "read_from": "origin/claude/rbot-prover-1 at 1cfce4a0468b2b0fca224676089fbd2727485949",
+   "upstream": "https://github.com/qed-solver/prover",
+   "commit": "31f4b6c271440942ecaca1e1111d4beeabf1f14c"
+  },
+  "verieql": {
+   "present": false,
+   "note": "no VeriEQL fixture under tests/fixtures on origin/master"
+  }
+ },
+ "alignment": {
+  "pairs": {
+   "spes": 232,
+   "sqlsolver": 232,
+   "cosette_json": 232
+  },
+  "spes_vs_cosette_json_same_name_same_position": 232,
+  "spes_vs_cosette_json_identical_pairs": 184,
+  "spes_vs_sqlsolver_same_position_q1_or_q2_equal_modulo_aliases": 195,
+  "note": "SQLSolver's file edits some queries (e.g. pair 0 replaces CAST(TIME ...) with UNIX_TIMESTAMP); the remaining positions hold edited versions of the same test. SPES names 3 tests with a trailing '*' (stripped) and names position 107 testPushMinThroughUnion, a duplicate; Cosette's name for that identical pair, testDistinctNonDistinctTwoAggregatesWithGrouping, is used."
+ },
+ "unique_names": {
+  "sqlsolver": 232,
+  "spes": 232,
+  "cosette_json": 232,
+  "spes_only": 34,
+  "cosette": 33,
+  "rbot": 45,
+  "qed": 375
+ },
+ "unique_names_all_corpora": 430,
+ "pairwise_overlap": {
+  "sqlsolver&spes": 232,
+  "sqlsolver&cosette_json": 232,
+  "sqlsolver&spes_only": 34,
+  "sqlsolver&cosette": 33,
+  "sqlsolver&rbot": 21,
+  "sqlsolver&qed": 181,
+  "spes&cosette_json": 232,
+  "spes&spes_only": 34,
+  "spes&cosette": 33,
+  "spes&rbot": 21,
+  "spes&qed": 181,
+  "cosette_json&spes_only": 34,
+  "cosette_json&cosette": 33,
+  "cosette_json&rbot": 21,
+  "cosette_json&qed": 181,
+  "spes_only&cosette": 7,
+  "spes_only&rbot": 4,
+  "spes_only&qed": 29,
+  "cosette&rbot": 1,
+  "cosette&qed": 31,
+  "rbot&qed": 39
+ },
+ "only_in": {
+  "sqlsolver": 0,
+  "spes": 0,
+  "cosette_json": 0,
+  "spes_only": 0,
+  "cosette": 0,
+  "rbot": 4,
+  "qed": 174
+ },
+ "scored_before_this_change": [
+  "sqlsolver",
+  "rbot",
+  "qed"
+ ],
+ "new_fixture_names_not_in_scored": [],
+ "tests": {
+  "testAddRedundantSemiJoinRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testAggregateConstantKeyRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testAggregateConstantKeyRule2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette"
+  ],
+  "testAggregateConstantKeyRule3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testAggregateExtractProjectRule": [
+   "qed"
+  ],
+  "testAggregateExtractProjectRuleWithGroupingSets": [
+   "qed"
+  ],
+  "testAggregateExtractProjectRuleWithGroupingSets2": [
+   "qed"
+  ],
+  "testAggregateGroupingSetsProjectMerge": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testAggregateJoinRemove1": [
+   "qed"
+  ],
+  "testAggregateJoinRemove11": [
+   "qed"
+  ],
+  "testAggregateJoinRemove2": [
+   "qed"
+  ],
+  "testAggregateJoinRemove3": [
+   "qed"
+  ],
+  "testAggregateJoinRemove4": [
+   "rbot",
+   "qed"
+  ],
+  "testAggregateJoinRemove5": [
+   "rbot",
+   "qed"
+  ],
+  "testAggregateJoinRemove6": [
+   "qed"
+  ],
+  "testAggregateJoinRemove7": [
+   "qed"
+  ],
+  "testAggregateJoinRemove8": [
+   "qed"
+  ],
+  "testAggregateJoinRemove9": [
+   "qed"
+  ],
+  "testAggregateMerge1": [
+   "rbot",
+   "qed"
+  ],
+  "testAggregateMerge2": [
+   "qed"
+  ],
+  "testAggregateMerge8": [
+   "qed"
+  ],
+  "testAggregateMergeSum0": [
+   "rbot",
+   "qed"
+  ],
+  "testAggregateProjectMerge": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testAggregateProjectPullUpConstants": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testAggregateProjectPullUpConstants2": [
+   "qed"
+  ],
+  "testAggregateRemove1": [
+   "rbot"
+  ],
+  "testAggregateRemove2": [
+   "rbot",
+   "qed"
+  ],
+  "testAggregateRemove3": [
+   "rbot",
+   "qed"
+  ],
+  "testAggregateRemove7": [
+   "qed"
+  ],
+  "testAggregateUnionTransposeWithOneInputUnique": [
+   "qed"
+  ],
+  "testAggregateUnionTransposeWithTopLevelGroupSetRemapping": [
+   "qed"
+  ],
+  "testAll": [
+   "qed"
+  ],
+  "testAlreadyFalseEliminatesFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testAntiCorrelateWithLeftEmpty": [
+   "qed"
+  ],
+  "testAntiCorrelateWithRightEmpty": [
+   "qed"
+  ],
+  "testAntiJoinProjectTranspose": [
+   "qed"
+  ],
+  "testAnyInProjectNonNullable": [
+   "rbot",
+   "qed"
+  ],
+  "testBitAndReuseDistinctAttrWithMixedOptionality": [
+   "qed"
+  ],
+  "testBitOrReuseDistinctAttrWithMixedOptionality": [
+   "rbot",
+   "qed"
+  ],
+  "testCasePushIsAlwaysWorking": [
+   "qed"
+  ],
+  "testCastInAggregateExpandDistinctAggregatesRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testCastInAggregateReduceFunctions": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testCorrelateWithoutCorrelationToEmpty": [
+   "qed"
+  ],
+  "testCustomColumnResolvingInCorrelatedSubQuery": [
+   "qed"
+  ],
+  "testCustomColumnResolvingInCorrelatedSubQuery2": [
+   "qed"
+  ],
+  "testCustomColumnResolvingInNonCorrelatedSubQuery": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testDecorrelateAggWithConstantGroupKey": [
+   "qed"
+  ],
+  "testDecorrelateExists": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testDecorrelateTwoExists": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "rbot",
+   "qed"
+  ],
+  "testDecorrelateTwoIn": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "rbot",
+   "qed"
+  ],
+  "testDecorrelateUncorrelatedInAndCorrelatedExists": [
+   "qed"
+  ],
+  "testDigestOfApproximateDistinctAggregateCall": [
+   "qed"
+  ],
+  "testDistinctCount1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testDistinctCount2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCount3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountGroupingSets1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountGroupingSets2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountMixed": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountMixed2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountMultiple": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountMultipleNoGroup": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testDistinctCountWithExpandSumType": [
+   "rbot",
+   "qed"
+  ],
+  "testDistinctNonDistinctAggregates": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testDistinctNonDistinctAggregatesWithGrouping1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testDistinctNonDistinctAggregatesWithGrouping2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testDistinctNonDistinctTwoAggregatesWithGrouping": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testDistinctWithGrouping": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testEmptyAggregate": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testEmptyAggregateEmptyKey": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testEmptyAggregateEmptyKeyWithAggregateValuesRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testEmptyFilterProjectUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testEmptyIntersect": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testEmptyJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testEmptyJoinLeft": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testEmptyJoinRight": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testEmptyMinus": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testEmptyMinus2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testEmptyProject": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testEmptyProject2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testEmptySort": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testEmptySort2": [
+   "qed"
+  ],
+  "testEmptySortLimitZero": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testExistsWithAtLeastOneRowSubQuery": [
+   "rbot",
+   "qed"
+  ],
+  "testExistsWithNoRowSubQuery": [
+   "qed"
+  ],
+  "testExpandFilterConstantInCorrelatedWithTwoSubQueries": [
+   "qed"
+  ],
+  "testExpandFilterConstantInWithTwoSubQueries": [
+   "qed"
+  ],
+  "testExpandFilterExists": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testExpandFilterExistsSimple": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testExpandFilterExistsSimpleAnd": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testExpandFilterIn": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only"
+  ],
+  "testExpandFilterIn3Value": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testExpandFilterInComposite": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testExpandFilterInCorrelatedWithTwoSubQueries": [
+   "qed"
+  ],
+  "testExpandFilterInWithTwoSubQueries": [
+   "qed"
+  ],
+  "testExpandFilterScalar": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testExpandJoinExists": [
+   "qed"
+  ],
+  "testExpandJoinScalar": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testExpandProjectExists": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testExpandProjectIn": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only"
+  ],
+  "testExpandProjectInComposite": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testExpandProjectInNullable": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot"
+  ],
+  "testExpandProjectInWithTwoSubQueries": [
+   "qed"
+  ],
+  "testExpandProjectScalar": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testExpandWhereComparisonCorrelated": [
+   "qed"
+  ],
+  "testExpressionSimplification1": [
+   "qed"
+  ],
+  "testExpressionSimplification2": [
+   "qed"
+  ],
+  "testExtractJoinFilterRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testExtractYearMonthToRange": [
+   "qed"
+  ],
+  "testExtractYearToRange": [
+   "qed"
+  ],
+  "testFilterJoinRuleAndIsNotNull": [
+   "qed"
+  ],
+  "testFilterJoinRuleOrIsNotNull": [
+   "qed"
+  ],
+  "testFilterProjectTranspose": [
+   "qed"
+  ],
+  "testFilterRemoveIsNotDistinctFromRule": [
+   "qed"
+  ],
+  "testFlattenUncorrelatedCallBelowEquals": [
+   "qed"
+  ],
+  "testFlattenUncorrelatedTwoLevelCallBelowEqualsSucceeds": [
+   "qed"
+  ],
+  "testFullOuterJoinSimplificationToInner": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testFullOuterJoinSimplificationToLeftOuter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testFullOuterJoinSimplificationToRightOuter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testGroupByBooleanLiteralSimple": [
+   "qed"
+  ],
+  "testGroupByDateLiteralSimple": [
+   "qed"
+  ],
+  "testGroupByMultipleLiterals": [
+   "qed"
+  ],
+  "testInferringPredicatesWithNotOperatorInJoinCondition": [
+   "qed"
+  ],
+  "testInnerCorrelateWithLeftEmpty": [
+   "qed"
+  ],
+  "testInnerCorrelateWithRightEmpty": [
+   "qed"
+  ],
+  "testIntersectToDistinct": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testIntersectToDistinctAll": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testIsNullPushDown": [
+   "rbot"
+  ],
+  "testIsNullPushDown2": [
+   "rbot"
+  ],
+  "testJoinAssociateRuleWithBottomAlwaysTrueConditionAllowed": [
+   "qed"
+  ],
+  "testJoinAssociateRuleWithTopAlwaysTrueConditionAllowed": [
+   "qed"
+  ],
+  "testJoinCommuteRuleWithAlwaysTrueConditionAllowed": [
+   "qed"
+  ],
+  "testJoinConditionPushdown1": [
+   "qed"
+  ],
+  "testJoinConditionPushdown2": [
+   "qed"
+  ],
+  "testJoinConditionPushdown6": [
+   "rbot",
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule1": [
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule12": [
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule15": [
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule2": [
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule3": [
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule4": [
+   "qed"
+  ],
+  "testJoinDeriveIsNotNullFilterRule5": [
+   "qed"
+  ],
+  "testJoinProjectTranspose1": [
+   "qed"
+  ],
+  "testJoinProjectTranspose7": [
+   "qed"
+  ],
+  "testJoinProjectTranspose8": [
+   "qed"
+  ],
+  "testJoinPushTransitivePredicatesRule2": [
+   "qed"
+  ],
+  "testLeftCorrelateWithBothEmpty1": [
+   "qed"
+  ],
+  "testLeftCorrelateWithBothEmpty2": [
+   "qed"
+  ],
+  "testLeftCorrelateWithBothEmpty3": [
+   "qed"
+  ],
+  "testLeftCorrelateWithLeftEmpty": [
+   "qed"
+  ],
+  "testLeftCorrelateWithRightEmpty": [
+   "qed"
+  ],
+  "testLeftEmptyAntiJoin": [
+   "qed"
+  ],
+  "testLeftEmptyFullJoin": [
+   "qed"
+  ],
+  "testLeftEmptyInnerJoin": [
+   "qed"
+  ],
+  "testLeftEmptyLeftJoin": [
+   "qed"
+  ],
+  "testLeftEmptyRightJoin": [
+   "qed"
+  ],
+  "testLeftEmptySemiJoin": [
+   "qed"
+  ],
+  "testLeftOuterJoinSimplificationToInner": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testMaxReuseDistinctAttrWithMixedOptionality": [
+   "rbot",
+   "qed"
+  ],
+  "testMergeFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testMergeIntersect": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testMergeJoinFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testMergeMinus": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testMergeMinusRightDeep": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testMergeSetOpMixed": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testMergeUnionAll": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testMergeUnionDistinct": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testMergeUnionMixed": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testMergeUnionMixed2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testMinReuseDistinctAttrWithMixedOptionality": [
+   "rbot",
+   "qed"
+  ],
+  "testMinusMergeRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testMultipleDistinctWithGrouping": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testNoOversimplificationBelowIsNull": [
+   "qed"
+  ],
+  "testNotPushFilterPastWindowWhenPredicateNotOnPartitionKey": [
+   "rbot"
+  ],
+  "testOrAlwaysTrue": [
+   "qed"
+  ],
+  "testOrAlwaysTrue2": [
+   "qed"
+  ],
+  "testOversimplifiedCaseStatement": [
+   "qed"
+  ],
+  "testProjectAggregateMerge": [
+   "qed"
+  ],
+  "testProjectAggregateMergeSum0": [
+   "qed"
+  ],
+  "testProjectAggregateMergeSum0AndSum": [
+   "qed"
+  ],
+  "testProjectCorrelateTransposeRuleLeftCorrelate": [
+   "qed"
+  ],
+  "testProjectJoinRemove1": [
+   "qed"
+  ],
+  "testProjectJoinRemove10": [
+   "qed"
+  ],
+  "testProjectJoinRemove4": [
+   "qed"
+  ],
+  "testProjectJoinRemove7": [
+   "qed"
+  ],
+  "testPullAggregateThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPullAggregateThroughUnion2": [
+   "qed"
+  ],
+  "testPullAggregateThroughUnionAndAddProjects": [
+   "qed"
+  ],
+  "testPullAggregateThroughUnionWithAlias": [
+   "qed"
+  ],
+  "testPullConstantIntoFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testPullConstantIntoJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantIntoJoin2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantIntoProject": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPullConstantIntoProjectWithIsNotDistinctFrom": [
+   "qed"
+  ],
+  "testPullConstantIntoProjectWithIsNotDistinctFromDate": [
+   "qed"
+  ],
+  "testPullConstantIntoProjectWithIsNotDistinctFromForNull": [
+   "qed"
+  ],
+  "testPullConstantThroughAggregateAllConst": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughAggregateAllLiterals": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughAggregateConstGroupBy": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughAggregatePermuted": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughAggregatePermutedConstFirst": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughAggregatePermutedConstGroupBy": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughAggregateSimpleNonNullable": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughConstLast": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullConstantThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPullConstantThroughUnion2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette"
+  ],
+  "testPullConstantThroughUnion3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPullConstantThroughUnionSameTypeNullableField": [
+   "qed"
+  ],
+  "testPullFilterThroughAggregate": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPullFilterThroughAggregateGroupingSets": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPullNull": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAboveFiltersIntoInnerJoinCondition": [
+   "qed"
+  ],
+  "testPushAggregateFunctionsThroughJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "rbot",
+   "qed"
+  ],
+  "testPushAggregateSumNoGroup": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateSumThroughJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateSumThroughJoinAfterAggregateReduce": [
+   "qed"
+  ],
+  "testPushAggregateSumWithoutGroupKeyThroughJoin": [
+   "qed"
+  ],
+  "testPushAggregateThroughJoin1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateThroughJoin2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateThroughJoin3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testPushAggregateThroughJoin4": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateThroughJoin5": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateThroughJoin6": [
+   "qed"
+  ],
+  "testPushAggregateThroughJoinDistinct": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAggregateThroughJoinOnEmptyLogicalValues": [
+   "qed"
+  ],
+  "testPushAggregateThroughJoinWithUniqueInput": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin1": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin12": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin13": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin14": [
+   "rbot",
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin15": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin16": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin2": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin3": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin4": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin5": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin6": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin7": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin8": [
+   "qed"
+  ],
+  "testPushAggregateThroughOuterJoin9": [
+   "qed"
+  ],
+  "testPushAvgGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushAvgThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushBoolAndBoolOrThroughUnion": [
+   "qed"
+  ],
+  "testPushCountFilterThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testPushCountNullableGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushCountNullableThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushCountStarGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushCountStarThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushFilterPastAgg": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPushFilterPastAggFour": [
+   "qed"
+  ],
+  "testPushFilterPastAggThree": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testPushFilterPastAggTwo": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPushFilterPastAggWithGroupingSets1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testPushFilterPastAggWithGroupingSets2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testPushFilterPastProject": [
+   "qed"
+  ],
+  "testPushFilterSemijoin": [
+   "qed"
+  ],
+  "testPushFilterThroughSemiJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testPushFilterWithIsNotDistinctFromPastJoin": [
+   "qed"
+  ],
+  "testPushFilterWithRank": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testPushFilterWithRankExpr": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testPushJoinCondDownToProject": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPushJoinThroughUnionOnLeft": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testPushJoinThroughUnionOnRight": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "cosette",
+   "qed"
+  ],
+  "testPushMaxNullableGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushMaxNullableThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushMinGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushMinThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastFilter2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastFilter3b": [
+   "qed"
+  ],
+  "testPushProjectPastFilter3c": [
+   "qed"
+  ],
+  "testPushProjectPastFullJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastFullJoinStrong": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastInnerJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testPushProjectPastInnerJoinStrong": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastJoin": [
+   "qed"
+  ],
+  "testPushProjectPastLeftJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastLeftJoinSwap": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastLeftJoinSwapStrong": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastOutJoinWithCastNonNullExpr": [
+   "qed"
+  ],
+  "testPushProjectPastRightJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastRightJoinStrong": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastRightJoinSwap": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastRightJoinSwapStrong": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushProjectPastSetOp": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testPushProjectWithIsNotDistinctFromPastJoin": [
+   "qed"
+  ],
+  "testPushSemiJoinConditions": [
+   "qed"
+  ],
+  "testPushSemiJoinPastFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSemiJoinPastJoinRuleLeft": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSemiJoinPastJoinRuleNotHappensJoinKeysDifferentOrigin": [
+   "qed"
+  ],
+  "testPushSemiJoinPastJoinRuleRight": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSemiJoinPastProject": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumConstantGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumConstantThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumCountStarGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumCountStarThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumNullConstantGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumNullConstantThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumNullableGroupingSetsThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumNullableNOGBYThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testPushSumNullableThroughUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceAverage": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceAverageWithNoReduceSum": [
+   "qed"
+  ],
+  "testReduceCase": [
+   "qed"
+  ],
+  "testReduceCaseNullabilityChange": [
+   "qed"
+  ],
+  "testReduceCastAndConsts": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testReduceCastTimeUnchanged": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testReduceCasts": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceCompositeInSubQuery": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstants": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testReduceConstants2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only"
+  ],
+  "testReduceConstants3": [
+   "qed"
+  ],
+  "testReduceConstantsCalc": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot"
+  ],
+  "testReduceConstantsCaseEquals": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsCaseEquals2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsCaseEquals3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsDup": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsDup2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsDup3": [
+   "qed"
+  ],
+  "testReduceConstantsDup3Null": [
+   "qed"
+  ],
+  "testReduceConstantsDupNot": [
+   "qed"
+  ],
+  "testReduceConstantsDupNot2": [
+   "qed"
+  ],
+  "testReduceConstantsDupNot2Null": [
+   "qed"
+  ],
+  "testReduceConstantsDupNotNull": [
+   "qed"
+  ],
+  "testReduceConstantsEliminatesFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsIsNotNull": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsIsNull": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testReduceConstantsNegated": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testReduceConstantsNegatedInverted": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testReduceConstantsNull": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsNullEqualsOne": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsProjectNullable": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceConstantsRequiresExecutor": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testReduceExpressionsNot": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testReduceNestedCaseWhen": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceNot": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testReduceNullableCase": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testReduceNullableCase2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only"
+  ],
+  "testReduceNullableToNotNull": [
+   "qed"
+  ],
+  "testReduceNullableToNotNull2": [
+   "qed"
+  ],
+  "testReduceOrCaseWhen": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceValuesToEmpty": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testReduceValuesUnderFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceValuesUnderProject": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testReduceValuesUnderProjectFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testRemoveDistinctOnAgg": [
+   "rbot",
+   "qed"
+  ],
+  "testRemoveSemiJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testRemoveSemiJoinRight": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testRemoveSemiJoinRightWithFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testRemoveSemiJoinWithFilter": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testRightEmptyAntiJoin": [
+   "qed"
+  ],
+  "testRightEmptyAntiJoinNonEqui": [
+   "qed"
+  ],
+  "testRightEmptyFullJoin": [
+   "qed"
+  ],
+  "testRightEmptyInnerJoin": [
+   "qed"
+  ],
+  "testRightEmptyLeftJoin": [
+   "qed"
+  ],
+  "testRightEmptyRightJoin": [
+   "qed"
+  ],
+  "testRightEmptySemiJoin": [
+   "qed"
+  ],
+  "testRightOuterJoinSimplificationToInner": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testSelectAnyCorrelated": [
+   "rbot",
+   "qed"
+  ],
+  "testSelectNotInCorrelated": [
+   "rbot",
+   "qed"
+  ],
+  "testSemiCorrelateWithLeftEmpty": [
+   "qed"
+  ],
+  "testSemiCorrelateWithRightEmpty": [
+   "qed"
+  ],
+  "testSemiJoinProjectTranspose": [
+   "qed"
+  ],
+  "testSemiJoinReduceConstants": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testSemiJoinRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSemiJoinRuleExists": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSemiJoinRuleFull": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testSemiJoinRuleLeft": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testSemiJoinRuleRight": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testSemiJoinRuleWithHint": [
+   "qed"
+  ],
+  "testSemiJoinRuleWithJoinOnUniqueInput": [
+   "qed"
+  ],
+  "testSemiJoinRuleWithJoinOnUniqueInputWithAlias": [
+   "qed"
+  ],
+  "testSemiJoinTrim": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSimplifyFilter": [
+   "qed"
+  ],
+  "testSkipReduceConstantsCaseEquals": [
+   "qed"
+  ],
+  "testSome": [
+   "rbot",
+   "qed"
+  ],
+  "testSomeWithEquality": [
+   "qed"
+  ],
+  "testSomeWithEquality2": [
+   "qed"
+  ],
+  "testSomeWithNotEquality": [
+   "qed"
+  ],
+  "testSomeWithTwoCorrelatedSubQueries": [
+   "qed"
+  ],
+  "testSomeWithTwoSubQueries": [
+   "qed"
+  ],
+  "testSortJoinCopyInnerJoinOrderBy": [
+   "qed"
+  ],
+  "testSortJoinCopyInnerJoinOrderByLimit": [
+   "qed"
+  ],
+  "testSortJoinCopyInnerJoinOrderByTwoFields": [
+   "qed"
+  ],
+  "testSortJoinCopySemiJoinOrderBy": [
+   "qed"
+  ],
+  "testSortJoinCopySemiJoinOrderByLimitOffset": [
+   "qed"
+  ],
+  "testSortJoinCopySemiJoinOrderByOffset": [
+   "qed"
+  ],
+  "testSortJoinTranspose1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testSortJoinTranspose2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSortJoinTranspose3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testSortJoinTranspose4": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSortJoinTranspose5": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testSortProjectTranspose1": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSortProjectTranspose2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSortProjectTranspose3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only"
+  ],
+  "testSortRemovalAllKeysConstant": [
+   "qed"
+  ],
+  "testSortRemovalOneKeyConstant": [
+   "qed"
+  ],
+  "testSortUnionTranspose": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testSortUnionTranspose2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testSortUnionTranspose3": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "qed"
+  ],
+  "testStrengthenJoinType": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testSumAndDistinctSumWithExpandSumType": [
+   "rbot",
+   "qed"
+  ],
+  "testSwapOuterJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceAggregate": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testTransitiveInferenceComplexPredicate": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceConjunctInPullUp": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testTransitiveInferenceConstantEquiPredicate": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testTransitiveInferenceFullOuterJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testTransitiveInferenceJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testTransitiveInferenceJoin3way": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceJoin3wayAgg": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testTransitiveInferenceLeftOuterJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceNoPullUpExprs": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testTransitiveInferencePreventProjectPullUp": [
+   "sqlsolver",
+   "spes",
+   "cosette_json"
+  ],
+  "testTransitiveInferenceProject": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testTransitiveInferencePullUpThruAlias": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceRightOuterJoin": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceUnion": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceUnion3way": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testTransitiveInferenceUnionAlwaysTrue": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testUncorrelatedCallInConjunctionIsFlattenedOnlyIfSiblingOfCorrelation": [
+   "qed"
+  ],
+  "testUnionMergeRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testUnionToDistinctRule": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "cosette",
+   "qed"
+  ],
+  "testWhereAnyCorrelatedInSelect": [
+   "rbot",
+   "qed"
+  ],
+  "testWhereExpressionInCorrelated": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testWhereExpressionInCorrelated2": [
+   "qed"
+  ],
+  "testWhereInCorrelated": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "rbot",
+   "qed"
+  ],
+  "testWhereInJoinCorrelated": [
+   "qed"
+  ],
+  "testWhereNotInCorrelated": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "rbot",
+   "qed"
+  ],
+  "testWhereNotInCorrelated2": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "qed"
+  ],
+  "testWhereOrSubQuery": [
+   "sqlsolver",
+   "spes",
+   "cosette_json",
+   "spes_only",
+   "rbot",
+   "qed"
+  ]
+ }
+}

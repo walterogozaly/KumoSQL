@@ -179,3 +179,40 @@ def test_pipeline_report_includes_near_duplicates(tmp_path, capsys):
     assert cluster["kind"] == "extra_columns_and_filters"
     assert cluster["shared_sql"].startswith("SELECT o.id")
     assert report["duplicates"] == []
+
+
+def test_a_derived_table_wrapper_around_a_copy_does_not_crash_the_analysis():
+    graph = {
+        "tables": [
+            table("a", f"SELECT id FROM ({BASE}) AS s WHERE id IS NOT NULL"),
+            table("b", f"SELECT id FROM ({BASE} AND o.amount < 99) AS s WHERE id IS NOT NULL"),
+        ],
+        "declarations": drifted_copies_graph()["declarations"],
+    }
+
+    clusters = load_compiled_graph(graph).near_duplicate_selects()
+
+    assert any(
+        {m for v in c.variants for m, _ in v.occurrences} == {"proj.mart.a", "proj.mart.b"} for c in clusters
+    )
+
+
+def test_copies_with_renamed_aliases_and_flipped_comparisons_still_get_a_shared_model():
+    renamed = (
+        "SELECT x.id, x.customer_id, x.amount, x.created_at "
+        "FROM `proj.raw.orders` AS x JOIN `proj.raw.customers` AS k ON x.customer_id = k.id "
+        "WHERE 0 < x.amount AND 'US' = k.country"
+    )
+    parsed = {"a": parse(BASE), "b": parse(renamed)}
+
+    [cluster] = find_near_duplicates(parsed)
+
+    assert cluster.kind == "extra_filters"
+    assert cluster.shared_sql is not None
+    assert [v.residual_filters for v in cluster.variants] == [(), ("country = 'US'",)]
+
+
+def test_logic_over_different_tables_is_not_a_near_duplicate():
+    other = BASE.replace("`proj.raw.customers`", "`proj.raw.vendors`")
+
+    assert find_near_duplicates({"a": parse(BASE), "b": parse(other + " AND o.amount < 9")}) == []

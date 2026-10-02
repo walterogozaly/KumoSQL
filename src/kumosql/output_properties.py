@@ -1,0 +1,653 @@
+"""What a query's output is guaranteed to look like, without running it.
+
+``infer_properties(sql, constraints, schema)`` answers three questions about a
+SELECT, each as a proven fact or as "not known" (never as a guess):
+
+* which output columns are never NULL (a NOT NULL column that is read through
+  inner joins, a ``COUNT``, a column the WHERE clause tests with ``IS NOT NULL``
+  or a comparison, a ``COALESCE`` with a constant; but not a column of the
+  nullable side of an outer join, nor ``SUM`` over a global aggregate that may
+  see no rows);
+* which sets of output columns are unique (``GROUP BY`` makes its keys unique,
+  ``DISTINCT`` makes the whole row unique, a join keeps a side's key when the
+  other side is matched on its own key and otherwise only the pair of keys is
+  unique);
+* how many rows it returns at most (a global aggregate returns exactly one row,
+  ``LIMIT 1`` and a lookup by a full key return at most one), which is what a
+  scalar subquery needs to be safe.
+
+Uniqueness means no two rows are identical, with NULL equal to NULL (the way
+``GROUP BY`` and ``DISTINCT`` compare). A fact that rests on a declared NOT NULL
+column or key says so in ``assumptions``; facts that follow from the query alone
+carry none. Anything the analysis does not understand is left as unknown, so
+"not known" is the safe answer for a case it cannot decide.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Iterable, Mapping
+
+import sqlglot
+from sqlglot import exp
+
+from .smt_equivalence import TableConstraints
+
+# A fact's provenance: the declared facts it rests on (empty = follows from the query).
+Provenance = frozenset
+
+_NULL_PROPAGATING = {
+    "ABS", "UPPER", "LOWER", "LENGTH", "TRIM", "LTRIM", "RTRIM", "ROUND", "FLOOR", "CEIL", "CEILING",
+    "SQRT", "CONCAT", "REVERSE", "DATE_TRUNC", "TIMESTAMP_TRUNC", "SUBSTR",
+    "SUBSTRING", "LEFT", "RIGHT", "REPLACE", "SIGN", "MOD", "POWER", "LN", "LOG", "EXP",
+}
+_ALWAYS_NON_NULL = {"ROW_NUMBER", "RANK", "DENSE_RANK", "COUNTIF", "CURRENT_DATE", "CURRENT_TIMESTAMP", "CURRENT_DATETIME", "CURRENT_TIME"}
+_NULL_ON_EMPTY_AGGREGATES = (exp.Sum, exp.Min, exp.Max, exp.Avg)
+
+
+@dataclass(frozen=True)
+class ColumnFact:
+    name: str
+    non_null: bool
+    assumptions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class UniqueKey:
+    columns: tuple[str, ...]  # empty: the query returns at most one row
+    assumptions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OutputProperties:
+    """Proven facts about one query's output; absence of a fact means "not known"."""
+
+    columns: tuple[ColumnFact, ...] = ()
+    keys: tuple[UniqueKey, ...] = ()
+    exactly_one_row: bool = False
+    unsupported: str = ""
+
+    def column(self, name: str) -> ColumnFact | None:
+        for column in self.columns:
+            if column.name == name.lower():
+                return column
+        return None
+
+    def non_null(self, name: str) -> bool:
+        column = self.column(name)
+        return bool(column and column.non_null)
+
+    def is_unique(self, *names: str) -> bool:
+        """True when the given output columns (or a subset of them) are proven unique."""
+
+        wanted = {n.lower() for n in names}
+        return any(set(key.columns) <= wanted for key in self.keys)
+
+    @property
+    def at_most_one_row(self) -> bool:
+        return any(not key.columns for key in self.keys)
+
+    @property
+    def scalar_subquery(self) -> str:
+        """``exactly_one``, ``at_most_one`` or ``unknown`` (it may return several rows)."""
+
+        if self.exactly_one_row:
+            return "exactly_one"
+        return "at_most_one" if self.at_most_one_row else "unknown"
+
+    def assumptions_for(self, *facts: str) -> tuple[str, ...]:
+        """Declared facts a conclusion rests on, e.g. ``assumptions_for("id")`` for the key and NOT NULL behind ``id``."""
+
+        found: dict[str, None] = {}
+        for name in facts:
+            column = self.column(name)
+            for item in (column.assumptions if column else ()):
+                found[item] = None
+        return tuple(found)
+
+    def to_json(self) -> dict:
+        return {
+            "columns": [{"name": c.name, "non_null": c.non_null, "assumptions": list(c.assumptions)} for c in self.columns],
+            "unique_keys": [{"columns": list(k.columns), "assumptions": list(k.assumptions)} for k in self.keys],
+            "exactly_one_row": self.exactly_one_row,
+            "scalar_subquery": self.scalar_subquery,
+            "unsupported": self.unsupported,
+        }
+
+
+class _Unsupported(Exception):
+    pass
+
+
+@dataclass
+class _Rel:
+    """A relation during analysis: columns keyed by ``alias.column`` (all lower case)."""
+
+    cols: dict[str, tuple[bool, Provenance]] = field(default_factory=dict)  # qualified -> (non_null, provenance)
+    keys: list[tuple[frozenset, Provenance]] = field(default_factory=list)  # sets of qualified columns
+    exactly_one: bool = False
+    order: list[str] = field(default_factory=list)  # qualified names in declared order
+    revert: dict = field(default_factory=dict)  # outer-join side column -> (declared non-null, provenance, side id)
+    same: list[set] = field(default_factory=list)  # columns known equal in every row (inner join / WHERE equalities)
+
+    def unite(self, a: str, b: str) -> None:
+        merged = {a, b}
+        rest = []
+        for group in self.same:
+            if group & merged:
+                merged |= group
+            else:
+                rest.append(group)
+        self.same = [*rest, merged]
+
+    def equal_to(self, q: str) -> set:
+        for group in self.same:
+            if q in group:
+                return set(group)
+        return {q}
+
+
+def _fact(kind: str, table: str, columns: Iterable[str]) -> str:
+    return f"{table}.{next(iter(columns))} is NOT NULL" if kind == "not_null" else f"({', '.join(columns)}) is unique in {table}"
+
+
+class _Analyzer:
+    def __init__(self, constraints: Mapping[str, TableConstraints], schema: Mapping[str, list[str]], dialect: str) -> None:
+        self.constraints = {k.lower().strip("`"): v for k, v in (constraints or {}).items()}
+        self.schema = {k.lower().strip("`"): [c.lower() for c in v] for k, v in (schema or {}).items()}
+        self.dialect = dialect
+        self.ctes: dict[str, exp.Expression] = {}
+
+    # ----- lookups
+
+    def _lookup(self, table: exp.Table) -> tuple[list[str], frozenset, tuple]:
+        parts = [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
+        candidates = [".".join(parts[i:]) for i in range(len(parts))]
+        for name in candidates:
+            if name in self.schema or name in self.constraints:
+                columns = self.schema.get(name)
+                facts = self.constraints.get(name, TableConstraints())
+                if columns is None:
+                    raise _Unsupported(f"columns of {name} are not known")
+                return columns, frozenset(facts.not_null), tuple(facts.keys)
+        raise _Unsupported(f"table {'.'.join(parts)} is not in the schema")
+
+    # ----- relations
+
+    def source(self, node: exp.Expression) -> tuple[str, _Rel]:
+        alias = node.alias.lower() if node.alias else ""
+        if isinstance(node, exp.Table):
+            name = node.name.lower()
+            if not node.args.get("db") and name in self.ctes:
+                rel = self.query_rel(self.ctes[name])
+                return alias or name, _requalify(rel, alias or name)
+            columns, not_null, keys = self._lookup(node)
+            alias = alias or node.name.lower()
+            rel = _Rel()
+            display = ".".join(p.name.lower() for p in (node.args.get("db"), node.this) if p is not None and p.name)
+            for column in columns:
+                q = f"{alias}.{column}"
+                rel.cols[q] = (column in not_null, frozenset({f"{display}.{column} is NOT NULL"}) if column in not_null else frozenset())
+                rel.order.append(q)
+            for key in keys:
+                key = tuple(c.lower() for c in key)
+                if all(c in columns for c in key):
+                    rel.keys.append((frozenset(f"{alias}.{c}" for c in key), frozenset({f"({', '.join(key)}) is unique in {display}"})))
+            return alias, rel
+        if isinstance(node, exp.Subquery):
+            if not alias:
+                raise _Unsupported("subquery without an alias")
+            return alias, _requalify(self.query_rel(node.this), alias)
+        raise _Unsupported(f"source {type(node).__name__}")
+
+    def query_rel(self, node: exp.Expression) -> _Rel:
+        """The output relation of a query, columns qualified by the empty alias."""
+
+        while isinstance(node, exp.Subquery):
+            node = node.this
+        with_ = node.args.get("with_") or node.args.get("with")
+        saved = dict(self.ctes)
+        try:
+            if with_ is not None:
+                for cte in with_.expressions:
+                    self.ctes[cte.alias.lower()] = cte.this
+            if isinstance(node, exp.Select):
+                return self.select_rel(node)
+            if isinstance(node, (exp.Union, exp.Intersect, exp.Except)):
+                return self.set_rel(node)
+            raise _Unsupported(type(node).__name__)
+        finally:
+            self.ctes = saved
+
+    def set_rel(self, node) -> _Rel:
+        left, right = self.query_rel(node.left), self.query_rel(node.right)
+        if len(left.order) != len(right.order):
+            raise _Unsupported("set operation with different widths")
+        distinct = node.args.get("distinct", True)
+        out = _Rel()
+        for lq, rq in zip(left.order, right.order):
+            ln, lp = left.cols[lq]
+            rn, rp = right.cols[rq]
+            if isinstance(node, exp.Except):
+                non_null, prov = ln, lp
+            elif isinstance(node, exp.Intersect):
+                non_null, prov = (ln, lp) if ln else (rn, rp) if rn else (False, frozenset())
+            else:
+                non_null, prov = ln and rn, lp | rp
+            out.cols[lq] = (non_null, prov if non_null else frozenset())
+            out.order.append(lq)
+        if distinct:
+            out.keys.append((frozenset(out.order), frozenset()))
+        elif isinstance(node, exp.Except):
+            out.keys = [(frozenset(f".{k.split('.', 1)[1]}" for k in key), prov) for key, prov in left.keys if all(k in left.order for k in key)]
+        return out
+
+    def select_rel(self, select: exp.Select) -> _Rel:
+        from_ = select.args.get("from_") or select.args.get("from")
+        scope: dict[str, _Rel] = {}
+        if from_ is None:
+            rel = _Rel(exactly_one=True)
+            rel.keys.append((frozenset(), frozenset()))
+            current = rel
+        else:
+            alias, current = self.source(from_.this)
+            scope[alias] = current
+            for join in select.args.get("joins") or []:
+                current = self._join(current, scope, join, select, select.args.get("where").this if select.args.get("where") else None)
+        current = self._filter(current, select.args.get("where"), scope)
+        return self._project(select, current, scope)
+
+    # ----- joins and filters
+
+    def _join(self, left: _Rel, scope: dict, join: exp.Join, select: exp.Select, where: exp.Expression | None = None) -> _Rel:
+        if join.args.get("using"):
+            raise _Unsupported("JOIN USING")
+        alias, right = self.source(join.this)
+        side = (join.args.get("side") or "").upper()
+        on = join.args.get("on")
+        known = {**{q: None for q in left.cols}, **{q: None for q in right.cols}}
+        left_bound: set[str] = set()
+        right_bound: set[str] = set()
+        conds = list(_conjuncts(on)) if on is not None else []
+        if on is None and side == "" and where is not None:
+            conds += list(_conjuncts(where))  # FROM a, b WHERE a.x = b.y is an inner join on the equality
+        for cond in conds:
+            pair = _eq_pair(cond)
+            if pair is None:
+                continue
+            for x, y in (pair, pair[::-1]):
+                qx = self._resolve(x, known)
+                if qx is None:
+                    continue
+                qy = self._resolve(y, known)
+                if qy is not None and ((qx in right.cols) != (qy in right.cols)) or qy is None and self._free_of(y, known):
+                    (right_bound if qx in right.cols else left_bound).add(qx)
+        out = _Rel(order=left.order + right.order, same=[set(g) for g in left.same + right.same])
+        out.revert = {**left.revert, **right.revert}
+        for rel, nullable in ((left, side in ("RIGHT", "FULL")), (right, side in ("LEFT", "FULL"))):
+            for q in rel.order:
+                non_null, prov = rel.cols[q]
+                out.cols[q] = (non_null and not nullable, prov if non_null and not nullable else frozenset())
+                if nullable:
+                    out.revert[q] = (*(out.revert[q][:2] if q in out.revert else (non_null, prov)), id(rel) if q not in out.revert else out.revert[q][2])
+        if side == "":
+            if on is not None:
+                self._mark_non_null(out, on)
+                for cond in _conjuncts(on):
+                    pair = _eq_pair(cond)
+                    if pair and (a := self._resolve(pair[0], known)) and (b := self._resolve(pair[1], known)):
+                        out.unite(a, b)
+        else:
+            out.same = [set(g) for g in left.same] if side == "LEFT" else [set(g) for g in right.same] if side == "RIGHT" else []
+        keys: list[tuple[frozenset, Provenance]] = []
+        if _covers_key(right.keys, right_bound) and side in ("", "INNER", "LEFT"):
+            keys += [(k, p | _prov_of(right.keys, right_bound)) for k, p in left.keys]
+        if _covers_key(left.keys, left_bound) and side in ("", "INNER", "RIGHT"):
+            keys += [(k, p | _prov_of(left.keys, left_bound)) for k, p in right.keys]
+        for kl, pl in left.keys:
+            for kr, pr in right.keys:
+                keys.append((kl | kr, pl | pr))
+        out.keys = _prune_keys(keys)
+        scope[alias] = right
+        return out
+
+    def _resolve(self, node, known):
+        """Qualified name of a column reference, or None (outside this scope / ambiguous)."""
+
+        if not isinstance(node, exp.Column) or isinstance(node.this, exp.Star):
+            return None
+        name = node.name.lower()
+        table = node.table.lower()
+        if table:
+            q = f"{table}.{name}"
+            return q if q in known else None
+        found = [q for q in known if q.split(".", 1)[1] == name]
+        return found[0] if len(found) == 1 else None
+
+    def _filter(self, rel: _Rel, where: exp.Where | None, scope: dict) -> _Rel:
+        if where is None:
+            return rel
+        out = _Rel(cols=dict(rel.cols), keys=list(rel.keys), order=list(rel.order), same=[set(g) for g in rel.same], revert=dict(rel.revert))
+        self._mark_non_null(out, where.this)
+        bound: set[str] = set()
+        for cond in _conjuncts(where.this):
+            pair = _eq_pair(cond)
+            if pair is None:
+                continue
+            qa, qb = self._resolve(pair[0], out.cols), self._resolve(pair[1], out.cols)
+            if qa and qb:
+                out.unite(qa, qb)
+            for x, y, qx, qy in ((pair[0], pair[1], qa, qb), (pair[1], pair[0], qb, qa)):
+                if qx is not None and qy is None and self._free_of(y, out.cols):
+                    bound.add(qx)
+        # A key whose remaining columns are all bound to constants identifies at most one row.
+        keys = list(out.keys)
+        for key, prov in rel.keys:
+            closed = set(bound)
+            for q in bound:
+                closed |= out.equal_to(q)
+            reduced = key - closed
+            if reduced != key:
+                keys.append((reduced, prov))
+        out.keys = _prune_keys(keys)
+        return out
+
+    def _free_of(self, node: exp.Expression, known) -> bool:
+        """The expression reads nothing from this query's own relations (a literal, parameter or outer column)."""
+
+        for column in node.find_all(exp.Column):
+            if self._resolve(column, known) is not None:
+                return False
+            if not column.table and any(q.split(".", 1)[1] == column.name.lower() for q in known):
+                return False
+        return not node.find(exp.Subquery) and not node.find(exp.Window)
+
+    def _mark_non_null(self, rel: _Rel, cond: exp.Expression) -> None:
+        rejected = self._null_rejected(cond, rel)
+        for name in rejected:
+            if name in rel.cols and not rel.cols[name][0]:
+                rel.cols[name] = (True, frozenset())
+        # A match required on the nullable side of an outer join makes it an inner join for those rows.
+        for side in {rel.revert[n][2] for n in rejected if n in rel.revert}:
+            for q, (non_null, prov, group) in rel.revert.items():
+                if group == side and non_null:
+                    rel.cols[q] = (True, prov)
+
+    def _null_rejected(self, cond: exp.Expression, rel: _Rel) -> set:
+        """Columns that must be non-NULL for ``cond`` to be TRUE."""
+
+        if isinstance(cond, exp.Paren):
+            return self._null_rejected(cond.this, rel)
+        if isinstance(cond, exp.And):
+            return self._null_rejected(cond.left, rel) | self._null_rejected(cond.right, rel)
+        if isinstance(cond, exp.Or):
+            return self._null_rejected(cond.left, rel) & self._null_rejected(cond.right, rel)
+        if isinstance(cond, exp.Not):
+            inner = cond.this.this if isinstance(cond.this, exp.Paren) else cond.this
+            if isinstance(inner, exp.Is) and isinstance(inner.expression, exp.Null):
+                return self._strict_columns(inner.this, rel)
+            return set()
+        if isinstance(cond, (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Like, exp.ILike)):
+            return self._strict_columns(cond.left, rel) | self._strict_columns(cond.right, rel)
+        if isinstance(cond, exp.Between):
+            return self._strict_columns(cond.this, rel) | self._strict_columns(cond.args["low"], rel) | self._strict_columns(cond.args["high"], rel)
+        if isinstance(cond, exp.In) and not cond.args.get("query") and not cond.args.get("unnest"):
+            return self._strict_columns(cond.this, rel)
+        return set()
+
+    def _strict_columns(self, node: exp.Expression, rel: _Rel) -> set:
+        """Columns whose NULL would make ``node`` NULL (a bare column or arithmetic on columns)."""
+
+        if isinstance(node, exp.Paren):
+            return self._strict_columns(node.this, rel)
+        if isinstance(node, exp.Column):
+            q = self._resolve(node, rel.cols)
+            return {q} if q else set()
+        if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div)):
+            return self._strict_columns(node.left, rel) | self._strict_columns(node.right, rel)
+        if isinstance(node, exp.Neg):
+            return self._strict_columns(node.this, rel)
+        if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast):
+            return self._strict_columns(node.this, rel)
+        return set()
+
+    # ----- projection
+
+    def _canon(self, node: exp.Expression, rel: _Rel) -> str:
+        """Identity of an expression for matching GROUP BY items with select items."""
+
+        if isinstance(node, exp.Paren):
+            node = node.this
+        return self._resolve(node, rel.cols) or node.sql(dialect=self.dialect).lower()
+
+    def _project(self, select: exp.Select, rel: _Rel, scope: dict) -> _Rel:
+        group = select.args.get("group")
+        grouped = bool(group and group.expressions)
+        if group is not None and (any(group.args.get(k) for k in ("grouping_sets", "rollup", "cube", "totals", "all")) or group.find(exp.Rollup, exp.Cube, exp.GroupingSets)):
+            raise _Unsupported("grouping sets")
+        has_agg = any(select_has_aggregate(e) for e in select.expressions) or bool(select.args.get("having"))
+        global_agg = has_agg and not grouped
+        projected: list[tuple[str, exp.Expression]] = []
+        for item in select.expressions:
+            if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
+                qualifier = item.table.lower() if isinstance(item, exp.Column) else ""
+                for q in rel.order:
+                    table, name = q.split(".", 1)
+                    if not qualifier or table == qualifier:
+                        projected.append((name, exp.column(name, table=table)))
+                continue
+            name = item.alias_or_name.lower() if item.alias_or_name else f"f{len(projected)}_"  # BigQuery's name for it
+            projected.append((name, item.this if isinstance(item, exp.Alias) else item))
+        if len({n for n, _ in projected}) != len(projected):
+            raise _Unsupported("duplicate output names")
+        out = _Rel()
+        for name, expr in projected:
+            non_null, prov = self._non_null(expr, rel, possibly_empty=global_agg)
+            out.cols[f".{name}"] = (non_null, prov if non_null else frozenset())
+            out.order.append(f".{name}")
+        keys: list[tuple[frozenset, Provenance]] = []
+        by_canon: dict[str, str] = {}
+        for name, expr in projected:
+            by_canon.setdefault(self._canon(expr, rel), f".{name}")
+        if grouped:
+            members = []
+            for g in group.expressions:
+                if isinstance(g, exp.Literal) and not g.is_string and g.this.isdigit() and 1 <= int(g.this) <= len(projected):
+                    members.append(f".{projected[int(g.this) - 1][0]}")
+                    continue
+                alias_hit = [n for n, e in projected if isinstance(g, exp.Column) and not g.table and n == g.name.lower() and self._resolve(g, rel.cols) is None]
+                members.append(by_canon.get(self._canon(g, rel)) or (f".{alias_hit[0]}" if alias_hit else None))
+            if all(members):
+                keys.append((frozenset(members), frozenset()))
+        elif global_agg:
+            keys.append((frozenset(), frozenset()))
+            out.exactly_one = not select.args.get("having")
+        else:
+            by_col: dict[str, str] = {}
+            for name, expr in projected:
+                q = self._resolve(expr, rel.cols)
+                if q:
+                    by_col.setdefault(q, f".{name}")
+            for key, prov in rel.keys:
+                chosen = []
+                for c in key:
+                    hit = next((by_col[e] for e in sorted(rel.equal_to(c)) if e in by_col), None)
+                    if hit is None:
+                        break
+                    chosen.append(hit)
+                else:
+                    keys.append((frozenset(chosen), prov))
+            out.exactly_one = rel.exactly_one
+        distinct = select.args.get("distinct")
+        if isinstance(distinct, exp.Distinct) and not distinct.args.get("on"):
+            keys.append((frozenset(out.order), frozenset()))
+        limit = select.args.get("limit")
+        if limit is not None:
+            value = limit.expression
+            count = int(value.this) if isinstance(value, exp.Literal) and not value.is_string and value.this.isdigit() else None
+            if count is not None and count <= 1:
+                keys.append((frozenset(), frozenset()))
+            if count is None or count < 1:
+                out.exactly_one = False
+        if select.args.get("offset") or select.args.get("qualify"):
+            out.exactly_one = False
+        out.keys = _prune_keys(keys)
+        return out
+
+    def _non_null(self, node: exp.Expression, rel: _Rel, possibly_empty: bool = False) -> tuple[bool, Provenance]:
+        """Whether an expression is never NULL, and the declared facts that say so."""
+
+        none = (False, frozenset())
+
+        def combine(*args) -> tuple[bool, Provenance]:
+            parts = [go(a) for a in args if a is not None]
+            return (True, frozenset().union(*(p for _, p in parts))) if parts and all(ok for ok, _ in parts) else none
+
+        def all_args(n: exp.Expression) -> tuple[bool, Provenance]:
+            args = [v for v in (n.args.get("this"), *(n.args.get("expressions") or []), n.args.get("expression")) if isinstance(v, exp.Expression)]
+            return combine(*args) if args else none
+
+        def go(n: exp.Expression) -> tuple[bool, Provenance]:
+            if isinstance(n, (exp.Paren, exp.Alias)):
+                return go(n.this)
+            if isinstance(n, exp.Null):
+                return none
+            if isinstance(n, (exp.Literal, exp.Boolean, exp.Var, exp.DataType)):
+                return True, frozenset()
+            if isinstance(n, exp.Column):
+                q = self._resolve(n, rel.cols)
+                return rel.cols[q] if q else none
+            if isinstance(n, exp.Count):
+                return True, frozenset()
+            if isinstance(n, _NULL_ON_EMPTY_AGGREGATES):
+                return none if possibly_empty else all_args(n)
+            if isinstance(n, exp.Window):
+                return (True, frozenset()) if isinstance(n.this, (exp.RowNumber, exp.Rank, exp.DenseRank, exp.Count)) else none
+            if isinstance(n, (exp.Is, exp.Exists)):
+                return True, frozenset()
+            if isinstance(n, exp.Coalesce):
+                best = none
+                for arg in [n.this, *n.expressions]:
+                    ok, prov = go(arg)
+                    if ok and (not best[0] or len(prov) < len(best[1])):
+                        best = (True, prov)
+                return best
+            if isinstance(n, (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.And, exp.Or, exp.DPipe, exp.Like, exp.Neg, exp.Not)):
+                return combine(n.args.get("this"), n.args.get("expression"))
+            if isinstance(n, exp.Cast):
+                return none if isinstance(n, exp.TryCast) else go(n.this)
+            if isinstance(n, exp.Case):
+                if n.args.get("default") is None:
+                    return none
+                parts = [go(i.args["true"]) for i in n.args["ifs"]] + [go(n.args["default"])]
+                return (True, frozenset().union(*(p for _, p in parts))) if all(ok for ok, _ in parts) else none
+            if isinstance(n, exp.If):
+                if n.args.get("false") is None:
+                    return none
+                return combine(n.args["true"], n.args["false"])
+            if isinstance(n, exp.Subquery):
+                try:
+                    inner = self.query_rel(n.this)
+                except _Unsupported:
+                    return none
+                return inner.cols[inner.order[0]] if len(inner.order) == 1 and inner.exactly_one else none
+            if isinstance(n, (exp.Anonymous, exp.Func)):
+                name = (n.name if isinstance(n, exp.Anonymous) else n.sql_name()).upper()
+                if name in _NULL_PROPAGATING:
+                    return all_args(n)
+                if name in _ALWAYS_NON_NULL:
+                    return True, frozenset()
+            return none
+
+        return go(node)
+
+
+def _requalify(rel: _Rel, alias: str) -> _Rel:
+    out = _Rel(exactly_one=rel.exactly_one)
+    mapping = {q: f"{alias}.{q.split('.', 1)[1]}" for q in rel.order}
+    out.order = [mapping[q] for q in rel.order]
+    out.cols = {mapping[q]: v for q, v in rel.cols.items()}
+    out.keys = [(frozenset(mapping[c] for c in key), prov) for key, prov in rel.keys]
+    out.same = [{mapping[c] for c in g if c in mapping} for g in rel.same]
+    return out
+
+
+def _conjuncts(node: exp.Expression):
+    if isinstance(node, exp.Paren):
+        yield from _conjuncts(node.this)
+    elif isinstance(node, exp.And):
+        yield from _conjuncts(node.left)
+        yield from _conjuncts(node.right)
+    else:
+        yield node
+
+
+def _eq_pair(cond: exp.Expression):
+    return (cond.left, cond.right) if isinstance(cond, exp.EQ) else None
+
+
+def _is_outer_or_const(node: exp.Expression) -> bool:
+    return not node.find(exp.Subquery) and not node.find(exp.Window)
+
+
+def _covers_key(keys: list, bound: set) -> bool:
+    return any(key <= bound for key, _ in keys)
+
+
+def _prov_of(keys: list, bound: set) -> Provenance:
+    for key, prov in keys:
+        if key <= bound:
+            return prov
+    return frozenset()
+
+
+def _prune_keys(keys: list) -> list:
+    """Drop keys that contain another key (they say less), keep the cheapest provenance of equal keys."""
+
+    best: dict[frozenset, Provenance] = {}
+    for key, prov in keys:
+        if key not in best or len(prov) < len(best[key]):
+            best[key] = prov
+    kept = [(k, p) for k, p in best.items() if not any(o < k for o in best)]
+    return kept
+
+
+def select_has_aggregate(node: exp.Expression) -> bool:
+    """Whether the select item aggregates its own rows (not inside a window or a subquery)."""
+
+    for agg in node.find_all(exp.AggFunc):
+        if agg is node:
+            return True
+        owner = agg.parent
+        while owner is not None:
+            if isinstance(owner, (exp.Window, exp.Subquery)):
+                break
+            if owner is node:
+                return True
+            owner = owner.parent
+    return False
+
+
+def infer_properties(
+    sql: str,
+    constraints: Mapping[str, TableConstraints] | None = None,
+    schema: Mapping[str, list[str]] | None = None,
+    dialect: str = "bigquery",
+) -> OutputProperties:
+    """Proven output properties of ``sql``; unsupported shapes return ``OutputProperties(unsupported=...)``."""
+
+    analyzer = _Analyzer(constraints or {}, schema or {}, dialect)
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+        rel = analyzer.query_rel(tree)
+    except (_Unsupported, sqlglot.errors.SqlglotError) as error:
+        return OutputProperties(unsupported=str(error))
+    columns = tuple(
+        ColumnFact(q.split(".", 1)[1], rel.cols[q][0], tuple(sorted(rel.cols[q][1])))
+        for q in rel.order
+    )
+    keys = tuple(
+        UniqueKey(tuple(sorted(c.split(".", 1)[1] for c in key)), tuple(sorted(prov)))
+        for key, prov in sorted(rel.keys, key=lambda kp: (len(kp[0]), sorted(kp[0])))
+    )
+    return OutputProperties(columns=columns, keys=keys, exactly_one_row=rel.exactly_one)

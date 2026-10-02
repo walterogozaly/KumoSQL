@@ -324,3 +324,16 @@ def test_time_function_never_escapes_as_exception():
     sql = "SELECT CURRENT_TIMESTAMP() AS t FROM `p.d.orders`"
     result = check_result_equivalence(sql, sql, SCHEMA, seeds=range(1, 3))
     assert isinstance(result.status, ResultEquivalenceStatus)
+
+
+def test_generated_values_include_the_queries_constants():
+    # JOB-style filters on long string constants never match a small fixed domain, so a
+    # faulty rewrite would agree with the original on empty results. With the constants in
+    # the domain, the extra condition is caught.
+    schema = {"p.d.info": {"id": "INT64", "info": "STRING", "note": "STRING"}}
+    left = "SELECT id FROM `p.d.info` WHERE info = 'top 250 rank' AND note LIKE '%(co-production)%'"
+    right = left + " AND id > 3"
+    caught = check_result_equivalence(left, right, schema, seeds=range(1, 9))
+    assert caught.status is ResultEquivalenceStatus.DIFFERENT
+    blind = check_result_equivalence(left, right, schema, seeds=range(1, 9), use_query_constants=False)
+    assert blind.status is ResultEquivalenceStatus.EQUIVALENT

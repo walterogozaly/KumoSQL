@@ -35,14 +35,18 @@ Run it with `python tools/sqlsolver_bench.py [calcite|spark|tpch|tpcc]`. Pairs a
 
 | Suite | Pairs | Proved | Unknown | Wrong | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Calcite | 232 | 192 | 40 | 0 | was 163 before filter-into-HAVING folds, DISTINCT over UNION ALL and hidden ORDER BY keys; 162 before AVG became SUM / COUNT; 160 before window functions were read as a kept-whole derived table; 159 before derived aggregates were compared by proof; 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
-| Spark SQL | 127 | 116 | 11 | 0 | was 105 before columns of joins were qualified from the schema; 99 before constant aggregates and function identities; 86 before |
+| Calcite | 232 | 204 | 28 | 0 | was 202 before witnessed EXISTS and inner joins to grouped sets; 192 earlier; was 163 before filter-into-HAVING folds, DISTINCT over UNION ALL and hidden ORDER BY keys; 162 before AVG became SUM / COUNT; 160 before window functions were read as a kept-whole derived table; 159 before derived aggregates were compared by proof; 158 before filtering derived tables under a grouping were folded in; 147 before aggregates over outer joins; 138 before case-insensitive columns, UNION ALL column pruning, mixed HAVING and constant set sources; 93 before EXISTS/IN and outer joins |
+| Spark SQL | 127 | 120 | 7 | 0 | was 118 before single-row sources; 116 earlier; was 105 before columns of joins were qualified from the schema; 99 before constant aggregates and function identities; 86 before |
 | TPC-H | 22 | 22 | 0 | 0 | was 21 before an EXISTS repeated inside a grouped join partner was read as redundant; 20 before casts that keep every value were dropped by declared column type and grouped derived tables were listed in a fixed column order; 19 before outer-join filters and joins under a grouping were read directly; was 16 before semi/anti joins, `IN` over a grouped subquery and repeated existence tests; 15 before correlated scalar aggregates became joins and derived aggregates were compared by proof; 14 before NULL guards, `1.00 = 1` and folded derived tables made the two spellings of a scalar subquery read alike; 8 before YEAR()/EXTRACT unification and uncorrelated scalar subqueries; all 22 pairs are proved |
 | TPC-C | 19 | 19 | 0 | 0 | was 17 before LIMIT |
 
 The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSolver assumes), output names ignored, NOT NULL and primary keys from the schema, and the input read as MySQL. The Calcite suite also passes `group_by_constants=True`: Calcite reads a literal in `GROUP BY` as a constant (dropped, or `GROUP BY TRUE` when nothing else is grouped, so an empty input still gives no row), where BigQuery and MySQL read it as a column ordinal. DuckDB checks those pairs with the literals cast to integers. Off by default. "Unchecked" proofs (a few pairs that DuckDB itself rejects) are listed in the tool output.
 
 SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.
+
+## Negated tests in every dialect
+
+`x IS NOT NULL`, `x NOT LIKE y` and `x NOT ILIKE y` are rewritten to `NOT (...)` before either prover reads a query (`ast_utils.canonical_negation`). sqlglot parses them under PostgreSQL as the positive node with a `negate` flag, which an earlier version of the provers ignored: read as PostgreSQL, `x IS NULL` and `x IS NOT NULL` were proven equivalent. The BigQuery default was never affected. `tests/test_negated_predicates.py` pins it for five dialects.
 
 ## Rewrite verification and declared facts
 
@@ -79,8 +83,27 @@ A select that only keeps distinct values (`DISTINCT`, or `GROUP BY` with no aggr
 
 A `GROUP BY` of exactly the selected columns inside an `IN` or `EXISTS` test is dropped (the test does not see repeats). `(x IS NULL) IS NULL` is FALSE and `(x IS NULL) IS NOT NULL` is TRUE (a null test is never NULL), `TRUE OR y` and `FALSE AND y` are decided, and `CAST(x IS NULL AS INTEGER)` (0 or 1) compared with a number outside `{0, 1}` is decided. A typed `CAST(NULL AS t)` is NULL. A `LEFT`/`RIGHT JOIN` whose null-extended side is always empty (`WHERE FALSE`) keeps the other side with NULL for the empty side's columns. An aggregate in the select list of an `IN` or `EXISTS` subquery is refused: a global aggregate returns a row even over no input, so it is not a test on the rows it reads (an earlier version proved `EXISTS (SELECT COUNT(*) ..)` equal to `EXISTS (SELECT 1 ..)`).
 
+A `WHERE EXISTS` on a key the query already joins to is dropped when an inner-joined copy of that same set carries the equality. An inner join to a grouped derived table that is read only through its keys, and a `LEFT JOIN` read only through `IS NULL`, become `EXISTS` / `NOT EXISTS` (the group keys must be covered, so at most one row matches). A grouping or `DISTINCT` aggregate over a `(.. LIMIT 1)` derived table does nothing, since it sees one row, and is dropped.
+
 `UNNEST` in `FROM` (comma or `CROSS JOIN`, optional `WITH OFFSET`) is modeled as a table of `(array, element, offset)` rows keyed by array and offset; array literals are known by their text, an array column by its value. Outer joins to an `UNNEST` stay unsupported, and no counterexample database is built for a query that unnests.
 
 ## R-Bot's Calcite pairs
 
 `python tools/rbot_bench.py` scores the 45 (query, Calcite-rewrite) pairs shipped with [R-Bot](https://github.com/curtis-sun/LLM4Rewrite) (Apache-2.0, copied with its LICENSE to `tests/fixtures/rbot/`). Each pair is reported as `proved`, `different` (the prover failed and a random DuckDB database shows the queries disagree), `unknown`, or `wrong` (proved, yet a counterexample exists; must stay 0). R-Bot's TPC-H and DSB folders hold only template instances (same query, different constants), not rewrites, so they have nothing to score. `tests/test_rbot_benchmarks.py` holds the floor.
+
+## QED's Calcite cases
+
+`python tools/qed_bench.py` scores the Calcite optimizer-test cases shipped with the [QED prover](https://github.com/qed-solver/prover) (MIT, VLDB 2024). QED stores them as relational-algebra JSON; `tools/qed_to_sql.py` converts 375 of the 444 to SQL (`tests/fixtures/qed/`, with QED's LICENSE). The other 69 use features the conversion cannot reproduce exactly, such as aggregate `FILTER` clauses that QED's JSON drops, geospatial functions, `LITERAL_AGG` and windows, and are listed with a reason in `qed_calcite_skipped.jsonl`. `tools/validate_qed_pairs.py` runs both sides of every converted pair in DuckDB. Verdicts are the same four as for R-Bot, and `tests/test_qed_benchmarks.py` holds the floor.
+
+| Suite | Proved | Different | Unknown | Wrong |
+|---|---|---|---|---|
+| QED Calcite (375 converted) | 221 | 1 | 153 | 0 |
+| R-Bot Calcite (45) | 18 | 2 | 25 | 0 |
+
+Rules added for these suites live in `src/kumosql/keyed_rules.py`. A `GROUP BY` over one table that includes a NOT NULL key (grouped, or fixed by `WHERE k = constant`) reads each row's own value, so `SUM(x)` is `x`, `COUNT(*)` is 1 and `GROUPING(c)` is 0. A `DISTINCT` that outputs such a key is dropped in a second attempt when the first finds no proof, since dropping it on one side only can hide a match. `EXISTS` over a select made only of aggregates, with no `GROUP BY`, is TRUE.
+
+## Cosette and SPES fixtures
+
+`tests/fixtures/cosette/` holds 60 pairs converted from [Cosette](https://github.com/uwdb/Cosette)'s examples (BSD-2-Clause) by `tools/cosette_to_sql.py`: equivalent, not-equivalent and conditionally equivalent (under primary keys) cases, with uninterpreted predicates as hidden Boolean columns. `tests/fixtures/spes/` holds the 34 runnable [SPES](https://github.com/georgia-tech-db/spes) Calcite pairs (Apache-2.0) whose text differs from SQLSolver's Calcite pairs (`tools/spes_to_sql.py`). `tests/fixtures/calcite_overlap.json` (`tools/calcite_overlap.py`) lists which corpora (SQLSolver, SPES, Cosette, R-Bot, QED) hold each Calcite test. `tests/test_cosette_fixtures.py` checks they parse and run.
+
+`python tools/cosette_bench.py` scores them (`tests/test_cosette_benchmarks.py` holds the floors). Cosette: 49/60 correct, 0 wrong (45 equivalent pairs proved, 4 of 5 not-equivalent pairs refuted with a DuckDB counterexample, 10 unknown; `testDecorrelateTwoIn` is refuted against its label, a transcription issue in Cosette's file). SPES-only: 20/34 proved, 0 wrong. Every Cosette and SPES test name is already in SQLSolver's set; they add other wordings of the same tests, not new tests. Across all corpora there are 430 distinct Calcite test names, 174 of them only in QED. See the READMEs in those folders for translation rules, labels and skips.

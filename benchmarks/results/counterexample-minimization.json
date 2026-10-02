@@ -1,0 +1,17 @@
+{
+  "suite": "Counterexample minimization",
+  "order": 72,
+  "size": 250,
+  "score": "250/250 replayed; database rows -69% dev, -58% held out",
+  "metric": "Failing (original, mutant) pairs reduced in query, schema and database while they still differ, then replayed from JSON on a fresh engine; dev 692 to 216 rows, held out 595 to 250; SQL nodes -27% dev, -50% held out.",
+  "evidence": "executed",
+  "correctness": "Each reduced case replays as different on a fresh engine (250/250). It is not an equivalence-preserving simplification: the reduced queries differ from the originals and only the failure is preserved.",
+  "coverage": {
+    "refuted": 250
+  },
+  "held_out": "100 held-out cases: 100/100 replayed, median 2 rows left",
+  "docs": "docs/targeted-test-data.md",
+  "command": "python tools/targeted_data_bench.py --split all",
+  "date": "2026-10-02",
+  "caveats": "150 dev and 100 held-out killed mutants sampled evenly. Median 0.14 s dev and 0.45 s held out per case (max 4.6 s); median rows left 1 dev, 2 held out. Edits are made on both queries at once, so the part that differs is kept."
+}

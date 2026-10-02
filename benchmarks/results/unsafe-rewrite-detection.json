@@ -1,0 +1,19 @@
+{
+  "suite": "Unsafe-rewrite detection",
+  "order": 310,
+  "size": 560,
+  "score": "0 false proofs; 200/221 correct rewrites proved; 338/339 unsafe rewrites caught with a replayable counterexample",
+  "metric": "NOT IN with NULLs, COUNT(*) vs COUNT(col), duplicate-producing joins, UNION vs UNION ALL and predicates moved across outer joins, each next to a correct variant. Of 339 non-equivalent pairs the prover refutes 40 itself (all replay) and the executed synthetic check finds 298 more.",
+  "evidence": "proof",
+  "correctness": "0 false proofs, 0 non-replayable counterexamples, 0 label errors; correct variants never flagged different by the executed check. Ground truth is a 40-database DuckDB search.",
+  "coverage": {
+    "proven": 200,
+    "refuted": 40,
+    "unknown": 320
+  },
+  "held_out": "held-out templates: 80/81 correct rewrites proved, 58/59 unsafe ones caught by execution, 0 false proofs",
+  "docs": "docs/fuzzing.md#suites",
+  "command": "python tools/unsafe_fuzz.py unsafe --count 20 --seed 1",
+  "date": "2026-10-02",
+  "caveats": "The prover alone refutes only 11.8% of unsafe pairs (most return unknown: no row-preserving mapping, UNION shapes differ); the rest rely on bounded execution, a different evidence level. Template-generated, 28 templates."
+}

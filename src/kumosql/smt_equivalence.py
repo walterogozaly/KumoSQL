@@ -45,6 +45,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
+from .ast_utils import canonical_negation
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -571,10 +572,13 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [s for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        statements = [canonical_negation(s) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
+        if any(statement.find_all(exp.Pivot)):
+            # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
+            raise Unsupported("PIVOT and UNPIVOT are not modeled")
         self._check_nondeterminism(statement)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
@@ -1316,6 +1320,9 @@ class _Compiler:
             return _Val(z3.Or(a.null, b.null), val_fn(*args))
         if isinstance(e, (exp.Sub, exp.Neg, exp.Div, exp.Mod, exp.DPipe)):
             parts = [e.this] + ([e.expression] if isinstance(e, exp.Binary) else [])
+            if isinstance(e, exp.Div) and isinstance(e.expression, exp.Nullif) and e.expression.expression.sql() == "0":
+                # x / NULLIF(y, 0) is the quotient with the zero divisor read as NULL (the mean of no values).
+                parts = [e.this, e.expression.this]
             vals = [self._val(p, env, agg, aliases) for p in parts]
             null_fn, val_fn = self._function(type(e).__name__, len(vals))
             args = self._uf_args(vals)
@@ -2481,7 +2488,18 @@ def _z3_value(value):
 def _cell(model, v: _Val):
     if z3.is_true(model.eval(v.null, model_completion=True)):
         return None
+    if not _decided(model, v.val):
+        # The model never constrained this value, so z3 would complete it with
+        # an arbitrary constructor, often a string; a number loads into any column.
+        return Fraction(0)
     return _py(model, v.val)
+
+
+def _decided(model, term) -> bool:
+    """Whether the model itself, not its completion, fixes ``term``'s value."""
+
+    value = model.eval(term, model_completion=False)
+    return not (z3.is_const(value) and value.decl().kind() == z3.Z3_OP_UNINTERPRETED)
 
 
 class _NoCandidate(Exception):
@@ -2857,7 +2875,7 @@ def _split_limit(sql: str, dialect: str):
     shape is not handled (``spec`` then says why).
     """
 
-    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
     root = tree
     while isinstance(root, exp.Subquery):
         root = root.this
