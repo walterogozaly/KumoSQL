@@ -93,7 +93,7 @@ def build(name: str, rows: list[dict], date: str, bound: int = 3) -> dict:
         "coverage": coverage,
         "held_out": "none",
         "docs": docs,
-        "command": f"python tools/bounded_bench.py run {name} --rows {bound}",
+        "command": f"python tools/bounded_bench.py run {name} --rows {bound}" + (" --every 24" if name == "leetcode" else ""),
         "date": date,
         "caveats": f"{caveat} {OVERLAP} Assumes exact arithmetic and no runtime errors. Encoder developed with these suites in view (tuned on test).",
     }
