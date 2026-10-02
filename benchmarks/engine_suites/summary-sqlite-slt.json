@@ -1,0 +1,89 @@
+{
+ "all": {
+  "cases": 30116,
+  "executed": 30101,
+  "transformed": 21889,
+  "declined": 8212,
+  "unsupported": 15,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 159.5,
+  "p95_ms": 1002.1
+ },
+ "plain": {
+  "cases": 6050,
+  "executed": 6035,
+  "transformed": 1929,
+  "declined": 4106,
+  "unsupported": 15,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 95.9,
+  "p95_ms": 825.5
+ },
+ "amplified": {
+  "cases": 24066,
+  "executed": 24066,
+  "transformed": 19960,
+  "declined": 4106,
+  "unsupported": 0,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 174.1,
+  "p95_ms": 1061.3
+ },
+ "dev": {
+  "cases": 22584,
+  "executed": 22574,
+  "transformed": 16472,
+  "declined": 6102,
+  "unsupported": 10,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 161.7,
+  "p95_ms": 887.8
+ },
+ "held_out": {
+  "cases": 7532,
+  "executed": 7527,
+  "transformed": 5417,
+  "declined": 2110,
+  "unsupported": 5,
+  "timeout": 0,
+  "error": 0,
+  "wrong": 0,
+  "wrong_but_proven": 0,
+  "median_ms": 152.2,
+  "p95_ms": 1187.6
+ },
+ "duplicates_collapsed": 20,
+ "files_skipped": {},
+ "files_hung": 0,
+ "expected_match": {
+  "True": 4724,
+  "None": 25090,
+  "False": 287
+ },
+ "by_rule": {
+  "format_sql": 20804,
+  "inline_single_use_ctes": 12070,
+  "remove_unused_ctes": 6035,
+  "remove_trivial_predicates": 5969,
+  "remove_redundant_parentheses": 9734,
+  "remove_redundant_distinct": 20
+ },
+ "wrong_cases": [],
+ "suite": "sqlite-slt",
+ "revision": "c67f97bf3ca7e590d12e073408bcacaf2ff0f3a0",
+ "licence": "SQLite sqllogictest, public domain (as collected by SQuaLity, MIT)",
+ "files": 156,
+ "seconds": 2549.0
+}
