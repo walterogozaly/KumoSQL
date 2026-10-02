@@ -79,8 +79,15 @@ def test_unknown_observed_consumer_refuses():
     assert reasons(result)["p.d.stg"] == "unknown_consumer"
 
 
+def test_an_operation_that_reads_the_model_is_a_consumer_that_cannot_be_checked():
+    reads = {"target": {"database": "p", "schema": "d", "name": "op"}, "queries": ["SELECT 1 FROM `p.d.stg`"]}
+    result = run(STG, reader("a", "s.status = 'paid'"), extra={"operations": [reads]})
+    assert not result.proposals
+    assert reasons(result)["p.d.stg"] == "consumer_unparsed"
+
+
 def test_blind_graph_refuses():
-    blind = {"target": {"database": "p", "schema": "d", "name": "op"}, "queries": ["SELECT 1 FROM `p.d.stg`"]}
+    blind = {"target": {"database": "p", "schema": "d", "name": "op"}, "queries": ["EXECUTE IMMEDIATE FORMAT('SELECT 1 FROM %s', 'x' || CAST(1 AS STRING))"]}
     result = run(STG, reader("a", "s.status = 'paid'"), extra={"operations": [blind]})
     assert not result.proposals
     assert reasons(result)["p.d.stg"] == "graph_incomplete"
