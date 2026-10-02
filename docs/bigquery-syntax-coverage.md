@@ -51,6 +51,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - The formatter upper-cased backticked routine paths (``DROP FUNCTION `p.d.f` `` became `` `P.D.F` ``), and the equivalence check called that proven. Quoted names are now restored exactly.
 - `CREATE TABLE/VIEW ... AS SELECT`, `INSERT ... SELECT` and `EXPORT DATA ... AS SELECT` in `.sql` files had no reads in the graph; they do now.
 - A `.sql` file with a `config { }` block is loaded as an action instead of failing to parse.
+- Table-valued function calls that pass a table (`FROM dataset.fn(TABLE dataset.input, option => value)`) failed to parse ("Expecting )") in sqlglot's BigQuery parser, so the model lost every read. `kumosql.bigquery_syntax` teaches the parser the `TABLE` argument once for the whole package; the table is read, the SQL prints back unchanged, and the columns the function returns are reported unknown (`untraceable_source`), never attributed to a table named like the function. Covered by `tests/test_table_function_arguments.py`.
 - Analytical corpora ([analytical-sql-coverage.md](analytical-sql-coverage.md)) found that the formatter re-cased unquoted table and column names (BigQuery table names are case sensitive), and that windows and `ORDER BY ... LIMIT` blocked every proof; the `query/analytical_*` cases cover them.
 - Formatting a statement sqlglot cannot parse or keeps as an opaque command (DDL for reservations, policies and indexes, `LOAD DATA`, `CALL`, `REPEAT`, `CHANGES(TABLE ...)`) was never proven, so it could not be accepted. A change that only moves whitespace and re-cases reserved keywords and built-in calls is now proven by comparing tokens. Formatting also re-cased user-defined function names (`f(x)` became `F(x)`), which are case sensitive; it now keeps them.
 - Cleanup rewrote pipe-syntax queries into sqlglot's standard-SQL translation, and once into a broken query (`FROM t |> AS u` lost its table). Pipe syntax is now left as written.
@@ -59,7 +60,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 ## Gaps that are not fixed here
 
 - **sqlglot** keeps procedural statements (`DECLARE`, `IF`, `LOOP`, `BEGIN ... END`, `CALL`, `EXECUTE IMMEDIATE`) and many `ALTER`/`DROP`/`CREATE` forms (reservations, indexes, aggregate and remote functions) as opaque commands, and cannot parse `LOAD DATA`, `CHANGES`/`APPENDS`, `UNION ... CORRESPONDING` and some pipe operators. KumoSQL leaves such statements untouched and says so. Which cases fail differs between sqlglot 26.0.0 and the latest, so `known_gaps.json` holds the union of both.
-- **Graph reads of DML and scripts** (`MERGE ... USING`, `UPDATE ... FROM`, `DELETE ... WHERE EXISTS`, scripts) are not extracted, so a model written as a script shows unknown reads.
+- **Scripts** are read by KumoSQL's own splitter ([scripts.md](scripts.md)), so the graph reads of `MERGE`, `UPDATE`, `DELETE` and scripts work even where sqlglot's `parse` stage still lists a script case as a gap (sqlglot cannot parse `BEGIN ... END` and procedural statements). Dynamic `EXECUTE IMMEDIATE` and undefined `CALL`s stay unknown.
 - **Cleanup on `BEGIN ... END` and procedure bodies** is refused (`source_splice_error`): the statements cannot be mapped back to their source text, so the file is left as written.
 - **sqlfluff** cannot parse `GRANT`/`REVOKE`, `EXPORT MODEL`, remote functions and models, property graphs, some literals and a few other statements, so they are not formatted (`parse_error`).
 - **Project layouts**: `projectSuffix`/`datasetSuffix`/`namePrefix` are ignored, the Dataform JavaScript API in `.js` files and `actions.yaml` are not read (`tests/test_bq_syntax_projects.py`, as xfail).
@@ -73,16 +74,16 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 |---|---:|---|---|---|---|---|---|---|---|
 | data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 7 ✅ 1 ⚪ | n/a | 1 ✅ 7 ⚠ |
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 4 ✅ 1 ⚪ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
-| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 74 ✅ | n/a | 72 ✅ 2 ⚪ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
-| dml | 16 | 16 ✅ | 16 ✅ | 13 ✅ 3 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 134 | 127 ✅ 7 ⚪ | 134 ✅ | 134 ✅ | 126 ✅ | 134 ✅ | 131 ✅ 3 ⚪ | 104 ✅ 22 ⚪ | 115 ✅ 16 ⚠ 3 – |
-| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 20 ✅ 2 ⚪ | n/a | 16 ✅ 6 ⚪ | 20 ✅ 2 ⚪ | n/a | 20 ✅ 2 ⚠ |
+| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 74 ✅ | n/a | 74 ✅ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| dml | 16 | 16 ✅ | 16 ✅ | 16 ✅ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
+| query | 134 | 130 ✅ 4 ⚪ | 134 ✅ | 134 ✅ | 129 ✅ | 134 ✅ | 131 ✅ 3 ⚪ | 107 ✅ 22 ⚪ | 115 ✅ 16 ⚠ 3 – |
+| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 22 ✅ | 20 ✅ 2 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 261 | 203 ✅ 58 ⚪ | 261 ✅ | 255 ✅ 6 ⚪ | 126 ✅ | 253 ✅ 8 ⚪ | 241 ✅ 20 ⚪ | 104 ✅ 22 ⚪ | 202 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 261 | 206 ✅ 55 ⚪ | 261 ✅ | 259 ✅ 2 ⚪ | 129 ✅ | 261 ✅ | 241 ✅ 20 ⚪ | 107 ✅ 22 ⚪ | 202 ✅ 45 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
-| SQLX actions | 64 | 60 ✅ | 63 ✅ 1 ⚪ | 55 ✅ 1 ⚪ | 62 ✅ | 61 ✅ 1 ⚪ | 62 ✅ | 40 ✅ 2 ⚠ 22 – |
+| SQLX actions | 64 | 60 ✅ | 63 ✅ 1 ⚪ | 55 ✅ 1 ⚪ | 62 ✅ | 62 ✅ | 62 ✅ | 40 ✅ 2 ⚠ 22 – |
 
 ### Known gaps
 
@@ -108,7 +109,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | parse | sqlglot | sqlglot keeps LOOP as an opaque command | 1 | `script/loop_leave_iterate` |
 | parse | sqlglot | sqlglot keeps WHILE as an opaque command | 1 | `script/while_loop` |
 | load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
-| graph | kumosql | reads of this DML, script or non-query statement are not extracted | 6 | `dcl/revoke_table`, `dml/merge_cte_source`, `dml/merge_full` |
+| graph | kumosql | reads of this DML, script or non-query statement are not extracted | 2 | `dcl/revoke_table`, `script/assert` |
 | cleanup | kumosql | source_splice_error | 7 | `dataform/operations_ddl_script`, `ddl/create_procedure_options`, `script/begin_end_block` |
 | cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
 | cleanup | kumosql | recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_pars | 2 | `ddl/create_procedure_sql`, `script/case_when` |

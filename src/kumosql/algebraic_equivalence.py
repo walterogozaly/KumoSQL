@@ -35,6 +35,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, parenthesize_is_operands, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
+from .string_literals import canonical_literals
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -50,6 +51,7 @@ from .set_filters import merge_same_source, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
@@ -4431,6 +4433,7 @@ def normalize(
     tree = _resolve_ordinals(tree, group_by=not group_by_constants)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
+    tree = rewrite_quantified(tree, schema, not_null, keys)
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
@@ -4529,6 +4532,8 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     """
 
     search = kwargs.pop("search_counterexample", False)
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     original = (left_sql, right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
