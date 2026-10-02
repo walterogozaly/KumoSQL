@@ -427,7 +427,7 @@ class UIHandler(BaseHTTPRequestHandler):
         try:
             if not isinstance(payload, dict):
                 raise ValueError("settings must be an object")
-            prover_context.save_settings(payload.get("enabled"), payload.get("timeout_ms"))
+            prover_context.save_settings(payload.get("enabled"), payload.get("timeout_ms"), payload.get("bounded_rows"))
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
