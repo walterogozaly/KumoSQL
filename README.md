@@ -17,7 +17,7 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 
 | Eval | Evidence | Size | Score | Correctness | Held-out | As of | Caveats |
 | --- | --- | ---: | --- | --- | --- | --- | --- |
-| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 232 | **212/232, 0 wrong**: Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 60 random DuckDB databases. | 0 false proofs (re-checked on 60 random DuckDB databases) | none | 2026-10-02 | Rules were developed against these pairs (tuned on test). |
+| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 232 | **213/232, 0 wrong**: Equivalent query pairs proved (SQLSolver's authors say all are equivalent; the rest are left unknown, never called different). Every proof is re-checked on 60 random DuckDB databases. | 0 false proofs (re-checked on 60 random DuckDB databases) | none | 2026-10-02 | Rules were developed against these pairs (tuned on test). |
 | [SQLSolver Spark SQL](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 127 | **122/127, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-02 | Tuned on test. |
 | [SQLSolver TPC-H](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 22 | **22/22, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-01 | Tuned on test. |
 | [SQLSolver TPC-C](docs/sqlsolver.md#benchmark-coverage) | Unbounded proof | 19 | **19/19, 0 wrong**: Equivalent query pairs proved; same checking as Calcite. | 0 false proofs | none | 2026-10-01 | Tuned on test. |
@@ -78,7 +78,7 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 
 | Eval | Proven | Refuted | Unknown | Unsupported | Timeout | Error |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | 212 | – | 20 | – | – | – |
+| [SQLSolver Calcite](docs/sqlsolver.md#benchmark-coverage) | 213 | – | 19 | – | – | – |
 | [SQLSolver Spark SQL](docs/sqlsolver.md#benchmark-coverage) | 122 | – | 5 | – | – | – |
 | [SQLSolver TPC-H](docs/sqlsolver.md#benchmark-coverage) | 22 | – | 0 | – | – | – |
 | [SQLSolver TPC-C](docs/sqlsolver.md#benchmark-coverage) | 19 | – | 0 | – | – | – |

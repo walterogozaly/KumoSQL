@@ -101,6 +101,21 @@ _UNMODELED_ARGS = (
 )
 
 
+# sqlglot reads ``a = b IS TRUE`` as ``a = (b IS TRUE)``; BigQuery, MySQL, PostgreSQL, DuckDB and Calcite read
+# ``(a = b) IS TRUE``. Written without parentheses the query is declined rather than proved under one reading.
+_COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ)
+
+
+def parenthesize_is_operands(tree: exp.Expression) -> exp.Expression:
+    """Wrap an ``IS`` test that is a comparison's right operand in parentheses, as the tree means it."""
+
+    for node in list(tree.find_all(*_COMPARISONS)):
+        operand = node.expression
+        if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
+            operand.replace(exp.Paren(this=operand.copy()))
+    return tree
+
+
 def table_function_reads_cte(tree: exp.Expression) -> bool:
     """Whether a table-valued function call is handed a CTE by name.
 
@@ -143,6 +158,10 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
+    for node in tree.find_all(*_COMPARISONS):
+        operand = node.expression
+        if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
+            raise UnmodeledConstruct("a comparison followed by IS without parentheses reads differently across engines")
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
@@ -258,6 +277,8 @@ def _shape(node: object) -> object:
         for key in sorted(node.args):
             if key in _IGNORED_ARGS or (isinstance(node, exp.Identifier) and key == "global_"):
                 continue
+            if isinstance(node, exp.Concat) and key == "safe":
+                continue  # whether CONCAT raises on non-string arguments; errors are not modeled
             if isinstance(node, exp.Join) and key == "kind" and str(node.args[key]).upper() == "CROSS" and not node.args.get("on"):
                 continue  # ", t" and "CROSS JOIN t" are one join
             value = node.args[key]
@@ -345,22 +366,7 @@ def faithful_sql(tree: exp.Expression, dialect: str) -> str:
             continue
         if _shape(back) == expected:
             return text
-    import os  # TEMPORARY-DEBUG
-    if os.environ.get("KQ_FAITHFUL_LOG"):  # TEMPORARY-DEBUG
-        with open(os.environ["KQ_FAITHFUL_LOG"], "a") as f:  # TEMPORARY-DEBUG
-            back = sqlglot.parse_one(tree.sql(dialect=dialect), read=dialect)  # TEMPORARY-DEBUG
-            f.write(repr((dialect, tree.sql(dialect=dialect)[:3000], _first_diff(expected, _shape(canonical_negation(back))))) + "\n")  # TEMPORARY-DEBUG
     raise LossySql(f"the query cannot be printed faithfully in {dialect or 'the default dialect'}")
-
-
-def _first_diff(x, y):  # TEMPORARY-DEBUG
-    if x == y:
-        return None
-    if isinstance(x, tuple) and isinstance(y, tuple) and len(x) == len(y):
-        for p, q in zip(x, y):
-            if p != q:
-                return _first_diff(p, q)
-    return (str(x)[:300], str(y)[:300])
 
 
 def identifier_name(node: exp.Expression | None) -> str | None:

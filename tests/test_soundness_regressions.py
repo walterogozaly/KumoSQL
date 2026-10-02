@@ -209,3 +209,11 @@ def test_a_cte_read_by_a_table_function_is_never_dropped(left, right):
     assert verify_rewrite(left, right).status.value != "proven"
     for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
         assert not prove(left, right, schema={"t": ["a", "b"]}).proven
+
+
+def test_a_comparison_followed_by_is_without_parentheses_is_declined():
+    # sqlglot reads a = b IS TRUE as a = (b IS TRUE); the engines read (a = b) IS TRUE
+    left, right = "SELECT * FROM s WHERE a = b IS TRUE", "SELECT * FROM s WHERE a = (b IS TRUE)"
+    for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+        assert not prove(left, right, schema=STILL_SCHEMA, dialect="mysql").proven
+    assert prove_equivalent_algebraic(right, "SELECT * FROM s WHERE (b IS TRUE) = a", schema=STILL_SCHEMA, dialect="mysql").proven
