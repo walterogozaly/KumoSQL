@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "sqlglot>=26.0,<31",
-    "sqlfluff>=3.0",
+    "sqlfluff>=4.3",
 ]
 
 [project.optional-dependencies]
