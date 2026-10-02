@@ -54,14 +54,14 @@ These 28 pairs must be refuted or left unknown; a proof would be a false proof.
 
 ### Results
 
-Measured 2026-10-02 over all 397 pairs (no implementation changed, so the first run is also the final one):
+Measured 2026-10-02 over all 397 pairs. The first run, with no implementation change, proved 214 and refuted 4 meaning-keeping pairs; the only change since is the string-literal canonicaliser for [#314](https://github.com/walterogozaly/KumoSQL/issues/314), which moved those 4 to proved:
 
 | | Proven | Refuted | Unknown | Unsupported | Timeout | Error | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Meaning kept (369) | **214** | 4 | 7 | 144 | 0 | 0 | 0 |
+| Meaning kept (369) | **218** | 0 | 7 | 144 | 0 | 0 | 0 |
 | Changes by design (28) | 0 | **18** | 4 | 6 | 0 | 0 | 0 |
 
-**214/369 fixes that keep the meaning are proved, 214/225 of those the prover can read, and no fix that changes meaning is proved: 0 wrong.** Developing rules (308 pairs): 164/286 and 12/22 refuted. Held-out rules (89 pairs): 50/83 proved (all 50 supported ones), 6/6 by-design changes refuted. One held-out case was read after it exposed a labelling error in the layout part, which makes the held-out split slightly weaker than the others.
+**218/369 fixes that keep the meaning are proved, 218/225 of those the prover can read, and no fix that changes meaning is proved: 0 wrong.** Developing rules (308 pairs): 168/286 and 12/22 refuted. Held-out rules (89 pairs): 50/83 proved (all 50 supported ones), 6/6 by-design changes refuted. One held-out case was read after it exposed a labelling error in the layout part, which makes the held-out split slightly weaker than the others.
 
 Adapted: 33 of the 150 unsupported pairs have an adapted form (a script or a query inside `INSERT ... SELECT` or `CREATE ... AS`); 24 are proved, 1 refuted (an ST06 view that reorders its columns) and 8 stay unsupported. 12 of the adapted proofs are CV06 scripts (a terminator added to each statement); 4 pairs are Jinja-templated and are adapted by the same tag masking as in the layout part.
 
@@ -71,7 +71,7 @@ Adapted: 33 of the 150 unsupported pairs have an adapted form (a script or a que
 | AL02 | 9 | 6 | 0 | 0 | 3 | 1/1 |
 | AL05 (with AL05+CV12) | 30 | 10 | 0 | 1 | 19 | 0/1 |
 | AL07 | 10 | 8 | 0 | 0 | 2 | – |
-| AL09 | 5 | 4 | 1 | 0 | 0 | – |
+| AL09 | 5 | 5 | 0 | 0 | 0 | – |
 | AM02 | 4 | 4 | 0 | 0 | 0 | – |
 | AM03 | 3 | 3 | 0 | 0 | 0 | – |
 | AM05 | 14 | 14 | 0 | 0 | 0 | – |
@@ -82,7 +82,7 @@ Adapted: 33 of the 150 unsupported pairs have an adapted form (a script or a que
 | CV05 (by design) | 6 | 0 | 6 | 0 | 0 | – |
 | CV06 | 36 | 10 | 0 | 0 | 26 | 12/12 |
 | CV07 | 6 | 6 | 0 | 0 | 0 | – |
-| CV10 | 16 | 11 | 3 | 0 | 2 | – |
+| CV10 | 16 | 14 | 0 | 0 | 2 | – |
 | CV11 | 41 | 20 | 0 | 2 | 19 | 1/1 |
 | CV12 | 14 | 8 | 0 | 0 | 6 | 1/1 |
 | OR01 | 6 | 0 | 0 | 0 | 6 | – |
@@ -105,8 +105,8 @@ Why pairs are unsupported: queries whose columns come from nowhere (`SELECT col1
 
 Every pair that is not proved stays in the test file as a regression case: it may improve, but it must never become a wrong verdict.
 
-- **sqlglot reads some BigQuery literals differently from BigQuery.** Four pairs that keep the meaning are refuted because DuckDB separates them: CV10 `test_fail_unnecessary_escaping`, `test_fail_tripple_quoted_strings_dont_remove_escapes_single_quotes` and `..._double_quotes` (sqlglot keeps a backslash escape such as `\"` in the literal's text, so `'a\"b'` and `'a"b'` differ), and AL09 `test_fail_bigquery_quoted_column_no_space_without_as` (sqlglot reads ``col``col`` as one identifier containing a backtick, where BigQuery sees `col` aliased as `col`). These are counterexamples to sqlglot's reading, not to sqlfluff's fix, so the parts of KumoSQL that compare string literals with escapes are worth a look.
-- **No sqlfluff fix was found unsafe.** Apart from those four, no pair that should keep its meaning has a counterexample.
+- **sqlglot reads some BigQuery literals differently from BigQuery (fixed, [#314](https://github.com/walterogozaly/KumoSQL/issues/314)).** Four pairs that keep the meaning were refuted at first because DuckDB separated them: CV10 `test_fail_unnecessary_escaping`, `test_fail_tripple_quoted_strings_dont_remove_escapes_single_quotes` and `..._double_quotes` (sqlglot keeps a backslash escape such as `\"` in the literal's text, so `'a\"b'` and `'a"b'` differ, and writes the first back as `'a\\"b'`, a different string), and AL09 `test_fail_bigquery_quoted_column_no_space_without_as` (sqlglot reads ``col``col`` as one identifier containing a backtick, where BigQuery sees `col` aliased as `col`). `kumosql.string_literals.canonical_literals` now gives each plain string and each pair of adjacent quoted names one spelling before the provers and the execution check read them, and all four are proved.
+- **No sqlfluff fix was found unsafe.** No pair that should keep its meaning has a counterexample.
 - **The by-design changes behave.** CV05 refutes in 6 of 6, ST06 in 10 of its 20 by-design pairs (4 stay unknown because an output column is named differently on each side, 6 are unsupported), ST07 in 2 of 2 pairs with a bare `*`. None is proved.
 - **Seven pairs that keep the meaning stay unknown**: ST04 with comments between the nested `CASE`s (the output column name comes out as `value2` on one side and unnamed on the other), ST08 `SELECT DISTINCT(field_1)`, AL05 on a Spark `VALUES` clause, and two T-SQL `CONVERT` rewrites.
 
@@ -144,14 +144,14 @@ The one flagged layout-only pair is CP05 `test_fail_postgres_create_type`: `CREA
 | Supported by KumoSQL's preferences | 169 |
 | Output equal to sqlfluff's fix | **167** |
 | Output differs | 2 |
-| Verified by KumoSQL (proven equal, or unchanged) | **159** |
-| Unverified (refused as unproven) | 10 |
+| Verified by KumoSQL (proven equal, or unchanged) | **161** |
+| Unverified (refused as unproven) | 8 |
 | Verified but the output changes the tree, a comment or a literal | **0** |
 | Unsupported (another dialect 105, configuration KumoSQL cannot express 121, Jinja 49, sqlfluff cannot parse 9) | 284 |
 
-All 167 reproductions are exact, and the 10 unverified runs are right to be: seven rename identifiers (CP02), one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column, and two are the real bug below.
+All 167 reproductions are exact, and the 8 unverified runs are right to be: seven rename identifiers (CP02) and one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column.
 
-- **Finding: a repeat-until-stable pass can turn spaced unary signs into a comment.** LT01 on `SELECT 1 * - - - 5` gives sqlfluff's `SELECT 1 * - - -5`, but running the fixer again on that output returns `SELECT 1 * ---5`, and `--5` starts a comment (the second fixture loses `AS c, 2 AS d` the same way). KumoSQL's loop in `format_sql` runs the second pass. KumoSQL's verification marks both runs unproven, so nothing wrongly passes, but the formatter should not emit them.
+- **Finding, fixed ([#313](https://github.com/walterogozaly/KumoSQL/issues/313)): sqlfluff's fixer can turn spaced unary signs into a comment.** LT01 on `SELECT 1 * - - - 5` returns `SELECT 1 * ---5` (the fixture expects `- - -5`), and `--5` starts a comment; the second fixture lost `AS c, 2 AS d` the same way. KumoSQL's verification marked both runs unproven, so nothing wrongly passed, but `format_sql` still produced the text. It now keeps the text from before any pass that creates or removes a comment, so these two fixtures come back unchanged: they differ from the fixture's fix on purpose and count as verified (unchanged).
 
 **Structural rewrite rules.** The rules in the registry (other than `format_sql`) are applied to every semantic fixture's flagged query that BigQuery can read (ANSI or BigQuery dialect, one query). Each one that changes the query is counted, and its verification status and whether its output equals sqlfluff's fix (same parse tree, or proved equivalent) are recorded; a rule whose verified output a random database separates would be **wrong**.
 

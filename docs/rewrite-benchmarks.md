@@ -52,25 +52,29 @@ python tools/rewrite_bench.py --bench benchmark --method kumosql --cost --jobs 3
 
 | Measure | KumoSQL | Reference rewrites |
 | --- | ---: | ---: |
-| CGOQ@N (all 180) | **28.69** | 40.42 (paper: 41.00) |
-| Rewritten | 130 (all proven, all return the same rows) | 180 |
+| CGOQ@N (all 180) | **30.72** | 40.42 (paper: 41.00) |
+| Rewritten | 142 (all proven, all return the same rows) | 180 |
 | Unsafe / non-executable | 0 / 0 | 0 / 0 |
-| Geometric-mean speedup over rewritten cases | 1.96x | 2.04x |
-| At least 10% faster | 49 | |
-| Held-out split (35 cases) | 24.23 | |
+| Geometric-mean speedup over rewritten cases | 1.90x | 2.04x |
+| At least 10% faster | 54 | |
+| Held-out split (35 cases) | 27.61 | |
 
 | Pool | Cases | Rewritten | CGOQ |
 | --- | ---: | ---: | ---: |
-| PERF | 44 | 35 | 73.33 |
-| PG-AWARE | 30 | 15 | 22.22 |
-| ROBUST | 58 | 49 | 15.79 |
-| EQUIV | 48 | 31 | 7.40 |
+| PERF | 44 | 40 | 81.03 |
+| PG-AWARE | 30 | 13 | 18.82 |
+| ROBUST | 58 | 53 | 15.82 |
+| EQUIV | 48 | 36 | 10.06 |
+
+History: 28.69 (130 rewritten) in the first run; 30.72 after the prover kept grouped window queries whole and matched `ORDER BY .. LIMIT` bodies written differently on the two sides, and the runner completed each case's schema profile from the database catalog (the profiles omit some tables, so stars over them could not be expanded). Two cases lost a rewrite in that run (PG-AWARE-018, ROBUST-021) through prover changes merged on master in between. PG-AWARE-018 is proven again after two fixes in this step: the outer-join wrapping rule kept a bare output column's name, and a constant `INTERVAL` reads as one fixed value. ROBUST-021 still gets only a smaller rewrite. The table above is from the run before those fixes.
 
 Data is scale factor 1, not the benchmark's 10, so speedups differ from the paper's machine. Each statement ran once to warm up, then five times alternating with the other, and the medians are compared, so drift in the machine's speed affects both alike (the reference run predates alternation). Cases numbered 4, 9, 14, ... in each pool were held out while writing the rules and never inspected.
 
 What moved the score: the PERF and PG-AWARE pools wrap the real query in layers of `SELECT *` CTEs and cross joins with `COUNT(*)` aggregates whose only use is `count >= 0`. Removing those (`passthrough`, `unused_cte`, `one_row_join`) is where the large speedups come from (up to 66x). Most other rewrites only shorten the statement and run at the same speed. One rewrite is slower (ROBUST-028, 0.74x: an inner `ORDER BY` that PostgreSQL used for a cheaper plan is dropped).
 
-The 50 cases left unchanged are mostly ones the prover cannot read yet: window functions (8), `SELECT *` over derived tables (4), `LIMIT` without a full `ORDER BY`, `ROLLUP`/`GROUPING`, and others, or rewrites whose proof did not finish.
+The 38 cases left unchanged are mostly ones the prover cannot read yet: window functions over plain rows, `LIMIT` without a full `ORDER BY`, `ROLLUP`/`GROUPING`, `STDDEV`, dates written `'2001-5-01'`, and others, or rewrites whose proof did not finish.
+
+With `--cost`, the runner also reads `information_schema` (columns, types, NOT NULL, primary keys) for tables a case's profile leaves out.
 
 
 ## WeTune's 50 GitHub performance issues
@@ -116,3 +120,32 @@ python tools/clickbench_bench.py --clickbench ClickBench --db clickbench --gener
 | Q36 | `GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3` becomes `GROUP BY ClientIP` | yes | 1.04x |
 
 3 of 43 queries are rewritten, all 3 are proven and return the same rows, 1 is at least 10% faster (geometric mean 1.68x over the 3); the other 40 are left unchanged (single-table scans with nothing provably redundant).
+
+## Cost-recommendation validity
+
+Does a rewrite KumoSQL recommends keep the query's meaning, and does it save what the cost estimate says? `tools/cost_validity_bench.py` collects the recommendations of two sources for every statement of a workload and judges them in a fixed order:
+
+1. **Correctness.** The evidence label KumoSQL attaches (proven, or not), then execution: original and rewrite run on PostgreSQL 16 and must return the same bag of rows. Under a top-level `ORDER BY` the sequence of sort-key values must also match; rows that tie on every key may come back in any order.
+2. **Estimated benefit.** PostgreSQL's `EXPLAIN` total cost before and after, the local stand-in for a BigQuery dry run. "Cheaper" means at least 2% lower.
+3. **Observed benefit.** Median of five alternating runs after a warm-up. "Faster" means at least 10%.
+
+A benefit is counted only for rewrites that passed step 1, and estimates and observations are reported separately.
+
+The sources are the rule pipeline (`canonical_rule_order()` without `format_sql`; it works on BigQuery SQL, so each query is transpiled to BigQuery and back and the round-tripped original is the baseline) and `query_optimizer.optimize` with the cost guard and the database's catalog. The workload is TPC-DS (99 templates, 103 statements) and DSB (53 statements) generated with DSB's `dsqgen` (seed 7, PostgreSQL templates) at scale factor 1; the generated queries are not stored here.
+
+```
+python tools/cost_validity_bench.py --workload tpcds=TPCDS_QUERY_DIR --workload dsb=DSB_QUERY_DIR --jobs 4 --out results.json
+python tools/cost_validity_bench.py --workload ... --rejudge results.json --out results2.json   # execute the same recommendations again
+```
+
+| Source | Recommended | Proven | Same rows | Different rows | Not judged | Estimated cheaper | Faster | Slower | Geomean speedup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Rule pipeline | 44 | 40 | 37 | 0 | 7 | 0 | 0 | 0 | 1.006x |
+| Optimizer | 26 | 26 | 26 | 0 | 0 | 1 | 1 | 1 | 0.997x |
+
+* **0 wrong.** Every judged rewrite returned the same rows. The 4 unproven rule rewrites (single-use CTE inlining around window functions in TPC-DS q47, q51 and q57, plus q21) are labelled unproven, so they are never presented as safe; the three that could run returned the same rows.
+* **Not judged.** For 7 TPC-DS queries (q2, q5, q21, q40, q77, q78, q80) the round-tripped original does not run on PostgreSQL (`ROUND(double precision, int)`, interval arithmetic written as `- 30 AS days`); these are transpiler limits, not rule results.
+* **Estimate versus observation.** The rule recommendations (27 parenthesis removals, 24 single-use CTE inlinings) never change PostgreSQL's estimate and never moved runtime by 10%; they make SQL easier to read, not cheaper. The optimizer's one estimated saving (DSB `multi_block_queries-query069`, a dropped redundant predicate, estimate -11%) ran 1.30x faster. Of the 25 optimizer rewrites with an unchanged estimate, none ran faster and one ran 0.90x (TPC-DS q58, 1.06x in the first run), which is timing noise. So on this workload the estimate predicted the one real saving and no false ones.
+* In the first run, the optimizer's TPC-DS q44 rewrite (dropping `rnk < 11` on one side of a join on `rnk`, implied by the other side) compared as different rows because tied rows came back in another order; re-run, both returned the same 10 rows in the same order. The tie-aware comparison above came from this case.
+
+BigQuery dry-run bytes for the same recommendations need real BigQuery access and have not been measured yet.

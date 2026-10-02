@@ -23,6 +23,7 @@ from sqlglot.dialects.bigquery import BigQuery
 from sqlglot.tokens import TokenType
 
 from .ast_utils import cte_dependency_errors, parse_statements, render_statement
+from .scripts import has_blocks, is_rewriteable, leaf_statements
 from .sqlx import (
     SqlxRestorationError,
     looks_like_sqlx,
@@ -31,6 +32,9 @@ from .sqlx import (
     split_sqlx_sections,
     with_preserved_whitespace,
 )
+
+
+_BLOCK_WORDS = re.compile(r"\b(?:BEGIN|LOOP|WHILE|REPEAT|THEN|DO)\b", re.IGNORECASE)  # cheap test before cutting a script apart
 
 
 def _sql_comments(sql: str) -> list[str]:
@@ -104,6 +108,13 @@ def _same_ast(left: list[exp.Expression], right: list[exp.Expression]) -> bool:
     return len(left) == len(right) and all(
         _without_comments(a) == _without_comments(b) for a, b in zip(left, right)
     )
+
+
+def _uses_pipe_syntax(sql: str) -> bool:
+    try:
+        return any(token.token_type is TokenType.PIPE_GT for token in sqlglot.tokenize(sql, read="bigquery"))
+    except Exception:  # noqa: BLE001
+        return "|>" in sql
 
 
 def _rewriteable_statements(statements: list[exp.Expression]) -> list[tuple[int, exp.Expression]]:
@@ -302,6 +313,9 @@ class RewriteRule:
 
     name: ClassVar[str]
     summary: ClassVar[str]
+    #: Rewrite statements written in pipe syntax. sqlglot parses ``|>`` into nested CTEs and prints them
+    #: as standard SQL, so only analysis that never shows its output (the prover) turns this on.
+    rewrite_pipe_syntax: ClassVar[bool] = False
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -325,6 +339,8 @@ class RewriteRule:
     def _apply_sql(self, sql: str) -> RuleOutput:
         if not sql or not sql.strip():
             return RuleOutput("", 0, 0, 0, 0, ())
+        if _BLOCK_WORDS.search(sql) and has_blocks(sql):
+            return self._apply_script(sql)
 
         try:
             statements = parse_statements(sql)
@@ -377,6 +393,15 @@ class RewriteRule:
         changed_statements = 0
         changes = 0
         for (index, _), (start, end, statement) in zip(rewriteable, segments):
+            if not self.rewrite_pipe_syntax and _uses_pipe_syntax(sql[start:end]):
+                # sqlglot turns pipe syntax into nested CTEs and subqueries when it parses it, so a rule
+                # would rewrite that translation (and print it as standard SQL), not what was written.
+                diagnostics.append(
+                    RuleDiagnostic(index, "pipe_syntax_kept", "pipe syntax (|>) is left as written")
+                )
+                rewritten_statements.append(statement)
+                rendered_statements.append(render_statement(_without_comments(statement)))
+                continue
             before = statement.copy()
             try:
                 count, statement_diagnostics = self.rewrite_statement(statement, index)
@@ -473,6 +498,35 @@ class RewriteRule:
             remaining,
             tuple(diagnostics),
         )
+
+    def _apply_script(self, sql: str) -> RuleOutput:
+        """A script with ``BEGIN ... END``, ``IF``, loops or procedures: the rule runs on each statement inside, in place.
+
+        Declarations, variable assignments, transactions and control flow are left exactly as written.
+        """
+
+        edits: list[tuple[int, int, str]] = []
+        diagnostics: list[RuleDiagnostic] = []
+        statements = changed_statements = changes = remaining = 0
+        for node in leaf_statements(sql):
+            if not is_rewriteable(node.header):
+                continue
+            text = sql[node.start : node.end]
+            result = self._apply_sql(text)
+            index = statements
+            statements += max(result.statements, 1)
+            changed_statements += result.changed_statements
+            changes += result.changes
+            remaining += result.remaining
+            diagnostics.extend(
+                RuleDiagnostic(index if d.statement_index >= 0 else d.statement_index, d.code, d.message) for d in result.diagnostics
+            )
+            if result.sql != text:
+                edits.append((node.start, node.end, result.sql))
+        output = sql
+        for start, end, replacement in reversed(edits):
+            output = output[:start] + replacement + output[end:]
+        return RuleOutput(output, statements, changed_statements, changes, remaining, tuple(diagnostics))
 
     def _apply_sqlx(self, sql: str) -> RuleOutput:
         try:

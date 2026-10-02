@@ -22,21 +22,15 @@ _spec.loader.exec_module(bench)
 
 # measured 2026-10-02 over the whole corpus; a little room for solver timeouts under load
 FLOORS = {
-    "semantic_proven": 205,  # of 369 pairs that keep the meaning (214 measured)
+    "semantic_proven": 214,  # of 369 pairs that keep the meaning (218 measured)
     "semantic_design_refuted": 17,  # of 28 pairs that change it by design (18 measured)
     "layout_proven": 325,  # of 426 layout-only pairs (330 measured)
     "format_reproduced": 160,  # of 169 layout fixtures KumoSQL's preferences express (167 measured)
 }
 
-# Pairs the harness reads differently from sqlfluff: sqlglot keeps BigQuery backslash escapes in string
-# literals undecoded and reads a doubled backtick as one escaped backtick, so the quoted-string and
-# alias fixes below look like changes. They are findings about the parser, not about sqlfluff.
-PARSER_READS_DIFFERENTLY = {
-    "CV10/test_fail_unnecessary_escaping",
-    "CV10/test_fail_tripple_quoted_strings_dont_remove_escapes_single_quotes",
-    "CV10/test_fail_tripple_quoted_strings_dont_remove_escapes_double_quotes",
-    "AL09/test_fail_bigquery_quoted_column_no_space_without_as",
-}
+# Pairs the harness reads differently from sqlfluff (none: the four that sqlglot's BigQuery escapes made look
+# different are fixed by kumosql.string_literals, issue #314). A pair added here is a parser finding, not a sqlfluff one.
+PARSER_READS_DIFFERENTLY: set[str] = set()
 
 
 def test_data_is_the_pinned_version():
@@ -132,9 +126,8 @@ def test_layout_fixes_and_kumosql_rules():
     formats = [v.outcome for v in result["format"].values()]
     assert "wrong" not in formats, [k for k, v in result["format"].items() if v.outcome == "wrong"]
     assert formats.count("reproduced") >= FLOORS["format_reproduced"]
-    # the two cases where KumoSQL's repeat-until-stable pass turns spaced unary minus signs into a comment
-    # (`- - -5` becomes `---5`) must stay unverified, never accepted
+    # sqlfluff's fixer turns `- - -5` into the comment `--5` (issue #313); format_sql must leave such text alone
     for case_id in ("LT01-operators/fail_consecutive_sign_indicators_outer_spacing", "LT01-operators/fail_consecutive_sign_indicators_trailing_code"):
-        assert result["format"][case_id].verified == "unproven", result["format"][case_id]
+        assert result["format"][case_id].outcome == "different" and result["format"][case_id].verified == "unchanged", result["format"][case_id]
     for records in result["rules"].values():
         assert all(r["outcome"] != "wrong" for r in records), records

@@ -31,8 +31,10 @@ def test_unsafe_rewrites_are_never_proved_and_always_found_by_execution():
     _assert_sound(summary)
     different = summary["all"]["different"]
     assert different["cases"] > 25
-    # The prover alone refutes few of these; the synthetic-data check must catch every one.
+    # The synthetic-data check must catch every one, and the prover (its executed
+    # counterexample search) must return a replayable database for each.
     assert different["found_either_way"] == different["cases"]
+    assert different["refuted"] == different["replayed"] == different["cases"]
     equivalent = summary["all"]["equivalent"]
     assert equivalent["proved"] >= 0.8 * equivalent["cases"]
     assert summary["all"]["synthetic_claims_difference_on_equivalent"] == 0

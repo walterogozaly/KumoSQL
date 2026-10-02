@@ -175,3 +175,31 @@ def test_missing_or_damaged_snapshot_is_ignored(tmp_path, monkeypatch):
     path = live_graph._snapshot_file("bad")
     path.write_bytes(b"not a pickle")
     assert not live_graph.restore_snapshot("bad", "x")
+
+
+def test_a_project_whose_compilation_was_unreachable_is_still_saved_for_a_restart(monkeypatch):
+    files = {
+        "workflow_settings.yaml": "defaultProject: p\ndefaultDataset: d\n",
+        "definitions/decl.js": 'getTables().forEach((t) => declare({ schema: "raw", name: t }));\n',
+        "definitions/m.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("orders")}',
+    }
+
+    def broken():
+        raise RuntimeError("no credentials")
+
+    monkeypatch.setattr(live_graph, "_compiled_targets", lambda url: broken)
+    key = live_graph._content_key(files)
+    live_graph._PROJECT_CACHE.clear()
+    first = live_graph.pipeline_from_files(files, "https://example.com/r.git")
+    assert any(d.code == "compiled_graph_unavailable" for d in first.diagnostics)
+
+    # A restart still shows it at once from the data folder...
+    live_graph._PROJECT_CACHE.clear()
+    assert live_graph.restore_snapshot(key, "saved", {"url": "https://example.com/r.git", "branch": "main", "actual": "main"})
+
+    # ...but the load that follows parses again, since credentials may work now.
+    parsed = []
+    real = live_graph.load_sqlx_project
+    monkeypatch.setattr(live_graph, "load_sqlx_project", lambda *a, **k: parsed.append(1) or real(*a, **k))
+    live_graph.pipeline_from_files(files, "https://example.com/r.git")
+    assert parsed
