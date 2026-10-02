@@ -131,6 +131,17 @@ def check(ddl: list[str], tables: list[dict], q1: str, q2: str, trials: int = 40
     return None
 
 
+SEMI_JOIN_NOTE = (
+    "SPES's text replaces the semi-join with an inner join on EMP rows that are not de-duplicated, so each "
+    "DEPT row repeats once per matching employee: not equivalent under bag semantics (nothing makes EMP.DEPTNO unique)."
+)
+# Pairs whose SPES text is not equivalent although the Calcite rule is: the reason, kept in the fixture.
+NOT_EQUIVALENT = {
+    name: SEMI_JOIN_NOTE
+    for name in ("testSemiJoinRule", "testSemiJoinRuleExists", "testSemiJoinTrim")
+}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--src", type=Path, required=True, help="SPES checkout")
@@ -153,6 +164,8 @@ def main() -> None:
             continue
         rec = {"name": r["name"], "spes_index": r["index"], "label": "equivalent",
                "sql_a": r["q1"], "sql_b": r["q2"]}
+        if r["name"] in NOT_EQUIVALENT:
+            rec["label"], rec["label_note"] = "not_equivalent", NOT_EQUIVALENT[r["name"]]
         if r["spes_name"] != r["name"]:
             rec["spes_name"] = r["spes_name"]
         rec["sqlsolver_index"] = r["index"]  # same test, edited text, in SQLSolver
