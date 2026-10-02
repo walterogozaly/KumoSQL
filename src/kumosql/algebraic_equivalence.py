@@ -39,6 +39,7 @@ from .string_literals import canonical_literals
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
+from .decorrelation_rules import decorrelation_step
 from .constraint_normalization import keyed_join_to_exists, normalize_key_counts
 from .grouping_expansion import collapse_grouping_expansion
 from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
@@ -48,11 +49,13 @@ from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
+from .limit_rules import limit_rule
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .distinct_rules import distinct_rules
+from . import set_aggregates
 from .empty_rules import canonical_empty, propagate_empty
 from .setop_rules import _sf_flatten as _flatten_projections, merge_same_source, normalize_set_operations, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
@@ -3260,10 +3263,13 @@ def _derived_key_outputs(inner: exp.Select) -> dict[str, exp.Expression] | None:
     """Output name -> value for the outputs of a DISTINCT or GROUP BY derived select that a filter commutes with.
 
     A filter on a value the select deduplicates or groups by can run before it: DISTINCT outputs, or
-    the non-aggregate outputs that are GROUP BY keys. ``None`` when the select is anything else.
+    the non-aggregate outputs that are GROUP BY keys (a HAVING drops whole groups, as such a filter
+    does, so the two commute). ``None`` when the select is anything else.
     """
 
-    if any(inner.args.get(k) for k in ("having", "limit", "offset", "qualify", "windows", "with_", "with", "order")) or any(inner.find_all(exp.Window)):
+    if inner.args.get("having") is not None and inner.args.get("group") is None:
+        return None
+    if any(inner.args.get(k) for k in ("limit", "offset", "qualify", "windows", "with_", "with", "order")) or any(inner.find_all(exp.Window)):
         return None
     if any(isinstance(e, exp.Star) for e in inner.expressions):
         return None
@@ -3387,7 +3393,11 @@ def _drop_redundant_distinct_source(select: exp.Select) -> exp.Expression | None
     """
 
     from_ = select.args.get("from_") or select.args.get("from")
-    if from_ is None or select.args.get("joins") or select.args.get("distinct") or select.args.get("having") is not None:
+    if from_ is None or select.args.get("joins") or select.args.get("having") is not None:
+        return None
+    # An outer DISTINCT without aggregates or grouping ignores repeated rows of the source too.
+    distinct = select.args.get("distinct")
+    if distinct is not None and (distinct.args.get("on") or select.args.get("group")):
         return None
     source = from_.this
     if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
@@ -3407,6 +3417,14 @@ def _drop_redundant_distinct_source(select: exp.Select) -> exp.Expression | None
         if sorted(values) != sorted(g.sql() for g in group.expressions):
             return None
     aggregates = [a for a in select.find_all(exp.AggFunc) if a.find_ancestor(exp.Select) is select]
+    if distinct is not None:
+        if aggregates or any(select.find_all(exp.Window)) or any(n is not source for n in select.find_all(exp.Subquery, exp.Exists)):
+            return None
+        copy = select.copy()
+        new_inner = copy.args.get("from_", copy.args.get("from")).this.this
+        new_inner.set("distinct", None)
+        new_inner.set("group", None)
+        return copy
     if not aggregates:
         return None
     for call in aggregates:
@@ -4650,7 +4668,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys)):
+            for rule in (lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
@@ -4770,6 +4788,21 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
     except sqlglot.errors.SqlglotError:
         replaced = False
     result = prove_equivalent_smt(left, right, **kwargs)
+    if result.status is SmtStatus.NOT_PROVEN and not replaced:
+        reduced = set_aggregates.reduce(left, right, dialect, kwargs.get("compare_names", True))
+        if reduced:
+            inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
+            proofs = []
+            for value_left, value_right in reduced:
+                proof = prove_equivalent_algebraic(value_left, value_right, compare_names=False, types=types, group_by_constants=constants, **inner)
+                if not proof.proven:
+                    break
+                proofs.append(proof)
+            else:
+                assumptions = tuple(dict.fromkeys(a for proof in proofs for a in proof.assumptions))
+                return SmtEquivalenceResult(
+                    SmtStatus.PROVEN_EQUIVALENT, "the aggregates read the same set of values on both sides", assumptions=assumptions
+                )
     if result.status is SmtStatus.NOT_PROVEN and not replaced:
         from .structural_identity import same_scoped_query
         if same_scoped_query(left, right, schema=kwargs.get("schema"), dialect=dialect,
