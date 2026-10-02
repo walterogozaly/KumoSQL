@@ -217,7 +217,7 @@ def tlp_cases(rng, index: int) -> list[Case]:
     # DISTINCT partitions with UNION (set semantics).
     dbase = f"SELECT DISTINCT {sel} FROM {source}"
     dparts = [f"SELECT {sel} FROM {source} WHERE {q}" for q in (f"({p})", f"NOT ({p})", f"({p}) IS NULL")]
-    cases.append(Case(f"tlp-distinct-{index}", "tlp_distinct", dbase, " UNION ".join(dparts), "equivalent"))
+    cases.append(Case(f"tlp-distinct-{index}", "tlp_distinct", dbase, " UNION DISTINCT ".join(dparts), "equivalent"))
     # Aggregates: COUNT(*), MAX and SUM recombine over the partitions.
     col = rng.choice(cols)
     for fn, combine in (("COUNT(*)", "SUM"), (f"MAX({col})", "MAX"), (f"MIN({col})", "MIN"), (f"SUM({col})", "SUM")):
@@ -248,7 +248,7 @@ def tlp_cases(rng, index: int) -> list[Case]:
             f"tlp-mut-union-{index}",
             "tlp_mutant",
             base,
-            " UNION ".join(parts),
+            " UNION DISTINCT ".join(parts),
             "either",
         )
     )
@@ -592,6 +592,9 @@ def classify(result) -> str:
     return "unknown"
 
 
+SEARCH_REASON = "the queries return different rows on the attached database"
+
+
 def prove(left: str, right: str):
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 
@@ -599,8 +602,10 @@ def prove(left: str, right: str):
         left,
         right,
         schema={t: list(COLUMNS) for t in TABLES},
+        types={t: {c: "INT64" for c in COLUMNS} for t in TABLES},
         timeout_ms=PROVER_TIMEOUT_MS,
         compare_names=False,
+        search_counterexample=True,
     )
 
 
@@ -645,6 +650,9 @@ def evaluate(case: Case, oracle: Oracle) -> Outcome:
         except Exception as error:
             replayed = False
             return Outcome(case, status, truth, replayed, time.time() - start, f"replay: {error}"[:200])
+        if replayed and truth == "equivalent":
+            # The replayed database separates the pair: the oracle's random search missed it.
+            truth = "label_error" if case.expect == "equivalent" else "different"
     synthetic = None
     if status != "refuted":
         synthetic = synthetic_check(case)
@@ -688,6 +696,7 @@ def summarise(outcomes: list[Outcome]) -> dict:
                 "cases": len(different),
                 "refuted": sum(o.prover == "refuted" for o in different),
                 "replayed": sum(o.replayed is True for o in different),
+                "refuted_by_executed_search": sum(o.prover == "refuted" and o.detail.startswith(SEARCH_REASON) for o in different),
                 "synthetic_found": sum(o.synthetic == "different" for o in different),
                 "found_either_way": sum(o.prover == "refuted" or o.synthetic == "different" for o in different),
             },

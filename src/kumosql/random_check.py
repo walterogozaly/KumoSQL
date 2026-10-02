@@ -171,11 +171,41 @@ def _connect(schema: Schema):
     return db
 
 
+def _floor_to_unit(node):
+    """``FLOOR(ts TO unit)`` (Calcite) is ``DATE_TRUNC('unit', ts)``; DuckDB has no TO form."""
+
+    if isinstance(node, sqlglot.exp.Floor) and node.args.get("to") is not None:
+        return sqlglot.exp.Anonymous(this="DATE_TRUNC", expressions=[sqlglot.exp.Literal.string(node.args["to"].name.lower()), node.this.copy()])
+    return node
+
+
+_RESERVED: set[str] | None = None
+
+
+def _duck_reserved() -> set[str]:
+    """Words DuckDB will not take as a bare name (``at`` is a common alias in JOB queries)."""
+
+    global _RESERVED
+    if _RESERVED is None:
+        import duckdb
+
+        rows = duckdb.sql("SELECT keyword_name FROM duckdb_keywords() WHERE keyword_category IN ('reserved', 'type_function', 'column_name')").fetchall()
+        _RESERVED = {r[0].lower() for r in rows}
+    return _RESERVED
+
+
+def _quote_reserved(node):
+    if isinstance(node, sqlglot.exp.Identifier) and not node.args.get("quoted") and node.name.lower() in _duck_reserved():
+        return sqlglot.exp.to_identifier(node.name, quoted=True)
+    return node
+
+
 def _duck(sql: str, dialect: str) -> str:
     if dialect == "bigquery":
         sql = canonical_literals(sql)
     try:
-        return sqlglot.transpile(sql, read=dialect, write="duckdb")[0]
+        tree = sqlglot.parse_one(sql, read=dialect).transform(_floor_to_unit).transform(_quote_reserved)
+        return tree.sql(dialect="duckdb")
     except sqlglot.errors.SqlglotError as error:
         raise CheckError(f"cannot translate: {error}") from error
 

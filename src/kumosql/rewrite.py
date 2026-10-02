@@ -26,6 +26,7 @@ from .ast_utils import parse_statements, top_level_query
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
+from .layout_equivalence import layout_only_change
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
@@ -181,6 +182,10 @@ def _verify_sql(
     smt_checks: list[VerificationCheck] | None = None,
     smt_timeout_ms: int = DEFAULT_SMT_TIMEOUT_MS,
 ) -> tuple[bool, list[str]]:
+    if layout_only_change(before, after):
+        # Only whitespace and the case of reserved words and built-in calls changed: proven for any
+        # statement, including ones sqlglot cannot parse or keeps as an opaque command.
+        return True, []
     try:
         left = parse_statements(before)
         right = parse_statements(after)

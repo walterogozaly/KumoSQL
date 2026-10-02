@@ -1,0 +1,30 @@
+{
+ "source": "edx-h/Benchmarking-MV-Based-Rewriting@83da57fbc719",
+ "method": "query text equal after lower-casing, removing whitespace, semicolons, quotes and ::timestamp",
+ "compared_with": {
+  "jo-bench JOB queries (danolivo/jo-bench, 113 queries; used by the join-order and transformation evals)": {
+   "job": 113,
+   "scale": 0,
+   "stats": 0,
+   "tpcds": 0
+  },
+  "STATS-CEB (Nathaniel-Han/End-to-End-CardEst-Benchmark stats_CEB.sql, 146 queries; used by the STATS-CEB evals)": {
+   "job": 0,
+   "scale": 0,
+   "stats": 136,
+   "tpcds": 0
+  },
+  "Calcite materialized-view cases (tests/fixtures/mv_reuse)": {
+   "job": 0,
+   "scale": 0,
+   "stats": 0,
+   "tpcds": 0
+  }
+ },
+ "workload_sizes": {
+  "job": 113,
+  "scale": 500,
+  "stats": 1448,
+  "tpcds": 938
+ }
+}

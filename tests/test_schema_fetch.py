@@ -197,3 +197,22 @@ def test_many_tables_are_fetched_concurrently(monkeypatch):
     elapsed = time.time() - started
     assert stats["found"] == 210
     assert elapsed < 210 * 0.05 / 3  # serial would take 10.5 s; a pool of 8 takes about 1.3 s
+
+
+def test_many_tables_write_the_catalog_file_once(monkeypatch):
+    tables = {f"p.ext.t{i}": ["id", "name"] for i in range(40)}
+    fake_bigquery(monkeypatch, tables)
+    writes = []
+    real = bigquery_catalog._save_disk
+    monkeypatch.setattr(bigquery_catalog, "_save_disk", lambda: (writes.append(1), real())[1])
+    answers, stats = schema_fetch.resolve([f"p.ext.t{i}" for i in range(40)])
+    assert stats["found"] == 40 and len(answers) == 40
+    assert len(writes) == 1  # not one rewrite of the whole file per table
+    assert bigquery_catalog.saved_tables()  # and it was written
+
+
+def test_lookup_stops_waiting_after_its_time_budget(monkeypatch):
+    fake_bigquery(monkeypatch, {f"p.ext.t{i}": ["id"] for i in range(10)})
+    monkeypatch.setattr(schema_fetch, "MAX_SECONDS", -1.0)
+    answers, stats = schema_fetch.resolve([f"p.ext.t{i}" for i in range(10)])
+    assert answers == {} and stats["unknown"] == 10
