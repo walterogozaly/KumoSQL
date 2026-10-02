@@ -233,13 +233,17 @@ def _quoted(sql: str) -> list[str]:
     return sorted(re.findall(r"`[^`]*`", sql))
 
 
-def stage_format(text: str, parse_status: str) -> tuple[str, str]:
-    """Formatting must keep the meaning: no crash, backticked names untouched, and a trusted proof or no change."""
+def stage_format(text: str, parse_status: str, result=None) -> tuple[str, str]:
+    """Formatting must keep the meaning: no crash, backticked names untouched, and a trusted proof or no change.
 
-    try:
-        result = rewrite.apply_rule("format_sql", text)
-    except Exception as exc:  # noqa: BLE001
-        return FAIL, _error(exc)
+    ``result`` is a ``format_sql`` result already computed for ``text``.
+    """
+
+    if result is None:
+        try:
+            result = rewrite.apply_rule("format_sql", text)
+        except Exception as exc:  # noqa: BLE001
+            return FAIL, _error(exc)
     if result.sql == text:
         status, detail = _classify(result, text)
         return (status, detail or "unchanged")

@@ -199,13 +199,66 @@ def run_pgivm(seeds: int = 30, limit: int | None = None) -> dict:
     return out
 
 
+def run_pgivm_heldout(seeds: int = 30, workload_seed: int = 9001) -> dict:
+    """Held-out pg_ivm track: fresh random workloads on the adapted views, never seen while tuning.
+
+    Each distinct adapted view gets one new random insert/update/delete script (generator
+    seed ``workload_seed``, unrelated to the checker's own seeds). Scripts that drift are
+    scored once at the frozen ``seeds``.
+    """
+
+    import random
+
+    from kumosql.incremental import _Generator, _insert
+
+    path = FIXTURES / "pgivm_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
+    seen, out = set(), {"views": 0, "script_agrees": 0, "script_diverges": 0, "script_error": 0,
+                        "coverage": {k: 0 for k in ("proven", "refuted", "unknown", "unsupported", "timeout", "error")}, "wrong": []}
+    for case in cases:
+        if "adapted" not in case or case["adapted"]["full_sql"] in seen:
+            continue
+        seen.add(case["adapted"]["full_sql"])
+        out["views"] += 1
+        model, sources, _, _ = pgivm_build(case)
+        rng = random.Random(f"{workload_seed}:{case['adapted']['full_sql']}")
+        gen = _Generator(sources, frozenset({"insert_new", "update", "delete", "empty"}), rng)
+        initial = []
+        for name in sorted(sources):
+            for _ in range(rng.randint(1, 2)):
+                gen.next_hour = rng.randint(0, 2)
+                row = gen._fresh(name, None)
+                initial.append(_insert(name, sources[name], row))
+                gen.rows[name].append(row)
+        plan = [gen.batch() for _ in range(4)]
+        try:
+            divergence = first_divergence(replay(model, sources, initial, plan))
+        except IncrementalError:
+            out["script_error"] += 1
+            continue
+        if divergence is None:
+            out["script_agrees"] += 1
+            continue
+        out["script_diverges"] += 1
+        verdict = check_incremental(model, sources, pgivm_kinds(plan), seeds=seeds, batches=4, time_limit=20)
+        outcome = {"safe": "proven", "diverges": "refuted"}.get(verdict.outcome, verdict.outcome)
+        out["coverage"][outcome] += 1
+        if verdict.outcome == "safe" or (verdict.counterexample is not None and first_divergence(
+                replay(model, sources, verdict.counterexample.initial, verdict.counterexample.batches)) is None):
+            out["wrong"].append(case["id"])
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--split", choices=("all", "dev", "held_out"), default="all")
     parser.add_argument("--seeds", type=int, default=60)
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--track", choices=("boundary", "pgivm"), default="boundary")
+    parser.add_argument("--track", choices=("boundary", "pgivm", "pgivm-heldout"), default="boundary")
     args = parser.parse_args()
+    if args.track == "pgivm-heldout":
+        print(run_pgivm_heldout(args.seeds))
+        return
     if args.track == "pgivm":
         result = run_pgivm(args.seeds)
         print(json.dumps(result, indent=1) if args.json else {k: v for k, v in result.items() if k != "rows"})

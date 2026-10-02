@@ -1,0 +1,1 @@
+WITH totals AS (SELECT user_id, DATE(created_at) AS day, SUM(sale_price) AS total FROM `kumosql.kumosql_messy.raw_order_items` GROUP BY user_id, day) SELECT t1.user_id, t1.day FROM totals AS t1 WHERE t1.total > (SELECT AVG(t2.total) * 1.2 FROM totals AS t2 WHERE t2.user_id = t1.user_id) ORDER BY t1.user_id, t1.day LIMIT 100
