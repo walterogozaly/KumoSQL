@@ -5,7 +5,7 @@ Settings does, waits for the graph and the analysis, opens every page in a real 
 on any console error, failed or erroring request, unresponsive server, or ``ERROR`` line in
 ``ui.log``. It is the release gate for anything touching loading, git, the graph or logging.
 
-It reproduces a locked-down work laptop: SSH is blocked (a failing ``GIT_SSH_COMMAND``), the
+It reproduces a locked-down laptop: SSH is blocked (a failing ``GIT_SSH_COMMAND``), the
 local data folder is outside AppData, and nothing needs administrator rights or a launcher on
 ``PATH``. The browser is driven with Playwright (``python -m pip install --user playwright``); it
 uses Microsoft Edge or Chrome when installed, so no browser download is needed.
@@ -246,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--browser", default="auto", choices=["auto", "msedge", "chrome", "chromium"], help="Browser to drive (default: Edge, then Chrome, then bundled Chromium)")
     parser.add_argument("--browser-path", default=os.environ.get("KUMOSQL_SMOKE_BROWSER_PATH"), help="Path to a Chromium-based browser executable (overrides --browser)")
     parser.add_argument("--forbid-dataset", default="fx_scratch", help="Fail if the graph has nodes in this dataset (the fixture's default dataset, where wrongly resolved refs land; default: fx_scratch; empty to disable)")
-    parser.add_argument("--allow-ssh", action="store_true", help="Do not block SSH (default: blocked, like a work laptop)")
+    parser.add_argument("--allow-ssh", action="store_true", help="Do not block SSH (default: blocked, like a locked-down laptop)")
     parser.add_argument("--no-second-start", action="store_true", help="Skip restarting the server to time how fast the saved project reappears")
     parser.add_argument("--second-start-limit", type=float, default=20.0, help="Seconds the saved project may take to appear after a restart (default: 20)")
     parser.add_argument("--no-browser", action="store_true", help="Skip the browser pages (API checks only)")
