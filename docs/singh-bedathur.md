@@ -41,19 +41,19 @@ DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A
 
 Measured 2026-10-02 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`, about 30 minutes on 4 cores):
 
-**2556/2800, 0 wrong**: 682 proved equivalent, 1,874 proved different, 244 unknown.
+**2581/2800, 0 wrong**: 707 proved equivalent, 1,874 proved different, 219 unknown.
 
 | Outcome | Pairs |
 | --- | ---: |
-| Proven equivalent | 682 |
+| Proven equivalent | 707 |
 | Refuted (counterexample) | 1,874 |
-| Unknown | 232 |
+| Unknown | 207 |
 | Unsupported (the prover cannot read a query, and no counterexample) | 12 |
 | Timeout | 0 |
 | Error | 0 |
 | Wrong | 0 |
 
-Supported subset: 2556/2788. Held-out fifth (pairs whose text hash is divisible by 5): **530/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+Supported subset: 2581/2788. Held-out fifth (pairs whose text hash is divisible by 5): **534/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
 
 The last step was developed on dev pairs only (the held-out fifth went from 509 to 524 without being looked at). It also fixed two ways the harness could see a difference that is not one: DuckDB returns `DECIMAL` results as Python `Decimal` and `DOUBLE` ones as `float`, and `0.33` never equals `Decimal("0.33")`, so numbers are now compared as floats rounded to six places; and every fraction the generator draws is exact in binary (eighths), because DuckDB averages decimals in floating point and a value like `1.005` lands on the other side of a `ROUND(.., 2)` midpoint from MySQL's exact result. Neither had produced a published refutation. Every dev pair labelled equivalent that this step newly refutes was checked by hand: they hinge on a NULL inside `NOT IN`, duplicate rows, or an inclusive `BETWEEN` against a half-open range.
 
@@ -65,15 +65,15 @@ What moved the score:
 | + prover counterexamples, canonical rewrites, bigger tables for `COUNT` thresholds | 2,317 |
 | + skewed databases, fractional decimals, `LIMIT` over a full ordering, MySQL NULL order and case rules | 2,434 |
 | + a second search stream seeded per pair with tables up to 10 rows, duplicate rows, three-decimal values, date and divisor neighbours, `ORDER BY NULL` | 2,513 |
-| + derived tables holding an outer join read through (`outer_join_flatten.py`; master measured 2,533 the same day) | 2,556 |
+| + `LEFT JOIN` read as inner under a NULL-rejecting `WHERE`, `WHERE` pushed into `UNION` branches (2,533 on the same master without them) | 2,581 |
 
 ### Against the published labels
 
 | Verdict | Label "Equivalent" | Label "Non Equivalent" |
 | --- | ---: | ---: |
-| Proved equivalent | 682 | 0 |
+| Proved equivalent | 707 | 0 |
 | Proved different | 476 | 1,398 |
-| Unknown | 242 | 2 |
+| Unknown | 217 | 2 |
 
 No proof contradicts a label. The 476 pairs labelled equivalent that get a counterexample are equivalent only under LeetCode's constraints, which the files drop: most rely on a key (`UNION` versus `UNION ALL`), a NOT NULL column (`NOT IN` versus an anti-join) or a foreign key. A few differ outright, for example a typo inside a string literal (`'15 OR MORE AS BIN'`). Each comes with its counterexample: `--show-disagreements` prints them.
 

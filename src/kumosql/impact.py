@@ -185,13 +185,14 @@ def assess_change(
 
     # Tables named in a query also count, so a SELECT * over a table is found
     # even though it consumes no named column.
+    from .ast_utils import is_function_table
     from .pipeline import _table_name_for_schema
     from sqlglot import exp
 
     for model, query in a.parsed.items():
         ctes = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
         for node in query.find_all(exp.Table):
-            if node.name and not (not node.db and node.name.lower() in ctes):
+            if node.name and not is_function_table(node) and not (not node.db and node.name.lower() in ctes):
                 name = pipeline.resolve(node) or _table_name_for_schema(node)
                 if name != model:
                     readers_index.setdefault(name, set()).add(model)

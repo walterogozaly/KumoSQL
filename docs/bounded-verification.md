@@ -85,3 +85,7 @@ Disputed labels: Cosette's `testDecorrelateTwoIn` and SPES's three semi-join cas
 Checks behind "0 wrong": the encoding agrees with DuckDB on 92 Literature, 511 Calcite and 1,504 LeetCode-sample queries (`differential`, 0 mismatches; queries with an ungrouped column are excluded because their answer is arbitrary). The first LeetCode run found the encoder assumed ORDER BY ties away, which hid real differences in 18 pairs; ties are now broken by row position and the same run is 0 wrong. A doubled primary key in one family of pairs is read as the shared harness reads it (the later one wins).
 
 The bounded check is developed with these suites in view (tuned on test), and held-out cases are not reserved yet. Caveats per suite are in `benchmarks/results/bounded-*.json`.
+
+## SQLite (SQL-IQ)
+
+`SQLiteReplay` replays on the standard-library `sqlite3` module, for queries in SQLite's dialect. For SQLite only counterexamples are offered: the encoding's `LIKE` (case-sensitive) and `/` (exact) differ from SQLite's, so "no counterexample" is reported as unknown. `tools/sqliq_bench.py` uses it as a last step of the Equivalence Judge, after the random and targeted databases agree: a database of at most 3 rows per table on which SQLite itself returns different results answers "no". On the 1,390 pairs it settles 16 more (15 match the labels, 1 "equivalent" label is a label dispute), moving the score from 1165 to 1179 ([sql-iq.md](sql-iq.md#scores)).

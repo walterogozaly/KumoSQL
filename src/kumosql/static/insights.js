@@ -388,9 +388,10 @@ function overlapList(section, name) {
           (match.role.evidence?.length ? `. Evidence: ${match.role.evidence.map((e) => e.detail).join("; ")}` : "") }) : null);
     })) : h("p", { class: "muted small", text: section.status === "unavailable" ? "Nothing was compared." : "No existing table in the compared set provides the same attributes." }),
     unknown.length ? h("div", {},
-      h("h3", { text: `Could not be compared (${unknown.length})` }),
+      h("h3", { text: `Could not be compared (${section.unknown_total ?? unknown.length})` }),
       h("ul", { class: "plain-list" }, unknown.map((item) => h("li", { class: "reader" }, name(item.table, item.key),
-        h("span", { class: "edge-meta" }, E.pill("unknown"), otherOwner(item), h("span", { class: "muted small", text: (item.reason || "").split(":").slice(1).join(":").trim() || item.reason }))))))
+        h("span", { class: "edge-meta" }, E.pill("unknown"), otherOwner(item), h("span", { class: "muted small", text: (item.reason || "").split(":").slice(1).join(":").trim() || item.reason }))))),
+      (section.unknown_total ?? 0) > unknown.length ? h("p", { class: "muted small", text: `Showing the first ${unknown.length}.` }) : null)
       : null,
     skipped.length ? h("p", { class: "muted small", text: "Skipped: " + skipped.map(([reason, count]) => `${count} ${reason.replaceAll("_", " ")}`).join(", ") + ". A skipped table was not checked; it is not a “no match”." }) : null,
     (section.rollups || []).length ? h("div", {},

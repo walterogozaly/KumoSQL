@@ -33,6 +33,8 @@ __all__ = ["OverlapChecker", "unavailable_section"]
 MAX_ROLE_EVIDENCE = 4
 #: changed models compared per report; each comparison profiles the whole pipeline
 MAX_COMPARED_MODELS = 40
+#: Tables that could not be compared are listed up to this many per change (the total is kept); thousands of them made one response tens of megabytes.
+MAX_UNKNOWN_LISTED = 50
 
 
 def unavailable_section(reason: str) -> dict:
@@ -92,7 +94,7 @@ class OverlapChecker:
         except Exception as exc:  # noqa: BLE001 - one comparison must not sink a report
             return unavailable_section(f"compare_error: {type(exc).__name__}")
 
-    def retired_matches(self, sql: str, retired: set[str]) -> list[dict]:
+    def retired_matches(self, sql: str, retired: set[str], profile=None) -> list[dict]:
         """Matches of ``sql`` among ``retired`` tables of this (base) pipeline; never raises.
 
         A table the change removes is not in the head pipeline, so a new table
@@ -101,7 +103,7 @@ class OverlapChecker:
         """
 
         try:
-            found = find_overlaps(self.pipeline, sql=sql, scope=self.scope, roles=self.roles)
+            found = find_overlaps(self.pipeline, sql=sql, scope=self.scope, roles=self.roles, target_profile=profile)
             out = []
             for match in found.matches:
                 if match.table in retired and match.kind != "unknown":
@@ -129,7 +131,8 @@ class OverlapChecker:
             "skipped": dict(sorted(found.skipped.items())),
             "candidates_in_scope": found.candidates_in_scope,
             "matches": matches,
-            "unknown": unknown,
+            "unknown": unknown[:MAX_UNKNOWN_LISTED],
+            "unknown_total": len(unknown),
             "rollups": [],
         }
         try:

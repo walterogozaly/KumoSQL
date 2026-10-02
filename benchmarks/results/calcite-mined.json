@@ -2,8 +2,8 @@
   "suite": "Calcite rule tests (mined, current)",
   "order": 24,
   "size": 502,
-  "score": "355/502 proved, 0 wrong",
-  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 146 unknown. 84 of the 168 pairs new to every other corpus are proved.",
+  "score": "348/502 proved, 0 wrong",
+  "metric": "planBefore/planAfter pairs from Calcite's current rule tests, translated to SQL, proved equivalent; 1 genuine Calcite non-equivalence refuted with a DuckDB counterexample, 153 unknown. 78 of the 168 pairs new to every other corpus are proved.",
   "docs": "docs/sqlsolver.md#calcites-current-rule-tests-mined",
   "command": "python tools/calcite_mined_bench.py",
   "date": "2026-10-02",
@@ -11,10 +11,10 @@
   "evidence": "proof",
   "correctness": "0 false proofs; every proof and refutation re-run on 60 random DuckDB databases, half skewed towards the literals",
   "coverage": {
-    "proven": 355,
+    "proven": 348,
     "refuted": 1,
-    "unknown": 146,
+    "unknown": 153,
     "unsupported": 332
   },
-  "held_out": "76/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules (set_filters.py) were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py); the outer-join flattening rules (outer_join_flatten.py) took it from 76 to 84, and all 8 gained pairs were among the failing pairs read in the 2026-10-02 triage, so those 8 are not clean"
+  "held_out": "78/168 on pairs new to every other corpus, tuned on test: they scored 53/168 before any rule was developed against them; the set-operation rules were written with their unknowns in view, and 7 were read while building the ANY/ALL rules (quantified_rules.py). Rules since then were developed on the other 334 pairs and QED only; they lifted the new pairs from 76 to 78."
 }

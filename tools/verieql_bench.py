@@ -43,8 +43,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 from kumosql import counterexample as cx  # noqa: E402
+from bench_sql_repairs import expand_row_predicates, pipes_as_concat, rebind_correlation_variables, uniquify_star_columns  # noqa: E402
 
 COMMIT = "493cbb81000205e33b0623cfd1c39106fa035fae"
 BASE = f"https://raw.githubusercontent.com/VeriEQL/VeriEQL/{COMMIT}"
@@ -103,6 +105,7 @@ def load_cases(suite: str) -> list[dict]:
     cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     for position, case in enumerate(cases):
         case["index"] = position  # the files restart their own index per problem, so number the cases here
+        case["suite"] = suite
     return cases
 
 
@@ -229,30 +232,78 @@ def _or(values):
     return None if any(v is None for v in values) else False
 
 
+# --- harness repairs --------------------------------------------------------------------
+
+
+def repaired_pair(case: dict, spec: cx.Spec) -> tuple[str, str, dict[str, int]]:
+    """The case's two queries as the harness runs and proves them, plus any uninterpreted predicates.
+
+    See ``tools/bench_sql_repairs.py``. Calcite-397 gets ``||`` read as concatenation, its correlation
+    variables rebound and its repeated star columns named; Literature gets its whole-row predicates spelled out over the row's
+    columns. Each repair has one reading; when it cannot apply, the query is kept as written.
+    """
+
+    tables = {t.name.lower(): [c.name for c in t.columns] for t in spec.tables.values()}
+    suite = case.get("suite")
+    out, predicates = [], {}
+    for sql in case["pair"]:
+        try:
+            if suite == "calcite":
+                try:
+                    sql = pipes_as_concat(sql)
+                except Exception:
+                    pass
+                sql = uniquify_star_columns(rebind_correlation_variables(sql, tables) if "$cor" in sql else sql, tables)
+            elif suite == "literature":
+                sql, arities = expand_row_predicates(sql, tables)
+                if any(predicates.get(name, arity) != arity for name, arity in arities.items()):
+                    return case["pair"][0], case["pair"][1], {}
+                predicates.update(arities)
+        except Exception:  # a query the repairs cannot read is scored as written
+            pass
+        out.append(sql)
+    return out[0], out[1], predicates
+
+
 # --- verdicts ---------------------------------------------------------------------------
 
 EQUIVALENT, DIFFERENT, AGREES, UNKNOWN, WRONG = "equivalent", "different", "agrees", "unknown", "wrong"
 
 
-def prove(case: dict, spec: cx.Spec, timeout_ms: int):
+def prove(case: dict, spec: cx.Spec, timeout_ms: int, pair: tuple[str, str] | None = None):
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
     from kumosql.smt_equivalence import TableConstraints
 
     lower = {t.name.lower(): t for t in spec.tables.values()}
     schema = {n: [c.name.lower() for c in t.columns] for n, t in lower.items()}
-    constraints = {
-        n: TableConstraints(
-            not_null=frozenset(c.name.lower() for c in t.columns if c.not_null),
-            keys=tuple(tuple(k.lower() for k in key) for key in ([t.primary_key] if t.primary_key else []) + list(t.unique)),
-        )
-        for n, t in lower.items()
-    }
     types = {n: {c.name.lower(): c.type for c in t.columns} for n, t in lower.items()}
-    left, right = case["pair"]
-    return prove_equivalent_algebraic(
-        left, right, schema=schema, constraints=constraints, types=types, compare_names=False,
-        dialect="mysql", exact_arithmetic=True, timeout_ms=timeout_ms,
-    )
+    left, right = pair or case["pair"]
+
+    def attempt(with_foreign_keys: bool):
+        constraints = {
+            n: TableConstraints(
+                not_null=frozenset(c.name.lower() for c in t.columns if c.not_null),
+                keys=tuple(tuple(k.lower() for k in key) for key in ([t.primary_key] if t.primary_key else []) + list(t.unique)),
+                foreign_keys=tuple(
+                    ((column.lower(),), parent.lower(), (parent_column.lower(),))
+                    for child, column, parent, parent_column in spec.foreign_keys
+                    if child.lower() == n and with_foreign_keys
+                ),
+            )
+            for n, t in lower.items()
+        }
+        return prove_equivalent_algebraic(
+            left, right, schema=schema, constraints=constraints, types=types, compare_names=False,
+            dialect="mysql", exact_arithmetic=True, timeout_ms=timeout_ms,
+        )
+
+    result = attempt(False)
+    if result.proven or not spec.foreign_keys:
+        return result
+    # Foreign keys come second: their rules can rewrite one side out of the shape the other side's
+    # proof needs, so a pair the keys and NOT NULL columns alone prove is never lost to them.
+    retry = attempt(True)
+    return retry if retry.proven else result
 
 
 class _Timeout(Exception):
@@ -271,7 +322,7 @@ class Verdict:
     seconds: float = 0.0
 
 
-def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
+def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, wide_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
     """The program's verdict for one case: search for a counterexample, else try to prove, else unknown."""
 
     start = time.time()
@@ -280,13 +331,13 @@ def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_tr
         spec = build_spec(case)
     except Exception as error:  # unreadable constraints: no verdict
         return Verdict(index, UNKNOWN, f"constraints: {type(error).__name__}", time.time() - start)
-    left, right = case["pair"]
+    left, right, predicates = repaired_pair(case, spec)
     signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(budget)
     searched = False
     try:
         try:
-            searcher = cx.Searcher(spec, left, right)
+            searcher = cx.Searcher(spec, left, right, predicates=predicates)
         except Exception as error:
             return Verdict(index, UNKNOWN, f"parse: {type(error).__name__}", time.time() - start)
         if not searcher.runs():
@@ -296,19 +347,24 @@ def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_tr
         if found is not None:
             return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
         try:
-            result = prove(case, spec, timeout_ms)
+            result = prove(case, spec, timeout_ms, (left, right))
         except _Timeout:
             raise
         except Exception as error:
             return Verdict(index, AGREES, f"prover crash: {type(error).__name__}", time.time() - start)
         if result.proven:
             again = searcher.search(recheck_trials, seed=index + 1_000_003)
+            if again is None and wide_trials and searcher.having:
+                again = searcher.search(wide_trials // 2, seed=index + 4_000_003, wide=True)
             if again is not None:
                 return Verdict(index, WRONG, "proved, then refuted by a counterexample", time.time() - start)
             return Verdict(index, EQUIVALENT, "proof", time.time() - start)
         # not proven: look harder for a counterexample, then try every small database (<= 2 rows per table)
         if searcher.search(more_trials, seed=index + 2_000_003) is not None:
             return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
+        # filtered groups: bigger databases with more distinct values (groups past a COUNT or SUM threshold)
+        if wide_trials and searcher.having and searcher.search(wide_trials, seed=index + 3_000_003, wide=True) is not None:
+            return Verdict(index, DIFFERENT, "counterexample (wide search)", time.time() - start)
         try:
             outcome, _ = searcher.exhaustive(2, 3000)
         except _Timeout:
