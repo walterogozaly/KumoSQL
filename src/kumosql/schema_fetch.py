@@ -183,6 +183,8 @@ def resolve(names: Iterable[str], default_project: str = "", fetch: bool | None 
     """
 
     names = sorted({n for n in names if n})
+    started = time.time()
+    refreshes_before = bigquery_catalog.token_refreshes
     saved = saved_schema()
     answers: dict[str, dict[str, str]] = {}
     pending: dict[tuple[str, str, str], list[str]] = {}
@@ -216,7 +218,8 @@ def resolve(names: Iterable[str], default_project: str = "", fetch: bool | None 
     if names:
         console.say(
             f"schema lookup: {stats['found']} of {stats['asked']} tables not in the project have known columns "
-            f"({stats['from_catalog']} from the saved catalog)",
+            f"({stats['from_catalog']} from the saved catalog; {time.time() - started:.1f}s, "
+            f"{bigquery_catalog.token_refreshes - refreshes_before} access token refreshes)",
             console=False,
         )
     return answers, stats

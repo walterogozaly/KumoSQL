@@ -113,11 +113,23 @@ def extended_path(path: str | Path) -> Path:
     return Path(_extended_text(os.path.abspath(path)))
 
 
+def decode_text(data: bytes) -> str:
+    """UTF-8 (a byte-order mark is dropped, as it would hide a leading config block), else Windows-1252-style latin-1.
+
+    Both the git reader and the local-folder reader use this, so a file loads the same either way.
+    """
+
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")  # only comments and strings differ; keep the model rather than dropping it
+
+
 def read_text_or_reason(path: Path) -> tuple[str | None, str | None]:
     """Return ``(text, None)`` or ``(None, reason)``; never raises for I/O errors."""
 
     try:
-        return path.read_text(encoding="utf-8-sig"), None  # a byte-order mark would hide a leading config block
+        return decode_text(path.read_bytes()), None
     except (OSError, UnicodeError) as exc:
         return None, describe_os_error(exc)
 

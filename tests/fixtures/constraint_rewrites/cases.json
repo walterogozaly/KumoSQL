@@ -80,6 +80,106 @@
      ]
     }
    }
+  },
+  "warehouse": {
+   "tables": {
+    "plan_prices": {
+     "columns": {
+      "plan": "STRING",
+      "price": "INT64"
+     },
+     "not_null": [
+      "plan",
+      "price"
+     ],
+     "keys": [
+      [
+       "plan"
+      ]
+     ]
+    },
+    "users": {
+     "columns": {
+      "user_id": "INT64",
+      "plan": "STRING",
+      "country": "STRING"
+     },
+     "not_null": [
+      "user_id",
+      "plan"
+     ],
+     "keys": [
+      [
+       "user_id"
+      ]
+     ],
+     "foreign_keys": [
+      {
+       "columns": [
+        "plan"
+       ],
+       "parent": "plan_prices",
+       "parent_columns": [
+        "plan"
+       ]
+      }
+     ]
+    },
+    "sessions": {
+     "columns": {
+      "session_id": "INT64",
+      "user_id": "INT64",
+      "duration": "INT64"
+     },
+     "not_null": [
+      "session_id",
+      "user_id"
+     ],
+     "keys": [
+      [
+       "session_id"
+      ]
+     ],
+     "foreign_keys": [
+      {
+       "columns": [
+        "user_id"
+       ],
+       "parent": "users",
+       "parent_columns": [
+        "user_id"
+       ]
+      }
+     ]
+    },
+    "payments": {
+     "columns": {
+      "payment_id": "INT64",
+      "session_id": "INT64",
+      "amount": "INT64"
+     },
+     "not_null": [
+      "payment_id",
+      "amount"
+     ],
+     "keys": [
+      [
+       "payment_id"
+      ]
+     ],
+     "foreign_keys": [
+      {
+       "columns": [
+        "session_id"
+       ],
+       "parent": "sessions",
+       "parent_columns": [
+        "session_id"
+       ]
+      }
+     ]
+    }
+   }
   }
  },
  "cases": [
@@ -433,6 +533,254 @@
    "valid": false,
    "requires": [],
    "schema": "shop"
+  },
+  {
+   "id": "h-fk-join-elimination",
+   "group": "join elimination",
+   "original": "SELECT s.session_id, s.duration FROM sessions AS s JOIN users AS u ON s.user_id = u.user_id",
+   "rewritten": "SELECT session_id, duration FROM sessions",
+   "requires": [
+    {
+     "kind": "foreign_key",
+     "table": "sessions",
+     "columns": [
+      "user_id"
+     ],
+     "parent": "users",
+     "parent_columns": [
+      "user_id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "sessions",
+     "columns": [
+      "user_id"
+     ]
+    },
+    {
+     "kind": "unique",
+     "table": "users",
+     "columns": [
+      "user_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-lookup-join-elimination",
+   "group": "join elimination",
+   "original": "SELECT u.user_id, u.plan FROM users AS u JOIN plan_prices AS pp ON pp.plan = u.plan",
+   "rewritten": "SELECT user_id, plan FROM users",
+   "requires": [
+    {
+     "kind": "foreign_key",
+     "table": "users",
+     "columns": [
+      "plan"
+     ],
+     "parent": "plan_prices",
+     "parent_columns": [
+      "plan"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "users",
+     "columns": [
+      "plan"
+     ]
+    },
+    {
+     "kind": "unique",
+     "table": "plan_prices",
+     "columns": [
+      "plan"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-left-join-elimination",
+   "group": "join elimination",
+   "original": "SELECT p.payment_id FROM payments AS p LEFT JOIN sessions AS s ON p.session_id = s.session_id",
+   "rewritten": "SELECT payment_id FROM payments",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "sessions",
+     "columns": [
+      "session_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-self-join-on-key",
+   "group": "join elimination",
+   "original": "SELECT a.session_id FROM sessions AS a JOIN sessions AS b ON a.session_id = b.session_id",
+   "rewritten": "SELECT session_id FROM sessions",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "sessions",
+     "columns": [
+      "session_id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "sessions",
+     "columns": [
+      "session_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-distinct-over-key",
+   "group": "distinct and grouping",
+   "original": "SELECT DISTINCT payment_id, amount FROM payments",
+   "rewritten": "SELECT payment_id, amount FROM payments",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "payments",
+     "columns": [
+      "payment_id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "payments",
+     "columns": [
+      "payment_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-count-column",
+   "group": "nullability",
+   "original": "SELECT COUNT(amount) AS n FROM payments",
+   "rewritten": "SELECT COUNT(*) AS n FROM payments",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "payments",
+     "columns": [
+      "amount"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-not-in-to-not-exists",
+   "group": "nullability",
+   "original": "SELECT user_id FROM users WHERE user_id NOT IN (SELECT user_id FROM sessions)",
+   "rewritten": "SELECT u.user_id FROM users AS u WHERE NOT EXISTS (SELECT 1 FROM sessions AS s WHERE s.user_id = u.user_id)",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "sessions",
+     "columns": [
+      "user_id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "users",
+     "columns": [
+      "user_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-in-to-join",
+   "group": "semi-join",
+   "original": "SELECT user_id FROM users WHERE user_id IN (SELECT user_id FROM sessions)",
+   "rewritten": "SELECT DISTINCT u.user_id FROM users AS u JOIN sessions AS s ON s.user_id = u.user_id",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "users",
+     "columns": [
+      "user_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-filter-then-fk-join",
+   "group": "join elimination",
+   "original": "SELECT p.payment_id, p.amount FROM payments AS p JOIN sessions AS s ON p.session_id = s.session_id WHERE p.session_id IS NOT NULL",
+   "rewritten": "SELECT payment_id, amount FROM payments WHERE session_id IS NOT NULL",
+   "requires": [
+    {
+     "kind": "foreign_key",
+     "table": "payments",
+     "columns": [
+      "session_id"
+     ],
+     "parent": "sessions",
+     "parent_columns": [
+      "session_id"
+     ]
+    },
+    {
+     "kind": "unique",
+     "table": "sessions",
+     "columns": [
+      "session_id"
+     ]
+    }
+   ],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-control-nullable-fk-join",
+   "group": "control",
+   "original": "SELECT p.payment_id FROM payments AS p JOIN sessions AS s ON p.session_id = s.session_id",
+   "rewritten": "SELECT payment_id FROM payments",
+   "valid": false,
+   "requires": [],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-control-nullable-count",
+   "group": "control",
+   "original": "SELECT COUNT(duration) AS n FROM sessions",
+   "rewritten": "SELECT COUNT(*) AS n FROM sessions",
+   "valid": false,
+   "requires": [],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-control-is-not-null",
+   "group": "control",
+   "original": "SELECT country FROM users WHERE country IS NOT NULL",
+   "rewritten": "SELECT country FROM users",
+   "valid": false,
+   "requires": [],
+   "schema": "warehouse"
+  },
+  {
+   "id": "h-control-distinct",
+   "group": "control",
+   "original": "SELECT DISTINCT user_id FROM sessions",
+   "rewritten": "SELECT user_id FROM sessions",
+   "valid": false,
+   "requires": [],
+   "schema": "warehouse"
   }
  ]
 }
