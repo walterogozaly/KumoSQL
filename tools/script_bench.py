@@ -63,6 +63,10 @@ DEV_FAMILIES = (
     "procedures",
     "ignored",
     "merge",
+    "insert_values",
+    "table_function",
+    "function_definition",
+    "degraded",
 )
 MIXED = ("mixed",)
 JOBS = ("jobs",)
@@ -453,6 +457,106 @@ def f_merge(rng: random.Random) -> Case:
     return Case("merge", sql, 1, {tgt: set(reads)}, reads, 0, set(), columns, set(), must_read)
 
 
+def f_insert_values(rng: random.Random) -> Case:
+    """INSERT ... VALUES: a constant source. Constants have no source column; a scalar subquery among the values reads its table."""
+
+    n = Namer(rng)
+    tgt = n.fresh("tgt")
+    names = rng.sample(["v", "w", "z", "label", "flag", "amount"], rng.randint(2, 4))
+    reads: set[str] = set()
+    columns: dict[str, set[tuple[str, str]]] = {}
+    row_count = rng.randint(1, 3)
+    subquery_at = rng.choice(names) if rng.random() < 0.5 else None
+    rows = []
+    src = n.src()
+    for r in range(row_count):
+        cells = []
+        for name in names:
+            if name == subquery_at and r == 0:
+                cells.append(f"(SELECT MAX(id) FROM {ref(src)})")
+                reads.add(src)
+                columns[name] = {(src, "id")}
+            else:
+                cells.append(rng.choice(["1", "'a'", "NULL", "TRUE", "DATE '2024-01-01'", "2.5", "CONCAT('x', 'y')"]))
+                columns.setdefault(name, set())
+        rows.append("(" + ", ".join(cells) + ")")
+    sql = f"INSERT INTO {ref(tgt)} ({', '.join(names)}) VALUES " + ", ".join(rows)
+    return Case("insert_values", sql, 1, {tgt: set(reads)}, reads, 0, set(), columns)
+
+
+def f_table_function(rng: random.Random) -> Case:
+    """A table function defined in the script, then called with a table argument: the call reads as the function's query."""
+
+    n = Namer(rng)
+    src, out, fn = n.src(), n.fresh("out"), n.fresh("tvf")
+    lookup = n.fresh("lkp") if rng.random() < 0.5 else None
+    body = "SELECT t.id, t.amount FROM t"
+    columns = {"id": {(src, "id")}, "amount": {(src, "amount")}}
+    reads = {src}
+    if lookup:
+        body = f"SELECT t.id, t.amount, l.price AS price FROM t JOIN {ref(lookup)} l ON l.id = t.id"
+        columns["price"] = {(lookup, "price")}
+        reads.add(lookup)
+    body += rng.choice(["", " LIMIT n"])
+    call = rng.choice([f"{ref(fn)}(TABLE {ref(src)}, n => {rng.randint(1, 9)})", f"{ref(fn)}(TABLE {ref(src)}, {rng.randint(1, 9)})"])
+    outputs = ["id", "amount"] + (["price"] if lookup else [])
+    if rng.random() < 0.5:
+        picked = rng.sample(outputs, rng.randint(1, len(outputs)))
+        select = ", ".join(f"f.{c}" for c in picked)
+        call += " AS f"
+    else:
+        picked = outputs
+        select = "*"
+    columns = {c: columns[c] for c in picked}
+    lines = [
+        f"CREATE TEMP TABLE FUNCTION {fn}(t TABLE<id INT64, amount INT64>, n INT64) AS ({body});",
+        f"CREATE TABLE {ref(out)} AS SELECT {select} FROM {call};",
+    ]
+    return Case("table_function", "\n".join(lines), 2, {out: set(reads)}, reads, 0, set(), columns)
+
+
+def f_function_definition(rng: random.Random) -> Case:
+    """Scalar function definitions are not steps of the data flow; what their bodies read still feeds the tables that call them."""
+
+    n = Namer(rng)
+    src, out = n.src(), n.fresh("out")
+    lines = [f"CREATE TEMP FUNCTION scale(x INT64) AS (x * {rng.randint(2, 9)});"]
+    statements = 1
+    reads = {src}
+    if rng.random() < 0.6:
+        lookup = n.fresh("lkp")
+        lines.append(f"CREATE TEMP FUNCTION lookup_size() AS ((SELECT COUNT(*) FROM {ref(lookup)}));")
+        statements += 1
+        reads.add(lookup)
+        select = f"scale(amount) AS dbl, id, lookup_size() AS size"
+    else:
+        select = "scale(amount) AS dbl, id"
+    lines.append(f"CREATE TABLE {ref(out)} AS SELECT {select} FROM {ref(src)};")
+    statements += 1
+    columns = {"dbl": {(src, "amount")}, "id": {(src, "id")}}
+    return Case("function_definition", "\n".join(lines), statements, {out: set(reads)}, reads, 0, set(), columns)
+
+
+def f_degraded(rng: random.Random) -> Case:
+    """A statement sqlglot cannot parse: its tables still become edges, it is reported unknown (columns never guessed), and names in
+    comments or strings are not tables."""
+
+    n = Namer(rng)
+    a, b, out, ghost, ghost2 = n.src(), n.src(), n.fresh("out"), n.fresh("ghost"), n.fresh("ghost")
+    garbage = rng.choice(["???", "@@ 3 ))", "~~~ ((", "$$ ] ["])
+    forms = [
+        (f"INSERT INTO {ref(out)} SELECT id FROM {ref(a)} s JOIN {ref(b)} l ON s.id = l.id WHERE s.x {garbage} 3", {a, b}),
+        (f"CREATE TABLE {ref(out)} AS SELECT id FROM {ref(a)}, {ref(b)} WHERE {garbage}", {a, b}),
+        (f"MERGE {ref(out)} T USING (SELECT id FROM {ref(a)}) S ON {garbage} WHEN MATCHED THEN UPDATE SET v = 1", {a}),
+        (f"WITH c AS (SELECT id FROM {ref(a)}) INSERT INTO {ref(out)} SELECT id FROM c WHERE {garbage}", {a}),
+    ]
+    text, reads = rng.choice(forms)
+    lines = [f"-- FROM {ghost}", text.replace("WHERE", f"WHERE 'FROM {ghost2}' = '' AND", 1) if "WHERE" in text and rng.random() < 0.4 else text]
+    sql = "\n".join(lines)
+    phantoms = {ghost} | ({ghost2} if ghost2 in sql else set())
+    return Case("degraded", sql, 1, {out: set(reads)}, set(reads), 1, phantoms)
+
+
 GENERATORS = {
     "split": f_split,
     "temp_chain": f_temp_chain,
@@ -468,8 +572,16 @@ GENERATORS = {
     "procedures": f_procedures,
     "ignored": f_ignored,
     "merge": f_merge,
+    "insert_values": f_insert_values,
+    "table_function": f_table_function,
+    "function_definition": f_function_definition,
+    "degraded": f_degraded,
 }
-MIXABLE = [f for f in DEV_FAMILIES if f not in {"temp_chain", "temp_redefine", "temp_insert", "temp_dml", "merge"}]
+MIXABLE = [
+    f
+    for f in DEV_FAMILIES
+    if f not in {"temp_chain", "temp_redefine", "temp_insert", "temp_dml", "merge", "insert_values", "table_function", "function_definition", "degraded"}
+]
 
 
 def f_mixed(rng: random.Random) -> Case:
@@ -754,7 +866,8 @@ def write_results(dev, mixed, jobs, public, cases, seed) -> None:
         "score": f"{exact}/{total} scripts exact, {wrong} wrong",
         "metric": (
             "Multi-statement BigQuery scripts split into statements, with what each statement reads and writes followed through "
-            "temporary tables, script variables, branches, loops, exception handlers, literal EXECUTE IMMEDIATE, procedures and MERGE (target columns from the USING source, ON and condition columns read); "
+            "temporary tables, script variables, branches, loops, exception handlers, literal EXECUTE IMMEDIATE, procedures, MERGE (target columns from the USING source, ON and condition columns read), INSERT VALUES as a constant source, "
+            "table functions defined in the script (a call reads as the function's query), function definitions (never counted as skipped) and statements that do not parse (tables kept, columns unknown); "
             "dynamic SQL and undefined procedures must be reported unknown, and names that only appear in comments, strings, "
             "ignored statements or procedures never called must not become edges."
         ),
@@ -778,7 +891,7 @@ def write_results(dev, mixed, jobs, public, cases, seed) -> None:
         "analysis": (
             f"Edges: {td['edges_correct'] + tm['edges_correct']}/{td['edges_true'] + tm['edges_true']} found, "
             f"{(td['edges_found'] - td['edges_correct']) + (tm['edges_found'] - tm['edges_correct'])} extra. "
-            f"Output columns traced through temporary-table chains and MERGE clauses, with ON and condition columns counted as read: {td.get('columns_exact', 0) + tm.get('columns_exact', 0)}/"
+            f"Output columns traced through temporary-table chains, MERGE clauses (ON and condition columns counted as read), INSERT VALUES, table-function calls and scalar function calls: {td.get('columns_exact', 0) + tm.get('columns_exact', 0)}/"
             f"{td.get('columns_total', 0) + tm.get('columns_total', 0)} exact."
         ),
         "performance": f"{td['cases'] + tm['cases']} generated scripts in {round(td['seconds'] + tm['seconds'], 1)} s",

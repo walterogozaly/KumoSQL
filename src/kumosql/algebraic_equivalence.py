@@ -48,12 +48,16 @@ from .limit_rules import limit_rule
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .empty_rules import canonical_empty, propagate_empty
-from .set_filters import merge_same_source, set_operation_to_exists
+from .set_filters import _flatten as _flatten_projections, merge_same_source, set_operation_to_exists
 from .outer_filters import strengthen_derived_outer_join
+from .grouped_sums import drop_grouped_sum_coalesce
+from .lone_source import lift_derived_expressions
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .null_rejecting_joins import left_join_to_inner
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
+from .union_filter_rules import push_filter_into_set_operation
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -2883,15 +2887,35 @@ def _left_join_indicator_to_exists(tree: exp.Expression, keys: dict[str, list[tu
     """
 
     key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
+
     for select in list(tree.find_all(exp.Select))[::-1]:
-        progress = True
-        while progress:
-            progress = False
-            for join in list(select.args.get("joins") or []):
-                if _indicator_join(select, join, key_sets):
-                    progress = True
-                    break
+        _apply_indicator_joins(select, key_sets)
     return tree
+
+
+def _apply_indicator_joins(select: exp.Select, key_sets: dict[str, list[frozenset[str]]]) -> bool:
+    fired, progress = False, True
+    while progress:
+        progress = False
+        for join in list(select.args.get("joins") or []):
+            if _indicator_join(select, join, key_sets):
+                fired = progress = True
+                break
+    return fired
+
+
+def _indicator_join_above(select: exp.Select, keys: dict[str, list[tuple[str, ...]]] | None) -> exp.Expression | None:
+    """``_left_join_indicator_to_exists`` once the select is normalized, also reading the indicator
+    a few projections above the join (the derived tables are flattened into one select first)."""
+
+    key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is None or not isinstance(from_.this, exp.Subquery) or select.args.get("joins"):
+        return None
+    flat = _flatten_projections(select.copy())
+    if flat is None or not flat.args.get("joins") or not _apply_indicator_joins(flat, key_sets):
+        return None
+    return flat
 
 
 def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list[frozenset[str]]]) -> bool:
@@ -2900,6 +2924,8 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     if not (inner_join or (join.args.get("side") == "LEFT" and not join.args.get("kind"))) or join.args.get("on") is None or not isinstance(source, exp.Subquery):
         return False
     inner, alias = source.this, source.alias
+    if isinstance(inner, exp.Select) and isinstance((inner.args.get("from_") or inner.args.get("from") or exp.From()).this, exp.Subquery):
+        inner = _flatten_projections(inner.copy()) or inner  # read through projection-only derived tables
     if not alias or not isinstance(inner, exp.Select) or inner.args.get("joins") or not isinstance(inner.args.get("from_") or inner.args.get("from"), exp.From):
         return False
     constant_distinct = bool(inner.args.get("distinct")) and all(isinstance(e.this if isinstance(e, exp.Alias) else e, (exp.Literal, exp.Boolean)) for e in inner.expressions)
@@ -3615,6 +3641,8 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
     for node in list(tree.find_all(exp.In)):
         query = node.args.get("query")
         inner = query.this if isinstance(query, exp.Subquery) else None
+        if isinstance(inner, exp.Select) and isinstance((inner.args.get("from_") or inner.args.get("from") or exp.From()).this, exp.Subquery):
+            inner = _flatten_projections(inner.copy()) or inner  # read through projection-only derived tables
         lefts = node.this.expressions if isinstance(node.this, exp.Tuple) else [node.this]
         if not isinstance(inner, exp.Select) or node.args.get("expressions") or len(inner.expressions) != len(lefts) or node.args.get("unnest"):
             continue
@@ -4541,7 +4569,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join):
+            for rule in (_mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
@@ -4557,7 +4585,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null)
+        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))), not_null), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
