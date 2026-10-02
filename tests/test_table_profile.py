@@ -308,3 +308,13 @@ def test_self_join_meaning():
     })["sj"]
     assert p.attribute("other_amount").meaning == "col:proj.raw.orders.amount"
     assert p.grain.status == "unknown"
+
+
+def test_profiles_are_computed_once_per_pipeline_and_grain():
+    pipeline = build({"a": "SELECT id FROM proj.raw.orders"})
+    first = profile_pipeline(pipeline)
+    assert profile_pipeline(pipeline) == first
+    assert profile_pipeline(pipeline) is not first  # a copy of the saved result: callers may edit theirs
+    assert next(iter(profile_pipeline(pipeline).values())) is next(iter(first.values()))
+    other = profile_pipeline(pipeline, declared_grain={"proj.core.a": ["id"]})
+    assert other.keys() == first.keys()
