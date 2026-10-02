@@ -335,6 +335,11 @@ def drop_dedup_read_as_set(select: exp.Select, schema: dict[str, list[str]] | No
     outer = any((j.args.get("side") or "").upper() in ("LEFT", "RIGHT", "FULL") for j in joins)
     if joins and not outer and not _own(reader, exp.AggFunc) and not _whole_table(select, schema):
         return None
+    # Without its dedup the source may be merged into the reader, bringing its tables into scope: an
+    # unqualified column there that names an outer query's column would then name the source's.
+    names = {item.alias_or_name.lower() for item in select.expressions}
+    if any(not c.table and not isinstance(c.this, exp.Star) and c.name.lower() not in names for c in _own(reader, exp.Column)):
+        return None
     if not _reads_as_set(reader):
         return None
     result = select.copy()

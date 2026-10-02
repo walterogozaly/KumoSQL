@@ -157,6 +157,12 @@ NOT_PROVEN = [
         "SELECT a, SUM(c) FROM t GROUP BY a HAVING SUM(c) > 1",
         id="having-on-finer-groups-is-not-having-on-coarse-groups",
     ),
+    pytest.param(
+        # The unqualified a is the outer t.a: merging g into the EXISTS must not let it name g's t.a.
+        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT b * 2 AS f FROM t GROUP BY b * 2) AS g WHERE a = g.f)",
+        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM t AS g WHERE g.a = g.b * 2)",
+        id="correlated-unqualified-column-keeps-its-scope",
+    ),
 ]
 
 
