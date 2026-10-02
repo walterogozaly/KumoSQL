@@ -86,3 +86,6 @@ python tools/singh_bedathur_bench.py --show-unknown --show-disagreements --json 
 ```
 
 `tests/test_singh_bedathur_benchmark.py` runs a fixed sample of 120 pairs (floor 100 decided, 0 wrong) and, marked `slow`, all 2,800 (floor 2,420). Both skip when the data cannot be downloaded. A pair that ever comes out wrong is a soundness bug: fix the rule or prover and add the shape to `tests/test_canonical_rules.py` or the prover's tests as a regression case.
+
+
+Bounded verification (3 rows per table, [bounded-verification.md](bounded-verification.md#results)) on the 1,006 pairs the prover does not already refute: 824 bounded-equivalent, 71 refuted with a replayed database, 0 wrong. Not a proof.
