@@ -1,0 +1,20 @@
+{
+  "suite": "BigQuery scripts (generated and public examples)",
+  "order": 215,
+  "size": 1622,
+  "score": "1622/1622 scripts exact, 0 wrong",
+  "metric": "Multi-statement BigQuery scripts split into statements, with what each statement reads and writes followed through temporary tables, script variables, branches, loops, exception handlers, literal EXECUTE IMMEDIATE, procedures and MERGE (target columns from the USING source, ON and condition columns read); dynamic SQL and undefined procedures must be reported unknown, and names that only appear in comments, strings, ignored statements or procedures never called must not become edges.",
+  "evidence": "executed",
+  "correctness": "0 wrong: no edge, read or column that the answer key lacks, no phantom table from comments, strings or ignored statements, and none of the 169 scripts with dynamic SQL or an undefined procedure guessed (each reported unknown; counted as exact)",
+  "coverage": {
+    "proven": 1622,
+    "unknown": 0
+  },
+  "held_out": "none",
+  "docs": "docs/scripts.md#evaluation",
+  "command": "python tools/script_bench.py --write-results",
+  "date": "2026-10-02",
+  "caveats": "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of and were tuned against while building the feature; there is no held-out family. The public examples are the scripting cases in tests/fixtures/bq_syntax with labels written by hand. A script that mixes the families with the same seed is not independent of them.",
+  "analysis": "Edges: 3693/3693 found, 0 extra. Output columns traced through temporary-table chains and MERGE clauses, with ON and condition columns counted as read: 1062/1062 exact.",
+  "performance": "1500 generated scripts in 12.8 s"
+}
