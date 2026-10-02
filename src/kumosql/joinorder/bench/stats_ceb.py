@@ -111,7 +111,7 @@ def run(repo: str, sample_rows: int = 10_000, psql: list[str] | None = None,
     from ..estimator import FactorEstimator
     from ..query import parse_join_query
     from ..stats import Statistics, collect_statistics
-    from .endtoend import connected_subsets, forced_sql, optimize, run_sql, subset_key, subset_sql, true_cost
+    from .endtoend import DEFAULT_SETTINGS, FORCED_PLAN_SETTINGS, connected_subsets, forced_sql, optimize, run_sql, subset_key, subset_sql, true_cost
     from .truth import exact_count
 
     base = data_dir()
@@ -179,7 +179,7 @@ def run(repo: str, sample_rows: int = 10_000, psql: list[str] | None = None,
         for i, q in enumerate(queries):
             sqls = {"duckdb": wl[i][1].rstrip(";"), **{k: forced_sql(q, plans[i][k]) for k in cards}}
             for k, sql in sqls.items():
-                con.execute("SET disabled_optimizers=''" if k == "duckdb" else "SET disabled_optimizers='join_order'")
+                con.execute(DEFAULT_SETTINGS if k == "duckdb" else FORCED_PLAN_SETTINGS)
                 t, res = run_sql(con, sql, timeout)
                 if t < timeout / 3:
                     t = min(t, run_sql(con, sql, timeout)[0])
