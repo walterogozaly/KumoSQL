@@ -129,9 +129,35 @@ def ordered(sql: str) -> bool:
     return bool(tree.args.get("order")) if tree is not None else False
 
 
-def same_results(before, after, keep_order: bool) -> bool:
+def _deep_sorted(value):
+    if isinstance(value, tuple):
+        return tuple(sorted((_deep_sorted(v) for v in value), key=repr))
+    return value
+
+
+def unordered_aggregates(sql: str) -> set[str]:
+    """Aggregates whose element order BigQuery leaves unspecified (no ORDER BY inside the call)."""
+
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except Exception:  # noqa: BLE001
+        return set()
+    kinds = (exp.ArrayConcatAgg, exp.ArrayAgg, exp.GroupConcat)
+    return {
+        type(node).__name__
+        for node in tree.find_all(*kinds)
+        if not isinstance(node.this, exp.Order)
+    }
+
+
+def same_results(before, after, keep_order: bool, unordered_elements: bool = False) -> bool:
     a = [_norm(r) for r in before]
     b = [_norm(r) for r in after]
+    if unordered_elements:
+        # ARRAY_AGG / ARRAY_CONCAT_AGG without ORDER BY: the element order is not part of the contract,
+        # so lists compare as multisets (DuckDB may also order them differently from run to run).
+        a = [_deep_sorted(r) for r in a]
+        b = [_deep_sorted(r) for r in b]
     if keep_order:
         return a == b
     key = lambda r: repr(r)  # noqa: E731
@@ -170,7 +196,11 @@ def evaluate(sql: str, rules, setup: list[str] | None = None) -> dict:
         return {"class": "not_executable", "detail": r1, "trusted": trusted, "after": after}
     s2, r2 = run_duckdb(after, setup)
     keep = ordered(sql)
-    if s2 != "ok" or not same_results(r1, r2, keep):
+    loose = unordered_aggregates(sql)
+    if "GroupConcat" in loose:
+        # STRING_AGG without ORDER BY concatenates in an unspecified order; the result text cannot be compared.
+        return {"class": "not_executable", "detail": "order-unspecified STRING_AGG", "trusted": trusted, "after": after}
+    if s2 != "ok" or not same_results(r1, r2, keep, bool(loose)):
         detail = r2 if s2 != "ok" else "results differ"
         return {"class": "WRONG" if trusted else "declined", "detail": detail, "trusted": trusted, "after": after,
                 "unproven_but_wrong": not trusted}

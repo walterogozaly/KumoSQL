@@ -1,99 +1,98 @@
 {
  "schemas": {
-  "warehouse": {
+  "library": {
    "tables": {
-    "plan_prices": {
+    "authors": {
      "columns": {
-      "plan": "STRING",
-      "price": "INT64"
-     },
-     "not_null": [
-      "plan",
-      "price"
-     ],
-     "keys": [
-      [
-       "plan"
-      ]
-     ]
-    },
-    "users": {
-     "columns": {
-      "user_id": "INT64",
-      "plan": "STRING",
+      "author_id": "INT64",
+      "name": "STRING",
       "country": "STRING"
      },
      "not_null": [
-      "user_id",
-      "plan"
+      "author_id",
+      "name"
      ],
      "keys": [
       [
-       "user_id"
+       "author_id"
+      ]
+     ]
+    },
+    "books": {
+     "columns": {
+      "book_id": "INT64",
+      "author_id": "INT64",
+      "title": "STRING",
+      "pages": "INT64"
+     },
+     "not_null": [
+      "book_id",
+      "author_id",
+      "title"
+     ],
+     "keys": [
+      [
+       "book_id"
       ]
      ],
      "foreign_keys": [
       {
        "columns": [
-        "plan"
+        "author_id"
        ],
-       "parent": "plan_prices",
+       "parent": "authors",
        "parent_columns": [
-        "plan"
+        "author_id"
        ]
       }
      ]
     },
-    "sessions": {
+    "members": {
      "columns": {
-      "session_id": "INT64",
-      "user_id": "INT64",
-      "duration": "INT64"
+      "member_id": "INT64",
+      "tier": "STRING"
      },
      "not_null": [
-      "session_id",
-      "user_id"
+      "member_id"
      ],
      "keys": [
       [
-       "session_id"
+       "member_id"
       ]
-     ],
-     "foreign_keys": [
-      {
-       "columns": [
-        "user_id"
-       ],
-       "parent": "users",
-       "parent_columns": [
-        "user_id"
-       ]
-      }
      ]
     },
-    "payments": {
+    "loans": {
      "columns": {
-      "payment_id": "INT64",
-      "session_id": "INT64",
-      "amount": "INT64"
+      "loan_id": "INT64",
+      "book_id": "INT64",
+      "member_id": "INT64"
      },
      "not_null": [
-      "payment_id",
-      "amount"
+      "loan_id",
+      "book_id"
      ],
      "keys": [
       [
-       "payment_id"
+       "loan_id"
       ]
      ],
      "foreign_keys": [
       {
        "columns": [
-        "session_id"
+        "book_id"
        ],
-       "parent": "sessions",
+       "parent": "books",
        "parent_columns": [
-        "session_id"
+        "book_id"
+       ]
+      },
+      {
+       "columns": [
+        "member_id"
+       ],
+       "parent": "members",
+       "parent_columns": [
+        "member_id"
        ]
       }
      ]
@@ -103,252 +102,245 @@
  },
  "cases": [
   {
-   "id": "h-fk-join-elimination",
+   "id": "l-fk-join",
    "group": "join elimination",
-   "original": "SELECT s.session_id, s.duration FROM sessions AS s JOIN users AS u ON s.user_id = u.user_id",
-   "rewritten": "SELECT session_id, duration FROM sessions",
+   "original": "SELECT b.book_id, b.title FROM books AS b JOIN authors AS a ON b.author_id = a.author_id",
+   "rewritten": "SELECT book_id, title FROM books",
    "requires": [
     {
      "kind": "foreign_key",
-     "table": "sessions",
+     "table": "books",
      "columns": [
-      "user_id"
+      "author_id"
      ],
-     "parent": "users",
+     "parent": "authors",
      "parent_columns": [
-      "user_id"
+      "author_id"
      ]
     },
     {
      "kind": "not_null",
-     "table": "sessions",
+     "table": "books",
      "columns": [
-      "user_id"
+      "author_id"
      ]
     },
     {
      "kind": "unique",
-     "table": "users",
+     "table": "authors",
      "columns": [
-      "user_id"
+      "author_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-lookup-join-elimination",
+   "id": "l-fk-join-nullable-needs-filter",
    "group": "join elimination",
-   "original": "SELECT u.user_id, u.plan FROM users AS u JOIN plan_prices AS pp ON pp.plan = u.plan",
-   "rewritten": "SELECT user_id, plan FROM users",
+   "original": "SELECT l.loan_id FROM loans AS l JOIN members AS m ON l.member_id = m.member_id WHERE l.member_id IS NOT NULL",
+   "rewritten": "SELECT loan_id FROM loans WHERE member_id IS NOT NULL",
    "requires": [
     {
      "kind": "foreign_key",
-     "table": "users",
+     "table": "loans",
      "columns": [
-      "plan"
+      "member_id"
      ],
-     "parent": "plan_prices",
+     "parent": "members",
      "parent_columns": [
-      "plan"
-     ]
-    },
-    {
-     "kind": "not_null",
-     "table": "users",
-     "columns": [
-      "plan"
+      "member_id"
      ]
     },
     {
      "kind": "unique",
-     "table": "plan_prices",
+     "table": "members",
      "columns": [
-      "plan"
+      "member_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-left-join-elimination",
+   "id": "l-left-join",
    "group": "join elimination",
-   "original": "SELECT p.payment_id FROM payments AS p LEFT JOIN sessions AS s ON p.session_id = s.session_id",
-   "rewritten": "SELECT payment_id FROM payments",
+   "original": "SELECT b.book_id FROM books AS b LEFT JOIN authors AS a ON a.author_id = b.author_id",
+   "rewritten": "SELECT book_id FROM books",
    "requires": [
     {
      "kind": "unique",
-     "table": "sessions",
+     "table": "authors",
      "columns": [
-      "session_id"
+      "author_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-self-join-on-key",
-   "group": "join elimination",
-   "original": "SELECT a.session_id FROM sessions AS a JOIN sessions AS b ON a.session_id = b.session_id",
-   "rewritten": "SELECT session_id FROM sessions",
-   "requires": [
-    {
-     "kind": "unique",
-     "table": "sessions",
-     "columns": [
-      "session_id"
-     ]
-    },
-    {
-     "kind": "not_null",
-     "table": "sessions",
-     "columns": [
-      "session_id"
-     ]
-    }
-   ],
-   "schema": "warehouse"
-  },
-  {
-   "id": "h-distinct-over-key",
+   "id": "l-distinct-key",
    "group": "distinct and grouping",
-   "original": "SELECT DISTINCT payment_id, amount FROM payments",
-   "rewritten": "SELECT payment_id, amount FROM payments",
+   "original": "SELECT DISTINCT book_id, title FROM books",
+   "rewritten": "SELECT book_id, title FROM books",
    "requires": [
     {
      "kind": "unique",
-     "table": "payments",
+     "table": "books",
      "columns": [
-      "payment_id"
+      "book_id"
      ]
     },
     {
      "kind": "not_null",
-     "table": "payments",
+     "table": "books",
      "columns": [
-      "payment_id"
+      "book_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-count-column",
-   "group": "nullability",
-   "original": "SELECT COUNT(amount) AS n FROM payments",
-   "rewritten": "SELECT COUNT(*) AS n FROM payments",
+   "id": "l-count-distinct-key",
+   "group": "distinct and grouping",
+   "original": "SELECT COUNT(DISTINCT book_id) AS n FROM books",
+   "rewritten": "SELECT COUNT(book_id) AS n FROM books",
    "requires": [
     {
-     "kind": "not_null",
-     "table": "payments",
+     "kind": "unique",
+     "table": "books",
      "columns": [
-      "amount"
+      "book_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-not-in-to-not-exists",
+   "id": "l-count-column",
    "group": "nullability",
-   "original": "SELECT user_id FROM users WHERE user_id NOT IN (SELECT user_id FROM sessions)",
-   "rewritten": "SELECT u.user_id FROM users AS u WHERE NOT EXISTS (SELECT 1 FROM sessions AS s WHERE s.user_id = u.user_id)",
+   "original": "SELECT COUNT(author_id) AS n FROM books",
+   "rewritten": "SELECT COUNT(*) AS n FROM books",
    "requires": [
     {
      "kind": "not_null",
-     "table": "sessions",
+     "table": "books",
      "columns": [
-      "user_id"
+      "author_id"
+     ]
+    }
+   ],
+   "schema": "library"
+  },
+  {
+   "id": "l-not-in",
+   "group": "nullability",
+   "original": "SELECT member_id FROM members WHERE member_id NOT IN (SELECT book_id FROM loans)",
+   "rewritten": "SELECT m.member_id FROM members AS m WHERE NOT EXISTS (SELECT 1 FROM loans AS l WHERE l.book_id = m.member_id)",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "loans",
+     "columns": [
+      "book_id"
      ]
     },
     {
      "kind": "not_null",
-     "table": "users",
+     "table": "members",
      "columns": [
-      "user_id"
+      "member_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-in-to-join",
+   "id": "l-in-to-join",
    "group": "semi-join",
-   "original": "SELECT user_id FROM users WHERE user_id IN (SELECT user_id FROM sessions)",
-   "rewritten": "SELECT DISTINCT u.user_id FROM users AS u JOIN sessions AS s ON s.user_id = u.user_id",
+   "original": "SELECT author_id FROM authors WHERE author_id IN (SELECT author_id FROM books)",
+   "rewritten": "SELECT DISTINCT a.author_id FROM authors AS a JOIN books AS b ON b.author_id = a.author_id",
    "requires": [
     {
      "kind": "unique",
-     "table": "users",
+     "table": "authors",
      "columns": [
-      "user_id"
+      "author_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-filter-then-fk-join",
+   "id": "l-chain-fk-join",
    "group": "join elimination",
-   "original": "SELECT p.payment_id, p.amount FROM payments AS p JOIN sessions AS s ON p.session_id = s.session_id WHERE p.session_id IS NOT NULL",
-   "rewritten": "SELECT payment_id, amount FROM payments WHERE session_id IS NOT NULL",
+   "original": "SELECT l.loan_id FROM loans AS l JOIN books AS b ON l.book_id = b.book_id",
+   "rewritten": "SELECT loan_id FROM loans",
    "requires": [
     {
      "kind": "foreign_key",
-     "table": "payments",
+     "table": "loans",
      "columns": [
-      "session_id"
+      "book_id"
      ],
-     "parent": "sessions",
+     "parent": "books",
      "parent_columns": [
-      "session_id"
+      "book_id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "loans",
+     "columns": [
+      "book_id"
      ]
     },
     {
      "kind": "unique",
-     "table": "sessions",
+     "table": "books",
      "columns": [
-      "session_id"
+      "book_id"
      ]
     }
    ],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-control-nullable-fk-join",
+   "id": "l-control-nullable-fk",
    "group": "control",
-   "original": "SELECT p.payment_id FROM payments AS p JOIN sessions AS s ON p.session_id = s.session_id",
-   "rewritten": "SELECT payment_id FROM payments",
+   "original": "SELECT l.loan_id FROM loans AS l JOIN members AS m ON l.member_id = m.member_id",
+   "rewritten": "SELECT loan_id FROM loans",
    "valid": false,
    "requires": [],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-control-nullable-count",
+   "id": "l-control-fanout",
    "group": "control",
-   "original": "SELECT COUNT(duration) AS n FROM sessions",
-   "rewritten": "SELECT COUNT(*) AS n FROM sessions",
+   "original": "SELECT a.author_id FROM authors AS a JOIN books AS b ON b.author_id = a.author_id",
+   "rewritten": "SELECT author_id FROM authors",
    "valid": false,
    "requires": [],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-control-is-not-null",
+   "id": "l-control-distinct",
    "group": "control",
-   "original": "SELECT country FROM users WHERE country IS NOT NULL",
-   "rewritten": "SELECT country FROM users",
+   "original": "SELECT DISTINCT author_id FROM books",
+   "rewritten": "SELECT author_id FROM books",
    "valid": false,
    "requires": [],
-   "schema": "warehouse"
+   "schema": "library"
   },
   {
-   "id": "h-control-distinct",
+   "id": "l-control-count",
    "group": "control",
-   "original": "SELECT DISTINCT user_id FROM sessions",
-   "rewritten": "SELECT user_id FROM sessions",
+   "original": "SELECT COUNT(pages) AS n FROM books",
+   "rewritten": "SELECT COUNT(*) AS n FROM books",
    "valid": false,
    "requires": [],
-   "schema": "warehouse"
+   "schema": "library"
   }
  ]
 }

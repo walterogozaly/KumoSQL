@@ -12,10 +12,13 @@ answer is ``no_rewrite`` (or ``unsupported`` when the query or the model uses a 
 does not read); a rewrite is never returned on a guess. Every proof carries the prover's
 assumptions.
 
-Shapes the proposer reads (both sides, after merging plain derived tables): inner joins and
-filters over base tables, projections of expressions, ``DISTINCT``, ``GROUP BY`` with ``SUM``,
-``COUNT``, ``MIN``, ``MAX``, ``AVG`` and distinct aggregates, and ``HAVING``. Outer joins, windows,
-set operations, ``LIMIT`` and subquery predicates are reported as unsupported.
+Shapes the proposer reads (both sides, after merging plain derived tables and a filter over a
+grouped derived table): inner joins and filters over base tables, projections of expressions,
+literal ``IN`` lists, ``DISTINCT``, ``GROUP BY`` with ``SUM``, ``COUNT``, ``MIN``, ``MAX``, ``AVG``
+and distinct aggregates, and ``HAVING``. A model it does not read (a set operation, a join of
+derived tables, ...) is still tried as the whole answer and as a column subset; when neither is
+proven the answer is unsupported. Outer joins, windows, ``LIMIT`` and subquery predicates are
+reported as unsupported.
 """
 
 from __future__ import annotations
@@ -75,6 +78,16 @@ _AGGREGATES = (exp.Sum, exp.Count, exp.Min, exp.Max, exp.Avg)
 _TOP_LEVEL_UNSUPPORTED = (exp.Window, exp.Subquery, exp.Exists, exp.In, exp.Unnest, exp.Lateral, exp.Star)
 
 
+def _allowed(node: exp.Expression) -> bool:
+    """``COUNT(*)`` and an ``IN`` over a list of values are plain expressions; their subquery and star forms are not."""
+
+    if isinstance(node, exp.Star):
+        return isinstance(node.parent, exp.Count)
+    if isinstance(node, exp.In):
+        return not (node.args.get("query") or node.args.get("unnest") or node.args.get("field"))
+    return False
+
+
 def _has_aggregate(node: exp.Expression) -> bool:
     return any(isinstance(n, exp.AggFunc) for n in node.walk())
 
@@ -111,7 +124,62 @@ def _prepare(sql: str, schema: Mapping[str, Sequence[str]], dialect: str) -> exp
         tree = merge_subqueries(tree)
     except Exception as error:  # noqa: BLE001 - sqlglot's optimizer raises many types
         raise _Unsupported(f"could not resolve the query: {error}") from error
-    return tree
+    return _merge_grouped_derived(tree)
+
+
+def _merge_grouped_derived(tree: exp.Expression) -> exp.Expression:
+    """``SELECT f(c) FROM (SELECT .. GROUP BY ..) d WHERE p(c)`` as one grouped SELECT with ``p`` in HAVING.
+
+    ``merge_subqueries`` leaves grouped derived tables alone. Filtering the rows of a grouped table is
+    filtering its groups, so the outer filter becomes a HAVING over the inner expressions, and the outer
+    projection reads those expressions directly. Only a plain projection and filter over a single grouped
+    derived table is merged; anything else is returned unchanged.
+    """
+
+    if not isinstance(tree, exp.Select) or tree.args.get("joins"):
+        return tree
+    if any(tree.args.get(k) for k in ("group", "having", "distinct", "limit", "offset", "qualify", "windows", "with", "order", "laterals", "pivots")):
+        return tree
+    source = tree.args.get("from_") or tree.args.get("from")
+    derived = source.this if source is not None else None
+    if not isinstance(derived, exp.Subquery) or not isinstance(derived.this, exp.Select):
+        return tree
+    inner = derived.this
+    if not (inner.args.get("group") or any(_has_aggregate(e) for e in inner.expressions)):
+        return tree
+    if any(inner.args.get(k) for k in ("distinct", "limit", "offset", "qualify", "windows", "with", "order")):
+        return tree
+    if any(isinstance(n, exp.Window) for e in inner.expressions for n in e.walk()):
+        return tree
+    if any(not isinstance(e, exp.Alias) for e in inner.expressions):
+        return tree
+    alias = derived.alias_or_name
+    defs = {e.alias: e.this for e in inner.expressions}
+    if len(defs) != len(inner.expressions):
+        return tree
+    roots = list(tree.expressions) + ([tree.args["where"].this] if tree.args.get("where") else [])
+    if any(isinstance(n, (exp.AggFunc, exp.Window, exp.Subquery, exp.Star)) for r in roots for n in r.walk()):
+        return tree
+    for root in roots:
+        for column in root.find_all(exp.Column):
+            if column.table != alias or column.name not in defs:
+                return tree
+
+    def substitute(node: exp.Expression) -> exp.Expression:
+        def visit(n):
+            if isinstance(n, exp.Column) and n.table == alias:
+                return defs[n.name].copy()
+            return n
+
+        return node.copy().transform(visit)
+
+    merged = inner.copy()
+    merged.set("expressions", [exp.alias_(substitute(_inner(e)), e.alias_or_name) for e in tree.expressions])
+    if tree.args.get("where"):
+        condition = substitute(tree.args["where"].this)
+        having = merged.args.get("having")
+        merged.set("having", exp.Having(this=exp.and_(exp.Paren(this=having.this), exp.Paren(this=condition)) if having else condition))
+    return merged
 
 
 def _split_and(node: exp.Expression | None) -> list[exp.Expression]:
@@ -176,9 +244,7 @@ def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None)
     parts = [*conjuncts, *outputs, *group] + ([having] if having is not None else [])
     for part in parts:
         for node in part.walk():
-            if isinstance(node, exp.In) and not node.args.get("query") and not node.args.get("unnest") and not node.args.get("field") and all(isinstance(e, exp.Literal) or isinstance(e, exp.Null) for e in node.expressions):
-                continue  # x IN (literal, ...) is a plain predicate
-            if isinstance(node, _TOP_LEVEL_UNSUPPORTED) and not (isinstance(node, exp.Star) and isinstance(node.parent, exp.Count)):
+            if isinstance(node, _TOP_LEVEL_UNSUPPORTED) and not _allowed(node):
                 raise _Unsupported(f"unsupported construct: {type(node).__name__}")
     order = list(tree.args["order"].expressions) if tree.args.get("order") else []
     block = _Block(tables, conjuncts, outputs, group, having, bool(tree.args.get("distinct")), order)
@@ -231,8 +297,12 @@ def _expand_conjuncts(conjuncts: list[exp.Expression]) -> list[exp.Expression]:
 
 
 def _output_names(block: _Block) -> list[str]:
+    return _names_of(block.outputs)
+
+
+def _names_of(outputs: list[exp.Expression]) -> list[str]:
     names: list[str] = []
-    for index, item in enumerate(block.outputs):
+    for index, item in enumerate(outputs):
         base = item.alias_or_name or f"col{index}"
         base = re.sub(r"\W", "_", base.lower()) or f"col{index}"
         name, n = base, 1
@@ -487,17 +557,30 @@ def _candidates_for(query: _Block, model: _Block, names: list[str], model_name: 
     model_group_keys = {_key(g) for g in model_renamed.group}
     model_aggs = _agg_available(model_renamed, names, {})
     model_having = [_key(h) for h in _conjunct_keys(model_renamed.having)]
+    # a model key the query fixes to a constant does not split the query's groups any further
+    fixed = {
+        _key(side)
+        for c in query_conj
+        if isinstance(c, exp.EQ)
+        for side, other in ((c.this, c.expression), (c.expression, c.this))
+        if isinstance(side, exp.Column) and isinstance(other, exp.Literal)
+    }
     for label, residuals in residual_options:
         query_group_keys = {_key(g) for g in query.group}
-        same_grain = query_group_keys == model_group_keys and not extras
+        same_grain = not extras and (
+            query_group_keys == model_group_keys
+            or (bool(query.group) and query_group_keys <= model_group_keys <= query_group_keys | fixed)
+        )
         query_having = _conjunct_keys(query.having)
         if model_having:
             # the model dropped groups: the query must drop at least those, and nothing finer can be rebuilt
             if not same_grain or not set(model_having) <= {_key(h) for h in query_having}:
                 continue
             query_having = [h for h in query_having if _key(h) not in set(model_having)]
-        def agg_rewrite(node):
-            return _agg_rewrite(node, rewriter, model_aggs, same_grain, alias, no_group=not query.group)
+        regroup: list = []
+
+        def agg_rewrite(node, same_grain=same_grain, regroup=regroup):
+            return _agg_rewrite(node, rewriter, model_aggs, same_grain, alias, no_group=_has_empty_grouping(query.group), regroup=regroup)
 
         select = exp.Select()
         built_outputs: list[exp.Expression] = []
@@ -537,11 +620,52 @@ def _candidates_for(query: _Block, model: _Block, names: list[str], model_name: 
                 built.set("having", exp.Having(this=having))
         if not ordered(built, agg_rewrite):
             continue
+        if regroup and not _regroup_by_model_keys(built, model_renamed.group, rewriter):
+            continue
         yield _Candidate(built.sql(dialect="postgres"), "aggregate-same-grain" if same_grain else "aggregate-rollup")
 
 
-def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str, tuple[str, exp.Expression]], same_grain: bool, alias: str, no_group: bool):
-    """Rewrite an expression of a grouped query, re-aggregating the model's partial aggregates."""
+def _regroup_by_model_keys(built: exp.Select, model_group: list[exp.Expression], rewriter: _Rewriter) -> bool:
+    """Group a same-grain replacement by the model's keys (one model row per group, so the rows are
+    unchanged) and by every other model column it reads outside an aggregate; False when a key is not
+    an output of the model."""
+
+    keys = [rewriter.rewrite(g) for g in model_group]
+    if not keys or any(k is None for k in keys):
+        return False
+    seen = {k.sql() for k in keys}
+    roots = list(built.expressions) + ([built.args["order"]] if built.args.get("order") else [])
+    for root in roots:
+        for column in root.find_all(exp.Column):
+            if column.find_ancestor(exp.AggFunc) is None and column.sql() not in seen:
+                seen.add(column.sql())
+                keys.append(column.copy())
+    built.set("group", exp.Group(expressions=keys))
+    return True
+
+
+def _has_empty_grouping(group: list[exp.Expression]) -> bool:
+    """Whether the grouping has an empty grouping set (no GROUP BY, or one ROLLUP, CUBE or GROUPING SETS
+    can produce ``()``): that group exists even over no rows, where a sum of counts is NULL, not 0."""
+
+    def can_be_empty(g: exp.Expression) -> bool:
+        if isinstance(g, (exp.Cube, exp.Rollup)):
+            return True
+        if isinstance(g, exp.GroupingSets):
+            return any(isinstance(s, (exp.Tuple, exp.Paren)) and not (s.expressions if isinstance(s, exp.Tuple) else s.this) for s in g.expressions)
+        return False
+
+    return all(can_be_empty(g) for g in group)
+
+
+def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str, tuple[str, exp.Expression]], same_grain: bool, alias: str, no_group: bool, regroup: list | None = None):
+    """Rewrite an expression of a grouped query, re-aggregating the model's partial aggregates.
+
+    At the model's own grain an aggregate the model lacks can still be computed over the model's rows
+    when they are grouped again by the model's keys; such aggregates are appended to ``regroup``.
+    """
+
+    regroup = [] if regroup is None else regroup
 
     def lookup(agg: exp.Expression):
         found = model_aggs.get(_key(agg))
@@ -579,12 +703,17 @@ def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str
     def aggregate(agg: exp.AggFunc):
         distinct = isinstance(agg.this, exp.Distinct)
         if distinct:
+            if same_grain:
+                direct = lookup(agg)
+                if direct is not None:
+                    return direct
             if isinstance(agg, (exp.Count, exp.Sum)):
                 arguments = [rewriter.rewrite(e) for e in agg.this.expressions]
                 if any(a is None for a in arguments):
                     return None
                 if same_grain:
-                    return None
+                    # each row of the model is one group: aggregate it again over the model's own keys
+                    regroup.append(agg)
                 return type(agg)(this=exp.Distinct(expressions=arguments))
             return None
         direct = lookup(agg)
@@ -684,6 +813,72 @@ def _outputs_named(select: exp.Select) -> bool:
     return all(isinstance(e, exp.Alias) or isinstance(e, exp.Column) for e in select.expressions)
 
 
+def _leftmost_select(tree: exp.Expression) -> exp.Expression:
+    """The SELECT whose output names a set operation takes."""
+
+    while isinstance(tree, (exp.SetOperation, exp.Subquery)):
+        tree = tree.this if isinstance(tree, exp.Subquery) else tree.left
+    return tree
+
+
+def _opaque_model(model_tree: exp.Expression, reason: str) -> tuple[list[str], str]:
+    """Output names and named SQL for a model the proposer does not read (a set operation, a join of
+    derived tables, ...), so whole-model and projection candidates can still be proven against it."""
+
+    if any(model_tree.args.get(k) for k in ("limit", "offset", "with")):
+        raise _Unsupported(reason)
+    tree = model_tree.copy()
+    first = _leftmost_select(tree)
+    if not isinstance(first, exp.Select) or any(isinstance(n, exp.Star) for e in first.expressions for n in e.walk() if not isinstance(n.parent, exp.Count)):
+        raise _Unsupported(reason)
+    names = _names_of(first.expressions)
+    first.set("expressions", [exp.alias_(_inner(item).copy(), name) for item, name in zip(first.expressions, names)])
+    return names, tree.sql(dialect="postgres")
+
+
+def _lineage_keys(select: exp.Select) -> list[str]:
+    """A key per output: its expression, with each column of a derived table replaced by that table's own
+    expression for it (tagged with the derived table's alias)."""
+
+    sources = [select.args.get("from_") or select.args.get("from")] + list(select.args.get("joins") or [])
+    derived = {s.this.alias_or_name: s.this.this for s in sources if s is not None and isinstance(s.this, exp.Subquery) and isinstance(s.this.this, exp.Select)}
+    keys = []
+    for item in select.expressions:
+        node = _inner(item).copy()
+        if isinstance(node, exp.Column) and node.table in derived:
+            node = exp.Paren(this=node)  # so a bare column can be replaced in place
+        for column in list(node.find_all(exp.Column)):
+            inner = derived.get(column.table)
+            if inner is None:
+                continue
+            match = [e for e in inner.expressions if e.alias_or_name == column.name]
+            if len(match) != 1:
+                return []
+            column.replace(exp.Anonymous(this="from_derived", expressions=[exp.Literal.string(column.table), _inner(match[0]).copy()]))
+        keys.append(_key(node))
+    return keys
+
+
+def _projection_by_lineage(query_tree: exp.Expression, model_tree: exp.Expression, names: list[str], model_name: str) -> list[_Candidate]:
+    """The query as a column subset of a model it otherwise equals (matched by where each output comes from)."""
+
+    if not (isinstance(query_tree, exp.Select) and isinstance(model_tree, exp.Select)):
+        return []
+    query_keys, model_keys = _lineage_keys(query_tree), _lineage_keys(model_tree)
+    if not query_keys or len(model_keys) != len(names):
+        return []
+    by_key: dict[str, str] = {}
+    for key, name in zip(model_keys, names):
+        by_key.setdefault(key, name)
+    if not all(k in by_key for k in query_keys):
+        return []
+    outputs = [exp.alias_(_column(model_name, by_key[k]), item.alias_or_name) if item.alias_or_name else _column(model_name, by_key[k]) for k, item in zip(query_keys, query_tree.expressions)]
+    select = exp.Select(expressions=outputs).from_(exp.to_table(model_name))
+    if query_tree.args.get("distinct"):
+        select.set("distinct", exp.Distinct())
+    return [_Candidate(select.sql(dialect="postgres"), "projection")]
+
+
 def rewrite_over_model(
     query_sql: str,
     model_sql: str,
@@ -702,22 +897,33 @@ def rewrite_over_model(
     from .algebraic_equivalence import prove_equivalent_algebraic
 
     nn = not_null_columns(constraints)
+    opaque = ""  # why the proposer cannot read the model, when it cannot
+    model: _Block | None
     try:
         model_tree = _prepare(model_sql, schema, dialect)
-        model = _block(model_tree, nn)
-        names = _output_names(model)
+        try:
+            model = _block(model_tree, nn)
+            names = _output_names(model)
+        except _Unsupported as error:
+            # a model the proposer does not read can still answer the query as a whole or as a projection
+            opaque = f"model: {error}"
+            model = None
+            names, opaque_sql = _opaque_model(model_tree, opaque)
     except _Unsupported as error:
-        return ModelReuse("unsupported", f"model: {error}")
+        return ModelReuse("unsupported", opaque or f"model: {error}")
     except sqlglot.errors.SqlglotError as error:
         return ModelReuse("unsupported", f"model parse error: {error}")
     try:
         plain_model, plain_query = _plain(model_sql, schema, dialect), _plain(query_sql, schema, dialect)
     except sqlglot.errors.SqlglotError as error:
         return ModelReuse("unsupported", f"parse error: {error}")
-    # the model's own ORDER BY never changes its rows
-    if model.order:
-        model.order = []
-    named_model = _named_model_sql(model, names, model_tree, plain_model)
+    if model is None:
+        named_model = opaque_sql
+    else:
+        # the model's own ORDER BY never changes its rows
+        if model.order:
+            model.order = []
+        named_model = _named_model_sql(model, names, model_tree, plain_model)
     plain_query_sql = plain_query.sql(dialect="postgres")
     base_schema = {t.lower(): [c.lower() for c in cols] for t, cols in schema.items()}
 
@@ -739,13 +945,22 @@ def rewrite_over_model(
     candidates: list[_Candidate] = []
     exact = "SELECT " + ", ".join(f"{model_name}.{n}" for n in names) + f" FROM {model_name}"
     candidates.append(_Candidate(exact, "same-as-model"))
-    try:
-        candidates.extend(whole())
-    except _Unsupported as error:
-        return ModelReuse("unsupported", str(error), model_columns=tuple(names))
+    if model is None:
+        if isinstance(model_tree, exp.SetOperation):
+            # the prover reads a set operation under SELECT * as the set operation itself
+            candidates.append(_Candidate(f"SELECT * FROM {model_name}", "same-as-model"))
+        try:
+            candidates.extend(_projection_by_lineage(_prepare(query_sql, schema, dialect), model_tree, names, model_name))
+        except (_Unsupported, sqlglot.errors.SqlglotError):
+            pass
+    else:
+        try:
+            candidates.extend(whole())
+        except _Unsupported as error:
+            return ModelReuse("unsupported", str(error), model_columns=tuple(names))
     if identity:
         candidates = [c for c in candidates if _is_identity(sqlglot.parse_one(c.sql, read="postgres"), model_name, names)]
-    else:
+    elif model is not None:
         # nested pieces: replace a sub-select by an answer from the model, keep the rest of the query
         pieces: list[tuple[exp.Select, str]] = []
         for site in _sites(plain_query):
@@ -784,6 +999,8 @@ def rewrite_over_model(
             if query_has_order(plain_query):
                 assumptions += (ORDER_ASSUMPTION,)
             return ModelReuse("rewritten", "proven equivalent to the query with the model's definition substituted", candidate.sql, candidate.strategy, assumptions, tuple(names), tried, replacement_sql, plain_query_sql)
+    if opaque:
+        return ModelReuse("unsupported", opaque, model_columns=tuple(names), candidates_tried=tried)
     if tried <= 1 and whole.reason:
         return ModelReuse("unsupported", whole.reason, model_columns=tuple(names), candidates_tried=tried)
     return ModelReuse("no_rewrite", f"{tried} candidate replacement(s) were not proven equivalent", model_columns=tuple(names), candidates_tried=tried)

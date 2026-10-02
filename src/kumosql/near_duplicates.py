@@ -165,8 +165,11 @@ def find_near_duplicates(
         small, large = sorted((len(a.shingles), len(b.shingles)))
         if small < threshold * large:  # Jaccard <= |A| / |B|
             continue
+        # Same sources first: one cached lookup per variant, against a set intersection per pair
+        if not _same_sources(a, b, sources_of, i, j):
+            continue
         score = _jaccard(a.shingles, b.shingles)
-        if score >= threshold and _has_unnested_pair(a, b) and _same_sources(a, b, sources_of, i, j):
+        if score >= threshold and _has_unnested_pair(a, b):
             similarity[(i, j)] = score
 
     clusters = _star_clusters(variants, similarity)
@@ -213,7 +216,7 @@ def _collect_variants(parsed: dict[str, exp.Expression], min_nodes: int) -> list
                 layer = _layer(select)
                 if sum(1 for _ in layer.walk()) < min_nodes:
                     continue
-                canonical_layer = _layer(select, canonical=True)
+                canonical_layer = _canonical_or_copy(layer)  # the small layer, not the whole nested query
                 shingles = frozenset(
                     (key, n) for key, count in _shingles(canonical_layer).items() for n in range(count)
                 )
@@ -241,12 +244,6 @@ def _layer(select: exp.Select, *, canonical: bool = False) -> exp.Select:
     and near-duplicate CTEs are clustered at their own level.
     """
 
-    copy = select.copy()
-    if canonical:
-        try:
-            copy = canonical_copy(select)  # aliases by position, so renamed copies shingle alike
-        except Exception:
-            pass
     nested = []
 
     def visit(node: exp.Expression) -> None:
@@ -259,9 +256,24 @@ def _layer(select: exp.Select, *, canonical: bool = False) -> exp.Select:
                 else:
                     visit(child)
 
-    visit(copy)
-    for node in nested:
-        node.replace(exp.Var(this=f"<query {_fingerprint_hash(node)[:8]}>"))
+    visit(select)
+    # Copy the level alone: swap each nested query for its token, copy, put the queries back. Copying the
+    # whole tree for every level is quadratic in how deeply CTEs nest.
+    tokens = [(node, exp.Var(this=f"<query {_fingerprint_hash(node)[:8]}>")) for node in nested]
+    for node, token in tokens:
+        node.replace(token)
+    try:
+        copy = select.copy()
+    finally:
+        for node, token in reversed(tokens):
+            token.replace(node)
+    copy.meta.pop("kumosql_fingerprint", None)
+    copy.meta.pop("kumosql_text", None)
+    if canonical:
+        try:
+            copy = canonical_copy(copy)  # aliases by position, so renamed copies shingle alike
+        except Exception:
+            pass
     return copy
 
 
