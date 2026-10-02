@@ -19,7 +19,7 @@ _spec.loader.exec_module(bench)
 GAPS = json.loads((ROOT / "tests" / "fixtures" / "pipeline_equiv" / "known_gaps.json").read_text(encoding="utf-8"))
 
 # floors for the full development run (50 equivalent cases, 66 different)
-PROVED_FLOOR = 47
+PROVED_FLOOR = 50
 REFUTED_FLOOR = 66
 
 
