@@ -200,6 +200,11 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             self._json(200, live_graph.server_status())
             return
+        if self.path == "/api/refactor/status":
+            from . import refactor
+
+            self._json(200, refactor.job_status())
+            return
         if self.path == "/api/refactor":
             from . import refactor
 
@@ -571,7 +576,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries",
-            "/api/refactor/run",
+            "/api/refactor/run", "/api/refactor/cancel",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -614,6 +619,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import refactor
 
                 result = refactor.run_loaded(payload)
+            elif self.path == "/api/refactor/cancel":
+                from . import refactor
+
+                result = refactor.cancel_job()
             elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries"):
                 from . import equivalences, pipeline_equivalence
 

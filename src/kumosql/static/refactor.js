@@ -120,6 +120,11 @@
     box.append(
       h("p", { text: `Now: ${result.baseline.models} models, complexity ${result.baseline.complexity}. Protected or exposed tables checked: ${result.observable.length}.` }),
       h("table", {}, h("thead", {}, head), h("tbody", {}, ...rows)));
+    if (result.rejected_moves && result.rejected_moves.length) {
+      box.append(h("details", {},
+        h("summary", { text: `${result.rejected_moves.length} moves not proved` }),
+        ...result.rejected_moves.map((item) => h("pre", { text: `${item.move}\n${item.why}` }))));
+    }
     if (result.stopped) box.append(h("p", { class: "rf-empty", text: `Stopped at the ${result.stopped}.` }));
   }
 
@@ -134,18 +139,50 @@
     }
   }
 
+  let polling = 0;
+
+  function finish(button) {
+    clearTimeout(polling);
+    $("rf-run").disabled = false;
+    $("rf-cancel").hidden = true;
+    return button;
+  }
+
+  async function poll() {
+    try {
+      const job = await call("GET", "/api/refactor/status");
+      if (job.state === "running") {
+        if (job.partial) renderResults(job.partial);
+        const found = job.partial ? job.partial.front.length : 0;
+        say(`Proving… ${Math.round(job.elapsed)} s, ${found} option${found === 1 ? "" : "s"} so far${job.line ? `, ${job.line}` : ""}`);
+        polling = setTimeout(poll, 1000);
+        return;
+      }
+      finish();
+      if (job.state === "error") {
+        say(job.error, true);
+      } else if (job.result) {
+        renderResults(job.result);
+        const result = job.result;
+        say(`${job.state === "cancelled" ? "Cancelled: " : ""}${result.front.length} option${result.front.length === 1 ? "" : "s"} on the front, ${result.tried} tried, ${result.rejected} rejected`);
+      }
+    } catch (error) {
+      finish();
+      say(error.message, true);
+    }
+  }
+
   async function run() {
     $("rf-run").disabled = true;
+    $("rf-cancel").hidden = false;
     say("Proving…");
     try {
       if (dirty) await save();
-      const result = await call("POST", "/api/refactor/run", {});
-      renderResults(result);
-      say(`${result.front.length} option${result.front.length === 1 ? "" : "s"} on the front, ${result.tried} tried, ${result.rejected} rejected`);
+      await call("POST", "/api/refactor/run", {});
+      poll();
     } catch (error) {
+      finish();
       say(error.message, true);
-    } finally {
-      $("rf-run").disabled = false;
     }
   }
 
@@ -158,6 +195,12 @@
       renderScopes();
       renderList();
       $("rf-run").disabled = !models.length;
+      const job = await call("GET", "/api/refactor/status");
+      if (job.state === "running") {
+        $("rf-run").disabled = true;
+        $("rf-cancel").hidden = false;
+        poll();
+      }
     } catch (error) {
       say(error.message, true);
     }
@@ -173,5 +216,6 @@
   });
   $("rf-save").addEventListener("click", save);
   $("rf-run").addEventListener("click", run);
+  $("rf-cancel").addEventListener("click", () => call("POST", "/api/refactor/cancel", {}).catch((error) => say(error.message, true)));
   load();
 })();
