@@ -276,7 +276,7 @@ def existence_joins(select: exp.Select) -> exp.Expression | None:
 def decorrelation_step(select: exp.Select, not_null: dict[str, frozenset[str]] | None = None, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """The rules above, in order, for ``algebraic_equivalence.normalize``."""
 
-    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null), lambda sel: lift_membership_tests(sel, schema), drop_implied_membership, extreme_of_top_rows):
+    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null), lambda sel: self_domain_join(sel, not_null), lambda sel: lift_membership_tests(sel, schema), drop_implied_membership, extreme_of_top_rows):
         rewritten = rule(select)
         if rewritten is not None:
             return rewritten
@@ -772,3 +772,132 @@ def extreme_of_top_rows(select: exp.Select) -> exp.Expression | None:
     inner.set("order", None)
     inner.set("limit", None)
     return select
+
+
+def _real_sources(select: exp.Select) -> dict[str, exp.Expression]:
+    """The FROM items of ``select`` whose rows are real rows (not NULL-extended by an outer join)."""
+
+    joins = select.args.get("joins") or []
+    if any(j.args.get("side") in ("RIGHT", "FULL") for j in joins):
+        return {}
+    real = {}
+    for position, source in enumerate(_sources(select)):
+        if isinstance(source, (exp.Table, exp.Subquery)) and source.alias_or_name and not source.args.get("joins"):
+            if position == 0 or not joins[position - 1].args.get("side"):
+                real[source.alias_or_name.lower()] = source
+    return real
+
+
+def _base_column(select: exp.Select, column: exp.Column, depth: int = 0) -> tuple[exp.Table, str] | None:
+    """The base table column whose values ``column`` carries: it names a real row of a table, or a
+    plain column output of a derived table that does (through any number of projections)."""
+
+    if depth > 8 or not column.table:
+        return None
+    source = _real_sources(select).get(column.table.lower())
+    if isinstance(source, exp.Table):
+        return source, column.name.lower()
+    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select):
+        return None
+    inner = source.this
+    group = inner.args.get("group")
+    if group is not None and (group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets")):
+        return None
+    for item in inner.expressions:
+        if item.alias_or_name.lower() == column.name.lower():
+            value = item.unalias()
+            return _base_column(inner, value, depth + 1) if isinstance(value, exp.Column) else None
+    return None
+
+
+def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | None) -> exp.Expression | None:
+    """``FROM t AS x JOIN (SELECT y.c AS k FROM t AS y GROUP BY y.c) AS d ON x.c = d.k`` is ``FROM t AS x``, reading ``d.k`` as ``x.c``.
+
+    The derived table holds each value of ``t.c`` once, and the row ``x`` of ``t`` carries one of
+    them, so every row of ``x`` meets exactly one row of ``d`` (``=`` needs ``c`` NOT NULL; ``<=>``
+    matches NULL too). This is the domain join a top-down decorrelator adds.
+    """
+
+    joins = select.args.get("joins") or []
+    if any(j.args.get("side") in ("RIGHT", "FULL") or (j.args.get("kind") or "").upper() in ("SEMI", "ANTI") for j in joins):
+        return None
+    lowered = {k.lower(): {c.lower() for c in v} for k, v in (not_null or {}).items()}
+    sources = _sources(select)
+    for join in joins:
+        item = join.this
+        if join.args.get("side") or join.args.get("using") or join.args.get("method") or not isinstance(item, exp.Subquery) or not item.alias:
+            continue
+        body = item.this
+        if not isinstance(body, exp.Select) or body.args.get("where") is not None or body.args.get("joins"):
+            continue
+        if any(body.args.get(k) for k in _CLAUSES if k not in ("group", "distinct")) or body.args.get("having"):
+            continue
+        inner = _sources(body)
+        if len(inner) != 1 or not isinstance(inner[0], exp.Table) or not inner[0].alias_or_name:
+            continue
+        table = inner[0]
+        outputs = {}
+        for e in body.expressions:
+            value = e.unalias()
+            if not isinstance(value, exp.Column) or (value.table and value.table.lower() != table.alias_or_name.lower()):
+                outputs = None
+                break
+            outputs[e.alias_or_name.lower()] = value.name.lower()
+        if not outputs or len(set(outputs.values())) != len(outputs):
+            continue
+        group = body.args.get("group")
+        distinct = body.args.get("distinct")
+        if group is not None:
+            keys = []
+            for k in group.expressions:
+                if not isinstance(k, exp.Column):
+                    keys = None
+                    break
+                keys.append(k.name.lower())
+            if keys is None or set(keys) != set(outputs.values()) or group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets"):
+                continue
+        elif not (isinstance(distinct, exp.Distinct) and not distinct.args.get("on")):
+            continue
+        alias = item.alias.lower()
+        parts = _conjuncts(join.args.get("on"))
+        pinned, outer = {}, None
+        ok = bool(parts)
+        for part in parts:
+            if not isinstance(part, (exp.EQ, exp.NullSafeEQ)) or not all(isinstance(o, exp.Column) for o in (part.left, part.right)):
+                ok = False
+                break
+            mine = [o for o in (part.left, part.right) if o.table.lower() == alias]
+            other = [o for o in (part.left, part.right) if o.table.lower() != alias]
+            if len(mine) != 1 or len(other) != 1 or mine[0].name.lower() not in outputs:
+                ok = False
+                break
+            base = _base_column(select, other[0])
+            if base is None or base[1] != outputs[mine[0].name.lower()] or not _same_table(base[0], table):
+                ok = False
+                break
+            outer = outer or other[0].table.lower()
+            if other[0].table.lower() != outer:
+                ok = False
+                break
+            if isinstance(part, exp.EQ) and base[1] not in lowered.get(table.name.lower(), set()):
+                ok = False
+                break
+            pinned[mine[0].name.lower()] = other[0]
+        if not ok or outer is None or set(pinned) != set(outputs):
+            continue
+        reader = next((s for s in sources if (s.alias_or_name or "").lower() == outer), None)
+        if reader is None or sources.index(reader) > sources.index(item):
+            continue
+        outside = [n for n in select.walk() if n is not item and not _under(n, item) and not _under(n, join)]
+        if any(isinstance(n, (exp.Table, exp.Subquery, exp.Lateral)) and (n.alias_or_name or "").lower() == alias for n in outside):
+            continue
+        for column in [n for n in outside if isinstance(n, exp.Column) and n.table.lower() == alias]:
+            value = pinned[column.name.lower()].copy()
+            column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
+        select.set("joins", [j for j in joins if j is not join] or None)
+        return select
+    return None
+
+
+def _same_table(a: exp.Table, b: exp.Table) -> bool:
+    return all((x or "").lower() == (y or "").lower() for x, y in ((a.name, b.name), (a.db, b.db), (a.catalog, b.catalog)))

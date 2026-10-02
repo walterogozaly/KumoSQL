@@ -74,6 +74,15 @@ EQUIVALENT = [
     # the outer row witnesses an EXISTS over its own table on a NOT NULL column
     ("SELECT x.empno FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno = x.empno)", "SELECT x.empno FROM emp AS x"),
     ("SELECT x.empno FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.deptno IS NOT DISTINCT FROM x.deptno)", "SELECT x.empno FROM emp AS x"),
+    # a join to the DISTINCT values of the row's own NOT NULL column meets exactly one row
+    (
+        "SELECT x.empno, d.k FROM emp AS x JOIN (SELECT y.empno AS k FROM emp AS y GROUP BY y.empno) AS d ON x.empno = d.k",
+        "SELECT x.empno, x.empno AS k FROM emp AS x",
+    ),
+    (
+        "SELECT w.empno FROM (SELECT x.empno, x.deptno AS dd FROM emp AS x WHERE x.sal > 1) AS w JOIN (SELECT DISTINCT y.deptno AS k FROM emp AS y) AS d ON w.dd IS NOT DISTINCT FROM d.k",
+        "SELECT x.empno FROM emp AS x WHERE x.sal > 1",
+    ),
     # tests on the compared column inside IN move out to the outer value
     (
         "SELECT d.name FROM dept AS d WHERE d.deptno IN (SELECT e.deptno FROM emp AS e WHERE e.sal > 1 AND e.deptno IN (SELECT y.deptno FROM emp AS y WHERE y.job = 'a'))",
@@ -109,6 +118,21 @@ DIFFERENT = [
     (
         "SELECT d.deptno FROM dept AS d LEFT JOIN emp AS x ON x.deptno = d.deptno WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno IS NOT DISTINCT FROM x.empno)",
         "SELECT d.deptno FROM dept AS d LEFT JOIN emp AS x ON x.deptno = d.deptno",
+    ),
+    # the domain of a nullable column joined with = drops rows whose value is NULL
+    (
+        "SELECT x.empno FROM emp AS x JOIN (SELECT y.deptno AS k FROM emp AS y GROUP BY y.deptno) AS d ON x.deptno = d.k",
+        "SELECT x.empno FROM emp AS x",
+    ),
+    # a filtered domain does not hold every value
+    (
+        "SELECT x.empno FROM emp AS x JOIN (SELECT y.deptno AS k FROM emp AS y WHERE y.sal > 1 GROUP BY y.deptno) AS d ON x.deptno IS NOT DISTINCT FROM d.k",
+        "SELECT x.empno FROM emp AS x",
+    ),
+    # a NULL-extended row carries a NULL that the domain may not hold
+    (
+        "SELECT p.deptno FROM dept AS p LEFT JOIN emp AS x ON x.deptno = p.deptno JOIN (SELECT y.sal AS k FROM emp AS y GROUP BY y.sal) AS d ON x.sal IS NOT DISTINCT FROM d.k",
+        "SELECT p.deptno FROM dept AS p LEFT JOIN emp AS x ON x.deptno = p.deptno",
     ),
     # a test on another column of the IN body stays inside
     (
