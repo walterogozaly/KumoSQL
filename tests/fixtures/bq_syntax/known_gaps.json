@@ -287,10 +287,6 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
- "query/graph_gql::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Expecting ). Line 1, Col: 66."
- },
  "query/limit_in_subquery_order::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
