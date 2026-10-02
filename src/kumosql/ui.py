@@ -46,6 +46,9 @@ ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/browse": ("browse.html", "text/html; charset=utf-8"),
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
+    "/refactor": ("refactor.html", "text/html; charset=utf-8"),
+    "/assets/refactor.js": ("refactor.js", "text/javascript; charset=utf-8"),
+    "/assets/refactor.css": ("refactor.css", "text/css; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
     "/assets/scopes.js": ("scopes.js", "text/javascript; charset=utf-8"),
     "/assets/tags.js": ("tags.js", "text/javascript; charset=utf-8"),
@@ -195,6 +198,11 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/status":
             self._json(200, live_graph.server_status())
+            return
+        if self.path == "/api/refactor":
+            from . import refactor
+
+            self._json(200, refactor.classes_view())
             return
         if self.path == "/api/equivalences":
             from . import equivalences
@@ -458,7 +466,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(exc)})
             return
         section = self.path.removeprefix("/api/settings/")
-        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules", "data_sources") or section == self.path:
+        if section not in ("ui", "format", "scopes", "scope_queries", "tag_rules", "data_sources", "refactor") or section == self.path:
             self._json(404, {"error": "not found"})
             return
         payload = self._read_json(MAX_UI_STATE_BYTES if section == "ui" else MAX_REQUEST_BYTES)
@@ -480,6 +488,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 saved = tags.save_rules(payload)
             elif section == "data_sources":
                 saved = [source.to_json() for source in data_sources.save_sources(payload)]
+            elif section == "refactor":
+                from . import refactor
+
+                saved = refactor.save_classes(payload).to_json()
             else:
                 if not isinstance(payload, list):
                     raise ValueError("scopes must be a list")
@@ -549,6 +561,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries",
+            "/api/refactor/run",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -583,6 +596,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 result = {**data_sources.populate(source, refresh=payload.get("refresh") is True).status(), "id": source.id}
             elif self.path == "/api/tag-rules/preview":
                 result = tags.preview_rule(payload)
+            elif self.path == "/api/refactor/run":
+                from . import refactor
+
+                result = refactor.run_loaded(payload)
             elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries"):
                 from . import equivalences, pipeline_equivalence
 
