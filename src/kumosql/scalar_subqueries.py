@@ -109,7 +109,7 @@ def _candidates(tree: exp.Expression, schema) -> list[exp.Subquery]:
     found = []
     for node in tree.find_all(exp.Subquery):
         parent = node.parent
-        if isinstance(parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.Union, exp.Subquery, exp.Table, exp.TableAlias)):
+        if isinstance(parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.SetOperation, exp.Subquery, exp.Table, exp.TableAlias)):
             continue
         inner = node.this
         if not isinstance(inner, exp.Select) or len(inner.expressions) != 1:
@@ -164,7 +164,7 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
             if node.find_ancestor(exp.Subquery) in nodes:
                 continue
             if single_row is not None and report is not None:
-                scalars = [node] + [n for n in node.find_all(exp.Subquery) if n is not node and not isinstance(n.parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.Union, exp.Subquery, exp.Table, exp.TableAlias))]
+                scalars = [node] + [n for n in node.find_all(exp.Subquery) if n is not node and not isinstance(n.parent, (exp.From, exp.Join, exp.In, exp.Exists, exp.CTE, exp.SetOperation, exp.Subquery, exp.Table, exp.TableAlias))]
                 report["unproven"] = report.get("unproven", 0) + sum(1 for n in scalars if not single_row(n.this.sql(dialect=dialect)))
             index = class_of(node)
             node.replace(exp.Anonymous(this=PLACEHOLDER, expressions=[exp.Literal.number(index)]))
