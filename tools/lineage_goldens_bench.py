@@ -154,7 +154,42 @@ def _lenient(case: dict) -> bool:
     return bool(case.get("default_db") or case.get("default_schema"))
 
 
+def _destination(statement):
+    """The table a statement writes: INSERT and CREATE (as ``sqllineage_bench``), plus the statements the goldens also cover."""
+
+    name = base_destination(statement)
+    if name:
+        return name
+    exp = base.exp
+    table = None
+    if isinstance(statement, exp.Alter):
+        # a rename reads the old name and writes the new one; one model name cannot say both, so it is not named
+        table = None if any(isinstance(a, exp.AlterRename) for a in statement.args.get("actions") or []) else statement.this
+    elif isinstance(statement, (exp.Delete, exp.Update, exp.Merge)):
+        table = statement.this
+    elif isinstance(statement, exp.TruncateTable):
+        table = statement.expressions[0] if statement.expressions else None
+    elif isinstance(statement, exp.Drop) and str(statement.args.get("kind") or "").upper() in {"TABLE", "VIEW", "MATERIALIZED VIEW"}:
+        table = statement.this or next(iter(statement.args.get("tables") or []), None)
+    if isinstance(table, exp.Schema):
+        table = table.this
+    if isinstance(table, exp.Table):
+        return ".".join(part.name for part in table.parts)
+    return None
+
+
+base_destination = base._destination
+
+
 def classify(case: dict) -> dict:
+    base._destination = _destination  # only while this case runs: the other bench shares the module
+    try:
+        return _classify(case)
+    finally:
+        base._destination = base_destination
+
+
+def _classify(case: dict) -> dict:
     row = {"id": case["id"], "kind": case["kind"], "dialect": case["dialect"], "corpus": case["corpus"]}
     try:
         got = base.predict(_adapt(case))
