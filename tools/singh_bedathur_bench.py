@@ -368,7 +368,7 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows
+    from kumosql.duckdb_load import insert_rows, run_unoptimized
 
     kinds = column_kinds(trees, pair.tables)
     domains = literal_domains(trees)
@@ -391,13 +391,41 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
                 insert_rows(db, f'"{table}"', rows)
             a = normalise(db.execute(left_sql).fetchall())
             b = normalise(db.execute(right_sql).fetchall())
+            if a != b and [normalise(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         except duckdb.Error:
             failures += 1  # a data-dependent error (a scalar subquery with two rows) or a misfit proposed database
             continue
         if a != b:
             tables = {t: [dict(zip(pair.tables[t], r)) for r in data.get(t, [])] for t in used}
             return {"tables": tables, "left": sorted(map(str, a.elements())), "right": sorted(map(str, b.elements()))}
+    if failures < trials + len(candidates):
+        found = _targeted_witness(pair, left_sql, right_sql, kinds, used)
+        if found:
+            return found
     return False if failures == trials + len(candidates) else None
+
+
+_STRING_KINDS = {"VARCHAR": "STRING", "DATE": "DATE", "DECIMAL(18,3)": "NUMERIC"}
+DUCKDB_SETTINGS = ("SET default_null_order = 'nulls_first_on_asc_last_on_desc'", "SET default_collation = 'nocase'")
+
+
+def _targeted_witness(pair: Pair, left_sql: str, right_sql: str, kinds, used: list[str]):
+    """A database from the targeted suite on which the (DuckDB) queries differ, in the witness format."""
+
+    from kumosql.refute import find_targeted_difference
+
+    if os.environ.get("KUMOSQL_TARGETED", "1") == "0":
+        return None
+    schema = {t: {c: _STRING_KINDS.get(kinds.get((t, c), "BIGINT"), "INT64") for c in pair.tables[t]} for t in used}
+    found = find_targeted_difference(
+        left_sql, right_sql, schema, engine="duckdb", dialect="duckdb", settings=DUCKDB_SETTINGS, budget=15.0
+    )
+    if found is None:
+        return None
+    a, b = normalise(list(found.left.rows)), normalise(list(found.right.rows))
+    tables = {t: [dict(zip(pair.tables[t], r)) for r in found.dataset.tables[t].rows] for t in used}
+    return {"tables": tables, "left": sorted(map(str, a.elements())), "right": sorted(map(str, b.elements())), "targeted": found.label}
 
 
 def _proposed_database(pair: Pair, result) -> list[dict]:

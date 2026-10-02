@@ -1,0 +1,143 @@
+{
+ "about": "Hand-written expectations for the scripting examples in tests/fixtures/bq_syntax/sql/script, from the BigQuery scripting reference: leaf statement count once blocks are opened, real tables read (ASSERT and scalar DECLARE/SET reads are ignored by design except a SET or DECLARE whose value comes from a table read that later statements use; none of these examples does), tables written, and statements that must be reported unknown (CALL of an undefined procedure, EXECUTE IMMEDIATE of a variable or FORMAT).",
+ "cases": {
+  "assert": {
+   "statements": 1,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "begin_end_block": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "begin_end_with_tempobjects": {
+   "statements": 3,
+   "reads": [
+    "raw_users"
+   ],
+   "writes": [],
+   "unknown": 0
+  },
+  "begin_exception": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "call_procedure": {
+   "statements": 1,
+   "reads": [],
+   "writes": [],
+   "unknown": 1
+  },
+  "call_with_dml": {
+   "statements": 1,
+   "reads": [],
+   "writes": [],
+   "unknown": 1
+  },
+  "case_when": {
+   "statements": 4,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "declare_set": {
+   "statements": 6,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "declare_struct_array": {
+   "statements": 4,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "execute_immediate": {
+   "statements": 3,
+   "reads": [],
+   "writes": [],
+   "unknown": 1
+  },
+  "execute_immediate_concat": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 1
+  },
+  "execute_immediate_using_positional": {
+   "statements": 1,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "for_in": {
+   "statements": 1,
+   "reads": [
+    "raw_users"
+   ],
+   "writes": [],
+   "unknown": 0
+  },
+  "if_elseif_else": {
+   "statements": 4,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "labels": {
+   "statements": 1,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "loop_leave_iterate": {
+   "statements": 4,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "raise": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "repeat_until": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "return": {
+   "statements": 1,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "session_system_var": {
+   "statements": 4,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "set_from_subquery": {
+   "statements": 3,
+   "reads": [
+    "raw_users"
+   ],
+   "writes": [],
+   "unknown": 0
+  },
+  "while_loop": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  }
+ }
+}
