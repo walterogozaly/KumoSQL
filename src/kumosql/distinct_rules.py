@@ -58,6 +58,9 @@ def drop_membership_dedup(select: exp.Select) -> exp.Select | None:
         return None
     if any(w.find_ancestor(exp.Select) is select for w in select.find_all(exp.Window)):
         return None
+    # dedup_join_rules drops an unread outer join only under DISTINCT; let it go first.
+    if any(j.side for j in select.args.get("joins") or ()):
+        return None
     if _plain_distinct(select):
         result = select.copy()
         result.set("distinct", None)

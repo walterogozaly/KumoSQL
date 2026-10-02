@@ -97,6 +97,11 @@ PROVEN = [
         "SELECT x FROM (SELECT a AS x, b FROM t GROUP BY a, b) AS g GROUP BY x",
         id="group-without-aggregates-under-distinct",
     ),
+    pytest.param(
+        "SELECT a FROM t WHERE b NOT IN (SELECT DISTINCT s.b FROM s LEFT JOIN t ON t.b = s.b)",
+        "SELECT a FROM t WHERE b NOT IN (SELECT DISTINCT b FROM s)",
+        id="unread-outer-join-inside-not-in",
+    ),
 ]
 
 
