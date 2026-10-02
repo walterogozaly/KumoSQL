@@ -1,0 +1,22 @@
+{
+  "suite": "SQLFluff layout fixes (LT, CP, JJ)",
+  "order": 331,
+  "size": 453,
+  "score": "330/425 layout fixes leave the parse tree, comments and literals unchanged, 0 wrong; 25/28 fixes that rename identifiers are not passed",
+  "metric": "Each fail/fix pair from sqlfluff 4.3.0's layout, capitalisation and Jinja rules, read with sqlglot in the case's dialect: layout-only fixes must keep the parse tree, the comments (words and order) and the string literals; a CP02 fix that renames an identifier must not pass.",
+  "evidence": "proof",
+  "correctness": "0 wrong: no fix that renames an identifier is passed. 1 layout-only fix is flagged (CP05 on a PostgreSQL user-defined type name whose case sqlglot keeps), a stricter reading than PostgreSQL's.",
+  "coverage": {
+    "proven": 330,
+    "refuted": 26,
+    "unknown": 0,
+    "unsupported": 97,
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "77/97 layout-only fixes passed (the other 20 unsupported), 2/3 identifier renames refuted, 0 wrong; rules LT01, LT12, LT13 and the CP02+LT01 pairs held out by hash of the rule code",
+  "docs": "docs/sqlfluff-fixtures.md#layout-fixes",
+  "command": "python tools/sqlfluff_fixtures_bench.py layout",
+  "date": "2026-10-02",
+  "caveats": "Passing means identical parse trees, not a solver proof, and function-name case is ignored. 97 pairs are unsupported as written (50 templated with Jinja, the rest in oracle, tsql, exasol and snowflake syntax sqlglot cannot read); the Jinja ones were also checked with their tags masked (41 of 50 passed), which is not in the score. No implementation changed."
+}
