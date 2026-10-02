@@ -298,7 +298,8 @@ def _same_meaning(before: str, after: str) -> bool:
     """Formatting only moves whitespace and case, so both texts must parse alike.
 
     sqlfluff joins tokens when it removes spaces: ``- -i`` becomes ``--i``, which
-    BigQuery reads as a comment. SQL sqlglot cannot parse is not checked.
+    BigQuery reads as a comment. SQL sqlglot cannot parse is not checked. Comments are compared by
+    ``format_sql`` itself, which allows re-indenting the lines of a block comment.
     """
 
     import sqlglot
@@ -317,7 +318,7 @@ def _same_meaning(before: str, after: str) -> bool:
     if len(left) != len(right):
         return False
     return all(
-        (a is None and b is None) or (a is not None and b is not None and a.sql("bigquery").upper() == b.sql("bigquery").upper())
+        (a is None and b is None) or (a is not None and b is not None and a.sql("bigquery", comments=False).upper() == b.sql("bigquery", comments=False).upper())
         for a, b in zip(left, right)
     )
 
