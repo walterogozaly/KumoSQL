@@ -2,8 +2,8 @@
   "suite": "Cosette examples",
   "order": 22,
   "size": 60,
-  "score": "55/60 correct, 0 wrong",
-  "metric": "Labelled pairs (equivalent, not equivalent, equivalent under stated keys) answered correctly: 50 equivalent pairs proved, all 5 not-equivalent pairs refuted with a counterexample executed in DuckDB; 4 unknown, 1 refuted against its label.",
+  "score": "56/60 correct, 0 wrong",
+  "metric": "Labelled pairs (equivalent, not equivalent, equivalent under stated keys) answered correctly: 51 equivalent pairs proved, all 5 not-equivalent pairs refuted with a counterexample executed in DuckDB; 3 unknown, 1 refuted against its label.",
   "docs": "docs/evals/sqlsolver.md#cosette-and-spes-fixtures",
   "command": "python tools/cosette_bench.py cosette",
   "date": "2026-10-02",
@@ -11,9 +11,9 @@
   "evidence": "proof",
   "correctness": "0 false proofs and 0 proofs of a not-equivalent pair; every refutation re-run in DuckDB; refutations of uninterpreted-predicate cases are never claimed",
   "coverage": {
-    "proven": 50,
+    "proven": 51,
     "refuted": 6,
-    "unknown": 4,
+    "unknown": 3,
     "unsupported": 26
   },
   "held_out": "none"
