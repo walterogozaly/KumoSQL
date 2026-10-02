@@ -9,7 +9,7 @@
   "date": "2026-10-02",
   "caveats": "SPES ships the same 232 Calcite tests as SQLSolver; 137 are textually SQLSolver's pairs and are not re-scored. Of the other 95, 61 cannot run (mostly SPES's own SQL bugs and empty VALUES) and are counted unsupported.",
   "evidence": "proof",
-  "correctness": "0 false proofs (re-checked on 60 random DuckDB databases)",
+  "correctness": "0 false proofs (re-checked on 120 random DuckDB databases, half skewed towards the literals)",
   "coverage": {
     "proven": 24,
     "unknown": 10,

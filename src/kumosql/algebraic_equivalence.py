@@ -1797,6 +1797,11 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
     )
     inner.set("from_" if "from_" in select.args else "from", from_.copy())
     inner.set("joins", [j.copy() for j in joins])
+    # An output that is a bare column keeps its name once the column is renamed to kqj.cN.
+    select.set(
+        "expressions",
+        [exp.alias_(e, e.name, copy=False) if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star) else e for e in select.expressions],
+    )
     for column, key in zip(columns, keys):
         column.set("table", exp.to_identifier("kqj"))
         column.set("this", exp.to_identifier(f"c{positions[key]}"))
@@ -2439,6 +2444,32 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
 _WINDOW_COUNTER = itertools.count()
 
 
+def _wrap_window_select(select: exp.Select) -> exp.Select | None:
+    """A grouped select with window functions, kept whole as a derived table named ``kqw*``.
+
+    Its windows run over its groups, so they cannot be split from the grouping the way
+    ``_isolate_windows`` splits them from a plain FROM/WHERE. Wrapped whole, the prover keeps it
+    opaque (``_opaque``): two queries agree on it when it reads alike on both sides. Only plain
+    selects with distinct, named outputs qualify (no ORDER BY, LIMIT, DISTINCT or set operation).
+    """
+
+    if any(select.args.get(k) for k in ("order", "limit", "offset", "distinct", "qualify")) or not isinstance(
+        select.parent, (exp.Subquery, exp.CTE, exp.From, exp.Join, type(None))
+    ):
+        return None
+    names = []
+    for item in select.expressions:
+        if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
+            return None
+        names.append(item.alias_or_name)
+    if any(not n for n in names) or len({n.lower() for n in names}) != len(names):
+        return None
+    alias = f"kqw{next(_WINDOW_COUNTER)}"
+    outer = exp.Select(expressions=[exp.alias_(exp.column(n, table=alias), n) for n in names])
+    outer.set("from_", exp.From(this=exp.Subquery(this=select.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+    return outer
+
+
 def _isolate_windows(tree: exp.Expression) -> exp.Expression:
     """Compute a select's window functions in a derived table over its FROM and WHERE.
 
@@ -2451,10 +2482,18 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
 
     for select in list(tree.find_all(exp.Select))[::-1]:
         windows = [w for w in select.find_all(exp.Window) if w.find_ancestor(exp.Select) is select]
-        if not windows or select.args.get("group") or select.args.get("having") or select.args.get("windows"):
+        if not windows or select.args.get("windows"):
             continue
         parent = select.parent
         if isinstance(parent, exp.Subquery) and (parent.alias or "").startswith("kqw"):
+            continue
+        if select.args.get("group") or select.args.get("having"):
+            wrapped = _wrap_window_select(select)
+            if wrapped is not None:
+                if select is tree:
+                    tree = wrapped
+                else:
+                    select.replace(wrapped)
             continue
         own_calls = [c for c in select.find_all(exp.AggFunc) if c.find_ancestor(exp.Select) is select and c.find_ancestor(exp.Window) is None]
         if own_calls or select.args.get("distinct") and select.args["distinct"].args.get("on"):
@@ -4325,16 +4364,50 @@ def normalize(
 
 
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
-    """Normalize both queries algebraically, then run the SMT prover on the result."""
+    """Normalize both queries algebraically, then run the SMT prover on the result.
 
+    With ``search_counterexample=True`` an unproven pair the solver cannot refute is
+    run on databases built for it (:mod:`kumosql.executed_refutation`); a database
+    on which the results differ comes back as a ``NOT_EQUIVALENT`` counterexample.
+    """
+
+    search = kwargs.pop("search_counterexample", False)
+    original = (left_sql, right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
     result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
-    if result.proven or not (kwargs.get("constraints") or {}):
-        return result
-    retry = _prove_algebraic(left_sql, right_sql, True, **kwargs)
-    return retry if retry.proven else result
+    if not result.proven and (kwargs.get("constraints") or {}):
+        retry = _prove_algebraic(left_sql, right_sql, True, **kwargs)
+        if retry.proven:
+            return retry
+    if result.status is SmtStatus.NOT_PROVEN:
+        from .semijoin_rules import semijoin_reading
+
+        dialect = kwargs.get("dialect", "bigquery")
+        semi = semijoin_reading(left_sql, dialect), semijoin_reading(right_sql, dialect)
+        if semi != (None, None):
+            retry = _prove_algebraic(semi[0] or left_sql, semi[1] or right_sql, False, **kwargs)
+            if retry.proven:
+                return retry
+    if search and result.status is SmtStatus.NOT_PROVEN:
+        from . import executed_refutation
+
+        counterexample = executed_refutation.search_counterexample(
+            *original,
+            schema=kwargs.get("schema"),
+            types=kwargs.get("types"),
+            constraints=kwargs.get("constraints"),
+            dialect=kwargs.get("dialect", "bigquery"),
+        )
+        if counterexample is not None:
+            return SmtEquivalenceResult(
+                SmtStatus.NOT_EQUIVALENT,
+                "the queries return different rows on the attached database (found by running both)",
+                counterexample=counterexample,
+                assumptions=(executed_refutation.ASSUMPTION,),
+            )
+    return result
 
 
 def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: bool, **kwargs) -> SmtEquivalenceResult:

@@ -40,6 +40,7 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 ## Gaps and checks still wanted
 
 - 1,356 GoogleSQL queries do not parse in sqlglot's BigQuery dialect (GoogleSQL-only features: protos, enums, graph queries, `FLOAT32`, newer pipe and table syntax). They are counted as unsupported, not hidden.
+- The 81 pipe-syntax (`|>`) queries are left as written. sqlglot parses pipe syntax into nested CTEs, so the rewrites that used to count for 7 of them were of that translation, printed as standard SQL.
 - Most GoogleSQL cases are declined because KumoSQL has nothing to rewrite in a bare `SELECT`; the handled count measures rewrites that happened and held.
 - Still wanted on real BigQuery (to run on the work-laptop replica): every rewritten before/after pair from the edge suite (`--failures` lists none; use `evaluate()` for the pairs), especially the CTE-inlining cases with `RAND()`, `GENERATE_UUID()` and `CURRENT_*`, and `SAFE_`/cast cases whose result a DuckDB transpile may not model.
 
@@ -47,8 +48,8 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 
 | Corpus | Pipeline | Cases | Rewritten and identical | Wrong | Declined | Unsupported | Not executable |
 |---|---|---:|---:|---:|---:|---:|---:|
-| GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 38 | 0 | 6,255 | 1,356 | 221 |
-| GoogleSQL compliance | lift | 7,870 | 200 | 0 | 5,732 | 1,356 | 582 |
+| GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 31 | 0 | 6,264 | 1,356 | 219 |
+| GoogleSQL compliance | lift | 7,870 | 253 | 0 | 5,662 | 1,356 | 599 |
 | Edge cases (967 custom: 379 hand-written, 588 seeded fuzz) | semantic | 967 | 428 | 0 | 539 | 0 | 0 |
 | Edge cases | lift | 967 | 434 | 0 | 533 | 0 | 0 |
 | Held-out fuzz (662, seeds 101 and 103, not used while fixing) | semantic / lift | 662 | 421 | 0 | 241 | 0 | 0 |
