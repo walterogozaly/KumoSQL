@@ -1960,10 +1960,16 @@ class _Prover:
         agg_pairs = []
         for call_b in b.aggs:
             arg_b = _subst_val(call_b.arg, pairs) if call_b.arg is not None else None
+            first = None
             for call_a in a.aggs:
                 if self._same_aggregate(a, call_a, call_b.func, call_b.distinct, arg_b, facts):
-                    agg_pairs.extend([(call_b.var.null, call_a.var.null), (call_b.var.val, call_a.var.val)])
-                    break
+                    if first is None:
+                        first = call_a
+                        agg_pairs.extend([(call_b.var.null, call_a.var.null), (call_b.var.val, call_a.var.val)])
+                    else:
+                        # another call of ``a`` that agrees with the same call of ``b`` (COUNT(x) and COUNT(y) over NOT NULL columns)
+                        own_pairs.extend([(call_a.var.null, first.var.null), (call_a.var.val, first.var.val)])
+        own_pairs = [p for p in own_pairs if not p[0].eq(p[1])]
         all_pairs = pairs + [p for p in agg_pairs if not p[0].eq(p[1])]
         # Aggregate values are left free: the claim must hold for any group.
         guard = z3.BoolVal(True) if a.is_global else a.cond.t
@@ -1986,7 +1992,13 @@ class _Prover:
             return not distinct and self.valid(z3.Implies(a.cond.t, z3.Not(present.null)), a.occs, facts)
         if arg is None:
             return True
-        return self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts)
+        if self.valid(z3.Implies(a.cond.t, _null_eq(call_a.arg, arg)), a.occs, facts):
+            return True
+        if func == "COUNT" and not distinct:
+            # COUNT of two columns that are never NULL is the same count of rows.
+            both = z3.And(z3.Not(call_a.arg.null), z3.Not(arg.null))
+            return self.valid(z3.Implies(a.cond.t, both), a.occs, facts)
+        return False
 
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
