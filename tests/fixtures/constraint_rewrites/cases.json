@@ -1,0 +1,438 @@
+{
+ "schemas": {
+  "shop": {
+   "tables": {
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "name": "STRING",
+      "region": "STRING"
+     },
+     "not_null": [
+      "id",
+      "name"
+     ],
+     "keys": [
+      [
+       "id"
+      ]
+     ]
+    },
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "total": "INT64",
+      "amount": "INT64",
+      "status": "STRING"
+     },
+     "not_null": [
+      "id",
+      "customer_id",
+      "total"
+     ],
+     "keys": [
+      [
+       "id"
+      ]
+     ],
+     "foreign_keys": [
+      {
+       "columns": [
+        "customer_id"
+       ],
+       "parent": "customers",
+       "parent_columns": [
+        "id"
+       ]
+      }
+     ]
+    },
+    "order_items": {
+     "columns": {
+      "order_id": "INT64",
+      "line_no": "INT64",
+      "sku": "STRING",
+      "qty": "INT64"
+     },
+     "not_null": [
+      "order_id",
+      "line_no",
+      "sku",
+      "qty"
+     ],
+     "keys": [
+      [
+       "order_id",
+       "line_no"
+      ]
+     ],
+     "foreign_keys": [
+      {
+       "columns": [
+        "order_id"
+       ],
+       "parent": "orders",
+       "parent_columns": [
+        "id"
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "fk-join-elimination",
+   "group": "join elimination",
+   "original": "SELECT o.id, o.amount FROM orders AS o JOIN customers AS c ON o.customer_id = c.id",
+   "rewritten": "SELECT id, amount FROM orders",
+   "requires": [
+    {
+     "kind": "foreign_key",
+     "table": "orders",
+     "columns": [
+      "customer_id"
+     ],
+     "parent": "customers",
+     "parent_columns": [
+      "id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "customer_id"
+     ]
+    },
+    {
+     "kind": "unique",
+     "table": "customers",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "fk-join-elimination-items",
+   "group": "join elimination",
+   "original": "SELECT i.sku, i.qty FROM order_items AS i JOIN orders AS o ON i.order_id = o.id",
+   "rewritten": "SELECT sku, qty FROM order_items",
+   "requires": [
+    {
+     "kind": "foreign_key",
+     "table": "order_items",
+     "columns": [
+      "order_id"
+     ],
+     "parent": "orders",
+     "parent_columns": [
+      "id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "order_items",
+     "columns": [
+      "order_id"
+     ]
+    },
+    {
+     "kind": "unique",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "left-join-elimination",
+   "group": "join elimination",
+   "original": "SELECT o.id FROM orders AS o LEFT JOIN customers AS c ON o.customer_id = c.id",
+   "rewritten": "SELECT id FROM orders",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "customers",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "self-join-on-key",
+   "group": "join elimination",
+   "original": "SELECT a.id, a.amount FROM orders AS a JOIN orders AS b ON a.id = b.id",
+   "rewritten": "SELECT id, amount FROM orders",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "distinct-over-key",
+   "group": "distinct and grouping",
+   "original": "SELECT DISTINCT id, amount FROM orders",
+   "rewritten": "SELECT id, amount FROM orders",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "group-by-key",
+   "group": "distinct and grouping",
+   "original": "SELECT id, SUM(total) AS s FROM orders GROUP BY id",
+   "rewritten": "SELECT id, total AS s FROM orders",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "count-distinct-key",
+   "group": "distinct and grouping",
+   "original": "SELECT COUNT(DISTINCT id) AS n FROM orders",
+   "rewritten": "SELECT COUNT(id) AS n FROM orders",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "is-not-null-redundant",
+   "group": "nullability",
+   "original": "SELECT id FROM orders WHERE total IS NOT NULL",
+   "rewritten": "SELECT id FROM orders",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "total"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "count-column-as-count-star",
+   "group": "nullability",
+   "original": "SELECT COUNT(total) AS n FROM orders",
+   "rewritten": "SELECT COUNT(*) AS n FROM orders",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "total"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "coalesce-redundant",
+   "group": "nullability",
+   "original": "SELECT COALESCE(total, 0) AS t FROM orders",
+   "rewritten": "SELECT total AS t FROM orders",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "total"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "not-in-to-not-exists",
+   "group": "nullability",
+   "original": "SELECT id FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)",
+   "rewritten": "SELECT c.id FROM customers AS c WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id)",
+   "requires": [
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "customer_id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "customers",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "in-to-join",
+   "group": "semi-join",
+   "original": "SELECT id FROM customers WHERE id IN (SELECT customer_id FROM orders)",
+   "rewritten": "SELECT DISTINCT c.id FROM customers AS c JOIN orders AS o ON o.customer_id = c.id",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "customers",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "distinct-join-to-exists",
+   "group": "semi-join",
+   "original": "SELECT DISTINCT o.id FROM orders AS o JOIN order_items AS i ON i.order_id = o.id",
+   "rewritten": "SELECT id FROM orders AS o WHERE EXISTS (SELECT 1 FROM order_items AS i WHERE i.order_id = o.id)",
+   "requires": [
+    {
+     "kind": "unique",
+     "table": "orders",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "aggregate-through-fk-join",
+   "group": "join elimination",
+   "original": "SELECT c.id, SUM(o.total) AS s FROM customers AS c JOIN orders AS o ON o.customer_id = c.id GROUP BY c.id",
+   "rewritten": "SELECT customer_id AS id, SUM(total) AS s FROM orders GROUP BY customer_id",
+   "requires": [
+    {
+     "kind": "foreign_key",
+     "table": "orders",
+     "columns": [
+      "customer_id"
+     ],
+     "parent": "customers",
+     "parent_columns": [
+      "id"
+     ]
+    },
+    {
+     "kind": "not_null",
+     "table": "orders",
+     "columns": [
+      "customer_id"
+     ]
+    },
+    {
+     "kind": "unique",
+     "table": "customers",
+     "columns": [
+      "id"
+     ]
+    }
+   ],
+   "schema": "shop"
+  },
+  {
+   "id": "control-filtered-join",
+   "group": "control",
+   "original": "SELECT o.id FROM orders AS o JOIN customers AS c ON o.customer_id = c.id AND c.region = 'EU'",
+   "rewritten": "SELECT id FROM orders",
+   "valid": false,
+   "requires": [],
+   "schema": "shop"
+  },
+  {
+   "id": "control-fan-out",
+   "group": "control",
+   "original": "SELECT c.id FROM customers AS c JOIN orders AS o ON o.customer_id = c.id",
+   "rewritten": "SELECT id FROM customers",
+   "valid": false,
+   "requires": [],
+   "schema": "shop"
+  },
+  {
+   "id": "control-undeclared-nullable",
+   "group": "control",
+   "original": "SELECT id FROM orders WHERE amount IS NOT NULL",
+   "rewritten": "SELECT id FROM orders",
+   "valid": false,
+   "requires": [],
+   "schema": "shop"
+  },
+  {
+   "id": "control-distinct-nonkey",
+   "group": "control",
+   "original": "SELECT DISTINCT status FROM orders",
+   "rewritten": "SELECT status FROM orders",
+   "valid": false,
+   "requires": [],
+   "schema": "shop"
+  },
+  {
+   "id": "control-wrong-column",
+   "group": "control",
+   "original": "SELECT SUM(amount) AS s FROM orders",
+   "rewritten": "SELECT SUM(total) AS s FROM orders",
+   "valid": false,
+   "requires": [],
+   "schema": "shop"
+  }
+ ]
+}

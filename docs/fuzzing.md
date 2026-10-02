@@ -28,7 +28,7 @@ Keep these apart: they are different kinds of evidence.
 
 ## Suites
 
-**`fuzz`**: for random sources (one table, inner/left/cross joins) and random three-valued predicates, TLP (`Q` = `Q[p]` UNION ALL `Q[NOT p]` UNION ALL `Q[p IS NULL]`, also with DISTINCT/UNION and recombined COUNT/SUM/MIN/MAX) and NoREC (`WHERE p` against `COUNT(CASE WHEN p ...)` and a projected-then-filtered subquery). Mutated TLP/NoREC pairs (lost or duplicated partition, `SUM` instead of `COUNT`) and single-site mutations of generated multi-CTE queries (flipped comparison, AND/OR swap, dropped conjunct or DISTINCT or WHERE or NOT, LEFT JOIN made INNER, UNION flipped, COUNT(*) made COUNT(col), constant bumped). A mutant is labelled *different* only if the oracle separates it.
+**`fuzz`**: for random sources (one table, inner/left/cross joins) and random three-valued predicates, TLP (`Q` = `Q[p]` UNION ALL `Q[NOT p]` UNION ALL `Q[p IS NULL]`, also with DISTINCT/UNION and recombined COUNT/SUM/MIN/MAX) and NoREC (`WHERE p` against `COUNT(CASE WHEN p ...)` and a projected-then-filtered subquery). Mutated TLP/NoREC pairs (lost or duplicated partition, `SUM` instead of `COUNT`) and single-site mutations of generated multi-CTE queries (shapes: filters, DISTINCT, inner/left joins, GROUP BY with HAVING, CASE, COALESCE/IFNULL, UNION [ALL], IN / NOT IN / EXISTS subqueries) (flipped comparison, AND/OR swap, dropped conjunct or DISTINCT or WHERE or NOT, LEFT JOIN made INNER, UNION flipped, COUNT(*) made COUNT(col), constant bumped). A mutant is labelled *different* only if the oracle separates it.
 
 **`unsafe`**: `NOT IN` against `NOT EXISTS` / anti-join, `COUNT(*)` against `COUNT(col)`, duplicate-producing joins against `IN`/`EXISTS`, `UNION` against `UNION ALL`, and WHERE/ON predicates moved across outer joins, each next to the variant that is correct.
 
@@ -44,6 +44,8 @@ Findings that are not bugs but gaps: for most non-equivalent unsafe pairs the pr
 
 ## Reusable cases
 
-`python tools/unsafe_fuzz.py unsafe --count 3 --seed 1 --dump-cases tests/fixtures/unsafe_rewrite_cases.jsonl` writes the cases as JSONL (`id`, `family`, `left`, `right`, `expect`, `heldout`). The committed copy is checked against its seed by the tests; other threads can use it as faulty variants. `expect` is `equivalent` (by construction) or `either`/`different` (the oracle decides).
+`python tools/unsafe_fuzz.py unsafe --count 20 --seed 1 --dump-cases tests/fixtures/unsafe_rewrite_cases.jsonl` writes the cases as JSONL (`id`, `family`, `left`, `right`, `expect`, `heldout`). The committed copy is checked against its seed by the tests; other threads can use it as faulty variants. `expect` is `equivalent` (by construction) or `either` (the oracle decides): 220 cases are equivalent by construction and 340 are `either`, of which the oracle separates 339 (all but `union-intersect-5`).
 
 Every discovered failure becomes a regression test in `tests/test_unsafe_fuzz.py`. The pre-fix baseline for the first run: 2 bad counterexamples on `fuzz` seed 1 (count 3) and one non-idempotent canonical pipeline in the first 15 composed queries.
+
+Seeds 31 (fuzz, count 40: 850 cases) and 31 (compose, 60 queries) over the richer shapes found no further bugs: 0 false proofs, 0 bad counterexamples, 0 behaviour changes.

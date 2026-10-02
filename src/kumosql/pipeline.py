@@ -22,7 +22,6 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 import gc
-import os
 import re
 import threading
 import time
@@ -36,6 +35,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
+from . import lineage_limits
 from .timing import Progress, stage
 from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
@@ -798,16 +798,6 @@ class Pipeline:
             return self._analysis
 
 
-def _seconds_from_env(name: str, default: float) -> float:
-    """A time budget in seconds from the environment; ``0`` means no limit."""
-
-    try:
-        value = float(os.environ.get(name, default))
-    except ValueError:
-        return default
-    return max(value, 0.0)
-
-
 def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expression]]:
     """The last query of a script, how many other queries it has, and those queries (read for their tables only)."""
 
@@ -1127,8 +1117,8 @@ class _Analysis:
         # Column tracing copies a model's whole query once per output column, so wide models with
         # many CTEs can take seconds each. A budget keeps a load bounded: past it, a model keeps
         # its columns and edges but its column-level lineage is skipped and reported as a gap.
-        model_budget = _seconds_from_env("KUMOSQL_LINEAGE_MODEL_SECONDS", 8.0)
-        total_deadline = _seconds_from_env("KUMOSQL_LINEAGE_SECONDS", 120.0)
+        model_budget = lineage_limits.effective("model_seconds")
+        total_deadline = lineage_limits.effective("total_seconds")
         total_deadline = time.perf_counter() + total_deadline if total_deadline else None
         for key in order:
             tracing.step(key)
@@ -1220,6 +1210,7 @@ class _Analysis:
             is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
             model_deadline = time.perf_counter() + model_budget if model_budget else None
             skipped_columns = 0
+            cte_names: dict[str, str] = {}
             for name in names:
                 ref = ColumnRef(key, name)
                 now = time.perf_counter()
@@ -1227,7 +1218,10 @@ class _Analysis:
                     (model_deadline is not None and now > model_deadline)
                     or (total_deadline is not None and now > total_deadline)
                 ):
-                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_skipped")
+                    # Table-level fallback: the column is taken to depend on everything the model reads,
+                    # so impact and dead-column answers stay safe even though they are coarser.
+                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "lineage_skipped")
+                    direct[ref] = frozenset(used)
                     skipped_columns += 1
                     continue
                 if name == "*":
@@ -1244,7 +1238,7 @@ class _Analysis:
                         # label; the trace never reads that copy, and for wide models it dominated.
                         trim_selects=False,
                     )
-                    leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union)
+                    leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union, cte_names)
                     if reason == "unresolved_column" and lineage_scope is not None:
                         # With no schema for a table, the pre-built scope keeps a
                         # bare column unresolved; re-qualifying resolves it when
@@ -1271,8 +1265,9 @@ class _Analysis:
                     PipelineDiagnostic(
                         key,
                         "lineage_skipped",
-                        f"{skipped_columns} of {len(names)} columns were not traced because tracing this model "
-                        "took longer than the time budget (KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
+                        f"{skipped_columns} of {len(names)} columns are traced at table level (they depend on everything "
+                        "this model reads) because column tracing took longer than the time limit "
+                        "(Settings > Analysis, or KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
                         "its reads and readers are still in the graph",
                     )
                 )
@@ -1350,6 +1345,7 @@ def _scan_lineage(
     node,
     name: str,
     is_union: bool,
+    cte_names: dict | None = None,
 ) -> tuple[set[ColumnRef], str | None, str]:
     """Leaf columns, the reason the trace is incomplete (or None), and the transform."""
 
@@ -1361,7 +1357,7 @@ def _scan_lineage(
     # ``WITH f AS (SELECT * FROM t) SELECT f.x`` traces f.x to a ``*`` leaf on t; the column
     # read through that star is the one asked for one step up (t.x).
     parent_of = {id(child): item for item in node.walk() for child in item.downstream}
-    phantoms = _phantom_star_sources(node)
+    phantoms = _phantom_star_sources(node, cte_names)
     for item in node.walk():
         if any(id(n) in phantoms for n in _ancestors(item, parent_of)):
             continue
@@ -1406,21 +1402,26 @@ def _ancestors(item, parent_of: dict):
         item = parent_of.get(id(item))
 
 
-def _phantom_star_sources(node) -> set[int]:
+def _phantom_star_sources(node, cte_names: dict | None = None) -> set[int]:
     """Lineage nodes a ``SELECT *`` inside a WITH does not actually read.
 
     sqlglot expands the star of ``f AS (SELECT * FROM t)`` over every source visible to
     that CTE, which includes the CTEs defined before it; only the relations in its own
     FROM and JOIN clauses are read.
+
+    Printing every CTE to match it is the slow part for models with many CTEs, so it happens
+    only once a ``*`` is found, and ``cte_names`` (one dict per model) shares it across columns.
     """
 
     phantoms: set[int] = set()
     root = node.source if isinstance(node.source, exp.Expression) else None
-    ctes = {cte.this.sql(): cte.alias_or_name for cte in root.find_all(exp.CTE)} if root is not None else {}
+    ctes = cte_names if cte_names is not None else {}
     for item in node.walk():
         select = item.source
         if len(item.downstream) < 2 or not isinstance(item.expression, exp.Star) or not isinstance(select, exp.Select):
             continue
+        if not ctes and root is not None:
+            ctes.update({cte.this.sql(): cte.alias_or_name for cte in root.find_all(exp.CTE)})
         read = {
             source.alias_or_name
             for source in [getattr(select.args.get("from_") or select.args.get("from"), "this", None),

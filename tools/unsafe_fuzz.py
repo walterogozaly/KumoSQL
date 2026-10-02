@@ -472,7 +472,24 @@ def relation(rng, sources: list[str], depth: int) -> str:
             return f"({relation(rng, sources, depth - 1)})"
         return rng.choice(sources)
 
-    shape = rng.choice(["filter", "filter", "distinct", "join", "agg", "union", "plain"])
+    shape = rng.choice(["filter", "filter", "distinct", "join", "agg", "union", "plain", "having", "case", "coalesce", "in_sub", "exists_sub", "not_in_sub", "multi_agg"])
+    if shape == "having":
+        fn = rng.choice(["MAX(x.b)", "MIN(x.b)", "SUM(x.b)", "COUNT(x.b)"])
+        having = rng.choice([f"COUNT(*) {rng.choice(['>', '>=', '<'])} {rng.choice((1, 2))}", f"{fn} {rng.choice(['>', '<=', '='])} {rng.choice(DOMAIN)}"])
+        return f"SELECT x.a AS a, {fn} AS b, COUNT(*) AS c FROM {src()} AS x GROUP BY x.a HAVING {having}"
+    if shape == "multi_agg":
+        return f"SELECT x.a AS a, SUM(x.b) AS b, COUNT(x.c) AS c FROM {src()} AS x WHERE {pred(rng, ['x.a', 'x.b'], 1)} GROUP BY x.a"
+    if shape == "case":
+        return f"SELECT x.a AS a, CASE WHEN {atom(rng, ['x.b', 'x.c'])} THEN x.b ELSE x.c END AS b, x.c AS c FROM {src()} AS x"
+    if shape == "coalesce":
+        return f"SELECT COALESCE(x.a, {rng.choice(DOMAIN)}) AS a, IFNULL(x.b, x.c) AS b, x.c AS c FROM {src()} AS x"
+    if shape == "in_sub":
+        return f"SELECT x.a AS a, x.b AS b, x.c AS c FROM {src()} AS x WHERE x.a IN (SELECT y.{rng.choice('abc')} FROM {src()} AS y WHERE {atom(rng, ['y.b', 'y.c'])})"
+    if shape == "not_in_sub":
+        return f"SELECT x.a AS a, x.b AS b, x.c AS c FROM {src()} AS x WHERE x.a NOT IN (SELECT y.{rng.choice('abc')} FROM {src()} AS y)"
+    if shape == "exists_sub":
+        neg = rng.choice(["", "NOT "])
+        return f"SELECT x.a AS a, x.b AS b, x.c AS c FROM {src()} AS x WHERE {neg}EXISTS (SELECT 1 FROM {src()} AS y WHERE y.a = x.a AND {atom(rng, ['y.b', 'y.c'])})"
     if shape == "filter":
         return f"SELECT x.a AS a, x.b AS b, x.c AS c FROM {src()} AS x WHERE {_trivial(rng, pred(rng, ['x.a', 'x.b', 'x.c'], 1))}"
     if shape == "plain":

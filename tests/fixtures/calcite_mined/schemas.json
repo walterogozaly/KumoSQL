@@ -1,0 +1,1770 @@
+{
+ "s1": {
+  "ddl": "CREATE TABLE DEPT (\n  DEPTNO INTEGER NOT NULL,\n  NAME VARCHAR(10) NOT NULL,\n  PRIMARY KEY (DEPTNO)\n);\nCREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "NAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s2": {
+  "ddl": "CREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s3": {
+  "ddl": "CREATE TABLE DEPT (\n  DEPTNO INTEGER NOT NULL,\n  NAME VARCHAR(10) NOT NULL,\n  PRIMARY KEY (DEPTNO)\n);",
+  "tables": [
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "NAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s4": {
+  "ddl": "",
+  "tables": []
+ },
+ "s5": {
+  "ddl": "CREATE TABLE EMP (\n  EMPNO SMALLINT NOT NULL,\n  ENAME VARCHAR(10),\n  JOB VARCHAR(9),\n  MGR SMALLINT,\n  HIREDATE DATE,\n  SAL DECIMAL(7, 2),\n  COMM DECIMAL(7, 2),\n  DEPTNO TINYINT,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "SMALLINT",
+      "ddl_type": "SMALLINT",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(9)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "SMALLINT",
+      "ddl_type": "SMALLINT",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "DATE",
+      "ddl_type": "DATE",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "TINYINT",
+      "ddl_type": "TINYINT",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s6": {
+  "ddl": "CREATE TABLE DEPT (\n  DEPTNO TINYINT NOT NULL,\n  DNAME VARCHAR(14),\n  LOC VARCHAR(13),\n  PRIMARY KEY (DEPTNO)\n);",
+  "tables": [
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "TINYINT",
+      "ddl_type": "TINYINT",
+      "nullable": false
+     },
+     {
+      "name": "DNAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(14)",
+      "nullable": true
+     },
+     {
+      "name": "LOC",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(13)",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s7": {
+  "ddl": "CREATE TABLE DEPT (\n  DEPTNO TINYINT NOT NULL,\n  DNAME VARCHAR(14),\n  LOC VARCHAR(13),\n  PRIMARY KEY (DEPTNO)\n);\nCREATE TABLE EMP (\n  EMPNO SMALLINT NOT NULL,\n  ENAME VARCHAR(10),\n  JOB VARCHAR(9),\n  MGR SMALLINT,\n  HIREDATE DATE,\n  SAL DECIMAL(7, 2),\n  COMM DECIMAL(7, 2),\n  DEPTNO TINYINT,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "TINYINT",
+      "ddl_type": "TINYINT",
+      "nullable": false
+     },
+     {
+      "name": "DNAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(14)",
+      "nullable": true
+     },
+     {
+      "name": "LOC",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(13)",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "SMALLINT",
+      "ddl_type": "SMALLINT",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(9)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "SMALLINT",
+      "ddl_type": "SMALLINT",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "DATE",
+      "ddl_type": "DATE",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "TINYINT",
+      "ddl_type": "TINYINT",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s8": {
+  "ddl": "CREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);\nCREATE TABLE EMP_B (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  BIRTHDATE DATE NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP_B",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     },
+     {
+      "name": "BIRTHDATE",
+      "type": "DATE",
+      "ddl_type": "DATE",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s9": {
+  "ddl": "CREATE TABLE DEPTNULLABLES (\n  DEPTNO INTEGER,\n  NAME VARCHAR(10),\n  UNIQUE (DEPTNO)\n);\nCREATE TABLE EMPNULLABLES (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20),\n  JOB VARCHAR(10),\n  MGR INTEGER,\n  HIREDATE TIMESTAMP,\n  SAL INTEGER,\n  COMM INTEGER,\n  DEPTNO INTEGER,\n  SLACKER BOOLEAN,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "DEPTNULLABLES",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "NAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMPNULLABLES",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s10": {
+  "ddl": "CREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);\nCREATE TABLE EMPNULLABLES (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20),\n  JOB VARCHAR(10),\n  MGR INTEGER,\n  HIREDATE TIMESTAMP,\n  SAL INTEGER,\n  COMM INTEGER,\n  DEPTNO INTEGER,\n  SLACKER BOOLEAN,\n  PRIMARY KEY (EMPNO)\n);\nCREATE TABLE EMP_B (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  BIRTHDATE DATE NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMPNULLABLES",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP_B",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     },
+     {
+      "name": "BIRTHDATE",
+      "type": "DATE",
+      "ddl_type": "DATE",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s11": {
+  "ddl": "CREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);\nCREATE TABLE EMPNULLABLES (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20),\n  JOB VARCHAR(10),\n  MGR INTEGER,\n  HIREDATE TIMESTAMP,\n  SAL INTEGER,\n  COMM INTEGER,\n  DEPTNO INTEGER,\n  SLACKER BOOLEAN,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMPNULLABLES",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s12": {
+  "ddl": "CREATE TABLE EMP_B (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  BIRTHDATE DATE NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP_B",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     },
+     {
+      "name": "BIRTHDATE",
+      "type": "DATE",
+      "ddl_type": "DATE",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s13": {
+  "ddl": "CREATE TABLE BONUS (\n  ENAME VARCHAR(10),\n  JOB VARCHAR(9),\n  SAL DECIMAL(7, 2),\n  COMM DECIMAL(7, 2)\n);\nCREATE TABLE DEPT (\n  DEPTNO TINYINT NOT NULL,\n  DNAME VARCHAR(14),\n  LOC VARCHAR(13),\n  PRIMARY KEY (DEPTNO)\n);\nCREATE TABLE EMP (\n  EMPNO SMALLINT NOT NULL,\n  ENAME VARCHAR(10),\n  JOB VARCHAR(9),\n  MGR SMALLINT,\n  HIREDATE DATE,\n  SAL DECIMAL(7, 2),\n  COMM DECIMAL(7, 2),\n  DEPTNO TINYINT,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "BONUS",
+    "columns": [
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(9)",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     }
+    ],
+    "keys": []
+   },
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "TINYINT",
+      "ddl_type": "TINYINT",
+      "nullable": false
+     },
+     {
+      "name": "DNAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(14)",
+      "nullable": true
+     },
+     {
+      "name": "LOC",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(13)",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "SMALLINT",
+      "ddl_type": "SMALLINT",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(9)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "SMALLINT",
+      "ddl_type": "SMALLINT",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "DATE",
+      "ddl_type": "DATE",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "DECIMAL",
+      "ddl_type": "DECIMAL(7, 2)",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "TINYINT",
+      "ddl_type": "TINYINT",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s14": {
+  "ddl": "CREATE TABLE EMPNULLABLES (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20),\n  JOB VARCHAR(10),\n  MGR INTEGER,\n  HIREDATE TIMESTAMP,\n  SAL INTEGER,\n  COMM INTEGER,\n  DEPTNO INTEGER,\n  SLACKER BOOLEAN,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMPNULLABLES",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": true
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s15": {
+  "ddl": "CREATE TABLE BONUS (\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL\n);\nCREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "BONUS",
+    "columns": [
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     }
+    ],
+    "keys": []
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s16": {
+  "ddl": "CREATE TABLE BONUS (\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL\n);\nCREATE TABLE DEPT (\n  DEPTNO INTEGER NOT NULL,\n  NAME VARCHAR(10) NOT NULL,\n  PRIMARY KEY (DEPTNO)\n);\nCREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "BONUS",
+    "columns": [
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     }
+    ],
+    "keys": []
+   },
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "NAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s17": {
+  "ddl": "CREATE TABLE ACCOUNT (\n  ACCTNO INTEGER NOT NULL,\n  TYPE VARCHAR(20) NOT NULL,\n  BALANCE INTEGER NOT NULL\n);\nCREATE TABLE DEPT (\n  DEPTNO INTEGER NOT NULL,\n  NAME VARCHAR(10) NOT NULL,\n  PRIMARY KEY (DEPTNO)\n);\nCREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "ACCOUNT",
+    "columns": [
+     {
+      "name": "ACCTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "TYPE",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "BALANCE",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     }
+    ],
+    "keys": []
+   },
+   {
+    "table": "DEPT",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "NAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s18": {
+  "ddl": "CREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);\nCREATE TABLE EMPDEFAULTS (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10),\n  MGR INTEGER,\n  HIREDATE TIMESTAMP,\n  SAL INTEGER,\n  COMM INTEGER,\n  DEPTNO INTEGER,\n  SLACKER BOOLEAN,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMPDEFAULTS",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": true
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ },
+ "s19": {
+  "ddl": "CREATE TABLE DEPTNULLABLES (\n  DEPTNO INTEGER,\n  NAME VARCHAR(10),\n  UNIQUE (DEPTNO)\n);\nCREATE TABLE EMP (\n  EMPNO INTEGER NOT NULL,\n  ENAME VARCHAR(20) NOT NULL,\n  JOB VARCHAR(10) NOT NULL,\n  MGR INTEGER,\n  HIREDATE TIMESTAMP NOT NULL,\n  SAL INTEGER NOT NULL,\n  COMM INTEGER NOT NULL,\n  DEPTNO INTEGER NOT NULL,\n  SLACKER BOOLEAN NOT NULL,\n  PRIMARY KEY (EMPNO)\n);",
+  "tables": [
+   {
+    "table": "DEPTNULLABLES",
+    "columns": [
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "NAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": true
+     }
+    ],
+    "keys": [
+     [
+      "DEPTNO"
+     ]
+    ]
+   },
+   {
+    "table": "EMP",
+    "columns": [
+     {
+      "name": "EMPNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "ENAME",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(20)",
+      "nullable": false
+     },
+     {
+      "name": "JOB",
+      "type": "VARCHAR",
+      "ddl_type": "VARCHAR(10)",
+      "nullable": false
+     },
+     {
+      "name": "MGR",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": true
+     },
+     {
+      "name": "HIREDATE",
+      "type": "TIMESTAMP",
+      "ddl_type": "TIMESTAMP",
+      "nullable": false
+     },
+     {
+      "name": "SAL",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "COMM",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "DEPTNO",
+      "type": "INTEGER",
+      "ddl_type": "INTEGER",
+      "nullable": false
+     },
+     {
+      "name": "SLACKER",
+      "type": "BOOLEAN",
+      "ddl_type": "BOOLEAN",
+      "nullable": false
+     }
+    ],
+    "keys": [
+     [
+      "EMPNO"
+     ]
+    ]
+   }
+  ]
+ }
+}

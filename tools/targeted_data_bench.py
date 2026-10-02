@@ -49,7 +49,7 @@ import sqlglot  # noqa: E402
 
 import sqlsolver_bench as ssb  # noqa: E402
 from kumosql.minimize import minimize_failure, replay, to_json  # noqa: E402
-from kumosql.query_mutants import mutate  # noqa: E402
+from kumosql.query_mutants import Mutant, mutate  # noqa: E402
 from kumosql.result_equivalence import (  # noqa: E402
     DataRules,
     DatasetRunner,
@@ -124,6 +124,27 @@ def _constraints(tables):
         )
         for t in tables.values()
     }
+
+
+UNSAFE_CASES = ROOT / "tests" / "fixtures" / "unsafe_rewrite_cases.jsonl"
+
+
+def _unsafe_items(split: str) -> tuple[list[dict], dict]:
+    """Pairs from the unsafe-rewrite fuzzing suite that may differ (``either``/``different``): the left query is
+    the original and the right one the faulty variant. Equivalent-by-construction pairs are not faults."""
+
+    import unsafe_fuzz
+
+    schema = unsafe_fuzz.SCHEMA
+    suite = {"schema": schema, "rules": {}, "constraints": {}, "tables": {}}
+    items = []
+    for line in UNSAFE_CASES.read_text(encoding="utf-8").splitlines():
+        case = json.loads(line)
+        held = bool(case["heldout"])
+        if case["expect"] == "equivalent" or split not in ("all", "heldout" if held else "dev"):
+            continue
+        items.append({"suite": "unsafe", "index": case["id"], "source": case["left"], "variant": case["right"], "family": case["family"], "split": "heldout" if held else "dev"})
+    return items, suite
 
 
 def build_corpus(split: str) -> tuple[list[dict], dict]:
@@ -231,11 +252,15 @@ def process(item_and_suite) -> dict:
     record = {"suite": item["suite"], "index": item["index"], "split": item["split"], "mutants": [], "status": "ok"}
     start = time.monotonic()
     try:
-        if item["suite"] == "university":
+        if item["suite"] == "unsafe":
+            original = sqlglot.transpile(item["source"], read="bigquery", write="bigquery")[0]
+            mutants = [Mutant(item["family"], 0, sqlglot.transpile(item["variant"], read="bigquery", write="bigquery")[0])]
+        elif item["suite"] == "university":
             original = sqlglot.transpile(item["source"], read="mysql", write="bigquery")[0]
         else:
             original = ssb.to_dialect(item["source"], "bigquery")
-        mutants = mutate(original)
+        if item["suite"] != "unsafe":
+            mutants = mutate(original)
     except Exception as error:
         record["status"] = "unsupported"
         record["reason"] = f"translate: {type(error).__name__}"
@@ -390,6 +415,8 @@ def summarize_minimization(results: list[dict]) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--split", choices=["dev", "heldout", "all"], default="dev")
+    parser.add_argument("--unsafe-only", action="store_true", help="score only the unsafe-rewrite pairs")
+    parser.add_argument("--unsafe", action="store_true", help="add the unsafe-rewrite fuzzing pairs as faulty variants")
     parser.add_argument("--limit", type=int, default=None, help="only the first N originals per suite")
     parser.add_argument("--jobs", type=int, default=max(1, multiprocessing.cpu_count() // 2))
     parser.add_argument("--minimize", type=int, default=150, help="how many killed mutants to minimize (0 skips)")
@@ -397,6 +424,12 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     items, suites = build_corpus(args.split)
+    if args.unsafe_only:
+        items = []
+    if args.unsafe or args.unsafe_only:
+        unsafe_items, unsafe_suite = _unsafe_items(args.split)
+        items += unsafe_items
+        suites["unsafe"] = unsafe_suite
     if args.limit:
         counts: Counter = Counter()
         kept = []

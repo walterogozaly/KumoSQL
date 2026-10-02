@@ -206,6 +206,10 @@ class _Facts:
         self._pools[name] = out
         return out
 
+    def is_joined(self, name: str) -> bool:
+        root = self._find(name)
+        return sum(1 for n in self.types if self._find(n) == root) > 1
+
     def predicate_groups(self) -> list[tuple[str, list[Any]]]:
         return [(name, group) for name in sorted(self.constants) for group in self.constants[name]]
 
@@ -355,6 +359,19 @@ def targeted_datasets(
 
     for key in names:
         add(f"empty:{key}", overrides={key: []})
+    # NULL in the matching columns of every table at once: where INTERSECT and a join part ways.
+    null_overrides = {}
+    for key in names:
+        columns = _columns(schema, key)
+        table_rules = rules.get(key.lower()) if rules else None
+        pinned = (table_rules.not_null if table_rules else frozenset()) | {
+            c for k in (table_rules.keys if table_rules else ()) for c in k
+        }
+        shared = {n.lower() for n, _ in columns if facts.is_joined(n.lower())} or {n.lower() for n, _ in columns}
+        null_row = tuple(None if n.lower() in shared and n.lower() not in pinned else facts.pool(n.lower())[0] for n, _ in columns)
+        match_row = tuple(facts.pool(n.lower())[0] for n, _ in columns)
+        null_overrides[key] = respect_rules(columns, [null_row, match_row, null_row], table_rules)
+    add("null_keys", overrides=null_overrides)
     add("one_value", single_value=True, default_size=(3, 3), null_rate=0.0)
     add("doubled", double=True, null_rate=0.0)
     add("small_groups", default_size=(4, 6), null_rate=0.0)

@@ -13,7 +13,7 @@ Needs `duckdb` and `z3-solver` (the `dev` extra); neither is a runtime requireme
 
 ## How a case is scored
 
-The rewrite pipeline runs on the query. If the text only changes layout, or does not change, the case is **declined**. Otherwise both versions are executed in DuckDB (after sqlglot's BigQuery to DuckDB transpile) and the results compared as bags (as lists when there is an `ORDER BY`).
+The rewrite pipeline runs on the query. If the text only changes layout, or does not change, the case is **declined**. Otherwise both versions are executed in DuckDB (after sqlglot's BigQuery to DuckDB transpile) and the results compared as bags (as lists when there is an `ORDER BY`). DuckDB runs on one thread so the same query gives the same answer every time (with several threads it can build `ARRAY(SELECT .. UNION ALL ..)` in a different order on each run).
 
 | Outcome | Meaning |
 |---|---|
