@@ -55,7 +55,7 @@ Mutants that escape the single seed and the default eight databases but are caug
 
 ## Unsafe-rewrite variants
 
-`--unsafe` / `--unsafe-only` score the pairs of `tests/fixtures/unsafe_rewrite_cases.jsonl` (from `tools/unsafe_fuzz.py`) whose `expect` is `either` or `different`, left query as original and right query as faulty variant: 51/51 caught by the suite (single seed 48, 8 random databases 51), median counterexample 2 rows versus 25.
+`--unsafe` / `--unsafe-only` score the pairs of `tests/fixtures/unsafe_rewrite_cases.jsonl` (from `tools/unsafe_fuzz.py`) whose `expect` is `either` or `different`, left query as original and right query as faulty variant: 340/340 caught by the suite (single seed 322, 8 random databases 340) over the full 560-case fixture, median counterexample 2 rows versus 25. The pair that needs NULLs in both tables (`union-intersect-5`, INTERSECT versus a join) is caught by the `all_null` and `null_keys` databases.
 
 ## Default checker
 

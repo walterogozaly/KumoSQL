@@ -5,7 +5,7 @@ description = "Deterministic, test-verified transformations for BigQuery SQL"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "sqlglot>=26.0",
+    "sqlglot>=26.0,<31",
     "sqlfluff>=3.0",
 ]
 
@@ -15,6 +15,7 @@ execution = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.5",
     "duckdb>=1.0",
     "z3-solver>=4.12",
 ]
@@ -48,6 +49,7 @@ kumosql-smoke = "kumosql.smoke:main"
 kumosql-incremental-report = "kumosql.incremental_scan:main"
 prove-tables = "kumosql.pipeline_equivalence:main"
 kumosql-equivalence = "kumosql.pipeline_equivalence:equivalence_main"
+kumosql-refactor = "kumosql.refactor:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -64,5 +66,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "slow: scans the full SQL workbook fixture",
+    "eval: scores KumoSQL on a benchmark corpus and holds its floors (set in tests/conftest.py)",
+    "xdist_group(name): keep these tests on one pytest-xdist worker (used with --dist loadgroup)",
 ]
 addopts = "-m 'not slow'"

@@ -42,11 +42,13 @@ BENCH_DIR = Path(os.environ.get("KUMOSQL_BENCH_DIR", Path.home() / ".cache" / "k
 SQLSTORM_URL = "https://github.com/SQL-Storm/SQLStorm.git"
 DSB_URL = "https://github.com/microsoft/dsb.git"
 JOB_URL = "https://github.com/gregrahn/join-order-benchmark.git"
+IMDB_URL = "https://github.com/danolivo/jo-bench.git"  # the IMDB data JOB runs on, as CSV chunks in git (BSD-2)
 # Pinned source versions: results are only comparable on the same queries.
 PINS = {
     SQLSTORM_URL: "b3bb0b96794a6afe9bb8f3ff2b243562b779c40d",
     DSB_URL: "ec9a156ceee923db1114cbe388f6183b53d49787",
     JOB_URL: "a39603662e023e449cb2121997a5034df9e02ebf",
+    IMDB_URL: "ad516b39edc51f914f0097b801dc7dbd114fc46b",
 }
 SQLSTORM_DATASETS = ("stackoverflow", "tpch", "tpcds", "job")
 DSB_SEEDS = (1, 2, 3)
@@ -61,7 +63,8 @@ def _clone(url: str, dest: Path, sparse: list[str] | None = None) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if sparse:
             _run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none", "--sparse", url, str(dest)])
-            _run(["git", "sparse-checkout", "set", *sparse], cwd=dest)
+            # Non-cone mode so single files can be listed; a leading slash anchors each path at the root.
+            _run(["git", "sparse-checkout", "set", "--no-cone", *("/" + p.lstrip("/") for p in sparse)], cwd=dest)
         else:
             _run(["git", "clone", "-q", "--depth", "1", url, str(dest)])
     pin = PINS.get(url)
@@ -75,7 +78,7 @@ def source_versions() -> dict[str, str]:
     """The commit each fetched corpus is at (it should match ``PINS``)."""
 
     out = {}
-    for name in ("SQLStorm", "dsb", "join-order-benchmark"):
+    for name in ("SQLStorm", "dsb", "join-order-benchmark", "jo-bench"):
         path = BENCH_DIR / name
         if path.exists():
             out[name] = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True).stdout.strip()
@@ -288,7 +291,34 @@ def schema(corpus: str) -> dict[str, dict[str, str]] | None:
     return _schema_from_ddl(path.read_text())
 
 
-FETCHERS = {"sqlstorm": fetch_sqlstorm, "dsb": fetch_dsb, "tpch-data": fetch_tpch_data, "tpcds-data": fetch_tpcds_data}
+def fetch_job_data() -> Path:
+    """The IMDB snapshot JOB runs on, in a DuckDB file, from jo-bench's CSVs (a 4.8 GB clone, removed after loading)."""
+
+    import shutil
+
+    import duckdb
+
+    target = BENCH_DIR / "job.duckdb"
+    if target.exists():
+        return target
+    clone = BENCH_DIR / "jo-bench"
+    _clone(IMDB_URL, clone)
+    con = duckdb.connect(str(target))
+    con.execute((clone / "duckdb" / "schema.sql").read_text())
+    con.execute(f"SET VARIABLE datadir='{clone}'")
+    con.execute((clone / "duckdb" / "load.sql").read_text())
+    con.close()
+    shutil.rmtree(clone / "csv")
+    return target
+
+
+FETCHERS = {
+    "sqlstorm": fetch_sqlstorm,
+    "dsb": fetch_dsb,
+    "tpch-data": fetch_tpch_data,
+    "tpcds-data": fetch_tpcds_data,
+    "job-data": fetch_job_data,
+}
 
 
 def main(argv: list[str] | None = None) -> int:

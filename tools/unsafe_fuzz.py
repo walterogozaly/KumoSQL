@@ -54,6 +54,7 @@ COLUMNS = ("a", "b", "c")
 DOMAIN = (0, 1, 2, 3)
 NULL_RATE = 0.2
 PROVER_TIMEOUT_MS = 2000
+BQ_SHAPES = True  # window, QUALIFY, SAFE_*, date arithmetic, UNNEST, STRUCT and NULL-heavy outer joins
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +127,20 @@ class Oracle:
         data = {
             t: [tuple(row.get(c) for c in COLUMNS) for row in lowered.get(t, [])] for t in TABLES
         }
-        return self.compare(left, right, data) is not None
+        fractional = any(isinstance(v, float) and v != int(v) for rows in data.values() for r in rows for v in r if v is not None)
+        if fractional:
+            # Valid only for FLOAT64 columns: replay on DOUBLE tables.
+            self._retype("DOUBLE")
+        try:
+            return self.compare(left, right, data) is not None
+        finally:
+            if fractional:
+                self._retype("BIGINT")
+
+    def _retype(self, sql_type: str) -> None:
+        for table in TABLES:
+            self.db.execute(f"DROP TABLE {table}")
+            self.db.execute(f"CREATE TABLE {table} ({', '.join(c + ' ' + sql_type for c in COLUMNS)})")
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +486,27 @@ def relation(rng, sources: list[str], depth: int) -> str:
             return f"({relation(rng, sources, depth - 1)})"
         return rng.choice(sources)
 
-    shape = rng.choice(["filter", "filter", "distinct", "join", "agg", "union", "plain", "having", "case", "coalesce", "in_sub", "exists_sub", "not_in_sub", "multi_agg"])
+    shape = rng.choice(["filter", "filter", "distinct", "join", "agg", "union", "plain", "having", "case", "coalesce", "in_sub", "exists_sub", "not_in_sub", "multi_agg"]
+                       + ([] if not BQ_SHAPES else ["window", "qualify", "safe", "date", "unnest", "outer_nulls", "struct"]))
+    if shape == "window":
+        fn = rng.choice(["SUM(x.b)", "MAX(x.b)", "MIN(x.c)", "COUNT(*)", "COUNT(x.b)"])
+        return f"SELECT x.a AS a, {fn} OVER (PARTITION BY x.a) AS b, x.c AS c FROM {src()} AS x"
+    if shape == "qualify":
+        fn = rng.choice(["MAX(x.b)", "MIN(x.b)", "COUNT(*)", "SUM(x.c)"])
+        return f"SELECT x.a AS a, x.b AS b, x.c AS c FROM {src()} AS x QUALIFY {fn} OVER (PARTITION BY x.a) {rng.choice(['>', '<=', '='])} {rng.choice(DOMAIN)}"
+    if shape == "safe":
+        e = rng.choice(["SAFE_DIVIDE(x.a, x.b)", "NULLIF(x.a, x.b)", "SAFE_CAST(x.a AS INT64)", "IF(x.a > x.b, x.a, x.b)", "IFNULL(NULLIF(x.a, 0), x.c)", "x.a + x.b", "x.a * 2 - x.c"])
+        return f"SELECT {e} AS a, x.b AS b, x.c AS c FROM {src()} AS x WHERE {atom(rng, ['x.a', 'x.b'])}"
+    if shape == "date":
+        return f"SELECT DATE_DIFF(DATE_ADD(DATE '2024-01-01', INTERVAL x.a DAY), DATE '2024-01-01', DAY) AS a, x.b AS b, x.c AS c FROM {src()} AS x"
+    if shape == "unnest":
+        return f"SELECT x.a AS a, e AS b, x.c AS c FROM {src()} AS x CROSS JOIN UNNEST([x.a, x.b, {rng.choice(DOMAIN)}]) AS e WHERE e IS NOT NULL"
+    if shape == "struct":
+        return f"SELECT s.f AS a, s.g AS b, s.h AS c FROM (SELECT STRUCT(x.a AS f, x.b AS g, x.c AS h) AS s FROM {src()} AS x)"
+    if shape == "outer_nulls":
+        kind = rng.choice(["LEFT", "RIGHT", "FULL OUTER"])
+        where = rng.choice(["", " WHERE y.b IS NULL", " WHERE x.b IS NULL", " WHERE y.a IS NOT NULL", f" WHERE y.b {rng.choice(['>', '<>'])} {rng.choice(DOMAIN)}"])
+        return f"SELECT x.a AS a, y.b AS b, x.c AS c FROM {src()} AS x {kind} JOIN {src()} AS y ON x.a = y.b{where}"
     if shape == "having":
         fn = rng.choice(["MAX(x.b)", "MIN(x.b)", "SUM(x.b)", "COUNT(x.b)"])
         having = rng.choice([f"COUNT(*) {rng.choice(['>', '>=', '<'])} {rng.choice((1, 2))}", f"{fn} {rng.choice(['>', '<=', '='])} {rng.choice(DOMAIN)}"])
