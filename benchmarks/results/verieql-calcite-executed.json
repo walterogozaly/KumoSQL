@@ -1,13 +1,13 @@
 {
   "suite": "VeriEQL Calcite-397 (counterexamples)",
   "order": 43,
-  "score": "29/397 refuted, 108 agree, 0 wrong",
+  "score": "29/397 refuted, 104 agree, 0 wrong",
   "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 600 random databases (400 wider ones when a query has HAVING, and every database of at most 2 rows per table) showed no difference (not a proof, not bounded verification).",
   "evidence": "executed",
   "correctness": "Every refutation was executed on both queries, is stable under row-order shuffles, and returns the same rows with DuckDB's optimizer off; none are claimed without a database",
   "coverage": {
     "refuted": 29,
-    "unknown": 108,
+    "unknown": 104,
     "unsupported": 9
   },
   "caveats": "No labels. 9 pairs are not run: 5 whose Calcite text lost a correlated column (WHERE * = t5.DEPTNO), 2 with a subquery in an outer join's ON (DuckDB cannot run it), 1 comparing VARCHAR with INT and 1 naming a renamed lateral column ($cor0.SAL0). Calcite-only spellings ($f0 names, COUNT(a, b), SINGLE_VALUE, FIRST_VALUE, empty select lists, $cor correlation variables, repeated star columns, || as concatenation) are translated as docs/verieql.md describes. 5 refuted pairs are marked equivalent by VeriEQL (80, 120, 126, 257, 367); each counterexample was executed and checked by hand (pair 80 returns 'TABLE' against 'TABLE ': Calcite pads CHAR literals, which DuckDB's VARCHAR does not). One pair (a correlated EXISTS with an unqualified column) is read differently by DuckDB than by VeriEQL. Rules were developed against SQLSolver's Calcite pairs, which overlap this suite (tuned on test). In this row 'unknown' counts pairs that agree on every database tried and 'unsupported' counts pairs DuckDB or the parser rejects.",
