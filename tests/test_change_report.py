@@ -128,3 +128,16 @@ def test_cli_writes_report(tmp_path):
     assert data["changes"][0]["cost"]["basis"] == "estimate"
     with pytest.raises(SystemExit):
         change_report_main([str(a), str(b), "--cost", str(tmp_path / "missing.json")])
+
+
+def test_changes_are_flagged_when_the_active_catalogs_do_not_own_them(tmp_path):
+    a = project(tmp_path / "a", "amount > 0")
+    b = project(tmp_path / "b", "amount > 5")
+    (b / "definitions/totals.sqlx").write_text(TOTALS + "-- edited\n", encoding="utf-8")
+    base, br = load_snapshot(a)
+    head, hr = load_snapshot(b)
+    owned = {"proj.analytics.stg"}
+    r = build_change_report(base, head, base_root=br, head_root=hr, generated_at="t", owned=(owned, owned))
+    flags = {c["model"]: c["owned"] for c in r["changes"]}
+    assert flags["analytics.stg"] is True and flags["analytics.totals"] is False
+    assert all("owned" not in c for c in report(a, b)["changes"])

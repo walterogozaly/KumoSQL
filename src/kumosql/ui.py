@@ -200,6 +200,11 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             self._json(200, live_graph.server_status())
             return
+        if self.path == "/api/refactor/status":
+            from . import refactor
+
+            self._json(200, refactor.job_status())
+            return
         if self.path == "/api/refactor":
             from . import refactor
 
@@ -219,6 +224,11 @@ class UIHandler(BaseHTTPRequestHandler):
             from . import lineage_limits
 
             self._json(200, lineage_limits.settings())
+            return
+        if self.path == "/api/schema-fetch":
+            from . import schema_fetch
+
+            self._json(200, schema_fetch.settings())
             return
         if self.path == "/api/settings":
             self._json(200, {
@@ -446,7 +456,28 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         self._json(200, saved)
 
+    def _put_schema_fetch(self) -> None:
+        from . import schema_fetch
+
+        payload = self._read_json(MAX_UI_STATE_BYTES)
+        if payload is None:
+            return
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("settings must be an object")
+            saved = schema_fetch.save_settings(payload.get("enabled"))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except OSError as exc:
+            self._json(500, {"error": str(exc)})
+            return
+        self._json(200, saved)
+
     def do_PUT(self) -> None:
+        if self.path == "/api/schema-fetch":
+            self._put_schema_fetch()
+            return
         if self.path == "/api/lineage-limits":
             self._put_lineage_limits()
             return
@@ -571,7 +602,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries",
-            "/api/refactor/run",
+            "/api/refactor/run", "/api/refactor/cancel",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -614,6 +645,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import refactor
 
                 result = refactor.run_loaded(payload)
+            elif self.path == "/api/refactor/cancel":
+                from . import refactor
+
+                result = refactor.cancel_job()
             elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries"):
                 from . import equivalences, pipeline_equivalence
 

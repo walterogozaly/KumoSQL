@@ -10,6 +10,26 @@ from sqlglot import ErrorLevel, exp
 from sqlglot.errors import UnsupportedError
 
 
+class _UnknownSubqueryScope(logging.Filter):
+    """sqlglot warns (with the SQL text) for every subquery lineage cannot scope; say it once, at debug, without the SQL."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.count = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not str(record.msg).startswith("Unknown subquery scope"):
+            return True
+        self.count += 1
+        if self.count == 1:
+            logging.getLogger("kumosql.lineage").debug("a subquery had no scope for lineage and was skipped (reported once)")
+        return False
+
+
+_scope_filter = _UnknownSubqueryScope()
+logging.getLogger("sqlglot.lineage").addFilter(_scope_filter)
+
+
 @contextmanager
 def quiet_parser():
     logger = logging.getLogger("sqlglot")

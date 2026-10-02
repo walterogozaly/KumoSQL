@@ -1,0 +1,17 @@
+{
+  "suite": "SQL-RewriteBench",
+  "order": 59,
+  "size": 180,
+  "score": "CGOQ@N 28.69, 0 wrong (130/180 rewritten, all proven)",
+  "metric": "The benchmark's correctness-gated optimization quality (runtime speedup plus credit for a simpler statement; unsafe, non-executable and unchanged cases score 0) averaged over all 180 cases. The benchmark's own reference rewrites score 40.4 on the same setup.",
+  "evidence": "proof",
+  "correctness": "0 behaviour-changing rewrites: each rewrite is proven equivalent before it is emitted, then executed against the original on PostgreSQL 16 and compared row by row (in order when the query has ORDER BY); 0 unsafe, 0 non-executable",
+  "coverage": {"proven": 130, "unknown": 50},
+  "usefulness": "130 queries changed, 130 verified; 49 at least 10% faster, 1 slower than 0.9x (ROBUST-028, 0.74x); statements 21% smaller on average (the benchmark's SCS)",
+  "performance": "Median of 5 alternating runs after a warm-up, TPC-DS and DSB at scale factor 1 on PostgreSQL 16; geometric-mean speedup 1.96x over the 130 rewrites. Per pool CGOQ: PERF 73.3, PG-AWARE 22.2, ROBUST 15.8, EQUIV 7.4",
+  "held_out": "CGOQ 24.23 on the 35 held-out cases (numbers 4, 9, 14, ... in each pool, never inspected while writing rules)",
+  "docs": "docs/rewrite-benchmarks.md#sql-rewritebench",
+  "command": "python tools/rewrite_bench.py --bench benchmark --method kumosql --cost --jobs 3 --db tpcds_sf10=tpcds --db dsb=dsb",
+  "date": "2026-10-02",
+  "caveats": "Scale factor 1 instead of the benchmark's 10, so speedups differ from the paper's machine; the reference score (40.4, paper 41.0) was timed without alternating runs. The release is a development split; held-out cases are this repo's own split."
+}

@@ -28,3 +28,19 @@ When a repository is connected, KumoSQL looks up the Dataform repository whose g
 - **When it loads and refreshes.** After each repository load, in the background. The answer is saved with the catalog cache and lives for the **query cache lifetime** (48 hours by default); an older copy is shown at once and refreshed behind it, and **Refresh schedules** re-reads it now. If Dataform cannot be reached the saved copy stays, marked as such. If no Dataform repository has the remote, or Dataform returns an error, the entry says so; the repository still loads.
 - **On the graph.** Scheduled models get a green edge in both views and a *Runs in production* tag in the detail panel that lists the schedules. `GET /api/graph` adds `schedules` to those nodes and a `workflow` summary.
 - **Export.** `kumosql-workflow-configs https://github.com/org/repo --project my-project --location us-central1 --csv schedules.csv` (or `python -m kumosql workflow-configs ...`) prints or writes one row per configuration with the columns `REPO`, `WORKFLOW_CONFIGURATION`, `TAGS`, `SPECIFIC_ACTIONS`, `INCLUDE_DEPENDENCIES`, `INCLUDE_DEPENDENTS`, `CRON_SCHEDULE`, `TIME_ZONE`, `DISABLED`, `RELEASE_CONFIGURATION`, `ACTIVE_PRODUCTION`, `UPDATED_TS`. The API is `GET /api/workflow-configs`, `POST /api/workflow-configs/refresh` and `POST /api/workflow-configs/settings` with `{"id": ...}`.
+
+## Declarations and refs
+
+A `ref("name")` is resolved from what the project declares, never from the default schema alone. KumoSQL reads:
+
+- `.sqlx` files with `type: "declaration"` (their own `database`, `schema` and `name`, else the project defaults);
+- `declare({...})` and `publish("name", {...})` calls in any `.js` file, including `includes/`, when the name, schema and database are string literals, constants, or a loop variable over a literal list (`["a", "b"].forEach(...)`, `for (const t of [...])`).
+
+Where it cannot decide, it leaves the ref unresolved (a `unsupported_ref` diagnostic, the dependency unknown) instead of guessing:
+
+- a name declared in more than one schema (Dataform itself refuses to compile it);
+- any ref to an unlisted name while a `.js` file declares tables it cannot read without running the code (`js_declaration_dynamic`). For exact results on such projects, load the compiled graph from the Dataform API.
+
+When Google credentials allow and the repository is also a Dataform repository (found the same way as workflow configurations), KumoSQL reads the newest release compilation (else the newest compilation) from the Dataform API and takes every compiled action and declaration from it, so computed declarations resolve too. It is only asked when a `.js` file could not be read; the compilation may differ from the checked-out commit. Without credentials, or when no repository matches, refs stay unresolved (`compiled_graph_unavailable`) and that load is not cached, so a later load with credentials tries again.
+
+A table name that carries a dataset (`raw.orders`, `ref("raw", "orders")`) is matched on that dataset, never on its table name alone, so a staging model that shares its source table's name still reads the source. A bare `ref("orders")` that two actions answer to is ambiguous to Dataform itself and stays unresolved; spell the dataset (`ref("raw", "orders")`) to settle it.
