@@ -8,6 +8,7 @@ unknown rather than being scored under a guessed meaning.
 * ``uniquify_star_columns``: ``SELECT *`` over a join with repeated column names inside a derived table.
 * ``expand_row_predicates``: VeriEQL Literature's uninterpreted predicates over whole rows, ``B1(X)``.
 * ``fold_table_names``: Cosette's case-insensitive table names (``A`` and ``a`` are one table).
+* ``pipes_as_concat``: Calcite's ``||`` (string concatenation; MySQL reads it as OR).
 """
 
 from __future__ import annotations
@@ -217,3 +218,26 @@ def fold_table_names(*queries: str) -> list[str]:
                 changed = True
         out.append(_mysql(tree) if changed else sql)
     return out
+
+
+def pipes_as_concat(sql: str) -> str:
+    """Calcite's ``a || b`` as ``CONCAT(a, b)``: the pairs are read as MySQL, where ``||`` means OR.
+
+    Each ``||`` token is parsed as MySQL's ``|``, whose precedence sits where Calcite's ``||`` does (above
+    comparisons, below arithmetic), and then becomes a concatenation. A query that also uses ``|`` itself is
+    left as written. ``CONCAT`` returns NULL when an argument is NULL, as ``||`` does.
+    """
+
+    from sqlglot.dialects.mysql import MySQL
+    from sqlglot.tokens import TokenType
+
+    tokens = MySQL().tokenize(sql)
+    pipes = [t for t in tokens if t.token_type == TokenType.DPIPE]
+    if not pipes or any(t.token_type == TokenType.PIPE for t in tokens):
+        return sql
+    for token in reversed(pipes):
+        sql = sql[: token.start] + "|" + sql[token.end + 1 :]
+    tree = sqlglot.parse_one(sql, read="mysql")
+    for node in reversed(list(tree.find_all(exp.BitwiseOr, bfs=False))):  # inner ones first
+        node.replace(exp.Concat(expressions=[node.this.copy(), node.expression.copy()]))
+    return _mysql(tree)
