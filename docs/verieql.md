@@ -40,7 +40,7 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Literature | 64 | 10 | 22 | 21 | 11 | 0 |
-| Calcite-397 | 397 | 224 | 22 | 122 | 29 | 0 |
+| Calcite-397 | 397 | 247 | 26 | 95 | 29 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,392 | 5,652 | 12,878 | 1,072 | 0 |
 
 On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute about 2,400 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores (the figures above are the full run, with the 1,923 pairs that DuckDB first rejected re-run after the translation fixes). Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (a table the schema names differently, `GROUP BY` positions that name aggregates, Calcite-only syntax). Translation handles bare words used as strings, `$` in names, unqualified `GROUP BY` names that DuckDB calls ambiguous, `SUBDATE`/`ADDDATE`, `CROSS JOIN .. ON` and MySQL's ungrouped columns.
