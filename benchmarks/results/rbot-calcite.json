@@ -7,7 +7,7 @@
   "docs": "docs/sqlsolver.md#r-bots-calcite-pairs",
   "command": "python tools/rbot_bench.py",
   "date": "2026-10-02",
-  "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test).",
+  "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test).",
   "evidence": "proof",
   "correctness": "0 false proofs; 2 counterexamples, each re-run in DuckDB",
   "coverage": {

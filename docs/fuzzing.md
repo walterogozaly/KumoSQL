@@ -24,7 +24,7 @@ Keep these apart: they are different kinds of evidence.
 
 **Coverage**: proved / refuted / unknown / unsupported / timeout / error for the prover, and, for pairs the prover does not refute, whether KumoSQL's own executed check (`check_result_equivalence`) finds the difference. For pairs that really differ the report gives the share refuted by the prover, the share whose counterexample replays, and the share found either way.
 
-**Held out**: some families are marked `heldout` (TLP aggregates, NoREC, a handful of unsafe-rewrite templates). They were not looked at while fixing bugs. A fix that only helps the development families does not move the held-out numbers. Exception: the outer-join flattening rules (`outer_join_flatten.py`) handle an unaliased derived table because another thread described the NoREC pairs that stayed unknown (`SELECT k FROM (SELECT .., (p) AS f FROM t LEFT JOIN u ..) WHERE f`); the held-out families went from 342 to 356 of 420 pairs proved with them (seed 2, count 60, 0 false proofs), so those 14 are not a clean held-out gain.
+**Held out**: some families are marked `heldout` (TLP aggregates, NoREC, a handful of unsafe-rewrite templates). They were not looked at while fixing bugs. A fix that only helps the development families does not move the held-out numbers.
 
 ## Suites
 

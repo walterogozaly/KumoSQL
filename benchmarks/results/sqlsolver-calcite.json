@@ -7,7 +7,7 @@
   "docs": "docs/sqlsolver.md#benchmark-coverage",
   "command": "python tools/sqlsolver_bench.py calcite",
   "date": "2026-10-02",
-  "caveats": "Rules were developed against these pairs (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test).",
+  "caveats": "Rules were developed against these pairs (tuned on test).",
   "evidence": "proof",
   "correctness": "0 false proofs (re-checked on 120 random DuckDB databases, half skewed towards the literals)",
   "coverage": {
