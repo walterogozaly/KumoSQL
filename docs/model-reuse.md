@@ -55,17 +55,18 @@ Cases: `tests/fixtures/decomposition/cases.json` (`tools/make_decomposition_case
 | | Correct | Rewrites found | Impossible declined | Traps refuted | Wrong |
 | --- | --- | --- | --- | --- | --- |
 | Baseline, development | 16/35 | 2/21 | 7/7 | 7/7 | 0 |
-| Development | 32/35 | 18/21 | 7/7 | 7/7 | 0 |
+| Development | 34/35 | 20/21 | 7/7 | 7/7 | 0 |
 | Held out | 24/24 | 14/14 | 2/2 | 8/8 | 0 |
-| All | 56/59 | 32/35 | 9/9 | 15/15 | 0 |
+| All | 58/59 | 34/35 | 9/9 | 15/15 | 0 |
 
-Open: weighted average and standard deviation from a summary. AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
+Weighted averages (a per-group `AVG` and its `COUNT`) are rebuilt as `SUM(a * n) / NULLIF(SUM(n), 0)`. Open: standard deviation from a summary (`STDDEV_POP` from sums of squares needs a square-root identity the prover does not do). AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
 
 ## Prover changes made for these evals
 
 * `eager_aggregation.unnest_grouped_source` handles `SUM` of a per-group `COUNT(x)` and `HAVING`, and replaces calls by identity (equal calls are distinct nodes).
 * `algebraic_equivalence._roll_up_aggregate` rolls `COALESCE(SUM(count), 0)` up to the `COUNT`.
-* `smt_equivalence` reads `x / NULLIF(y, 0)` as the quotient `x / y`, the same value `AVG` has.
+* `algebraic_equivalence._mean_times_count` reads `AVG(x) * COUNT(x)` over a grouped derived table as `SUM(x)`.
+* `smt_equivalence` treats `COUNT` of any two columns that are never NULL as the same count, and reads `x / NULLIF(y, 0)` as the quotient `x / y`, the same value `AVG` has.
 * Negated predicates are read as negations in every dialect (a false proof found by the first containment baseline; PR #241).
 
 ## Regression cases

@@ -47,7 +47,7 @@ def test_adapted_shared_model_reuse_floor(tmp_path):
 def test_aggregate_decomposition_floor(tmp_path):
     summary = _run(decomposition_bench, ["--all"], tmp_path)["all"]
     assert summary["wrong"] == 0
-    assert summary["correct"] >= 56
+    assert summary["correct"] >= 58
     assert summary["traps_refuted"] == summary["traps"] and summary["impossible_declined"] == summary["impossible_cases"]
 
 
