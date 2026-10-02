@@ -2,7 +2,7 @@
   "suite": "SPES Calcite (SPES-only wording)",
   "order": 23,
   "size": 34,
-  "score": "20/34 proved, 0 wrong",
+  "score": "21/34 proved, 0 wrong",
   "metric": "SPES's Calcite pairs whose SQL differs from SQLSolver's wording of the same test, proved equivalent.",
   "docs": "docs/sqlsolver.md#cosette-and-spes-fixtures",
   "command": "python tools/cosette_bench.py spes",
@@ -11,8 +11,8 @@
   "evidence": "proof",
   "correctness": "0 false proofs (re-checked on 60 random DuckDB databases)",
   "coverage": {
-    "proven": 20,
-    "unknown": 14,
+    "proven": 21,
+    "unknown": 13,
     "unsupported": 61
   },
   "held_out": "none"

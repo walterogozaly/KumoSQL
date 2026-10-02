@@ -52,3 +52,11 @@ The baseline (the checker before this work: eight random databases) was measured
 ## Regression cases
 
 Mutants that escape the single seed and the default eight databases but are caught by the suite, and every mutant the suite does not catch, are kept in `tests/fixtures/targeted_data/cases.json`; `tests/test_targeted_data_bench.py` replays them and fails if the suite stops catching one it caught before, and pins floors for the full corpus.
+
+## Unsafe-rewrite variants
+
+`--unsafe` / `--unsafe-only` score the pairs of `tests/fixtures/unsafe_rewrite_cases.jsonl` (from `tools/unsafe_fuzz.py`) whose `expect` is `either` or `different`, left query as original and right query as faulty variant: 51/51 caught by the suite (single seed 48, 8 random databases 51), median counterexample 2 rows versus 25.
+
+## Default checker
+
+`check_result_equivalence(..., targeted=True)` appends the targeted suite built around the left query after the random seeds, and `attach_synthetic_check` (the executed check on rewrites) now uses it. It only adds databases, so a rewrite that agreed before can now be refuted, never the reverse; the recorded `seeds_checked` lists the random seeds first, then the targeted databases.

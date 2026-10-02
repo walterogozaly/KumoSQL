@@ -110,3 +110,16 @@ def test_mutants_are_deterministic_distinct_and_cover_the_operators():
     assert {m.operator for m in first} == set(OPERATORS)
     assert query not in {m.sql for m in first}
     assert all(m.operator != "limit_changed" for m in mutate("SELECT sal FROM emp LIMIT 3"))
+
+
+def test_null_keys_in_both_tables_separate_intersect_from_a_join():
+    schema = {"t": {"a": "INT64"}, "u": {"b": "INT64"}}
+    left = "SELECT a AS k FROM t INTERSECT DISTINCT SELECT b AS k FROM u"
+    right = "SELECT DISTINCT t.a AS k FROM t JOIN u ON t.a = u.b"
+    with DatasetRunner(schema) as runner:
+        killers = [
+            d.label
+            for d in database_suite(left, schema, random_seeds=())
+            if not compare_outputs(runner.run(left, d.dataset), runner.run(right, d.dataset))[0]
+        ]
+    assert "null_keys" in killers
