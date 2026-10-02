@@ -155,3 +155,16 @@ def test_by_name_models_never_get_a_meaning_that_could_match_another_model():
     for match in find_overlaps(pipeline, model="p.m.u").matches:
         assert match.table != "p.m.swapped" or match.kind != "same_meaning"
     assert not [r for r in find_rollups(pipeline, model="p.m.u").rollups if r.derivability == "derivable_exact"]
+
+
+def test_star_over_an_unknown_table_in_a_later_union_branch_makes_columns_unknown():
+    for tail in ("", f" UNION ALL SELECT k, x FROM {A}"):
+        records, _ = trace(f"SELECT k, x FROM {A} UNION ALL SELECT * FROM `p.raw.nowhere`{tail}")
+        assert {r.status for r in records.values()} == {"unknown"}
+        assert {r.reason for r in records.values()} == {"unexpanded_star"}  # never lineage_error or a guessed leaf
+        assert not any(s.table == "p.raw.nowhere" for r in records.values() for s in r.sources)
+
+
+def test_known_star_in_a_union_branch_still_traces():
+    records, _ = trace(f"SELECT k, y FROM {B} UNION ALL SELECT * FROM {B}")
+    assert leaves(records["k"]) == {"p.raw.src_b.k"} and records["y"].status == "traced"

@@ -956,6 +956,21 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
     return found
 
 
+def _star_in_set_operation(query: exp.Expression) -> bool:
+    """True when a branch of a set operation still has a ``*`` (its table's columns are unknown)."""
+
+    def branch_has_star(branch: exp.Expression) -> bool:
+        while isinstance(branch, exp.Subquery):
+            branch = branch.this
+        if isinstance(branch, exp.SetOperation):
+            return branch_has_star(branch.this) or branch_has_star(branch.expression)
+        return isinstance(branch, exp.Select) and any(
+            projection.is_star or isinstance(projection.unalias(), exp.Star) for projection in branch.expressions
+        )
+
+    return any(branch_has_star(node) for node in query.find_all(exp.SetOperation) if not isinstance(node.parent, exp.SetOperation))
+
+
 def _has_unexpanded_star(query: exp.Expression) -> bool:
     return any(
         isinstance(node, exp.Star) and isinstance(node.parent, (exp.Select, exp.Column))
@@ -1148,6 +1163,7 @@ class _Analysis:
                 for problem in by_name_problems:
                     diagnostics.append(PipelineDiagnostic(key, "by_name_set_operation", problem))
 
+            union_star = _star_in_set_operation(qualified)
             if _has_unexpanded_star(qualified):
                 diagnostics.append(
                     PipelineDiagnostic(
@@ -1239,9 +1255,11 @@ class _Analysis:
                 if name == "*":
                     records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
                     continue
-                if by_name_problems:
-                    # Positional tracing would attribute columns to the wrong branch column.
-                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "by_name_set_operation")
+                if by_name_problems or union_star:
+                    # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
+                    # an unknown table counts as one column, so every position after it is off).
+                    reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
+                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason)
                     direct[ref] = frozenset(used)
                     continue
                 try:
