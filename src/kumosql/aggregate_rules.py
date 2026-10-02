@@ -59,6 +59,10 @@ def rewrite_aggregates(select: exp.Select) -> exp.Expression | None:
         _filter_into_having,
         _lift_aggregate_expressions,
         _split_compound_aggregates,
+        _having_existence_to_where,
+        _merge_joined_aggregates,
+        _distribute_over_aggregating_branches,
+        _merge_projection_over_grouped_join,
     ):
         rewritten = rule(select)
         if rewritten is not None:
@@ -70,7 +74,9 @@ def rewrite_aggregates(select: exp.Select) -> exp.Expression | None:
 
 
 def _own(select: exp.Select, kind=exp.AggFunc) -> list[exp.Expression]:
-    return [n for n in select.find_all(kind) if n.find_ancestor(exp.Select) is select]
+    """Aggregate calls of ``select`` itself: not of its subqueries, and not window functions."""
+
+    return [n for n in select.find_all(kind) if n.find_ancestor(exp.Select) is select and not isinstance(n.find_ancestor(exp.Window, exp.Select), exp.Window)]
 
 
 def _plain(select: exp.Select, *, group: bool) -> bool:
@@ -536,14 +542,18 @@ def _filter_into_having(select: exp.Select) -> exp.Expression | None:
     inner = source.this
     if not isinstance(inner, exp.Select) or _keys(inner) is None:
         return None
-    if any(inner.args.get(k) for k in ("order", "limit", "offset", "qualify", "windows", "with_", "with")) or any(inner.find_all(exp.Window)):
+    if any(inner.args.get(k) for k in ("order", "limit", "offset", "qualify", "windows", "with_", "with", "distinct")) or any(inner.find_all(exp.Window)):
         return None
+    keys = _keys(inner)
     outputs: dict[str, exp.Expression] = {}
     for item in inner.expressions:
         name = item.alias_or_name.lower()
         if not name or name in outputs or isinstance(item, exp.Star):
             return None
-        outputs[name] = _value(item)
+        value = _value(item)
+        # a bare non-key column (MySQL's lenient GROUP BY) has no single value per group
+        if _own_value_has_aggregate(value) or _key_determined(value, keys):
+            outputs[name] = value
     alias = source.alias.lower()
     moved, kept = [], []
     for part in _conjuncts(where.this):
@@ -614,11 +624,14 @@ def _lift_aggregate_expressions(select: exp.Select) -> exp.Expression | None:
         inner = source.this
         if not inner.args.get("group") and not _own(inner):
             continue
-        if any(inner.args.get(k) for k in ("qualify", "windows")) or any(inner.find_all(exp.Window)):
+        if any(inner.args.get(k) for k in ("qualify", "windows", "distinct")) or any(inner.find_all(exp.Window)):
             continue
         names = [i.alias_or_name.lower() for i in inner.expressions]
         if "" in names or len(set(names)) != len(names) or any(isinstance(i, exp.Star) for i in inner.expressions):
             continue
+        group_keys = _keys(inner) or set()
+        # group keys the derived table also outputs: f may read them as d.<name>
+        key_outputs = {_value(i).sql(): i.alias_or_name for i in inner.expressions if isinstance(_value(i), exp.Column) and _value(i).sql() in group_keys}
         targets = []
         for item in inner.expressions:
             value = _value(item)
@@ -630,20 +643,29 @@ def _lift_aggregate_expressions(select: exp.Select) -> exp.Expression | None:
                 if any(n is a for a in aggregates):
                     return not any(isinstance(m, (exp.Select, exp.Subquery, exp.Window)) for m in n.walk())
                 if isinstance(n, exp.Column):
-                    return False
+                    return n.sql() in key_outputs
                 return None
 
             if _deterministic(value, leaf):
                 targets.append(item)
         if not targets:
             continue
+        lifted_names = {t.alias_or_name.lower() for t in targets}
+        # HAVING or ORDER BY may name a select alias; it would lose its meaning
+        if any(
+            not c.table and c.name.lower() in lifted_names
+            for clause in ("having", "order", "group", "where") if inner.args.get(clause) is not None
+            for c in inner.args[clause].find_all(exp.Column)
+        ):
+            continue
         alias = source.alias.lower()
         uses = [c for c in select.find_all(exp.Column) if not _inside(c, source)]
-        lifted_names = {t.alias_or_name.lower() for t in targets}
-        if any(not c.table and c.name.lower() in lifted_names for c in uses):
+        # with no join, a bare name can only be the derived table's column
+        sole = not joins
+        if not sole and any(not c.table and c.name.lower() in lifted_names for c in uses):
             continue
         if sum(1 for n in select.walk() if isinstance(n, (exp.Table, exp.Subquery)) and (n.alias_or_name or "").lower() == alias) != 1:
-            continue
+            continue  # the inner select's own tables must not share the derived table's name
         # The inner select outputs each aggregate once; existing plain aggregate outputs are reused.
         existing = {(_value(i)).sql(): i.alias_or_name for i in inner.expressions if isinstance(_value(i), exp.AggFunc)}
         copy = select.copy()
@@ -663,10 +685,15 @@ def _lift_aggregate_expressions(select: exp.Select) -> exp.Expression | None:
                     existing[key] = f"kumosql_lift{next(_lift_counter)}"
                     new_items.append(exp.alias_(agg.copy(), existing[key]))
                 agg.replace(exp.column(existing[key], table=source.alias))
+            for column in list(value.find_all(exp.Column)):
+                if column.table.lower() != alias and column.sql() in key_outputs:
+                    column.replace(exp.column(key_outputs[column.sql()], table=source.alias))
             lifted[name] = value
         new_inner.set("expressions", new_items)
         for column in list(copy.find_all(exp.Column)):
-            if _inside(column, new_source) or column.table.lower() != alias or column.name.lower() not in lifted:
+            if _inside(column, new_source) or column.name.lower() not in lifted:
+                continue
+            if column.table.lower() != alias and not (sole and not column.table):
                 continue
             value = lifted[column.name.lower()].copy()
             value = exp.Paren(this=value) if isinstance(value, (exp.Binary, exp.Case)) else value
@@ -777,3 +804,322 @@ def _split_compound_aggregates(select: exp.Select) -> exp.Expression | None:
     if keys:
         outer = outer.group_by(*[exp.column(i.alias) for i in partial_items if not isinstance(i.this, exp.AggFunc)])
     return outer
+
+
+def _existence_test(part: exp.Expression, select: exp.Select) -> exp.Expression | None:
+    """``p`` when ``part`` says some row of the group has ``p`` TRUE: ``SUM(CASE WHEN p THEN 1 ELSE 0 END) >= 1``."""
+
+    part = _unparen(part)
+    if isinstance(part, (exp.GTE, exp.GT)):
+        agg, bound = _unparen(part.this), _unparen(part.expression)
+    elif isinstance(part, (exp.LTE, exp.LT)):
+        agg, bound = _unparen(part.expression), _unparen(part.this)
+    else:
+        return None
+    strict = isinstance(part, (exp.GT, exp.LT))
+    if not isinstance(bound, exp.Literal) or bound.is_string or bound.this != ("0" if strict else "1"):
+        return None
+    if not isinstance(agg, (exp.Sum, exp.Count)) or agg.find_ancestor(exp.Select) is not select:
+        return None
+    arg, distinct = _aggregate_arg(agg)
+    if arg is None:
+        return None
+    arg = _unparen(arg)
+    if not isinstance(arg, exp.Case) or arg.this is not None or len(arg.args.get("ifs") or []) != 1:
+        return None
+    test, value = arg.args["ifs"][0].this, _unparen(arg.args["ifs"][0].args.get("true"))
+    default = arg.args.get("default")
+    default = _unparen(default) if default is not None else None
+    if isinstance(agg, exp.Count):
+        # COUNT of a non-NULL value where p holds, NULL elsewhere: at least one row has p
+        if not _non_null_literal(value) or (default is not None and not isinstance(default, exp.Null)):
+            return None
+    else:
+        # SUM of a positive integer where p holds and 0 or NULL elsewhere: at least one row has p
+        if not (isinstance(value, exp.Literal) and not value.is_string and value.this.isdigit() and int(value.this) >= 1):
+            return None
+        if default is not None and not isinstance(default, exp.Null) and not (isinstance(default, exp.Literal) and default.this == "0"):
+            return None
+        if distinct:
+            return None
+    if any(isinstance(n, (exp.AggFunc, exp.Select, exp.Subquery, exp.Window)) for n in test.walk()):
+        return None
+    return test
+
+
+def _having_existence_to_where(select: exp.Select) -> exp.Expression | None:
+    """``SELECT k .. GROUP BY k HAVING SUM(CASE WHEN p THEN 1 ELSE 0 END) >= 1`` is ``SELECT k .. WHERE p GROUP BY k``.
+
+    The groups kept are those with a row where ``p`` holds, and filtering the rows by ``p`` first
+    leaves exactly those groups. Only a select that outputs nothing but its keys qualifies: any other
+    aggregate would see the rows the filter drops.
+    """
+
+    from .algebraic_equivalence import _and_all, _conjuncts
+
+    having = select.args.get("having")
+    keys = _keys(select)
+    if having is None or keys is None or any(select.args.get(k) for k in ("windows", "qualify")) or any(select.find_all(exp.Window)):
+        return None
+    if any(not _key_determined(_value(i), keys) for i in select.expressions) or any(isinstance(i, exp.Star) for i in select.expressions):
+        return None
+    order = select.args.get("order")
+    if order is not None and _own(order):
+        return None
+    parts = _conjuncts(having.this)
+    tests = [(p, _existence_test(p, select)) for p in parts]
+    found = [(p, t) for p, t in tests if t is not None]
+    others = [p for p, t in tests if t is None]
+    if len(found) != 1 or any(_own_value_has_aggregate(p) for p in others):
+        return None
+    test = found[0][1].copy()
+    where = select.args.get("where")
+    select.set("where", exp.Where(this=_and_all(([where.this] if where is not None else []) + [test])))
+    select.set("having", exp.Having(this=_and_all(others)) if others else None)
+    return select
+
+
+def _positional_body(select: exp.Select) -> tuple[str, list[str]] | None:
+    """The SQL of a select's ``FROM .. WHERE .. GROUP BY .. HAVING`` with tables renamed by position, and the original names."""
+
+    sources = [_from(select)] + [j.this for j in select.args.get("joins") or []]
+    if any(not isinstance(src, exp.Table) for src in sources):
+        return None
+    names = [src.alias_or_name.lower() for src in sources]
+    if len(set(names)) != len(names):
+        return None
+    copy = select.copy()
+    copy.set("expressions", [exp.Literal.number(1)])
+    copy.set("having", None)
+    renames = {name: f"kumosql_b{i}" for i, name in enumerate(names)}
+    for column in copy.find_all(exp.Column):
+        if column.table:
+            if column.table.lower() not in renames:
+                return None  # a correlated reference
+            column.set("table", exp.to_identifier(renames[column.table.lower()]))
+    for i, table in enumerate([_from(copy)] + [j.this for j in copy.args.get("joins") or []]):
+        table.set("alias", exp.TableAlias(this=exp.to_identifier(f"kumosql_b{i}")))
+    return copy.sql(), names
+
+
+def _merge_joined_aggregates(select: exp.Select) -> exp.Expression | None:
+    """Inner-joined copies of one grouped query, joined on all their keys, are that one query.
+
+    ``(SELECT k, SUM(x) AS a FROM t GROUP BY k) AS d1 JOIN (SELECT k, MAX(y) AS b FROM t GROUP BY k)
+    AS d2 ON d1.k <=> d2.k`` has one row per group of ``t`` with both aggregates: ``(SELECT k, SUM(x),
+    MAX(y) FROM t GROUP BY k)``. Each side has exactly one row per key, so the NULL-safe key equality
+    pairs them one to one (an ordinary ``=`` would drop the NULL group, so it does not qualify); with no
+    keys both sides are one row and join ``ON TRUE``. Different ``HAVING`` filters keep the groups that
+    pass both.
+    """
+
+    from .algebraic_equivalence import _and_all, _conjuncts
+
+    joins = select.args.get("joins") or []
+    if not joins or any(j.args.get("side") or (j.args.get("kind") or "").upper() not in ("", "INNER", "CROSS") or j.args.get("using") for j in joins):
+        return None
+    sources = [_from(select)] + [j.this for j in joins]
+    derived = []
+    for source in sources:
+        if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+            return None
+        inner = source.this
+        if any(inner.args.get(k) for k in ("distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")) or any(inner.find_all(exp.Window)):
+            return None
+        group = inner.args.get("group")
+        if group is not None and _keys(inner) is None:
+            return None
+        if group is None and not _own(inner):
+            return None
+        body = _positional_body(inner)
+        if body is None:
+            return None
+        names = [i.alias_or_name.lower() for i in inner.expressions]
+        if "" in names or len(set(names)) != len(names) or any(isinstance(i, exp.Star) for i in inner.expressions):
+            return None
+        derived.append((source.alias.lower(), inner, body))
+    if len({d[2][0] for d in derived}) != 1 or len({d[0] for d in derived}) != len(derived):
+        return None
+    first_group = derived[0][1].args.get("group")
+    keys_renamed = {_rename_tables(k.copy(), derived[0][2][1]).sql() for k in first_group.expressions} if first_group else set()
+
+    def key_of(alias: str, column: exp.Column) -> str | None:
+        """The key, with tables renamed by position, that output ``alias.column`` holds."""
+
+        _, inner, (_, names) = next(d for d in derived if d[0] == alias)
+        for item in inner.expressions:
+            if item.alias_or_name.lower() == column.name.lower():
+                renamed = _rename_tables(_value(item).copy(), names).sql()
+                return renamed if renamed in keys_renamed else None
+        return None
+
+    # every later copy is linked to an earlier one on every key, and the ON clauses say nothing else
+    seen = {derived[0][0]}
+    for join, (alias, _, _) in zip(joins, derived[1:]):
+        on = join.args.get("on")
+        linked: set[str] = set()
+        for part in _conjuncts(on) if on is not None else []:
+            part = _unparen(part)
+            if isinstance(part, exp.Boolean) and part.this:
+                continue
+            if not isinstance(part, exp.NullSafeEQ):
+                return None
+            left, right = _unparen(part.this), _unparen(part.expression)
+            if not isinstance(left, exp.Column) or not isinstance(right, exp.Column):
+                return None
+            if left.table.lower() == alias:
+                left, right = right, left
+            if right.table.lower() != alias or left.table.lower() not in seen:
+                return None
+            a, b = key_of(left.table.lower(), left), key_of(alias, right)
+            if a is None or a != b:
+                return None
+            linked.add(a)
+        if linked != keys_renamed:
+            return None
+        seen.add(alias)
+    if select.args.get("where") is not None and any(
+        c.table.lower() not in seen for c in select.args["where"].find_all(exp.Column) if c.table
+    ):
+        return None
+    if any(not c.table for c in select.find_all(exp.Column) if not any(_inside(c, s) for s in sources)):
+        return None
+    # the merged select: the first copy, with every copy's outputs renamed into its tables
+    first_alias, first, (_, first_names) = derived[0]
+    merged = first.copy()
+    items, renames, havings = [], {}, []
+    for alias, inner, (_, names) in derived:
+        mapping = dict(zip(names, first_names))
+        for item in inner.expressions:
+            value = _value(item).copy()
+            for column in value.find_all(exp.Column):
+                if column.table:
+                    column.set("table", exp.to_identifier(mapping[column.table.lower()]))
+            name = f"kumosql_j{len(items)}"
+            items.append(exp.alias_(value, name))
+            renames[(alias, item.alias_or_name.lower())] = name
+        if inner.args.get("having") is not None:
+            having = inner.args["having"].this.copy()
+            for column in having.find_all(exp.Column):
+                if column.table:
+                    column.set("table", exp.to_identifier(mapping[column.table.lower()]))
+            havings.append(having)
+    merged.set("expressions", items)
+    merged.set("having", exp.Having(this=_and_all(havings)) if havings else None)
+    copy = select.copy()
+    copy.set("joins", None)
+    copy.set("from", None)
+    copy.set("from_", exp.From(this=exp.Subquery(this=merged, alias=exp.TableAlias(this=exp.to_identifier(first_alias)))))
+    for column in list(copy.find_all(exp.Column)):
+        if _inside(column, merged):
+            continue
+        key = (column.table.lower(), column.name.lower())
+        if column.table and column.table.lower() in seen:
+            if key not in renames:
+                return None
+            column.set("table", exp.to_identifier(first_alias))
+            column.set("this", exp.to_identifier(renames[key]))
+    return copy
+
+
+def _rename_tables(node: exp.Expression, names: list[str]) -> exp.Expression:
+    """Name the tables in ``node`` by their position in ``names`` (a lone table also for bare columns)."""
+
+    renames = {name: f"kumosql_b{i}" for i, name in enumerate(names)}
+    for column in list(node.find_all(exp.Column)):
+        if column.table and column.table.lower() in renames:
+            column.set("table", exp.to_identifier(renames[column.table.lower()]))
+        elif not column.table and len(names) == 1:
+            column.set("table", exp.to_identifier("kumosql_b0"))
+    return node
+
+
+def _distribute_over_aggregating_branches(select: exp.Select) -> exp.Expression | None:
+    """``SELECT f FROM (A UNION ALL B) AS t WHERE p`` is ``SELECT f FROM A AS t WHERE p UNION ALL ..`` when A or B aggregate.
+
+    ``_distribute`` does this when no aggregate appears anywhere below the select; the branches'
+    own aggregates do not matter, only that the select itself does not aggregate.
+    """
+
+    from .algebraic_equivalence import MAX_BRANCHES, _aligned_branches, _branch_copy, _no_extras, _plain_sources
+
+    if not _no_extras(select, allow_group=False) or _own(select) or not any(select.find_all(exp.AggFunc)):
+        return None
+    sources = _plain_sources(select)
+    if not sources:
+        return None
+    branch_lists = [_aligned_branches(s) for s in sources]
+    if any(b is None for b in branch_lists):
+        return None
+    total = 1
+    for branches in branch_lists:
+        total *= len(branches)
+    if total > MAX_BRANCHES:
+        return None
+    copies = []
+    for combination in itertools.product(*branch_lists):
+        copy = select.copy()
+        for source, branch in zip(sources, combination):
+            copy = _branch_copy(copy, source, branch)
+        copies.append(copy)
+    result: exp.Expression = copies[0]
+    for copy in copies[1:]:
+        result = exp.Union(this=result, expression=copy, distinct=False)
+    return result
+
+
+def _merge_projection_over_grouped_join(select: exp.Select) -> exp.Expression | None:
+    """``SELECT f(d.x) FROM (SELECT p.s * q.c AS x FROM (..) AS p JOIN (..) AS q ON ..) AS d`` reads the join directly.
+
+    Both selects only compute values row by row, so the outer one's expressions can be written over
+    the inner one's sources. It is limited to joins of grouped subqueries, so that
+    ``eager_aggregation.flatten_grouped_join`` sees the join it reads off.
+    """
+
+    from .algebraic_equivalence import _and_all
+
+    source = _from(select)
+    if select.args.get("joins") or not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
+        return None
+    if any(select.args.get(k) for k in ("group", "having", "distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")):
+        return None
+    outside = [n for n in select.walk() if not _inside(n, source)]
+    if _own(select) or any(isinstance(n, (exp.Window, exp.Star)) or (isinstance(n, exp.Select) and n is not select) for n in outside):
+        return None
+    inner = source.this
+    if any(inner.args.get(k) for k in ("group", "having", "distinct", "order", "limit", "offset", "qualify", "windows", "with_", "with")):
+        return None
+    joins = inner.args.get("joins") or []
+    if not joins or _own(inner) or any(isinstance(i, exp.Star) for i in inner.expressions):
+        return None
+    if any(isinstance(n, exp.Window) for i in inner.expressions for n in i.walk()):
+        return None
+    inner_sources = [_from(inner)] + [j.this for j in joins]
+    if not any(isinstance(s, exp.Subquery) and isinstance(s.this, exp.Select) and (s.this.args.get("group") or _own(s.this)) for s in inner_sources):
+        return None
+    outputs = {}
+    for item in inner.expressions:
+        name = item.alias_or_name.lower()
+        value = _value(item)
+        if not name or name in outputs or not _deterministic(value):
+            return None
+        outputs[name] = value
+    alias = source.alias.lower()
+    copy = select.copy()
+    for column in list(copy.find_all(exp.Column)):
+        if _inside(column, _from(copy)):
+            continue
+        if column.table.lower() not in (alias, ""):
+            return None  # a correlated reference to an enclosing query
+        if column.name.lower() not in outputs:
+            return None
+        value = outputs[column.name.lower()].copy()
+        value = exp.Paren(this=value) if isinstance(value, (exp.Binary, exp.Case)) else value
+        column.replace(exp.alias_(value, column.name) if column.parent is copy else value)
+    merged = inner.copy()
+    merged.set("expressions", copy.expressions)
+    where = copy.args.get("where")
+    if where is not None:
+        existing = merged.args.get("where")
+        merged.set("where", exp.Where(this=_and_all(([existing.this] if existing is not None else []) + [where.this])))
+    return merged
