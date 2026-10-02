@@ -43,6 +43,14 @@ class IncrementalError(ValueError):
     """The model or workload is outside what the simulator can run."""
 
 
+class MergeConflict(IncrementalError):
+    """BigQuery MERGE would fail: a target row matches several source rows.
+
+    This is modelled BigQuery behaviour, so it counts as the run failing; every
+    other :class:`IncrementalError` means the simulator could not run the model.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -60,6 +68,8 @@ class IncrementalModel:
     pre_operations: tuple[str, ...] = ()
     # Output columns allowed to differ (audit columns such as a load timestamp).
     ignore_columns: tuple[str, ...] = ()
+    # sqlglot dialect the query and pre_operations are written in.
+    dialect: str = "bigquery"
 
 
 @dataclass(frozen=True)
@@ -69,6 +79,8 @@ class SourceTable:
     columns: dict[str, str]
     key: tuple[str, ...] = ()
     time_column: str | None = None
+    # DuckDB default expressions for columns the source DML does not set.
+    defaults: dict[str, str] = field(default_factory=dict)
 
 
 _STRING = r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|`(?:[^`\\]|\\.)*`'
@@ -142,6 +154,9 @@ def _evaluate(expression: str, target: str, incremental: bool) -> str:
     ref = re.fullmatch(r"ref\(\s*((?:%s)(?:\s*,\s*(?:%s))*)\s*\)" % (_STRING, _STRING), expression)
     if ref:
         return _js_string(_split_args(ref.group(1))[-1])
+    ref_object = re.fullmatch(r"ref\(\s*\{.*\bname\s*:\s*(%s).*\}\s*\)" % _STRING, expression, re.DOTALL)
+    if ref_object:
+        return _js_string(ref_object.group(1))
     when = re.fullmatch(r"when\((.*)\)", expression, re.DOTALL)
     if when:
         args = _split_args(when.group(1))
@@ -185,10 +200,10 @@ def parse_incremental_sqlx(sqlx: str, target: str) -> IncrementalModel:
         inner = block[block.index("{") + 1 : block.rindex("}")]
         # ``${when(incremental(), `stmt`)}`` yields a statement only on incremental runs.
         rendered = _resolve(inner, target, True).strip()
-        if rendered and _resolve(inner, target, False).strip() != rendered:
+        if _resolve(inner, target, False).strip() != rendered:
             pre.extend(s.strip() for s in rendered.split(";") if s.strip())
-        elif rendered and "incremental()" not in inner:
-            pre.extend(s.strip() for s in rendered.split(";") if s.strip())
+        elif rendered:
+            raise IncrementalError("pre_operations that run on every run are not simulated")
     return IncrementalModel(
         target=target,
         full_sql=_resolve(body, target, False).strip().rstrip(";"),
@@ -235,6 +250,9 @@ def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
     literal = f"{clock:%Y-%m-%d %H:%M:%S}"
 
     def pin(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.Table) and read != "duckdb" and (node.args.get("db") or node.args.get("catalog")):
+            # tables are local DuckDB tables named by their last part
+            return exp.Table(this=node.this, alias=node.args.get("alias"))
         if isinstance(node, (exp.CurrentTimestamp, exp.CurrentDatetime)):
             return exp.cast(exp.Literal.string(literal), "timestamp")
         if isinstance(node, exp.CurrentDate):
@@ -245,6 +263,10 @@ def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
 
 
 def _norm(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_norm(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, _norm(v)) for k, v in value.items()))
     if isinstance(value, float):
         return round(value, 9)
     if hasattr(value, "normalize") and hasattr(value, "as_tuple"):
@@ -281,7 +303,12 @@ class Simulation:
         self.runs = 0
         self.failed: str | None = None
         for name, table in sources.items():
-            cols = ", ".join(f'"{c}" {_DUCK_TYPES.get(t.upper(), t)}' for c, t in table.columns.items())
+            cols = ", ".join(
+                f'"{c}" {_DUCK_TYPES.get(t.upper(), t)}' + (f" DEFAULT {table.defaults[c]}" if c in table.defaults else "")
+                for c, t in table.columns.items()
+            )
+            if table.defaults:
+                self.con.execute("CREATE SEQUENCE IF NOT EXISTS _load_seq")
             self.con.execute(f'CREATE TABLE "{name}" ({cols})')
         for statement in initial:
             self._dml(statement)
@@ -295,7 +322,7 @@ class Simulation:
             raise IncrementalError(f"source statement failed: {exc}") from exc
 
     def _full_query(self) -> str:
-        return _to_duckdb(self.model.full_sql, self.clock)
+        return _to_duckdb(self.model.full_sql, self.clock, self.model.dialect)
 
     # -- the Dataform run cycle ------------------------------------------
 
@@ -310,8 +337,8 @@ class Simulation:
             return
         self.runs += 1
         for statement in m.pre_operations:
-            self.con.execute(_to_duckdb(statement, self.clock))
-        self.con.execute(f"CREATE OR REPLACE TEMP TABLE __incr AS {_to_duckdb(m.incremental_sql, self.clock)}")
+            self.con.execute(_to_duckdb(statement, self.clock, m.dialect))
+        self.con.execute(f"CREATE OR REPLACE TEMP TABLE __incr AS {_to_duckdb(m.incremental_sql, self.clock, m.dialect)}")
         columns = [r[0] for r in self.con.execute(f'SELECT column_name FROM information_schema.columns WHERE table_name = \'{m.target}\' ORDER BY ordinal_position').fetchall()]
         if m.unique_key:
             on = " AND ".join(f't."{k}" = s."{k}"' for k in m.unique_key)
@@ -320,7 +347,7 @@ class Simulation:
                 f'SELECT count(*) FROM (SELECT t.rowid FROM "{m.target}" t JOIN __incr s ON {on} GROUP BY t.rowid HAVING count(*) > 1)'
             ).fetchone()[0]
             if dup:
-                raise IncrementalError("MERGE: a target row matches more than one source row")
+                raise MergeConflict("MERGE: a target row matches more than one source row")
             self.con.execute(f'DELETE FROM "{m.target}" t USING __incr s WHERE {on}')
         collist = ", ".join(f'"{c}"' for c in columns)
         self.con.execute(f'INSERT INTO "{m.target}" ({collist}) SELECT {collist} FROM __incr')
@@ -338,7 +365,7 @@ class Simulation:
             cols_f, full = self.full_rows()
             cols_t, got = self.target_rows()
         except Exception as exc:
-            return BatchResult(index, "error", error=str(exc))
+            raise IncrementalError(f"cannot compare in DuckDB: {exc}") from exc
         keep = [i for i, c in enumerate(cols_f) if c.lower() not in {x.lower() for x in self.model.ignore_columns}]
         keep_t = [i for i, c in enumerate(cols_t) if c.lower() not in {x.lower() for x in self.model.ignore_columns}]
         if len(keep) != len(keep_t):
@@ -365,10 +392,12 @@ class Simulation:
             self._dml(statement)
         try:
             self.run_incremental()
-        except IncrementalError as exc:
+        except MergeConflict as exc:
             return BatchResult(index, "error", error=str(exc))
+        except IncrementalError:
+            raise
         except Exception as exc:
-            return BatchResult(index, "error", error=str(exc))
+            raise IncrementalError(f"cannot run the model in DuckDB: {exc}") from exc
         return self.compare(index)
 
 
@@ -788,8 +817,8 @@ def prove_watermark(
     if model.pre_operations:
         return None
     try:
-        full = sqlglot.parse_one(model.full_sql, read="bigquery")
-        incremental = sqlglot.parse_one(model.incremental_sql, read="bigquery")
+        full = sqlglot.parse_one(model.full_sql, read=model.dialect)
+        incremental = sqlglot.parse_one(model.incremental_sql, read=model.dialect)
     except sqlglot.errors.SqlglotError:
         return None
     ignore = frozenset(c.lower() for c in model.ignore_columns)
