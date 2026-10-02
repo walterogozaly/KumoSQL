@@ -1,0 +1,18 @@
+{
+  "suite": "Rewrite composition",
+  "order": 320,
+  "size": 60,
+  "score": "0 behaviour changes in 150 changed steps; 60/60 canonical pipelines terminate and are idempotent",
+  "metric": "Random chains of the registered rules (random subset and order, 1-3 repeats) over generated CTE/subquery queries; every step is compared with its input on random DuckDB databases. 541 steps run, 150 changed the SQL; the prover verified 146 of those and left 4 unsupported.",
+  "evidence": "executed",
+  "correctness": "0 behaviour changes, 0 errors, 0 nondeterministic chains, 0 prover false proofs (60 queries, seed 21)",
+  "coverage": {
+    "proven": 146,
+    "unsupported": 4
+  },
+  "held_out": "none",
+  "docs": "docs/fuzzing.md#suites",
+  "command": "python tools/unsafe_fuzz.py compose --count 60 --seed 21",
+  "date": "2026-10-02",
+  "caveats": "Semantic preservation is bounded (random databases), not a proof. Coverage counts the prover on changed steps only. Found and fixed: canonical_rule_order() was not idempotent (an unused CTE removed after inlining left a single-use CTE)."
+}

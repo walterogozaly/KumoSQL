@@ -2163,8 +2163,11 @@ def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
 
 
 def _and_all(parts: list[exp.Expression]) -> exp.Expression | None:
+    # sqlglot prints trees without adding parentheses, so an OR operand must carry its own.
     result = None
     for part in parts:
+        if isinstance(part, exp.Or):
+            part = exp.Paren(this=part)
         result = part if result is None else exp.And(this=result, expression=part)
     return result
 
@@ -3832,6 +3835,21 @@ def _group_by_to_distinct(select: exp.Select) -> exp.Expression | None:
     return copy
 
 
+def _parenthesize_boolean(tree: exp.Expression) -> exp.Expression:
+    """Wrap an ``OR`` under ``AND`` (or ``NOT``) in parentheses; sqlglot prints trees without adding them.
+
+    Whatever rule built the tree, the printed text then reads back with the same precedence.
+    """
+
+    tree = tree.copy()
+    for node in list(tree.find_all(exp.Or, exp.And)):
+        if isinstance(node, exp.Or) and isinstance(node.parent, (exp.And, exp.Not)):
+            node.replace(exp.Paren(this=node.copy()))
+        elif isinstance(node, exp.And) and isinstance(node.parent, exp.Not):
+            node.replace(exp.Paren(this=node.copy()))
+    return tree
+
+
 def _parenthesize_set_operations(tree: exp.Expression) -> exp.Expression:
     """Keep the shape of nested set operations through the text the prover re-reads.
 
@@ -4139,7 +4157,7 @@ def normalize(
             replacement = _canonicalize_union_source(subquery)
             if replacement is not None:
                 subquery.replace(replacement)
-    return _parenthesize_set_operations(tree).sql(dialect=dialect)
+    return _parenthesize_boolean(_parenthesize_set_operations(tree)).sql(dialect=dialect)
 
 
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:

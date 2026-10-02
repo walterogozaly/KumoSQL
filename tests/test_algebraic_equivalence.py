@@ -1619,3 +1619,13 @@ def test_single_row_source_grouping_is_dropped_and_near_misses_kept():
     assert "GROUP BY" in normalize(two).upper() or "DISTINCT" in normalize(two).upper()
     glob = "SELECT COUNT(*) FROM (SELECT a AS k FROM t ORDER BY a LIMIT 1) AS d GROUP BY k"
     assert "GROUP BY" in normalize(glob).upper()
+
+
+def test_printed_normal_form_keeps_or_inside_and_parenthesized():
+    from kumosql.algebraic_equivalence import _parenthesize_boolean
+    from sqlglot import exp, parse_one
+
+    tree = exp.And(this=parse_one("a >= 1"), expression=parse_one("b = 2 OR a < 2"))
+    assert "(b = 2 OR a < 2)" in _parenthesize_boolean(tree).sql()
+    negated = exp.Not(this=parse_one("a = 1 OR b = 2"))
+    assert parse_one(_parenthesize_boolean(negated).sql()) == parse_one("NOT (a = 1 OR b = 2)")
