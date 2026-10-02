@@ -283,7 +283,7 @@ def build_query_graph(
     parse_incomplete = {
         diagnostic.model
         for diagnostic in analysis.diagnostics
-        if diagnostic.code in {"parse_error", "no_query", "qualify_error"}
+        if diagnostic.code in {"parse_error", "no_query", "qualify_error", "unparsed_operation"}
     }
 
     def identity_for_key(pipeline: "Pipeline", key: str) -> tuple[NodeIdentity, str]:
@@ -350,10 +350,11 @@ def build_query_graph(
             ).declared = True
 
         query = analysis.parsed.get(downstream_key)
-        if query is None:
+        extra_tables = analysis.script_tables.get(downstream_key, ())
+        if query is None and not extra_tables:
             continue
-        cte_names = {cte.alias_or_name.casefold() for cte in query.find_all(exp.CTE)}
-        for table in query.find_all(exp.Table):
+        cte_names = {cte.alias_or_name.casefold() for cte in query.find_all(exp.CTE)} if query is not None else set()
+        for table in (*(query.find_all(exp.Table) if query is not None else ()), *extra_tables):
             if not table.db and table.name.casefold() in cte_names:
                 continue
             if _TEMPLATE_TOKEN.fullmatch(table.name):

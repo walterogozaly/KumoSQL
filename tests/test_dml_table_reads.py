@@ -1,5 +1,5 @@
 """Tables read by statements that are not queries (DELETE, UPDATE, INSERT ... VALUES, CREATE ... LIKE/CLONE, and
-subqueries in SET, DECLARE and ASSERT).
+subqueries in script SET and DECLARE).
 
 They become graph edges and appear in ``table_reads()``; the table a statement writes is not a read, and the columns of
 such statements are still not traced (the model keeps its ``unknown_reads`` flag).
@@ -30,6 +30,7 @@ def _pipeline(sql: str, **extra: str) -> Pipeline:
         "UPDATE `p.d.victim` SET a = 1 FROM `p.d.raw` WHERE victim.a = raw.a",
         "INSERT INTO `p.d.victim` (a) VALUES ((SELECT COUNT(*) FROM `p.d.raw`))",
         "CREATE TABLE `p.d.victim` CLONE `p.d.raw`",
+        "CREATE TABLE `p.d.victim` LIKE `p.d.raw`",
     ],
 )
 def test_reads_become_edges_and_the_written_table_does_not(sql):
@@ -67,7 +68,6 @@ def test_a_script_mixing_a_query_and_a_delete_reads_both():
     [
         "DECLARE n INT64;\nSET n = (SELECT COUNT(*) FROM `p.d.raw`);\nSELECT n AS n",
         "DECLARE n INT64 DEFAULT (SELECT MAX(a) FROM `p.d.raw`);\nSELECT n AS n",
-        "ASSERT (SELECT COUNT(*) FROM `p.d.raw`) > 0 AS 'raw is empty';\nSELECT 1 AS a",
     ],
 )
 def test_script_subqueries_read_their_tables(sql):

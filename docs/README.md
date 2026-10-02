@@ -37,6 +37,7 @@ Each eval's numbers are in the README scoreboard, generated from `benchmarks/res
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on LLM-R2's 11,353 queries, test files held out |
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage |
 | [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct |
+| [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
 | [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases |
 | [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC, unsafe-rewrite detection, rewrite composition |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking, counterexample minimization |
