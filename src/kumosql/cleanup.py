@@ -436,7 +436,6 @@ class RemoveUnusedCtesRule(RewriteRule):
         if removed and not clause.expressions:
             set_with_clause(query, None)
         return removed, []
-<<<<<<< HEAD
 
 
 def _named_as_value(query: exp.Expression, name: str, cte: exp.Expression) -> bool:
@@ -446,14 +445,3 @@ def _named_as_value(query: exp.Expression, name: str, cte: exp.Expression) -> bo
         column.name == name and not column.table and not _inside(column, cte)
         for column in query.find_all(exp.Column)
     )
-
-
-def _inside(node: exp.Expression, ancestor: exp.Expression) -> bool:
-    parent = node.parent
-    while parent is not None:
-        if parent is ancestor:
-            return True
-        parent = parent.parent
-    return False
-=======
->>>>>>> origin/master
