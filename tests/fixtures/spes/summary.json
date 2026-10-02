@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/georgia-tech-db/spes",
+  "commit": "8049f98d8e64a5c2c43d1ed581e7d5b6e0a006e2",
+  "spes_pairs": 232,
+  "already_in_sqlsolver": {
+    "normalised_text": 135,
+    "alias_renaming": 2
+  },
+  "spes_only": 95,
+  "kept": 34,
+  "skipped": 61,
+  "skipped_by_category": {
+    "concat_operator": 1,
+    "duckdb_error": 31,
+    "random_db_disagrees": 7,
+    "sqlglot_parse_error": 22
+  },
+  "schema": "tests/fixtures/sqlsolver/calcite.schema.sql"
+}
