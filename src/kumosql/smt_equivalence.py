@@ -94,6 +94,10 @@ class TableConstraints:
 
     not_null: frozenset = frozenset()
     keys: tuple = ()
+    # Each ``(columns, parent_table, parent_columns)``: every row whose columns are all non-NULL has a
+    # matching row in the parent. The SMT encoding does not use it; the algebraic normalizer does
+    # (``fk_rules``) and counterexamples must respect it.
+    foreign_keys: tuple = ()
 
 
 BASE_ASSUMPTIONS = (
@@ -1824,6 +1828,14 @@ class _Prover:
                         seen.add(value)
                 rows = unique
             legal[table] = rows
+        for table, rows in legal.items():
+            constraint = self.constraints.get(table.lower())
+            for columns, parent, parent_columns in (constraint.foreign_keys if constraint else ()):
+                parents = {tuple(r.get(c) for c in parent_columns) for r in legal.get(parent, [])}
+                for row in rows:
+                    value = tuple(row.get(c) for c in columns)
+                    if None not in value and value not in parents:
+                        return None
         return legal
 
     # ---- mappings ------------------------------------------------------
