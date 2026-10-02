@@ -44,6 +44,10 @@ The benchmark runs with `exact_arithmetic=True` (mathematical integers, as SQLSo
 
 SQLSolver's own proved counts are in its paper; they are not repeated here because they could not be checked against the repository, which publishes inputs only.
 
+## Negated tests in every dialect
+
+`x IS NOT NULL`, `x NOT LIKE y` and `x NOT ILIKE y` are rewritten to `NOT (...)` before either prover reads a query (`ast_utils.canonical_negation`). sqlglot parses them under PostgreSQL as the positive node with a `negate` flag, which an earlier version of the provers ignored: read as PostgreSQL, `x IS NULL` and `x IS NOT NULL` were proven equivalent. The BigQuery default was never affected. `tests/test_negated_predicates.py` pins it for five dialects.
+
 ## Rewrite verification and declared facts
 
 `kumosql.prover_context.prove` is the one entry point the app uses; `verify_rewrite` calls it for any changed statement when the solver is enabled (`prover` section of the saved settings, default on, 5000 ms). The facts it may assume come from `kumosql.prover_schema`: BigQuery `REQUIRED` columns and `tableConstraints.primaryKey` from the saved catalog (`bigquery_catalog.saved_tables`), and Dataform `assertions` read by `pipeline_loading` into `Model.non_null` / `Model.unique_keys`. A table is registered under each spelling (`project.dataset.table`, `dataset.table`, `table`); a bare name shared by two tables is dropped. Proofs that used any declared fact list the assumption "declared keys and NOT NULL columns hold in the data".
@@ -84,3 +88,14 @@ A `GROUP BY` of exactly the selected columns inside an `IN` or `EXISTS` test is 
 ## R-Bot's Calcite pairs
 
 `python tools/rbot_bench.py` scores the 45 (query, Calcite-rewrite) pairs shipped with [R-Bot](https://github.com/curtis-sun/LLM4Rewrite) (Apache-2.0, copied with its LICENSE to `tests/fixtures/rbot/`). Each pair is reported as `proved`, `different` (the prover failed and a random DuckDB database shows the queries disagree), `unknown`, or `wrong` (proved, yet a counterexample exists; must stay 0). R-Bot's TPC-H and DSB folders hold only template instances (same query, different constants), not rewrites, so they have nothing to score. `tests/test_rbot_benchmarks.py` holds the floor.
+
+## QED's Calcite cases
+
+`python tools/qed_bench.py` scores the Calcite optimizer-test cases shipped with the [QED prover](https://github.com/qed-solver/prover) (MIT, VLDB 2024). QED stores them as relational-algebra JSON; `tools/qed_to_sql.py` converts 375 of the 444 to SQL (`tests/fixtures/qed/`, with QED's LICENSE). The other 69 use features the conversion cannot reproduce exactly, such as aggregate `FILTER` clauses that QED's JSON drops, geospatial functions, `LITERAL_AGG` and windows, and are listed with a reason in `qed_calcite_skipped.jsonl`. `tools/validate_qed_pairs.py` runs both sides of every converted pair in DuckDB. Verdicts are the same four as for R-Bot, and `tests/test_qed_benchmarks.py` holds the floor.
+
+| Suite | Proved | Different | Unknown | Wrong |
+|---|---|---|---|---|
+| QED Calcite (375 converted) | 221 | 1 | 153 | 0 |
+| R-Bot Calcite (45) | 18 | 2 | 25 | 0 |
+
+Rules added for these suites live in `src/kumosql/keyed_rules.py`. A `GROUP BY` over one table that includes a NOT NULL key (grouped, or fixed by `WHERE k = constant`) reads each row's own value, so `SUM(x)` is `x`, `COUNT(*)` is 1 and `GROUPING(c)` is 0. A `DISTINCT` that outputs such a key is dropped in a second attempt when the first finds no proof, since dropping it on one side only can hide a match. `EXISTS` over a select made only of aggregates, with no `GROUP BY`, is TRUE.

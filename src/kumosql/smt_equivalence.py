@@ -45,6 +45,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
+from .ast_utils import canonical_negation
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -571,10 +572,13 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        statements = [s for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+        statements = [canonical_negation(s) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
+        if any(statement.find_all(exp.Pivot)):
+            # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
+            raise Unsupported("PIVOT and UNPIVOT are not modeled")
         self._check_nondeterminism(statement)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
@@ -2857,7 +2861,7 @@ def _split_limit(sql: str, dialect: str):
     shape is not handled (``spec`` then says why).
     """
 
-    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
     root = tree
     while isinstance(root, exp.Subquery):
         root = root.this
