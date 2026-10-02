@@ -1381,6 +1381,14 @@ def _scan_lineage(
             reason = reason or "unresolved_column"
         elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
             literal_unnest = True  # UNNEST of literals reads no column
+        elif (
+            item is not node
+            and isinstance(item.source, exp.Query)
+            and not isinstance(item.expression, exp.Star)
+            and not isinstance(getattr(item.expression, "this", None), exp.Star)
+            and item.expression.find(exp.Column) is None
+        ):
+            literal_unnest = True  # a derived column like COUNT(*) or 1 reads no column
         elif item is not node:
             reason = reason or "untraceable_source"
     if reason is None and not leaves and reads_column and not literal_unnest:

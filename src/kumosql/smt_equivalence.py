@@ -541,6 +541,10 @@ class _AggCtx:
         self.calls: list[_AggCall] = []
 
 
+# Every outer join doubles the cases a select is compiled into; past this many the compiler gives up, not memory.
+MAX_OUTER_JOIN_CASES = 256
+
+
 class _Compiler:
     def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
         self.dialect = dialect
@@ -799,6 +803,8 @@ class _Compiler:
                         _State(list(b_occs), b_conds + [_Pred(z3.Not(atom), atom)], env2, b_subs + [anti])
                     )
             states = new_states
+            if len(states) > MAX_OUTER_JOIN_CASES:
+                raise Unsupported(f"more than {MAX_OUTER_JOIN_CASES} outer-join cases in one select")
         if len(states) > 1 and outer is not None:
             raise Unsupported("outer join inside a subquery")
         for st in states:
