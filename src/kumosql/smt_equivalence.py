@@ -576,6 +576,9 @@ class _Compiler:
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
+        if any(statement.find_all(exp.Pivot)):
+            # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
+            raise Unsupported("PIVOT and UNPIVOT are not modeled")
         self._check_nondeterminism(statement)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
