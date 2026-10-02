@@ -28,13 +28,13 @@ Every statement plays one role, and the later steps (column tracing, diagnostics
 | Role | Statements | Columns | Counted as skipped |
 | --- | --- | --- | --- |
 | Query | `SELECT`, set operations | traced; the output columns are the projections | no |
-| Write | `CREATE ... AS`, `INSERT ... SELECT`, `MERGE` | traced into the target | only when it is not the traced statement of a script with others |
+| Write | `CREATE ... AS`, `INSERT ... SELECT`, `MERGE` | traced into the target | only when it is not the traced statement of a script |
 | Constant | `INSERT ... (cols) VALUES ...`, `CREATE TABLE (col defs)` | the insert list; each value has no source column (a scalar subquery among them reads its table) | no |
-| Definition | `CREATE [TEMP] FUNCTION`, `TABLE FUNCTION`, `PROCEDURE` | none; a call is a transform over its arguments | never |
-| Reader | `DELETE ... USING`, `UPDATE ... FROM`, `CREATE ... LIKE`/`CLONE`, delete-only `MERGE` | tables only; the tables count as fully used | only inside a script with other statements |
+| Definition | `CREATE [TEMP] FUNCTION`, `TABLE FUNCTION` (a `PROCEDURE` is read when called) | none; a call is a transform over its arguments | never |
+| Reader | `DELETE ... USING`, `UPDATE ... FROM`, `CREATE ... LIKE`/`CLONE`, delete-only `MERGE` | tables only; the tables count as fully used | `UPDATE`, `LIKE` and `CLONE` write columns that are not traced, so yes; a delete writes none, so no |
 | Opaque | a statement that does not parse | unknown; tables from its tokens | yes, with its kind |
 
-A single statement never reports a skip. The `skipped_statements` text counts only statements that matter: `N statements; 1 traced, K not traced (kinds: insert x1, merge x2)`.
+A statement that writes no column (a `DELETE`, a delete-only `MERGE`) and a function definition never report a skip; a lone `UPDATE`, an `INSERT ... VALUES` without a column list or a `CREATE PROCEDURE` that nothing calls do, because columns they write (or statements they hold) are not traced. The `skipped_statements` text counts only statements that matter: `N statements; 1 traced, K not traced (kinds: insert x1, merge x2)`.
 
 ### Table functions
 
@@ -62,11 +62,11 @@ A `MERGE` is read as the values that flow into the target's columns: each `WHEN`
 | `WHEN NOT MATCHED BY SOURCE ... UPDATE SET` | `c` from `e` (constants stay constants) | `ON` and the condition, including target columns |
 | `... DELETE` | none | the condition and `ON` |
 
-Several clauses union their sources per column. A script's last unconditional `MERGE` defines its output columns like a final query; earlier ones keep their table dependencies and are counted in `skipped_statements`. An operation that merges into its own table is traced the same way. Only the written columns are known, so the merged table keeps its schema from elsewhere and a `SELECT *` over it is never narrowed to them. Not understood means unknown: `INSERT VALUES (...)` without column names, `INSERT ROW` mixed with explicit columns (by-name, conservative), a delete-only `MERGE` (no columns to trace) and anything that does not parse keep the tables as dependencies and claim no columns. The tables they read count as fully used, so nothing downstream is called dead because of them, and a single such statement is not reported as skipped.
+Several clauses union their sources per column. A script's last unconditional `MERGE` defines its output columns like a final query; earlier ones keep their table dependencies and are counted in `skipped_statements`. An operation that merges into its own table is traced the same way. Only the written columns are known, so the merged table keeps its schema from elsewhere and a `SELECT *` over it is never narrowed to them. Not understood means unknown: `INSERT VALUES (...)` without column names, `INSERT ROW` mixed with explicit columns (by-name, conservative), a delete-only `MERGE` (no columns to trace) and anything that does not parse keep the tables as dependencies and claim no columns. The tables they read count as fully used, so nothing downstream is called dead because of them, and a statement that writes no column is not reported as skipped.
 
 ## Diagnostics
 
-Nothing in the UI explains scripts. Each script gets an informational `script_summary` diagnostic with counts (for example `script of 12 statements: 7 kept, 5 ignored, 1 unknown (execute_immediate x1)`), never SQL text. Two codes block completeness: `skipped_statements` (a script of several statements where some are not traced: `N statements; 1 traced, K not traced (kinds: ...)`; a definition or a single statement never counts) and `unparsed_operation` (some pre/post operations could not be read). The graph, impact and dead-column views treat a model with either code as incomplete, as for any other gap.
+Nothing in the UI explains scripts. Each script gets an informational `script_summary` diagnostic with counts (for example `script of 12 statements: 7 kept, 5 ignored, 1 unknown (execute_immediate x1)`), never SQL text. Two codes block completeness: `skipped_statements` (a script where some statements that write columns are not traced: `N statements; 1 traced, K not traced (kinds: ...)`; a definition, a delete and a traced statement never count) and `unparsed_operation` (some pre/post operations could not be read). The graph, impact and dead-column views treat a model with either code as incomplete, as for any other gap.
 
 ## Limits
 

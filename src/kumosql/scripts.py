@@ -785,6 +785,14 @@ def _qualified_with(node: exp.Expression, alias: str) -> exp.Expression:
     return copy
 
 
+def _only_deletes(merge: exp.Merge) -> bool:
+    """A MERGE whose clauses all delete: it writes no column, so there is nothing to trace."""
+
+    whens = merge.args.get("whens")
+    clauses = list(whens.expressions) if isinstance(whens, exp.Whens) else list(whens or [])
+    return bool(clauses) and all(isinstance(when.args.get("then"), exp.Delete) or str(when.args.get("then")).upper() == "DELETE" for when in clauses)
+
+
 def merge_query(merge: exp.Merge) -> exp.Query | None:
     """What flows into the target's columns, as a query the lineage code can trace; ``None`` when the MERGE is not understood.
 
@@ -954,6 +962,7 @@ class Statement:
     nested: str = ""  # "procedure" or "execute_immediate" when it was read from inside one
     traced: bool = False  # its columns are part of the output query's column lineage
     definition: bool = False  # defines a routine: not a step of the data flow, never counted as skipped
+    complete: bool = False  # writes no column (DELETE, a delete-only MERGE): nothing is left to trace
     degraded: bool = False  # could not be parsed; its table reads and writes come from its tokens, its columns are unknown
     error: str = ""  # where sqlglot stopped (line and column, no SQL text)
 
@@ -1097,14 +1106,14 @@ class ScriptAnalysis:
     def untraced_kept(self) -> int:
         """Kept statements whose columns are not part of the traced output (their tables are still dependencies)."""
 
-        return sum(1 for s in self.statements if s.disposition == KEPT and not s.traced and not s.nested and not s.definition)
+        return sum(1 for s in self.statements if s.disposition == KEPT and not s.traced and not s.nested and not s.definition and not s.complete)
 
     def untraced_kinds(self) -> dict[str, int]:
         """Kinds of the statements that matter but whose columns are not traced (kept without a trace, or unknown)."""
 
         kinds: dict[str, int] = {}
         for s in self.statements:
-            if s.nested or s.definition or s.traced or s.disposition == IGNORED:
+            if s.nested or s.definition or s.traced or s.complete or s.disposition == IGNORED:
                 continue
             kinds[s.kind] = kinds.get(s.kind, 0) + 1
         return dict(sorted(kinds.items()))
@@ -1922,6 +1931,7 @@ class _Run:
         if not isinstance(target, exp.Table) or not target.name:
             return self.record(Statement(index, line, kind, UNKNOWN, "target could not be read", conditional))
         statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
+        statement.complete = kind == "delete" or (kind == "merge" and _only_deletes(tree))
         into_temp = _is_temp_name(target) and target.name.casefold() in self.temps
         query = _query_of(tree) if kind == "insert" else None
         output = None

@@ -1187,7 +1187,7 @@ class _Analysis:
                     statements_matched += matched
                     statements_by_model[key] = (considered, matched)
                     if query is None and model.sql.strip() and analysis.counts()[KEPT] and not analysis.unknown:
-                        if analysis.considered > 1:
+                        if analysis.untraced_kept:
                             diagnostics.append(PipelineDiagnostic(key, "skipped_statements", _skip_message(analysis)))
                     elif query is None and model.sql.strip():
                         failure = _parse_failure(model.sql)
@@ -1199,7 +1199,7 @@ class _Analysis:
                             if failure
                             else PipelineDiagnostic(key, "no_query", "model has no parseable query")
                         )
-                    elif (analysis.untraced_kept or analysis.unknown) and analysis.considered > 1:
+                    elif analysis.untraced_kept or analysis.unknown:
                         diagnostics.append(PipelineDiagnostic(key, "skipped_statements", _skip_message(analysis)))
                         located = next((u for u in analysis.unknown if u.error or u.degraded), None)
                         if located is not None:

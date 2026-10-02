@@ -106,9 +106,19 @@ def test_cte_passed_to_a_table_function_is_not_reported_as_a_table():
     assert pl.upstream["p.d.tgt"] == {"p.d.src"}
 
 
-def test_a_single_statement_never_reports_a_skip():
-    pl = build("MERGE `p.d.tgt` T USING `p.d.src` S ON T.k = S.k WHEN MATCHED THEN DELETE")
-    assert "skipped_statements" not in codes(pl)
+def test_statements_that_write_no_column_never_report_a_skip():
+    for sql in (
+        "MERGE `p.d.tgt` T USING `p.d.src` S ON T.k = S.k WHEN MATCHED THEN DELETE",
+        "DELETE FROM `p.d.tgt` WHERE k IN (SELECT k FROM `p.d.src`)",
+    ):
+        assert "skipped_statements" not in codes(build(sql)), sql
+
+
+def test_a_lone_update_writes_columns_that_are_not_traced_and_says_so():
+    pl = build("UPDATE `p.d.tgt` SET v = s.v FROM `p.d.src` s WHERE `p.d.tgt`.k = s.k")
+    skipped = [d for d in pl.all_diagnostics() if d.code == "skipped_statements"]
+    assert skipped and "not traced (kinds: update x1)" in skipped[0].message
+    assert pl.upstream["p.d.tgt"] == {"p.d.src"}
 
 
 def test_a_statement_that_does_not_parse_keeps_its_tables_and_says_where_it_stopped():

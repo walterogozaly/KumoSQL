@@ -124,7 +124,7 @@ def test_delete_only_keeps_the_edges_and_claims_no_columns():
     pl = build(merge("WHEN MATCHED THEN DELETE"))
     assert pl.upstream["p.d.target"] == {"p.d.src"}
     assert lineage(pl) == {}
-    assert not {"skipped_statements", "unknown_reads", "no_query", "parse_error"} & codes(pl)  # one statement is never a skip
+    assert not {"skipped_statements", "unknown_reads", "no_query", "parse_error"} & codes(pl)  # it writes no column, so nothing is left to trace
     # its condition reads source columns that are not traced, so nothing may be called dead
     assert not pl.dead_columns().get("p.d.src")
 
@@ -133,7 +133,7 @@ def test_insert_values_without_column_names_is_not_guessed():
     pl = build(merge("WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v)"))
     assert pl.upstream["p.d.target"] == {"p.d.src"}
     assert lineage(pl) == {}
-    assert "skipped_statements" not in codes(pl)  # a single statement is never reported as skipped
+    assert "skipped_statements" in codes(pl)  # it writes columns that are not traced
     assert not pl.dead_columns().get("p.d.src")  # its values read source columns that are not traced
 
 
