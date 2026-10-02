@@ -33,8 +33,10 @@ import re
 
 import sqlglot
 from sqlglot import exp
+from .ast_utils import canonical_negation
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
+from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -3832,6 +3834,10 @@ def _in_over_union(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+# sqlglot 26 has no EndsWith node; ENDS_WITH there parses as a plain function call.
+_PREFIX_SUFFIX_TESTS = tuple(t for t in (exp.StartsWith, getattr(exp, "EndsWith", None)) if t is not None)
+
+
 def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
     """``COUNTIF(c)`` is ``COUNT(CASE WHEN c THEN 1 END)``; ``SAFE_DIVIDE(a, b)`` is ``IF(b = 0, NULL, a / b)``;
     ``STARTS_WITH(x, 'p')`` is ``x LIKE 'p%'`` (and ``ENDS_WITH`` ``'%p'``) for a pattern without wildcards."""
@@ -3843,7 +3849,7 @@ def _bigquery_sugar(tree: exp.Expression) -> exp.Expression:
             return exp.Trim(this=type(node)(this=node.this.this.copy()))
         if isinstance(node, exp.CountIf):
             return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this.copy(), true=exp.Literal.number(1))]))
-        if isinstance(node, (exp.StartsWith, exp.EndsWith)):
+        if isinstance(node, _PREFIX_SUFFIX_TESTS):
             pattern = node.expression
             if isinstance(pattern, exp.Literal) and pattern.is_string and not set(pattern.name) & set("%_\\"):
                 text = pattern.name + "%" if isinstance(node, exp.StartsWith) else "%" + pattern.name
@@ -3915,14 +3921,17 @@ def normalize(
     keys: dict[str, list[tuple[str, ...]]] | None = None,
     types: dict[str, dict[str, str]] | None = None,
     group_by_constants: bool = False,
+    keyed_distinct: bool = False,
 ) -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out).
 
     ``group_by_constants`` reads a literal in ``GROUP BY`` as a constant, as Calcite does, instead of a
-    column ordinal (see ``_drop_constant_groupings``).
+    column ordinal (see ``_drop_constant_groupings``). ``keyed_distinct`` drops a ``DISTINCT`` that outputs a
+    NOT NULL key (``keyed_rules.drop_keyed_distinct``); it is a second attempt, since dropping it on one side
+    can hide a match the first attempt finds.
     """
 
-    tree = sqlglot.parse_one(sql, read=dialect)
+    tree = canonical_negation(sqlglot.parse_one(sql, read=dialect))
     if group_by_constants:
         tree = _drop_constant_groupings(tree)
     tree = _lowercase_columns(tree)
@@ -3930,6 +3939,7 @@ def normalize(
     tree = _bigquery_sugar(tree)
     tree = _using_to_on(tree, schema)
     tree = _semi_joins_to_exists(tree)
+    tree = exists_over_aggregate(tree)
     tree = _left_join_indicator_to_exists(tree, keys)
     tree = _grouped_in_to_derived(tree)
     tree = _in_over_union(tree)
@@ -3964,10 +3974,12 @@ def normalize(
         if isinstance(node, exp.Subquery):
             return _inline_projection(node) or node
         if isinstance(node, exp.Select):
-            for rule in (_drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates):
+            for rule in (_drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, _unwrap_distinct_projection, _drop_redundant_distinct_source, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), _wrap_outer_join_aggregate, _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     return rewritten
+            if keyed_distinct:
+                return drop_keyed_distinct(node, keys, not_null) or node
         return node
 
     for _ in range(16):
@@ -3986,6 +3998,14 @@ def normalize(
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result."""
 
+    result = _prove_algebraic(left_sql, right_sql, False, **kwargs)
+    if result.proven or not (kwargs.get("constraints") or {}):
+        return result
+    retry = _prove_algebraic(left_sql, right_sql, True, **kwargs)
+    return retry if retry.proven else result
+
+
+def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: bool, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
     constants = kwargs.get("group_by_constants", False)
@@ -3993,26 +4013,40 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     try:
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct)
+        if keyed_distinct and (left, right) == tuple(
+            normalize(sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants)
+            for sql in (left_sql, right_sql)
+        ):
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop")
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
     from . import scalar_subqueries
 
     replaced = False
+    report: dict = {}
     try:
         inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
 
         def same(a: str, b: str) -> bool:
             return prove_equivalent_algebraic(a, b, compare_names=False, types=types, **inner).proven
 
+        def single_row(sql: str) -> bool:
+            from .output_properties import infer_properties
+
+            try:
+                return infer_properties(sql, kwargs.get("constraints"), kwargs.get("schema"), dialect=dialect).at_most_one_row
+            except Exception:  # noqa: BLE001 - not vouching keeps the assumption
+                return False
+
         left, right, replaced = scalar_subqueries.unify(
-            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same
+            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same, single_row=single_row, report=report
         )
     except sqlglot.errors.SqlglotError:
         replaced = False
     result = prove_equivalent_smt(left, right, **kwargs)
-    if replaced and result.proven:
+    if replaced and result.proven and report.get("unproven", 1):
         result = dataclasses.replace(
             result, assumptions=tuple(result.assumptions) + (scalar_subqueries.ASSUMPTION,)
         )

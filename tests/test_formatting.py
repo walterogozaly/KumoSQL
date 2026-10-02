@@ -92,3 +92,19 @@ def test_formatting_keeps_backticked_routine_paths_as_written():
     out = format_sql(sql)
     assert "`proj.ds.my_udf`(age)" in out and "`proj.ds.t`" in out
     assert format_sql("DROP FUNCTION IF EXISTS `proj.ds.my_udf`") == "DROP FUNCTION IF EXISTS `proj.ds.my_udf`"
+
+
+def test_formatting_keeps_the_case_of_unquoted_names():
+    # BigQuery table names are case sensitive and an alias's case names the output column,
+    # so the capitalisation group must not re-case identifiers (SQLStorm found this).
+    sql = "select p.Id as PostId, p.Score from Posts as p where p.Score > 1 order by p.Score"
+    formatted = format_sql(sql)
+    assert "FROM Posts AS p" in formatted and "p.Id AS PostId" in formatted
+    result = apply_rules(["format_sql"], sql)
+    assert result.verification.status is VerificationStatus.PROVEN
+
+
+def test_identifier_capitalisation_runs_only_when_named():
+    prefs = parse_preferences({"rules": ["layout", "capitalisation", "CP02"]})
+    assert "Name" in format_sql("select Id, name from Posts", prefs)
+    assert "name" in format_sql("select Id, name from Posts")

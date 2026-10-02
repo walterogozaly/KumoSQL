@@ -41,6 +41,8 @@ python tools/bq_dry_run_manifest.py --project kumosql      # free dry runs; need
 
 After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverage.py --update-known-gaps` under each supported sqlglot version (CI tests 26.0.0 and the latest) and delete the entries that now pass.
 
+See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrites of GoogleSQL compliance queries and BigQuery edge cases and compares results.
+
 ## What this found and fixed
 
 - A nested `name:` (a documented column called `name`, a `{ name, schema }` entry in `dependencies`) renamed the action. Config keys are now read at the top level only.
@@ -49,6 +51,7 @@ After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverag
 - The formatter upper-cased backticked routine paths (``DROP FUNCTION `p.d.f` `` became `` `P.D.F` ``), and the equivalence check called that proven. Quoted names are now restored exactly.
 - `CREATE TABLE/VIEW ... AS SELECT`, `INSERT ... SELECT` and `EXPORT DATA ... AS SELECT` in `.sql` files had no reads in the graph; they do now.
 - A `.sql` file with a `config { }` block is loaded as an action instead of failing to parse.
+- Analytical corpora ([analytical-sql-coverage.md](analytical-sql-coverage.md)) found that the formatter re-cased unquoted table and column names (BigQuery table names are case sensitive), and that windows and `ORDER BY ... LIMIT` blocked every proof; the `query/analytical_*` cases cover them.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
 
 ## Gaps that are not fixed here
@@ -67,16 +70,16 @@ After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverag
 |---|---:|---|---|---|---|---|---|---|---|
 | data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 5 ✅ 3 ⚪ | n/a | 1 ✅ 7 ⚠ |
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 4 ✅ 1 ⚪ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
-| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 71 ✅ 3 ⚪ | n/a | 72 ✅ 2 ⚪ | 44 ✅ 30 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| ddl | 74 | 44 ✅ 30 ⚪ | 74 ✅ | 71 ✅ 3 ⚪ | n/a | 72 ✅ 2 ⚪ | 45 ✅ 29 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
 | dml | 16 | 16 ✅ | 16 ✅ | 10 ✅ 6 ⚪ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 131 | 124 ✅ 7 ⚪ | 131 ✅ | 131 ✅ | 123 ✅ | 125 ✅ 6 ⚪ | 111 ✅ 20 ⚪ | 96 ✅ 27 ⚪ | 115 ✅ 16 ⚠ |
+| query | 134 | 127 ✅ 7 ⚪ | 134 ✅ | 134 ✅ | 126 ✅ | 130 ✅ 4 ⚪ | 127 ✅ 7 ⚪ | 105 ✅ 21 ⚪ | 115 ✅ 16 ⚠ 3 – |
 | script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 19 ✅ 3 ⚪ | n/a | 16 ✅ 6 ⚪ | 16 ✅ 6 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 258 | 200 ✅ 58 ⚪ | 258 ✅ | 245 ✅ 13 ⚪ | 123 ✅ | 244 ✅ 14 ⚪ | 194 ✅ 64 ⚪ | 96 ✅ 27 ⚪ | 202 ✅ 45 ⚠ 11 – |
+| **all GoogleSQL** | 261 | 203 ✅ 58 ⚪ | 261 ✅ | 248 ✅ 13 ⚪ | 126 ✅ | 249 ✅ 12 ⚪ | 211 ✅ 50 ⚪ | 105 ✅ 21 ⚪ | 202 ✅ 45 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
-| SQLX actions | 64 | 60 ✅ | 63 ✅ 1 ⚪ | 55 ✅ 1 ⚪ | 62 ✅ | 60 ✅ 2 ⚪ | 62 ✅ | 40 ✅ 2 ⚠ 22 – |
+| SQLX actions | 64 | 60 ✅ | 63 ✅ 1 ⚪ | 55 ✅ 1 ⚪ | 62 ✅ | 61 ✅ 1 ⚪ | 62 ✅ | 40 ✅ 2 ⚠ 22 – |
 
 ### Known gaps
 
@@ -104,16 +107,15 @@ After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverag
 | load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
 | graph | kumosql | reads of this DML, script or non-query statement are not extracted | 13 | `dcl/revoke_table`, `ddl/create_table_clone`, `ddl/create_table_copy` |
 | cleanup | kumosql | source_splice_error | 7 | `dataform/operations_ddl_script`, `ddl/create_procedure_options`, `script/begin_end_block` |
-| cleanup | kumosql | equivalence could not be proven for every changed statement | 6 | `dataform/table_with_qualify_cte`, `query/pipe_as_alias`, `query/pipe_call_tablesample` |
 | cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
+| cleanup | kumosql | equivalence could not be proven for every changed statement | 4 | `dataform/table_with_qualify_cte`, `query/pipe_as_alias`, `query/pipe_call_tablesample` |
 | cleanup | kumosql | recovered_parse; source_splice_error; recovered_parse; source_splice_error; recovered_pars | 2 | `ddl/create_procedure_sql`, `script/case_when` |
 | cleanup | kumosql | recovered_parse | 2 | `query/pipe_extend_set_drop`, `query/pipe_with_cte` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
-| format | kumosql | equivalence could not be proven for every changed statement | 64 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
+| format | kumosql | equivalence could not be proven for every changed statement | 53 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
 | format | sqlfluff | parse_error | 20 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
-| prover | prover | unsupported: LIMIT is not modeled | 12 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
-| prover | prover | unsupported: WINDOW is not modeled | 8 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pipe_window` |
-| prover | prover | unsupported: unaliased subquery in FROM | 2 | `query/nested_with_in_subquery`, `query/pipe_pivot_unpivot` |
+| prover | prover | unsupported: LIMIT is not modeled | 9 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
+| prover | prover | unsupported: WINDOW is not modeled | 7 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pseudo_columns_row_number` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT) | 2 | `query/pipe_call_tablesample`, `query/tablesample` |
 | prover | prover | unsupported: nondeterministic: ARRAY_AGG(DISTINCT state) | 1 | `query/aggregate_filter_modifiers` |
 | prover | prover | unsupported: nondeterministic: ANY_VALUE(city) | 1 | `query/aggregate_functions` |
