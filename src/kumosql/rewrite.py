@@ -23,6 +23,7 @@ from urllib.error import URLError
 from sqlglot import exp
 
 from .ast_utils import parse_statements, top_level_query
+from .scripts import block_statements
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
@@ -182,8 +183,10 @@ def _verify_sql(
     smt_timeout_ms: int = DEFAULT_SMT_TIMEOUT_MS,
 ) -> tuple[bool, list[str]]:
     try:
-        left = parse_statements(before)
-        right = parse_statements(after)
+        left = block_statements(before)
+        right = block_statements(after)
+        left = parse_statements(before) if left is None else left
+        right = parse_statements(after) if right is None else right
     except Exception as exc:
         return False, [f"strict parse failed: {exc}"]
     if len(left) != len(right):

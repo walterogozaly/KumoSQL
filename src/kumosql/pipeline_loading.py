@@ -545,6 +545,9 @@ def load_sqlx_project(
 
         body = _REF_RE.sub(substitute, body)
         body = _SELF_RE.sub(target.sql(), body)
+        if kind == "operations":
+            # Dataform separates the statements of an operations file by a line of ``---`` as well as by semicolons.
+            body = re.sub(r"(?m)^[ \t]*---[ \t]*$", ";", body)
         # Dataform evaluates ref() in pre_operations and post_operations too, so what they ref is a dependency.
         for kind_, section in sections:
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section):
@@ -564,6 +567,22 @@ def load_sqlx_project(
                 return match.group(0)  # computed argument: left masked like any other interpolation
 
         body = _RESOLVE_RE.sub(resolve, body)
+
+        def plain_ref(match: re.Match[str]) -> str:
+            try:
+                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js).sql()
+            except ValueError:
+                return match.group(0)
+
+        operations: list[str] = []
+        for kind_, section in sections:
+            if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section) and "{" in section and "}" in section:
+                inner = section[section.index("{") + 1 : section.rindex("}")]
+                inner = _SELF_RE.sub(target.sql(), _RESOLVE_RE.sub(plain_ref, _REF_RE.sub(plain_ref, inner)))
+                if "${" in inner:
+                    inner, _restorations = _mask_sqlx_interpolations(inner)
+                if inner.strip():
+                    operations.append(inner)
         for entry in _config_dependencies(config):
             try:
                 declared = _parse_ref_args(entry, default, known, names_may_be_missing=incomplete_js)
@@ -585,7 +604,7 @@ def load_sqlx_project(
             non_null, unique_keys = _config_assertions(config)
         except Exception:  # noqa: BLE001 - assertions are optional evidence
             non_null, unique_keys = (), ()
-        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys))
+        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys, tuple(operations)))
 
     def unreadable(relative: str, exc: Exception) -> None:
         diagnostics.append(PipelineDiagnostic(
@@ -701,6 +720,9 @@ def load_compiled_graph(
                     tags=tuple(tag for tag in item.get("tags", []) if isinstance(tag, str)),
                     non_null=non_null,
                     unique_keys=tuple(dict.fromkeys(k for k in unique if k)),
+                    operations_sql=tuple(
+                        text for key_ in ("preOps", "postOps") for text in (item.get(key_) or []) if isinstance(text, str) and text.strip()
+                    ),
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(

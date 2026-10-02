@@ -1,0 +1,1758 @@
+"""BigQuery scripts: break them into statements and follow what flows between them.
+
+A script is several statements run together, with variables, temporary tables,
+control flow and stored procedures between them. Everything that reads SQL
+(job history, Dataform operations, procedure bodies, pasted queries) goes
+through this module so a script is understood the same way everywhere.
+
+Reading happens in three steps:
+
+1. :func:`split_script` cuts the text into statements with a small lexer that
+   knows strings (raw, triple-quoted), comments, quoted names and nested
+   ``BEGIN ... END``, ``IF``, ``LOOP``, ``WHILE``, ``FOR``, ``REPEAT`` and
+   ``CASE`` blocks. Semicolons inside any of those never split. The lexer does
+   not depend on sqlglot, whose tokenizer treats ``BEGIN`` as a command and
+   swallows the rest.
+2. Each statement is *kept* (it reads or writes tables: queries,
+   ``CREATE TABLE/VIEW ... AS``, ``INSERT``, ``MERGE``, ``UPDATE``, ``DELETE``,
+   ``CALL`` of a known procedure), *ignored* (``DECLARE``/``SET`` of scalars,
+   ``ASSERT``, transactions, ``LOAD DATA``, DDL, control-flow shells) or
+   *unknown* (it might read tables and could not be understood: dynamic
+   ``EXECUTE IMMEDIATE``, an unknown procedure, text that does not parse).
+   Unknown is never guessed.
+3. Kept statements are followed in order. A temporary table remembers what it
+   was built from, so a table written from a temporary table traces to the real
+   sources; a script variable remembers the tables its value came from; a
+   statement inside an ``IF``, loop or exception handler is a *possible* edge.
+   A temporary table that one query defines is also spliced into the final query
+   as a common table expression so column lineage reaches the real sources.
+
+Nothing here echoes SQL text; :meth:`ScriptAnalysis.report` carries counts,
+kinds and line numbers only.
+"""
+
+from __future__ import annotations
+
+import bisect
+import re
+from dataclasses import dataclass, field
+from typing import Iterable, Iterator, Mapping, NamedTuple
+
+import sqlglot
+from sqlglot import ErrorLevel, exp
+
+from .ast_utils import quiet_parser, set_with_clause, with_clause
+
+MAX_PROCEDURE_DEPTH = 8
+MAX_NESTED_SQL_DEPTH = 3
+KEPT, IGNORED, UNKNOWN = "kept", "ignored", "unknown"
+
+# ----------------------------------------------------------------------------- lexer
+
+
+class Tok(NamedTuple):
+    kind: str  # w word, s string, q quoted name, n number, p punctuation, ; semicolon
+    text: str
+    start: int
+    end: int
+
+    @property
+    def up(self) -> str:
+        return self.text.upper() if self.kind == "w" else ""
+
+
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_NUMBER = re.compile(r"\d[\w.]*")
+_STRING_PREFIXES = {"r", "b", "rb", "br"}
+
+
+def lex(text: str) -> list[Tok]:
+    """Tokens of BigQuery SQL with comments dropped. Unterminated strings run to the end of the text."""
+
+    tokens: list[Tok] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+        elif c == "#" or text.startswith("--", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j + 1
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        elif c in "'\"":
+            end = _string_end(text, i, raw=False)
+            tokens.append(Tok("s", text[i:end], i, end))
+            i = end
+        elif c == "`":
+            j = i + 1
+            while j < n and text[j] != "`":
+                j += 2 if text[j] == "\\" else 1
+            end = min(j + 1, n)
+            tokens.append(Tok("q", text[i:end], i, end))
+            i = end
+        elif c == ";":
+            tokens.append(Tok(";", c, i, i + 1))
+            i += 1
+        elif c.isalpha() or c == "_":
+            m = _WORD.match(text, i)
+            end = m.end()
+            if text[i:end].lower() in _STRING_PREFIXES and end < n and text[end] in "'\"":
+                stop = _string_end(text, end, raw=True)
+                tokens.append(Tok("s", text[i:stop], i, stop))
+                i = stop
+            else:
+                tokens.append(Tok("w", text[i:end], i, end))
+                i = end
+        elif c.isdigit():
+            m = _NUMBER.match(text, i)
+            tokens.append(Tok("n", m.group(), i, m.end()))
+            i = m.end()
+        else:
+            tokens.append(Tok("p", c, i, i + 1))
+            i += 1
+    return tokens
+
+
+def _string_end(text: str, start: int, *, raw: bool) -> int:
+    quote = text[start]
+    triple = text.startswith(quote * 3, start)
+    closer = quote * 3 if triple else quote
+    i = start + len(closer)
+    n = len(text)
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+        elif text.startswith(closer, i):
+            return i + len(closer)
+        elif not triple and text[i] == "\n":
+            return i  # an unterminated one-line string stops at the line end
+        else:
+            i += 1
+    return n
+
+
+_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "'": "'", '"': '"', "`": "`", "?": "?"}
+
+
+def string_value(token: str) -> str | None:
+    """The value of a string literal token, or ``None`` for bytes or an escape it does not decode."""
+
+    prefix = ""
+    body = token
+    while body and body[0] not in "'\"":
+        prefix += body[0]
+        body = body[1:]
+    if "b" in prefix.lower():
+        return None
+    triple = body[:3] in ("'''", '"""')
+    inner = body[3:-3] if triple else body[1:-1]
+    if "r" in prefix.lower() or "\\" not in inner:
+        return inner
+    out = []
+    i = 0
+    while i < len(inner):
+        if inner[i] == "\\" and i + 1 < len(inner):
+            nxt = inner[i + 1]
+            if nxt not in _ESCAPES:
+                return None
+            out.append(_ESCAPES[nxt])
+            i += 2
+        else:
+            out.append(inner[i])
+            i += 1
+    return "".join(out)
+
+
+# ------------------------------------------------------------------------ statement tree
+
+
+@dataclass
+class Node:
+    """One statement or control structure of a script."""
+
+    kind: str  # stmt, begin, if, while, loop, for, repeat, case, procedure
+    start: int
+    end: int
+    header: str = ""  # a statement's text; a control structure's condition text
+    branches: list[list["Node"]] = field(default_factory=list)
+    name: str = ""  # a procedure's name, a FOR loop's variable
+    query: str = ""  # a FOR loop's query
+    params: str = ""  # a procedure's parameter list
+
+
+_CONTROL_STARTS = {"IF", "WHILE", "LOOP", "FOR", "REPEAT", "CASE"}
+_BLOCK_ENDS = {"IF", "LOOP", "WHILE", "FOR", "REPEAT", "CASE"}
+
+
+class _Splitter:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.toks = lex(text)
+        self.i = 0
+        self.n = len(self.toks)
+
+    # -- helpers
+    def peek(self, offset: int = 0) -> Tok | None:
+        j = self.i + offset
+        return self.toks[j] if j < self.n else None
+
+    def word(self, offset: int = 0) -> str:
+        t = self.peek(offset)
+        return t.up if t is not None else ""
+
+    def skip_to_semicolon(self) -> None:
+        while self.i < self.n and self.toks[self.i].kind != ";":
+            self.i += 1
+        if self.i < self.n:
+            self.i += 1
+
+    def scan_until(self, stop: set[str], *, then: str = "") -> tuple[int, int]:
+        """Token range up to a keyword in ``stop`` at parenthesis and CASE depth zero; leaves ``i`` on it."""
+
+        start = self.i
+        depth = case = 0
+        while self.i < self.n:
+            t = self.toks[self.i]
+            if t.kind == "p" and t.text == "(":
+                depth += 1
+            elif t.kind == "p" and t.text == ")":
+                depth = max(depth - 1, 0)
+            elif t.kind == "w":
+                if t.up == "CASE":
+                    case += 1
+                elif t.up == "END" and case:
+                    case -= 1
+                elif depth == 0 and case == 0 and t.up in stop:
+                    break
+            elif t.kind == ";" and depth == 0:
+                break
+            self.i += 1
+        return start, self.i
+
+    def text_of(self, a: int, b: int) -> str:
+        if a >= b or a >= self.n:
+            return ""
+        return self.text[self.toks[a].start : self.toks[b - 1].end]
+
+    # -- grammar
+    def parse(self) -> list[Node]:
+        return self.block(set())
+
+    def block(self, terminators: set[str]) -> list[Node]:
+        nodes: list[Node] = []
+        while self.i < self.n:
+            t = self.toks[self.i]
+            if t.kind == ";":
+                self.i += 1
+                continue
+            if t.kind == "w" and t.up in terminators:
+                break
+            node = self.statement(bool(terminators))
+            if node is not None:
+                nodes.append(node)
+        return nodes
+
+    def statement(self, inside_block: bool) -> Node | None:
+        # an optional ``label:`` before a block
+        if self.peek(1) is not None and self.toks[self.i].kind == "w" and self.peek(1).text == ":" and self.word(2) in {"BEGIN", "LOOP", "WHILE", "FOR", "REPEAT"}:
+            self.i += 2
+        first = self.word()
+        begin = self.toks[self.i].start
+        if first == "BEGIN" and self.word(1) not in {"TRANSACTION", ""} and self.peek(1).kind != ";":
+            return self.begin_block(begin)
+        if first == "IF" and self.peek(1) is not None and self.peek(1).text != "(" or first == "IF" and self.control_if_call_is_statement():
+            return self.if_block(begin)
+        if first == "WHILE":
+            return self.simple_loop(begin, "while", {"DO"})
+        if first == "LOOP":
+            return self.simple_loop(begin, "loop", set())
+        if first == "REPEAT":
+            return self.repeat_block(begin)
+        if first == "FOR" and self.word(2) == "IN":
+            return self.for_block(begin)
+        if first == "CASE":
+            return self.case_block(begin)
+        if first == "CREATE":
+            node = self.maybe_procedure(begin)
+            if node is not None:
+                return node
+        return self.simple(begin, inside_block)
+
+    def control_if_call_is_statement(self) -> bool:
+        # ``IF(cond, a, b)`` opens no statement of its own; an IF statement is ``IF cond THEN``
+        j = self.i
+        depth = 0
+        while j < self.n:
+            t = self.toks[j]
+            if t.kind == "p" and t.text == "(":
+                depth += 1
+            elif t.kind == "p" and t.text == ")":
+                depth -= 1
+            elif t.kind == ";":
+                return False
+            elif t.kind == "w" and t.up == "THEN" and depth == 0:
+                return True
+            j += 1
+        return False
+
+    def end_statement(self, kind: str) -> None:
+        """Consume ``END`` plus its optional keyword and label up to the semicolon."""
+
+        if self.word() == "END":
+            self.i += 1
+        self.skip_to_semicolon()
+
+    def begin_block(self, begin: int) -> Node:
+        self.i += 1
+        body = self.block({"END", "EXCEPTION"})
+        node = Node("begin", begin, begin, branches=[body])
+        if self.word() == "EXCEPTION":
+            self.i += 1
+            if self.word() == "WHEN":
+                self.scan_until({"THEN"})
+                self.i += 1
+            node.branches.append(self.block({"END"}))
+        self.end_statement("begin")
+        node.end = self.toks[self.i - 1].end if self.i else begin
+        return node
+
+    def if_block(self, begin: int) -> Node:
+        self.i += 1
+        a, b = self.scan_until({"THEN"})
+        node = Node("if", begin, begin, header=self.text_of(a, b))
+        self.i += 1  # THEN
+        node.branches.append(self.block({"ELSEIF", "ELSE", "END"}))
+        while self.word() in {"ELSEIF", "ELSE"}:
+            if self.word() == "ELSEIF":
+                self.i += 1
+                self.scan_until({"THEN"})
+            self.i += 1
+            node.branches.append(self.block({"ELSEIF", "ELSE", "END"}))
+        self.end_statement("if")
+        node.end = self.toks[self.i - 1].end
+        return node
+
+    def simple_loop(self, begin: int, kind: str, header_stop: set[str]) -> Node:
+        self.i += 1
+        node = Node(kind, begin, begin)
+        if header_stop:
+            a, b = self.scan_until(header_stop)
+            node.header = self.text_of(a, b)
+            self.i += 1
+        node.branches.append(self.block({"END"}))
+        self.end_statement(kind)
+        node.end = self.toks[self.i - 1].end
+        return node
+
+    def repeat_block(self, begin: int) -> Node:
+        self.i += 1
+        node = Node("repeat", begin, begin)
+        node.branches.append(self.block({"UNTIL", "END"}))
+        if self.word() == "UNTIL":
+            self.i += 1
+            a, b = self.scan_until({"END"})
+            node.header = self.text_of(a, b)
+        self.end_statement("repeat")
+        node.end = self.toks[self.i - 1].end
+        return node
+
+    def for_block(self, begin: int) -> Node:
+        variable = self.toks[self.i + 1].text
+        self.i += 3  # FOR var IN
+        a, b = self.scan_until({"DO"})
+        query = self.text_of(a, b).strip()
+        if query.startswith("(") and query.endswith(")"):
+            query = query[1:-1]
+        node = Node("for", begin, begin, name=variable, query=query)
+        self.i += 1
+        node.branches.append(self.block({"END"}))
+        self.end_statement("for")
+        node.end = self.toks[self.i - 1].end
+        return node
+
+    def case_block(self, begin: int) -> Node:
+        self.i += 1
+        self.scan_until({"WHEN"})
+        node = Node("case", begin, begin)
+        while self.word() in {"WHEN", "ELSE"}:
+            if self.word() == "WHEN":
+                self.i += 1
+                self.scan_until({"THEN"})
+            self.i += 1
+            node.branches.append(self.block({"WHEN", "ELSE", "END"}))
+        self.end_statement("case")
+        node.end = self.toks[self.i - 1].end
+        return node
+
+    def maybe_procedure(self, begin: int) -> Node | None:
+        j = self.i + 1
+        while j < self.n and self.toks[j].up in {"OR", "REPLACE", "TEMP", "TEMPORARY"}:
+            j += 1
+        if not (j < self.n and self.toks[j].up == "PROCEDURE"):
+            return None
+        j += 1
+        if self.word(j - self.i) == "IF":  # IF NOT EXISTS
+            j += 3
+        name_parts = []
+        while j < self.n and self.toks[j].kind in {"w", "q"} or (j < self.n and self.toks[j].text == "."):
+            name_parts.append(self.toks[j].text)
+            j += 1
+        # parameter list, then OPTIONS(...) / LANGUAGE ..., then BEGIN
+        k = j
+        depth = 0
+        params_start = j
+        while k < self.n:
+            t = self.toks[k]
+            if t.kind == "p" and t.text == "(":
+                depth += 1
+            elif t.kind == "p" and t.text == ")":
+                depth -= 1
+            elif t.kind == ";" and depth == 0:
+                return None  # no body here (a language other than SQL)
+            elif t.kind == "w" and t.up == "BEGIN" and depth == 0:
+                break
+            k += 1
+        else:
+            return None
+        node = Node(
+            "procedure",
+            begin,
+            begin,
+            name="".join(name_parts).replace("`", ""),
+            params=self.text_of(params_start, k),
+        )
+        self.i = k + 1
+        node.branches.append(self.block({"END", "EXCEPTION"}))
+        if self.word() == "EXCEPTION":
+            self.i += 1
+            if self.word() == "WHEN":
+                self.scan_until({"THEN"})
+                self.i += 1
+            node.branches.append(self.block({"END"}))
+        self.end_statement("procedure")
+        node.end = self.toks[self.i - 1].end
+        return node
+
+    def simple(self, begin: int, inside_block: bool) -> Node | None:
+        start = self.i
+        depth = case = 0
+        while self.i < self.n:
+            t = self.toks[self.i]
+            if t.kind == ";":
+                break
+            if t.kind == "p":
+                depth += t.text == "("
+                depth -= t.text == ")" and depth > 0
+            elif t.kind == "w":
+                if t.up == "CASE":
+                    case += 1
+                elif t.up == "END":
+                    if case:
+                        case -= 1
+                    elif inside_block and depth == 0:
+                        break  # the block's END closes a last statement written without its semicolon
+            self.i += 1
+        stop = self.i
+        if self.i < self.n and self.toks[self.i].kind == ";":
+            self.i += 1
+        if stop == start:
+            if self.i == start:  # a stray END or keyword at the top level: step over it
+                self.i += 1
+            return None
+        return Node("stmt", self.toks[start].start, self.toks[stop - 1].end, header=self.text_of(start, stop))
+
+
+def parse_script(text: str) -> list[Node]:
+    return _Splitter(text).parse()
+
+
+# ------------------------------------------------------------------------- flat splitting
+
+
+@dataclass(frozen=True)
+class ScriptPart:
+    """A statement of a script, in order, with where it sits."""
+
+    text: str
+    line: int
+    conditional: bool = False
+    in_procedure: str = ""
+
+
+def _line_index(text: str) -> list[int]:
+    return [m.start() for m in re.finditer("\n", text)]
+
+
+def split_script(text: str) -> list[ScriptPart]:
+    """The statements of ``text`` in order. Blocks and control flow are opened, not returned as statements."""
+
+    breaks = _line_index(text)
+    parts: list[ScriptPart] = []
+
+    def walk(nodes: list[Node], conditional: bool, procedure: str) -> None:
+        for node in nodes:
+            if node.kind == "stmt":
+                parts.append(ScriptPart(node.header, bisect.bisect_left(breaks, node.start) + 1, conditional, procedure))
+                continue
+            inner = procedure or (node.name if node.kind == "procedure" else "")
+            for index, branch in enumerate(node.branches):
+                gated = conditional or node.kind in {"if", "while", "for", "repeat", "case", "loop"} or (node.kind in {"begin", "procedure"} and index > 0)
+                walk(branch, gated, inner)
+
+    walk(parse_script(text), False, "")
+    return parts
+
+
+def leaf_statements(text: str) -> list[Node]:
+    """The statement nodes of ``text`` in order, with their offsets in ``text``; blocks are opened."""
+
+    return [node for node in _walk_nodes(parse_script(text)) if node.kind == "stmt"]
+
+
+def has_blocks(text: str) -> bool:
+    """Whether ``text`` has ``BEGIN ... END``, ``IF``, a loop or a procedure around its statements."""
+
+    return any(node.kind != "stmt" for node in parse_script(text))
+
+
+_REWRITEABLE = {"SELECT", "WITH", "FROM", "CREATE", "INSERT", "MERGE", "UPDATE", "DELETE", "("}
+
+
+def is_rewriteable(statement: str) -> bool:
+    """A statement whose query text a rewrite rule may change (not a declaration, assignment or call)."""
+
+    words = _first_words(statement, 1)
+    return bool(words) and words[0] in _REWRITEABLE
+
+
+_BLOCK_START = re.compile(r"\s*(?:BEGIN|IF|LOOP|WHILE|REPEAT|FOR|CASE)\b", re.IGNORECASE)
+_BLOCK_WORDS = re.compile(r"\b(?:BEGIN|LOOP|WHILE|REPEAT|THEN|DO)\b", re.IGNORECASE)
+
+
+def block_statements(text: str) -> list[exp.Expression] | None:
+    """The parsed statements a rewrite may change, in order, when ``text`` has blocks; ``None`` for plain SQL.
+
+    Raises what sqlglot raises for a statement that does not parse."""
+
+    if not _BLOCK_WORDS.search(text) or not has_blocks(text):
+        return None
+    statements: list[exp.Expression] = []
+    for node in leaf_statements(text):
+        if is_rewriteable(node.header):
+            with quiet_parser():
+                statements.extend(s for s in sqlglot.parse(node.header, read="bigquery", error_level=ErrorLevel.RAISE) if s is not None)
+    return statements
+
+
+def split_statements(text: str) -> list[str]:
+    """Just the statement texts, in order (see :func:`split_script`)."""
+
+    return [part.text for part in split_script(text)]
+
+
+# ----------------------------------------------------------------------- classification
+
+_QUERY_STARTS = {"SELECT", "WITH", "FROM", "TABLE"}
+_DDL = {"DROP", "ALTER", "GRANT", "REVOKE", "UNDROP", "TRUNCATE", "COMMENT"}
+_FLOW = {"RAISE", "RETURN", "BREAK", "LEAVE", "CONTINUE", "ITERATE"}
+_TRANSACTION = {"BEGIN", "COMMIT", "ROLLBACK", "START"}
+
+
+def _first_words(text: str, count: int = 8) -> list[str]:
+    words: list[str] = []
+    for tok in lex(text[:600]):
+        if tok.kind == "w":
+            words.append(tok.up)
+        elif tok.text == "(" and not words:
+            words.append("(")
+        else:
+            words.append("")
+        if len(words) >= count:
+            break
+    return words
+
+
+def _parse_one(sql: str) -> exp.Expression | None:
+    try:
+        with quiet_parser():
+            parsed = sqlglot.parse(sql, read="bigquery")
+    except Exception:  # noqa: BLE001 - sqlglot raises several error types
+        return None
+    parsed = [p for p in parsed if p is not None]
+    return parsed[0] if len(parsed) == 1 else None
+
+
+def _query_of(statement: exp.Expression) -> exp.Expression | None:
+    """The query a statement reads from, without any ``WITH`` that the statement itself carries."""
+
+    if isinstance(statement, exp.Query):
+        return statement
+    if isinstance(statement, (exp.Create, exp.Insert)):
+        node = statement.expression
+        while isinstance(node, exp.Subquery):
+            node = node.this
+        return node if isinstance(node, exp.Query) else None
+    return None
+
+
+def _table_ref(table: exp.Table) -> str:
+    return ".".join(part for part in (table.catalog, table.db, table.name) if part)
+
+
+def _norm(name: str) -> str:
+    return name.replace("`", "").casefold()
+
+
+def _clean(table: exp.Table) -> exp.Table:
+    """The table without its alias, joins or sampling: just the name."""
+
+    copy = table.copy()
+    for key in ("alias", "joins", "laterals", "pivots", "sample"):
+        if copy.args.get(key):
+            copy.set(key, None)
+    return copy
+
+
+def _is_temp_name(table: exp.Table) -> bool:
+    return not table.catalog and (not table.db or table.db.casefold() == "_session")
+
+
+# ----------------------------------------------------------------------------- analysis
+
+
+@dataclass
+class Statement:
+    """What was decided about one statement. Carries no SQL text."""
+
+    index: int
+    line: int
+    kind: str
+    disposition: str
+    reason: str = ""
+    conditional: bool = False
+    nested: str = ""  # "procedure" or "execute_immediate" when it was read from inside one
+    traced: bool = False  # its columns are part of the output query's column lineage
+
+    def to_json(self) -> dict:
+        row = {"line": self.line, "kind": self.kind, "disposition": self.disposition}
+        if self.reason:
+            row["reason"] = self.reason
+        if self.conditional:
+            row["conditional"] = True
+        if self.nested:
+            row["nested"] = self.nested
+        return row
+
+
+@dataclass
+class ScriptWrite:
+    """A table a script writes and the real tables that feed it."""
+
+    table: exp.Table
+    sources: tuple[exp.Table, ...]
+    kind: str
+    conditional: bool = False
+    via_variable: bool = False
+
+
+@dataclass(eq=False)
+class _Temp:
+    """One version of a temporary table: what it was built from and, when known, the query that builds it."""
+
+    name: str
+    alias: str
+    sources: dict[str, exp.Table] = field(default_factory=dict)
+    query: exp.Query | None = None
+    columns: tuple[str, ...] | None = None
+    deps: tuple["_Temp", ...] = ()
+    opaque_reason: str = ""
+    sequence: int = 0
+    statements: list["Statement"] = field(default_factory=list)  # the statements whose columns this version's query carries
+    empty: bool = False  # created with a schema and no rows yet
+
+
+@dataclass
+class _Variable:
+    sources: dict[str, exp.Table] = field(default_factory=dict)
+
+
+@dataclass
+class Procedure:
+    name: str
+    params: tuple[str, ...]
+    body: list[Node]
+    text: str  # the script text the body's offsets point into
+
+
+@dataclass
+class _Output:
+    statement: Statement
+    node: exp.Expression  # the statement with temporary tables renamed to their versions
+    query: exp.Query
+    temps: tuple[_Temp, ...]  # versions the query reads directly
+    sources: dict[str, exp.Table]
+    target: exp.Table | None
+    conditional: bool
+    top_level: bool
+
+
+class ScriptAnalysis:
+    """The result of :func:`analyse_script`."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.statements: list[Statement] = []
+        self.writes: list[ScriptWrite] = []
+        self.reads: dict[str, exp.Table] = {}
+        self.variable_reads: dict[str, exp.Table] = {}
+        self.procedures: dict[str, Procedure] = {}
+        self.procedure_reports: list[dict] = []
+        self.opaque_temps: dict[str, str] = {}
+        self._outputs: list[_Output] = []
+        self._final: _Output | None = None
+        self._ctes: list[tuple[str, exp.Query]] = []
+        self.temp_names: set[str] = set()
+
+    # -- results
+    @property
+    def final(self) -> exp.Expression | None:
+        """The statement whose columns define the script's output: its last unconditional query."""
+
+        return self._final.node if self._final is not None else None
+
+    @property
+    def final_query(self) -> exp.Query | None:
+        return self._final.query if self._final is not None else None
+
+    @property
+    def final_target(self) -> exp.Table | None:
+        return self._final.target if self._final is not None else None
+
+    def with_temp_ctes(self, query: exp.Query) -> exp.Query:
+        """``query`` (the final one, already carrying its own CTEs) with the temporary tables it reads defined in front of it."""
+
+        if not self._ctes:
+            return query
+        clause = with_clause(query)
+        ours = [exp.CTE(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias))) for alias, body in self._ctes]
+        if clause is None:
+            clause = exp.With(expressions=ours)
+        else:
+            clause = clause.copy()
+            clause.set("expressions", [*ours, *clause.expressions])
+        set_with_clause(query, clause)
+        return query
+
+    def counts(self) -> dict[str, int]:
+        out = {KEPT: 0, IGNORED: 0, UNKNOWN: 0}
+        for s in self.statements:
+            if not s.nested:
+                out[s.disposition] += 1
+        return out
+
+    @property
+    def unknown(self) -> list[Statement]:
+        return [s for s in self.statements if s.disposition == UNKNOWN]
+
+    @property
+    def considered(self) -> int:
+        """Statements that matter for lineage: kept or unknown. Ignored ones are thrown away on purpose."""
+
+        return sum(1 for s in self.statements if s.disposition != IGNORED and not s.nested)
+
+    @property
+    def traced(self) -> int:
+        return sum(1 for s in self.statements if s.traced and not s.nested)
+
+    @property
+    def untraced_kept(self) -> int:
+        """Kept statements whose columns are not part of the traced output (their tables are still dependencies)."""
+
+        return sum(1 for s in self.statements if s.disposition == KEPT and not s.traced and not s.nested)
+
+    def all_reads(self) -> list[exp.Table]:
+        merged = dict(self.reads)
+        merged.update(self.variable_reads)
+        return list(merged.values())
+
+    def report(self) -> dict:
+        """Counts and kinds only: no SQL text, names or paths."""
+
+        by_kind: dict[str, dict[str, int]] = {KEPT: {}, IGNORED: {}, UNKNOWN: {}}
+        for s in self.statements:
+            if s.nested:
+                continue
+            by_kind[s.disposition][s.kind] = by_kind[s.disposition].get(s.kind, 0) + 1
+        out = {
+            "statements": sum(self.counts().values()),
+            "kept": self.counts()[KEPT],
+            "ignored": self.counts()[IGNORED],
+            "unknown": self.counts()[UNKNOWN],
+            "by_kind": {k: dict(sorted(v.items())) for k, v in by_kind.items() if v},
+            "conditional": sum(1 for s in self.statements if s.conditional and s.disposition == KEPT),
+            "expanded": sum(1 for s in self.statements if s.nested),
+            "traced": self.traced,
+            "temporary_tables": len(self.temp_names),
+            "variable_dependencies": len(self.variable_reads),
+            "writes": len(self.writes),
+            "detail": [s.to_json() for s in self.statements if s.disposition != IGNORED or not s.nested][:200],
+        }
+        if self.opaque_temps:
+            out["temporary_tables_untraced"] = len(self.opaque_temps)
+        if self.procedure_reports:
+            out["procedures"] = self.procedure_reports
+        return out
+
+    def summary(self) -> str:
+        """A one-line description of what was kept, ignored and unknown, for a diagnostic."""
+
+        c = self.counts()
+        kinds = self.report()["by_kind"]
+        parts = [f"{c[KEPT]} kept", f"{c[IGNORED]} ignored"]
+        if c[UNKNOWN]:
+            detail = ", ".join(f"{kind} x{count}" for kind, count in kinds.get(UNKNOWN, {}).items())
+            parts.append(f"{c[UNKNOWN]} unknown ({detail})")
+        else:
+            parts.append("0 unknown")
+        extra = []
+        if self.temp_names:
+            extra.append(f"{len(self.temp_names)} temporary table(s) followed")
+        if self.variable_reads:
+            extra.append(f"{len(self.variable_reads)} table(s) reached through variables")
+        if any(s.conditional and s.disposition == KEPT for s in self.statements):
+            extra.append("statements in branches count as possible edges")
+        text = f"script of {sum(c.values())} statements: " + ", ".join(parts)
+        return text + ("; " + "; ".join(extra) if extra else "")
+
+
+def collect_procedures(texts: Iterable[str]) -> dict[str, Procedure]:
+    """Procedures defined in ``texts``, by lower-cased name as written and by bare name when that is unambiguous."""
+
+    found: dict[str, Procedure] = {}
+    bare: dict[str, list[Procedure]] = {}
+    for text in texts:
+        if "procedure" not in text.lower():
+            continue
+        try:
+            nodes = parse_script(text)
+        except Exception:  # noqa: BLE001
+            continue
+        for node in _walk_nodes(nodes):
+            if node.kind == "procedure" and node.name:
+                params = tuple(_parameter_names(node.params))
+                body = node.branches[0] if node.branches else []
+                proc = Procedure(node.name, params, body, text)
+                found[_norm(node.name)] = proc
+                bare.setdefault(_norm(node.name).split(".")[-1], []).append(proc)
+    for name, procs in bare.items():
+        if len(procs) == 1 and name not in found:
+            found[name] = procs[0]
+    return found
+
+
+def _walk_nodes(nodes: list[Node]) -> Iterator[Node]:
+    for node in nodes:
+        yield node
+        for branch in node.branches:
+            yield from _walk_nodes(branch)
+
+
+def _parameter_names(params: str) -> list[str]:
+    inner = params.strip()
+    if inner.startswith("("):
+        inner = inner[1:]
+    names = []
+    depth = 0
+    expecting = True
+    for tok in lex(inner):
+        if tok.kind == "p" and tok.text == "(":
+            depth += 1
+        elif tok.kind == "p" and tok.text == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif tok.kind == "p" and tok.text == "," and depth == 0:
+            expecting = True
+        elif expecting and depth == 0 and tok.kind == "w":
+            if tok.up in {"IN", "OUT", "INOUT"}:
+                continue
+            names.append(tok.text)
+            expecting = False
+    return names
+
+
+def analyse_script(text: str, *, procedures: Mapping[str, Procedure] | None = None) -> ScriptAnalysis:
+    """Split ``text`` and follow what each statement reads and writes. Never raises."""
+
+    analysis = ScriptAnalysis(text)
+    try:
+        _Run(analysis, procedures or {}).run(text)
+    except RecursionError:  # pathological nesting: report what was read so far as unknown
+        analysis.statements.append(Statement(len(analysis.statements), 0, "script", UNKNOWN, "nested too deeply to read"))
+    return analysis
+
+
+class _Run:
+    def __init__(self, analysis: ScriptAnalysis, external: Mapping[str, Procedure]) -> None:
+        self.a = analysis
+        self.external = dict(external)
+        self.temps: dict[str, _Temp] = {}
+        self.versions: dict[str, int] = {}
+        self.variables: dict[str, _Variable] = {}
+        self.sequence = 0
+        self.used_names: set[str] = set()
+        self.call_stack: list[str] = []
+        self.breaks: list[int] = []
+        self.nested = ""
+        self.anchor_line = 0  # the line of the CALL or EXECUTE IMMEDIATE that statements read from inside it are reported at
+        self._depth = 0
+
+    # -- driving
+    def run(self, text: str) -> None:
+        self.a.procedures = {}
+        if ";" not in text:
+            # one statement, the common case: no need to cut it apart
+            nodes = [Node("stmt", 0, len(text), header=text.strip())] if text.strip() else []
+            if _BLOCK_START.match(text):
+                nodes = parse_script(text)
+        else:
+            nodes = parse_script(text)
+            for proc in collect_procedures([text]).values():
+                self.a.procedures[_norm(proc.name)] = proc
+        self.breaks = _line_index(text)
+        self.used_names = {m.casefold() for m in re.findall(r"\b[A-Za-z_]\w*\b", text)} if ";" in text else set()
+        self.nodes(nodes, text, conditional=False, top_level=True)
+        self.choose_final()
+
+    def line_of(self, text: str, offset: int) -> int:
+        if text is self.a.text:
+            return bisect.bisect_left(self.breaks, offset) + 1
+        return bisect.bisect_left(_line_index(text), offset) + 1
+
+    def nodes(self, nodes: list[Node], text: str, *, conditional: bool, top_level: bool) -> None:
+        for node in nodes:
+            self.node(node, text, conditional=conditional, top_level=top_level)
+
+    def node(self, node: Node, text: str, *, conditional: bool, top_level: bool) -> None:
+        line = self.line_of(text, node.start)
+        if node.kind == "stmt":
+            self.statement(node.header, line, text, conditional=conditional, top_level=top_level)
+            return
+        if node.kind == "procedure":
+            self.record(Statement(len(self.a.statements), line, "create_procedure", KEPT, "definition; read when called", conditional), nested=False)
+            self.describe_procedure(node, text)
+            return
+        looping = node.kind in {"while", "loop", "for", "repeat"}
+        self.record(Statement(len(self.a.statements), line, node.kind if node.kind != "begin" else "block", IGNORED, "control flow", conditional))
+        if node.kind == "for":
+            self.bind_loop_variable(node, line)
+        for index, branch in enumerate(node.branches):
+            gated = conditional or node.kind in {"if", "case"} or looping or index > 0
+            self.nodes(branch, text, conditional=gated, top_level=top_level)
+
+    def record(self, statement: Statement, *, nested: bool | None = None) -> Statement:
+        if self.nested:
+            statement.nested = self.nested
+            statement.line = self.anchor_line or statement.line
+        self.a.statements.append(statement)
+        return statement
+
+    # -- procedures
+    def describe_procedure(self, node: Node, text: str) -> None:
+        """What a procedure reads and writes, read once from its definition."""
+
+        sub = ScriptAnalysis(text)
+        runner = _Run(sub, self.external)
+        runner.breaks = _line_index(text)
+        runner.used_names = self.used_names
+        for name in _parameter_names(node.params):
+            runner.variables[name.casefold()] = _Variable()
+        runner.nodes(node.branches[0] if node.branches else [], text, conditional=False, top_level=False)
+        runner.nested = ""
+        self.a.procedure_reports.append(
+            {
+                "line": self.line_of(text, node.start),
+                "statements": len(sub.statements),
+                "reads": len(sub.reads),
+                "writes": len(sub.writes),
+                "unknown": len(sub.unknown),
+            }
+        )
+
+    def known_procedure(self, name: str) -> Procedure | None:
+        key = _norm(name)
+        for registry in (self.a.procedures, self.external):
+            if key in registry:
+                return registry[key]
+            bare = key.split(".")[-1]
+            hits = {id(p): p for k, p in registry.items() if k == bare or k.endswith("." + bare)}
+            if len(hits) == 1:
+                return next(iter(hits.values()))
+        return None
+
+    # -- variables
+    def bind_loop_variable(self, node: Node, line: int) -> None:
+        sources, ok = self.sources_of_text(node.query)
+        self.variables[node.name.casefold()] = _Variable(dict(sources))
+        if not ok:
+            self.record(Statement(len(self.a.statements), line, "for_query", UNKNOWN, "loop query could not be read"))
+
+    def sources_of_text(self, expression: str) -> tuple[dict[str, exp.Table], bool]:
+        """Real tables read by an expression or query text, through temporary tables and variables. ``ok`` is False if it did not parse."""
+
+        tree = _parse_one(expression) if re.match(r"\s*(SELECT|WITH|\()", expression, re.I) else _parse_one("SELECT " + expression)
+        if tree is None:
+            ok = not re.search(r"\b(from|join)\b", expression, re.I)
+            return {}, ok
+        found, _temps, _unresolved = self.reads_of(tree)
+        return found, True
+
+    def declare_variables(self, names: list[str], sources: dict[str, exp.Table]) -> None:
+        for name in names:
+            self.variables[name.casefold()] = _Variable(dict(sources))
+
+    def variable_sources(self, tree: exp.Expression) -> dict[str, exp.Table]:
+        if not self.variables:
+            return {}
+        found: dict[str, exp.Table] = {}
+        for column in tree.find_all(exp.Column):
+            name = (column.table or column.name).casefold() if column.table else column.name.casefold()
+            var = self.variables.get(name)
+            if var is not None:
+                found.update(var.sources)
+        return found
+
+    # -- reading tables out of a syntax tree
+    def reads_of(
+        self, tree: exp.Expression, skip: Iterable[exp.Table | None] = ()
+    ) -> tuple[dict[str, exp.Table], list[_Temp], list[str]]:
+        """``(real tables, temporary tables read directly, unqualified names that no temporary table has yet)``.
+
+        ``skip`` are table nodes of the statement that are written, not read."""
+
+        skipped = {id(t) for t in skip if t is not None}
+        ctes = {cte.alias_or_name.casefold() for cte in tree.find_all(exp.CTE)}
+        real: dict[str, exp.Table] = {}
+        temps: list[_Temp] = []
+        late: list[str] = []
+        for table in tree.find_all(exp.Table):
+            if id(table) in skipped or not table.name or not isinstance(table.this, exp.Identifier):
+                continue
+            if not table.db and not table.catalog and table.name.casefold() in ctes:
+                continue
+            if _is_temp_name(table) and table.name.casefold() in self.temps:
+                version = self.temps[table.name.casefold()]
+                if version not in temps:
+                    temps.append(version)
+                real.update(version.sources)
+                continue
+            if _is_temp_name(table) and not table.db:
+                late.append(table.name.casefold())
+            real[_norm(_table_ref(table))] = _clean(table)
+        return real, temps, late
+
+    # -- statements
+    def statement(self, text_: str, line: int, text: str, *, conditional: bool, top_level: bool) -> None:
+        words = _first_words(text_)
+        first = words[0] if words else ""
+        index = len(self.a.statements)
+
+        def done(kind: str, disposition: str, reason: str = "") -> Statement:
+            return self.record(Statement(index, line, kind, disposition, reason, conditional))
+
+        if first in _QUERY_STARTS or first == "(":
+            return self.query_statement(text_, line, conditional, top_level, kind="select")
+        if first == "CREATE":
+            return self.create_statement(text_, line, words, conditional, top_level)
+        if first == "INSERT":
+            return self.dml_statement(text_, line, "insert", conditional)
+        if first == "MERGE":
+            return self.dml_statement(text_, line, "merge", conditional)
+        if first == "UPDATE":
+            return self.dml_statement(text_, line, "update", conditional)
+        if first == "DELETE":
+            return self.dml_statement(text_, line, "delete", conditional)
+        if first == "TRUNCATE":
+            return done("truncate", IGNORED, "removes rows only")
+        if first in _DDL:
+            if first == "DROP":
+                self.drop_temp(text_)
+            return done(first.lower(), IGNORED, "definition change, no data flow")
+        if first == "DECLARE":
+            return self.declare_statement(text_, line, conditional)
+        if first == "SET":
+            return self.set_statement(text_, line, conditional)
+        if first == "ASSERT":
+            return done("assert", IGNORED, "a check, not data flow")
+        if first == "LOAD":
+            return done("load_data", IGNORED, "loads files")
+        if first == "EXPORT":
+            return self.export_statement(text_, line, conditional)
+        if first in _TRANSACTION or (first == "BEGIN" and len(words) > 1):
+            return done("transaction", IGNORED, "transaction control")
+        if first in _FLOW:
+            return done("flow", IGNORED, "control flow")
+        if first == "CALL":
+            return self.call_statement(text_, line, conditional, top_level)
+        if first == "EXECUTE":
+            return self.execute_statement(text_, line, conditional, top_level)
+        return done("other", UNKNOWN, "statement not recognised")
+
+    def drop_temp(self, text_: str) -> None:
+        tree = _parse_one(text_)
+        if isinstance(tree, exp.Drop):
+            # sqlglot 26 keeps the table in ``this``, later releases in ``tables``
+            for table in tree.args.get("tables") or [tree.this]:
+                if isinstance(table, exp.Table) and _is_temp_name(table):
+                    self.temps.pop(table.name.casefold(), None)
+
+    # -- queries and DDL
+    def rewritten(self, tree: exp.Expression, temps: list[_Temp]) -> exp.Expression:
+        """A copy of ``tree`` reading each temporary table under the name of the version that is current."""
+
+        if not temps:
+            return tree
+        copy = tree.copy()
+        by_name = {t.name.casefold(): t for t in temps}
+        ctes = {cte.alias_or_name.casefold() for cte in copy.find_all(exp.CTE)}
+        for table in list(copy.find_all(exp.Table)):
+            if not table.db and not table.catalog and table.name.casefold() in ctes:
+                continue
+            version = by_name.get(table.name.casefold()) if _is_temp_name(table) else None
+            if version is not None and version.alias != table.name:
+                table.set("this", exp.to_identifier(version.alias))
+                table.set("db", None)
+        return copy
+
+    def query_statement(self, text_: str, line: int, conditional: bool, top_level: bool, *, kind: str) -> Statement:
+        index = len(self.a.statements)
+        tree = _parse_one(text_)
+        query = _query_of(tree) if tree is not None else None
+        if tree is None or query is None:
+            return self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional))
+        statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
+        self.after_query(statement, tree, query, None, conditional, top_level)
+        return statement
+
+    def after_query(
+        self,
+        statement: Statement,
+        tree: exp.Expression,
+        query: exp.Query,
+        target: exp.Table | None,
+        conditional: bool,
+        top_level: bool,
+    ) -> "_Output":
+        sources, temps, _late = self.reads_of(tree, [target])
+        via = self.variable_sources(tree)
+        for key, table in sources.items():
+            self.a.reads.setdefault(key, table)
+        for key, table in via.items():
+            if key not in sources:
+                self.a.variable_reads.setdefault(key, table)
+        merged = {**sources, **via}
+        node = self.rewritten(tree, temps)
+        out_query = _query_of(node)
+        output = _Output(
+            statement, node, out_query if out_query is not None else query, tuple(temps), merged, target, conditional, top_level and not self.nested
+        )
+        self.a._outputs.append(output)
+        return output
+
+    def create_statement(self, text_: str, line: int, words: list[str], conditional: bool, top_level: bool) -> Statement:
+        index = len(self.a.statements)
+        head = " ".join(w for w in words[:6] if w)
+        if re.match(r"CREATE (OR REPLACE )?(TEMP |TEMPORARY )?(AGGREGATE )?(TABLE )?(FUNCTION|PROCEDURE)", head):
+            tree = _parse_one(text_) if "FUNCTION" in head else None
+            found = self.reads_of(tree)[0] if tree is not None else {}
+            if not found:
+                return self.record(Statement(index, line, "create_function", IGNORED, "defines a routine; read when called", conditional))
+            for key, table in found.items():
+                self.a.reads.setdefault(key, table)
+            return self.record(Statement(index, line, "create_function", KEPT, "reads only: the tables its body reads when called", conditional))
+        if not re.match(r"CREATE (OR REPLACE )?(TEMP |TEMPORARY )?(EXTERNAL |MATERIALIZED |SNAPSHOT )?(TABLE|VIEW|MODEL)", head):
+            return self.record(Statement(index, line, "ddl", IGNORED, "definition change, no data flow", conditional))
+        tree = _parse_one(text_)
+        target = None
+        if isinstance(tree, exp.Create):
+            target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+        if not isinstance(target, exp.Table) or not target.name:
+            return self.record(Statement(index, line, "create_table", UNKNOWN, "could not be parsed", conditional))
+        words_set = set(words[:6])
+        properties = tree.args.get("properties")
+        temp = bool(words_set & {"TEMP", "TEMPORARY"}) or (
+            bool(properties) and any(isinstance(p, exp.TemporaryProperty) for p in properties.expressions)
+        )
+        temp = temp and not target.db
+        kind = "create_view" if "VIEW" in words_set else "create_model" if "MODEL" in words_set else "create_table"
+        columns = None
+        if isinstance(tree.this, exp.Schema):
+            columns = tuple(
+                (item.this if isinstance(item, exp.ColumnDef) else item).name
+                for item in tree.this.expressions
+                if getattr(item.this if isinstance(item, exp.ColumnDef) else item, "name", "")
+            ) or None
+        query = _query_of(tree)
+        clone = tree.args.get("clone")
+        if query is None and isinstance(clone, exp.Clone) and isinstance(clone.this, exp.Table):
+            statement = self.record(Statement(index, line, "clone", KEPT, "", conditional))
+            sources, _temps, _late = self.reads_of(clone.this)
+            self.write_or_temp(target, sources, "clone", conditional, temp, columns, None, statement)
+            return statement
+        if query is None:
+            statement = self.record(Statement(index, line, kind, KEPT, "no source query", conditional))
+            if temp:
+                self.define_temp(target, {}, None, columns, conditional, [statement])
+            return statement
+        statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
+        output = self.after_query(statement, tree, query, target, conditional, top_level and not temp)
+        self.write_or_temp(target, output.sources, kind, conditional, temp, columns, output, statement)
+        return statement
+
+    def write_or_temp(self, target, sources, kind, conditional, temp, columns, output, statement) -> None:
+        if temp:
+            self.define_temp(target, sources, output, columns, conditional, [statement])
+            return
+        for key, table in sources.items():
+            self.a.reads.setdefault(key, table)
+        self.a.writes.append(ScriptWrite(_clean(target), tuple(sources.values()), kind, conditional))
+
+    # -- temporary tables
+    def define_temp(
+        self,
+        target: exp.Table,
+        sources: dict[str, exp.Table],
+        output: "_Output | None",
+        columns: tuple[str, ...] | None,
+        conditional: bool,
+        statements: list[Statement],
+    ) -> None:
+        name = target.name
+        key = name.casefold()
+        self.a.temp_names.add(key)
+        self.sequence += 1
+        version = self.versions.get(key, 0) + 1
+        self.versions[key] = version
+        alias = name if version == 1 and key not in self.used_elsewhere() else f"{name}__v{version}"
+        temp = _Temp(name, alias, dict(sources), sequence=self.sequence, statements=list(statements))
+        previous = self.temps.get(key)
+        if output is not None:
+            query = output.query
+            temp.deps = tuple(output.temps)
+            if columns:
+                query = _alias_to(query, columns)
+                temp.columns = columns
+            else:
+                temp.columns = _output_names(query)
+            temp.query = query.copy() if query is not None else None
+            if temp.query is None:
+                temp.opaque_reason = "its columns do not line up with the declared ones"
+        else:
+            temp.columns = columns
+            temp.empty = True
+        if previous is not None and conditional:
+            temp.sources = {**previous.sources, **temp.sources}
+            temp.query = None
+            temp.empty = False
+            temp.opaque_reason = "defined on more than one path"
+            temp.statements = [*previous.statements, *temp.statements]
+        self.temps[key] = temp
+
+    def used_elsewhere(self) -> set[str]:
+        """Names a version alias must not take: any word of the script that is not a temporary table's own name."""
+
+        return self.used_names - {t.casefold() for t in self.a.temp_names}
+
+    def temp_dml(
+        self,
+        target: exp.Table,
+        kind: str,
+        output: "_Output | None",
+        insert_columns: tuple[str, ...] | None,
+        sources: dict[str, exp.Table],
+        statement: Statement,
+    ) -> None:
+        """INSERT, UPDATE, MERGE or DELETE on a temporary table that exists."""
+
+        key = target.name.casefold()
+        previous = self.temps[key]
+        if kind == "delete":  # removes rows: the columns still come from the same query
+            previous.sources.update({k: t for k, t in sources.items() if k not in previous.sources})
+            previous.statements.append(statement)
+            return
+        # Later statements see the changed table; statements that already read it keep the version they read.
+        self.sequence += 1
+        version = self.versions.get(key, 0) + 1
+        self.versions[key] = version
+        temp = _Temp(
+            previous.name,
+            f"{previous.name}__v{version}",
+            {**previous.sources, **{k: t for k, t in sources.items() if k not in previous.sources}},
+            previous.query,
+            previous.columns,
+            previous.deps,
+            previous.opaque_reason,
+            self.sequence,
+            [*previous.statements, statement],
+            previous.empty,
+        )
+        self.temps[key] = temp
+        if kind == "insert" and output is not None and temp.columns and not temp.opaque_reason:
+            arm = _arm(output.query, temp.columns, insert_columns)
+            if arm is not None:
+                if temp.empty or temp.query is None:
+                    temp.query = arm.copy()
+                else:
+                    temp.query = exp.union(exp.Subquery(this=temp.query.copy()), exp.Subquery(this=arm.copy()), distinct=False)
+                temp.empty = False
+                temp.deps = tuple(dict.fromkeys([*previous.deps, *output.temps]))
+                return
+        temp.query = None
+        temp.empty = False
+        temp.opaque_reason = f"changed by {kind} in a way it could not follow"
+
+    def dml_statement(self, text_: str, line: int, kind: str, conditional: bool) -> Statement:
+        index = len(self.a.statements)
+        tree = _parse_one(text_)
+        valid = {"insert": exp.Insert, "merge": exp.Merge, "update": exp.Update, "delete": exp.Delete}[kind]
+        if not isinstance(tree, valid):
+            return self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional))
+        target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+        if not isinstance(target, exp.Table) or not target.name:
+            return self.record(Statement(index, line, kind, UNKNOWN, "target could not be read", conditional))
+        statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
+        into_temp = _is_temp_name(target) and target.name.casefold() in self.temps
+        query = _query_of(tree) if kind == "insert" else None
+        output = None
+        if query is not None:
+            output = self.after_query(statement, tree, query, target, conditional, not into_temp)
+            sources = dict(output.sources)
+        else:
+            sources, _temps, _late = self.reads_of(tree, [target])
+            via = self.variable_sources(tree)
+            for key, table in sources.items():
+                self.a.reads.setdefault(key, table)
+            for key, table in via.items():
+                if key not in sources:
+                    self.a.variable_reads.setdefault(key, table)
+            sources = {**sources, **via}
+        if into_temp:
+            insert_columns = None
+            if kind == "insert" and isinstance(tree.this, exp.Schema):
+                insert_columns = tuple(c.name for c in tree.this.expressions)
+            self.temp_dml(target, kind, output, insert_columns, sources, statement)
+            return statement
+        sources.pop(_norm(_table_ref(target)), None)
+        self.a.writes.append(ScriptWrite(_clean(target), tuple(sources.values()), kind, conditional))
+        return statement
+
+    # -- variables
+    def declare_statement(self, text_: str, line: int, conditional: bool) -> Statement:
+        toks = lex(text_)
+        names: list[str] = []
+        j = 1
+        while j < len(toks) and toks[j].kind in {"w", "p"} and not (toks[j].kind == "w" and toks[j].up in {"DEFAULT"}):
+            if toks[j].kind == "w":
+                names.append(toks[j].text)
+                j += 1
+                if j < len(toks) and toks[j].text == ",":
+                    j += 1
+                    continue
+                break
+            j += 1
+        default = next((k for k, t in enumerate(toks) if t.kind == "w" and t.up == "DEFAULT"), None)
+        statement = self.record(Statement(len(self.a.statements), line, "declare", IGNORED, "scalar variable", conditional))
+        if default is not None:
+            expression = text_[toks[default + 1].start :] if default + 1 < len(toks) else ""
+            sources, ok = self.sources_of_text(expression)
+            self.mark_unreadable(statement, ok)
+            self.declare_variables(names, sources)
+        else:
+            self.declare_variables(names, {})
+        return statement
+
+    def mark_unreadable(self, statement: Statement, ok: bool) -> None:
+        if not ok:
+            statement.disposition, statement.reason = UNKNOWN, "value could not be read"
+
+    def set_statement(self, text_: str, line: int, conditional: bool) -> Statement:
+        statement = self.record(Statement(len(self.a.statements), line, "set", IGNORED, "scalar variable", conditional))
+        match = re.match(r"\s*SET\s+(\([^)]*\)|[\w.@`]+)\s*=\s*(.*)$", text_, re.I | re.S)
+        if not match:
+            return statement
+        target, expression = match.group(1), match.group(2)
+        names = [n.strip().strip("()") for n in target.split(",")] if target.startswith("(") else [target]
+        sources, ok = self.sources_of_text(expression)
+        self.mark_unreadable(statement, ok)
+        for variable in self.variable_sources_of_text(expression):
+            sources.setdefault(*variable)
+        for name in names:
+            name = name.split(".")[0].strip().casefold()
+            if name.startswith("@@"):
+                continue
+            existing = self.variables.get(name)
+            if existing is not None and conditional:
+                existing.sources.update(sources)
+            else:
+                self.variables[name] = _Variable(dict(sources))
+        return statement
+
+    def variable_sources_of_text(self, expression: str) -> list[tuple[str, exp.Table]]:
+        tree = _parse_one("SELECT " + expression)
+        if tree is None:
+            return []
+        return list(self.variable_sources(tree).items())
+
+    # -- other statements
+    def export_statement(self, text_: str, line: int, conditional: bool) -> Statement:
+        index = len(self.a.statements)
+        match = re.search(r"\bAS\b\s*(.*)$", text_, re.I | re.S)
+        tree = _parse_one(match.group(1)) if match else None
+        query = _query_of(tree) if tree is not None else None
+        if query is None:
+            return self.record(Statement(index, line, "export_data", UNKNOWN, "query could not be read", conditional))
+        statement = self.record(Statement(index, line, "export_data", KEPT, "reads only: nothing is written to a table", conditional))
+        sources, _temps, _late = self.reads_of(tree)
+        for key, table in sources.items():
+            self.a.reads.setdefault(key, table)
+        return statement
+
+    def call_statement(self, text_: str, line: int, conditional: bool, top_level: bool) -> Statement:
+        index = len(self.a.statements)
+        match = re.match(r"\s*CALL\s+((?:`[^`]+`|[\w.\-]+)+)\s*\((.*)\)\s*$", text_, re.I | re.S)
+        if not match:
+            return self.record(Statement(index, line, "call", UNKNOWN, "could not be read", conditional))
+        name = match.group(1).replace("`", "")
+        procedure = self.known_procedure(name)
+        if procedure is None:
+            return self.record(Statement(index, line, "call", UNKNOWN, "procedure is not defined in the project", conditional))
+        if _norm(procedure.name) in self.call_stack or len(self.call_stack) >= MAX_PROCEDURE_DEPTH:
+            return self.record(Statement(index, line, "call", UNKNOWN, "recursive or too deeply nested", conditional))
+        statement = self.record(Statement(index, line, "call", KEPT, "expanded from its definition", conditional))
+        arguments = _split_arguments(match.group(2))
+        saved = dict(self.variables)
+        self.call_stack.append(_norm(procedure.name))
+        previous_nested, self.nested = self.nested, self.nested or "procedure"
+        previous_anchor, self.anchor_line = self.anchor_line, self.anchor_line or line
+        try:
+            for position, param in enumerate(procedure.params):
+                sources: dict[str, exp.Table] = {}
+                if position < len(arguments):
+                    sources, _ok = self.sources_of_text(arguments[position])
+                    for key, table in self.variable_sources_of_text(arguments[position]):
+                        sources.setdefault(key, table)
+                self.variables[param.casefold()] = _Variable(dict(sources))
+            before_unknown = len(self.a.unknown)
+            self.nodes_in_text(procedure.body, procedure.text, conditional=conditional)
+            if len(self.a.unknown) > before_unknown:
+                statement.reason = "expanded from its definition; some of it could not be read"
+        finally:
+            self.nested, self.anchor_line = previous_nested, previous_anchor
+            self.call_stack.pop()
+            for key in [k for k in self.variables if k not in saved]:
+                del self.variables[key]
+            for key, value in saved.items():
+                self.variables.setdefault(key, value)
+        return statement
+
+    def nodes_in_text(self, nodes: list[Node], text: str, *, conditional: bool) -> None:
+        saved = self.breaks
+        self.breaks = _line_index(text)
+        try:
+            self.nodes(nodes, text, conditional=conditional, top_level=False)
+        finally:
+            self.breaks = saved
+
+    def execute_statement(self, text_: str, line: int, conditional: bool, top_level: bool) -> Statement:
+        index = len(self.a.statements)
+        toks = lex(text_)
+        if len(toks) < 3 or toks[1].up != "IMMEDIATE":
+            return self.record(Statement(index, line, "execute", UNKNOWN, "statement not recognised", conditional))
+        body: list[Tok] = []
+        for t in toks[2:]:
+            if t.kind == "w" and t.up in {"INTO", "USING"}:
+                break
+            body.append(t)
+        inner = _literal_text(body)
+        if inner is None:
+            return self.record(Statement(index, line, "execute_immediate", UNKNOWN, "dynamic SQL text", conditional))
+        if self._depth >= MAX_NESTED_SQL_DEPTH:
+            return self.record(Statement(index, line, "execute_immediate", UNKNOWN, "nested too deeply to read", conditional))
+        statement = self.record(Statement(index, line, "execute_immediate", KEPT, "literal text, read as a script", conditional))
+        self._depth += 1
+        previous_nested, self.nested = self.nested, self.nested or "execute_immediate"
+        previous_anchor, self.anchor_line = self.anchor_line, self.anchor_line or line
+        try:
+            self.nodes_in_text(parse_script(inner), inner, conditional=conditional)
+        finally:
+            self.nested, self.anchor_line = previous_nested, previous_anchor
+            self._depth -= 1
+        return statement
+
+    # -- output
+    def choose_final(self) -> None:
+        outputs = [o for o in self.a._outputs if o.top_level and o.statement.disposition == KEPT]
+        unconditional = [o for o in outputs if not o.conditional]
+        final = (unconditional or outputs or [None])[-1]
+        if final is None:
+            return
+        self.a._final = final
+        final.statement.traced = True
+        needed: list[_Temp] = []
+
+        def collect(temp: _Temp) -> None:
+            if temp in needed:
+                return
+            for dep in temp.deps:
+                collect(dep)
+            needed.append(temp)
+
+        for temp in final.temps:
+            collect(temp)
+        ctes: list[tuple[str, exp.Query]] = []
+        for temp in sorted(needed, key=lambda t: t.sequence):
+            if temp.query is None:
+                self.a.opaque_temps[temp.alias.casefold()] = temp.opaque_reason or "no query"
+                continue
+            ctes.append((temp.alias, temp.query))
+            for statement in temp.statements:
+                statement.traced = True
+        self.a._ctes = ctes
+
+
+def _literal_text(tokens: list[Tok]) -> str | None:
+    """The text a constant string expression stands for (literals joined by ``||`` or ``CONCAT``), else ``None``."""
+
+    position = 0
+
+    def expression() -> str | None:
+        nonlocal position
+        value = term()
+        while value is not None and position + 1 < len(tokens) and tokens[position].text == "|" and tokens[position + 1].text == "|":
+            position += 2
+            more = term()
+            value = None if more is None else value + more
+        return value
+
+    def term() -> str | None:
+        nonlocal position
+        if position >= len(tokens):
+            return None
+        t = tokens[position]
+        if t.kind == "s":
+            position += 1
+            return string_value(t.text)
+        if t.kind == "p" and t.text == "(":
+            position += 1
+            value = expression()
+            if value is None or position >= len(tokens) or tokens[position].text != ")":
+                return None
+            position += 1
+            return value
+        if t.kind == "w" and t.up == "CONCAT" and position + 1 < len(tokens) and tokens[position + 1].text == "(":
+            position += 2
+            parts: list[str] = []
+            while True:
+                piece = expression()
+                if piece is None:
+                    return None
+                parts.append(piece)
+                if position < len(tokens) and tokens[position].text == ",":
+                    position += 1
+                    continue
+                break
+            if position >= len(tokens) or tokens[position].text != ")":
+                return None
+            position += 1
+            return "".join(parts)
+        return None
+
+    value = expression()
+    return value if value is not None and position == len(tokens) else None
+
+
+def _output_names(query: exp.Query | None) -> tuple[str, ...] | None:
+    if query is None:
+        return None
+    first = query
+    while isinstance(first, exp.SetOperation):
+        first = first.left
+    first = first.unnest() if isinstance(first, exp.Subquery) else first
+    if not isinstance(first, exp.Select):
+        return None
+    if any(p.is_star or isinstance(p.unalias(), exp.Star) for p in first.expressions):
+        return None
+    names = tuple(p.alias_or_name for p in first.expressions)
+    return names if all(names) else None
+
+
+def _alias_to(query: exp.Query, columns: tuple[str, ...]) -> exp.Query | None:
+    first = query.copy()
+    head = first
+    while isinstance(head, exp.SetOperation):
+        head = head.left
+    head = head.unnest() if isinstance(head, exp.Subquery) else head
+    if not isinstance(head, exp.Select) or len(head.expressions) != len(columns):
+        return None
+    if any(p.is_star or isinstance(p.unalias(), exp.Star) for p in head.expressions):
+        return None
+    head.set("expressions", [exp.alias_(p.unalias(), name, quoted=False) for p, name in zip(head.expressions, columns)])
+    return first
+
+
+def _arm(query: exp.Query, columns: tuple[str, ...], insert_columns: tuple[str, ...] | None) -> exp.Query | None:
+    """``query`` named by position to fit ``columns``, or ``None`` when its columns cannot be matched safely."""
+
+    if insert_columns is None:
+        return _alias_to(query, columns)
+    if not isinstance(query, exp.Select):
+        return None
+    if len(query.expressions) != len(insert_columns) or any(p.is_star or isinstance(p.unalias(), exp.Star) for p in query.expressions):
+        return None
+    given = {name.casefold(): projection.unalias() for name, projection in zip(insert_columns, query.expressions)}
+    if not set(given) <= {c.casefold() for c in columns}:
+        return None
+    copy = query.copy()
+    copy.set(
+        "expressions",
+        [exp.alias_(given[c.casefold()].copy() if c.casefold() in given else exp.Null(), c, quoted=False) for c in columns],
+    )
+    return copy
+
+
+def _split_arguments(text: str) -> list[str]:
+    args: list[str] = []
+    depth = 0
+    start = 0
+    toks = lex(text)
+    for t in toks:
+        if t.kind == "p" and t.text in "([{":
+            depth += 1
+        elif t.kind == "p" and t.text in ")]}":
+            depth -= 1
+        elif t.kind == "p" and t.text == "," and depth == 0:
+            args.append(text[start : t.start])
+            start = t.end
+    if toks:
+        args.append(text[start:])
+    return [a.strip() for a in args]
+
+
+# ---------------------------------------------------------------------------------- jobs
+
+
+_TEMP_DATASET = re.compile(r"^_")
+
+
+def _parts(reference: object) -> tuple[str, str, str]:
+    if isinstance(reference, Mapping):
+        project = reference.get("projectId") or reference.get("project_id") or reference.get("project") or ""
+        dataset = reference.get("datasetId") or reference.get("dataset_id") or reference.get("dataset") or ""
+        table = reference.get("tableId") or reference.get("table_id") or reference.get("table") or ""
+        return str(project), str(dataset), str(table)
+    parts = [p for p in str(reference or "").replace("`", "").split(".") if p]
+    parts = [""] * (3 - len(parts)) + parts[-3:]
+    return parts[0], parts[1], parts[2]
+
+
+def is_temporary_reference(reference: object) -> bool:
+    """A table in a script's hidden dataset (``_script...``, ``_session``, anonymous query results)."""
+
+    _project, dataset, table = _parts(reference)
+    return bool(dataset and _TEMP_DATASET.match(dataset)) or (not dataset and bool(table))
+
+
+def expand_script_jobs(records: Iterable[Mapping[str, object]]) -> tuple[list[dict], dict]:
+    """Job-history records with script jobs reduced to the real tables they read and wrote.
+
+    Each statement of a BigQuery script is its own job (``parent_job_id`` names the script). Statements
+    write to temporary tables that later statements read; a record that reads or writes one is replaced
+    by what the temporary table was built from, so a final table traces to the real sources. A script's
+    parent job (``statement_type`` ``SCRIPT``) with children is dropped, since they carry the facts. A
+    script job that has query text but no children is read with :func:`analyse_script`, one record per
+    table it writes. Everything else passes through untouched.
+
+    Returns ``(records, summary)``; the summary has counts only.
+    """
+
+    rows = [dict(r) for r in records if isinstance(r, Mapping)]
+    summary = {"scripts": 0, "child_jobs": 0, "temporary_tables_followed": 0, "parents_dropped": 0, "scripts_read_from_text": 0, "records_added": 0, "unreadable_scripts": 0}
+    by_parent: dict[str, list[int]] = {}
+    for index, row in enumerate(rows):
+        parent = row.get("parent_job_id")
+        if parent:
+            by_parent.setdefault(str(parent), []).append(index)
+    drop: set[int] = set()
+    out: dict[int, dict] = {}
+    for parent, indices in by_parent.items():
+        summary["scripts"] += 1
+        summary["child_jobs"] += len(indices)
+        ordered = sorted(indices, key=lambda i: (str(rows[i].get("creation_time") or ""), i))
+        built: dict[str, set[str]] = {}
+        for i in ordered:
+            row = rows[i]
+            refs = row.get("referenced_tables") or row.get("references") or []
+            if isinstance(refs, (str, Mapping)):
+                refs = [refs]
+            expanded: list[object] = []
+            seen: set[str] = set()
+            for ref in refs:
+                key = ".".join(_parts(ref))
+                if is_temporary_reference(ref):
+                    for source in sorted(built.get(key, ())):
+                        if source not in seen:
+                            seen.add(source)
+                            expanded.append(source)
+                elif key not in seen:
+                    seen.add(key)
+                    expanded.append(ref)
+            destination = row.get("destination") or row.get("destination_table")
+            if destination and is_temporary_reference(destination):
+                built.setdefault(".".join(_parts(destination)), set()).update(".".join(_parts(r)) for r in expanded)
+                drop.add(i)
+                summary["temporary_tables_followed"] += 1
+                continue
+            row["referenced_tables"] = expanded
+            row.pop("references", None)
+            out[i] = row
+    parents_with_children = set(by_parent)
+    result: list[dict] = []
+    for index, row in enumerate(rows):
+        if index in drop:
+            continue
+        job_id = str(row.get("job_id") or "")
+        if job_id and job_id in parents_with_children and str(row.get("statement_type") or "").upper() == "SCRIPT":
+            summary["parents_dropped"] += 1
+            continue
+        row = out.get(index, row)
+        text = row.get("query") or row.get("query_text")
+        has_edges = bool(row.get("referenced_tables") or row.get("references")) and bool(row.get("destination") or row.get("destination_table"))
+        if (
+            isinstance(text, str)
+            and not has_edges
+            and not row.get("parent_job_id")
+            and str(row.get("statement_type") or "").upper() == "SCRIPT"
+            and not row.get("query_truncated")
+            and job_id not in parents_with_children
+        ):
+            analysis = analyse_script(text)
+            summary["scripts_read_from_text"] += 1
+            writes = [w for w in analysis.writes if w.table.name]
+            if not writes:
+                summary["unreadable_scripts"] += 1
+                result.append(row)
+                continue
+            for number, write in enumerate(writes, 1):
+                added = dict(row)
+                added["job_id"] = f"{job_id}#{number}" if job_id else f"script#{number}"
+                added["destination"] = _table_ref(write.table)
+                added["destination_table"] = added["destination"]
+                added["referenced_tables"] = [_table_ref(t) for t in write.sources]
+                added["statement_type"] = "SCRIPT"
+                result.append(added)
+                summary["records_added"] += 1
+            continue
+        result.append(row)
+    return result, summary

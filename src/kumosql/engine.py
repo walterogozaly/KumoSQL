@@ -23,6 +23,7 @@ from sqlglot.dialects.bigquery import BigQuery
 from sqlglot.tokens import TokenType
 
 from .ast_utils import cte_dependency_errors, parse_statements, render_statement
+from .scripts import has_blocks, is_rewriteable, leaf_statements
 from .sqlx import (
     SqlxRestorationError,
     looks_like_sqlx,
@@ -31,6 +32,9 @@ from .sqlx import (
     split_sqlx_sections,
     with_preserved_whitespace,
 )
+
+
+_BLOCK_WORDS = re.compile(r"\b(?:BEGIN|LOOP|WHILE|REPEAT|THEN|DO)\b", re.IGNORECASE)  # cheap test before cutting a script apart
 
 
 def _sql_comments(sql: str) -> list[str]:
@@ -325,6 +329,8 @@ class RewriteRule:
     def _apply_sql(self, sql: str) -> RuleOutput:
         if not sql or not sql.strip():
             return RuleOutput("", 0, 0, 0, 0, ())
+        if _BLOCK_WORDS.search(sql) and has_blocks(sql):
+            return self._apply_script(sql)
 
         try:
             statements = parse_statements(sql)
@@ -473,6 +479,35 @@ class RewriteRule:
             remaining,
             tuple(diagnostics),
         )
+
+    def _apply_script(self, sql: str) -> RuleOutput:
+        """A script with ``BEGIN ... END``, ``IF``, loops or procedures: the rule runs on each statement inside, in place.
+
+        Declarations, variable assignments, transactions and control flow are left exactly as written.
+        """
+
+        edits: list[tuple[int, int, str]] = []
+        diagnostics: list[RuleDiagnostic] = []
+        statements = changed_statements = changes = remaining = 0
+        for node in leaf_statements(sql):
+            if not is_rewriteable(node.header):
+                continue
+            text = sql[node.start : node.end]
+            result = self._apply_sql(text)
+            index = statements
+            statements += max(result.statements, 1)
+            changed_statements += result.changed_statements
+            changes += result.changes
+            remaining += result.remaining
+            diagnostics.extend(
+                RuleDiagnostic(index if d.statement_index >= 0 else d.statement_index, d.code, d.message) for d in result.diagnostics
+            )
+            if result.sql != text:
+                edits.append((node.start, node.end, result.sql))
+        output = sql
+        for start, end, replacement in reversed(edits):
+            output = output[:start] + replacement + output[end:]
+        return RuleOutput(output, statements, changed_statements, changes, remaining, tuple(diagnostics))
 
     def _apply_sqlx(self, sql: str) -> RuleOutput:
         try:
