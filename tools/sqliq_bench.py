@@ -297,6 +297,36 @@ def targeted(pair: Pair):
 USE_TARGETED = os.environ.get("KUMOSQL_TARGETED", "1") != "0"
 
 
+USE_BOUNDED = os.environ.get("KUMOSQL_BOUNDED", "1") != "0"
+BOUNDED_ROWS = 3
+
+
+def bounded_refutes(pair: Pair) -> bool:
+    """A database of at most 3 rows per table found by the z3 bounded check, on which SQLite returns different bags."""
+
+    from kumosql import bounded_equivalence as be
+
+    tables = {}
+    for table, columns in pair.tables.items():
+        key = set(pair.keys.get(table, ()))
+        cols = [
+            be.BColumn(c, "FLOAT64" if any(w in k for w in ("REAL", "FLOA", "DOUB", "DEC")) else _BQ_TYPES[_kind(k)], c in key)
+            for c, k in columns.items()
+        ]
+        tables[table] = be.BTable(table, cols, [tuple(pair.keys[table])] if pair.keys.get(table) else [])
+    for child, child_column, parent, parent_column in pair.foreign:
+        tables[child].foreign_keys.append(((child_column,), parent, (parent_column,)))
+    schema = be.BoundedSchema(tables)
+    try:
+        result = be.check_bounded(
+            pair.sql1, pair.sql2, schema, rows=BOUNDED_ROWS, dialect="sqlite", budget_s=30, timeout_ms=5000,
+            replay=be.SQLiteReplay(schema, pair.sql1, pair.sql2),
+        )
+    except Exception:
+        return False
+    return result.status is be.BoundedStatus.DIFFERENT
+
+
 def judge(pair: Pair) -> tuple[str, str]:
     """(answer, how): answer is "yes" or "no"; how is proved, differs, targeted, tested or error."""
 
@@ -311,6 +341,8 @@ def judge(pair: Pair) -> tuple[str, str]:
     if result == "agree":
         if USE_TARGETED and targeted(pair) is not None:
             return "no", "targeted"
+        if USE_BOUNDED and bounded_refutes(pair):
+            return "no", "bounded"
         return "yes", "tested"
     return "no", "error"
 
