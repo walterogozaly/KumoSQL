@@ -1,0 +1,1968 @@
+{
+ "source": "https://github.com/apache/calcite",
+ "tag": "calcite-1.37.0",
+ "tag_object": "14ab7c28ddd4c9e742fcba5108d20108386e5edb",
+ "license": "Apache-2.0",
+ "cases": [
+  {
+   "id": "rules.testSwapJoin",
+   "name": "testSwapJoin",
+   "origin": "rules",
+   "materialization": "select count(*) as c from \"foodmart\".\"sales_fact_1997\" as s join \"foodmart\".\"time_by_day\" as t on s.\"time_id\" = t.\"time_id\"",
+   "query": "select count(*) as c from \"foodmart\".\"time_by_day\" as t join \"foodmart\".\"sales_fact_1997\" as s on t.\"time_id\" = s.\"time_id\"",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateProject",
+   "name": "testAggregateProject",
+   "origin": "rules",
+   "materialization": "select \"deptno\", count(*) as c, \"empid\" + 2, sum(\"empid\") as s from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c, \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs1",
+   "name": "testAggregateMaterializationNoAggregateFuncs1",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\" from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"empid\", \"deptno\" from \"emps\" group by \"empid\", \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs2",
+   "name": "testAggregateMaterializationNoAggregateFuncs2",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\" from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs3",
+   "name": "testAggregateMaterializationNoAggregateFuncs3",
+   "origin": "rules",
+   "materialization": "select \"deptno\" from \"emps\" group by \"deptno\"",
+   "query": "select \"empid\", \"deptno\" from \"emps\" group by \"empid\", \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs4",
+   "name": "testAggregateMaterializationNoAggregateFuncs4",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\"\nfrom \"emps\" where \"deptno\" = 10 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" where \"deptno\" = 10 group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs5",
+   "name": "testAggregateMaterializationNoAggregateFuncs5",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\"\nfrom \"emps\" where \"deptno\" = 5 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" where \"deptno\" = 10 group by \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs6",
+   "name": "testAggregateMaterializationNoAggregateFuncs6",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\"\nfrom \"emps\" where \"deptno\" > 5 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" where \"deptno\" > 10 group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs7",
+   "name": "testAggregateMaterializationNoAggregateFuncs7",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\"\nfrom \"emps\" where \"deptno\" > 5 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" where \"deptno\" < 10 group by \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs8",
+   "name": "testAggregateMaterializationNoAggregateFuncs8",
+   "origin": "rules",
+   "materialization": "select \"empid\" from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationNoAggregateFuncs9",
+   "name": "testAggregateMaterializationNoAggregateFuncs9",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\" from \"emps\"\nwhere \"salary\" > 1000 group by \"name\", \"empid\", \"deptno\"",
+   "query": "select \"empid\" from \"emps\"\nwhere \"salary\" > 2000 group by \"name\", \"empid\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs1",
+   "name": "testAggregateMaterializationAggregateFuncs1",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs2",
+   "name": "testAggregateMaterializationAggregateFuncs2",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs3",
+   "name": "testAggregateMaterializationAggregateFuncs3",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\", \"empid\", sum(\"empid\") as s, count(*) as c\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs4",
+   "name": "testAggregateMaterializationAggregateFuncs4",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" where \"deptno\" >= 10 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\", sum(\"empid\") as s\nfrom \"emps\" where \"deptno\" > 10 group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs5",
+   "name": "testAggregateMaterializationAggregateFuncs5",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\" where \"deptno\" >= 10 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\", sum(\"empid\") + 1 as s\nfrom \"emps\" where \"deptno\" > 10 group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs6",
+   "name": "testAggregateMaterializationAggregateFuncs6",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) + 1 as c, sum(\"empid\") + 2 as s\nfrom \"emps\" where \"deptno\" >= 10 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\", sum(\"empid\") + 1 as s\nfrom \"emps\" where \"deptno\" > 10 group by \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs7",
+   "name": "testAggregateMaterializationAggregateFuncs7",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\" where \"deptno\" >= 10 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" + 1, sum(\"empid\") + 1 as s\nfrom \"emps\" where \"deptno\" > 10 group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs8",
+   "name": "testAggregateMaterializationAggregateFuncs8",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\" + 1, count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\" where \"deptno\" >= 10 group by \"empid\", \"deptno\"",
+   "query": "select \"deptno\" + 1, sum(\"empid\") + 1 as s\nfrom \"emps\" where \"deptno\" > 10 group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": true
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs9",
+   "name": "testAggregateMaterializationAggregateFuncs9",
+   "origin": "rules",
+   "materialization": "select \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to month), count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\"\ngroup by \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to month)",
+   "query": "select floor(cast('1997-01-20 12:34:56' as timestamp) to year), sum(\"empid\") as s\nfrom \"emps\" group by floor(cast('1997-01-20 12:34:56' as timestamp) to year)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs10",
+   "name": "testAggregateMaterializationAggregateFuncs10",
+   "origin": "rules",
+   "materialization": "select \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to month), count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\"\ngroup by \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to month)",
+   "query": "select floor(cast('1997-01-20 12:34:56' as timestamp) to year), sum(\"empid\") + 1 as s\nfrom \"emps\" group by floor(cast('1997-01-20 12:34:56' as timestamp) to year)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs11",
+   "name": "testAggregateMaterializationAggregateFuncs11",
+   "origin": "rules",
+   "materialization": "select \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to second), count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\"\ngroup by \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to second)",
+   "query": "select floor(cast('1997-01-20 12:34:56' as timestamp) to minute), sum(\"empid\") as s\nfrom \"emps\" group by floor(cast('1997-01-20 12:34:56' as timestamp) to minute)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs12",
+   "name": "testAggregateMaterializationAggregateFuncs12",
+   "origin": "rules",
+   "materialization": "select \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to second), count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\"\ngroup by \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to second)",
+   "query": "select floor(cast('1997-01-20 12:34:56' as timestamp) to month), sum(\"empid\") as s\nfrom \"emps\" group by floor(cast('1997-01-20 12:34:56' as timestamp) to month)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs13",
+   "name": "testAggregateMaterializationAggregateFuncs13",
+   "origin": "rules",
+   "materialization": "select \"empid\", cast('1997-01-20 12:34:56' as timestamp), count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\"\ngroup by \"empid\", cast('1997-01-20 12:34:56' as timestamp)",
+   "query": "select floor(cast('1997-01-20 12:34:56' as timestamp) to year), sum(\"empid\") as s\nfrom \"emps\" group by floor(cast('1997-01-20 12:34:56' as timestamp) to year)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs14",
+   "name": "testAggregateMaterializationAggregateFuncs14",
+   "origin": "rules",
+   "materialization": "select \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to month), count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\"\ngroup by \"empid\", floor(cast('1997-01-20 12:34:56' as timestamp) to month)",
+   "query": "select floor(cast('1997-01-20 12:34:56' as timestamp) to hour), sum(\"empid\") as s\nfrom \"emps\" group by floor(cast('1997-01-20 12:34:56' as timestamp) to hour)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs15",
+   "name": "testAggregateMaterializationAggregateFuncs15",
+   "origin": "rules",
+   "materialization": "select \"eventid\", floor(cast(\"ts\" as timestamp) to second), count(*) + 1 as c, sum(\"eventid\") as s\nfrom \"events\" group by \"eventid\", floor(cast(\"ts\" as timestamp) to second)",
+   "query": "select floor(cast(\"ts\" as timestamp) to minute), sum(\"eventid\") as s\nfrom \"events\" group by floor(cast(\"ts\" as timestamp) to minute)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs16",
+   "name": "testAggregateMaterializationAggregateFuncs16",
+   "origin": "rules",
+   "materialization": "select \"eventid\", cast(\"ts\" as timestamp), count(*) + 1 as c, sum(\"eventid\") as s\nfrom \"events\" group by \"eventid\", cast(\"ts\" as timestamp)",
+   "query": "select floor(cast(\"ts\" as timestamp) to year), sum(\"eventid\") as s\nfrom \"events\" group by floor(cast(\"ts\" as timestamp) to year)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs17",
+   "name": "testAggregateMaterializationAggregateFuncs17",
+   "origin": "rules",
+   "materialization": "select \"eventid\", floor(cast(\"ts\" as timestamp) to month), count(*) + 1 as c, sum(\"eventid\") as s\nfrom \"events\" group by \"eventid\", floor(cast(\"ts\" as timestamp) to month)",
+   "query": "select floor(cast(\"ts\" as timestamp) to hour), sum(\"eventid\") as s\nfrom \"events\" group by floor(cast(\"ts\" as timestamp) to hour)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs18",
+   "name": "testAggregateMaterializationAggregateFuncs18",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"empid\"*\"deptno\", sum(\"empid\") as s\nfrom \"emps\" group by \"empid\"*\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs19",
+   "name": "testAggregateMaterializationAggregateFuncs19",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"empid\" + 10, count(*) + 1 as c\nfrom \"emps\" group by \"empid\" + 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationAggregateFuncs20",
+   "name": "testAggregateMaterializationAggregateFuncs20",
+   "origin": "rules",
+   "materialization": "select 11 as \"empno\", 22 as \"sal\", count(*) from \"emps\" group by 11, 22",
+   "query": "select * from\n(select 11 as \"empno\", 22 as \"sal\", count(*)\nfrom \"emps\" group by 11, 22) tmp\nwhere \"sal\" = 33",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs1",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs1",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"depts\".\"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"depts\".\"deptno\" > 10\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"empid\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"depts\".\"deptno\" > 20\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs2",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs2",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"empid\" from \"depts\"\njoin \"emps\" using (\"deptno\") where \"depts\".\"deptno\" > 10\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"empid\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"depts\".\"deptno\" > 20\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs3",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs3",
+   "origin": "rules",
+   "materialization": "select \"empid\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"depts\".\"deptno\" > 10\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"empid\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"depts\".\"deptno\" > 20\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs4",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs4",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"depts\".\"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"emps\".\"deptno\" > 10\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"empid\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"depts\".\"deptno\" > 20\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs5",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs5",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"emps\".\"empid\" from \"depts\"\njoin \"emps\" using (\"deptno\") where \"emps\".\"empid\" > 10\ngroup by \"depts\".\"deptno\", \"emps\".\"empid\"",
+   "query": "select \"depts\".\"deptno\" from \"depts\"\njoin \"emps\" using (\"deptno\") where \"emps\".\"empid\" > 15\ngroup by \"depts\".\"deptno\", \"emps\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs6",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs6",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"emps\".\"empid\" from \"depts\"\njoin \"emps\" using (\"deptno\") where \"emps\".\"empid\" > 10\ngroup by \"depts\".\"deptno\", \"emps\".\"empid\"",
+   "query": "select \"depts\".\"deptno\" from \"depts\"\njoin \"emps\" using (\"deptno\") where \"emps\".\"empid\" > 15\ngroup by \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs7",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs7",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 11\ngroup by \"depts\".\"deptno\", \"dependents\".\"empid\"",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10\ngroup by \"dependents\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs8",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs8",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 20\ngroup by \"depts\".\"deptno\", \"dependents\".\"empid\"",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10 and \"depts\".\"deptno\" < 20\ngroup by \"dependents\".\"empid\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs9",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs9",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 11 and \"depts\".\"deptno\" < 19\ngroup by \"depts\".\"deptno\", \"dependents\".\"empid\"",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10 and \"depts\".\"deptno\" < 20\ngroup by \"dependents\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationNoAggregateFuncs10",
+   "name": "testJoinAggregateMaterializationNoAggregateFuncs10",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"name\", \"dependents\".\"name\" as \"name2\", \"emps\".\"deptno\", \"depts\".\"deptno\" as \"deptno2\", \"dependents\".\"empid\"\nfrom \"depts\", \"dependents\", \"emps\"\nwhere \"depts\".\"deptno\" > 10\ngroup by \"depts\".\"name\", \"dependents\".\"name\", \"emps\".\"deptno\", \"depts\".\"deptno\", \"dependents\".\"empid\"",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10\ngroup by \"dependents\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs1",
+   "name": "testJoinAggregateMaterializationAggregateFuncs1",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"depts\".\"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs2",
+   "name": "testJoinAggregateMaterializationAggregateFuncs2",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"emps\".\"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\ngroup by \"empid\", \"emps\".\"deptno\"",
+   "query": "select \"depts\".\"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\ngroup by \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs3",
+   "name": "testJoinAggregateMaterializationAggregateFuncs3",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"depts\".\"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\ngroup by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"deptno\", \"empid\", sum(\"empid\") as s, count(*) as c\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs4",
+   "name": "testJoinAggregateMaterializationAggregateFuncs4",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"emps\".\"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere \"emps\".\"deptno\" >= 10 group by \"empid\", \"emps\".\"deptno\"",
+   "query": "select \"depts\".\"deptno\", sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere \"emps\".\"deptno\" > 10 group by \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs5",
+   "name": "testJoinAggregateMaterializationAggregateFuncs5",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"depts\".\"deptno\", count(*) + 1 as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere \"depts\".\"deptno\" >= 10 group by \"empid\", \"depts\".\"deptno\"",
+   "query": "select \"depts\".\"deptno\", sum(\"empid\") + 1 as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere \"depts\".\"deptno\" > 10 group by \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs6",
+   "name": "testJoinAggregateMaterializationAggregateFuncs6",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"name\", sum(\"salary\") as s\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\ngroup by \"depts\".\"name\"",
+   "query": "select \"dependents\".\"empid\", sum(\"salary\") as s\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\ngroup by \"dependents\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": true
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs7",
+   "name": "testJoinAggregateMaterializationAggregateFuncs7",
+   "origin": "rules",
+   "materialization": "select \"dependents\".\"empid\", \"emps\".\"deptno\", sum(\"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "query": "select \"dependents\".\"empid\", sum(\"salary\") as s\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs8",
+   "name": "testJoinAggregateMaterializationAggregateFuncs8",
+   "origin": "rules",
+   "materialization": "select \"dependents\".\"empid\", \"emps\".\"deptno\", sum(\"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "query": "select \"depts\".\"name\", sum(\"salary\") as s\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"depts\".\"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs9",
+   "name": "testJoinAggregateMaterializationAggregateFuncs9",
+   "origin": "rules",
+   "materialization": "select \"dependents\".\"empid\", \"emps\".\"deptno\", count(distinct \"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "query": "select \"emps\".\"deptno\", count(distinct \"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs10",
+   "name": "testJoinAggregateMaterializationAggregateFuncs10",
+   "origin": "rules",
+   "materialization": "select \"dependents\".\"empid\", \"emps\".\"deptno\", count(distinct \"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "query": "select \"emps\".\"deptno\", count(distinct \"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"emps\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs11",
+   "name": "testJoinAggregateMaterializationAggregateFuncs11",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"dependents\".\"empid\", count(\"emps\".\"salary\") as s\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 11 and \"depts\".\"deptno\" < 19\ngroup by \"depts\".\"deptno\", \"dependents\".\"empid\"",
+   "query": "select \"dependents\".\"empid\", count(\"emps\".\"salary\") + 1\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10 and \"depts\".\"deptno\" < 20\ngroup by \"dependents\".\"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs12",
+   "name": "testJoinAggregateMaterializationAggregateFuncs12",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"dependents\".\"empid\", count(distinct \"emps\".\"salary\") as s\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 11 and \"depts\".\"deptno\" < 19\ngroup by \"depts\".\"deptno\", \"dependents\".\"empid\"",
+   "query": "select \"dependents\".\"empid\", count(distinct \"emps\".\"salary\") + 1\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10 and \"depts\".\"deptno\" < 20\ngroup by \"dependents\".\"empid\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs13",
+   "name": "testJoinAggregateMaterializationAggregateFuncs13",
+   "origin": "rules",
+   "materialization": "select \"dependents\".\"empid\", \"emps\".\"deptno\", count(distinct \"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "query": "select \"emps\".\"deptno\", count(\"salary\") as s\nfrom \"emps\"\njoin \"dependents\" on (\"emps\".\"empid\" = \"dependents\".\"empid\")\ngroup by \"dependents\".\"empid\", \"emps\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs14",
+   "name": "testJoinAggregateMaterializationAggregateFuncs14",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"emps\".\"name\", \"emps\".\"deptno\", \"depts\".\"name\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'a') or (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'b')\ngroup by \"empid\", \"emps\".\"name\", \"depts\".\"name\", \"emps\".\"deptno\"",
+   "query": "select \"depts\".\"deptno\", sum(\"empid\") as s\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere \"depts\".\"name\" is not null and \"emps\".\"name\" = 'a'\ngroup by \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinAggregateMaterializationAggregateFuncs15",
+   "name": "testJoinAggregateMaterializationAggregateFuncs15",
+   "origin": "rules",
+   "materialization": "SELECT \"deptno\",\n  COUNT(*) AS \"dept_size\",\n  SUM(\"salary\") AS \"dept_budget\"\nFROM \"emps\"\nGROUP BY \"deptno\"",
+   "query": "SELECT FLOOR(\"CREATED_AT\" TO YEAR) AS by_year,\n  COUNT(*) AS \"num_emps\"\nFROM (SELECT\"deptno\"\n    FROM \"emps\") AS \"t\"\nJOIN (SELECT \"deptno\",\n        \"inceptionDate\" as \"CREATED_AT\"\n    FROM \"depts2\") using (\"deptno\")\nGROUP BY FLOOR(\"CREATED_AT\" TO YEAR)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization1",
+   "name": "testJoinMaterialization1",
+   "origin": "rules",
+   "materialization": "select * from \"emps\" where \"empid\" < 500",
+   "query": "select *\nfrom (select * from \"emps\" where \"empid\" < 300)\njoin \"depts\" using (\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization2",
+   "name": "testJoinMaterialization2",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"empid\", \"name\",\n\"salary\", \"commission\" from \"emps\"",
+   "query": "select *\nfrom \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": true
+  },
+  {
+   "id": "rules.testJoinMaterialization3",
+   "name": "testJoinMaterialization3",
+   "origin": "rules",
+   "materialization": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"empid\" = 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization4",
+   "name": "testJoinMaterialization4",
+   "origin": "rules",
+   "materialization": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"empid\" = 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization5",
+   "name": "testJoinMaterialization5",
+   "origin": "rules",
+   "materialization": "select cast(\"empid\" as BIGINT) from \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"empid\" > 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization6",
+   "name": "testJoinMaterialization6",
+   "origin": "rules",
+   "materialization": "select cast(\"empid\" as BIGINT) from \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"empid\" = 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization7",
+   "name": "testJoinMaterialization7",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"name\"\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")",
+   "query": "select \"dependents\".\"empid\"\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization8",
+   "name": "testJoinMaterialization8",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"name\"\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization9",
+   "name": "testJoinMaterialization9",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"name\"\nfrom \"emps\"\njoin \"depts\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"locations\" on (\"locations\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization10",
+   "name": "testJoinMaterialization10",
+   "origin": "rules",
+   "materialization": "select \"depts\".\"deptno\", \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 30",
+   "query": "select \"dependents\".\"empid\"\nfrom \"depts\"\njoin \"dependents\" on (\"depts\".\"name\" = \"dependents\".\"name\")\njoin \"emps\" on (\"emps\".\"deptno\" = \"depts\".\"deptno\")\nwhere \"depts\".\"deptno\" > 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization11",
+   "name": "testJoinMaterialization11",
+   "origin": "rules",
+   "materialization": "select \"empid\" from \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" from \"emps\"\nwhere \"deptno\" in (select \"deptno\" from \"depts\")",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterialization12",
+   "name": "testJoinMaterialization12",
+   "origin": "rules",
+   "materialization": "select \"empid\", \"emps\".\"name\", \"emps\".\"deptno\", \"depts\".\"name\"\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'a') or (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'b') or (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'c')",
+   "query": "select \"depts\".\"deptno\", \"depts\".\"name\"\nfrom \"emps\" join \"depts\" using (\"deptno\")\nwhere (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'a') or (\"depts\".\"name\" is not null and \"emps\".\"name\" = 'b')",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK1",
+   "name": "testJoinMaterializationUKFK1",
+   "origin": "rules",
+   "materialization": "select \"a\".\"empid\" \"deptno\" from\n(select * from \"emps\" where \"empid\" = 1) \"a\"\njoin \"depts\" using (\"deptno\")\njoin \"dependents\" using (\"empid\")",
+   "query": "select \"a\".\"empid\" from \n(select * from \"emps\" where \"empid\" = 1) \"a\"\njoin \"dependents\" using (\"empid\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK2",
+   "name": "testJoinMaterializationUKFK2",
+   "origin": "rules",
+   "materialization": "select \"a\".\"empid\", \"a\".\"deptno\" from\n(select * from \"emps\" where \"empid\" = 1) \"a\"\njoin \"depts\" using (\"deptno\")\njoin \"dependents\" using (\"empid\")",
+   "query": "select \"a\".\"empid\" from \n(select * from \"emps\" where \"empid\" = 1) \"a\"\njoin \"dependents\" using (\"empid\")\n",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK3",
+   "name": "testJoinMaterializationUKFK3",
+   "origin": "rules",
+   "materialization": "select \"a\".\"empid\", \"a\".\"deptno\" from\n(select * from \"emps\" where \"empid\" = 1) \"a\"\njoin \"depts\" using (\"deptno\")\njoin \"dependents\" using (\"empid\")",
+   "query": "select \"a\".\"name\" from \n(select * from \"emps\" where \"empid\" = 1) \"a\"\njoin \"dependents\" using (\"empid\")\n",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK4",
+   "name": "testJoinMaterializationUKFK4",
+   "origin": "rules",
+   "materialization": "select \"empid\" \"deptno\" from\n(select * from \"emps\" where \"empid\" = 1)\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" from \"emps\" where \"empid\" = 1\n",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK5",
+   "name": "testJoinMaterializationUKFK5",
+   "origin": "rules",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\")\njoin \"dependents\" using (\"empid\")where \"emps\".\"empid\" = 1",
+   "query": "select \"emps\".\"empid\" from \"emps\"\njoin \"dependents\" using (\"empid\")\nwhere \"emps\".\"empid\" = 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK6",
+   "name": "testJoinMaterializationUKFK6",
+   "origin": "rules",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\" from \"emps\"\njoin \"depts\" \"a\" on (\"emps\".\"deptno\"=\"a\".\"deptno\")\njoin \"depts\" \"b\" on (\"emps\".\"deptno\"=\"b\".\"deptno\")\njoin \"dependents\" using (\"empid\")where \"emps\".\"empid\" = 1",
+   "query": "select \"emps\".\"empid\" from \"emps\"\njoin \"dependents\" using (\"empid\")\nwhere \"emps\".\"empid\" = 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK7",
+   "name": "testJoinMaterializationUKFK7",
+   "origin": "rules",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\" from \"emps\"\njoin \"depts\" \"a\" on (\"emps\".\"name\"=\"a\".\"name\")\njoin \"depts\" \"b\" on (\"emps\".\"name\"=\"b\".\"name\")\njoin \"dependents\" using (\"empid\")where \"emps\".\"empid\" = 1",
+   "query": "select \"emps\".\"empid\" from \"emps\"\njoin \"dependents\" using (\"empid\")\nwhere \"emps\".\"empid\" = 1",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK8",
+   "name": "testJoinMaterializationUKFK8",
+   "origin": "rules",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\" from \"emps\"\njoin \"depts\" \"a\" on (\"emps\".\"deptno\"=\"a\".\"deptno\")\njoin \"depts\" \"b\" on (\"emps\".\"name\"=\"b\".\"name\")\njoin \"dependents\" using (\"empid\")where \"emps\".\"empid\" = 1",
+   "query": "select \"emps\".\"empid\" from \"emps\"\njoin \"dependents\" using (\"empid\")\nwhere \"emps\".\"empid\" = 1",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinMaterializationUKFK9",
+   "name": "testJoinMaterializationUKFK9",
+   "origin": "rules",
+   "materialization": "select * from \"emps\"\njoin \"dependents\" using (\"empid\")",
+   "query": "select \"emps\".\"empid\", \"dependents\".\"empid\", \"emps\".\"deptno\"\nfrom \"emps\"\njoin \"dependents\" using (\"empid\")join \"depts\" \"a\" on (\"emps\".\"deptno\"=\"a\".\"deptno\")\nwhere \"emps\".\"name\" = 'Bill'",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testQueryProjectWithBetween",
+   "name": "testQueryProjectWithBetween",
+   "origin": "rules",
+   "materialization": "select * from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "query": "select s.\"time_id\" between 1 and 3 from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": false
+  },
+  {
+   "id": "rules.testJoinQueryProjectWithBetween",
+   "name": "testJoinQueryProjectWithBetween",
+   "origin": "rules",
+   "materialization": "select * from \"foodmart\".\"sales_fact_1997\" as s join \"foodmart\".\"time_by_day\" as t on s.\"time_id\" = t.\"time_id\" where s.\"store_id\" = 1",
+   "query": "select s.\"time_id\" between 1 and 3 from \"foodmart\".\"sales_fact_1997\" as s join \"foodmart\".\"time_by_day\" as t on s.\"time_id\" = t.\"time_id\" where s.\"store_id\" = 1",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": false
+  },
+  {
+   "id": "rules.testViewProjectWithBetween",
+   "name": "testViewProjectWithBetween",
+   "origin": "rules",
+   "materialization": "select s.\"time_id\", s.\"time_id\" between 1 and 3 from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "query": "select s.\"time_id\" from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": false
+  },
+  {
+   "id": "rules.testQueryAndViewProjectWithBetween",
+   "name": "testQueryAndViewProjectWithBetween",
+   "origin": "rules",
+   "materialization": "select s.\"time_id\", s.\"time_id\" between 1 and 3 from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "query": "select s.\"time_id\" between 1 and 3 from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": false
+  },
+  {
+   "id": "rules.testViewProjectWithMultifieldExpressions",
+   "name": "testViewProjectWithMultifieldExpressions",
+   "origin": "rules",
+   "materialization": "select s.\"time_id\", s.\"time_id\" >= 1 and s.\"time_id\" < 3, s.\"time_id\" >= 1 or s.\"time_id\" < 3,  s.\"time_id\" + s.\"time_id\",  s.\"time_id\" * s.\"time_id\" from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "query": "select s.\"time_id\" from \"foodmart\".\"sales_fact_1997\" as s where s.\"store_id\" = 1",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateOnJoinKeys",
+   "name": "testAggregateOnJoinKeys",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"empid\", \"salary\" from \"emps\"\ngroup by \"deptno\", \"empid\", \"salary\"",
+   "query": "select \"empid\", \"depts\".\"deptno\" from \"emps\"\njoin \"depts\" on \"depts\".\"deptno\" = \"empid\" group by \"empid\", \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateOnJoinKeys2",
+   "name": "testAggregateOnJoinKeys2",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"empid\", \"salary\", sum(1) from \"emps\"\ngroup by \"deptno\", \"empid\", \"salary\"",
+   "query": "select sum(1) from \"emps\"\njoin \"depts\" on \"depts\".\"deptno\" = \"empid\" group by \"empid\", \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationOnCountDistinctQuery1",
+   "name": "testAggregateMaterializationOnCountDistinctQuery1",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"empid\", \"salary\"\nfrom \"emps\"\ngroup by \"deptno\", \"empid\", \"salary\"",
+   "query": "select \"deptno\", count(distinct \"empid\") as c from (\nselect \"deptno\", \"empid\"\nfrom \"emps\"\ngroup by \"deptno\", \"empid\")\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationOnCountDistinctQuery2",
+   "name": "testAggregateMaterializationOnCountDistinctQuery2",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"salary\", \"empid\"\nfrom \"emps\"\ngroup by \"deptno\", \"salary\", \"empid\"",
+   "query": "select \"deptno\", count(distinct \"empid\") as c from (\nselect \"deptno\", \"empid\"\nfrom \"emps\"\ngroup by \"deptno\", \"empid\")\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationOnCountDistinctQuery3",
+   "name": "testAggregateMaterializationOnCountDistinctQuery3",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"empid\", \"salary\"\nfrom \"emps\"\ngroup by \"deptno\", \"empid\", \"salary\"",
+   "query": "select \"deptno\", count(distinct \"salary\") from (\nselect \"deptno\", \"salary\"\nfrom \"emps\"\ngroup by \"deptno\", \"salary\")\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "rules.testAggregateMaterializationOnCountDistinctQuery4",
+   "name": "testAggregateMaterializationOnCountDistinctQuery4",
+   "origin": "rules",
+   "materialization": "select \"deptno\", \"salary\", \"empid\"\nfrom \"emps\"\ngroup by \"deptno\", \"salary\", \"empid\"",
+   "query": "select \"deptno\", count(\"salary\") from (\nselect \"deptno\", \"salary\"\nfrom \"emps\"\ngroup by \"deptno\", \"salary\")\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilter",
+   "name": "testFilter",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"deptno\" = 10",
+   "query": "select \"empid\" + 1 from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterToProject0",
+   "name": "testFilterToProject0",
+   "origin": "substitution",
+   "materialization": "select *, \"empid\" * 2 from \"emps\"",
+   "query": "select * from \"emps\" where (\"empid\" * 2) > 3",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterToProject1",
+   "name": "testFilterToProject1",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"salary\" from \"emps\"",
+   "query": "select \"empid\", \"deptno\", \"salary\"\nfrom \"emps\" where (\"salary\" * 0.8) > 10000",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView",
+   "name": "testFilterQueryOnProjectView",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\" from \"emps\"",
+   "query": "select \"empid\" + 1 as x from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView0",
+   "name": "testFilterQueryOnProjectView0",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\" from \"emps\"",
+   "query": "select \"empid\" + 1 as x from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView1",
+   "name": "testFilterQueryOnProjectView1",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\" from \"emps\"",
+   "query": "select \"empid\" + 1 as x from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView2",
+   "name": "testFilterQueryOnProjectView2",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\" from \"emps\"",
+   "query": "select \"empid\" + 1 as x, \"name\" from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView3",
+   "name": "testFilterQueryOnProjectView3",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" - 10 as \"x\", \"empid\" + 1, \"name\" from \"emps\"",
+   "query": "select \"name\" from \"emps\" where \"deptno\" - 10 = 0",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView4",
+   "name": "testFilterQueryOnProjectView4",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" - 10 as \"x\", \"empid\" + 1, \"name\" from \"emps\"",
+   "query": "select \"name\" from \"emps\" where \"deptno\" + 10 = 20",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView5",
+   "name": "testFilterQueryOnProjectView5",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" - 10 as \"x\", \"empid\" + 1 as ee, \"name\" from \"emps\"",
+   "query": "select \"name\", \"empid\" + 1 as e from \"emps\" where \"deptno\" - 10 = 2",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView6",
+   "name": "testFilterQueryOnProjectView6",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" - 10 as \"x\", \"empid\"  from \"emps\"",
+   "query": "select \"name\" from \"emps\" where \"deptno\" - 10 = 0",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView7",
+   "name": "testFilterQueryOnProjectView7",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" - 10 as \"x\", \"empid\" + 1, \"name\" from \"emps\"",
+   "query": "select \"name\", \"empid\" + 2 from \"emps\" where \"deptno\" - 10 = 0",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnProjectView8",
+   "name": "testFilterQueryOnProjectView8",
+   "origin": "substitution",
+   "materialization": "select \"salary\", \"commission\",\n\"deptno\", \"empid\", \"name\" from \"emps\"",
+   "query": "select *\nfrom (select * from \"emps\" where \"name\" is null)\nwhere \"commission\" is null",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView",
+   "name": "testFilterQueryOnFilterView",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\" from \"emps\" where \"deptno\" = 10",
+   "query": "select \"empid\" + 1 as x, \"name\" from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView2",
+   "name": "testFilterQueryOnFilterView2",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\" from \"emps\" where \"deptno\" = 10",
+   "query": "select \"empid\" + 1 as x, \"name\" from \"emps\" where \"deptno\" = 10 and \"empid\" < 150",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView3",
+   "name": "testFilterQueryOnFilterView3",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\" from \"emps\"\nwhere \"deptno\" = 10 or \"deptno\" = 20 or \"empid\" < 160",
+   "query": "select \"empid\" + 1 as x, \"name\" from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView4",
+   "name": "testFilterQueryOnFilterView4",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"deptno\" > 10",
+   "query": "select \"name\" from \"emps\" where \"deptno\" > 30",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView5",
+   "name": "testFilterQueryOnFilterView5",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10",
+   "query": "select \"name\" from \"emps\" where \"deptno\" > 30",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView6",
+   "name": "testFilterQueryOnFilterView6",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", \"salary\" from \"emps\" where \"salary\" > 2000.5",
+   "query": "select \"name\" from \"emps\" where \"deptno\" > 30 and \"salary\" > 3000",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView7",
+   "name": "testFilterQueryOnFilterView7",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where ((\"salary\" < 1111.9 and \"deptno\" > 10)or (\"empid\" > 400 and \"salary\" > 5000) or \"salary\" > 500)",
+   "query": "select \"name\" from \"emps\" where (\"salary\" > 1000 or (\"deptno\" >= 30 and \"salary\" <= 500))",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView8",
+   "name": "testFilterQueryOnFilterView8",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10",
+   "query": "select \"name\", \"empid\" from \"emps\" where \"deptno\" > 30",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView9",
+   "name": "testFilterQueryOnFilterView9",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10",
+   "query": "select \"name\", \"empid\" from \"emps\" where \"deptno\" > 30 or \"empid\" > 10",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView10",
+   "name": "testFilterQueryOnFilterView10",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" where \"deptno\" > 10 and \"name\" = 'calcite'",
+   "query": "select \"name\", \"empid\" from \"emps\" where \"deptno\" > 30 or \"empid\" > 10",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView11",
+   "name": "testFilterQueryOnFilterView11",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" where (\"salary\" < 1111.9 and \"deptno\" > 10)or (\"empid\" > 400 and \"salary\" > 5000)",
+   "query": "select \"name\" from \"emps\" where \"deptno\" > 30 and \"salary\" > 3000",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView12",
+   "name": "testFilterQueryOnFilterView12",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" where \"salary\" > 2000.5",
+   "query": "select \"name\" from \"emps\" where \"deptno\" > 30 and \"salary\" > 3000",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView13",
+   "name": "testFilterQueryOnFilterView13",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where (\"salary\" < 1111.9 and \"deptno\" > 10)or (\"empid\" > 400 and \"salary\" > 5000)",
+   "query": "select \"name\" from \"emps\" where \"salary\" > 1000 or (\"deptno\" > 30 and \"salary\" > 3000)",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterQueryOnFilterView14",
+   "name": "testFilterQueryOnFilterView14",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\", \"salary\", \"commission\" from \"emps\" as em where ((\"salary\" < 1111.9 and \"deptno\" > 10)or (\"empid\" > 400 and \"salary\" > 5000) or \"salary\" > 500)",
+   "query": "select * from \"emps\" where (\"salary\" > 1000 or (\"deptno\" >= 30 and \"salary\" <= 500))",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAlias",
+   "name": "testAlias",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" as em where (em.\"salary\" < 1111.9 and em.\"deptno\" > 10)or (em.\"empid\" > 400 and em.\"salary\" > 5000)",
+   "query": "select \"name\" as n from \"emps\" as e where (e.\"empid\" > 500 and e.\"salary\" > 6000)",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate0",
+   "name": "testAggregate0",
+   "origin": "substitution",
+   "materialization": "select count(*) as c from \"emps\" group by \"empid\"",
+   "query": "select count(*) + 1 as c from \"emps\" group by \"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate1",
+   "name": "testAggregate1",
+   "origin": "substitution",
+   "materialization": "select count(*) as c0 from \"emps\" group by \"empid\"",
+   "query": "select count(*) as c1 from \"emps\" group by \"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate2",
+   "name": "testAggregate2",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"deptno\"",
+   "query": "select count(*) + 1 as c, \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate3",
+   "name": "testAggregate3",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", sum(\"salary\"), sum(\"commission\"), sum(\"k\")\nfrom\n  (select \"deptno\", \"salary\", \"commission\", 100 as \"k\"\n  from \"emps\")\ngroup by \"deptno\"",
+   "query": "select \"deptno\", sum(\"salary\"), sum(\"k\")\nfrom\n  (select \"deptno\", \"salary\", 100 as \"k\"\n  from \"emps\")\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate4",
+   "name": "testAggregate4",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"commission\", sum(\"salary\")\nfrom \"emps\"\ngroup by \"deptno\", \"commission\"",
+   "query": "select \"deptno\", sum(\"salary\")\nfrom \"emps\"\nwhere \"commission\" = 100\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate5",
+   "name": "testAggregate5",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" + \"commission\", \"commission\", sum(\"salary\")\nfrom \"emps\"\ngroup by \"deptno\" + \"commission\", \"commission\"",
+   "query": "select \"commission\", sum(\"salary\")\nfrom \"emps\"\nwhere \"commission\" * (\"deptno\" + \"commission\") = 100\ngroup by \"commission\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregate6",
+   "name": "testAggregate6",
+   "origin": "substitution",
+   "materialization": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\", sum(\"commission\")\nfrom \"emps\"\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "query": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\"\nfrom \"emps\"\nwhere \"salary\" > 1000\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testCompensatingCalcWithAggregate0",
+   "name": "testCompensatingCalcWithAggregate0",
+   "origin": "substitution",
+   "materialization": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\", sum(\"commission\")\nfrom \"emps\"\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "query": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\"\nfrom \"emps\"\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testCompensatingCalcWithAggregate1",
+   "name": "testCompensatingCalcWithAggregate1",
+   "origin": "substitution",
+   "materialization": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\", sum(\"commission\")\nfrom \"emps\"\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "query": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\"\nfrom \"emps\"\nwhere \"deptno\" >=20\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testCompensatingCalcWithAggregate2",
+   "name": "testCompensatingCalcWithAggregate2",
+   "origin": "substitution",
+   "materialization": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\", sum(\"commission\")\nfrom \"emps\"\nwhere \"deptno\" >= 10\ngroup by \"deptno\")\nwhere \"sum_salary\" > 10",
+   "query": "select * from\n(select \"deptno\", sum(\"salary\") as \"sum_salary\"\nfrom \"emps\"\nwhere \"deptno\" >= 20\ngroup by \"deptno\")\nwhere \"sum_salary\" > 20",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateGroupSets1",
+   "name": "testAggregateGroupSets1",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"salary\") as s\nfrom \"emps\" group by cube(\"empid\",\"deptno\")",
+   "query": "select count(*) + 1 as c, \"deptno\"\nfrom \"emps\" group by cube(\"empid\",\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateGroupSets2",
+   "name": "testAggregateGroupSets2",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"salary\") as s\nfrom \"emps\" group by cube(\"empid\",\"deptno\")",
+   "query": "select count(*) + 1 as c, \"deptno\"\nfrom \"emps\" group by rollup(\"empid\",\"deptno\")",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateRollUp1",
+   "name": "testAggregateRollUp1",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c, \"deptno\" from \"emps\" group by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateRollUp2",
+   "name": "testAggregateRollUp2",
+   "origin": "substitution",
+   "materialization": "select \"empid\", stddev_pop(\"deptno\") from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select \"empid\", stddev_pop(\"deptno\") from \"emps\" group by \"empid\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateGroupSetsRollUp",
+   "name": "testAggregateGroupSetsRollUp",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"salary\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c, \"deptno\"\nfrom \"emps\" group by cube(\"empid\",\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateGroupSetsRollUp2",
+   "name": "testAggregateGroupSetsRollUp2",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"empid\") as s from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c,  \"deptno\" from \"emps\" group by cube(\"empid\",\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateOnProject2",
+   "name": "testAggregateOnProject2",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"salary\") as s from \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c,  \"deptno\" from \"emps\" group by cube(\"deptno\", \"empid\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateOnProject3",
+   "name": "testAggregateOnProject3",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", count(*) as c, sum(\"salary\") as s\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c,  \"deptno\"\nfrom \"emps\" group by rollup(\"deptno\", \"empid\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateOnProject4",
+   "name": "testAggregateOnProject4",
+   "origin": "substitution",
+   "materialization": "select \"salary\", \"empid\", \"deptno\", count(*) as c, sum(\"commission\") as s\nfrom \"emps\" group by \"salary\", \"empid\", \"deptno\"",
+   "query": "select count(*) + 1 as c,  \"deptno\"\nfrom \"emps\" group by rollup(\"empid\", \"deptno\", \"salary\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateOnProject5",
+   "name": "testAggregateOnProject5",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", \"name\", count(*) from \"emps\"\ngroup by \"empid\", \"deptno\", \"name\"",
+   "query": "select \"name\", \"empid\", count(*) from \"emps\" group by \"name\", \"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggregateOnProjectAndFilter",
+   "name": "testAggregateOnProjectAndFilter",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", sum(\"salary\"), count(1)\nfrom \"emps\"\ngroup by \"deptno\"",
+   "query": "select \"deptno\", count(1)\nfrom \"emps\"\nwhere \"deptno\" = 10\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testProjectOnProject",
+   "name": "testProjectOnProject",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", sum(\"salary\") + 2, sum(\"commission\")\nfrom \"emps\"\ngroup by \"deptno\"",
+   "query": "select \"deptno\", sum(\"salary\") + 2\nfrom \"emps\"\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testPermutationError",
+   "name": "testPermutationError",
+   "origin": "substitution",
+   "materialization": "select min(\"salary\"), count(*), max(\"salary\"), sum(\"salary\"), \"empid\" from \"emps\" group by \"empid\"",
+   "query": "select count(*), \"empid\" from \"emps\" group by \"empid\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnLeftProjectToJoin",
+   "name": "testJoinOnLeftProjectToJoin",
+   "origin": "substitution",
+   "materialization": "select * from\n  (select \"deptno\", sum(\"salary\"), sum(\"commission\")\n  from \"emps\"\n  group by \"deptno\") \"A\"\n  join\n  (select \"deptno\", count(\"name\")\n  from \"depts\"\n  group by \"deptno\") \"B\"\n  on \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "query": "select * from\n  (select \"deptno\", sum(\"salary\")\n  from \"emps\"\n  group by \"deptno\") \"A\"\n  join\n  (select \"deptno\", count(\"name\")\n  from \"depts\"\n  group by \"deptno\") \"B\"\n  on \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnRightProjectToJoin",
+   "name": "testJoinOnRightProjectToJoin",
+   "origin": "substitution",
+   "materialization": "select * from\n  (select \"deptno\", sum(\"salary\"), sum(\"commission\")\n  from \"emps\"\n  group by \"deptno\") \"A\"\n  join\n  (select \"deptno\", count(\"name\")\n  from \"depts\"\n  group by \"deptno\") \"B\"\n  on \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "query": "select * from\n  (select \"deptno\", sum(\"salary\"), sum(\"commission\")\n  from \"emps\"\n  group by \"deptno\") \"A\"\n  join\n  (select \"deptno\"\n  from \"depts\"\n  group by \"deptno\") \"B\"\n  on \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnProjectsToJoin",
+   "name": "testJoinOnProjectsToJoin",
+   "origin": "substitution",
+   "materialization": "select * from\n  (select \"deptno\", sum(\"salary\"), sum(\"commission\")\n  from \"emps\"\n  group by \"deptno\") \"A\"\n  join\n  (select \"deptno\", count(\"name\")\n  from \"depts\"\n  group by \"deptno\") \"B\"\n  on \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "query": "select * from\n  (select \"deptno\", sum(\"salary\")\n  from \"emps\"\n  group by \"deptno\") \"A\"\n  join\n  (select \"deptno\"\n  from \"depts\"\n  group by \"deptno\") \"B\"\n  on \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnCalcToJoin0",
+   "name": "testJoinOnCalcToJoin0",
+   "origin": "substitution",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\", \"depts\".\"deptno\" from\n\"emps\" join \"depts\"\non \"emps\".\"deptno\" = \"depts\".\"deptno\"",
+   "query": "select \"A\".\"empid\", \"A\".\"deptno\", \"depts\".\"deptno\" from\n (select \"empid\", \"deptno\" from \"emps\" where \"deptno\" > 10) A join \"depts\"\non \"A\".\"deptno\" = \"depts\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnCalcToJoin1",
+   "name": "testJoinOnCalcToJoin1",
+   "origin": "substitution",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\", \"depts\".\"deptno\" from\n\"emps\" join \"depts\"\non \"emps\".\"deptno\" = \"depts\".\"deptno\"",
+   "query": "select \"emps\".\"empid\", \"emps\".\"deptno\", \"B\".\"deptno\" from\n\"emps\" join\n(select \"deptno\" from \"depts\" where \"deptno\" > 10) B\non \"emps\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnCalcToJoin2",
+   "name": "testJoinOnCalcToJoin2",
+   "origin": "substitution",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\", \"depts\".\"deptno\" from\n\"emps\" join \"depts\"\non \"emps\".\"deptno\" = \"depts\".\"deptno\"",
+   "query": "select * from\n(select \"empid\", \"deptno\" from \"emps\" where \"empid\" > 10) A\njoin\n(select \"deptno\" from \"depts\" where \"deptno\" > 10) B\non \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnCalcToJoin3",
+   "name": "testJoinOnCalcToJoin3",
+   "origin": "substitution",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\", \"depts\".\"deptno\" from\n\"emps\" join \"depts\"\non \"emps\".\"deptno\" = \"depts\".\"deptno\"",
+   "query": "select * from\n(select \"empid\", \"deptno\" + 1 as \"deptno\" from \"emps\" where \"empid\" > 10) A\njoin\n(select \"deptno\" from \"depts\" where \"deptno\" > 10) B\non \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinOnCalcToJoin4",
+   "name": "testJoinOnCalcToJoin4",
+   "origin": "substitution",
+   "materialization": "select \"emps\".\"empid\", \"emps\".\"deptno\", \"depts\".\"deptno\" from\n\"emps\" join \"depts\"\non \"emps\".\"deptno\" = \"depts\".\"deptno\"",
+   "query": "select * from\n(select \"empid\", \"deptno\" from \"emps\" where \"empid\" is not null) A\nfull join\n(select \"deptno\" from \"depts\" where \"deptno\" is not null) B\non \"A\".\"deptno\" = \"B\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinMaterialization",
+   "name": "testJoinMaterialization",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 500",
+   "query": "select *\nfrom (select * from \"emps\" where \"empid\" < 300)\njoin \"depts\" using (\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinMaterialization2",
+   "name": "testJoinMaterialization2",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\",\n\"salary\", \"commission\" from \"emps\"",
+   "query": "select *\nfrom \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testJoinMaterialization3",
+   "name": "testJoinMaterialization3",
+   "origin": "substitution",
+   "materialization": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\")",
+   "query": "select \"empid\" \"deptno\" from \"emps\"\njoin \"depts\" using (\"deptno\") where \"empid\" = 1",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testUnionAll",
+   "name": "testUnionAll",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 500",
+   "query": "select * from \"emps\" where \"empid\" > 300\nunion all select * from \"emps\" where \"empid\" < 200",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testTableModify",
+   "name": "testTableModify",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\", \"name\"from \"emps\" where \"deptno\" = 10",
+   "query": "upsert into \"dependents\"select \"empid\" + 1 as x, \"name\"from \"emps\" where \"deptno\" = 10",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testSingleMaterializationMultiUsage",
+   "name": "testSingleMaterializationMultiUsage",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 500",
+   "query": "select *\nfrom (select * from \"emps\" where \"empid\" < 300)\njoin (select * from \"emps\" where \"empid\" < 200) using (\"empid\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testMaterializationOnJoinQuery",
+   "name": "testMaterializationOnJoinQuery",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 500",
+   "query": "select *\nfrom \"emps\"\njoin \"depts\" using (\"deptno\") where \"empid\" < 300 ",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testMaterializationAfterTrimingOfUnusedFields",
+   "name": "testMaterializationAfterTrimingOfUnusedFields",
+   "origin": "substitution",
+   "materialization": "select \"y\".\"deptno\", \"y\".\"name\", \"x\".\"sum_salary\"\nfrom\n  (select \"deptno\", sum(\"salary\") \"sum_salary\"\n  from \"emps\"\n  group by \"deptno\") \"x\"\n  join\n  \"depts\" \"y\"\n  on \"x\".\"deptno\"=\"y\".\"deptno\"\n",
+   "query": "select \"y\".\"deptno\", \"y\".\"name\", \"x\".\"sum_salary\"\nfrom\n  (select \"deptno\", sum(\"salary\") \"sum_salary\"\n  from \"emps\"\n  group by \"deptno\") \"x\"\n  join\n  \"depts\" \"y\"\n  on \"x\".\"deptno\"=\"y\".\"deptno\"\n",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testUnionAllToUnionAll",
+   "name": "testUnionAllToUnionAll",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 300 union all select * from \"emps\" where \"empid\" > 200",
+   "query": "select * from \"emps\" where \"empid\" > 200 union all select * from \"emps\" where \"empid\" < 300",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testUnionDistinctToUnionDistinct",
+   "name": "testUnionDistinctToUnionDistinct",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 300 union select * from \"emps\" where \"empid\" > 200",
+   "query": "select * from \"emps\" where \"empid\" > 200 union select * from \"emps\" where \"empid\" < 300",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testUnionDistinctToUnionAll",
+   "name": "testUnionDistinctToUnionAll",
+   "origin": "substitution",
+   "materialization": "select * from \"emps\" where \"empid\" < 300 union select * from \"emps\" where \"empid\" > 200",
+   "query": "select * from \"emps\" where \"empid\" < 300 union all select * from \"emps\" where \"empid\" > 200",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testUnionOnCalcsToUnion",
+   "name": "testUnionOnCalcsToUnion",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"salary\"\nfrom \"emps\"\nwhere \"empid\" > 300\nunion all\nselect \"deptno\", \"salary\"\nfrom \"emps\"\nwhere \"empid\" < 100",
+   "query": "select \"deptno\", \"salary\" * 2\nfrom \"emps\"\nwhere \"empid\" > 300 and \"salary\" > 100\nunion all\nselect \"deptno\", \"salary\" * 2\nfrom \"emps\"\nwhere \"empid\" < 100 and \"salary\" > 100",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testIntersectOnCalcsToIntersect",
+   "name": "testIntersectOnCalcsToIntersect",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"salary\"\nfrom \"emps\"\nwhere \"empid\" > 300\nintersect all\nselect \"deptno\", \"salary\"\nfrom \"emps\"\nwhere \"empid\" < 100",
+   "query": "select \"deptno\", \"salary\" * 2\nfrom \"emps\"\nwhere \"empid\" > 300 and \"salary\" > 100\nintersect all\nselect \"deptno\", \"salary\" * 2\nfrom \"emps\"\nwhere \"empid\" < 100 and \"salary\" > 100",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testIntersectToIntersect0",
+   "name": "testIntersectToIntersect0",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" from \"emps\"\nintersect\nselect \"deptno\" from \"depts\"",
+   "query": "select \"deptno\" from \"depts\"\nintersect\nselect \"deptno\" from \"emps\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testIntersectToIntersect1",
+   "name": "testIntersectToIntersect1",
+   "origin": "substitution",
+   "materialization": "select \"deptno\" from \"emps\"\nintersect all\nselect \"deptno\" from \"depts\"",
+   "query": "select \"deptno\" from \"depts\"\nintersect all\nselect \"deptno\" from \"emps\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testIntersectToCalcOnIntersect",
+   "name": "testIntersectToCalcOnIntersect",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from (select \"deptno\",\"name\" from \"emps\"\nintersect all\nselect \"deptno\",\"name\" from \"depts\")",
+   "query": "select \"name\",\"deptno\" from \"depts\"\nintersect all\nselect \"name\",\"deptno\" from \"emps\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testConstantFilterInAgg",
+   "name": "testConstantFilterInAgg",
+   "origin": "substitution",
+   "materialization": "select \"name\", count(distinct \"deptno\") as cnt\nfrom \"emps\" group by \"name\"",
+   "query": "select count(distinct \"deptno\") as cnt\nfrom \"emps\" where \"name\" = 'hello'",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testConstantFilterInAgg2",
+   "name": "testConstantFilterInAgg2",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", count(distinct \"commission\") as cnt\nfrom \"emps\"\n group by \"name\", \"deptno\"",
+   "query": "select \"deptno\", count(distinct \"commission\") as cnt\nfrom \"emps\" where \"name\" = 'hello'\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testConstantFilterInAgg3",
+   "name": "testConstantFilterInAgg3",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", count(distinct \"commission\") as cnt\nfrom \"emps\"\n group by \"name\", \"deptno\"",
+   "query": "select \"deptno\", count(distinct \"commission\") as cnt\nfrom \"emps\" where \"name\" = 'hello' and \"deptno\" = 1\ngroup by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testConstantFilterInAgg4",
+   "name": "testConstantFilterInAgg4",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", count(distinct \"commission\") as cnt\nfrom \"emps\"\n group by \"name\", \"deptno\"",
+   "query": "select \"deptno\", \"commission\", count(distinct \"commission\") as cnt\nfrom \"emps\" where \"name\" = 'hello' and \"deptno\" = 1\ngroup by \"deptno\", \"commission\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testConstantFilterInAggUsingSubquery",
+   "name": "testConstantFilterInAggUsingSubquery",
+   "origin": "substitution",
+   "materialization": "select \"name\", count(distinct \"deptno\") as cnt from \"emps\" group by \"name\"",
+   "query": "select cnt from(\n select \"name\", count(distinct \"deptno\") as cnt  from \"emps\" group by \"name\") t\nwhere \"name\" = 'hello'",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testLeftFilterOnLeftJoinToJoinOk1",
+   "name": "testLeftFilterOnLeftJoinToJoinOk1",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nleft join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\" where \"empid\" > 10) \"t1\"\nleft join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testLeftFilterOnLeftJoinToJoinOk2",
+   "name": "testLeftFilterOnLeftJoinToJoinOk2",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\" where \"empid\" > 10) \"t1\"\nleft join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\" where \"empid\" > 30) \"t1\"\nleft join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testRightFilterOnLeftJoinToJoinFail",
+   "name": "testRightFilterOnLeftJoinToJoinFail",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nleft join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nleft join (select \"deptno\", \"name\" from \"depts\" where \"name\" is not null) \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testRightFilterOnRightJoinToJoinOk",
+   "name": "testRightFilterOnRightJoinToJoinOk",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nright join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nright join (select \"deptno\", \"name\" from \"depts\" where \"name\" is not null) \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testLeftFilterOnRightJoinToJoinFail",
+   "name": "testLeftFilterOnRightJoinToJoinFail",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nright join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\" where \"empid\" > 30) \"t1\"\nright join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testLeftFilterOnFullJoinToJoinFail",
+   "name": "testLeftFilterOnFullJoinToJoinFail",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nfull join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\" where \"empid\" > 30) \"t1\"\nfull join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testRightFilterOnFullJoinToJoinFail",
+   "name": "testRightFilterOnFullJoinToJoinFail",
+   "origin": "substitution",
+   "materialization": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nfull join (select \"deptno\", \"name\" from \"depts\") \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "query": "select * from \n(select \"empid\", \"deptno\", \"name\" from \"emps\") \"t1\"\nfull join (select \"deptno\", \"name\" from \"depts\" where \"name\" is not null) \"t2\"\non \"t1\".\"deptno\" = \"t2\".\"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testMoreSameExprInMv",
+   "name": "testMoreSameExprInMv",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\", sum(\"empid\") as s1, sum(\"empid\") as s2, count(*) as c\nfrom \"emps\" group by \"empid\", \"deptno\"",
+   "query": "select sum(\"empid\"), count(*) from \"emps\" group by \"empid\", \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggDistinctInMvGrouping",
+   "name": "testAggDistinctInMvGrouping",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"name\"from \"emps\" group by \"deptno\", \"name\"",
+   "query": "select \"deptno\", \"name\", count(distinct \"name\")from \"emps\" group by \"deptno\", \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggOptionalityInMvGrouping",
+   "name": "testAggOptionalityInMvGrouping",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"salary\"from \"emps\" group by \"deptno\", \"salary\"",
+   "query": "select \"deptno\", \"salary\", max(\"salary\")from \"emps\" group by \"deptno\", \"salary\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggNormalInMvGrouping",
+   "name": "testAggNormalInMvGrouping",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"salary\"from \"emps\" group by \"deptno\", \"salary\"",
+   "query": "select \"deptno\", sum(\"salary\")from \"emps\" group by \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testGenerateQueryAggCallByMvGroupingForEmptyArg1",
+   "name": "testGenerateQueryAggCallByMvGroupingForEmptyArg1",
+   "origin": "substitution",
+   "materialization": "select \"deptno\"from \"emps\" group by \"deptno\"",
+   "query": "select \"deptno\", count(*)from \"emps\" group by \"deptno\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testGenerateQueryAggCallByMvGroupingForEmptyArg2",
+   "name": "testGenerateQueryAggCallByMvGroupingForEmptyArg2",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"commission\", \"salary\"from \"emps\" group by \"deptno\", \"commission\", \"salary\"",
+   "query": "select \"deptno\", \"commission\", count(*)from \"emps\" group by \"deptno\", \"commission\"",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testAggCallBothGenByMvGroupingAndRollupOk",
+   "name": "testAggCallBothGenByMvGroupingAndRollupOk",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", \"empid\", min(\"commission\")from \"emps\" group by \"name\", \"deptno\", \"empid\"",
+   "query": "select \"name\", max(\"deptno\"), count(distinct \"empid\"), min(\"commission\")from \"emps\" group by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testSubQuery",
+   "name": "testSubQuery",
+   "origin": "substitution",
+   "materialization": "select \"empid\", \"deptno\" from \"emps\"\n",
+   "query": "select \"empid\", \"deptno\", \"salary\" from \"emps\" e1\nwhere \"empid\" = (\n  select max(\"empid\") from \"emps\"\n  where \"deptno\" = e1.\"deptno\")",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testFilterGroupQueryOnStar",
+   "name": "testFilterGroupQueryOnStar",
+   "origin": "substitution",
+   "materialization": "select p.\"product_name\", t.\"the_year\",\n  sum(f.\"unit_sales\") as \"sum_unit_sales\", count(*) as \"c\"\nfrom \"foodmart\".\"sales_fact_1997\" as f\njoin (\n    select \"time_id\", \"the_year\", \"the_month\"\n    from \"foodmart\".\"time_by_day\") as t\n  on f.\"time_id\" = t.\"time_id\"\njoin \"foodmart\".\"product\" as p\n  on f.\"product_id\" = p.\"product_id\"\njoin \"foodmart\".\"product_class\" as pc  on p.\"product_class_id\" = pc.\"product_class_id\"\ngroup by t.\"the_year\",\n t.\"the_month\",\n pc.\"product_department\",\n pc.\"product_category\",\n p.\"product_name\"",
+   "query": "select t.\"the_month\", count(*) as x\nfrom (\n  select \"time_id\", \"the_year\", \"the_month\"\n  from \"foodmart\".\"time_by_day\") as t,\n \"foodmart\".\"sales_fact_1997\" as f\nwhere t.\"the_year\" = 1997\nand t.\"time_id\" = f.\"time_id\"\ngroup by t.\"the_year\",\n t.\"the_month\"\n",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": true
+  },
+  {
+   "id": "substitution.testQueryOnStar",
+   "name": "testQueryOnStar",
+   "origin": "substitution",
+   "materialization": "select *\nfrom \"foodmart\".\"sales_fact_1997\" as f\njoin \"foodmart\".\"time_by_day\" as t on f.\"time_id\" = t.\"time_id\"\njoin \"foodmart\".\"product\" as p on f.\"product_id\" = p.\"product_id\"\njoin \"foodmart\".\"product_class\" as pc on p.\"product_class_id\" = pc.\"product_class_id\"\n",
+   "query": "select *\nfrom \"foodmart\".\"sales_fact_1997\" as f\njoin \"foodmart\".\"time_by_day\" as t on f.\"time_id\" = t.\"time_id\"\njoin \"foodmart\".\"product\" as p on f.\"product_id\" = p.\"product_id\"\njoin \"foodmart\".\"product_class\" as pc on p.\"product_class_id\" = pc.\"product_class_id\"\nwhere t.\"month_of_year\" = 10",
+   "calcite": "ok",
+   "schema": "jdbc_foodmart",
+   "disabled": true
+  },
+  {
+   "id": "substitution.testJoinOnUnionMaterialization",
+   "name": "testJoinOnUnionMaterialization",
+   "origin": "substitution",
+   "materialization": "select *\nfrom (select * from \"emps\" union all select * from \"emps\")\njoin \"depts\" using (\"deptno\")",
+   "query": "select *\nfrom (select * from \"emps\" union all select * from \"emps\")\njoin \"depts\" using (\"deptno\")",
+   "calcite": "noMat",
+   "schema": "hr",
+   "disabled": true
+  },
+  {
+   "id": "substitution.testOrderByQueryOnProjectView",
+   "name": "testOrderByQueryOnProjectView",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\" from \"emps\"",
+   "query": "select \"empid\" from \"emps\" order by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": true
+  },
+  {
+   "id": "substitution.testOrderByQueryOnOrderByView",
+   "name": "testOrderByQueryOnOrderByView",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\" from \"emps\" order by \"deptno\"",
+   "query": "select \"empid\" from \"emps\" order by \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": true
+  },
+  {
+   "id": "substitution.testQueryDistinctColumnInTargetGroupByList0",
+   "name": "testQueryDistinctColumnInTargetGroupByList0",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"commission\", \"deptno\"\nfrom \"emps\" group by \"name\", \"commission\", \"deptno\"",
+   "query": "select \"name\", \"commission\", count(distinct \"deptno\") as cnt\nfrom \"emps\" group by \"name\", \"commission\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testQueryDistinctColumnInTargetGroupByList1",
+   "name": "testQueryDistinctColumnInTargetGroupByList1",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\" from \"emps\" group by \"name\", \"deptno\"",
+   "query": "select \"name\", count(distinct \"deptno\")\nfrom \"emps\" group by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testQueryDistinctColumnInTargetGroupByList2",
+   "name": "testQueryDistinctColumnInTargetGroupByList2",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", \"empid\"\nfrom \"emps\" group by \"name\", \"deptno\", \"empid\"",
+   "query": "select \"name\", count(distinct \"deptno\"), count(distinct \"empid\")\nfrom \"emps\" group by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testQueryDistinctColumnInTargetGroupByList3",
+   "name": "testQueryDistinctColumnInTargetGroupByList3",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", \"empid\", count(\"commission\")\nfrom \"emps\" group by \"name\", \"deptno\", \"empid\"",
+   "query": "select \"name\", count(distinct \"deptno\"), count(distinct \"empid\"), count(\"commission\")\nfrom \"emps\" group by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testQueryDistinctColumnInTargetGroupByList4",
+   "name": "testQueryDistinctColumnInTargetGroupByList4",
+   "origin": "substitution",
+   "materialization": "select \"name\", \"deptno\", \"empid\"\nfrom \"emps\" group by \"name\", \"deptno\", \"empid\"",
+   "query": "select \"name\", count(distinct \"deptno\")\nfrom \"emps\" group by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testRexPredicate",
+   "name": "testRexPredicate",
+   "origin": "substitution",
+   "materialization": "select \"name\"\nfrom \"emps\"\nwhere \"deptno\" > 100 and \"deptno\" > 50\ngroup by \"name\"",
+   "query": "select \"name\"\nfrom \"emps\"\nwhere \"deptno\" > 100group by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testRexPredicate1",
+   "name": "testRexPredicate1",
+   "origin": "substitution",
+   "materialization": "select \"name\"\nfrom \"emps\"\nwhere \"deptno\" > 100group by \"name\"",
+   "query": "select \"name\"\nfrom \"emps\"\nwhere \"deptno\" > 100 and \"deptno\" > 50\ngroup by \"name\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "substitution.testGroupByListContainsConstantLiteral",
+   "name": "testGroupByListContainsConstantLiteral",
+   "origin": "substitution",
+   "materialization": "select \"deptno\", \"empid\"\nfrom \"emps\"\ngroup by \"deptno\", \"empid\"",
+   "query": "select 'a', \"deptno\", count(distinct \"empid\")\nfrom \"emps\"\ngroup by 'a', \"deptno\"",
+   "calcite": "ok",
+   "schema": "hr",
+   "disabled": false
+  }
+ ]
+}

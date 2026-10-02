@@ -1,0 +1,295 @@
+{
+ "description": "Write tests/fixtures/mv_reuse/adapted_cases.json: shared-model reuse cases written for KumoSQL.",
+ "cases": [
+  {
+   "id": "shared.same-query",
+   "name": "same-query",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps",
+   "query": "SELECT empid, deptno, name, salary FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.column-subset",
+   "name": "column-subset",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps",
+   "query": "SELECT empid, salary FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.extra-filter",
+   "name": "extra-filter",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps",
+   "query": "SELECT empid FROM emps WHERE salary > 100",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.filter-on-model-column",
+   "name": "filter-on-model-column",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps",
+   "query": "SELECT name FROM emps WHERE deptno = 10 AND salary < 50",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.expression-of-columns",
+   "name": "expression-of-columns",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps",
+   "query": "SELECT empid, salary * 2 AS double_pay FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.missing-column",
+   "name": "missing-column",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps",
+   "query": "SELECT empid, commission FROM emps",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.model-filtered-too-much",
+   "name": "model-filtered-too-much",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, salary FROM emps WHERE deptno = 10",
+   "query": "SELECT empid FROM emps WHERE salary > 1",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.model-filter-implied",
+   "name": "model-filter-implied",
+   "origin": "adapted",
+   "materialization": "SELECT empid, deptno, salary FROM emps WHERE deptno = 10",
+   "query": "SELECT empid FROM emps WHERE deptno = 10 AND salary > 1",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-sum",
+   "name": "rollup-sum",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT SUM(salary) FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-count-star",
+   "name": "rollup-count-star",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT COUNT(*) FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-min",
+   "name": "rollup-min",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT MIN(salary) FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-max-by-dept",
+   "name": "rollup-max-by-dept",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT deptno, MAX(salary) FROM emps GROUP BY deptno",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-two-level",
+   "name": "rollup-two-level",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, name, SUM(salary) AS total, COUNT(*) AS n FROM emps GROUP BY deptno, name",
+   "query": "SELECT deptno, SUM(salary) FROM emps GROUP BY deptno",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-two-level-count",
+   "name": "rollup-two-level-count",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, name, SUM(salary) AS total, COUNT(*) AS n FROM emps GROUP BY deptno, name",
+   "query": "SELECT deptno, COUNT(*) FROM emps GROUP BY deptno",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-global-two-level",
+   "name": "rollup-global-two-level",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, name, SUM(salary) AS total, COUNT(*) AS n FROM emps GROUP BY deptno, name",
+   "query": "SELECT SUM(salary) FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-filter-on-key",
+   "name": "rollup-filter-on-key",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT deptno, SUM(salary) FROM emps WHERE deptno > 10 GROUP BY deptno",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-filter-on-measure",
+   "name": "rollup-filter-on-measure",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT deptno, SUM(salary) FROM emps WHERE salary > 10 GROUP BY deptno",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-finer-grain",
+   "name": "rollup-finer-grain",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT deptno, name, SUM(salary) FROM emps GROUP BY deptno, name",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-avg-needs-count",
+   "name": "rollup-avg-needs-count",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total FROM emps GROUP BY deptno",
+   "query": "SELECT deptno, AVG(salary) FROM emps GROUP BY deptno",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-count-distinct-not-summable",
+   "name": "rollup-count-distinct-not-summable",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, name, SUM(salary) AS total, COUNT(*) AS n FROM emps GROUP BY deptno, name",
+   "query": "SELECT deptno, COUNT(DISTINCT name) FROM emps GROUP BY deptno",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.rollup-count-distinct-lost",
+   "name": "rollup-count-distinct-lost",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT COUNT(DISTINCT deptno) FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.join-reuse",
+   "name": "join-reuse",
+   "origin": "adapted",
+   "materialization": "SELECT e.empid, e.salary, d.name AS dept FROM emps e JOIN depts d ON e.deptno = d.deptno",
+   "query": "SELECT dept, SUM(salary) FROM (SELECT e.salary, d.name AS dept FROM emps e JOIN depts d ON e.deptno = d.deptno) t GROUP BY dept",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.join-model-for-single-table",
+   "name": "join-model-for-single-table",
+   "origin": "adapted",
+   "materialization": "SELECT e.empid, e.salary, d.name AS dept FROM emps e JOIN depts d ON e.deptno = d.deptno",
+   "query": "SELECT empid FROM emps",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.join-swapped-order",
+   "name": "join-swapped-order",
+   "origin": "adapted",
+   "materialization": "SELECT e.empid, d.name FROM emps e JOIN depts d ON e.deptno = d.deptno",
+   "query": "SELECT e.empid, d.name FROM depts d JOIN emps e ON d.deptno = e.deptno",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.distinct-model-plain-query",
+   "name": "distinct-model-plain-query",
+   "origin": "adapted",
+   "materialization": "SELECT DISTINCT deptno FROM emps",
+   "query": "SELECT deptno FROM emps",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.plain-model-distinct-query",
+   "name": "plain-model-distinct-query",
+   "origin": "adapted",
+   "materialization": "SELECT deptno FROM emps",
+   "query": "SELECT DISTINCT deptno FROM emps",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.union-branch",
+   "name": "union-branch",
+   "origin": "adapted",
+   "materialization": "SELECT empid FROM emps UNION ALL SELECT empid FROM dependents",
+   "query": "SELECT empid FROM emps UNION ALL SELECT empid FROM dependents",
+   "expect": "rewrite",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.model-limited",
+   "name": "model-limited",
+   "origin": "adapted",
+   "materialization": "SELECT empid, salary FROM emps ORDER BY salary LIMIT 10",
+   "query": "SELECT empid FROM emps",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  },
+  {
+   "id": "shared.model-aggregated-plain-query",
+   "name": "model-aggregated-plain-query",
+   "origin": "adapted",
+   "materialization": "SELECT deptno, SUM(salary) AS total, COUNT(*) AS n, MIN(salary) AS lo, MAX(salary) AS hi FROM emps GROUP BY deptno",
+   "query": "SELECT deptno, salary FROM emps",
+   "expect": "none",
+   "schema": "hr",
+   "disabled": false
+  }
+ ]
+}
