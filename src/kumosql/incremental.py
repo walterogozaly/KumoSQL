@@ -812,6 +812,8 @@ def prove_watermark(
       so it is re-read, and the merge replaces the row with its current output.
       Re-read unchanged rows merge to themselves; the key is unique in the
       source, so no merge has two source rows for one target row.
+      ``update_touch`` needs a query without ``WHERE``: an update that makes a
+      row fail the filter would leave its old version in the table.
     """
 
     if model.pre_operations:
@@ -847,6 +849,8 @@ def prove_watermark(
     if set(model.unique_key) != set(table.key) or any(_projected_as(full, k) != k for k in table.key):
         return None
     allowed = {"insert_new", "update_touch", "empty"} | ({"insert_boundary"} if op == ">=" else set())
+    if "update_touch" in kinds and full.args.get("where"):
+        return None  # an update can move a row out of the filter, and a merge never deletes it
     if kinds <= allowed:
         return Verdict("safe", "R2 merge on a watermark", "row-wise query, merge on the source's unique key, every change at or after the table's newest time")
     return None
@@ -870,6 +874,10 @@ def check_incremental(
     kinds = frozenset(kinds)
     try:
         proof = prove_watermark(model, sources, kinds)
+        if proof is None:
+            from .incremental_rules import prove_more
+
+            proof = prove_more(model, sources, kinds, tables)
         if proof is not None:
             return proof
         found = search_divergence(model, sources, kinds, seeds=seeds, batches=batches, tables=tables, time_limit=time_limit)
