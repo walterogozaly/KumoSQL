@@ -36,7 +36,7 @@ from .timing import stage
 MAX_FILES = 20_000  # real enterprise Dataform repositories have thousands of files
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
 _CONFIG_FILES = ("workflow_settings.yaml", "workflow_settings.yml", "dataform.json")
-_ALLOWED_SUFFIXES = (".sqlx", ".sql")
+_ALLOWED_SUFFIXES = (".sqlx", ".sql", ".js")
 
 MAX_JOB_RECORDS = 200_000
 NOT_LOADED = "load a project first"
@@ -539,7 +539,7 @@ def _safe_path(path: object) -> PurePosixPath:
         raise ProjectError("invalid file path")
     name = posix.name.lower()
     if not (name.endswith(_ALLOWED_SUFFIXES) or name in _CONFIG_FILES):
-        raise ProjectError("only .sqlx, .sql and Dataform config files are accepted")
+        raise ProjectError("only .sqlx, .sql, .js and Dataform config files are accepted")
     return posix
 
 
