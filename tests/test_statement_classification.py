@@ -213,3 +213,23 @@ def test_what_a_called_function_reads_feeds_the_table_that_calls_it():
     )
     written = {w.table.name: {t.name for t in w.sources} for w in analysis.writes}
     assert written == {"tgt": {"src", "lkp"}}
+
+
+def test_parse_script_keeps_the_shape_its_callers_unpack():
+    """``_parse_script`` returns ``(query, analysis)``; the table profile unpacked a longer tuple once and silently fell back
+    to analysing every model, so every caller in the package is checked here."""
+
+    import ast
+    from pathlib import Path
+
+    from kumosql.pipeline import _parse_script
+    from kumosql.scripts import ScriptAnalysis
+
+    query, analysis = _parse_script("SELECT k FROM `p.d.src`")
+    assert query is not None and isinstance(analysis, ScriptAnalysis)
+    package = Path(__import__("kumosql").__file__).parent
+    for path in package.glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and getattr(node.value.func, "id", "") == "_parse_script":
+                target = node.targets[0]
+                assert isinstance(target, ast.Tuple) and len(target.elts) == 2, f"{path.name}:{node.lineno} unpacks the wrong shape"
