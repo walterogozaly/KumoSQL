@@ -22,12 +22,13 @@ from typing import Iterable
 
 import sqlglot
 
-from . import bigquery_catalog, console, state
+from . import bigquery_catalog, console, state, timing
 
 ENV = "KUMOSQL_SCHEMA_FETCH"
 MAX_TABLES = 2000  # per analysis; the rest stay unknown
 MAX_WILDCARD_MATCHES = 50
 WORKERS = 8
+MAX_SECONDS = 60.0  # per analysis; tables not answered by then stay unknown
 _DENIED_SECONDS = 3600.0
 _LOCK = threading.Lock()
 _DENIED: dict[tuple[str, str, str], float] = {}  # tables BigQuery refused or does not have, for this process
@@ -197,8 +198,16 @@ def resolve(names: Iterable[str], default_project: str = "", fetch: bool | None 
     from_catalog = len(answers)
     if (enabled() if fetch is None else fetch) and pending and _credentials_ok():
         todo = list(pending)[:MAX_TABLES]
-        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            fetched = list(pool.map(lambda t: _wildcard(t) if t[2].endswith("*") else _fetch_one(t), todo))
+        deadline = time.monotonic() + MAX_SECONDS
+
+        def look_up(triple):
+            if time.monotonic() > deadline:
+                return None  # out of time: the table stays unknown rather than holding the analysis up
+            return _wildcard(triple) if triple[2].endswith("*") else _fetch_one(triple)
+
+        with timing.stage("schema lookup", tables=len(todo)), bigquery_catalog.batched_saves():
+            with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+                fetched = list(pool.map(look_up, todo))
         for triple, columns in zip(todo, fetched):
             if columns:
                 for name in pending[triple]:
