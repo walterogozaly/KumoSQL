@@ -30,6 +30,10 @@ CLI usage:
 python -m kumosql prove-sql-equivalent left.sql right.sql --verifier-sql verify.sql
 ```
 
+The command runs the structural proof first and, when row order does not matter, the SMT-based prover (with the algebraic normalizer, see below) for what the structure check cannot see: a CTE against an inline subquery, a `LIKE` that another `LIKE` covers, `USING` against `ON`, an unused aggregate column. A proof from the second step says `SMT proof:` and lists its assumptions as `assumption:` lines. A pair it cannot prove stays `not_proven`, even when the SMT-based prover finds a counterexample; run `prove-sql-smt` to see that.
+
+Two `CREATE [OR REPLACE] TABLE|VIEW name AS query` statements are compared as a write whose query is analysed (`kumosql.statement_proof`): everything except the query (kind, name, `OR REPLACE`, `TEMP`, partitioning, clustering, options) must match as text, and the two queries must be proven. Functions, procedures, scripts and a `CREATE` without a query are not unwrapped.
+
 ## Result equivalence on synthetic data
 
 The static prover only accepts rewrites whose normalized ASTs match. To test rewrites it cannot prove, `kumosql.check_result_equivalence(left_sql, right_sql, schema)` runs both sides against the same deterministic synthetic tables in a local DuckDB engine (BigQuery SQL is translated with `sqlglot`) and compares the results as multisets, including column names.
@@ -94,6 +98,8 @@ Pass `schema={"t": ["id", "a"]}` to enable `SELECT *` and unqualified columns in
 python -m kumosql prove-sql-smt left.sql right.sql --schema schema.json
 ```
 
+The command runs the algebraic normalizer in front of the solver (the same prover as **Compare queries**) and unwraps `CREATE TABLE|VIEW ... AS` statements as described above. Without a schema it still handles `LEFT`/`RIGHT`/`FULL` joins (the unmatched side reads as NULL in every column; `SELECT *` over it needs the schema), `JOIN ... USING (k)` for a select that lists its columns, and a `LIKE 'ab%'` test beside `LIKE 'a%'` on the same column (patterns that are a literal with one trailing `%`; `_`, escapes and `ILIKE` are left alone).
+
 `tests/test_smt_fuzz.py` checks the prover against SQLite on random queries and databases: every proof must hold and every counterexample must separate the queries.
 
 **Solver in rewrite verification.** `verify_rewrite` also hands any changed statement to the algebraic prover (the section below), so a rewrite beyond predicates (a removed self-join, a pushed-down aggregate) can be `proven`. The solver is on by default; **Settings → Solver** (or `GET`/`PUT /api/prover`) turns it off and sets the time limit per check (500 to 60000 ms, default 5000). It assumes only what is declared: `REQUIRED` columns and a primary key from the saved BigQuery catalog, and the `assertions` (`nonNull`, `uniqueKey`, `uniqueKeys`) of the loaded Dataform project, plus the columns of each model's SELECT. Neither BigQuery nor Dataform enforces these when data is written, so a proof that used them lists that as an assumption.
@@ -123,6 +129,7 @@ A query split into partitions by a filter is put back together (`src/kumosql/par
 - `GROUP BY 2` and `ORDER BY 2` are spelled out as the second output's expression first, so a constant folded into those clauses later is not read back as a column position.
 - A select-list `x IN (SELECT y FROM t ...)` rewritten as `EXISTS (... AND y = x)` qualifies `x` by its outer table, and a subquery table of the same name gets a fresh alias, so the inner scope cannot capture `x` (`deptno IN (SELECT deptno FROM emp ...)` over `emp` is not `deptno = deptno`); when the owner of `x` is unclear the rewrite is skipped.
 - Before any rewrite, a bare column in a select with several sources is written with its source's name, so reading a derived table as its base table (which brings that table's other columns into scope) cannot capture it or make it ambiguous.
+- The same goes for a bare column a subquery reads from an enclosing query (`EXISTS (SELECT 1 FROM (SELECT 2 * deptno AS f FROM dept) AS t WHERE deptno = t.f)`): when a derived table on the way reads a table with a column of that name, the column is written with its enclosing source's name first; if a source on the way reuses that name, the query is declined.
 - A table function handed a CTE by name (DuckDB's `histogram_values(cte, l)`, BigQuery's `TABLE cte`) is declined by every prover, since such a read is not a table reference and the CTE would look unused.
 
 `tests/test_soundness_regressions.py` keeps each wrong proof found so far, with the database on which DuckDB shows the two queries differ, next to equivalent near misses that must stay proven.

@@ -1638,7 +1638,7 @@ class _Run:
             return self.call_statement(text_, line, conditional, top_level)
         if first == "EXECUTE":
             return self.execute_statement(text_, line, conditional, top_level)
-        return done("other", UNKNOWN, "statement not recognised")
+        return self.degrade(done("other", UNKNOWN, "statement not recognised"), text_)
 
     def drop_temp(self, text_: str) -> None:
         tree = self.parse(text_)

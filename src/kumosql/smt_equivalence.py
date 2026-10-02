@@ -476,8 +476,12 @@ class _Source:
     occ: _Occ | None = None
     cols: dict[str, _Val] | None = None
     order: list[str] = field(default_factory=list)
+    # The unmatched side of an outer join over a table whose columns are not declared: every column is NULL.
+    all_null: _Val | None = None
 
     def lookup(self, name: str) -> _Val | None:
+        if self.all_null is not None:
+            return self.all_null
         if self.cols is not None:
             return self.cols.get(name)
         if self.occ.columns is not None and name not in self.occ.columns:
@@ -487,6 +491,8 @@ class _Source:
     def may_have(self, name: str) -> bool | None:
         """True/False when known, None when the schema is unknown."""
 
+        if self.all_null is not None:
+            return None
         if self.cols is not None:
             return name in self.cols
         if self.occ.columns is None:
@@ -494,6 +500,8 @@ class _Source:
         return name in self.occ.columns
 
     def star(self) -> list[tuple[str, _Val]]:
+        if self.all_null is not None:
+            raise Unsupported("SELECT * over the unmatched side of an outer join needs a schema")
         if self.cols is not None:
             return [(name, self.cols[name]) for name in self.order]
         if self.occ.columns is None:
@@ -829,6 +837,10 @@ class _Compiler:
     def _null_source(self, source: "_Source") -> "_Source":
         V = _value_sort()
         null = _Val(z3.BoolVal(True), V.Num(0))
+        if source.all_null is not None:
+            return source
+        if source.cols is None and source.occ is not None and source.occ.columns is None:
+            return _Source(all_null=null)
         names = [name for name, _ in source.star()]
         return _Source(cols={name: null for name in names}, order=list(names))
 
@@ -1068,6 +1080,7 @@ class _Compiler:
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
         canonical = _canonical_aliases(body, self.schema)
+        position = {i: i for i in range(len(names))}
         root = canonical
         while isinstance(root, exp.Subquery):
             root = root.this
@@ -1077,17 +1090,22 @@ class _Compiler:
             in_select = {id(c) for item in root.expressions for c in item.find_all(exp.Column)}
             outside = {c.name.lower() for c in root.find_all(exp.Column) if not c.table and id(c) not in in_select}
             if not outside & set(names):
-                root.set(
-                    "expressions",
-                    [exp.alias_((i.this if isinstance(i, exp.Alias) else i).copy(), f"c{n}") for n, i in enumerate(root.expressions)],
-                )
+                # A windowed relation (matched by its text alone) lists its outputs by their own text, so a
+                # permutation of the select list is the same relation, each name reading the column it
+                # computes. Others keep their order: two of them proven equal are matched by position.
+                values = [(i.this if isinstance(i, exp.Alias) else i) for i in root.expressions]
+                order = list(range(len(values)))
+                if any(root.find_all(exp.Window)):
+                    order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
+                position = {old: new for new, old in enumerate(order)}
+                root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
         key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
         self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
-        return _Source(cols={name: occ.col(f"c{i}") for i, name in enumerate(names)}, order=list(names))
+        return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
 
     def _expand_ctes(self, body, ctes):
         local = dict(ctes)
@@ -2936,7 +2954,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.schema:
         with open(args.schema, encoding="utf-8") as handle:
             schema = json.load(handle)
-    result = prove_equivalent_smt(
+    from .statement_proof import prove_statements_smt
+
+    result = prove_statements_smt(
         left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms
     )
     payload = {
