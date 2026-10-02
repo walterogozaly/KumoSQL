@@ -241,3 +241,35 @@ def test_untrimmed_lineage_gives_the_same_columns_as_trimmed(monkeypatch):
         return {str(k): sorted(map(str, v)) for k, v in analysis.lineage.items()}
 
     assert lineage_of(True) == lineage_of(False)
+
+
+def test_default_limits_are_generous_and_settings_adjust_them(monkeypatch, tmp_path):
+    from kumosql import lineage_limits
+
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    monkeypatch.delenv("KUMOSQL_LINEAGE_MODEL_SECONDS", raising=False)
+    monkeypatch.delenv("KUMOSQL_LINEAGE_SECONDS", raising=False)
+    assert lineage_limits.effective("model_seconds") >= 60
+    lineage_limits.save_settings(model_seconds=0.000000001)
+    assert lineage_limits.effective("model_seconds") == 1e-09
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "5")
+    assert lineage_limits.effective("model_seconds") == 5  # the environment wins
+    with pytest.raises(ValueError):
+        lineage_limits.save_settings(model_seconds=-1)
+
+
+def test_a_model_over_its_limit_is_traced_at_table_level(monkeypatch):
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "0.000000001")
+    pipeline = live_graph.pipeline_from_files(FILES)
+    analysis = pipeline._analyse()
+    skipped = [r for r in analysis.records.values() if r.reason == "lineage_skipped"]
+    assert skipped and all(r.sources for r in skipped)
+    assert not any(e["code"] in ("lineage_error", "qualify_error") for e in pipeline.report(include_duplicates=False)["diagnostics"])
+
+
+def test_saved_analysis_is_not_reused_under_other_limits(monkeypatch, tmp_path):
+    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "5")
+    first = live_graph._snapshot_file("k")
+    monkeypatch.setenv("KUMOSQL_LINEAGE_MODEL_SECONDS", "50")
+    assert live_graph._snapshot_file("k") != first
