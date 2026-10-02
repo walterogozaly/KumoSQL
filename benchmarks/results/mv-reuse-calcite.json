@@ -1,0 +1,22 @@
+{
+  "suite": "Materialized-view reuse (Calcite 1.37.0)",
+  "order": 60,
+  "size": 196,
+  "score": "82/149 reusable cases rewritten, 0 wrong",
+  "metric": "Queries Calcite can answer from a materialized view that KumoSQL rewrites over the view and proves equivalent; 39 of 39 'cannot' cases (and 8 disabled ones) are not rewritten. Supported subset: 82/129.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every rewrite is proven by the prover and re-run against the original on random DuckDB databases (84 verified, 1 not runnable)",
+  "coverage": {
+    "proven": 85,
+    "unknown": 82,
+    "unsupported": 29,
+    "timeout": 0,
+    "error": 0
+  },
+  "usefulness": "85 of 196 queries changed (82 expected, 3 in cases Calcite disables); 84 of 85 verified on random databases",
+  "held_out": "21/39 reusable (held-out quarter by case-id hash; 22 rewrites, 22 verified, 0 wrong); development 61/110, baseline (existing prover alone) 8/110",
+  "docs": "docs/model-reuse.md#materialized-view-reuse",
+  "command": "python tools/mv_reuse_bench.py --all",
+  "date": "2026-10-02",
+  "caveats": "Calcite's noMat is not a proof that no rewrite exists, so a rewrite where Calcite says noMat would be checked, not penalised (none occurred). Developed on the development split; 29 cases use shapes the engine does not read (outer/UKFK joins, INTERSECT, CUBE/ROLLUP, FLOOR-TO). Adapted shared-model cases are scored separately (19/20 reusable, 9/9 cannot, 0 wrong)."
+}

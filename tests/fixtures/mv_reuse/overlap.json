@@ -1,0 +1,37 @@
+{
+ "sqlsolver-calcite": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ },
+ "sqlsolver-spark": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ },
+ "sqlsolver-tpch": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ },
+ "cosette": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ },
+ "qed": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ },
+ "rbot": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ },
+ "spes": {
+  "overlapping_cases": 0,
+  "of": 196,
+  "ids": []
+ }
+}

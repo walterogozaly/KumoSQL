@@ -1,0 +1,23 @@
+{
+  "suite": "Aggregate decomposition",
+  "order": 62,
+  "size": 59,
+  "score": "56/59 correct, 0 wrong",
+  "metric": "Rebuild a coarser aggregate from a finer summary table (proven and re-run), say nothing when the summary lacks the information, and refute tempting wrong rewrites.",
+  "evidence": "proof",
+  "correctness": "0 wrong: 32 of 35 possible rewrites found, 9 of 9 impossible cases declined (each backed by a stored database pair with the same summary and a different target), 15 of 15 traps refuted by a database",
+  "coverage": {
+    "proven": 32,
+    "refuted": 15,
+    "unknown": 12,
+    "unsupported": 0,
+    "timeout": 0,
+    "error": 0
+  },
+  "usefulness": "32 of 44 queries rewritten over the summary, all verified on random databases",
+  "held_out": "24/24 (distinct and empty-null families held out, 0 wrong); development 32/35, baseline 16/35",
+  "docs": "docs/model-reuse.md#aggregate-decomposition",
+  "command": "python tools/decomposition_bench.py --all",
+  "date": "2026-10-02",
+  "caveats": "Generated cases (tools/make_decomposition_cases.py). Open: weighted average and standard deviation from a summary. The unknown count is 9 impossible cases (correct) plus 3 misses."
+}
