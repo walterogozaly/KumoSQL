@@ -237,7 +237,7 @@ class Verdict:
     seconds: float = 0.0
 
 
-def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
+def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
     """The program's verdict for one case: search for a counterexample, else try to prove, else unknown."""
 
     start = time.time()
@@ -272,6 +272,17 @@ def decide(case: dict, *, trials: int = 150, recheck_trials: int = 600, timeout_
             if again is not None:
                 return Verdict(index, WRONG, "proved, then refuted by a counterexample", time.time() - start)
             return Verdict(index, EQUIVALENT, "proof", time.time() - start)
+        # not proven: look harder for a counterexample, then try every small database (<= 2 rows per table)
+        if searcher.search(more_trials, seed=index + 2_000_003) is not None:
+            return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
+        try:
+            outcome, _ = searcher.exhaustive(2, 3000)
+        except _Timeout:
+            raise
+        except Exception:
+            outcome = "too_large"
+        if outcome == "found":
+            return Verdict(index, DIFFERENT, "counterexample (all small databases)", time.time() - start)
         return Verdict(index, AGREES, result.reason[:80], time.time() - start)
     except _Timeout:
         return Verdict(index, AGREES if searched else UNKNOWN, "time budget", time.time() - start)
@@ -379,7 +390,7 @@ def main(argv=None) -> int:
     parser.add_argument("--every", type=int, default=1, help="take every Nth case")
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--audit", action="store_true", help="compare with VeriEQL's published outcomes")
-    parser.add_argument("--trials", type=int, default=150)
+    parser.add_argument("--trials", type=int, default=200)
     parser.add_argument("--timeout-ms", type=int, default=3000)
     parser.add_argument("--dump", help="write one JSON line per case to this file")
     args = parser.parse_args(argv)
