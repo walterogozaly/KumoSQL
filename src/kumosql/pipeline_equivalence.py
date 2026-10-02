@@ -23,6 +23,7 @@ from sqlglot import exp
 
 from . import equivalences as saved
 from .algebraic_equivalence import prove_equivalent_algebraic
+from .conditional_equivalence import conditions_json
 from .prover_schema import DECLARED_FACTS_NOTE, ProverSchema, _select_names
 from .smt_equivalence import SmtStatus
 
@@ -39,6 +40,7 @@ class PipelineResult:
     equivalences: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
     bounded: dict | None = None  # the bounded check of the two flat queries, when nothing was proven
+    conditions: list[dict] = field(default_factory=list)  # of a "conditional" verdict: the facts it holds under
 
     @property
     def proven(self) -> bool:
@@ -49,6 +51,8 @@ class PipelineResult:
                 "lemmas": self.lemmas, "equivalences": self.equivalences, "assumptions": self.assumptions}
         if self.bounded is not None:
             data["bounded"] = self.bounded
+        if self.conditions:
+            data["conditions"] = self.conditions
         return data
 
 
@@ -92,11 +96,14 @@ def prove_models(
     schema: ProverSchema | None = None,
     timeout_ms: int = 5000,
     bounded_check=None,
+    conditional: bool = False,
 ) -> PipelineResult:
     """Prove two models of ``pipeline`` return the same rows (columns compared by position).
 
     ``bounded_check(left_sql, right_sql)`` (optional) runs when nothing was proven; its JSON lands in
-    ``PipelineResult.bounded`` as its own evidence level.
+    ``PipelineResult.bounded`` as its own evidence level. With ``conditional`` a pair that cannot be proven
+    outright is tried under facts taken from the queries; the verdict is then ``"conditional"`` and
+    ``conditions`` lists the minimal facts it needs (never counted as ``proven``).
     """
 
     a, b = _resolve(pipeline, first), _resolve(pipeline, second)
@@ -193,6 +200,22 @@ def prove_models(
         if direct.status is SmtStatus.PROVEN_EQUIVALENT:
             used_declared[:] = [i for i in {*(flat[0][1]), *(flat[1][1])}]
             return finish("inlined", direct)
+    if conditional:
+        for method, pair in (("layers", (left_sql, right_sql)), ("inlined", (flat[0][0], flat[1][0]) if flat[0] and flat[1] else None)):
+            if pair is None:
+                continue
+            attempt = prove_equivalent_algebraic(
+                *pair, schema=columns, constraints=facts.constraints or None, types=facts.types or None,
+                compare_names=False, timeout_ms=timeout_ms, conditional=True,
+            )
+            if attempt.status is SmtStatus.PROVEN_CONDITIONALLY:
+                extra = [DECLARED_FACTS_NOTE] if facts.notes else []
+                if used_declared and method == "layers":
+                    extra.append("declared equivalences hold in the data: " + "; ".join(i.label for i in used_declared))
+                return PipelineResult(
+                    "conditional", attempt.reason, method, notes, [i.label for i in used_declared] if method == "layers" else [],
+                    list(dict.fromkeys([*extra, *attempt.assumptions])), conditions=conditions_json(attempt),
+                )
     outcome = PipelineResult("unknown", result.reason, "", notes)
     if bounded_check is not None:
         pair = (flat[0][0], flat[1][0]) if flat[0] and flat[1] else (left_sql, right_sql)
@@ -256,7 +279,7 @@ def prove_loaded(left: object, right: object) -> dict:
     return prove_models(
         loaded["pipeline"], left, right,
         schema=prover_context.current_schema(), timeout_ms=config["timeout_ms"],
-        bounded_check=prover_context.bounded,
+        bounded_check=prover_context.bounded, conditional=True,
     ).to_json()
 
 
@@ -272,20 +295,22 @@ def prove_queries(left: object, right: object) -> dict:
     config = prover_context.settings()
     if not config["enabled"]:
         raise ValueError("the solver is turned off in Settings")
-    result = prover_context.prove(left, right, search_counterexample=True)
+    result = prover_context.prove(left, right, search_counterexample=True, conditional=True)
     data = {"status": result.status.value, "reason": result.reason, "assumptions": list(result.assumptions)}
-    if result.status is not SmtStatus.PROVEN_EQUIVALENT:
+    if result.status is SmtStatus.PROVEN_CONDITIONALLY:
+        data["conditions"] = conditions_json(result)
+    if result.status not in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
         bounded = prover_context.bounded(left, right)
         if bounded is not None:
             data["bounded"] = bounded
-    if result.status is SmtStatus.NOT_EQUIVALENT and result.counterexample is not None:
+    if result.status in (SmtStatus.NOT_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY) and result.counterexample is not None:
         example = result.counterexample
         data["counterexample"] = {
             "tables": {name: [dict(row) for row in rows] for name, rows in example.tables.items()},
             "left_rows": [list(row) for row in example.left_rows],
             "right_rows": [list(row) for row in example.right_rows],
         }
-    if result.status is not SmtStatus.PROVEN_EQUIVALENT:
+    if result.status not in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
         from .refute import counterexample_from_search
 
         facts = prover_context.current_schema()

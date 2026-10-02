@@ -10,6 +10,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Connecting Dataform repositories](dataform-repositories.md) | Private repositories through local `git`, the data folder, logging and diagnostics, production schedules |
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
+| [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
 | [Cost, change reports and the BigQuery dry run](cost-and-change-reports.md) | Dry-run checks, cost attribution, change reports and refactoring proposals |
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |

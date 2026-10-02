@@ -4705,9 +4705,31 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     With ``search_counterexample=True`` an unproven pair the solver cannot refute is
     run on databases built for it (:mod:`kumosql.executed_refutation`); a database
     on which the results differ comes back as a ``NOT_EQUIVALENT`` counterexample.
+
+    With ``conditional=True`` a pair that is not proven is retried under facts taken from the queries
+    (NOT NULL columns, unique keys, foreign keys); a proof that needs some of them comes back as
+    ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (:mod:`kumosql.conditional_equivalence`).
     """
 
     search = kwargs.pop("search_counterexample", False)
+    conditional = kwargs.pop("conditional", False)
+    wall = kwargs.pop("conditional_seconds", None)
+    result = _prove_algebraic_levels(left_sql, right_sql, search, **kwargs)
+    if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
+        return result
+    from . import conditional_equivalence
+
+    def prove(constraints):
+        return _prove_algebraic_levels(left_sql, right_sql, False, **{**kwargs, "constraints": constraints})
+
+    options = {} if wall is None else {"wall_seconds": wall}
+    return conditional_equivalence.add_conditions(
+        left_sql, right_sql, result, prove,
+        schema=kwargs.get("schema"), constraints=kwargs.get("constraints"), types=kwargs.get("types"), dialect=kwargs.get("dialect", "bigquery"), **options,
+    )
+
+
+def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwargs) -> SmtEquivalenceResult:
     if kwargs.get("dialect", "bigquery") == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     original = (left_sql, right_sql)
