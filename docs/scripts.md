@@ -29,7 +29,7 @@ Unknown is never guessed: a dynamic statement adds no edges, and the script is r
 - **Branches and loops.** A statement inside `IF`, `CASE`, a loop or an exception handler is a possible edge, so every arm counts. Loop bodies are followed once.
 - **Procedures.** `CALL` expands the body with parameters as variables; recursion is cut at depth 8. A procedure that is defined but never called adds nothing.
 - **`EXECUTE IMMEDIATE`.** Literal text is read as the statement it holds; anything computed at run time is unknown.
-- **Job history.** `expand_script_jobs` joins child jobs to their parent script and replaces anonymous temporary datasets (leading underscore) with the real tables they were built from, ordered by creation time.
+- **Job history.** A `MERGE`, `INSERT`, `UPDATE` or `DELETE` job that carries its query text but no destination table gets its destination and sources from the statement, so a MERGE-built table (every Dataform incremental run) has its upstream edge in job-history analysis. `expand_script_jobs` joins child jobs to their parent script and replaces anonymous temporary datasets (leading underscore) with the real tables they were built from, ordered by creation time.
 
 ## MERGE
 

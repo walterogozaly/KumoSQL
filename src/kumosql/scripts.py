@@ -1802,6 +1802,9 @@ def is_temporary_reference(reference: object) -> bool:
     return bool(dataset and _TEMP_DATASET.match(dataset)) or (not dataset and bool(table))
 
 
+_DML_JOB_TYPES = frozenset({"MERGE", "INSERT", "UPDATE", "DELETE"})
+
+
 def expand_script_jobs(records: Iterable[Mapping[str, object]]) -> tuple[list[dict], dict]:
     """Job-history records with script jobs reduced to the real tables they read and wrote.
 
@@ -1867,15 +1870,30 @@ def expand_script_jobs(records: Iterable[Mapping[str, object]]) -> tuple[list[di
         row = out.get(index, row)
         text = row.get("query") or row.get("query_text")
         has_edges = bool(row.get("referenced_tables") or row.get("references")) and bool(row.get("destination") or row.get("destination_table"))
+        statement_type = str(row.get("statement_type") or "").upper()
         if (
             isinstance(text, str)
             and not has_edges
             and not row.get("parent_job_id")
-            and str(row.get("statement_type") or "").upper() == "SCRIPT"
+            and statement_type in {"SCRIPT", *_DML_JOB_TYPES}
             and not row.get("query_truncated")
             and job_id not in parents_with_children
         ):
             analysis = analyse_script(text)
+            if statement_type in _DML_JOB_TYPES:
+                # A MERGE, INSERT, UPDATE or DELETE job names no destination table: the statement text does.
+                writes = [w for w in analysis.writes if w.table.name]
+                summary["dml_read_from_text"] = summary.get("dml_read_from_text", 0) + 1
+                if len(writes) != 1:
+                    summary["unreadable_scripts"] += 1
+                    result.append(row)
+                    continue
+                added = dict(row)
+                added["destination"] = added["destination_table"] = _table_ref(writes[0].table)
+                added["referenced_tables"] = [_table_ref(t) for t in writes[0].sources]
+                result.append(added)
+                summary["records_added"] += 1
+                continue
             summary["scripts_read_from_text"] += 1
             writes = [w for w in analysis.writes if w.table.name]
             if not writes:

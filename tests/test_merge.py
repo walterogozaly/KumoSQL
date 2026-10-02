@@ -214,3 +214,34 @@ def test_the_trivial_merge_from_a_user_report_is_one_statement_with_its_source_u
     assert pl.upstream["p.d.tgt"] == {"p.d.src"}
     assert not codes(pl) and pl.completeness()["complete"]
     assert lineage(pl, "p.d.tgt") == {"k": {"p.d.src.k"}, "v": {"p.d.src.v"}}
+
+
+def test_merge_jobs_in_a_job_history_get_their_destination_and_sources_from_the_statement():
+    """A MERGE job carries no destination table, so the job-history edge src -> tgt was lost; the statement text names both."""
+
+    import json
+
+    from kumosql.live_graph import parse_job_history
+
+    records = [
+        {"job_id": "j1", "statement_type": "MERGE", "query": WALTER_MERGE, "referenced_tables": ["p.d.src", "p.d.tgt"]},
+        {"job_id": "j2", "statement_type": "MERGE", "query": WALTER_MERGE, "destination_table": None},
+        {"job_id": "j3", "statement_type": "SELECT", "query": "SELECT 1", "referenced_tables": ["p.d.src"]},
+        {"job_id": "j4", "statement_type": "MERGE", "referenced_tables": ["p.d.src"]},  # no text: left alone
+    ]
+    out = {r["job_id"]: r for r in parse_job_history(json.dumps(records))}
+    assert out["j1"]["destination"] == out["j2"]["destination"] == "p.d.tgt"
+    assert out["j1"]["referenced_tables"] == out["j2"]["referenced_tables"] == ["p.d.src"]
+    assert not out["j3"].get("destination") and not out["j4"].get("destination")
+
+
+def test_a_merge_job_makes_its_edge_in_the_graph():
+    import kumosql
+
+    pl = Pipeline({}, {}, {})
+    from kumosql.live_graph import parse_job_history
+    import json
+
+    records = parse_job_history(json.dumps([{"job_id": "j1", "statement_type": "MERGE", "query": WALTER_MERGE, "creation_time": "2024-01-01T00:00:00Z"}]))
+    graph = kumosql.build_query_graph(pl, records)
+    assert any(e.observed and "src" in str(e.upstream) and "tgt" in str(e.downstream) for e in graph.edges), graph.edges
