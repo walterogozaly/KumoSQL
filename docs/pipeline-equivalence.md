@@ -53,9 +53,7 @@ Without declared columns the prover rejects `SELECT *` expansions it must make f
 
 Held-out (union_split, latest_per_key; run once at baseline, declared columns): 3/8 proved, 10/10 refuted, 0 wrong.
 
-Current (2026-10-02, declared columns): **47/50 proved**, 66/66 refuted, 0 wrong; 100 changed outputs verified by proof. `rollup/average_from_sum_count` is now proved: an output combining aggregates (`SUM(total) / SUM(n_amount)`) is regrouped aggregate by aggregate (`regroup_arithmetic.py`) and the result, `SUM(amount) / COUNT(amount)`, matches `AVG(amount)`. Held-out rerun with the new rule: unchanged, 3/8 proved, 10/10 refuted, 0 wrong.
-
-Later on 2026-10-02: **50/50 proved**, 66/66 refuted, 0 wrong; 103 changed outputs verified by proof. The 3 staged LEFT JOIN chains (`join_staging/left_left`) are now proved: a model that reads a staged `LEFT JOIN` model is flattened into one join chain (`outer_join_flatten.py`, see `docs/sqlsolver.md`). Held-out rerun: unchanged, 3/8 proved, 10/10 refuted, 0 wrong.
+Current (2026-10-02, declared columns): **47/50 proved**, 66/66 refuted, 0 wrong; 100 changed outputs verified by proof. `rollup/average_from_sum_count` is now proved: an output combining aggregates (`SUM(total) / SUM(n_amount)`) is regrouped aggregate by aggregate (`regroup_arithmetic.py`) and the result, `SUM(amount) / COUNT(amount)`, matches `AVG(amount)`. The 3 unknowns are the staged LEFT JOIN chains (`join_staging/left_left`). Held-out rerun with the new rule: unchanged, 3/8 proved, 10/10 refuted, 0 wrong.
 
 Unproved sound cases are kept as regression cases in `tests/fixtures/pipeline_equiv/known_gaps.json`; the generator is deterministic, so a case id reproduces exactly.
 
