@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from kumosql.incremental import (  # noqa: E402
     IncrementalError,
+    IncrementalModel,
     SourceTable,
     check_incremental,
     first_divergence,
@@ -133,12 +134,82 @@ def run(split: str = "all", seeds: int = 60) -> dict:
     }
 
 
+def pgivm_build(case: dict):
+    """Model, sources and script of an adapted pg_ivm workload (see tools/incremental_pgivm.py)."""
+
+    adapted = case["adapted"]
+    load = adapted["load_column"]
+    sources = {
+        name: SourceTable({**spec["columns"], load: "TIMESTAMP"}, (), load, {load: adapted["load_default"]})
+        for name, spec in adapted["tables"].items()
+    }
+    target = "view_inc"
+    model = IncrementalModel(
+        target,
+        adapted["full_sql"],
+        adapted["incremental_sql"].replace("__SELF__", target),
+        dialect=adapted["dialect"],
+    )
+    return model, sources, adapted["initial"], adapted["batches"]
+
+
+def pgivm_kinds(batches: list[list[str]]) -> list[str]:
+    """Change kinds present in a workload: what a contract for it has to allow."""
+
+    kinds = {"empty"}
+    for batch in batches:
+        for statement in batch:
+            word = statement.split(None, 1)[0].upper()
+            kinds.add({"INSERT": "insert_new", "UPDATE": "update", "DELETE": "delete"}[word])
+    return sorted(kinds)
+
+
+def run_pgivm(seeds: int = 30, limit: int | None = None) -> dict:
+    """Adapted pg_ivm workloads: replay the script, then ask the checker without it."""
+
+    path = FIXTURES / "pgivm_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))["cases"] if path.exists() else []
+    out = {"total": len(cases), "unsupported_extraction": 0, "script_error": 0, "script_agrees": 0, "script_diverges": 0,
+           "coverage": {k: 0 for k in ("proven", "refuted", "unknown", "unsupported", "timeout", "error")}, "wrong": [], "rows": []}
+    for case in cases:
+        if "adapted" not in case:
+            out["unsupported_extraction"] += 1
+            continue
+        if limit is not None and out["script_diverges"] >= limit:
+            break
+        model, sources, initial, batches = pgivm_build(case)
+        try:
+            divergence = first_divergence(replay(model, sources, initial, batches))
+        except IncrementalError:
+            out["script_error"] += 1
+            continue
+        if divergence is None:
+            out["script_agrees"] += 1
+            continue
+        out["script_diverges"] += 1
+        verdict = check_incremental(model, sources, pgivm_kinds(batches), seeds=seeds, batches=4, time_limit=20)
+        outcome = {"safe": "proven", "diverges": "refuted"}.get(verdict.outcome, verdict.outcome)
+        wrong = verdict.outcome == "safe"
+        if verdict.counterexample is not None:
+            wrong = wrong or first_divergence(replay(model, sources, verdict.counterexample.initial, verdict.counterexample.batches)) is None
+        out["coverage"][outcome] = out["coverage"].get(outcome, 0) + 1
+        if wrong:
+            out["wrong"].append(case["id"])
+        out["rows"].append({"id": case["id"], "outcome": outcome, "rule": verdict.rule})
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--split", choices=("all", "dev", "held_out"), default="all")
     parser.add_argument("--seeds", type=int, default=60)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--track", choices=("boundary", "pgivm"), default="boundary")
     args = parser.parse_args()
+    if args.track == "pgivm":
+        result = run_pgivm(args.seeds)
+        print(json.dumps(result, indent=1) if args.json else {k: v for k, v in result.items() if k != "rows"})
+        return
     result = run(args.split, args.seeds)
     if args.json:
         print(json.dumps(result, indent=1, default=str))
