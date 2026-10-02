@@ -1,0 +1,2206 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "watermark-strict-coalesce",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the baseline pattern: strict watermark with an empty-table default",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-strict-no-default",
+   "family": "empty_batches",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > (SELECT MAX(ts) FROM ${self()})`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "MAX over an empty table is NULL, so the first rows after an empty first run are never loaded",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-gte-no-key",
+   "family": "watermark_boundary",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": ">= re-reads the newest row on every run and appends it again",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-gte-unique-key",
+   "family": "watermark_boundary",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": ">= with a merge key picks up rows sharing the newest timestamp",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-strict-late-arrival",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 05:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a row older than the newest loaded one never passes the strict watermark",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-gte-key-late-arrival",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 05:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a merge key does not help a row older than the watermark",
+   "cases_version": 1
+  },
+  {
+   "id": "dedup-merge-duplicate-delivery",
+   "family": "duplicate_delivery",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\nQUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "duplicate",
+     "update_touch",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "de-duplicating on the key and merging absorbs re-delivered rows",
+   "cases_version": 1
+  },
+  {
+   "id": "dedup-merge-late-arrival",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\nQUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 05:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "aggregate-partial-append",
+   "family": "aggregate",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT customer_id, SUM(v) AS total, MAX(ts) AS last_ts FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(last_ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a new batch for an existing group appends a second row for that group",
+   "cases_version": 1
+  },
+  {
+   "id": "aggregate-merge-reaggregate",
+   "family": "aggregate",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, SUM(v) AS total, MAX(ts) AS last_ts FROM ${ref(\"events\")}\n${when(incremental(), `WHERE customer_id IN (SELECT customer_id FROM ${ref(\"events\")} WHERE ts >= COALESCE((SELECT MAX(last_ts) FROM ${self()}), TIMESTAMP '1970-01-01'))`)}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "re-aggregates every group touched by new rows and merges by group key",
+   "cases_version": 1
+  },
+  {
+   "id": "aggregate-merge-source-update",
+   "family": "updates",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, SUM(v) AS total, MAX(ts) AS last_ts FROM ${ref(\"events\")}\n${when(incremental(), `WHERE customer_id IN (SELECT customer_id FROM ${ref(\"events\")} WHERE ts >= COALESCE((SELECT MAX(last_ts) FROM ${self()}), TIMESTAMP '1970-01-01'))`)}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "UPDATE events SET v = 9 WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "an in-place update to an old row changes no timestamp, so its group is not recomputed",
+   "cases_version": 1
+  },
+  {
+   "id": "aggregate-merge-source-delete",
+   "family": "updates",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, SUM(v) AS total, MAX(ts) AS last_ts FROM ${ref(\"events\")}\n${when(incremental(), `WHERE customer_id IN (SELECT customer_id FROM ${ref(\"events\")} WHERE ts >= COALESCE((SELECT MAX(last_ts) FROM ${self()}), TIMESTAMP '1970-01-01'))`)}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "delete"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "DELETE FROM events WHERE id = 1"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a merge never deletes, so a group whose rows were all deleted stays",
+   "cases_version": 1
+  },
+  {
+   "id": "pre-operation-window-reads-own-delete",
+   "family": "pre_operations",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 04:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the delete shrinks MAX(ts) before the query reads it, so the reload window slides back and re-inserts old rows",
+   "cases_version": 1
+  },
+  {
+   "id": "pre-operation-window-from-source",
+   "family": "pre_operations",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${ref(\"events\")}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${ref(\"events\")}), INTERVAL 2 HOUR)`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 04:00:00', 1)"
+     ],
+     [],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (6, 0, TIMESTAMP '2024-01-01 04:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "delete and reload use the same boundary, taken from the source",
+   "cases_version": 1
+  },
+  {
+   "id": "pre-operation-window-late-beyond-window",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${ref(\"events\")}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${ref(\"events\")}), INTERVAL 2 HOUR)`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 05:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (6, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "a row older than the reload window is never loaded",
+   "cases_version": 1
+  },
+  {
+   "id": "no-incremental-filter",
+   "family": "empty_batches",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the incremental run appends the whole query again",
+   "cases_version": 1
+  },
+  {
+   "id": "date-watermark-same-day-loss",
+   "family": "watermark_boundary",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, DATE(ts) AS d, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE DATE(ts) > COALESCE((SELECT MAX(d) FROM ${self()}), DATE '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a day-granular watermark skips later rows of the day already loaded",
+   "cases_version": 1
+  },
+  {
+   "id": "date-watermark-reload-day",
+   "family": "watermark_boundary",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, DATE(ts) AS d, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE DATE(ts) >= COALESCE((SELECT MAX(d) FROM ${self()}), DATE '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "reloading the whole newest day and merging by key",
+   "cases_version": 1
+  },
+  {
+   "id": "merge-error-duplicate-of-newest",
+   "family": "duplicate_delivery",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "duplicate"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "BigQuery MERGE fails when two source rows match one target row",
+   "cases_version": 1
+  },
+  {
+   "id": "merge-null-key",
+   "family": "duplicate_delivery",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "null_key",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (NULL, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "NULL never equals NULL in the merge condition, so a NULL-key row is inserted again on every run",
+   "cases_version": 1
+  },
+  {
+   "id": "join-dimension-update",
+   "family": "changed_dimension",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT e.id, e.customer_id, e.ts, e.v, c.tier FROM ${ref(\"events\")} e JOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n${when(incremental(), `WHERE e.ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "update"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE customers SET tier = 'b' WHERE id = 0"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "old events keep the dimension value they were loaded with",
+   "cases_version": 1
+  },
+  {
+   "id": "join-late-dimension-row",
+   "family": "changed_dimension",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT e.id, e.customer_id, e.ts, e.v, c.tier FROM ${ref(\"events\")} e JOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n${when(incremental(), `WHERE e.ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 5, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 05:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (5, 'a')"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "an inner join drops the event; the dimension row arrives later, after newer events were loaded, and the event is never reloaded",
+   "cases_version": 1
+  },
+  {
+   "id": "left-join-late-dimension-row",
+   "family": "changed_dimension",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT e.id, e.customer_id, e.ts, e.v, c.tier FROM ${ref(\"events\")} e LEFT JOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n${when(incremental(), `WHERE e.ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 5, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (5, 'a')"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the old row keeps a NULL tier",
+   "cases_version": 1
+  },
+  {
+   "id": "join-frozen-dimension",
+   "family": "changed_dimension",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT e.id, e.customer_id, e.ts, e.v, c.tier FROM ${ref(\"events\")} e JOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n${when(incremental(), `WHERE e.ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ],
+    "tables": [
+     "events"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "with the dimension unchanged, new events join the same rows",
+   "cases_version": 1
+  },
+  {
+   "id": "filtered-projection-watermark",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, ts, v * 2 AS dv FROM ${ref(\"events\")}\nWHERE v > 0 ${when(incremental(), `AND ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 0)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 4)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-renamed-column",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, ts AS event_ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(event_ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "correct, but through an alias the proof rule does not follow",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-update-touch-no-key",
+   "family": "updates",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update_touch"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET v = 7, ts = TIMESTAMP '2024-01-01 01:00:00' WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the changed row is appended beside its old version",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-unique-key-update-touch",
+   "family": "updates",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update_touch",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET v = 7, ts = TIMESTAMP '2024-01-01 01:00:00' WHERE id = 1"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-unique-key-delete",
+   "family": "updates",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update_touch",
+     "delete"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "DELETE FROM events WHERE id = 1"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-timestamp-tie",
+   "family": "watermark_boundary",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a row with the same timestamp as the newest loaded one is skipped",
+   "cases_version": 1
+  },
+  {
+   "id": "lookback-window-merge",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= TIMESTAMP_SUB(COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01'), INTERVAL 2 HOUR)`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "lookback-window-too-short",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= TIMESTAMP_SUB(COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01'), INTERVAL 2 HOUR)`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 06:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a row more than two hours behind the newest is outside the lookback",
+   "cases_version": 1
+  },
+  {
+   "id": "audit-column-ignored",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, ts, v, CURRENT_TIMESTAMP() AS loaded_at FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [
+    "loaded_at"
+   ],
+   "note": "loaded_at is excluded from the comparison",
+   "cases_version": 1
+  },
+  {
+   "id": "audit-column-compared",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, ts, v, CURRENT_TIMESTAMP() AS loaded_at FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a full refresh stamps every row with a new load time; the incremental run keeps the old ones",
+   "cases_version": 1
+  },
+  {
+   "id": "distinct-incremental",
+   "family": "aggregate",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT customer_id, MAX(ts) AS last_ts FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(last_ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "MAX per group appended instead of recomputed",
+   "cases_version": 1
+  },
+  {
+   "id": "empty-batches-strict",
+   "family": "empty_batches",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "incremental-filter-wrong-direction",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts < COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "derived-column-watermark",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, ts, v + 1 AS v1 FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "merge-strict-watermark-timestamp-tie",
+   "family": "watermark_boundary",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a merge key does not recover a row skipped by the strict watermark",
+   "cases_version": 1
+  },
+  {
+   "id": "merge-strict-duplicate-source-rows",
+   "family": "duplicate_delivery",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "duplicate"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the source now holds two identical rows; the full query returns both and the incremental table has one",
+   "cases_version": 1
+  },
+  {
+   "id": "merge-key-not-source-key",
+   "family": "aggregate",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "merging on a column that is not unique in the source collapses rows the full query keeps",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-on-value-column",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE v > COALESCE((SELECT MAX(v) FROM ${self()}), 0)`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 3)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the watermark is not the event time",
+   "cases_version": 1
+  },
+  {
+   "id": "incremental-drops-full-filter",
+   "family": "watermark",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, ts, v FROM ${ref(\"events\")}\n${when(!incremental(), `WHERE v > 0`)}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 0)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the full query filters v > 0; the incremental query lost that filter",
+   "cases_version": 1
+  },
+  {
+   "id": "watermark-default-after-events",
+   "family": "empty_batches",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '2030-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the default for an empty table is later than every event",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-empty-start",
+   "family": "empty_batches",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [],
+    "batches": [
+     [],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "aggregate-merge-late-arrival",
+   "family": "late_arriving",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, SUM(v) AS total, MAX(ts) AS last_ts FROM ${ref(\"events\")}\n${when(incremental(), `WHERE customer_id IN (SELECT customer_id FROM ${ref(\"events\")} WHERE ts >= COALESCE((SELECT MAX(last_ts) FROM ${self()}), TIMESTAMP '1970-01-01'))`)}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 05:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a late row's group is not among those touched by newer rows",
+   "cases_version": 1
+  },
+  {
+   "id": "merge-gte-source-update",
+   "family": "updates",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "update"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET v = 5 WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-source-delete",
+   "family": "updates",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "delete"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "DELETE FROM events WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  },
+  {
+   "id": "strict-watermark-only-empty-runs",
+   "family": "empty_batches",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [],
+     [],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "",
+   "cases_version": 1
+  }
+ ]
+}
