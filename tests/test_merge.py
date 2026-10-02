@@ -247,3 +247,72 @@ def test_a_merge_job_makes_its_edge_in_the_graph():
     records = parse_job_history(json.dumps([{"job_id": "j1", "statement_type": "MERGE", "query": WALTER_MERGE, "creation_time": "2024-01-01T00:00:00Z"}]))
     graph = kumosql.build_query_graph(pl, records)
     assert any(e.observed and "src" in str(e.upstream) and "tgt" in str(e.downstream) for e in graph.edges), graph.edges
+
+
+def operation_into(target_sql: str, extra_models: dict | None = None, sources: dict | None = None) -> Pipeline:
+    """An operations action (its own key is ``p.d.job``) that merges into another table."""
+
+    models = {"p.d.job": Model(Target("p", "d", "job"), "operations", target_sql), **(extra_models or {})}
+    return Pipeline(models, sources if sources is not None else {**SOURCES, "p.d.target": Target("p", "d", "target")}, SCHEMA)
+
+
+def test_an_operation_merging_into_a_declared_table_traces_the_columns_into_that_table():
+    sql = merge("WHEN MATCHED THEN UPDATE SET v = s.v", "WHEN NOT MATCHED THEN INSERT (id, v) VALUES (s.id, s.v)")
+    pl = operation_into(sql)
+    assert lineage(pl, "p.d.target") == {"id": {"p.d.src.id"}, "v": {"p.d.src.v"}}
+    assert pl.upstream["p.d.target"] == {"p.d.src"}
+    assert not {"unknown_reads", "parse_error", "no_query"} & codes(pl)
+
+
+def test_an_operation_merging_into_another_model_adds_its_sources_to_that_models_columns():
+    models = {"p.d.target": Model(Target("p", "d", "target"), "operations", "ASSERT TRUE")}
+    pl = operation_into(merge("WHEN NOT MATCHED THEN INSERT (id, v) VALUES (s.id, s.v)"), models)
+    assert lineage(pl, "p.d.target") == {"id": {"p.d.src.id"}, "v": {"p.d.src.v"}}
+
+
+def test_an_operation_inserting_into_a_declared_table_traces_the_columns_into_that_table():
+    pl = operation_into(f"INSERT INTO {TARGET} (id, v) SELECT id, w FROM `p.d.src`")
+    assert lineage(pl, "p.d.target") == {"id": {"p.d.src.id"}, "v": {"p.d.src.w"}}
+
+
+def test_a_write_into_another_table_does_not_narrow_that_tables_columns():
+    models = {"p.d.reader": Model(Target("p", "d", "reader"), "table", "SELECT * FROM `p.d.target`")}
+    pl = operation_into(merge("WHEN MATCHED THEN UPDATE SET v = s.v"), models)
+    assert set(lineage(pl, "p.d.reader")) == set(COLUMNS)
+
+
+def test_a_table_function_call_is_not_a_table_node_or_an_edge(tmp_path):
+    from kumosql.graph import build_query_graph
+    from kumosql.pipeline import load_sqlx_project
+
+    (tmp_path / "definitions").mkdir()
+    (tmp_path / "workflow_settings.yaml").write_text("defaultProject: p\ndefaultDataset: staging\n")
+    (tmp_path / "definitions" / "src.sqlx").write_text(
+        'config { type: "declaration", schema: "raw", name: "src", columns: {a: "x", name: "y"} }\n'
+    )
+    (tmp_path / "definitions" / "star.sqlx").write_text(
+        'config { type: "table" }\nSELECT * FROM staging.my_tvf(TABLE ${ref("raw", "src")}, name => \'x\')\n'
+    )
+    (tmp_path / "definitions" / "one.sqlx").write_text(
+        'config { type: "table" }\nSELECT t.a FROM staging.my_tvf(TABLE ${ref("raw", "src")}, name => \'x\') t\n'
+    )
+    pl = load_sqlx_project(tmp_path)
+    graph = build_query_graph(pl)
+    assert not any("my_tvf" in part for node in graph.nodes for part in node.identity.parts)
+    assert {(e.upstream.parts[-1], e.downstream.parts[-1]) for e in graph.edges} == {("src", "star"), ("src", "one")}
+    assert pl.upstream["p.staging.star"] == {"p.raw.src"} and pl.upstream["p.staging.one"] == {"p.raw.src"}
+    assert "my_tvf" not in " ".join(sorted(t for tables in pl.table_reads().values() for t in tables))
+    by_model = {(d.model, d.code): d.message for d in pl.all_diagnostics()}
+    assert "table function" in by_model[("p.staging.star", "unexpanded_star")]
+    assert ("p.staging.one", "table_function") in by_model and ("p.staging.star", "table_function") in by_model
+    assert not {"external_tables", "parse_error"} & codes(pl)
+    record = pl._analyse().records[ColumnRef("p.staging.one", "a")]
+    assert (record.status, record.reason) == ("unknown", "untraceable_source")
+
+
+def test_a_write_into_a_declared_table_is_an_edge_in_the_graph(tmp_path):
+    from kumosql.graph import build_query_graph
+
+    pl = operation_into(merge("WHEN MATCHED THEN UPDATE SET v = s.v"))
+    graph = build_query_graph(pl)
+    assert ("src", "target") in {(e.upstream.parts[-1], e.downstream.parts[-1]) for e in graph.edges}

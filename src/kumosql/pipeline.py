@@ -40,7 +40,7 @@ from . import lineage_limits
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
-from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
+from .ast_utils import is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -892,6 +892,8 @@ def _script_tables(query: exp.Expression | None, analysis: ScriptAnalysis) -> tu
         cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
         opaque = analysis.opaque_temps
         for table in query.find_all(exp.Table):
+            if is_function_table(table):
+                continue  # a table function call: the function is not a table (what it is given is read as a table)
             if not table.db and table.name.lower() in cte_names:
                 continue
             if not table.db and not table.catalog and table.name.lower() in opaque:
@@ -1094,6 +1096,8 @@ class _Analysis:
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
     # Per model: tables only its other statements read (a script's earlier queries, operations, pre/post operations).
     script_tables: dict[str, tuple[exp.Table, ...]] = field(default_factory=dict)
+    # Tables other models' scripts write, with the models and sources those scripts read.
+    written_into: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1151,6 +1155,8 @@ class _Analysis:
         script_opaque: dict[str, frozenset[str]] = {}
         partial_outputs: set[str] = set()
         script_extras: dict[str, tuple[exp.Table, ...]] = {}
+        # Operations that MERGE or INSERT into a table that is not their own: target -> (writing model, its query).
+        writes_into: dict[str, list[tuple[str, exp.Query]]] = {}
         reading = Progress("read models", len(pipeline.models))
         for key, model in pipeline.models.items():
             reading.step(key)
@@ -1179,6 +1185,17 @@ class _Analysis:
                 ):
                     # An operation that merges into its own table writes those columns: trace them like a query's.
                     query = analysis.with_temp_ctes(analysis.final_query)
+                elif (
+                    isinstance(analysis.final, (exp.Merge, exp.Insert))
+                    and analysis.final_query is not None
+                    and final_target is not None
+                    and (written_key := pipeline.resolve(final_target))
+                    and written_key != key
+                ):
+                    # The columns land in another known table (a declared source, another model): trace them there.
+                    written_query, _ = _parse_script(model.sql, procedures, functions)
+                    if written_query is not None:
+                        writes_into.setdefault(written_key, []).append((key, written_query))
             if analysis is not None:
                 considered = max(analysis.considered, 1) if model.is_query else analysis.considered
                 matched = min(analysis.traced, considered) if query is not None else 0
@@ -1309,195 +1326,223 @@ class _Analysis:
         model_budget = lineage_limits.effective("model_seconds")
         total_deadline = lineage_limits.effective("total_seconds")
         total_deadline = time.perf_counter() + total_deadline if total_deadline else None
+        # Each model's own query, then every write other models' operations make into its table (a declared
+        # source or another model): those columns are traced into that table and never narrow its schema.
+        units: dict[str, list[tuple[str, exp.Query, bool]]] = {}
+        for key in order:
+            own = parsed.get(key)
+            units[key] = ([(key, own, key in partial_outputs)] if own is not None else []) + [
+                (writer, written_query, True) for writer, written_query in writes_into.get(key, ())
+            ]
         for key in order:
             tracing.step(key)
-            query = parsed.get(key)
-            if query is None:
+            if not units[key]:
                 opaque_readers_of.update(upstream.get(key, ()))
                 continue
-            excepted: set[ColumnRef] = set()
-            try:
-                marked = query.copy()
-                for node in marked.find_all(exp.Column):
-                    node.meta["named"] = True  # written in the SQL, as opposed to made by expanding a star
-                excepted = _excepted_columns(pipeline, marked)
-                qualified = qualify(
-                    marked,
-                    schema=sqlglot_schema,
-                    dialect="bigquery",
-                    validate_qualify_columns=False,
-                    quote_identifiers=False,
-                )
-            except Exception as exc:
-                diagnostics.append(PipelineDiagnostic(key, "qualify_error", str(exc).splitlines()[0]))
-                opaque_readers_of.update(upstream.get(key, ()))
-                continue
-
-            by_name_problems: list[str] = []
-            before_by_name = None
-            if any(is_by_name(node) for node in qualified.find_all(exp.SetOperation)):
-                # BY NAME / CORRESPONDING match columns by name; everything below reads by position.
-                before_by_name = qualified.copy()
-                qualified, by_name_problems = positionalize(qualified)
-                for problem in by_name_problems:
-                    diagnostics.append(PipelineDiagnostic(key, "by_name_set_operation", problem))
-
-            union_star = _star_in_set_operation(qualified)
-            if _has_unexpanded_star(qualified):
-                diagnostics.append(
-                    PipelineDiagnostic(
-                        key,
-                        "unexpanded_star",
-                        "SELECT * over a table with unknown columns; readers of this model treat it as opaque",
+            for unit, (writer, query, partial) in enumerate(units[key]):
+                excepted: set[ColumnRef] = set()
+                try:
+                    marked = query.copy()
+                    for node in marked.find_all(exp.Column):
+                        node.meta["named"] = True  # written in the SQL, as opposed to made by expanding a star
+                    excepted = _excepted_columns(pipeline, marked)
+                    qualified = qualify(
+                        marked,
+                        schema=sqlglot_schema,
+                        dialect="bigquery",
+                        validate_qualify_columns=False,
+                        quote_identifiers=False,
                     )
-                )
-                opaque_readers_of.update(upstream.get(key, ()))
+                except Exception as exc:
+                    diagnostics.append(PipelineDiagnostic(writer, "qualify_error", str(exc).splitlines()[0]))
+                    opaque_readers_of.update(upstream.get(key, ()))
+                    continue
 
-            # Drop CTE and subquery columns nothing reads (``SELECT *`` in a
-            # CTE otherwise counts every column as used), then collect reads.
-            try:
-                pruned = pushdown_projections(qualified.copy())
-            except Exception:
-                pruned = qualified
-            used: set[ColumnRef] = set()
-            words = {
-                word.lower()
-                for text in pipeline.models[key].masked_expressions
-                for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text)
-            }
-            if words:
-                for parent in upstream.get(key, ()):
-                    for column in outputs.get(parent, ()):
-                        if column.lower() in words:
-                            used.add(ColumnRef(parent, column))
-            for scope in traverse_scope(pruned):
-                for column in scope.columns:
-                    table = _source_table(scope, column)
-                    if table is None:
-                        continue
-                    owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                    used.add(ColumnRef(owner, column.name))
-            if pruned is not qualified:
-                # Pruning drops columns the outer query never uses, which is right for a ``*`` that was
-                # expanded, but a column the SQL names in a CTE or subquery is still read: dropping it
-                # from the table breaks the model whether or not anything uses the result.
-                for scope in traverse_scope(qualified):
+                by_name_problems: list[str] = []
+                before_by_name = None
+                if any(is_by_name(node) for node in qualified.find_all(exp.SetOperation)):
+                    # BY NAME / CORRESPONDING match columns by name; everything below reads by position.
+                    before_by_name = qualified.copy()
+                    qualified, by_name_problems = positionalize(qualified)
+                    for problem in by_name_problems:
+                        diagnostics.append(PipelineDiagnostic(writer, "by_name_set_operation", problem))
+
+                union_star = _star_in_set_operation(qualified)
+                function_calls = sum(1 for table in qualified.find_all(exp.Table) if is_function_table(table))
+                if function_calls:
+                    diagnostics.append(
+                        PipelineDiagnostic(
+                            writer,
+                            "table_function",
+                            f"calls {function_calls} table function(s) whose definition is not in the project; their output "
+                            "columns are unknown, so columns taken from them are not traced (the tables they are given are read)",
+                        )
+                    )
+                if _has_unexpanded_star(qualified):
+                    diagnostics.append(
+                        PipelineDiagnostic(
+                            writer,
+                            "unexpanded_star",
+                            "SELECT * over a table function whose output columns are unknown; readers of this model treat it as opaque"
+                            if function_calls
+                            else "SELECT * over a table with unknown columns; readers of this model treat it as opaque",
+                        )
+                    )
+                    opaque_readers_of.update(upstream.get(key, ()))
+
+                # Drop CTE and subquery columns nothing reads (``SELECT *`` in a
+                # CTE otherwise counts every column as used), then collect reads.
+                try:
+                    pruned = pushdown_projections(qualified.copy())
+                except Exception:
+                    pruned = qualified
+                used: set[ColumnRef] = set()
+                words = {
+                    word.lower()
+                    for text in pipeline.models[writer].masked_expressions
+                    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text)
+                }
+                if words:
+                    for parent in upstream.get(writer, ()):
+                        for column in outputs.get(parent, ()):
+                            if column.lower() in words:
+                                used.add(ColumnRef(parent, column))
+                for scope in traverse_scope(pruned):
                     for column in scope.columns:
-                        if not column.meta.get("named"):
-                            continue
                         table = _source_table(scope, column)
                         if table is None:
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
                         used.add(ColumnRef(owner, column.name))
-            if before_by_name is not None:
-                # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
-                for scope in traverse_scope(before_by_name):
-                    for column in scope.columns:
-                        table = _source_table(scope, column)
-                        if table is not None:
+                if pruned is not qualified:
+                    # Pruning drops columns the outer query never uses, which is right for a ``*`` that was
+                    # expanded, but a column the SQL names in a CTE or subquery is still read: dropping it
+                    # from the table breaks the model whether or not anything uses the result.
+                    for scope in traverse_scope(qualified):
+                        for column in scope.columns:
+                            if not column.meta.get("named"):
+                                continue
+                            table = _source_table(scope, column)
+                            if table is None:
+                                continue
                             owner = pipeline.resolve(table) or _table_name_for_schema(table)
                             used.add(ColumnRef(owner, column.name))
-            used.update(excepted)
-            consumed[key] = frozenset(used)
+                if before_by_name is not None:
+                    # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
+                    for scope in traverse_scope(before_by_name):
+                        for column in scope.columns:
+                            table = _source_table(scope, column)
+                            if table is not None:
+                                owner = pipeline.resolve(table) or _table_name_for_schema(table)
+                                used.add(ColumnRef(owner, column.name))
+                used.update(excepted)
+                consumed[key] = frozenset(used) | consumed.get(key, frozenset()) if unit else frozenset(used)
 
-            names = tuple(qualified.named_selects)
-            outputs[key] = names
-            if names and "*" not in names and key not in partial_outputs:
-                schema[key] = {name: "UNKNOWN" for name in names}
-                _add_table(sqlglot_schema, key, schema[key])
-                for spelled in sorted(spellings.get(key, ())):
-                    _add_table(sqlglot_schema, spelled, schema[key])
-            # ``qualified`` is already qualified: hand lineage() its scope so it
-            # neither copies nor re-qualifies the query once per output column.
-            try:
-                lineage_scope = build_scope(qualified)
-            except Exception:
-                lineage_scope = None
-            is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
-            model_deadline = time.perf_counter() + model_budget if model_budget else None
-            skipped_columns = 0
-            cte_names: dict[str, str] = {}
-            for name in names:
-                ref = ColumnRef(key, name)
-                now = time.perf_counter()
-                if name != "*" and (
-                    (model_deadline is not None and now > model_deadline)
-                    or (total_deadline is not None and now > total_deadline)
-                ):
-                    # Table-level fallback: the column is taken to depend on everything the model reads,
-                    # so impact and dead-column answers stay safe even though they are coarser.
-                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "lineage_skipped")
-                    direct[ref] = frozenset(used)
-                    skipped_columns += 1
-                    continue
-                if name == "*":
-                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
-                    continue
-                if by_name_problems or union_star:
-                    # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
-                    # an unknown table counts as one column, so every position after it is off).
-                    reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
-                    records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason)
-                    direct[ref] = frozenset(used)
-                    continue
+                names = tuple(qualified.named_selects)
+                if writer == key:
+                    outputs[key] = names
+                if names and "*" not in names and not partial:
+                    schema[key] = {name: "UNKNOWN" for name in names}
+                    _add_table(sqlglot_schema, key, schema[key])
+                    for spelled in sorted(spellings.get(key, ())):
+                        _add_table(sqlglot_schema, spelled, schema[key])
+                # ``qualified`` is already qualified: hand lineage() its scope so it
+                # neither copies nor re-qualifies the query once per output column.
                 try:
-                    node = _lineage(
-                        name,
-                        qualified,
-                        dialect="bigquery",
-                        scope=lineage_scope,
-                        copy=lineage_scope is None,
-                        # Trimming copies the whole query once per column to print a tidier node
-                        # label; the trace never reads that copy, and for wide models it dominated.
-                        trim_selects=False,
-                    )
-                    leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union, cte_names)
-                    if reason == "unresolved_column" and lineage_scope is not None:
-                        # With no schema for a table, the pre-built scope keeps a
-                        # bare column unresolved; re-qualifying resolves it when
-                        # only one table is in scope and leaves real ambiguity.
-                        retry = _lineage(name, qualified, dialect="bigquery", copy=True)
-                        again = _scan_lineage(pipeline, schema, retry, name, is_union)
-                        if again[1] != "unresolved_column":
-                            leaves, reason, transform = again
-                except Exception as exc:
-                    diagnostics.append(
-                        PipelineDiagnostic(key, "lineage_error", f"{name}: {str(exc).splitlines()[0]}")
-                    )
-                    records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_error")
-                    continue
-                if reason:
-                    records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
-                elif not leaves:
-                    records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
-                else:
-                    records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
-                direct[ref] = frozenset(leaves)
-            hidden = script_opaque.get(key)
-            if hidden:
-                # A temporary table that DML changed has no query to trace through: columns read from
-                # it are unknown (its source tables are still this model's dependencies).
+                    lineage_scope = build_scope(qualified)
+                except Exception:
+                    lineage_scope = None
+                is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
+                model_deadline = time.perf_counter() + model_budget if model_budget else None
+                skipped_columns = 0
+                cte_names: dict[str, str] = {}
+                # A second writer of the same table: what it writes joins what is already known per column.
+                prior = {ref: records[ref] for ref in (ColumnRef(key, n) for n in names) if unit and ref in records}
+                prior_direct = {ref: direct[ref] for ref in prior if ref in direct}
                 for name in names:
                     ref = ColumnRef(key, name)
-                    record = records.get(ref)
-                    if record is None or not any(_last_part(src.table) in hidden for src in record.sources):
+                    now = time.perf_counter()
+                    if name != "*" and (
+                        (model_deadline is not None and now > model_deadline)
+                        or (total_deadline is not None and now > total_deadline)
+                    ):
+                        # Table-level fallback: the column is taken to depend on everything the model reads,
+                        # so impact and dead-column answers stay safe even though they are coarser.
+                        records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "lineage_skipped")
+                        direct[ref] = frozenset(used)
+                        skipped_columns += 1
                         continue
-                    kept = frozenset(src for src in record.sources if _last_part(src.table) not in hidden)
-                    records[ref] = ColumnLineage(ref, kept, "unknown", "unknown", "temporary_table")
-                    direct[ref] = kept
-                opaque_readers_of.update(upstream.get(key, ()))
-            if skipped_columns:
-                diagnostics.append(
-                    PipelineDiagnostic(
-                        key,
-                        "lineage_skipped",
-                        f"{skipped_columns} of {len(names)} columns are traced at table level (they depend on everything "
-                        "this model reads) because column tracing took longer than the time limit "
-                        "(Settings > Analysis, or KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
-                        "its reads and readers are still in the graph",
+                    if name == "*":
+                        records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                        continue
+                    if by_name_problems or union_star:
+                        # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
+                        # an unknown table counts as one column, so every position after it is off).
+                        reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
+                        records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason)
+                        direct[ref] = frozenset(used)
+                        continue
+                    try:
+                        node = _lineage(
+                            name,
+                            qualified,
+                            dialect="bigquery",
+                            scope=lineage_scope,
+                            copy=lineage_scope is None,
+                            # Trimming copies the whole query once per column to print a tidier node
+                            # label; the trace never reads that copy, and for wide models it dominated.
+                            trim_selects=False,
+                        )
+                        leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union, cte_names)
+                        if reason == "unresolved_column" and lineage_scope is not None:
+                            # With no schema for a table, the pre-built scope keeps a
+                            # bare column unresolved; re-qualifying resolves it when
+                            # only one table is in scope and leaves real ambiguity.
+                            retry = _lineage(name, qualified, dialect="bigquery", copy=True)
+                            again = _scan_lineage(pipeline, schema, retry, name, is_union)
+                            if again[1] != "unresolved_column":
+                                leaves, reason, transform = again
+                    except Exception as exc:
+                        diagnostics.append(
+                            PipelineDiagnostic(writer, "lineage_error", f"{name}: {str(exc).splitlines()[0]}")
+                        )
+                        records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_error")
+                        continue
+                    if reason:
+                        records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
+                    elif not leaves:
+                        records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
+                    else:
+                        records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
+                    direct[ref] = frozenset(leaves)
+                for ref, before in prior.items():
+                    records[ref] = _merge_records(before, records[ref])
+                    if ref in direct or ref in prior_direct:
+                        direct[ref] = direct.get(ref, frozenset()) | prior_direct.get(ref, frozenset())
+                hidden = script_opaque.get(writer)
+                if hidden:
+                    # A temporary table that DML changed has no query to trace through: columns read from
+                    # it are unknown (its source tables are still this model's dependencies).
+                    for name in names:
+                        ref = ColumnRef(key, name)
+                        record = records.get(ref)
+                        if record is None or not any(_last_part(src.table) in hidden for src in record.sources):
+                            continue
+                        kept = frozenset(src for src in record.sources if _last_part(src.table) not in hidden)
+                        records[ref] = ColumnLineage(ref, kept, "unknown", "unknown", "temporary_table")
+                        direct[ref] = kept
+                    opaque_readers_of.update(upstream.get(key, ()))
+                if skipped_columns:
+                    diagnostics.append(
+                        PipelineDiagnostic(
+                            writer,
+                            "lineage_skipped",
+                            f"{skipped_columns} of {len(names)} columns are traced at table level (they depend on everything "
+                            "this model reads) because column tracing took longer than the time limit "
+                            "(Settings > Analysis, or KUMOSQL_LINEAGE_MODEL_SECONDS / KUMOSQL_LINEAGE_SECONDS); "
+                            "its reads and readers are still in the graph",
+                        )
                     )
-                )
 
         tracing.finish()
         reverse: dict[ColumnRef, set[ColumnRef]] = defaultdict(set)
@@ -1561,8 +1606,20 @@ class _Analysis:
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
             script_tables=script_extras,
+            written_into={target: frozenset(sources - {target}) for target, sources in written.items() if sources - {target}},
             schema_lookup=schema_lookup,
         )
+
+
+def _merge_records(before: ColumnLineage, after: ColumnLineage) -> ColumnLineage:
+    """Two writers feed one column: its sources are both sets, and it is only as known as the less known of them."""
+
+    sources = before.sources | after.sources
+    if "unknown" in (before.status, after.status):
+        return ColumnLineage(after.column, sources, "unknown", "unknown", after.reason or before.reason)
+    status = "traced" if "traced" in (before.status, after.status) else "constant"
+    transform = before.transform if before.transform == after.transform else "union"
+    return ColumnLineage(after.column, sources, status, transform)
 
 
 _TRANSFORM_RANK = {"passthrough": 0, "renamed": 1, "expression": 2, "aggregate": 3, "window": 4}
