@@ -12,9 +12,10 @@
   decimal literal (``CAST(5 AS DECIMAL(11, 1))`` is ``5.0``), and an integer
   string literal cast to an integer type is the integer (``CAST('12' AS
   SIGNED)`` is ``12``).
-* A strict comparison of an integer expression with an integer literal is
-  the non-strict one with the literal moved by one: ``COUNT(x) > 1`` is
-  ``COUNT(x) >= 2``.
+* A strict comparison of a ``COUNT`` with an integer literal is the
+  non-strict one with the literal moved by one: ``COUNT(x) > 1`` is
+  ``COUNT(x) >= 2``. (Other integers keep their comparisons: the SMT reads
+  them as reals, where ``x > 50`` and ``x <= 50`` stay complementary.)
 * An ``INT`` (or narrower) expression cast to ``DOUBLE``, ``FLOAT`` or a wide
   enough ``DECIMAL`` keeps its order and its ties (the cast is exact and
   one-to-one there), so as an ``ORDER BY`` key it is the expression itself; and
@@ -319,15 +320,14 @@ def _int_literal(node: exp.Expression) -> int | None:
 
 
 def _non_strict(node: exp.Expression, select: exp.Select, types: dict) -> exp.Expression | None:
-    """``e > n`` is ``e >= n + 1`` and ``e < n`` is ``e <= n - 1`` for an integer ``e`` (either side)."""
+    """``c > n`` is ``c >= n + 1`` and ``c < n`` is ``c <= n - 1`` for a ``COUNT`` ``c`` (either side)."""
 
     left, right = node.this, node.expression
     for value, other, literal_on_right in ((_int_literal(right), left, True), (_int_literal(left), right, False)):
         if value is None or _int_literal(other) is not None:
             continue
-        kind = expression_type(other, select, types)
-        if kind is None or kind[0] != "int":
-            return None
+        if not isinstance(other.unnest() if isinstance(other, exp.Paren) else other, exp.Count):
+            return None  # the SMT reads other numbers as reals: x > 50 OR x <= 50 must stay complementary
         # Read as "other > n" (GT with the literal right, or LT with it left) or "other < n".
         greater = isinstance(node, exp.GT) == literal_on_right
         bound = _number(value + 1 if greater else value - 1)

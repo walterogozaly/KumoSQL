@@ -60,9 +60,9 @@ def test_constant_case_conditions():
 
 
 def test_strict_integer_comparisons_become_non_strict():
-    assert _fold("SELECT i FROM t WHERE i > 3 AND 5 > b AND i < -2") == "SELECT i FROM t WHERE i >= 4 AND 4 >= b AND i <= -3"
-    assert _fold("SELECT i FROM t GROUP BY i HAVING COUNT(*) > 1") == "SELECT i FROM t GROUP BY i HAVING COUNT(*) >= 2"
-    assert _fold("SELECT i FROM t WHERE n > 3 AND s > 3 AND i > 3.5") is None
+    assert _fold("SELECT i FROM t GROUP BY i HAVING COUNT(*) > 1 AND 5 > COUNT(s) AND COUNT(*) < 3") == "SELECT i FROM t GROUP BY i HAVING COUNT(*) >= 2 AND 4 >= COUNT(s) AND COUNT(*) <= 2"
+    assert _fold("SELECT i FROM t GROUP BY i HAVING COUNT(*) > 1.5") is None
+    assert _fold("SELECT i FROM t WHERE i > 3") is None  # x > 50 OR x <= 50 must stay complementary for the SMT
 
 
 def test_round_gets_its_default_precision():
