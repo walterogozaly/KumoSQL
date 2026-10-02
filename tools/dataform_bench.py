@@ -128,7 +128,7 @@ def declared_refs(rng: random.Random, index: int) -> Case:
 
     name, schema = f"decl_src_{index}", rng.choice(["raw", "lake", "ext"])
     database = rng.choice([PROJECT, "other"])
-    form = rng.choice(["sqlx", "js", "js_loop", "js_constants", "dynamic"])
+    form = rng.choice(["sqlx", "js", "js_loop", "js_constants", "js_require", "dynamic"])
     config = _config(rng)
     text = f'{config}\n\nSELECT id, val FROM ${{ref("{name}")}}\n'
     declare = f'declare({{ database: "{database}", schema: "{schema}", name: "{name}" }});\n'
@@ -137,6 +137,10 @@ def declared_refs(rng: random.Random, index: int) -> Case:
         "js": {f"definitions/{name}.js": declare},
         "js_loop": {f"includes/{name}.js": f'["{name}", "{name}_other"].forEach((t) => declare({{ database: "{database}", schema: "{schema}", name: t }}));\n'},
         "js_constants": {f"definitions/{name}.js": f'const schema = "{schema}";\nconst database = "{database}";\ndeclare({{ database, schema, name: "{name}" }});\n'},
+        "js_require": {
+            f"includes/{name}_src.js": f'module.exports = {{ SOURCES: [{{ database: "{database}", schema: "{schema}", name: "{name}" }}] }};\n',
+            f"definitions/{name}.js": f'const {{ SOURCES }} = require("includes/{name}_src");\nSOURCES.forEach((s) => declare({{ database: s.database, schema: s.schema, name: s.name }}));\n',
+        },
         "dynamic": {f"definitions/{name}.js": f'getTables().forEach((t) => declare({{ schema: "{schema}", name: t }}));\n'},
     }[form]
     if form == "dynamic":  # cannot be known from the files: the dependency must be left out and flagged, never guessed
