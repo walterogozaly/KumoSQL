@@ -52,13 +52,18 @@ class Plan:
         return self.left.joins() + self.right.joins() + [self]
 
 
+def _swap(out: float, left: Plan, right: Plan) -> bool:
+    """Swap so the right input, which a hash join builds, is the smaller one."""
+    return left.card < right.card
+
+
 def _join_cost(model: str, out: float, left: Plan, right: Plan) -> tuple[float, bool]:
     """Cost of joining two sub-plans; second value says whether to swap sides."""
     if model == "cout":
-        return out, left.card < right.card
+        return out, _swap(out, left, right)
     # hash join: probe the larger side, build the smaller (right) side.
     small, big = sorted((left.card, right.card))
-    return out + big + 2.0 * small, left.card < right.card
+    return out + big + 2.0 * small, _swap(out, left, right)
 
 
 def optimize(query: JoinQuery, card: CardFn, model: str = "cout",
