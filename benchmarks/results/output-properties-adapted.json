@@ -2,7 +2,7 @@
   "suite": "Output properties (SQLSolver queries)",
   "order": 61,
   "size": 761,
-  "score": "2,152 claims on 657 queries, 0 violated",
+  "score": "2,154 claims on 657 queries, 0 violated",
   "metric": "Every NOT NULL, uniqueness and row-count fact the analysis asserts about the queries of SQLSolver's Calcite, Spark, TPC-H and TPC-C pairs, checked on random databases that respect their schemas.",
   "docs": "docs/output-properties.md#evaluation",
   "command": "python tools/output_properties_bench.py --adapted",
