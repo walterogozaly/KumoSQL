@@ -340,13 +340,18 @@ pytest -m slow tests/test_workbook_fixture.py
 
 Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. The test fails unless every sample has zero remaining relational subqueries and no fatal diagnostics. A separate unit test verifies the small fixture shape.
 
-The normal unit suite (it skips the `slow` marker and needs `pip install -e ".[dev]"`; the full run takes a few minutes) is:
+The normal unit suite (it skips the `slow` marker and needs `pip install -e ".[dev]"`) runs in parallel with one command:
 
 ```shell
-python -m pytest
+python tools/run_tests.py             # the whole fast suite on every CPU (pytest-xdist)
+python tools/run_tests.py --evals     # only the benchmark floors (tests marked `eval`)
+python tools/run_tests.py --no-evals  # everything except the floors
+python -m pytest                      # plain serial run
 ```
 
-Use `python -m pytest` rather than bare `pytest` so the repository root is importable. CI (`.github/workflows/tests.yml`) runs `python -m pytest -m "not slow"` on the floor and the current `sqlglot` release.
+`run_tests.py` is `python -m pytest -n <cpus> --dist loadgroup` with the right marker; extra arguments go to pytest and `-j N` sets the workers. The whole fast suite took 35 minutes serially and about 9 on 4 CPUs; the longest single test (QED, about 5 minutes) is the floor. Tests must not share state: keep files under `tmp_path`, never write next to the sources, and reset module globals in a fixture (`tests/conftest.py` already isolates the state directory, the loaded project and the redactor). `tests/conftest.py` starts the slowest test files first under xdist (`HEAVY_FILES`) and marks the benchmark files `eval` (`EVAL_FILES`): add a new eval file to `EVAL_FILES`. Optionally `pip install sqlglotc` (the same version as `sqlglot`) compiles sqlglot and speeds the suite up by about 15%.
+
+Use `python -m pytest` rather than bare `pytest` so the repository root is importable. CI (`.github/workflows/tests.yml`) runs `python -m pytest -m "not slow" -n auto --dist loadgroup` on the floor and the current `sqlglot` releases.
 
 ## Conservative SQL equivalence
 

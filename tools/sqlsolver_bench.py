@@ -197,6 +197,8 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
 
     import duckdb
 
+    from kumosql.duckdb_load import insert_rows
+
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
     if constants:
@@ -213,9 +215,7 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
             for table in used:
                 db.execute(f'DELETE FROM "{table.name}"')
                 rows = random_rows(table, rng)
-                if rows:
-                    marks = ", ".join("?" * len(table.columns))
-                    db.executemany(f'INSERT INTO "{table.name}" VALUES ({marks})', rows)
+                insert_rows(db, f'"{table.name}"', rows)
             a = Counter(db.execute(left_sql).fetchall())
             b = Counter(db.execute(right_sql).fetchall())
         except duckdb.Error:

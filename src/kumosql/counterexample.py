@@ -22,6 +22,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .duckdb_load import insert_rows
+
 import sqlglot
 from sqlglot import exp
 
@@ -419,9 +421,7 @@ class Searcher:
                 for name in self.used:
                     table = self.spec.tables[name]
                     self.db.execute(f'DELETE FROM "{name}"')
-                    if data[name]:
-                        marks = ", ".join("?" * len(table.columns))
-                        self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', data[name])
+                    insert_rows(self.db, f'"{name}"', data[name])
                 a = self.db.execute(self.left_sql).fetchall()
                 b = self.db.execute(self.right_sql).fetchall()
             except duckdb.Error:
@@ -441,8 +441,7 @@ class Searcher:
                     rows = list(data[name])
                     rng.shuffle(rows)
                     self.db.execute(f'DELETE FROM "{name}"')
-                    if rows:
-                        self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', rows)
+                    insert_rows(self.db, f'"{name}"', rows)
                 if (_bag(self.db.execute(self.left_sql).fetchall()), _bag(self.db.execute(self.right_sql).fetchall())) != expected:
                     return False
         except duckdb.Error:

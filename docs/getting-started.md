@@ -35,7 +35,7 @@ Optional extras add capabilities; install them the same way, for example `python
 | `smt` | The Z3 prover for filter, join and `DISTINCT` rewrites the structural prover cannot canonicalize | Those rewrites stay `unproven` |
 | `execution` | Local DuckDB for comparing results on synthetic data | The synthetic check reports `not_run` |
 | `bigquery` | Google auth for dry runs and the BigQuery catalog page | Those features report that credentials are unavailable |
-| `dev` | pytest, DuckDB and Z3, for working on KumoSQL itself | |
+| `dev` | pytest (with xdist), DuckDB and Z3, for working on KumoSQL itself | |
 
 ## 2. Rewrite one query and see the evidence
 
@@ -169,10 +169,11 @@ Only these features contact BigQuery, and only when you ask.
 
 ```shell
 python -m pip install -e ".[dev]"
-python -m pytest
+python tools/run_tests.py        # parallel; --evals for the benchmark floors only
+python -m pytest                 # serial
 ```
 
-Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
+`tools/run_tests.py` uses pytest-xdist on every CPU (about 9 minutes instead of 35 on 4 CPUs); see the README's testing section. Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
 
 ## Where to go next
 
