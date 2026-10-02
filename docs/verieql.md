@@ -39,8 +39,8 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Literature | 64 | 10 | 22 | 21 | 11 | 0 |
-| Calcite-397 | 397 | 197 | 15 | 89 | 96 | 0 |
-| LeetCode (all pairs) | 23,994 | 4,380 | 5,519 | 12,172 | 1,923 | 0 |
+| Literature | 64 | 13 | 22 | 18 | 11 | 0 |
+| Calcite-397 | 397 | 203 | 15 | 83 | 96 | 0 |
+| LeetCode (all pairs) | 23,994 | 4,423 | 5,519 | 12,129 | 1,923 | 0 |
 
-On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute 2,286 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax).
+On LeetCode, 3,233 of the 3,586 pairs VeriEQL itself refutes are refuted here (90%); we also refute 2,286 pairs VeriEQL timed out on or could not read. The full LeetCode run takes about 4.5 hours on 4 cores. Search settings were tuned on every 24th pair; every other pair is untouched by that tuning. The aggregate rewrites added on 2026-10-02 (`src/kumosql/aggregate_rules.py`) were scored on LeetCode by rerunning, on both versions, only the 1,295 pairs where they change a query: 43 moved from agree to proven and nothing else changed. "Not run" means a query that DuckDB or the parser rejects (bare words used as strings, ambiguous columns, Calcite-only syntax).

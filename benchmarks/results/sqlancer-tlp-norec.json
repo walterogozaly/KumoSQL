@@ -1,20 +1,20 @@
 {
   "suite": "SQLancer-style TLP / NoREC fuzzing",
   "order": 300,
-  "size": 1258,
-  "score": "0 false proofs; 281/701 equivalent pairs proved; 310/437 different pairs refuted with a replayable counterexample",
-  "metric": "Seeded TLP, NoREC and mutated pairs over random predicates, joins and CTE queries; the prover must never prove a pair that a random database separates, and each counterexample must separate the queries when replayed in DuckDB. 424/437 different pairs are found when KumoSQL's executed check is added.",
+  "size": 1268,
+  "score": "0 false proofs; 310/691 equivalent pairs proved; 250/457 different pairs refuted with a replayable counterexample",
+  "metric": "Seeded TLP, NoREC and mutated pairs over random predicates, joins and CTE queries; the prover must never prove a pair that a random database separates, and each counterexample must separate the queries when replayed in DuckDB. 425/457 different pairs are found when KumoSQL's executed check is added.",
   "evidence": "proof",
   "correctness": "0 false proofs, 0 counterexamples that fail to replay, 0 generator label errors (seed 2, count 60; seeds 3 also 0). Ground truth is a 40-database DuckDB search, so a difference it misses can hide a false proof.",
   "coverage": {
-    "proven": 281,
-    "refuted": 322,
-    "unknown": 527,
-    "unsupported": 8
+    "proven": 310,
+    "refuted": 254,
+    "unknown": 530,
+    "unsupported": 54
   },
-  "held_out": "TLP aggregate and NoREC families: 114/420 equivalent pairs proved, 0 false proofs",
+  "held_out": "TLP aggregate and NoREC families: 163/420 equivalent pairs proved, 0 false proofs",
   "docs": "docs/fuzzing.md",
   "command": "python tools/unsafe_fuzz.py fuzz --count 60 --seed 2",
   "date": "2026-10-02",
-  "caveats": "120 of 1,258 cases run in neither engine and are excluded from coverage. Aggregate-recombination TLP is mostly unknown (prover cannot relate SUM over a UNION ALL of partitions). Found and fixed this run: normalizer OR precedence bug, counterexample values not loadable into INT columns."
+  "caveats": "120 of 1,268 cases run in neither engine and are excluded from coverage. Aggregate-recombination TLP is mostly unknown (prover cannot relate SUM over a UNION ALL of partitions). Found and fixed this run: normalizer OR precedence bug, counterexample values not loadable into INT columns. Refutations of a few TLP mutants vary by one or two between runs (the prover's counterexample search, not the rewrites)."
 }

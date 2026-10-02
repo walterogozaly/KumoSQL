@@ -26,6 +26,8 @@ Keep these apart: they are different kinds of evidence.
 
 **Held out**: some families are marked `heldout` (TLP aggregates, NoREC, a handful of unsafe-rewrite templates). They were not looked at while fixing bugs. A fix that only helps the development families does not move the held-out numbers.
 
+**Results (2026-10-02, `fuzz --count 60 --seed 2`)**: 1,268 cases, 0 false proofs, 0 bad counterexamples; 310/691 equivalent pairs proved, 250/457 different pairs refuted with a replayable counterexample (425/457 with KumoSQL's executed check). Held-out TLP aggregate and NoREC families: 163/420 proved. NoREC pairs (`WHERE p` against `COUNT(CASE WHEN p THEN 1 END)`) are proved by moving a filter shared by every aggregate into `WHERE` (`src/kumosql/aggregate_rules.py`).
+
 ## Suites
 
 **`fuzz`**: for random sources (one table, inner/left/cross joins) and random three-valued predicates, TLP (`Q` = `Q[p]` UNION ALL `Q[NOT p]` UNION ALL `Q[p IS NULL]`, also with DISTINCT/UNION and recombined COUNT/SUM/MIN/MAX) and NoREC (`WHERE p` against `COUNT(CASE WHEN p ...)` and a projected-then-filtered subquery). Mutated TLP/NoREC pairs (lost or duplicated partition, `SUM` instead of `COUNT`) and single-site mutations of generated multi-CTE queries (shapes: filters, DISTINCT, inner/left joins, GROUP BY with HAVING, CASE, COALESCE/IFNULL, UNION [ALL], IN / NOT IN / EXISTS subqueries) (flipped comparison, AND/OR swap, dropped conjunct or DISTINCT or WHERE or NOT, LEFT JOIN made INNER, UNION flipped, COUNT(*) made COUNT(col), constant bumped). A mutant is labelled *different* only if the oracle separates it.

@@ -101,8 +101,8 @@ Constructs the provers do not model are declined, never proved with the flag ign
 
 | Suite | Proved | Different | Unknown | Wrong |
 |---|---|---|---|---|
-| QED Calcite (375 converted) | 243 | 1 | 131 | 0 |
-| R-Bot Calcite (45) | 19 | 2 | 24 | 0 |
+| QED Calcite (375 converted) | 256 | 1 | 119 | 0 |
+| R-Bot Calcite (45) | 21 | 2 | 22 | 0 |
 
 Rules added for these suites live in `src/kumosql/keyed_rules.py`. A `GROUP BY` over one table that includes a NOT NULL key (grouped, or fixed by `WHERE k = constant`) reads each row's own value, so `SUM(x)` is `x`, `COUNT(*)` is 1 and `GROUPING(c)` is 0. A `DISTINCT` that outputs such a key is dropped in a second attempt when the first finds no proof, since dropping it on one side only can hide a match. `EXISTS` over a select made only of aggregates, with no `GROUP BY`, is TRUE. A relation that can never hold a row (`WHERE FALSE`, an empty source under an inner join or on the kept side of an outer join) makes its select empty, `EXISTS`/`IN` over it is FALSE, and a `LEFT JOIN` to it pads with NULLs (`empty_rules.py`); `ORDER BY` without `LIMIT` in a derived table is dropped. An outer join whose far side is never read is dropped under `DISTINCT` or a `GROUP BY` whose aggregates ignore duplicates (`dedup_join_rules.py`). `EXTRACT(YEAR FROM d) = 2014` (with `EXTRACT(MONTH ..)`) is the matching date range (`date_ranges.py`). QED went from 221 to 241 with these.
 
@@ -110,7 +110,7 @@ Rules added for these suites live in `src/kumosql/keyed_rules.py`. A `GROUP BY` 
 
 `tools/calcite_plan_to_sql.py` mines Apache Calcite's own rule tests (`RelOptRulesTest.xml` and six smaller per-rule test files, Apache-2.0, pinned commit) into SQL pairs: each test's `planBefore` and `planAfter` plan dumps are parsed, typed against Calcite's mock catalog (and the `scott` schema) and written as MySQL SQL, or skipped with a reason. Of 1016 tests, 502 translate, 182 do not change the plan and 332 are skipped (grouping sets, windows, Calcite-internal operators, Calcite-only typing, ...). 168 translated tests appear in none of the SQLSolver, QED or R-Bot sets. `tools/validate_calcite_mined_pairs.py` runs both sides on random DuckDB databases: 500 agree, and one, `testFullJoinToLeftAndRightJoin`, is a genuine non-equivalence in Calcite's expected plan (kept, flagged `differs_in_duckdb`, counterexample saved). The fixture, with provenance flags and Calcite's LICENSE and NOTICE, is `tests/fixtures/calcite_mined/` (see its README); `tests/test_calcite_mined_fixtures.py` checks it.
 
-`python tools/calcite_mined_bench.py` scores the 502 pairs: **268 proved, 1 refuted (the genuine non-equivalence above), 233 unknown, 0 wrong**; of the 168 new pairs, 53 are proved. A counterexample counts only if the bags still differ once DuckDB's DATE-to-TIMESTAMP widening in a `UNION` branch is undone, so type coercion is never mistaken for a difference. `tests/test_calcite_mined_benchmarks.py` holds the floor (marked slow: it takes about five minutes).
+`python tools/calcite_mined_bench.py` scores the 502 pairs: **293 proved, 1 refuted (the genuine non-equivalence above), 208 unknown, 0 wrong**; of the 168 new pairs, 71 are proved. Since the 2026-10-02 failing-tests work used 115 of the new pairs for rule development, they are no longer held out. A counterexample counts only if the bags still differ once DuckDB's DATE-to-TIMESTAMP widening in a `UNION` branch is undone, so type coercion is never mistaken for a difference. `tests/test_calcite_mined_benchmarks.py` holds the floor (marked slow: it takes about five minutes).
 
 ## Cosette and SPES fixtures
 
