@@ -1,6 +1,8 @@
 from kumosql import Pipeline, Target, load_compiled_graph
 from kumosql.pipeline import Model
-from kumosql.shared_logic import propose_shared_logic, proposals_json
+from dataclasses import replace
+
+from kumosql.shared_logic import propose_shared_logic, proposals_json, refactor_sql, verify_proposal
 
 BASE = (
     "SELECT o.id, o.customer_id, o.amount, o.created_at "
@@ -42,7 +44,7 @@ def by_node(proposal):
 
 
 def test_exact_duplicate_lists_edit_sites_and_transitive_readers():
-    (proposal,) = propose_shared_logic(load_compiled_graph(exact_graph()))
+    (proposal,) = propose_shared_logic(load_compiled_graph(exact_graph()), verify=False)
 
     assert proposal.origin == "exact_duplicate"
     assert set(proposal.sites) == {("proj.mart.a", "cte:base"), ("proj.mart.b", "cte:base")}
@@ -56,7 +58,7 @@ def test_exact_duplicate_lists_edit_sites_and_transitive_readers():
 
 
 def test_json_shape_never_invents_cost_or_readiness():
-    (proposal,) = propose_shared_logic(load_compiled_graph(exact_graph()))
+    (proposal,) = propose_shared_logic(load_compiled_graph(exact_graph()), verify=False)
     data = proposals_json([proposal])["proposals"][0]
 
     assert data["kind"] == "shared_logic"
@@ -121,3 +123,69 @@ def test_reader_cycle_terminates():
     )
     (proposal,) = propose_shared_logic(load_compiled_graph(graph))
     assert {"proj.mart.c1", "proj.mart.c2"} <= set(by_node(proposal))
+
+
+def test_exact_duplicate_refactor_is_proven_and_ready():
+    (proposal,) = propose_shared_logic(load_compiled_graph(exact_graph()))
+
+    assert proposal.ready
+    data = proposals_json([proposal])["proposals"][0]
+    assert data["ready"] is True
+    assert {c["node"]: c["label"] for c in data["consumers"]} == {
+        "proj.mart.a": "proven",
+        "proj.mart.b": "proven",
+        "proj.mart.down_a": "unchanged",
+        "proj.mart.down_down": "unchanged",
+    }
+
+
+def test_incomplete_reader_list_keeps_a_proven_refactor_not_ready():
+    graph = exact_graph([table("broken", "SELECT FROM WHERE ((")])
+    (proposal,) = propose_shared_logic(load_compiled_graph(graph))
+
+    assert not proposal.ready
+    assert any("incomplete" in reason for reason in proposal.unready_reasons)
+
+
+def test_copies_that_read_a_cte_the_model_defines_are_not_ready():
+    def model(name, base_filter):
+        return table(
+            name,
+            "WITH base AS (SELECT o.id, o.amount, o.status FROM `proj.raw.orders` AS o "
+            f"WHERE {base_filter}), agg AS (SELECT b.id, b.amount FROM base AS b "
+            "WHERE b.amount > 5 AND b.status = 'paid' AND b.id > 0) SELECT id FROM agg",
+        )
+
+    graph = {"tables": [model("a", "o.amount > 0"), model("b", "o.amount > 0")], "declarations": DECLARATIONS}
+    proposals = propose_shared_logic(load_compiled_graph(graph), min_nodes=8)
+
+    assert proposals
+    assert not any(p.ready for p in proposals if any("agg" in s[1] for s in p.sites))
+
+
+def test_near_duplicate_refactor_applies_residual_filters_and_is_verified():
+    graph = {
+        "tables": [
+            table("a", f"WITH base AS ({BASE}) SELECT id, amount FROM base"),
+            table("b", f"WITH us AS ({BASE.replace('o.', 'x.').replace('AS o', 'AS x')} AND c.country = 'US') SELECT id FROM us"),
+        ],
+        "declarations": DECLARATIONS,
+    }
+    pipeline = load_compiled_graph(graph)
+    proposals = propose_shared_logic(pipeline)
+    (proposal,) = [p for p in proposals if p.origin == "extra_filters"]
+
+    after = refactor_sql(proposal, pipeline.models["proj.mart.b"].sql, ("proj.mart.b", "cte:us"))
+
+    assert after is not None and "country = 'US'" in after and "_shared" in after
+    assert proposal.ready
+
+
+def test_a_refactor_that_drops_a_filter_is_never_verified():
+    pipeline = load_compiled_graph(exact_graph())
+    (proposal,) = propose_shared_logic(pipeline, verify=False)
+    broken = replace(proposal, shared_sql=proposal.shared_sql.replace("o.amount > 0", "o.amount > 1"))
+
+    result = verify_proposal(pipeline, broken)
+    assert not result.ready
+    assert result.verification["proj.mart.a"] != "proven"

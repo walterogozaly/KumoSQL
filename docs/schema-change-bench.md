@@ -1,0 +1,38 @@
+# Schema-change compatibility suite
+
+Question: if a table gains, loses, renames or retypes a column, which downstream models break and which change their
+output columns or types? `Pipeline.assess_schema_change(kind, table, column, new_name=..., new_type=...)` answers it
+(`src/kumosql/schema_change.py`). It re-resolves every model that reads the table, in dependency order, against the
+changed schema and compares with how the model resolves today.
+
+- `breaks`: the model resolved before and does not now (named column gone, bare column ambiguous, duplicate output
+  names, `* EXCEPT`/`REPLACE` of a missing column, `UNION` arm width differs).
+- `output_changes`: still works, but its output columns or types differ (the `SELECT *` cases), with exact added,
+  removed and retyped columns.
+- `unknown`: cannot be judged (model did not parse and names the table, unknown input columns, unresolved template),
+  plus everything that reads such a model. Unknown is never reported as safe.
+
+A model that breaks is assumed fixed with its current output, so models after it are judged on their own.
+
+## The suite
+
+`python tools/schema_change_bench.py [--write-results]` generates pipelines of 8, 30 and 120 models (3 seeds each).
+Every model is a spec that prints its SQL and resolves itself against its inputs' columns, so the answer key comes from
+a simulator that never parses SQL.
+
+| Split | Families |
+| --- | --- |
+| dev | explicit projection, `SELECT *`, expressions and casts, aggregates, CTE star, join with bare column, unparsable model |
+| held out | `SELECT *, expr`, `* EXCEPT ... REPLACE`, `x.*` join, `UNION ALL` of stars |
+
+Scores are kept apart: correctness (models that break or change but are reported safe, false breaks: both must be 0),
+analysis (precision and recall of breaks and output changes, exact columns), coverage (scenarios declined as unknown),
+performance (ms per scenario).
+
+Overlap: `assess_change` (docs/lineage-bench.md) covers drop/rename/expression change by column reads; this suite adds
+add/retype, `SELECT *` propagation and output-schema prediction. Original and adapted cases are not involved: the
+suite is generated, nothing is imported.
+
+Held-out first run: 2 misses (a `* EXCEPT (col)` over a dropped column, which BigQuery rejects and sqlglot ignores),
+fixed afterwards; those families no longer count as held out. Limits: retypes are checked only where the type reaches
+an output column, and retypes feeding a `UNION` are not scored.

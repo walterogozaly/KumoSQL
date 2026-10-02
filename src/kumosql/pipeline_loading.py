@@ -379,6 +379,17 @@ def load_sqlx_project(
         except ValueError as exc:
             diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
         body = _SELF_RE.sub(target.sql(), body)
+        # Dataform evaluates ref() in pre_operations and post_operations too, so what they ref is a dependency.
+        for kind_, section in sections:
+            if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section):
+                for match in _REF_RE.finditer(section):
+                    try:
+                        ref = _parse_ref_args(match.group("args"), default, known)
+                    except ValueError as exc:
+                        diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
+                        continue
+                    if ref not in dependencies:
+                        dependencies.append(ref)
 
         def resolve(match: re.Match[str]) -> str:
             try:

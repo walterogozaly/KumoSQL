@@ -1320,6 +1320,9 @@ class _Compiler:
             return _Val(z3.Or(a.null, b.null), val_fn(*args))
         if isinstance(e, (exp.Sub, exp.Neg, exp.Div, exp.Mod, exp.DPipe)):
             parts = [e.this] + ([e.expression] if isinstance(e, exp.Binary) else [])
+            if isinstance(e, exp.Div) and isinstance(e.expression, exp.Nullif) and e.expression.expression.sql() == "0":
+                # x / NULLIF(y, 0) is the quotient with the zero divisor read as NULL (the mean of no values).
+                parts = [e.this, e.expression.this]
             vals = [self._val(p, env, agg, aliases) for p in parts]
             null_fn, val_fn = self._function(type(e).__name__, len(vals))
             args = self._uf_args(vals)
@@ -2485,7 +2488,18 @@ def _z3_value(value):
 def _cell(model, v: _Val):
     if z3.is_true(model.eval(v.null, model_completion=True)):
         return None
+    if not _decided(model, v.val):
+        # The model never constrained this value, so z3 would complete it with
+        # an arbitrary constructor, often a string; a number loads into any column.
+        return Fraction(0)
     return _py(model, v.val)
+
+
+def _decided(model, term) -> bool:
+    """Whether the model itself, not its completion, fixes ``term``'s value."""
+
+    value = model.eval(term, model_completion=False)
+    return not (z3.is_const(value) and value.decl().kind() == z3.Z3_OP_UNINTERPRETED)
 
 
 class _NoCandidate(Exception):

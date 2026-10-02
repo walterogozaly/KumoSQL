@@ -165,6 +165,7 @@ class SyntheticDataset:
     tables: Mapping[str, SyntheticTable] = field(default_factory=dict)
 
 
+<<<<<<< HEAD
 @dataclass(frozen=True)
 class DataRules:
     """Declared facts a generated database must respect (names lower-case).
@@ -199,6 +200,71 @@ def respect_rules(
             seen[n].add(mark)
         kept.append(row)
     return kept
+=======
+_MAX_CONSTANTS_PER_TYPE = 24
+
+
+def query_constants(*sqls: str) -> dict[str, tuple[Any, ...]]:
+    """Values worth generating for each column type, read from the queries' own constants.
+
+    A filter such as ``it.info = 'top 250 rank'`` or ``d_year = 1998`` never matches values
+    drawn from a small fixed domain, so both sides of a comparison return nothing and agree
+    trivially. Adding the constants (and a string matching each ``LIKE`` pattern) makes such
+    filters select rows.
+    """
+
+    found: dict[str, list[Any]] = {t: [] for t in ("INT64", "FLOAT64", "NUMERIC", "STRING", "DATE")}
+    for sql in sqls:
+        try:
+            statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
+        except sqlglot.errors.SqlglotError:
+            continue
+        for statement in statements:
+            for node in statement.walk():
+                if isinstance(node, (exp.Like, exp.ILike)) and isinstance(node.expression, exp.Literal):
+                    pattern = node.expression.name
+                    found["STRING"].append(pattern.replace("%", "").replace("_", "x"))
+                    continue
+                if isinstance(node, exp.Cast) and isinstance(node.this, exp.Literal) and node.this.is_string:
+                    if node.to.this == exp.DataType.Type.DATE:
+                        try:
+                            found["DATE"].append(date.fromisoformat(node.this.name[:10]))
+                        except ValueError:
+                            pass
+                    continue
+                if not isinstance(node, exp.Literal) or isinstance(node.parent, (exp.Like, exp.ILike, exp.Cast)):
+                    continue
+                if node.is_string:
+                    found["STRING"].append(node.name)
+                    try:
+                        found["DATE"].append(date.fromisoformat(node.name))
+                    except ValueError:
+                        pass
+                    continue
+                text = node.name
+                try:
+                    if re.fullmatch(r"-?\d+", text):
+                        found["INT64"].append(int(text))
+                    else:
+                        found["FLOAT64"].append(float(text))
+                        found["NUMERIC"].append(Decimal(text))
+                except (ValueError, ArithmeticError):
+                    pass
+    out = {}
+    for type_name, values in found.items():
+        unique = [v for v in dict.fromkeys(values) if v not in _DOMAINS[type_name]]
+        if unique:
+            out[type_name] = tuple(unique[:_MAX_CONSTANTS_PER_TYPE])
+    return out
+
+
+def _draw(rng: random.Random, col_type: str, extras: Mapping[str, tuple[Any, ...]]) -> Any:
+    # Half the values come from the queries' constants when there are any, so that rows
+    # matching several filters at once are common, not a rare coincidence.
+    if extras.get(col_type) and rng.random() < 0.5:
+        return rng.choice(extras[col_type])
+    return rng.choice(_DOMAINS[col_type])
+>>>>>>> origin/master
 
 
 def generate_synthetic_dataset(
@@ -207,7 +273,11 @@ def generate_synthetic_dataset(
     seed: int,
     rows_per_table: int = 25,
     null_rate: float = 0.15,
+<<<<<<< HEAD
     rules: Mapping[str, DataRules] | None = None,
+=======
+    extra_values: Mapping[str, Iterable[Any]] | None = None,
+>>>>>>> origin/master
 ) -> SyntheticDataset:
     """Generate reproducible synthetic rows for every table in ``schema``.
 
@@ -220,6 +290,10 @@ def generate_synthetic_dataset(
     """
 
     rng = random.Random(seed)
+    extras = {
+        name: tuple(v for v in (extra_values or {}).get(name, ()) if v not in values)
+        for name, values in _DOMAINS.items()
+    }
     tables: dict[str, SyntheticTable] = {}
     for table_name in sorted(schema):
         columns = tuple((name, _normalize_type(t)) for name, t in schema[table_name].items())
@@ -230,7 +304,7 @@ def generate_synthetic_dataset(
         for _ in range(count):
             rows.append(
                 tuple(
-                    None if rng.random() < null_rate else rng.choice(_DOMAINS[col_type])
+                    None if rng.random() < null_rate else _draw(rng, col_type, extras)
                     for _, col_type in columns
                 )
             )
@@ -375,6 +449,10 @@ def prepare_statements(
                 raise ExecutionError(
                     f"statement {index + 1} references table {key!r}, which is not in the synthetic schema"
                 )
+            if not table.alias and table.name and not isinstance(table.this, exp.Func):
+                # Columns may be qualified by the table's own name (``t.a``);
+                # keep that name usable after the table is renamed.
+                table.set("alias", exp.TableAlias(this=exp.to_identifier(table.name)))
             table.set("catalog", None)
             table.set("db", None)
             table.set("this", exp.to_identifier(local))
@@ -605,8 +683,12 @@ def check_result_equivalence(
     ignore_row_order: bool = True,
     check_column_names: bool = True,
     float_digits: int = 12,
+    use_query_constants: bool = True,
 ) -> ResultEquivalence:
     """Run both queries over several synthetic datasets and compare results.
+
+    With ``use_query_constants`` the generated values include the queries' own constants
+    (see :func:`query_constants`), so their filters match some rows.
 
     Stops at the first seed that yields a counterexample or an execution
     error. An error on either side is never reported as equivalence. Each side
@@ -614,12 +696,13 @@ def check_result_equivalence(
     result ``INCONCLUSIVE`` instead of equivalent or different.
     """
 
+    extras = query_constants(left_sql, right_sql) if use_query_constants else None
     checked: list[int] = []
     left_sql_out: list[str] = []
     right_sql_out: list[str] = []
     for seed in seeds:
         dataset = generate_synthetic_dataset(
-            schema, seed=seed, rows_per_table=rows_per_table, null_rate=null_rate
+            schema, seed=seed, rows_per_table=rows_per_table, null_rate=null_rate, extra_values=extras
         )
         try:
             left_output, left_sql_out = execute_on_dataset(

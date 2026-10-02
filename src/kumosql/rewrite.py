@@ -799,6 +799,12 @@ def canonical_rule_order() -> tuple[str, ...]:
     """
 
     names = [n for n in available_rules() if n not in ("lift_subqueries", "format_sql")]
+    # Removing unused and duplicate CTEs can leave another CTE with a single
+    # reader, so inlining has to come after both or one pass is not enough.
+    if "inline_single_use_ctes" in names:
+        names.remove("inline_single_use_ctes")
+        after = max((names.index(n) for n in ("deduplicate_ctes", "remove_unused_ctes") if n in names), default=-1)
+        names.insert(after + 1, "inline_single_use_ctes")
     if "format_sql" in available_rules():
         names.append("format_sql")
     return tuple(names)

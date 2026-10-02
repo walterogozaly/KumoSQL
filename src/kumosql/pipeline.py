@@ -37,7 +37,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from .timing import Progress, stage
-from .ast_utils import quiet_parser as _quiet_parser, top_level_query
+from .ast_utils import quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -219,6 +219,15 @@ class Pipeline:
                 result.setdefault(parent, set()).add(key)
         return result
 
+    def table_reads(self) -> dict[str, frozenset[str]]:
+        """Every table each query model reads: pipeline models and declared sources by key, others as spelled."""
+
+        analysis = self._analyse()
+        reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed}
+        for key, tables in analysis.external_reads.items():
+            reads.setdefault(key, set()).update(tables)
+        return {key: frozenset(tables) for key, tables in reads.items()}
+
     def topological_order(self) -> list[str]:
         return self._analyse().order
 
@@ -322,11 +331,14 @@ class Pipeline:
 
         analysis = self._analyse()
         downstream = self.downstream
+        cyclic = {d.model for d in analysis.diagnostics if d.code == "cycle"}
         result: dict[str, tuple[str, ...]] = {}
         for key in analysis.order:
             readers = downstream.get(key, set())
             if analysis.blind or not readers or key in analysis.opaque_readers_of:
                 continue
+            if any(reader not in analysis.consumed or reader in cyclic for reader in readers):
+                continue  # a reader that was not analysed, or sits in a dependency cycle (so its input columns were unknown), might use any column
             outputs = analysis.outputs.get(key)
             if not outputs:
                 continue
@@ -588,6 +600,13 @@ class Pipeline:
         index = data_sources.join_index()
         return {key for key in self.models if scope.matches(self.model_record(key, profiles.get(key), tags, index))}
 
+    def assess_schema_change(self, kind: str, table: str, column: str, **kwargs):
+        """Which models break, and which change their output columns or types, if ``table`` gains, loses, renames or retypes ``column``."""
+
+        from .schema_change import assess_schema_change
+
+        return assess_schema_change(self, kind, table, column, **kwargs)
+
     def assess_change(
         self,
         kind: str,
@@ -781,25 +800,100 @@ def _seconds_from_env(name: str, default: float) -> float:
     return max(value, 0.0)
 
 
-def _parse_script(sql: str) -> tuple[exp.Expression | None, int]:
-    """The last query of a script, and how many other queries were ignored."""
+def _parse_script(sql: str) -> tuple[exp.Expression | None, int, list[exp.Expression]]:
+    """The last query of a script, how many other queries it has, and those queries (read for their tables only)."""
 
     with _quiet_parser():
         statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
     queries = []
+    unread = 0
     for statement in statements:
         # ``CREATE [OR REPLACE] TABLE|VIEW ... AS SELECT`` and ``INSERT ... SELECT`` and ``EXPORT DATA ... AS SELECT`` read what their query reads.
         if isinstance(statement, exp.Query):
             query = statement
         elif isinstance(statement, (exp.Create, exp.Insert)):
             query = top_level_query(statement)
+            if isinstance(query, exp.Query):
+                _adopt_statement_ctes(statement, query)
+                _apply_target_columns(statement, query)
         elif type(statement).__name__ == "Export":  # EXPORT DATA ... AS SELECT; sqlglot 26 cannot parse it
             query = statement.this
         else:
             query = None
         if isinstance(query, exp.Query):
             queries.append(query)
-    return (queries[-1] if queries else None), max(len(queries) - 1, 0)
+        elif _may_read_tables(statement):
+            unread += 1
+    query = queries[-1] if queries else None
+    if query is not None:
+        _name_unaliased_casts(query)
+    return query, max(len(queries) - 1, 0) + unread, queries[:-1]
+
+
+_TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
+_COMMAND_READS = re.compile(r"\b(?:from|join|into|update|merge|using)\b", re.IGNORECASE)
+
+
+def _may_read_tables(statement: exp.Expression) -> bool:
+    """A statement KumoSQL does not trace that might still read or write tables: DML other than a query, or syntax sqlglot left as raw text."""
+
+    if isinstance(statement, (exp.Update, exp.Delete, exp.Merge)):
+        return True
+    if isinstance(statement, exp.Command):
+        return bool(_COMMAND_READS.search(str(statement.expression or "")))
+    return isinstance(statement, exp.Create) and isinstance(statement.expression, exp.Command)
+
+
+def _adopt_statement_ctes(statement: exp.Expression, query: exp.Query) -> None:
+    """``WITH ... INSERT INTO t SELECT ...`` keeps its CTEs on the statement; the query needs them to resolve its reads."""
+
+    clause = with_clause(statement)
+    if clause is None:
+        return
+    own = with_clause(query)
+    if own is not None:
+        clause = clause.copy()
+        clause.set("expressions", [*clause.expressions, *own.expressions])
+        set_with_clause(query, clause)
+    else:
+        set_with_clause(query, clause.copy())
+    set_with_clause(statement, None)
+
+
+def _apply_target_columns(statement: exp.Expression, query: exp.Query) -> None:
+    """``INSERT INTO t (a, b) SELECT ...`` and ``CREATE VIEW v (a, b) AS ...`` name the outputs by position."""
+
+    target = statement.this
+    if not isinstance(target, exp.Schema):
+        return
+    names = []
+    for item in target.expressions:
+        inner = item.this if isinstance(item, exp.ColumnDef) else item
+        name = getattr(inner, "name", "")
+        if not name:
+            return
+        names.append(name)
+    first = query
+    while isinstance(first, exp.SetOperation):
+        first = first.left
+    first = first.unnest() if isinstance(first, exp.Subquery) else first
+    if not isinstance(first, exp.Select) or len(first.expressions) != len(names):
+        return
+    if any(projection.is_star or isinstance(projection.unalias(), exp.Star) for projection in first.expressions):
+        return
+    first.set(
+        "expressions",
+        [exp.alias_(projection.unalias(), name, quoted=False) for projection, name in zip(first.expressions, names)],
+    )
+
+
+def _name_unaliased_casts(query: exp.Expression) -> None:
+    """BigQuery names ``CAST(a AS T)`` with no alias ``f0_``, not ``a``; give it a name that cannot be mistaken for the column."""
+
+    for select in query.find_all(exp.Select):
+        for index, projection in enumerate(select.expressions):
+            if isinstance(projection, (exp.Cast, exp.TryCast)) and not isinstance(projection, exp.Alias):
+                select.expressions[index] = exp.alias_(projection, f"_col_{index}", quoted=False)
 
 
 def _nested_schema(flat: dict[str, dict[str, str]]) -> dict:
@@ -836,6 +930,39 @@ def _source_table(scope: Scope, column: exp.Column) -> exp.Table | None:
     return None
 
 
+def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[ColumnRef]:
+    """Columns named in ``SELECT * EXCEPT (...)``: expanding the star drops them, but the query still names them."""
+
+    stars = [
+        star
+        for star in query.find_all(exp.Star)
+        if star.args.get("except_") and isinstance(star.parent, (exp.Select, exp.Column))
+    ]
+    if not stars:
+        return set()
+    found: set[ColumnRef] = set()
+    try:
+        scopes = traverse_scope(query)
+    except Exception:
+        return found
+    for scope in scopes:
+        for star in stars:
+            owner = star.parent if isinstance(star.parent, exp.Column) else star
+            if owner.parent is not scope.expression and owner.find_ancestor(exp.Select) is not scope.expression:
+                continue
+            qualifier = owner.table if isinstance(owner, exp.Column) else ""
+            tables = [
+                source
+                for name, source in scope.sources.items()
+                if isinstance(source, exp.Table) and (not qualifier or name == qualifier)
+            ]
+            for table in tables:
+                resolved = pipeline.resolve(table) or _table_name_for_schema(table)
+                for column in star.args["except_"]:
+                    found.add(ColumnRef(resolved, column.name))
+    return found
+
+
 def _has_unexpanded_star(query: exp.Expression) -> bool:
     return any(
         isinstance(node, exp.Star) and isinstance(node.parent, (exp.Select, exp.Column))
@@ -867,6 +994,8 @@ class _Analysis:
     statements_matched: int = 0
     # Per model: (statements seen, statements analysed), for scoped coverage.
     statements_by_model: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # Per model: tables it reads that no model or declared source matches, as spelled.
+    external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -916,7 +1045,7 @@ class _Analysis:
             }
             if model.is_query:
                 try:
-                    query, skipped = _parse_script(model.sql)
+                    query, skipped, earlier = _parse_script(model.sql)
                     statements_total += skipped + 1
                     statements_matched += 1 if query is not None else 0
                     statements_by_model[key] = (skipped + 1, 1 if query is not None else 0)
@@ -925,8 +1054,8 @@ class _Analysis:
                             PipelineDiagnostic(
                                 key,
                                 "skipped_statements",
-                                f"script has {skipped + 1} queries; only the last was analysed, "
-                                f"so reads by the other {skipped} are missing from the graph",
+                                f"script has {skipped + 1} queries; only the last was analysed for columns, "
+                                f"so column reads by the other {skipped} are missing (the tables they read are in the graph)",
                             )
                         )
                 except Exception as exc:  # sqlglot raises several error types
@@ -936,25 +1065,26 @@ class _Analysis:
                     diagnostics.append(PipelineDiagnostic(key, "parse_error", str(exc).splitlines()[0]))
                 if query is not None:
                     parsed[key] = query
-                    cte_names = {
-                        cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)
-                    }
-                    for table in query.find_all(exp.Table):
-                        if not table.db and table.name.lower() in cte_names:
-                            continue
-                        resolved = pipeline.resolve(table)
-                        if resolved and resolved != key:
-                            parents.add(resolved)
-                            spelled = _table_name_for_schema(table)
-                            if spelled != resolved:
-                                spellings.setdefault(resolved, set()).add(spelled)
-                        elif resolved is None and table.name:
-                            bucket = (
-                                ambiguous_tables
-                                if pipeline._resolver.is_ambiguous(table)
-                                else unresolved_tables
-                            )
-                            bucket.setdefault(key, set()).add(_table_name_for_schema(table))
+                    # Tables read by the script's earlier queries are dependencies too, even though
+                    # only the last query is traced column by column.
+                    for each in (*earlier, query):
+                        cte_names = {cte.alias_or_name.lower() for cte in each.find_all(exp.CTE)}
+                        for table in each.find_all(exp.Table):
+                            if not table.db and table.name.lower() in cte_names:
+                                continue
+                            resolved = pipeline.resolve(table)
+                            if resolved and resolved != key:
+                                parents.add(resolved)
+                                spelled = _table_name_for_schema(table)
+                                if spelled != resolved:
+                                    spellings.setdefault(resolved, set()).add(spelled)
+                            elif resolved is None and table.name:
+                                bucket = (
+                                    ambiguous_tables
+                                    if pipeline._resolver.is_ambiguous(table)
+                                    else unresolved_tables
+                                )
+                                bucket.setdefault(key, set()).add(_table_name_for_schema(table))
                 elif model.sql.strip():
                     diagnostics.append(PipelineDiagnostic(key, "no_query", "model has no parseable query"))
             elif model.sql.strip():
@@ -998,9 +1128,14 @@ class _Analysis:
             if query is None:
                 opaque_readers_of.update(upstream.get(key, ()))
                 continue
+            excepted: set[ColumnRef] = set()
             try:
+                marked = query.copy()
+                for node in marked.find_all(exp.Column):
+                    node.meta["named"] = True  # written in the SQL, as opposed to made by expanding a star
+                excepted = _excepted_columns(pipeline, marked)
                 qualified = qualify(
-                    query.copy(),
+                    marked,
                     schema=sqlglot_schema,
                     dialect="bigquery",
                     validate_qualify_columns=False,
@@ -1045,6 +1180,20 @@ class _Analysis:
                         continue
                     owner = pipeline.resolve(table) or _table_name_for_schema(table)
                     used.add(ColumnRef(owner, column.name))
+            if pruned is not qualified:
+                # Pruning drops columns the outer query never uses, which is right for a ``*`` that was
+                # expanded, but a column the SQL names in a CTE or subquery is still read: dropping it
+                # from the table breaks the model whether or not anything uses the result.
+                for scope in traverse_scope(qualified):
+                    for column in scope.columns:
+                        if not column.meta.get("named"):
+                            continue
+                        table = _source_table(scope, column)
+                        if table is None:
+                            continue
+                        owner = pipeline.resolve(table) or _table_name_for_schema(table)
+                        used.add(ColumnRef(owner, column.name))
+            used.update(excepted)
             consumed[key] = frozenset(used)
 
             names = tuple(qualified.named_selects)
@@ -1126,11 +1275,24 @@ class _Analysis:
             for parent in parents:
                 reverse[parent].add(column)
 
+        templated_models: set[str] = set()
         for key, tables in sorted(unresolved_tables.items()):
             unknown = sorted(t for t in tables if t not in schema)
+            templated = [t for t in unknown if _TEMPLATE_TOKEN.search(t)]
+            unknown = [t for t in unknown if t not in templated]
             if unknown:
                 diagnostics.append(
                     PipelineDiagnostic(key, "external_tables", "reads tables outside the pipeline: " + ", ".join(unknown))
+                )
+            if templated:
+                templated_models.add(key)
+                # A table named by a ${...} expression that could not be resolved: what it reads is unknown.
+                diagnostics.append(
+                    PipelineDiagnostic(
+                        key,
+                        "unresolved_template",
+                        "reads a table named by a template expression that was not resolved; its dependency is unknown",
+                    )
                 )
 
         for key, tables in sorted(ambiguous_tables.items()):
@@ -1161,11 +1323,13 @@ class _Analysis:
             reverse_lineage={k: frozenset(v) for k, v in reverse.items()},
             consumed=consumed,
             opaque_readers_of=opaque_readers_of,
-            blind=bool(blind_models),
+            # A table named by an unresolved template might be any model, so no column can be called dead.
+            blind=bool(blind_models) or bool(templated_models),
             diagnostics=diagnostics,
             statements_total=statements_total,
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
+            external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
         )
 
 
@@ -1186,7 +1350,13 @@ def _scan_lineage(
     transform = "passthrough"
     reads_column = False
     literal_unnest = False
+    # ``WITH f AS (SELECT * FROM t) SELECT f.x`` traces f.x to a ``*`` leaf on t; the column
+    # read through that star is the one asked for one step up (t.x).
+    parent_of = {id(child): item for item in node.walk() for child in item.downstream}
+    phantoms = _phantom_star_sources(node)
     for item in node.walk():
+        if any(id(n) in phantoms for n in _ancestors(item, parent_of)):
+            continue
         if item.downstream:
             projection = item.expression
             if isinstance(projection, exp.Alias):
@@ -1199,7 +1369,13 @@ def _scan_lineage(
             continue
         if isinstance(item.source, exp.Table):
             owner = pipeline.resolve(item.source) or _table_name_for_schema(item.source)
-            leaf = ColumnRef(owner, item.name.split(".")[-1].strip('"`'))
+            column_name = item.name.split(".")[-1].strip('"`')
+            parent = parent_of.get(id(item))
+            if column_name == "*" and parent is not None and sum(id(d) not in phantoms for d in parent.downstream) == 1:
+                asked = parent.name.split(".")[-1].strip('"`')
+                if asked != "*":
+                    column_name = asked
+            leaf = ColumnRef(owner, column_name)
             known = {c.lower() for c in schema.get(owner, {})}
             if known and leaf.column.lower() not in known:
                 reason = reason or "unknown_column"
@@ -1214,6 +1390,41 @@ def _scan_lineage(
     if reason is None and not leaves and reads_column and not literal_unnest:
         reason = "unresolved_column"
     return leaves, reason, "union" if is_union else transform
+
+
+def _ancestors(item, parent_of: dict):
+    while item is not None:
+        yield item
+        item = parent_of.get(id(item))
+
+
+def _phantom_star_sources(node) -> set[int]:
+    """Lineage nodes a ``SELECT *`` inside a WITH does not actually read.
+
+    sqlglot expands the star of ``f AS (SELECT * FROM t)`` over every source visible to
+    that CTE, which includes the CTEs defined before it; only the relations in its own
+    FROM and JOIN clauses are read.
+    """
+
+    phantoms: set[int] = set()
+    root = node.source if isinstance(node.source, exp.Expression) else None
+    ctes = {cte.this.sql(): cte.alias_or_name for cte in root.find_all(exp.CTE)} if root is not None else {}
+    for item in node.walk():
+        select = item.source
+        if len(item.downstream) < 2 or not isinstance(item.expression, exp.Star) or not isinstance(select, exp.Select):
+            continue
+        read = {
+            source.alias_or_name
+            for source in [getattr(select.args.get("from_") or select.args.get("from"), "this", None),
+                           *[j.this for j in select.args.get("joins") or []]]
+            if source is not None
+        }
+        for child in item.downstream:
+            source = child.source
+            name = source.alias_or_name if isinstance(source, exp.Table) else ctes.get(source.sql())
+            if name is not None and name not in read:
+                phantoms.add(id(child))
+    return phantoms
 
 
 def _transform_kind(projection: exp.Expression, name: str) -> str:
