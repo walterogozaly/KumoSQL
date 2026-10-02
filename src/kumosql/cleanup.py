@@ -142,8 +142,8 @@ class RemoveTrivialPredicatesRule(RewriteRule):
                 condition, count = simplify_predicate(clause.this)
                 changes += count
                 clause.set("this", condition)
-                if _truth(condition) is not True:
-                    continue
+                if _truth(condition) is not True or isinstance(clause.parent, exp.Filter):
+                    continue  # FILTER (WHERE TRUE) needs its condition to stay valid SQL
                 # HAVING without GROUP BY can make a query an aggregate, so
                 # only drop HAVING TRUE when there is a GROUP BY.
                 owner = clause.parent
@@ -426,6 +426,7 @@ class RemoveUnusedCtesRule(RewriteRule):
                     ref for ref in _references(query, cte_alias_name(cte))
                     if not _inside(ref, cte)
                 )
+                and not _named_as_value(query, cte_alias_name(cte), cte)
             ]
             if not unused:
                 break
@@ -435,3 +436,12 @@ class RemoveUnusedCtesRule(RewriteRule):
         if removed and not clause.expressions:
             set_with_clause(query, None)
         return removed, []
+
+
+def _named_as_value(query: exp.Expression, name: str, cte: exp.Expression) -> bool:
+    """A bare identifier spelled like the CTE may name it (DuckDB passes tables to functions)."""
+
+    return any(
+        column.name == name and not column.table and not _inside(column, cte)
+        for column in query.find_all(exp.Column)
+    )

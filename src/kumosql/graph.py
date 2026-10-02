@@ -7,6 +7,8 @@ shape without making graph construction depend on credentials or network I/O.
 
 from __future__ import annotations
 
+import re
+
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -245,6 +247,9 @@ class _EdgeEvidence:
         )
 
 
+_TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
+
+
 def build_query_graph(
     pipeline: "Pipeline",
     observed_reads: Iterable[ObservedRead | Mapping[str, object]] = (),
@@ -352,6 +357,8 @@ def build_query_graph(
         for table in (*(query.find_all(exp.Table) if query is not None else ()), *extra_tables):
             if not table.db and table.name.casefold() in cte_names:
                 continue
+            if _TEMPLATE_TOKEN.fullmatch(table.name):
+                continue  # a ${...} that could not be resolved: the model carries an unresolved_template gap, not a node
             upstream, kind, resolved = resolve_static(table)
             if upstream.stable_key == downstream.stable_key:
                 continue

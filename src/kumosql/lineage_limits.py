@@ -34,6 +34,21 @@ def settings() -> dict:
     return {name: float(saved[name]) if _valid(saved.get(name)) else default for name, default in _DEFAULTS.items()}
 
 
+def overridden() -> dict:
+    """``{name: bool}``: whether an environment variable is setting each limit."""
+
+    return {name: _env_value(name) is not None for name in _ENV}
+
+
+def status() -> dict:
+    """The limits in force, and which of them an environment variable fixes."""
+
+    return {
+        **{name: effective(name) for name in _ENV},
+        "locked": [name for name, fixed in overridden().items() if fixed],
+    }
+
+
 def save_settings(**values: object) -> dict:
     current = settings()
     for name, value in values.items():
@@ -46,16 +61,18 @@ def save_settings(**values: object) -> dict:
     return current
 
 
+def _env_value(name: str) -> float | None:
+    try:
+        return max(float(os.environ[_ENV[name]]), 0.0)
+    except (KeyError, ValueError):
+        return None
+
+
 def effective(name: str) -> float:
     """The limit in force for ``name``: the environment, then Settings. ``0`` means no limit."""
 
-    raw = os.environ.get(_ENV[name])
-    if raw is not None:
-        try:
-            return max(float(raw), 0.0)
-        except ValueError:
-            pass
-    return settings()[name]
+    fixed = _env_value(name)
+    return settings()[name] if fixed is None else fixed
 
 
 def cache_tag() -> str:

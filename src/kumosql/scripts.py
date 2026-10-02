@@ -1352,9 +1352,11 @@ class _Run:
             ) or None
         query = _query_of(tree)
         clone = tree.args.get("clone")
-        if query is None and isinstance(clone, exp.Clone) and isinstance(clone.this, exp.Table):
-            statement = self.record(Statement(index, line, "clone", KEPT, "", conditional))
-            sources, _temps, _late = self.reads_of(clone.this)
+        like = tree.find(exp.LikeProperty)
+        copied = clone.this if isinstance(clone, exp.Clone) else like.this if like is not None else None
+        if query is None and isinstance(copied, exp.Table):
+            statement = self.record(Statement(index, line, "clone" if clone is not None else "like", KEPT, "", conditional))
+            sources, _temps, _late = self.reads_of(copied)
             self.write_or_temp(target, sources, "clone", conditional, temp, columns, None, statement)
             return statement
         if query is None:

@@ -110,6 +110,13 @@ def _same_ast(left: list[exp.Expression], right: list[exp.Expression]) -> bool:
     )
 
 
+def _uses_pipe_syntax(sql: str) -> bool:
+    try:
+        return any(token.token_type is TokenType.PIPE_GT for token in sqlglot.tokenize(sql, read="bigquery"))
+    except Exception:  # noqa: BLE001
+        return "|>" in sql
+
+
 def _rewriteable_statements(statements: list[exp.Expression]) -> list[tuple[int, exp.Expression]]:
     """Ignore parser-only semicolon nodes while keeping original indices."""
 
@@ -306,6 +313,9 @@ class RewriteRule:
 
     name: ClassVar[str]
     summary: ClassVar[str]
+    #: Rewrite statements written in pipe syntax. sqlglot parses ``|>`` into nested CTEs and prints them
+    #: as standard SQL, so only analysis that never shows its output (the prover) turns this on.
+    rewrite_pipe_syntax: ClassVar[bool] = False
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -383,6 +393,15 @@ class RewriteRule:
         changed_statements = 0
         changes = 0
         for (index, _), (start, end, statement) in zip(rewriteable, segments):
+            if not self.rewrite_pipe_syntax and _uses_pipe_syntax(sql[start:end]):
+                # sqlglot turns pipe syntax into nested CTEs and subqueries when it parses it, so a rule
+                # would rewrite that translation (and print it as standard SQL), not what was written.
+                diagnostics.append(
+                    RuleDiagnostic(index, "pipe_syntax_kept", "pipe syntax (|>) is left as written")
+                )
+                rewritten_statements.append(statement)
+                rendered_statements.append(render_statement(_without_comments(statement)))
+                continue
             before = statement.copy()
             try:
                 count, statement_diagnostics = self.rewrite_statement(statement, index)
