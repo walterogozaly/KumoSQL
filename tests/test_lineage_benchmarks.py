@@ -1,6 +1,6 @@
 """Lineage, change-impact and Dataform-preservation suites: floors, and zero on everything unsafe.
 
-See docs/lineage-bench.md and docs/dataform-bench.md. The numbers here are the floors behind the README
+See docs/evals/lineage-bench.md and docs/evals/dataform-bench.md. The numbers here are the floors behind the README
 scoreboard rows; raise them when a fix moves a score.
 """
 
@@ -36,7 +36,7 @@ def test_sqllineage_cases_are_exact_or_honestly_unknown():
     scoped = result["in_scope"]
     assert scoped["total"] == 279
     assert scoped["wrong"] == 0 and scoped["missed"] == 0, [r for r in result["rows"] if r["scope"] == "in" and r["outcome"] in {"wrong", "missed"}]
-    assert scoped["exact"] >= 235, scoped
+    assert scoped["exact"] >= 257, scoped
     assert result["table"]["wrong"] == 0 and result["column"]["wrong"] == 0
 
 

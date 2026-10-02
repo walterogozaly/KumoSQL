@@ -55,7 +55,8 @@ from kumosql.smt_equivalence import SmtStatus, prove_equivalent_smt  # noqa: E40
 
 PASS, UNSUPPORTED, FAIL = cov.PASS, cov.UNSUPPORTED, cov.FAIL
 STAGES = ("parse", "load", "graph", "lineage", "rename", "drop", "cleanup", "format")
-TIMEOUT = 60
+TIMEOUT = 60  # CPU seconds per query, so a busy machine (a parallel test run) cannot time a query out
+WALL_TIMEOUT = 10 * TIMEOUT  # backstop for a query that blocks without using CPU
 
 
 class _Timeout(BaseException):
@@ -197,13 +198,19 @@ def stage_rewrites(sql: str) -> dict:
     return out
 
 
+def _set_limits(cpu: float, wall: float) -> None:
+    signal.setitimer(signal.ITIMER_PROF, cpu)
+    signal.setitimer(signal.ITIMER_REAL, wall)
+
+
 def run_query(case_id: str) -> tuple[str, dict]:
+    signal.signal(signal.SIGPROF, _alarm)
     signal.signal(signal.SIGALRM, _alarm)
     sql = text_of(case_id)
     out: dict = {}
     started = time.time()
     try:
-        signal.alarm(TIMEOUT)
+        _set_limits(TIMEOUT, WALL_TIMEOUT)
         out["parse"] = cov.stage_parse(sql)
         pipeline, *loaded = cov.stage_load_sql(sql, out["parse"][0])
         out["load"] = tuple(loaded)
@@ -222,13 +229,13 @@ def run_query(case_id: str) -> tuple[str, dict]:
         )
         fmt = rewrites["format_sql"]
         out["format"] = (FAIL, "crashed") if "error" in fmt else ((FAIL, "damaged the query") if fmt.get("damaged") else (PASS, ""))
-        signal.alarm(0)
+        _set_limits(0, 0)
     except _Timeout:
-        out["timeout"] = (FAIL, f"over {TIMEOUT}s")
+        out["timeout"] = (FAIL, f"over {TIMEOUT} CPU seconds or {WALL_TIMEOUT} s")
     except Exception as exc:  # noqa: BLE001
         out["crash"] = (FAIL, cov._error(exc))
     finally:
-        signal.alarm(0)
+        _set_limits(0, 0)
     out["seconds"] = round(time.time() - started, 2)
     return case_id, out
 
@@ -327,7 +334,7 @@ def write_results(all_summary: dict, dev: dict, held: dict) -> None:
         "correctness": f"0 queries failed or timed out in any stage; {damaged} rewrites damaged a query; rewrites changed {changed} query-rule pairs, {verified} proven equivalent, the rest left unproven (never applied unproven)",
         "coverage": {"proven": total - st["lineage"]["unsupported"], "unknown": st["lineage"]["unsupported"]},
         "held_out": f"Held-out split ({held['queries']} queries, every fifth task by id hash) first run, after the dev fixes: 0 failed in every stage, {held['stages']['lineage']['unsupported']} lineage unknown (a SELECT * over a table with no known columns).",
-        "docs": "docs/spider2-bench.md",
+        "docs": "docs/evals/spider2-bench.md",
         "command": "python tools/spider2_bench.py --split all --write-results",
         "date": "2026-10-02",
         "caveats": "Only the 142 of 205 BigQuery and GA4 tasks whose gold SQL upstream publishes. The dbt tasks (68 instructions) are not scored: their project archives are on Google Drive, which is blocked here. Dev run exposed three real bugs, fixed in the same change (a prover memory blow-up on many outer joins, a near-duplicate crash, constant derived columns reported unknown).",

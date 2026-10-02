@@ -6,7 +6,7 @@ Each case runs through the stages below and gets ``pass``, ``unsupported``
 ``fail`` (a crash, a lost reference, a changed meaning). ``n/a`` means the stage
 does not apply to that kind of statement.
 
-    python tools/bq_syntax_coverage.py --markdown docs/bigquery-syntax-coverage.md
+    python tools/bq_syntax_coverage.py --markdown docs/evals/bigquery-syntax-coverage.md
     python tools/bq_syntax_coverage.py --json out.json
 """
 
@@ -109,7 +109,8 @@ def stage_load_sql(sql: str, parse_status: str):
 
 
 _READ_RE = re.compile(r"(?:kumosql\.kumosql_messy|bigquery-public-data\.[\w]+)\.(?!bq_syntax_|some_|information_schema)[\w*]+", re.I)
-_WRITERS = (exp.Create, exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Drop, exp.Alter, exp.TruncateTable, exp.Grant)
+_WRITERS = (exp.Create, exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Drop, exp.Alter, exp.TruncateTable, exp.Grant,
+            *((exp.Revoke,) if hasattr(exp, "Revoke") else ()))
 
 
 def expected_reads(sql: str) -> set[str] | None:

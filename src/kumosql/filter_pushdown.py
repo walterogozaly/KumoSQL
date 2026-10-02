@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 
 from sqlglot import exp
 
+from .ast_utils import conjuncts as _flatten
 from .equivalence import _normalize_predicate
 from .graph import ObservedRead, build_query_graph
 from .near_duplicates import _filters_safe_downstream
@@ -217,14 +218,6 @@ def _propose_for_model(pipeline, analysis, unparsed, key, consumers) -> list[Fil
     if not proposals and skipped:
         raise _Refuse("unmappable_filter", "; ".join(skipped))
     return proposals
-
-
-def _flatten(node: exp.Expression) -> list[exp.Expression]:
-    while isinstance(node, exp.Paren):
-        node = node.this
-    if isinstance(node, exp.And):
-        return _flatten(node.this) + _flatten(node.expression)
-    return [node]
 
 
 def _bare(node: exp.Expression) -> exp.Expression:

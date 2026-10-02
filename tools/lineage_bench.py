@@ -21,7 +21,7 @@ coverage         share of columns traced, rather than reported unknown
 performance      seconds and peak memory by pipeline size
 
 ``dev`` families were used while building the suite; ``held-out`` families were written afterwards and not
-looked at until the first scored run (see ``docs/lineage-bench.md``).
+looked at until the first scored run (see ``docs/evals/lineage-bench.md``).
 
     python tools/lineage_bench.py [--sizes 10,100,1000] [--seed 1]
 """
@@ -30,8 +30,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-import logging
-import os
 import random
 import resource
 import sys
@@ -39,6 +37,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from bench_common import quiet as _quiet, today, write_results as _write_results  # noqa: E402
 
 from kumosql.impact import assess_change  # noqa: E402
 from kumosql.pipeline import Pipeline  # noqa: E402
@@ -641,8 +642,6 @@ def run_scale(sizes=(100, 1000, 3000), seed=7) -> list[dict]:
     return rows
 
 
-RESULTS = Path(__file__).resolve().parent.parent / "benchmarks" / "results" / "lineage-impact.json"
-
 # Measured on the first run of the held-out families, before anything they found was fixed.
 HELD_OUT_FIRST_RUN = (
     "First run of the held-out families (474 models, 1,151 columns): 0 columns traced wrongly, but 83 impacted models "
@@ -652,8 +651,6 @@ HELD_OUT_FIRST_RUN = (
 
 
 def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
-    import json
-
     columns = dev["columns"] + held["columns"]
     wrong = dev["columns_wrong"] + held["columns_wrong"]
     unknown = round((1 - dev["coverage"]) * dev["columns"] + (1 - held["coverage"]) * held["columns"])
@@ -661,9 +658,9 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
     changes = dev["impact_changes"] + held["impact_changes"]
     changes_exact = dev["impact_exact"] + held["impact_exact"]
     top = scale[-1]
-    RESULTS.write_text(
-        json.dumps(
-            {
+    _write_results(
+        "lineage-impact",
+        {
                 "suite": "Lineage and change impact (generated)",
                 "order": 210,
                 "size": dev["models"] + held["models"],
@@ -680,9 +677,9 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
                 ),
                 "coverage": {"proven": exact, "unknown": unknown},
                 "held_out": HELD_OUT_FIRST_RUN,
-                "docs": "docs/lineage-bench.md#lineage-and-change-impact",
+                "docs": "docs/evals/lineage-bench.md#lineage-and-change-impact",
                 "command": "python tools/lineage_bench.py --scale --write-results",
-                "date": "2026-10-02",
+                "date": today(),
                 "caveats": (
                     "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of. "
                     "Dev families were tuned against; bugs they found were fixed in the same change. "
@@ -695,19 +692,8 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
                     f"Dead columns found: {dev['dead_found']}/{dev['dead_truth']} (it declines to call a column dead when any reader is unknown)."
                 ),
                 "performance": "; ".join(f"{row['models']:,} models: {row['seconds']} s, {row['peak_mb']} MB peak" for row in scale),
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+        },
     )
-
-
-def _quiet() -> None:
-    """Command-line runs print results, not per-stage timings or sqlglot warnings (kept out of module import so tests are unaffected)."""
-
-    os.environ.setdefault("KUMOSQL_TIMING", "0")
-    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 
 def main(argv: list[str]) -> None:

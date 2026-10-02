@@ -23,6 +23,9 @@ from typing import Iterable, Sequence
 
 import sqlglot
 
+from .duckdb_load import run_unoptimized
+from .string_literals import canonical_literals
+
 _DUCK_TYPES = {"int": "BIGINT", "float": "DOUBLE", "text": "VARCHAR", "date": "DATE", "bool": "BOOLEAN"}
 
 
@@ -169,9 +172,41 @@ def _connect(schema: Schema):
     return db
 
 
+def _floor_to_unit(node):
+    """``FLOOR(ts TO unit)`` (Calcite) is ``DATE_TRUNC('unit', ts)``; DuckDB has no TO form."""
+
+    if isinstance(node, sqlglot.exp.Floor) and node.args.get("to") is not None:
+        return sqlglot.exp.Anonymous(this="DATE_TRUNC", expressions=[sqlglot.exp.Literal.string(node.args["to"].name.lower()), node.this.copy()])
+    return node
+
+
+_RESERVED: set[str] | None = None
+
+
+def _duck_reserved() -> set[str]:
+    """Words DuckDB will not take as a bare name (``at`` is a common alias in JOB queries)."""
+
+    global _RESERVED
+    if _RESERVED is None:
+        import duckdb
+
+        rows = duckdb.sql("SELECT keyword_name FROM duckdb_keywords() WHERE keyword_category IN ('reserved', 'type_function', 'column_name')").fetchall()
+        _RESERVED = {r[0].lower() for r in rows}
+    return _RESERVED
+
+
+def _quote_reserved(node):
+    if isinstance(node, sqlglot.exp.Identifier) and not node.args.get("quoted") and node.name.lower() in _duck_reserved():
+        return sqlglot.exp.to_identifier(node.name, quoted=True)
+    return node
+
+
 def _duck(sql: str, dialect: str) -> str:
+    if dialect == "bigquery":
+        sql = canonical_literals(sql)
     try:
-        return sqlglot.transpile(sql, read=dialect, write="duckdb")[0]
+        tree = sqlglot.parse_one(sql, read=dialect).transform(_floor_to_unit).transform(_quote_reserved)
+        return tree.sql(dialect="duckdb")
     except sqlglot.errors.SqlglotError as error:
         raise CheckError(f"cannot translate: {error}") from error
 
@@ -222,6 +257,13 @@ def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dia
             b = Counter(tuple(_norm(v) for v in row) for row in db.execute(b_sql).fetchall())
         except duckdb.Error as error:
             raise CheckError(str(error)) from error
+        if a != b:
+            try:
+                plain = [Counter(tuple(_norm(v) for v in row) for row in rows) for rows in run_unoptimized(db, a_sql, b_sql)]
+            except duckdb.Error:
+                plain = None
+            if plain != [a, b]:
+                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         for mode in modes:
             if found[mode] is not None:
                 continue
@@ -246,8 +288,11 @@ def replay(schema: Schema, witness: Witness, left: str, right: str, *, mode: str
 
     db = _connect(schema)
     _load(db, schema, witness.tables)
-    a = Counter(tuple(_norm(v) for v in row) for row in db.execute(_duck(left, dialect)).fetchall())
-    b = Counter(tuple(_norm(v) for v in row) for row in db.execute(_duck(right, dialect)).fetchall())
+    left_sql, right_sql = _duck(left, dialect), _duck(right, dialect)
+    a = Counter(tuple(_norm(v) for v in row) for row in db.execute(left_sql).fetchall())
+    b = Counter(tuple(_norm(v) for v in row) for row in db.execute(right_sql).fetchall())
+    if [Counter(tuple(_norm(v) for v in row) for row in rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+        return False  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
     if mode in ("set", "subset"):
         a, b = Counter(set(a)), Counter(set(b))
     return bool(a - b) if mode in ("subbag", "subset") else bool((a - b) or (b - a))

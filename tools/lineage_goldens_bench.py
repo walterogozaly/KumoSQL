@@ -26,8 +26,6 @@ from __future__ import annotations
 from collections import Counter
 import importlib.util
 import json
-import logging
-import os
 import re
 import sys
 import time
@@ -36,6 +34,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FIX = ROOT / "tests" / "fixtures" / "lineage_goldens"
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tools"))
+from bench_common import quiet as _quiet  # noqa: E402
 
 _SPEC = importlib.util.spec_from_file_location("sqllineage_bench", ROOT / "tools" / "sqllineage_bench.py")
 base = importlib.util.module_from_spec(_SPEC)
@@ -282,11 +282,6 @@ def run() -> dict:
     return out
 
 
-def _quiet() -> None:
-    os.environ.setdefault("KUMOSQL_TIMING", "0")
-    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
-
-
 def main(argv: list[str]) -> int:
     _quiet()
     start = time.perf_counter()
@@ -351,7 +346,7 @@ def write_results(result: dict, seconds: float) -> None:
             "metric": description + " Each case is one SQL statement with its expected table and column lineage; KumoSQL must produce exactly it or say unknown.",
             "correctness": f"{t['wrong']} cases claim a table or edge the oracle does not have; {t['missed']} confident misses",
             "coverage": {"proven": t["exact"] + t["coarse"], "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
-            "docs": "docs/lineage-goldens-bench.md",
+            "docs": "docs/evals/lineage-goldens-bench.md",
             "command": "python tools/lineage_goldens_bench.py --write-results",
             "caveats": (
                 f"Cases left out: {sum(result[name]['left_out'].values())} (other dialects, upstream-skipped tests, USE state, not BigQuery); "

@@ -16,7 +16,7 @@ coverage         scenarios and models the tool answered, rather than reported un
 performance      seconds per scenario by pipeline size
 
 ``dev`` families were used while building the tool; ``held-out`` families were written after and not looked at until
-the first scored run (docs/schema-change-bench.md).
+the first scored run (docs/evals/schema-change-bench.md).
 
     python tools/schema_change_bench.py [--write-results]
 """
@@ -25,14 +25,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-import logging
-import os
 import random
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from bench_common import quiet as _quiet, today, write_results as _write_results  # noqa: E402
 
 from kumosql.pipeline import Pipeline  # noqa: E402
 from kumosql.pipeline_types import Model, Target  # noqa: E402
@@ -465,14 +466,7 @@ def run_suite(families: tuple[str, ...], sizes=(8, 30, 120), seeds=(1, 2, 3), co
     return aggregate([run_one(size, seed, families, count) for size in sizes for seed in seeds])
 
 
-def _quiet() -> None:
-    os.environ.setdefault("KUMOSQL_TIMING", "0")
-    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
-
-
 def write_results(dev: dict, held: dict) -> None:
-    import json
-
     total = dev["scenarios"] + held["scenarios"]
     exact = dev["exact"] + held["exact"]
     unknown_models = dev["models_unknown"] + held["models_unknown"]
@@ -487,15 +481,14 @@ def write_results(dev: dict, held: dict) -> None:
         "correctness": f"{dev['unsafe_misses'] + held['unsafe_misses']} models that break or change output reported as safe; {dev['false_breaks'] + held['false_breaks']} false breaks; {dev['opaque_unsafe'] + held['opaque_unsafe']} unparsed models that mention the table reported as safe",
         "coverage": {"proven": exact, "unknown": total - exact},
         "held_out": "First scored run of the held-out families (474 models): 2 models missed, both a SELECT * EXCEPT (col) or REPLACE over a column that was dropped, which BigQuery rejects and sqlglot ignores. Fixed afterwards, so those families no longer count as held out. Dev runs before it also exposed a bug that dropped table aliases, which made joins look unresolvable; reported then as unknown, never as safe.",
-        "docs": "docs/schema-change-bench.md",
+        "docs": "docs/evals/schema-change-bench.md",
         "command": "python tools/schema_change_bench.py --write-results",
-        "date": "2026-10-02",
+        "date": today(),
         "caveats": "Retypes are checked only where the type reaches an output column; an operation that is invalid on the new type is not detected. Retypes feeding a UNION are not scored (the supertype is not modelled). Answers come from the generator, whose families are ones the tool's author could think of.",
         "analysis": f"Breaks: precision {min(dev['breaks_precision'], held['breaks_precision']):.3f}, recall {min(dev['breaks_recall'], held['breaks_recall']):.3f}. Output changes: precision {min(dev['changes_precision'], held['changes_precision']):.3f}, recall {min(dev['changes_recall'], held['changes_recall']):.3f}. Exact columns added/removed/retyped: {dev['details_exact'] + held['details_exact']}/{dev['details_total'] + held['details_total']}. Unparsed models are reported unknown ({unknown_models} model answers).",
         "performance": f"{(dev['seconds'] + held['seconds']) / total * 1000:.0f} ms per scenario on pipelines of 8 to 120 models",
     }
-    out = Path(__file__).resolve().parent.parent / "benchmarks" / "results" / "schema-change.json"
-    out.write_text(json.dumps(row, indent=2) + "\n", encoding="utf-8")
+    _write_results("schema-change", row)
 
 
 def main(argv: list[str]) -> None:

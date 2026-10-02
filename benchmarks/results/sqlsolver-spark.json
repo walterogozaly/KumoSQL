@@ -2,17 +2,17 @@
   "suite": "SQLSolver Spark SQL",
   "order": 11,
   "size": 127,
-  "score": "122/127, 0 wrong",
+  "score": "124/127, 0 wrong",
   "metric": "Equivalent query pairs proved; same checking as Calcite.",
-  "docs": "docs/sqlsolver.md#benchmark-coverage",
+  "docs": "docs/evals/sqlsolver.md#benchmark-coverage",
   "command": "python tools/sqlsolver_bench.py spark",
   "date": "2026-10-02",
   "caveats": "Tuned on test.",
   "evidence": "proof",
   "correctness": "0 false proofs",
   "coverage": {
-    "proven": 122,
-    "unknown": 5
+    "proven": 124,
+    "unknown": 3
   },
   "held_out": "none"
 }

@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import datetime
+from decimal import Decimal
 import hashlib
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -202,6 +204,10 @@ def literal_domains(trees: list[exp.Expression]) -> tuple[list, list[str], list[
 
     numbers, strings, dates = {0, 1, 2, 3}, {"A", "B"}, set()
     for tree in trees:
+        # ``x / 60 >= 5`` needs x near 300: scale the literals by each divisor and multiplier in the query
+        scales = {int(float(node.expression.name)) for node in tree.find_all(exp.Div, exp.Mul)
+                  if isinstance(node.expression, exp.Literal) and not node.expression.is_string
+                  and re.fullmatch(r"\d+(\.0+)?", node.expression.name) and 1 < float(node.expression.name) <= 3600}
         for literal in tree.find_all(exp.Literal):
             if literal.is_string:
                 (dates if DATE_LITERAL.match(literal.name) else strings).add(literal.name)
@@ -213,13 +219,20 @@ def literal_domains(trees: list[exp.Expression]) -> tuple[list, list[str], list[
                 if value.is_integer():
                     value = int(value)
                     numbers.update({value - 1, value, value + 1})
+                    for scale in scales:
+                        numbers.update({value * scale - 1, value * scale, value * scale + 1})
                 else:
                     numbers.add(value)
     # MySQL compares strings without case; keep one spelling of each (DuckDB runs with a no-case collation).
     strings = {s.upper(): s for s in sorted(strings, reverse=True)}.values()
-    dates = {d[:10] for d in dates}
-    if not dates:
-        dates = {"2020-01-01", "2020-01-02", "2020-02-01"}
+    days = set()
+    for text in dates:
+        try:
+            day = datetime.date.fromisoformat(text[:10])
+        except ValueError:
+            continue
+        days.update((day + datetime.timedelta(days=d)).isoformat() for d in (-1, 0, 1))  # both sides of a boundary
+    dates = days or {"2020-01-01", "2020-01-02", "2020-02-01"}
     return sorted(numbers), sorted(strings), sorted(dates)
 
 
@@ -227,7 +240,13 @@ def literal_domains(trees: list[exp.Expression]) -> tuple[list, list[str], list[
 
 
 def translate(sql: str) -> str:
-    return sqlglot.transpile(sql, read="mysql", write="duckdb")[0]
+    tree = sqlglot.parse_one(sql, read="mysql")
+    for order in list(tree.find_all(exp.Order)):
+        # MySQL's ``ORDER BY NULL`` only switches off sorting; DuckDB has no such idiom
+        order.set("expressions", [o for o in order.expressions if not isinstance(o.this, exp.Null)])
+        if not order.expressions:
+            order.pop()
+    return tree.sql(dialect="duckdb")
 
 
 def _fully_ordered(select: exp.Expression) -> bool:
@@ -274,8 +293,10 @@ def unsafe_to_refute(*trees: exp.Expression) -> bool:
 
 def normalise(rows: list[tuple]) -> Counter:
     def cell(value):
-        if isinstance(value, float):
-            return round(value, 6)
+        # DuckDB returns DECIMAL results as Decimal and DOUBLE ones as float; 0.33 and Decimal("0.33")
+        # are the same value but never equal in Python, so compare both as rounded floats
+        if isinstance(value, (float, Decimal)):
+            return round(float(value), 6)
         return value
 
     return Counter(tuple(cell(v) for v in row) for row in rows)
@@ -298,7 +319,9 @@ def _random_tables(pair: Pair, used: list[str], kinds, domains, rng: random.Rand
 
     numbers, strings, dates = domains
     whole = [n for n in numbers if isinstance(n, int)]
-    fractions = sorted(set(numbers) | {0.5, 1.25, 2.75})
+    # Three decimals tell ROUND(x, 2) from x. Every fraction is exact in binary (eighths), so DuckDB's
+    # floating-point AVG cannot land on the other side of a rounding midpoint from MySQL's exact decimals.
+    fractions = sorted(set(numbers) | {0.5, 1.25, 2.75, 0.125, 2.375})
     data = {}
     for table in used:
         rows = []
@@ -309,7 +332,11 @@ def _random_tables(pair: Pair, used: list[str], kinds, domains, rng: random.Rand
             if skewed and rng.random() < 0.5:  # few distinct values: big groups, duplicates and ties
                 pool = rng.sample(pool, min(len(pool), rng.choice([1, 2])))
             pools[column] = (pool, rng.choice([0.0, 0.2, 0.4]) if skewed else 0.2)
+        copies = rng.choice([0.0, 0.0, 0.3]) if skewed else 0.0
         for _ in range(rng.choice(sizes)):
+            if rows and rng.random() < copies:  # an exact duplicate row: DISTINCT and bag semantics part ways
+                rows.append(list(rng.choice(rows)))
+                continue
             row = []
             for column in pair.tables[table]:
                 pool, nulls = pools[column]
@@ -322,7 +349,7 @@ def _random_tables(pair: Pair, used: list[str], kinds, domains, rng: random.Rand
 def _row_counts(trees) -> list[int]:
     """Small tables, plus tables big enough to pass a ``COUNT(..) >= n`` test when the queries have one."""
 
-    sizes = [0, 1, 2, 3, 3, 4, 5]
+    sizes = [0, 1, 2, 3, 3, 4, 5, 7]
     for tree in trees:
         for compare in tree.find_all(exp.GT, exp.GTE, exp.EQ, exp.LT, exp.LTE):
             if compare.find(exp.Count):
@@ -332,20 +359,20 @@ def _row_counts(trees) -> list[int]:
     return sizes
 
 
-def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dict] = ()):
+def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dict] = (), larger: bool = False):
     """A database on which the two queries return different bags, ``None`` if none found, ``False`` if DuckDB rejects them.
 
     ``extra`` holds candidate databases to try first (a counterexample proposed by the prover);
-    each is checked by running both queries, like the random ones.
+    each is checked by running both queries, like the random ones. ``larger`` adds tables of 6 to 10 rows.
     """
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows
+    from kumosql.duckdb_load import insert_rows, run_unoptimized
 
     kinds = column_kinds(trees, pair.tables)
     domains = literal_domains(trees)
-    sizes = _row_counts(trees)
+    sizes = _row_counts(trees) + ([6, 8, 10] if larger else [])
     try:
         left_sql, right_sql = translate(pair.left), translate(pair.right)
     except sqlglot.errors.SqlglotError:
@@ -364,13 +391,41 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
                 insert_rows(db, f'"{table}"', rows)
             a = normalise(db.execute(left_sql).fetchall())
             b = normalise(db.execute(right_sql).fetchall())
+            if a != b and [normalise(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
         except duckdb.Error:
             failures += 1  # a data-dependent error (a scalar subquery with two rows) or a misfit proposed database
             continue
         if a != b:
             tables = {t: [dict(zip(pair.tables[t], r)) for r in data.get(t, [])] for t in used}
             return {"tables": tables, "left": sorted(map(str, a.elements())), "right": sorted(map(str, b.elements()))}
+    if failures < trials + len(candidates):
+        found = _targeted_witness(pair, left_sql, right_sql, kinds, used)
+        if found:
+            return found
     return False if failures == trials + len(candidates) else None
+
+
+_STRING_KINDS = {"VARCHAR": "STRING", "DATE": "DATE", "DECIMAL(18,3)": "NUMERIC"}
+DUCKDB_SETTINGS = ("SET default_null_order = 'nulls_first_on_asc_last_on_desc'", "SET default_collation = 'nocase'")
+
+
+def _targeted_witness(pair: Pair, left_sql: str, right_sql: str, kinds, used: list[str]):
+    """A database from the targeted suite on which the (DuckDB) queries differ, in the witness format."""
+
+    from kumosql.refute import find_targeted_difference
+
+    if os.environ.get("KUMOSQL_TARGETED", "1") == "0":
+        return None
+    schema = {t: {c: _STRING_KINDS.get(kinds.get((t, c), "BIGINT"), "INT64") for c in pair.tables[t]} for t in used}
+    found = find_targeted_difference(
+        left_sql, right_sql, schema, engine="duckdb", dialect="duckdb", settings=DUCKDB_SETTINGS, budget=15.0
+    )
+    if found is None:
+        return None
+    a, b = normalise(list(found.left.rows)), normalise(list(found.right.rows))
+    tables = {t: [dict(zip(pair.tables[t], r)) for r in found.dataset.tables[t].rows] for t in used}
+    return {"tables": tables, "left": sorted(map(str, a.elements())), "right": sorted(map(str, b.elements())), "targeted": found.label}
 
 
 def _proposed_database(pair: Pair, result) -> list[dict]:
@@ -441,6 +496,9 @@ def decide(pair: Pair, trials: int = 300) -> Verdict:
     if unsafe_to_refute(*trees):
         return _unknown(reason or "no counterexample allowed (LIMIT with ties, LOWER, or non-determinism)", crash)
     witness = search_difference(pair, trees, trials, seed=7, extra=proposed)
+    if witness is None:
+        # A second stream seeded by the pair itself, so pairs that share a shape do not all miss together
+        witness = search_difference(pair, trees, trials, seed=int(pair.key, 16), larger=True)
     if witness:
         return Verdict("different", "counterexample", witness, outcome="refuted")
     return _unknown(reason or "no proof, no counterexample", crash)

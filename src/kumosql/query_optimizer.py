@@ -37,6 +37,8 @@ import time
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import select_sources as _sources
+
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
 
@@ -118,13 +120,6 @@ _CLAUSES = ("where", "group", "having", "qualify", "order", "limit", "offset", "
 
 def _only(select: exp.Expression, allowed: set[str]) -> bool:
     return all(not select.args.get(k) or k in allowed for k in _CLAUSES)
-
-
-def _sources(select: exp.Select) -> list[exp.Expression]:
-    from_ = _from(select)
-    out = [from_.this] if from_ is not None else []
-    out += [j.this for j in select.args.get("joins") or []]
-    return out
 
 
 def _alias(node: exp.Expression) -> str | None:

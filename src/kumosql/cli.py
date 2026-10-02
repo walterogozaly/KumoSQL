@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 from .lift_subqueries import lift_subqueries
-from .equivalence import prove_equivalent
+from .statement_proof import prove_statements
 from .rewrite import apply_rules, attach_planner_check, available_rules, check_idempotence
 from .sqlx import looks_like_sqlx
 from .synthetic_check import attach_synthetic_check
@@ -65,7 +65,7 @@ def prove_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verifier-sql", type=Path, help="Write generated bag-verifier SQL")
     args = parser.parse_args(argv)
 
-    result = prove_equivalent(
+    result = prove_statements(
         args.left.read_text(encoding="utf-8"),
         args.right.read_text(encoding="utf-8"),
         ignore_row_order=not args.respect_row_order,

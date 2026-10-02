@@ -9,7 +9,7 @@
     "proven": 16,
     "unknown": 2
   },
-  "docs": "docs/lineage-goldens-bench.md",
+  "docs": "docs/evals/lineage-goldens-bench.md",
   "command": "python tools/lineage_goldens_bench.py --write-results",
   "caveats": "Cases left out: 81 (other dialects, upstream-skipped tests, USE state, not BigQuery); 2 upstream tests could not be harvested. Statements other than queries and CREATE ... AS (DELETE, UPDATE, MERGE, ALTER, DROP, TRUNCATE) are not traced and are reported unknown.",
   "analysis": "46/48 expected column edges found (column cases only; recall counts edges reported unknown)",

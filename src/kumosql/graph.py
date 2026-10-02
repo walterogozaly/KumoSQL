@@ -7,6 +7,8 @@ shape without making graph construction depend on credentials or network I/O.
 
 from __future__ import annotations
 
+import re
+
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +16,7 @@ from typing import TYPE_CHECKING, Iterable, Literal, Mapping
 
 from sqlglot import exp
 
+from .ast_utils import is_function_table
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .scopes import job_record
 
@@ -245,6 +248,9 @@ class _EdgeEvidence:
         )
 
 
+_TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
+
+
 def build_query_graph(
     pipeline: "Pipeline",
     observed_reads: Iterable[ObservedRead | Mapping[str, object]] = (),
@@ -278,7 +284,7 @@ def build_query_graph(
     parse_incomplete = {
         diagnostic.model
         for diagnostic in analysis.diagnostics
-        if diagnostic.code in {"parse_error", "no_query", "qualify_error"}
+        if diagnostic.code in {"parse_error", "no_query", "qualify_error", "unparsed_operation"}
     }
 
     def identity_for_key(pipeline: "Pipeline", key: str) -> tuple[NodeIdentity, str]:
@@ -345,12 +351,17 @@ def build_query_graph(
             ).declared = True
 
         query = analysis.parsed.get(downstream_key)
-        if query is None:
+        extra_tables = analysis.script_tables.get(downstream_key, ())
+        if query is None and not extra_tables:
             continue
-        cte_names = {cte.alias_or_name.casefold() for cte in query.find_all(exp.CTE)}
-        for table in query.find_all(exp.Table):
+        cte_names = {cte.alias_or_name.casefold() for cte in query.find_all(exp.CTE)} if query is not None else set()
+        for table in (*(query.find_all(exp.Table) if query is not None else ()), *extra_tables):
+            if is_function_table(table):
+                continue  # a table function call is not a table; the tables it is given are their own nodes
             if not table.db and table.name.casefold() in cte_names:
                 continue
+            if _TEMPLATE_TOKEN.fullmatch(table.name):
+                continue  # a ${...} that could not be resolved: the model carries an unresolved_template gap, not a node
             upstream, kind, resolved = resolve_static(table)
             if upstream.stable_key == downstream.stable_key:
                 continue
@@ -363,6 +374,16 @@ def build_query_graph(
             )
             item.parsed = True
             item.parse_incomplete = downstream_key in parse_incomplete
+
+    # A table another model's script writes (a MERGE or INSERT into a declared source or into another model) is fed by
+    # what that script reads.
+    for written_key, feeders in sorted(analysis.written_into.items()):
+        downstream, downstream_kind = identity_for_key(pipeline, written_key)
+        for feeder_key in sorted(feeders):
+            upstream, upstream_kind = identity_for_key(pipeline, feeder_key)
+            if upstream.stable_key == downstream.stable_key:
+                continue
+            get_evidence(upstream, downstream, upstream_kind, downstream_kind).parsed = True
 
     unresolved_count = 0
     unresolved_samples: list[dict[str, object]] = []

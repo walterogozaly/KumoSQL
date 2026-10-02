@@ -28,11 +28,24 @@ def test_every_docs_page_is_in_the_index():
     index = (DOCS / "README.md").read_text(encoding="utf-8")
     missing = [p.name for p in sorted(DOCS.glob("*.md")) if p.name != "README.md" and f"]({p.name})" not in index]
     assert not missing, f"add to docs/README.md: {', '.join(missing)}"
+    assert "](evals/README.md)" in index, "docs/README.md must link the evals folder"
+
+
+def test_every_eval_page_is_in_the_evals_index():
+    index = (DOCS / "evals" / "README.md").read_text(encoding="utf-8")
+    missing = [p.name for p in sorted((DOCS / "evals").glob("*.md")) if p.name != "README.md" and f"]({p.name})" not in index]
+    assert not missing, f"add to docs/evals/README.md: {', '.join(missing)}"
+
+
+def test_every_results_file_is_in_the_evals_index():
+    index = (DOCS / "evals" / "README.md").read_text(encoding="utf-8")
+    missing = [p.stem for p in sorted((ROOT / "benchmarks" / "results").glob("*.json")) if f"`{p.stem}`" not in index]
+    assert not missing, f"name in docs/evals/README.md: {', '.join(missing)}"
 
 
 def test_relative_links_resolve():
     broken = []
-    for page in [ROOT / "README.md", ROOT / "benchmarks" / "README.md", *sorted(DOCS.glob("*.md"))]:
+    for page in [ROOT / "README.md", ROOT / "benchmarks" / "README.md", *sorted(DOCS.rglob("*.md"))]:
         for number, line in _lines_outside_code(page):
             for target in re.findall(r"\]\(([^)\s]+)\)", line):
                 if re.match(r"^[a-z]+:", target):

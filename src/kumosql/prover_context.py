@@ -19,26 +19,32 @@ from .smt_equivalence import SmtEquivalenceResult, SmtStatus, z3
 DEFAULT_TIMEOUT_MS = 5000
 MIN_TIMEOUT_MS = 500
 MAX_TIMEOUT_MS = 60000
+DEFAULT_BOUNDED_ROWS = 3  # rows per table in the bounded check; 0 turns it off
+MAX_BOUNDED_ROWS = 6
 
 _LOCK = threading.Lock()
 _CACHE: dict = {}
 
 
 def settings() -> dict:
-    """``{"enabled": bool, "timeout_ms": int}`` with defaults filled in."""
+    """``{"enabled": bool, "timeout_ms": int, "bounded_rows": int}`` with defaults filled in."""
 
     saved = state.get_section("prover", {}) or {}
     enabled = saved.get("enabled", True)
     timeout = saved.get("timeout_ms", DEFAULT_TIMEOUT_MS)
     if not isinstance(timeout, int) or isinstance(timeout, bool):
         timeout = DEFAULT_TIMEOUT_MS
+    rows = saved.get("bounded_rows", DEFAULT_BOUNDED_ROWS)
+    if not isinstance(rows, int) or isinstance(rows, bool):
+        rows = DEFAULT_BOUNDED_ROWS
     return {
         "enabled": enabled if isinstance(enabled, bool) else True,
         "timeout_ms": min(max(timeout, MIN_TIMEOUT_MS), MAX_TIMEOUT_MS),
+        "bounded_rows": min(max(rows, 0), MAX_BOUNDED_ROWS),
     }
 
 
-def save_settings(enabled: object = None, timeout_ms: object = None) -> dict:
+def save_settings(enabled: object = None, timeout_ms: object = None, bounded_rows: object = None) -> dict:
     """Update the solver settings; refuses values of the wrong type or range."""
 
     current = settings()
@@ -52,6 +58,10 @@ def save_settings(enabled: object = None, timeout_ms: object = None) -> dict:
         ):
             raise ValueError(f"timeout_ms must be a whole number from {MIN_TIMEOUT_MS} to {MAX_TIMEOUT_MS}")
         current["timeout_ms"] = timeout_ms
+    if bounded_rows is not None:
+        if not isinstance(bounded_rows, int) or isinstance(bounded_rows, bool) or not (0 <= bounded_rows <= MAX_BOUNDED_ROWS):
+            raise ValueError(f"bounded_rows must be a whole number from 0 to {MAX_BOUNDED_ROWS}")
+        current["bounded_rows"] = bounded_rows
     state.set_section("prover", current)
     return current
 
@@ -91,8 +101,12 @@ def status() -> dict:
     }
 
 
-def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True) -> SmtEquivalenceResult:
-    """Prove two queries return the same rows, using the project's declared facts."""
+def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True, search_counterexample: bool = False) -> SmtEquivalenceResult:
+    """Prove two queries return the same rows, using the project's declared facts.
+
+    ``search_counterexample`` also runs an unproven pair on databases built for it
+    (needs declared column types) and returns any database that tells them apart.
+    """
 
     from . import equivalences
     from .algebraic_equivalence import prove_equivalent_algebraic
@@ -115,6 +129,7 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
         constraints=facts.constraints or None,
         types=facts.types or None,
         timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
+        search_counterexample=search_counterexample,
     )
     if (facts.notes or used) and result.status is SmtStatus.PROVEN_EQUIVALENT:
         wanted = [*facts.notes]
@@ -126,3 +141,60 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
 
             result = dataclasses.replace(result, assumptions=tuple(result.assumptions) + extra)
     return result
+
+
+_BOUNDED: dict = {}
+
+
+def bounded_schema():
+    """The saved BigQuery catalog as a schema for the bounded check (column types, REQUIRED, keys)."""
+
+    from . import bigquery_catalog
+    from .bounded_equivalence import schema_from_bigquery
+
+    tables = list(bigquery_catalog.saved_tables())
+    signature = (len(tables), tuple(sorted(f"{p}.{d}.{t}" for p, d, t, _ in tables)))
+    with _LOCK:
+        if _BOUNDED.get("signature") == signature:
+            return _BOUNDED["schema"]
+    schema = schema_from_bigquery(tables)
+    with _LOCK:
+        _BOUNDED.update(signature=signature, schema=schema)
+    return schema
+
+
+def bounded(old_sql: str, new_sql: str, *, schema=None, timeout_ms: int | None = None) -> dict | None:
+    """The bounded check of two queries as JSON: ``None`` when it is off or cannot run.
+
+    ``status`` is ``bounded_equivalent`` (no counterexample within ``bound`` rows per table; not a proof),
+    ``different`` (a counterexample, replayed on DuckDB before it is reported) or ``unknown``.
+    """
+
+    from . import bounded_equivalence as be
+
+    rows = settings()["bounded_rows"]
+    if rows <= 0 or z3 is None:
+        return None
+    try:
+        import duckdb  # noqa: F401  - the replay needs it
+    except ImportError:
+        return None
+    facts = schema if schema is not None else bounded_schema()
+    if not facts.tables:
+        return None
+    limit = timeout_ms if timeout_ms is not None else settings()["timeout_ms"]
+    result = be.check_bounded(old_sql, new_sql, facts, rows=rows, dialect="bigquery", timeout_ms=limit, budget_s=max(limit / 1000 * 3, 5))
+    return bounded_json(result, facts)
+
+
+def bounded_json(result, facts) -> dict:
+    data = {"status": result.status.value, "label": result.label, "bound": result.bound, "reason": result.reason}
+    if result.counterexample is not None:
+        tables = {}
+        for name, rows in result.counterexample.items():
+            if not rows:
+                continue
+            columns = [c.name for c in facts.tables[name].columns]
+            tables[name] = [{c: (None if v is None else str(v) if not isinstance(v, (int, float, bool)) else v) for c, v in zip(columns, row)} for row in rows]
+        data["counterexample"] = {"tables": tables}
+    return data

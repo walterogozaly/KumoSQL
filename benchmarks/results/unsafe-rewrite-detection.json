@@ -2,18 +2,17 @@
   "suite": "Unsafe-rewrite detection",
   "order": 310,
   "size": 560,
-  "score": "0 false proofs; 200/221 correct rewrites proved; 338/339 unsafe rewrites caught with a replayable counterexample",
-  "metric": "NOT IN with NULLs, COUNT(*) vs COUNT(col), duplicate-producing joins, UNION vs UNION ALL and predicates moved across outer joins, each next to a correct variant. Of 339 non-equivalent pairs the prover refutes 40 itself (all replay) and the executed synthetic check finds 298 more.",
+  "score": "0 false proofs; 220/220 correct rewrites proved; 340/340 unsafe rewrites refuted by the prover with a replayable counterexample",
+  "metric": "NOT IN with NULLs, COUNT(*) vs COUNT(col), duplicate-producing joins, UNION vs UNION ALL and predicates moved across outer joins, each next to a correct variant. Of 340 non-equivalent pairs the solver's own model refutes 40 and the prover's executed counterexample search (search_counterexample=True, declared INT64 columns) the other 300; every counterexample replays in DuckDB.",
   "evidence": "proof",
-  "correctness": "0 false proofs, 0 non-replayable counterexamples, 0 label errors; correct variants never flagged different by the executed check. Ground truth is a 40-database DuckDB search.",
+  "correctness": "0 false proofs, 0 non-replayable counterexamples, 0 label errors; correct variants never flagged different. Ground truth is a 40-database DuckDB search plus any replayed counterexample: one held-out pair the oracle called equivalent (u.b > 3, never true on its 0..3 values) is refuted with a replayed database and counted as different.",
   "coverage": {
-    "proven": 200,
-    "refuted": 40,
-    "unknown": 320
+    "proven": 220,
+    "refuted": 340
   },
-  "held_out": "held-out templates: 80/81 correct rewrites proved, 58/59 unsafe ones caught by execution, 0 false proofs",
-  "docs": "docs/fuzzing.md#suites",
+  "held_out": "held-out templates: 80/80 correct rewrites proved, 60/60 unsafe ones refuted (all by the executed search), 0 false proofs",
+  "docs": "docs/evals/fuzzing.md#suites",
   "command": "python tools/unsafe_fuzz.py unsafe --count 20 --seed 1",
   "date": "2026-10-02",
-  "caveats": "The prover alone refutes only 11.8% of unsafe pairs (most return unknown: no row-preserving mapping, UNION shapes differ); the rest rely on bounded execution, a different evidence level. Template-generated, 28 templates."
+  "caveats": "Before this change the prover alone refuted 40/339 and proved 200/221; 300 of the 340 refutations now come from executed databases, not from the solver's model (the report counts them as refuted_by_executed_search). The 20 DISTINCT-join-versus-IN pairs are proved by reading a filtering inner join under DISTINCT as EXISTS. Template-generated, 28 templates."
 }

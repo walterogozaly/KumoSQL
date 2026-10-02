@@ -15,7 +15,7 @@ it (the query, ``pre_operations``, ``post_operations``, inside ``when(...)`` arg
 ``dependencies``) becomes a dependency; ``resolve()`` and ``self()`` do not.
 
 ``dev`` families were used while building the suite; ``held-out`` families were written afterwards and not tuned
-against (see ``docs/dataform-bench.md``).
+against (see ``docs/evals/dataform-bench.md``).
 
     python tools/dataform_bench.py
 """
@@ -24,8 +24,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-import logging
-import os
 import random
 import sys
 import tempfile
@@ -33,6 +31,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from bench_common import quiet as _quiet, today, write_results as _write_results  # noqa: E402
 
 from kumosql import apply_rule, available_rules, load_sqlx_project  # noqa: E402
 
@@ -394,7 +395,6 @@ def scale(sizes=(500, 2000)) -> list[dict]:
     return rows
 
 
-RESULTS = Path(__file__).resolve().parent.parent / "benchmarks" / "results" / "dataform-preservation.json"
 
 # Measured on the first run of the held-out families, before anything they found was fixed.
 HELD_OUT_FIRST_RUN = (
@@ -404,15 +404,13 @@ HELD_OUT_FIRST_RUN = (
 
 
 def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
-    import json
-
     files = dev["files"] + held["files"]
     checks = dev["span_checks"] + held["span_checks"]
     found = dev["deps_found"] + held["deps_found"]
     expected = dev["deps_expected"] + held["deps_expected"]
-    RESULTS.write_text(
-        json.dumps(
-            {
+    _write_results(
+        "dataform-preservation",
+        {
                 "suite": "Dataform preservation (generated)",
                 "order": 220,
                 "size": files,
@@ -429,9 +427,9 @@ def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
                 ),
                 "coverage": {"proven": files - held["unsupported"], "unsupported": held["unsupported"]},
                 "held_out": HELD_OUT_FIRST_RUN,
-                "docs": "docs/dataform-bench.md",
+                "docs": "docs/evals/dataform-bench.md",
                 "command": "python tools/dataform_bench.py --scale --write-results",
-                "date": "2026-10-02",
+                "date": today(),
                 "caveats": (
                     "Files are generated from templates its author wrote; real projects have more shapes. Dependency truth is how Dataform compiles an action "
                     "(every evaluated ref(), including those in pre_operations, post_operations and when() arguments). Dev families were tuned against. The declared_refs family (refs to tables declared in sqlx or JavaScript, including a computed list that must stay unresolved) was added with the declaration fix and is a dev family; the Dataform API fallback is not exercised by this eval."
@@ -441,19 +439,8 @@ def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
                     f"Fixable SQL around protected text still rewritten: {dev['fixable_fixed_cases'] + held['fixable_fixed_cases']}/{dev['fixable_cases'] + held['fixable_cases']} files."
                 ),
                 "performance": "; ".join(f"{row['files']:,} files: {row['seconds']} s to load" for row in timing),
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+        },
     )
-
-
-def _quiet() -> None:
-    """Command-line runs print results, not per-stage timings or sqlglot warnings (kept out of module import so tests are unaffected)."""
-
-    os.environ.setdefault("KUMOSQL_TIMING", "0")
-    logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 
 def main(argv: list[str]) -> None:

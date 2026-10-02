@@ -11,7 +11,7 @@
     "unknown": 39
   },
   "held_out": "First scored run of the held-out families (474 models): 2 models missed, both a SELECT * EXCEPT (col) or REPLACE over a column that was dropped, which BigQuery rejects and sqlglot ignores. Fixed afterwards, so those families no longer count as held out. Dev runs before it also exposed a bug that dropped table aliases, which made joins look unresolvable; reported then as unknown, never as safe.",
-  "docs": "docs/schema-change-bench.md",
+  "docs": "docs/evals/schema-change-bench.md",
   "command": "python tools/schema_change_bench.py --write-results",
   "date": "2026-10-02",
   "caveats": "Retypes are checked only where the type reaches an output column; an operation that is invalid on the new type is not detected. Retypes feeding a UNION are not scored (the supertype is not modelled). Answers come from the generator, whose families are ones the tool's author could think of.",

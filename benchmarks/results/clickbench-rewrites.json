@@ -10,7 +10,7 @@
   "usefulness": "1 of 3 rewrites at least 10% faster (Q30, 4.51x); Q35 1.01x, Q36 1.04x",
   "performance": "Median of 5 alternating runs on 1,000,000 synthetic hits rows, PostgreSQL 16; geometric-mean speedup 1.68x over the 3 rewritten queries",
   "held_out": "none",
-  "docs": "docs/rewrite-benchmarks.md#clickbench",
+  "docs": "docs/evals/rewrite-benchmarks.md#clickbench",
   "command": "python tools/clickbench_bench.py --clickbench ClickBench --db clickbench --generate 1000000",
   "date": "2026-10-02",
   "caveats": "Synthetic data (the real 100M-row set cannot be downloaded here), so speedups show removed work, not ClickBench results."

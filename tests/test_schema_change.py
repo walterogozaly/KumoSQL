@@ -1,4 +1,4 @@
-"""Schema-change assessment: regression cases, plus floors for the generated suite (docs/schema-change-bench.md)."""
+"""Schema-change assessment: regression cases, plus floors for the generated suite (docs/evals/schema-change-bench.md)."""
 
 import importlib.util
 import sys

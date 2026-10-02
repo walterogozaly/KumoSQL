@@ -1,4 +1,5 @@
-"""Tables read by statements that are not queries (DELETE, UPDATE, INSERT ... VALUES, CREATE ... LIKE/CLONE).
+"""Tables read by statements that are not queries (DELETE, UPDATE, INSERT ... VALUES, CREATE ... LIKE/CLONE, and
+subqueries in script SET and DECLARE).
 
 They become graph edges and appear in ``table_reads()``; the table a statement writes is not a read, and the columns of
 such statements are still not traced (the model keeps its ``unknown_reads`` flag).
@@ -29,6 +30,7 @@ def _pipeline(sql: str, **extra: str) -> Pipeline:
         "UPDATE `p.d.victim` SET a = 1 FROM `p.d.raw` WHERE victim.a = raw.a",
         "INSERT INTO `p.d.victim` (a) VALUES ((SELECT COUNT(*) FROM `p.d.raw`))",
         "CREATE TABLE `p.d.victim` CLONE `p.d.raw`",
+        "CREATE TABLE `p.d.victim` LIKE `p.d.raw`",
     ],
 )
 def test_reads_become_edges_and_the_written_table_does_not(sql):
@@ -38,10 +40,10 @@ def test_reads_become_edges_and_the_written_table_does_not(sql):
     assert "p.d.m" in pipeline.downstream["p.d.raw"]
 
 
-def test_columns_are_still_not_traced_so_the_model_stays_blind():
+def test_columns_are_not_traced_so_the_read_tables_count_as_fully_used():
     pipeline = _pipeline("DELETE FROM `p.d.victim` WHERE a IN (SELECT a FROM `p.d.raw`)")
     codes = {d.code for d in pipeline.all_diagnostics() if d.model == "p.d.m"}
-    assert "unknown_reads" in codes
+    assert not {"unknown_reads", "skipped_statements"} & codes  # the tables are known; only the columns are not traced
     assert "p.d.m" not in pipeline.explain_lineage() and not pipeline.dead_columns().get("p.d.raw")
 
 
@@ -59,3 +61,16 @@ def test_a_script_mixing_a_query_and_a_delete_reads_both():
     sql = "DELETE FROM `p.d.victim` WHERE a IN (SELECT a FROM `p.d.other`);\nSELECT a FROM `p.d.raw`"
     pipeline = _pipeline(sql, other="SELECT 2 AS a")
     assert {"p.d.raw", "p.d.other"} <= set(pipeline.table_reads()["p.d.m"])
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DECLARE n INT64;\nSET n = (SELECT COUNT(*) FROM `p.d.raw`);\nSELECT n AS n",
+        "DECLARE n INT64 DEFAULT (SELECT MAX(a) FROM `p.d.raw`);\nSELECT n AS n",
+    ],
+)
+def test_script_subqueries_read_their_tables(sql):
+    pipeline = _pipeline(sql)
+    assert "p.d.raw" in pipeline.table_reads()["p.d.m"]
+    assert "p.d.m" in pipeline.downstream["p.d.raw"]

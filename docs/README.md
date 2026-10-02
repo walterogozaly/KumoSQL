@@ -19,31 +19,9 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Join ordering and cardinality](joinorder.md) | Sub-join size estimates and join orders, in pure Python |
 | [UI roadmap](ui-roadmap.md) | The JSON each graph, cost and change view reads |
 | [BigQuery test bed](bigquery-testbed.md) | A messy, low-cost model layer with real job history |
+| [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
+| [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
 
 ## Evals
 
-Each eval's numbers are in the README scoreboard, generated from `benchmarks/results/*.json` ([format](../benchmarks/README.md)).
-
-| Page | Evals |
-| --- | --- |
-| [SQLSolver and the algebraic prover](sqlsolver.md) | SQLSolver Calcite, Spark, TPC-H and TPC-C; R-Bot; QED; Cosette and SPES |
-| [VeriEQL](verieql.md) | VeriEQL LeetCode, Literature and Calcite suites |
-| [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs |
-| [SQLFluff rule fixtures](sqlfluff-fixtures.md) | 850 lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them |
-| [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification |
-| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune, ClickBench and cost-based rewrites |
-| [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data |
-| [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on LLM-R2's 11,353 queries, test files held out |
-| [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage |
-| [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct |
-| [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases |
-| [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC, unsafe-rewrite detection, rewrite composition |
-| [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking, counterexample minimization |
-| [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
-| [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors |
-| [Lineage and change impact](lineage-bench.md) | SQLLineage cases and generated lineage pipelines |
-| [Dataform preservation](dataform-bench.md) | Protected SQLX text and dependencies |
-| [Schema-change compatibility](schema-change-bench.md) | Which models break when a column changes |
-| [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors |
-| [Spider 2.0](spider2-bench.md) | Spider 2.0 BigQuery reference queries as inputs to KumoSQL's analyses |
-| [Lineage goldens](lineage-goldens-bench.md) | DataHub and OpenLineage lineage tests, scored against KumoSQL (OpenLineage is the independent oracle) |
+The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur and SQL-IQ equivalence suites, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).

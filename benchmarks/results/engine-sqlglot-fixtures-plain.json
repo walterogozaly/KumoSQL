@@ -1,0 +1,23 @@
+{
+  "suite": "SQLGlot fixtures, original queries",
+  "order": 310,
+  "size": 4640,
+  "score": "0 wrong in 593 executed; 121 rewrites verified",
+  "metric": "Each query runs in DuckDB, goes through every KumoSQL rewrite, and runs again; a rewrite that changes the result multiset (or stops running) is wrong.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing rewrites (0 of them labelled proven); results compared against an unrewritten control run in the same database",
+  "coverage": {
+    "proven": 121,
+    "unknown": 472,
+    "unsupported": 4044,
+    "timeout": 1,
+    "error": 2
+  },
+  "usefulness": "121 of 593 executed queries changed by a rewrite; each changed result was compared with the control",
+  "performance": "median 177.6 ms, p95 686.0 ms per query through all rules",
+  "held_out": "dev 0 wrong / 1247 transformed; held out (files hashing to 0 mod 4) 0 wrong / 239 transformed",
+  "docs": "docs/evals/engine-suites.md",
+  "command": "python tools/engine_suites.py --suite sqlglot-fixtures",
+  "date": "2026-10-02",
+  "caveats": "Pinned to 954503e4c6 (MIT, Copyright Toby Mao). In coverage, 'proven' counts rewrites whose executed result matched the control, and 'unknown' counts queries no rule changed. 233 duplicate cases collapsed; 0 files skipped for unsupported directives."
+}

@@ -102,3 +102,51 @@ def drop_unread_outer_join(select: exp.Select) -> exp.Expression | None:
     copy = select.copy()
     (copy.args.get("from_") or copy.args.get("from")).this.set("this", dropped)
     return copy
+
+
+def _set_former(select: exp.Expression) -> bool:
+    """A select that only removes duplicates: ``DISTINCT``, or ``GROUP BY`` with no aggregate or HAVING."""
+
+    if not isinstance(select, exp.Select) or any(select.args.get(k) for k in ("having", "limit", "offset", "qualify")):
+        return False
+    if any(n.find_ancestor(exp.Select) is select for n in select.find_all(exp.AggFunc, exp.Window)):
+        return False
+    distinct = select.args.get("distinct")
+    if distinct is not None:
+        return not distinct.args.get("on") and not select.args.get("group")
+    group = select.args.get("group")
+    return bool(group) and not any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup", "totals"))
+
+
+def _strip_set_formers(select: exp.Select) -> bool:
+    changed = False
+    source = select.args.get("from_") or select.args.get("from")
+    items = ([source.this] if source is not None else []) + [j.this for j in select.args.get("joins") or []]
+    for item in items:
+        if isinstance(item, exp.Subquery) and _set_former(item.this):
+            item.this.set("distinct", None)
+            item.this.set("group", None)
+            changed = True
+    return changed
+
+
+def strip_distinct_sources(select: exp.Select) -> exp.Expression | None:
+    """Under a duplicate-blind select, a derived table that only removes duplicates need not.
+
+    Repeating a row of a joined or filtered input only repeats output rows, which ``DISTINCT`` (or a
+    grouping with duplicate-blind aggregates) removes again. Derived tables read directly, or through
+    one derived table that only projects, filters and joins, are rewritten.
+    """
+
+    if not _duplicate_blind(select):
+        return None
+    copy = select.copy()
+    changed = _strip_set_formers(copy)
+    source = copy.args.get("from_") or copy.args.get("from")
+    if source is not None and not copy.args.get("joins") and isinstance(source.this, exp.Subquery):
+        inner = source.this.this
+        if isinstance(inner, exp.Select) and not any(
+            inner.args.get(k) for k in ("group", "having", "distinct", "limit", "offset", "qualify", "order")
+        ) and not any(n.find_ancestor(exp.Select) is inner for n in inner.find_all(exp.AggFunc, exp.Window)):
+            changed = _strip_set_formers(inner) or changed
+    return copy if changed else None
