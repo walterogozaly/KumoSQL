@@ -2,6 +2,7 @@ import pytest
 
 from kumosql.formatting import (
     DEFAULT_PREFERENCES,
+    FormatPreferences,
     complexity,
     format_sql,
     load_preferences,
@@ -108,3 +109,12 @@ def test_identifier_capitalisation_runs_only_when_named():
     prefs = parse_preferences({"rules": ["layout", "capitalisation", "CP02"]})
     assert "Name" in format_sql("select Id, name from Posts", prefs)
     assert "name" in format_sql("select Id, name from Posts")
+
+
+def test_format_sql_never_turns_spaced_signs_into_a_comment():
+    """sqlfluff's LT01 would write `- - -5` as `---5`, and `--5` starts a comment that swallows the line."""
+
+    prefs = FormatPreferences(rules=("LT01",), keyword_case="consistent")
+    for sql in ("SELECT 1 * - - - 5\n", "SELECT 1 * - - 5 AS c, 2 AS d\n"):
+        assert format_sql(sql, prefs) == sql
+    assert format_sql("select a,b from t -- why\n", prefs) == "select a, b from t -- why\n"

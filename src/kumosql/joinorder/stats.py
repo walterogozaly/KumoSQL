@@ -25,18 +25,29 @@ from typing import Any, Iterable
 @dataclass
 class Domain:
     name: str
-    heavy: dict[Any, int]        # value -> bin id
-    bounds: list[Any]            # sorted upper bounds of the range bins
+    heavy: dict[Any, int]        # value -> bin id for the values with a bin of their own
     nbins: int
+    binning: str = "degree"
 
-    def bin_of(self, value: Any) -> int:
+
+class _Binner:
+    """Value -> bin during collection only; estimates use the stored rows' bins."""
+
+    def __init__(self, domain: Domain, mapping: dict[Any, int] | None, bounds: list[Any]):
+        self.domain = domain
+        self.mapping = mapping
+        self.bounds = bounds
+
+    def __call__(self, value: Any) -> int:
         if value is None:
             return -1
-        hit = self.heavy.get(value)
+        hit = self.domain.heavy.get(value)
         if hit is not None:
             return hit
+        if self.mapping is not None:
+            return self.mapping.get(value, self.domain.nbins - 1)
         i = bisect.bisect_left(self.bounds, value)
-        return len(self.heavy) + min(i, len(self.bounds) - 1) if self.bounds else 0
+        return len(self.domain.heavy) + min(i, len(self.bounds) - 1) if self.bounds else len(self.domain.heavy)
 
 
 @dataclass
@@ -103,15 +114,21 @@ def key_domains(pairs: Iterable[tuple[tuple[str, str], tuple[str, str]]]) -> dic
 
 def collect_statistics(con: Any, tables: list[str],
                        join_pairs: Iterable[tuple[tuple[str, str], tuple[str, str]]],
-                       sample_rows: int = 100_000, heavy_bins: int = 400,
-                       range_bins: int = 600, seed: int = 42) -> Statistics:
-    """Gather statistics from a DuckDB connection."""
+                       sample_rows: int = 100_000, heavy_bins: int = 2000,
+                       range_bins: int = 1000, seed: int = 42, binning: str = "range") -> Statistics:
+    """Gather statistics from a DuckDB connection.
+
+    ``binning="degree"`` groups the less frequent key values by how often they
+    occur (so a bin holds keys of similar popularity); ``"range"`` cuts them into
+    value ranges of equal total frequency.
+    """
     column_domain = key_domains(join_pairs)
     members: dict[str, list[tuple[str, str]]] = {}
     for col, dom in column_domain.items():
         members.setdefault(dom, []).append(col)
 
     domains: dict[str, Domain] = {}
+    binners: dict[str, _Binner] = {}
     for dom, cols in members.items():
         union = " UNION ALL ".join(
             f'SELECT "{c}" AS v, COUNT(*) AS n FROM "{t}" WHERE "{c}" IS NOT NULL GROUP BY 1'
@@ -121,15 +138,29 @@ def collect_statistics(con: Any, tables: list[str],
         heavy = {v: i for i, (v, _) in enumerate(by_freq)}
         rest = [(v, n) for v, n in totals if v not in heavy]
         total = sum(n for _, n in rest) or 1
+        step = total / range_bins
         bounds: list[Any] = []
-        acc, step = 0.0, total / range_bins
-        for v, n in rest:
-            acc += n
-            if acc >= step * (len(bounds) + 1) and len(bounds) < range_bins - 1:
-                bounds.append(v)
-        if rest and (not bounds or bounds[-1] != rest[-1][0]):
-            bounds.append(rest[-1][0])
-        domains[dom] = Domain(dom, heavy, bounds, len(heavy) + max(len(bounds), 1))
+        mapping: dict[Any, int] | None = None
+        if binning == "degree":
+            mapping = {}
+            acc, b = 0.0, 0
+            for v, n in sorted(rest, key=lambda r: (r[1], r[0])):
+                mapping[v] = len(heavy) + b
+                acc += n
+                if acc >= step * (b + 1) and b < range_bins - 1:
+                    b += 1
+            nbins = len(heavy) + b + 1
+        else:
+            acc = 0.0
+            for v, n in rest:
+                acc += n
+                if acc >= step * (len(bounds) + 1) and len(bounds) < range_bins - 1:
+                    bounds.append(v)
+            if rest and (not bounds or bounds[-1] != rest[-1][0]):
+                bounds.append(rest[-1][0])
+            nbins = len(heavy) + max(len(bounds), 1)
+        domains[dom] = Domain(dom, heavy, nbins, binning)
+        binners[dom] = _Binner(domains[dom], mapping, bounds)
 
     out: dict[str, TableStats] = {}
     for table in tables:
@@ -167,14 +198,15 @@ def collect_statistics(con: Any, tables: list[str],
         ts = TableStats(table, rows, columns, stored, len(pinned), weight)
         for c in key_cols:
             d = domains[column_domain[(table, c)]]
+            bin_of = binners[d.name]
             count = [0.0] * d.nbins
             distinct = [0.0] * d.nbins
             for v, n in counts[c]:
-                b = d.bin_of(v)
+                b = bin_of(v)
                 count[b] += n
                 distinct[b] += 1
             exact = frozenset(d.heavy[v] for v in pin_values) if c == pin_col else frozenset()
-            ts.keys[c] = KeyStats(d.name, count, distinct, [d.bin_of(r.get(c)) for r in stored], exact)
+            ts.keys[c] = KeyStats(d.name, count, distinct, [bin_of(r.get(c)) for r in stored], exact)
         out[table] = ts
     return Statistics(out, domains, column_domain)
 

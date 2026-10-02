@@ -202,6 +202,18 @@ def _restore_quoted(original: str, formatted: str) -> str:
     return _QUOTED_RE.sub(lambda _: next(replacements), formatted)
 
 
+def _comments(sql: str) -> list[str] | None:
+    """The comment texts BigQuery reads in ``sql``, ``None`` when it cannot be tokenized."""
+
+    import sqlglot
+
+    try:
+        # re-indenting the lines of a block comment is layout, so compare the lines' words only
+        return ["\n".join(line.strip() for line in c.strip().splitlines()) for token in sqlglot.tokenize(sql, read="bigquery") for c in (token.comments or [])]
+    except sqlglot.errors.SqlglotError:
+        return None
+
+
 def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     """Format BigQuery SQL with sqlfluff. Unparseable SQL raises ``ValueError``."""
 
@@ -213,12 +225,18 @@ def format_sql(sql: str, prefs: FormatPreferences = DEFAULT_PREFERENCES) -> str:
     parsed = linter.parse_string(sql)
     if any(v.rule_code() == "PRS" for v in parsed.violations):
         raise ValueError("sqlfluff could not parse this SQL")
+    # A pass must not create or remove a comment: LT01 on `- - -5` gives `---5`, and `--5` starts a comment
+    # that swallows the rest of the line. The text before that pass is kept then.
     formatted = linter.lint_string(sql, fix=True).fix_string()[0]
+    if _comments(formatted) != _comments(sql):
+        formatted = sql
     # One sqlfluff pass is not always a fixed point (a fix can enable another),
     # which would make a second run change the output. Repeat until stable.
     for _ in range(_MAX_FORMAT_PASSES):
         again = linter.lint_string(formatted, fix=True).fix_string()[0]
         if again == formatted:
+            break
+        if _comments(again) != _comments(formatted):
             break
         formatted = again
     # sqlfluff ends files with a newline; keep the input's ending so diffs stay clean.

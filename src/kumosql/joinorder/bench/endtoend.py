@@ -5,8 +5,8 @@ true sizes) feeds the same DPccp optimizer. The chosen join tree is then
 
 * costed with the true sub-join sizes (C_out, so plan quality free of timing
   noise; the plan chosen from true sizes is the optimum), and
-* executed in DuckDB with its own join reordering switched off, next to DuckDB's
-  default plan.
+* executed in DuckDB with its own join reordering and build-side choice switched
+  off, next to DuckDB's default plan.
 """
 
 from __future__ import annotations
@@ -17,6 +17,14 @@ from typing import Any, Callable
 
 from ..planner import Plan, optimize, plan_cost, to_sql
 from ..query import JoinQuery
+
+
+# Forced plans switch off DuckDB's join reordering and its build-side choice, so
+# the hash table is built on the right input as the plan says (the smaller side
+# by the plan's own estimates). Leaving the build-side choice on lets DuckDB's
+# estimates flip it, which made forced plans up to 7x slower.
+FORCED_PLAN_SETTINGS = "SET disabled_optimizers='join_order,build_side_probe_side'"
+DEFAULT_SETTINGS = "SET disabled_optimizers=''"
 
 
 def connected_subsets(query: JoinQuery) -> list[frozenset[str]]:
