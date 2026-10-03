@@ -40,8 +40,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SHARED_DIR = Path("/mnt/project-files/test-history")
 ORDER_FILE = ROOT / "tests" / "order.json"
-SCHEMA = 2  # 2 added the times: cpu_seconds, test_seconds, test_cpu_seconds, file_seconds, slow_cpu, machine
-SLOW_SECONDS = 3.0  # a test at least this slow is recorded with its duration and runs in the slow tier
+SCHEMA = 3  # 2 added the times: cpu_seconds, test_seconds, test_cpu_seconds, file_seconds, slow_cpu, machine;
+# 3 times a slow test with its setup and teardown (2 timed the call only) and adds slow_setup
+SLOW_SECONDS = 3.0  # a test at least this slow (setup, call and teardown) is recorded with its duration and runs in the slow tier
 MASS_FAILURE = 20  # a run with this many failures is an environment problem, not a test that broke
 MESSAGE_CHARS = 200
 
@@ -273,6 +274,7 @@ class Recorder:
         self.failed: dict[str, dict] = {}
         self.slow: dict[str, float] = {}
         self.slow_cpu: dict[str, float] = {}
+        self.slow_setup: dict[str, float] = {}
         self.files: collections.Counter = collections.Counter()
         self.wall: collections.Counter = collections.Counter()  # per test: setup + call + teardown seconds
         self.file_times: dict[str, list[float]] = collections.defaultdict(lambda: [0.0, 0.0])  # per file: wall, CPU
@@ -306,15 +308,17 @@ class Recorder:
             crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
             message = _first_line(getattr(crash, "message", "") or report.longrepr)
             self.failed.setdefault(nodeid, {"id": nodeid, "kind": outcome, "seconds": round(report.duration, 2), "msg": message})
-        if report.when == "call" and report.duration >= SLOW_SECONDS:
-            self.slow[nodeid] = round(report.duration, 1)
 
     def _time(self, report) -> None:
         nodeid = report.nodeid
         self.wall[nodeid] += report.duration
+        if report.when == "setup" and report.duration >= SLOW_SECONDS:
+            self.slow_setup[nodeid] = round(report.duration, 1)  # a shared fixture built for this test
         if report.when != "teardown":
             return
         wall, cpu = self.wall.pop(nodeid), getattr(report, "cpu_seconds", None)
+        if wall >= SLOW_SECONDS:
+            self.slow[nodeid] = round(wall, 1)
         times = self.file_times[nodeid.split("::", 1)[0]]
         times[0] += wall
         self.test_seconds += wall
@@ -390,6 +394,7 @@ class Recorder:
             "failed": failed,
             "slow": dict(sorted(self.slow.items())),
             "slow_cpu": dict(sorted(self.slow_cpu.items())),
+            "slow_setup": dict(sorted(self.slow_setup.items())),
             "files": dict(sorted(self.files.items())),
             "file_seconds": {name: [round(wall, 1), round(cpu, 1)] for name, (wall, cpu) in sorted(self.file_times.items())},
         }
@@ -545,8 +550,25 @@ def build_order(records: list[dict], risky_limit: int = 40, root: Path | None = 
         "runs": len(records),
         "slow_seconds": SLOW_SECONDS,
         "slow": dict(sorted(((n, s) for n, s in slow_tests(records).items() if here(n)), key=lambda kv: -kv[1])),
+        "together": {name: seconds for name, seconds in shared_fixture_files(records).items() if here(name)},
         "risky": risky,
+        "files": sorted({name for record in records for name in record.get("files", {}) if here(name)}),
     }
+
+
+def shared_fixture_files(records: list[dict]) -> dict[str, float]:
+    """Files with a slow setup (a module or class fixture that takes 3 seconds or more), with the whole file's median
+    seconds, longest first. Their tests run together on one worker so the fixture is built once."""
+
+    found = {nodeid.split("::", 1)[0] for record in records if not mass_failure(record) for nodeid in record.get("slow_setup", {})}
+    seconds: dict[str, list[float]] = collections.defaultdict(list)
+    for record in records:
+        if mass_failure(record) or "file_seconds" not in record:
+            continue
+        for name in found & set(record["file_seconds"]):
+            seconds[name].append(record["file_seconds"][name][0])
+    timed = {name: round(statistics.median(seconds[name]), 1) if seconds[name] else SLOW_SECONDS for name in found}
+    return dict(sorted(timed.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -684,7 +706,7 @@ def command_order(args) -> int:
     target = Path(args.output)
     if args.write:
         target.write_text(json.dumps(order, indent=1) + "\n", encoding="utf-8")
-        print(f"wrote {target}: {len(order['slow'])} slow tests, {len(order['risky'])} often-failing tests, from {order['runs']} runs")
+        print(f"wrote {target}: {len(order['slow'])} slow tests, {len(order['together'])} files with a slow shared fixture, {len(order['risky'])} often-failing tests, from {order['runs']} runs")
     else:
         print(json.dumps(order, indent=1))
     return 0
