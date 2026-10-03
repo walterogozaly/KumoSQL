@@ -25,6 +25,8 @@ import itertools
 import z3
 from sqlglot import exp
 
+from .domain_join_rules import lateral_aggregates
+
 _OPS = {exp.GT: ">", exp.GTE: ">=", exp.LT: "<", exp.LTE: "<=", exp.EQ: "=", exp.NEQ: "<>"}
 _CLASS = {op: cls for cls, op in _OPS.items()}
 _NEGATE = {">": "<=", ">=": "<", "<": ">=", "<=": ">", "=": "<>", "<>": "="}
@@ -534,21 +536,23 @@ def _classify(column: exp.Column, select: exp.Select, schema, not_null, groups: 
     expr, body, hops = lineage.expr, lineage.select, lineage.hops
     if any(_query_select(source.this if isinstance(source, exp.Lateral) else source).args.get("limit") for _, source in hops):
         return _probe(lineage, schema, groups)
-    if isinstance(expr, exp.AggFunc) and expr.parent is not None and _global_aggregate(body):
+    over_aggregates = not isinstance(expr, exp.AggFunc) and _reads_aggregates(expr, body)
+    if (isinstance(expr, exp.AggFunc) or over_aggregates) and expr.parent is not None and _global_aggregate(body):
         if lineage.nullable or body.args.get("distinct"):
             return None
-        role = _aggregate_role(expr)
-        if role is None or not all(_aggregate_role(i.unalias()) for i in body.expressions):
+        role = ("expr", expr) if over_aggregates else _aggregate_role(expr)
+        aggregates = [a for i in body.expressions for a in i.find_all(exp.AggFunc) if a.find_ancestor(exp.Select) is body]
+        if role is None or not all(_aggregate_role(a) for a in aggregates) or not all(_aggregate_item(i.unalias(), body) for i in body.expressions):
             return None
         group = groups.get(id(body))
         if group is None:
             group = groups[id(body)] = _Group("agg", body, hops)
-            ys = {a.sql() for i in body.expressions for r, a in [_aggregate_role(i.unalias())] if a is not None}
-            if len(ys) > 1:
+            args = [a for agg in aggregates for r, a in [_aggregate_role(agg)] if a is not None]
+            if len({a.sql() for a in args}) > 1:
                 group.key = None
                 group.y = None
             else:
-                arg = next((a for i in body.expressions for r, a in [_aggregate_role(i.unalias())] if a is not None), None)
+                arg = args[0] if args else None
                 group.y = arg
                 if arg is not None:
                     rows = _rows_select(body, arg, hops, schema, drop_group=False)
@@ -556,7 +560,7 @@ def _classify(column: exp.Column, select: exp.Select, schema, not_null, groups: 
                     group.rows = rows
         if group.y is None or group.key is None:
             return None
-        return group, role[0]
+        return group, role if over_aggregates else role[0]
     if _true(expr) and isinstance(expr, exp.Boolean):
         # TRUE read through a projection of a one-row aggregate is always TRUE.
         if not lineage.nullable and len(hops) >= 1 and _one_row(hops[-1][1]):
@@ -564,6 +568,44 @@ def _classify(column: exp.Column, select: exp.Select, schema, not_null, groups: 
         # Calcite's IN indicator: (SELECT y AS k, TRUE AS i FROM rows GROUP BY y) LEFT JOINed ON x = k.
         return _indicator(body, hops, schema, not_null, groups)
     return None
+
+
+def _outside_columns(expr: exp.Expression, body: exp.Select) -> list[exp.Column]:
+    """The columns of ``expr`` outside its aggregates."""
+
+    return [c for c in expr.find_all(exp.Column) if not any(a.find_ancestor(exp.Select) is body for a in _ancestors(c, expr) if isinstance(a, exp.AggFunc))]
+
+
+def _ancestors(node: exp.Expression, root: exp.Expression):
+    node = node.parent
+    while node is not None:
+        yield node
+        if node is root:
+            return
+        node = node.parent
+
+
+def _correlated(column: exp.Column, body: exp.Select) -> bool:
+    """A qualified column naming no source of ``body``: a value of an outer row."""
+
+    sources = _source_map(body)
+    return bool(column.table) and sources is not None and column.table.lower() not in sources
+
+
+def _aggregate_item(expr: exp.Expression, body: exp.Select) -> bool:
+    """An item of a one-row aggregate the encoder can read: aggregates, constants and outer values."""
+
+    if any(n.find_ancestor(exp.Select) is body for n in expr.find_all(exp.Window, exp.Subquery, exp.Star) if not isinstance(n.parent, exp.Count)):
+        return False
+    return all(_correlated(c, body) for c in _outside_columns(expr, body))
+
+
+def _reads_aggregates(expr: exp.Expression, body: exp.Select) -> bool:
+    """An expression over ``body``'s aggregates (Calcite's NULL-when-empty and COALESCE wrappers)."""
+
+    if isinstance(expr, (exp.Column, exp.Boolean)):
+        return False
+    return any(a.find_ancestor(exp.Select) is body for a in expr.find_all(exp.AggFunc)) and _aggregate_item(expr, body)
 
 
 def _indicator(body: exp.Select, hops: tuple, schema, not_null, groups: dict) -> tuple | None:
@@ -880,7 +922,7 @@ class _Encoder:
         return value
 
     def has_ref(self, node: exp.Expression) -> bool:
-        return any(id(c) in self.refs for c in node.find_all(exp.Column))
+        return any(id(c) in self.refs for c in node.find_all(exp.Column, exp.AggFunc))
 
     def pred(self, node: exp.Expression):
         if isinstance(node, exp.Paren):
@@ -932,6 +974,8 @@ class _Encoder:
             return self._case(node, self.pred, lambda a: z3.And(z3.Not(a[0]), z3.Not(a[1])))
         if isinstance(node, exp.Column) and id(node) in self.refs:
             role = self.refs[id(node)]
+            if isinstance(role, tuple):
+                return self.pred(role[1])
             if role == "true":
                 return z3.BoolVal(True), z3.BoolVal(False)
             if role == "i":
@@ -954,8 +998,13 @@ class _Encoder:
                 return z3.BoolVal(False), z3.RealVal(node.this)
             except z3.Z3Exception as error:
                 raise _Unsupported("number") from error
-        if isinstance(node, exp.Column) and id(node) in self.refs:
+        if isinstance(node, (exp.Column, exp.AggFunc)) and id(node) in self.refs:
             role = self.refs[id(node)]
+            if isinstance(role, tuple):
+                if _boolean_shaped(role[1]):
+                    hit, miss = self.pred(role[1])
+                    return z3.And(z3.Not(hit), z3.Not(miss)), z3.If(hit, z3.RealVal(1), z3.RealVal(0))
+                return self.val(role[1])
             if role in ("c", "ck", "d"):
                 null, count = self.agg(role)
                 return null, z3.ToReal(count)
@@ -1069,13 +1118,22 @@ def _same(encoder: _Encoder, condition, semantics, mode: str, extra: list) -> bo
 def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: dict | None = None, keys: dict | None = None) -> exp.Expression:
     """Read Calcite's aggregate/indicator expansions as ``x op ANY/ALL (q)`` or ``x IN (q)`` (see the module docstring)."""
 
+    not_null = {k.lower(): {c.lower() for c in v} for k, v in (not_null or {}).items()}
+    # Decorrelated aggregates joined on their correlation key become one-row LATERAL aggregates;
+    # a rewrite that no fold uses is undone below.
+    rewrites = []
+    for select in list(tree.find_all(exp.Select)):
+        if any(isinstance(j.this, exp.Subquery) for j in select.args.get("joins") or []):
+            snapshot = select.copy()
+            made = lateral_aggregates(select, not_null)
+            if made:
+                rewrites.append((select, snapshot, made))
     if not any(
         isinstance(s.parent, (exp.Subquery, exp.Lateral))
         and (_global_aggregate(s) or _limit_one(s) or (s.args.get("group") and any(isinstance(e.unalias(), exp.Boolean) for e in s.expressions)))
         for s in tree.find_all(exp.Select)
     ):
         return tree
-    not_null = {k.lower(): {c.lower() for c in v} for k, v in (not_null or {}).items()}
     folded = False
     for select in list(tree.find_all(exp.Select)):
         if not _inside(select, tree):
@@ -1084,7 +1142,15 @@ def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: 
             folded = _fold_select(select, schema, not_null, keys) or folded
         except (_Unsupported, z3.Z3Exception, RecursionError):
             continue
-    return _drop_unread_joins(tree, schema, keys) if folded else tree
+    if folded:
+        tree = _drop_unread_joins(tree, schema, keys)
+    for select, snapshot, made in rewrites:
+        if any(_inside(lateral, tree) for lateral in made):
+            for key in list(select.args):
+                select.set(key, None)
+            for key, value in snapshot.args.items():
+                select.set(key, value)
+    return tree
 
 
 def _prune_one_row_outputs(tree: exp.Expression) -> bool:
@@ -1106,6 +1172,8 @@ def _prune_one_row_outputs(tree: exp.Expression) -> bool:
             for item in list(body.expressions):
                 value = item.unalias()
                 name = item.alias_or_name.lower()
+                if isinstance(value, exp.Cast) and isinstance(value.this, exp.Column):
+                    value = value.this
                 if not isinstance(value, exp.Column) or len(body.expressions) == 1:
                     continue
                 if body.args.get("distinct") and value.table.lower() not in one_row:
@@ -1278,6 +1346,12 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
         return None
     rows_group = indicators[0] if indicators else probes[0] if probes else aggregates[0]
     roles = {id(c): refs[id(c)][1] for c in columns}
+    for role in list(roles.values()):
+        if isinstance(role, tuple):
+            body = role[1].find_ancestor(exp.Select)
+            for agg in role[1].find_all(exp.AggFunc):
+                if agg.find_ancestor(exp.Select) is body:
+                    roles[id(agg)] = _aggregate_role(agg)[0]
     y_select = rows_group.select
     y_never_null = _never_null(rows_group.y, y_select, schema, not_null)
     base = _filtered_base(rows_group.y, y_select, schema) if isinstance(rows_group.y, exp.Column) else None
