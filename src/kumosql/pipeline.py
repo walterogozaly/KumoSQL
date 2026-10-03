@@ -404,7 +404,8 @@ class Pipeline:
         def compute():
             parsed = self._analyse().parsed
             with stage("duplicates", models=len(parsed)):
-                return _find_duplicates(parsed, min_nodes=min_nodes)
+                masked = {key: model.masked_expressions for key, model in self.models.items() if model.masked_expressions}
+                return _find_duplicates(parsed, min_nodes=min_nodes, masked=masked)
 
         return self._remembered(("duplicates", min_nodes), compute)
 
