@@ -58,30 +58,50 @@ def _sources(select: exp.Select) -> list[exp.Expression] | None:
     return nodes
 
 
-def _rename(node: exp.Expression, stack: list[dict[str, str]], counter: list[int]) -> None:
+def _declared(select: exp.Select) -> list[str]:
+    """The lower-case names ``select``'s FROM and JOIN items declare, whatever kind of source they are."""
+
+    from_ = select.args.get("from_") or select.args.get("from")
+    nodes = ([from_.this] if from_ is not None else []) + [join.this for join in select.args.get("joins") or ()]
+    names = []
+    for node in nodes:
+        if node.alias_or_name:
+            names.append(node.alias_or_name.lower())
+        alias = node.args.get("alias")
+        if isinstance(node, exp.Unnest) and alias is not None and alias.args.get("columns"):
+            names.append(alias.args["columns"][0].name.lower())  # BigQuery: the element is a range variable
+    return names
+
+
+def _rename(node: exp.Expression, stack: list[dict[str, str | None]], counter: list[int]) -> None:
     """Rename aliases in ``node`` and below, resolving each qualifier to its nearest declaring SELECT."""
 
-    mapping: dict[str, str] = {}
+    renamed: dict[str, str] = {}
     sources = _sources(node) if isinstance(node, exp.Select) else None
     if sources is not None:
         names = [source.alias_or_name for source in sources]
         # Two sources under one name cannot be told apart; leave this SELECT as written.
-        if len(set(names)) == len(names):
+        if len({name.lower() for name in names}) == len(names):
             for source, name in zip(sources, names):
                 counter[0] += 1
-                mapping[name] = f"_a{counter[0]}"
+                renamed[name.lower()] = f"_a{counter[0]}"
+    # Every name this SELECT declares hides an outer alias of that name, renamed here or not (an
+    # UNNEST, a table function), so a qualifier that names it never resolves further out.
+    mapping: dict[str, str | None] = dict.fromkeys(_declared(node)) if isinstance(node, exp.Select) else {}
+    mapping.update(renamed)
     inner = [*stack, mapping] if mapping else stack
     for column in _own_columns(node):
         qualifier = column.args.get("table")
         if qualifier is None:
             continue
         for scope in reversed(inner):
-            if qualifier.name in scope:
-                column.set("table", exp.to_identifier(scope[qualifier.name]))
+            if qualifier.name.lower() in scope:
+                if scope[qualifier.name.lower()] is not None:
+                    column.set("table", exp.to_identifier(scope[qualifier.name.lower()]))
                 break
     for source in sources or ():
-        if source.alias_or_name in mapping:
-            source.set("alias", exp.TableAlias(this=exp.to_identifier(mapping[source.alias_or_name])))
+        if source.alias_or_name.lower() in renamed:
+            source.set("alias", exp.TableAlias(this=exp.to_identifier(renamed[source.alias_or_name.lower()])))
     for child in _child_queries(node):
         _rename(child, inner, counter)
 
