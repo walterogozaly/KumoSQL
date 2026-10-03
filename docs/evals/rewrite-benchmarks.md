@@ -175,7 +175,7 @@ python tools/clickbench_bench.py --clickbench ClickBench --db clickbench --gener
 
 Does a rewrite KumoSQL recommends keep the query's meaning, and does it save what the cost estimate says? `tools/cost_validity_bench.py` collects the recommendations of two sources for every statement of a workload and judges them in a fixed order:
 
-1. **Correctness.** The evidence label KumoSQL attaches (proven, or not), then execution: original and rewrite run on PostgreSQL 16 and must return the same bag of rows. Under a top-level `ORDER BY` the sequence of sort-key values must also match; rows that tie on every key may come back in any order.
+1. **Correctness.** Two separate facts, never merged. The proof label KumoSQL attaches (proven, or unproven), and the dataset agreement: original and rewrite run on PostgreSQL 16 and are compared by the rules in [How the rows are compared](#how-the-rows-are-compared).
 2. **Estimated benefit.** PostgreSQL's `EXPLAIN` total cost before and after, the local stand-in for a BigQuery dry run. "Cheaper" means at least 2% lower.
 3. **Observed benefit.** Median of five alternating runs after a warm-up. "Faster" means at least 10%.
 
@@ -193,9 +193,39 @@ python tools/cost_validity_bench.py --workload ... --rejudge results.json --out 
 | Rule pipeline | 44 | 40 | 37 | 0 | 7 | 0 | 0 | 0 | 1.006x |
 | Optimizer | 26 | 26 | 26 | 0 | 0 | 1 | 1 | 1 | 0.997x |
 
-* **0 wrong.** Every judged rewrite returned the same rows. The 4 unproven rule rewrites (single-use CTE inlining around window functions in TPC-DS q47, q51 and q57, plus q21) are labelled unproven, so they are never presented as safe; the three that could run returned the same rows.
+* **What "0 wrong" means.** 63 comparator agreements and 7 recommendations not judged; no wrong result observed under the comparison policy recorded for that run (rows as a bag, sort keys compared only when they are output columns, floats rounded to 9 places, output schema not compared). It is not a proof and not a rate: the 63 are one workload (PostgreSQL scale factor 1, seed 7), there is no held-out split, and the comparison was made on one dataset. 66 of the 70 carry a proof label and 4 are unproven (single-use CTE inlining around window functions in TPC-DS q47, q51 and q57, plus q21); they are labelled unproven, so they are never presented as safe. Of those four, three ran and returned the same rows, and q21 is one of the 7 not judged.
 * **Not judged.** For 7 TPC-DS queries (q2, q5, q21, q40, q77, q78, q80) the round-tripped original does not run on PostgreSQL (`ROUND(double precision, int)`, interval arithmetic written as `- 30 AS days`); these are transpiler limits, not rule results.
 * **Estimate versus observation.** The rule recommendations (27 parenthesis removals, 24 single-use CTE inlinings) never change PostgreSQL's estimate and never moved runtime by 10%; they make SQL easier to read, not cheaper. The optimizer's one estimated saving (DSB `multi_block_queries-query069`, a dropped redundant predicate, estimate -11%) ran 1.30x faster. Of the 25 optimizer rewrites with an unchanged estimate, none ran faster and one ran 0.90x (TPC-DS q58, 1.06x in the first run), which is timing noise. So on this workload the estimate predicted the one real saving and no false ones.
 * In the first run, the optimizer's TPC-DS q44 rewrite (dropping `rnk < 11` on one side of a join on `rnk`, implied by the other side) compared as different rows because tied rows came back in another order; re-run, both returned the same 10 rows in the same order. The tie-aware comparison above came from this case.
 
 BigQuery dry-run bytes for the same recommendations need real BigQuery access and have not been measured yet.
+
+### What the score covers
+
+The 70 recommendations are 44 from the rule pipeline and 26 from the optimizer, on 103 TPC-DS and 53 DSB statements. They do not include build recommendations, shared-model proposals, cost attribution or change reports, so the score says nothing about those (cost attribution and change reports are described in [Cost, change reports and the BigQuery dry run](../cost-and-change-reports.md)). There is no held-out split.
+
+A proof label holds under its model, and the tool now copies these assumptions into every recommendation it saves (`assumptions`):
+
+* declared primary keys and NOT NULL columns hold in the data (PostgreSQL enforces them here; BigQuery does not);
+* floating-point values are never NaN;
+* runtime errors (division by zero, overflow, failed casts) are not modeled;
+* column types are not compared by the proof;
+* rows that tie under `ORDER BY` and `LIMIT` may be chosen differently.
+
+The optimizer also accepts a proven rewrite whose `EXPLAIN` estimate is at most 2% above the original, so an accepted recommendation is not necessarily cheaper; the "estimated cheaper" column above is the stricter reading (at least 2% lower).
+
+### How the rows are compared
+
+`judge` runs the original and the rewrite and records `outcome`, which is the dataset agreement and nothing else (the proof label is the separate `label` field, and the summary counts `proven` and `unproven` apart from `same_rows`). Its `agreement_basis` field says what the comparison covered:
+
+* **Rows.** The same bag of rows, with multiplicity. Floats are compared rounded to 9 decimal places (`FLOAT_PLACES` in `tools/rewrite_bench.py`). The tolerance is absolute: two floats less than about 5e-10 apart can compare equal, and above about 4e6, where neighbouring doubles are more than 1e-9 apart, the comparison is in effect exact. Decimals and dates are compared as text, so exactly.
+* **Order.** Under a top-level `ORDER BY` the sequence of sort keys must match, and rows tied on every key may come back in any order. When a sort key is not an output column, both statements are re-run with the missing keys appended to the select list (as `_kumo_sort_N`); the rows together with their keys must form the same bag and the key sequence must be the same. A rewrite may add tie-breaking keys after the original's. When a key cannot be appended (`SELECT DISTINCT`, a set operation) or the rewrite sorts by fewer keys, the order is not checked and `agreement_basis.order` says `bag only`.
+* **Schema.** The output column names and PostgreSQL type OIDs must match; otherwise the outcome is `different_schema`. A rewrite that cannot run is `rewrite_error`; a rewrite counts as wrong when its outcome is `different_rows`, `different_schema` or `rewrite_error`.
+
+Limits that remain. Agreement on one dataset can never show equivalence: `WHERE k = 10` and `WHERE k < 15` agree on any table with no row where k is 11 to 14. The float tolerance hides differences below about 5e-10. The bag-only fallback for `DISTINCT` and set operations does not see a reordering. These are why proof labels and agreement are reported side by side.
+
+The first comparator, which produced the saved 70, compared an ordered result as a bag when its sort key was not projected, rounded floats the same way and did not compare column names. Calling the real `judge` on deliberately wrong pairs, it accepted `ORDER BY k ASC` against `DESC` with a unique hidden `k`, `CAST(1.0000000001 AS DOUBLE)` against `...0002`, `SELECT 1 AS old_name` against `AS new_name`, and `k = 10` against `k < 15`. None of these was seen in the 70. The first and third are now rejected, with regression tests in `tests/test_cost_validity_bench.py`; the float pair and the `k` pair are documented limits and have tests that pin them.
+
+### Rerun status
+
+The comparison above is not yet confirmed on the workload. The saved score (70 recommendations, 63 agreeing, 7 not judged, 0 observed wrong) and its date are from the first comparator. The environment that made the stricter comparator had neither PostgreSQL with the TPC-DS and DSB data nor the generated queries, so the eval was not rerun. The rerun is `python tools/cost_validity_bench.py --workload ... --rejudge results.json --out results2.json` on the saved recommendations; if any pair then compares as `different_rows` or `different_schema`, the results file and this page must report it and the score must change.
