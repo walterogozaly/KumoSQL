@@ -275,3 +275,16 @@ def test_a_correlated_column_whose_table_name_is_reused_inside_is_declined():
     assert not prove_equivalent_algebraic(left, right, schema=CALCITE, dialect="mysql", compare_names=False).proven
     fixed = "SELECT name FROM dept WHERE EXISTS (SELECT 1 FROM (SELECT 2 * deptno AS f FROM dept) AS t WHERE deptno = t.f)"
     assert prove_equivalent_algebraic(fixed, right, schema=CALCITE, dialect="mysql", compare_names=False).proven
+
+
+def test_an_order_key_that_is_not_an_output_never_stands_in_for_an_output_column():
+    # LLM-SQL-Solver negatives 124/125: the hidden order key became a second core column and matched Population
+    schema = {"city": ["name", "population"]}
+    two = "SELECT name, population FROM city ORDER BY population DESC LIMIT 1"
+    one = "SELECT name FROM city ORDER BY population DESC LIMIT 1"
+    for dialect in ("bigquery", "sqlite"):
+        for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+            assert not prove(two, one, schema=schema, dialect=dialect, compare_names=False).proven
+            assert not prove(one, two, schema=schema, dialect=dialect, compare_names=False).proven
+        same = "SELECT c.name FROM city AS c ORDER BY c.population DESC LIMIT 1"
+        assert prove_equivalent_algebraic(one, same, schema=schema, dialect=dialect, compare_names=False).proven
