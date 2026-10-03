@@ -7,10 +7,10 @@ from kumosql import console, ui
 
 def test_log_goes_to_file_and_rotates(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
-    console.log("hello")
+    console.log("hello", summarized=True)
     assert "hello" in (tmp_path / "ui.log").read_text(encoding="utf-8")
     monkeypatch.setattr(console, "MAX_LOG_BYTES", 10)
-    console.log("second")
+    console.log("second", summarized=True)
     assert (tmp_path / "ui.log.1").exists()
 
 
@@ -46,7 +46,7 @@ def test_task_logs_duration_and_failures(tmp_path, monkeypatch):
         pass
     text = (tmp_path / "ui.log").read_text(encoding="utf-8")
     assert "thing: started" in text and "thing: finished in" in text
-    assert "broken: failed (ValueError)" in text and "nope" in text
+    assert "broken: failed (ValueError)" in text and "nope" not in text
 
 
 def test_error_is_one_line_then_traceback(tmp_path, monkeypatch):
@@ -56,7 +56,8 @@ def test_error_is_one_line_then_traceback(tmp_path, monkeypatch):
     except RuntimeError as exc:
         console.error("it broke", exc)
     lines = (tmp_path / "ui.log").read_text(encoding="utf-8").splitlines()
-    assert "ERROR [KS-INTERNAL] it broke" in lines[0] and any("RuntimeError: boom" in line for line in lines[1:])
+    assert "ERROR [KS-INTERNAL] it broke" in lines[0] and any("RuntimeError: [KS-INTERNAL]" in line for line in lines[1:])
+    assert "boom" not in "\n".join(lines)
 
 
 def test_banner_names_the_environment(tmp_path, monkeypatch):
