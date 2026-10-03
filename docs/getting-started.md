@@ -1,5 +1,7 @@
 # Getting started
 
+[Plain-language version](../docs_simple/getting-started.md)
+
 KumoSQL helps you change BigQuery SQL and Dataform models with evidence. It gives you Python functions, command-line tools and a local browser UI. It requires Python 3.11 or newer, and it works on Windows, macOS and Linux.
 
 This guide takes you from install to a first useful result in about ten minutes. Nothing here needs a BigQuery account; the optional BigQuery features are at the end.

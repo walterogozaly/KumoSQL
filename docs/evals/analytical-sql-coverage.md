@@ -1,5 +1,7 @@
 # Analytical SQL coverage: TPC-DS, DSB and SQLStorm
 
+[Plain-language version](../../docs_simple/evals/analytical-sql-coverage.md)
+
 `tools/analytical_coverage.py` runs public analytical benchmark queries through every KumoSQL stage. It extends the [syntax coverage suite](bigquery-syntax-coverage.md), which has one small case per construct, to large real-world corpora of nested queries, aggregates, correlated subqueries and windows. For the rewrites measured on the benchmarks' real data (TPC-H, TPC-DS and JOB on IMDB), see [transformation-bench.md](transformation-bench.md).
 
 ## The score

@@ -18,7 +18,12 @@ label dispute. Cases with an uninterpreted predicate (a hidden ``__`` column)
 are never refuted, because a random hidden column need not be a function of
 the visible row.
 
-    python tools/cosette_bench.py [cosette|spes]
+``cosette-adapted`` holds pairs written for Cosette files that could not be
+converted as they stand (a table with no declared columns), each with a
+not-equivalent sibling; they are scored apart from the original pairs. One
+pair in five, by a SHA-1 hash of its name, is held out.
+
+    python tools/cosette_bench.py [cosette|spes|cosette-adapted]
 """
 
 from __future__ import annotations
@@ -44,8 +49,9 @@ def _tables(ddl: str) -> dict:
 
 
 def load(suite: str) -> list[dict]:
-    if suite == "cosette":
-        return [json.loads(line) for line in (ROOT / "cosette" / "cosette_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    if suite in ("cosette", "cosette-adapted"):
+        file = "cosette_cases.jsonl" if suite == "cosette" else "cosette_adapted.jsonl"
+        return [json.loads(line) for line in (ROOT / "cosette" / file).read_text(encoding="utf-8").splitlines() if line.strip()]
     ddl = (ROOT / "sqlsolver" / "calcite.schema.sql").read_text(encoding="utf-8")
     rows = [json.loads(line) for line in (ROOT / "spes" / "spes_only_pairs.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     for row in rows:
@@ -159,6 +165,14 @@ def search(left: str, right: str, tables: dict, constants: bool):
     return found or None
 
 
+def held_out(name: str) -> bool:
+    """One pair in five, chosen by a SHA-1 hash of its name, is held out (used for the adapted pairs)."""
+
+    import hashlib
+
+    return int(hashlib.sha1(name.encode()).hexdigest(), 16) % 5 == 0
+
+
 def run(suite: str, prove=sb.prove_result, trials: int = 60) -> dict:
     out = {"total": 0, "proven": [], "refuted": [], "unknown": [], "wrong": [], "disputed": [], "correct": 0, "seconds": 0.0}
     constants = suite == "spes"  # SPES pairs are Calcite's: a literal in GROUP BY is a constant
@@ -202,6 +216,10 @@ def run(suite: str, prove=sb.prove_result, trials: int = 60) -> dict:
             out["unknown"].append(name)
     out["scored"] = out["total"] - len(out["disputed"])  # a pair labelled equivalent with a replayed counterexample is not one to prove
     out["seconds"] = time.time() - start
+    if suite == "cosette-adapted":
+        held = [case["name"] for case in load(suite) if held_out(case["name"])]
+        out["held_out"] = held
+        out["held_out_correct"] = sum(1 for name in held if name in out["proven"] or (name in out["refuted"] and name not in out["disputed"]))
     return out
 
 
@@ -217,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
         for key in ("wrong", "disputed", "refuted"):
             if r[key]:
                 print(f"  {key}: {', '.join(r[key])}")
+        if "held_out" in r:
+            print(f"  held out: {r['held_out_correct']}/{len(r['held_out'])} correct ({', '.join(r['held_out'])})")
         bad += len(r["wrong"])
     return 1 if bad else 0
 
