@@ -323,6 +323,20 @@ S006_WRONG_PROOFS = [
         {"a": [(1,)], "b": [(7,)], "u": [(1,)]},
         id="s006-005-inner-indicator-before-a-full-join",
     ),
+    pytest.param(
+        "SELECT q.v FROM (SELECT y AS v FROM u ORDER BY v LIMIT 1) AS q, t",
+        "SELECT q.w FROM (SELECT y AS w FROM u ORDER BY v LIMIT 1) AS q, t",
+        {"t": ["x"], "u": ["y", "v"]},
+        {"t": [(5,)], "u": [(1, 9), (9, 1)]},
+        id="order-by-output-alias-in-a-derived-limit",
+    ),
+    pytest.param(
+        "SELECT x FROM t WHERE EXISTS (SELECT 1 FROM (SELECT y AS v FROM u ORDER BY v LIMIT 1) AS q WHERE q.v = t.x)",
+        "SELECT x FROM t WHERE EXISTS (SELECT 1 FROM (SELECT y AS w FROM u ORDER BY v LIMIT 1) AS q WHERE q.w = t.x)",
+        {"t": ["x"], "u": ["y", "v"]},
+        {"t": [(1,)], "u": [(1, 9), (9, 1)]},
+        id="order-by-output-alias-in-a-derived-limit-under-exists",
+    ),
 ]
 
 
@@ -350,7 +364,7 @@ def _bigquery_bags_differ(left: str, right: str, schema: dict[str, list[str]], r
 @pytest.mark.parametrize("left,right,schema,rows", S006_WRONG_PROOFS)
 def test_s006_pairs_that_differ_are_never_proven(left, right, schema, rows):
     assert _bigquery_bags_differ(left, right, schema, rows)
-    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery", compare_names=False).proven
 
 
 S006_STILL_PROVEN = [
@@ -382,13 +396,25 @@ S006_STILL_PROVEN = [
         "SELECT b.z, NOT EXISTS(SELECT 1 FROM u) AS missing FROM b RIGHT JOIN a ON FALSE",
         id="indicator-after-an-earlier-right-join",
     ),
+    pytest.param(
+        "SELECT q.v FROM (SELECT y AS v FROM u ORDER BY v LIMIT 1) AS q, t",
+        "SELECT q.w FROM (SELECT y AS w FROM u ORDER BY y LIMIT 1) AS q, t",
+        id="order-by-output-alias-is-its-expression",
+    ),
+    pytest.param(
+        "SELECT q.v FROM (SELECT y AS v FROM u ORDER BY y LIMIT 1) AS q, t",
+        "SELECT q.w FROM (SELECT y AS w FROM u ORDER BY y LIMIT 1) AS q, t",
+        id="renamed-output-of-a-derived-limit",
+    ),
 ]
 
 
 @pytest.mark.parametrize("left,right", S006_STILL_PROVEN)
 def test_s006_near_misses_stay_proven(left, right):
     schema = {"t": ["x"], "p1.d.t": ["x"], "p2.d.t": ["x"], "a": ["x", "y"], "b": ["z"], "u": ["k"]}
-    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+    if "ORDER BY" in left:
+        schema = {"t": ["x"], "u": ["y", "v"]}
+    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery", compare_names=False).proven
 
 
 def test_s006_dataset_names_are_case_sensitive():
