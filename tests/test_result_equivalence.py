@@ -14,6 +14,7 @@ pytest.importorskip("duckdb")
 from kumosql import lift_subqueries, prove_equivalent
 from kumosql.result_equivalence import (
     ExecutionError,
+    _SharedInstance,
     ResultEquivalenceStatus,
     assert_result_equivalent,
     check_result_equivalence,
@@ -253,6 +254,40 @@ INSERT INTO `p.d.customers` (id) SELECT 42;"""
     # A second run on the same dataset still sees the original source rows.
     fresh, _ = execute_on_dataset("SELECT COUNT(*) AS n FROM `p.d.customers`", SCHEMA, dataset)
     assert fresh.rows == ((len(dataset.tables["p.d.customers"].rows),),)
+
+
+def test_runs_on_a_shared_instance_answer_word_for_word_as_on_fresh_connections():
+    """A check runs its queries on one DuckDB instance; each run must start from an empty database of its own
+    (no table, view or temporary table a run made before) and answer, or fail, exactly as on a fresh connection.
+    (Rows are compared in sorted order: DuckDB's threads leave the order of a GROUP BY open even on a fresh one.)"""
+
+    scripts = [
+        "SELECT c.region, COUNT(*) AS n FROM `p.d.customers` AS c JOIN `p.d.orders` AS o ON o.customer_id = c.id "
+        "GROUP BY c.region",
+        "CREATE OR REPLACE TABLE `p.d.customers` AS SELECT id FROM `p.d.customers` WHERE FALSE;\n"
+        "INSERT INTO `p.d.customers` (id) SELECT 42;",
+        "CREATE TABLE `p.d.summary` AS SELECT customer_id, SUM(amount) AS total FROM `p.d.orders` GROUP BY 1;\n"
+        "SELECT * FROM `p.d.summary`",
+        "CREATE TEMP TABLE big AS SELECT * FROM `p.d.orders` WHERE amount > 0;\nSELECT COUNT(*) AS n FROM big",
+        "CREATE VIEW `p.d.v` AS SELECT id FROM `p.d.customers`;\nSELECT COUNT(*) AS n FROM `p.d.v`",
+        "UPDATE `p.d.orders` SET amount = 0 WHERE amount > 10;\nSELECT SUM(amount) AS s FROM `p.d.orders`",
+        "SELECT no_such_column FROM `p.d.customers`",
+        "SELECT CAST(name AS INT64) AS n FROM `p.d.customers`",
+    ]
+
+    def outcome(script, dataset, shared):
+        try:
+            output, statements = execute_on_dataset(script, SCHEMA, dataset, run_tag="t", shared=shared)
+        except ExecutionError as error:
+            return str(error)
+        return output.columns, sorted(output.rows, key=repr), statements
+
+    datasets = [generate_synthetic_dataset(SCHEMA, seed=seed) for seed in (0, 3, 5)]
+    with _SharedInstance() as shared:
+        for _ in range(2):  # a table left behind by the first round would make CREATE TABLE fail in the second
+            for dataset in datasets:
+                for script in scripts:
+                    assert outcome(script, dataset, shared) == outcome(script, dataset, None), script
 
 
 def test_cte_names_shadow_unqualified_schema_tables():
