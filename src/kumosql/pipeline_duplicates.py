@@ -22,7 +22,25 @@ def _select_location(select: exp.Expression) -> str:
 
 
 def _plain_sql(node: exp.Expression) -> str:
-    return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
+    """Normalized text: identifiers lower-cased, except the parts of a qualified table name.
+
+    BigQuery column names and aliases have no case, but ``p.d.Orders`` and ``p.d.orders`` are
+    different tables. (A one-part name is usually a CTE, whose name has no case either.)
+    """
+
+    if not any(table.args.get("db") or table.args.get("catalog") for table in node.find_all(exp.Table)):
+        return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
+    copy = node.copy()
+    keep = {
+        id(part)
+        for table in copy.find_all(exp.Table)
+        if table.args.get("db") or table.args.get("catalog")
+        for part in table.parts
+    }
+    for identifier in copy.find_all(exp.Identifier):
+        if id(identifier) not in keep and not identifier.quoted:
+            identifier.set("this", identifier.this.lower())
+    return copy.sql(dialect="bigquery", normalize_functions="upper", comments=False)
 
 
 def _remembered(select: exp.Expression, key: str, compute):

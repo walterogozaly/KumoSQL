@@ -194,3 +194,26 @@ def test_fetch_table_schemas_feeds_pipeline_source_schema():
 
     assert schemas == {"p.raw.orders": {"id": "INT64", "total": "FLOAT64"}}
     assert "Not found" in errors["p.raw.missing"]
+
+
+def test_a_planned_response_without_a_schema_is_not_a_schema_match():
+    no_schema = (200, {"statistics": {"query": {}}})
+    fake = FakeBigQuery({"SELECT 1 AS x": no_schema, "SELECT 'changed' AS y": no_schema})
+
+    result = dry_run("SELECT 1 AS x", "p", token="t", transport=fake)
+    assert result.ok and not result.schema_observed
+
+    check = check_rewrite("SELECT 1 AS x", "SELECT 'changed' AS y", "p", token="t", transport=fake)
+    assert check.planned_same_schema is None
+    assert check.outcome == "not_run"
+    assert "no output schema" in check.reason
+
+    schemas, errors = fetch_table_schemas(["SELECT 1 AS x"], "p", token="t", transport=FakeBigQuery(
+        {"SELECT * FROM `SELECT 1 AS x`": no_schema}
+    ))
+    assert schemas == {} and errors == {"SELECT 1 AS x": "the dry run returned no schema"}
+
+
+def test_an_observed_empty_field_list_is_still_observed():
+    fake = FakeBigQuery({"SELECT 1": ok([])})
+    assert dry_run("SELECT 1", "p", token="t", transport=fake).schema_observed

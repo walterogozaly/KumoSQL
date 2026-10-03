@@ -268,7 +268,19 @@ class Pipeline:
         return {key: frozenset(tables) for key, tables in reads.items()}
 
     def topological_order(self) -> list[str]:
+        """Models in dependency order, each after the models it reads.
+
+        Models on a dependency cycle cannot be ordered: they come last, by name, each with a
+        ``cycle`` diagnostic, and :meth:`cyclic_models` lists them. Only when that list is empty
+        is the whole result a topological order.
+        """
+
         return self._analyse().order
+
+    def cyclic_models(self) -> list[str]:
+        """Models on a dependency cycle, which :meth:`topological_order` could not place."""
+
+        return sorted({d.model for d in self._analyse().diagnostics if d.code == "cycle"})
 
     # ---------------------------------------------------------------- columns
 
@@ -351,7 +363,11 @@ class Pipeline:
         return _closure(column, self._analyse().lineage)
 
     def downstream_columns(self, column: ColumnRef) -> frozenset[ColumnRef]:
-        """Every model column, across the pipeline, computed from ``column``."""
+        """Every model column, across the pipeline, whose value is computed from ``column``.
+
+        This is value lineage: a model that only filters, joins or groups on ``column`` has no
+        column here although its rows depend on it. :meth:`assess_change` follows those too.
+        """
 
         return _closure(column, self._analyse().reverse_lineage)
 
@@ -709,6 +725,8 @@ class Pipeline:
             "scope": scope.name,
             "models": len(keep),
             "order": [key for key in report["order"] if key in keep],
+            "cyclic_models": [key for key in report["cyclic_models"] if key in keep],
+            "order_complete": not any(key in keep for key in report["cyclic_models"]),
             "node_identities": {
                 key: value for key, value in report["node_identities"].items() if key in keep
             },
@@ -781,6 +799,7 @@ class Pipeline:
             return value
 
         order = section("order", [], self.topological_order)
+        cyclic = section("cyclic_models", [], self.cyclic_models)
         dead = section("dead_columns", {}, lambda: {k: list(v) for k, v in self.dead_columns().items()})
         lineage_rows = section("column_lineage", [], self.lineage_report)
         duplicates = section(
@@ -820,6 +839,9 @@ class Pipeline:
                 for key, model in sorted(self.models.items())
             },
             "order": order,
+            # False when models on a cycle were appended unordered at the end of ``order``.
+            "order_complete": not cyclic,
+            "cyclic_models": cyclic,
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
             "dead_columns": dead,
             "column_lineage": lineage_rows,

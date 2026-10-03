@@ -246,6 +246,26 @@ def test_cycles_are_reported_not_fatal():
 
     assert set(pipeline.topological_order()) == {"d.x", "d.y"}
     assert any(d.code == "cycle" for d in pipeline.all_diagnostics())
+    # The fallback order is not a topological order, and the report says so.
+    assert pipeline.cyclic_models() == ["d.x", "d.y"]
+    report = pipeline.report()
+    assert report["order_complete"] is False and report["cyclic_models"] == ["d.x", "d.y"]
+    assert load_compiled_graph(compiled_graph(), source_schema=RAW_ORDERS).report()["order_complete"] is True
+
+
+def test_duplicates_keep_the_case_of_qualified_table_names():
+    def graph(one, two):
+        return load_compiled_graph(
+            {"tables": [
+                {"target": {"schema": "d", "name": "one"}, "query": one},
+                {"target": {"schema": "d", "name": "two"}, "query": two},
+            ]}
+        )
+
+    # BigQuery table names are case-sensitive; column names are not.
+    assert graph("SELECT id FROM p.d.Orders", "SELECT id FROM p.d.orders").duplicate_selects(min_nodes=1) == []
+    [group] = graph("SELECT Id FROM p.d.Orders", "SELECT id FROM p.d.Orders").duplicate_selects(min_nodes=1)
+    assert group.sql == "SELECT id FROM p.d.Orders"
 
 
 def test_plain_sql_folder_resolves_bare_table_names(tmp_path):

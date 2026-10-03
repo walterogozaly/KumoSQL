@@ -610,7 +610,7 @@ def dry_run_main(argv: list[str] | None = None) -> int:
         check = check_rewrite(
             sql, rewritten_sql, args.project, location=args.location
         )
-        print("planner_check=passed" if check.planned_same_schema else "planner_check=failed")
+        print(f"planner_check={check.outcome}")
         print(check.reason)
         print(f"original_planned={check.original_planned}")
         print(f"rewritten_planned={check.rewritten_planned}")
@@ -632,6 +632,8 @@ def dry_run_main(argv: list[str] | None = None) -> int:
     print("query_plan=passed")
     print("scope=planning only; query results were not compared")
     print(f"estimated_bytes={result.total_bytes_processed} (estimate)")
+    if not result.schema_observed:
+        print("schema=unknown: the dry run returned no output schema")
     for field in result.schema:
         print(field.describe())
     return 0
@@ -700,6 +702,9 @@ def compare_outputs_main(argv: list[str] | None = None) -> int:
             diffs = compare_snapshots(first, json.loads(args.after.read_text(encoding="utf-8")))
         else:
             diffs = summarize_comparison(first)
+        if not diffs:
+            print("error: the results hold no comparison rows, so nothing was compared", file=sys.stderr)
+            return 2
         for diff in diffs:
             print(f"{diff.model}: {diff.status}" + (f" ({diff.note})" if diff.note else ""))
         return 0 if all(diff.matches for diff in diffs) else 1
