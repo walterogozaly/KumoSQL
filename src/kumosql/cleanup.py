@@ -10,12 +10,16 @@ normalizes the same constructs independently (see ``equivalence.py``):
   drop ``p`` and any error it raises. UPDATE, DELETE, and MERGE statements are
   left unchanged because DML rewrites are not currently proven.
 - ``remove_redundant_parentheses``: parentheses that cannot change how an
-  expression parses.
+  expression parses. In Dataform SQLX, parentheses around a ``${...}``
+  expression are kept: it is masked as one identifier, but it can expand to
+  any text (``1 + 2``, ``a OR b``), and the parentheses are what group it.
 - ``deduplicate_ctes``: root CTEs with identical, deterministic bodies.
 - ``remove_unused_ctes``: root CTEs that nothing references.
 """
 
 from __future__ import annotations
+
+import re
 
 from sqlglot import exp
 from sqlglot.dialects.bigquery import BigQuery
@@ -182,10 +186,32 @@ _COMPARISONS = (
 
 _ATOMS = (exp.Column, exp.Literal, exp.Boolean, exp.Null, exp.Paren, exp.Star)
 
+# The identifier a rule sees in place of a masked SQLX ``${...}`` expression (see ``sqlx.py``).
+_SQLX_PLACEHOLDER = re.compile(r"__sqlx_\w+__")
+
+
+def _exposes_sqlx(node: exp.Expression) -> bool:
+    """Whether a masked SQLX ``${...}`` expression sits in ``node`` with nothing of its own around it.
+
+    The mask is one identifier, but the expression can expand to any text, so
+    ``(${"1 + 2"}) * 3`` is 9 and ``${"1 + 2"} * 3`` is 7. Only parentheses, a
+    subquery, or call or CASE syntax inside ``node`` keep it grouped.
+    """
+
+    if isinstance(node, exp.Column):
+        return any(_SQLX_PLACEHOLDER.fullmatch(part.name) for part in node.parts)
+    if isinstance(node, (exp.Paren, exp.Query, exp.Subquery)):
+        return False
+    if isinstance(node, (exp.Func, exp.Case, exp.Cast)) and _call_syntax(node.sql(dialect="bigquery")):
+        return False
+    return any(_exposes_sqlx(child) for child in node.iter_expressions())
+
 
 def _self_delimited(node: exp.Expression) -> bool:
     """An expression whose rendering cannot be split by a neighbouring operator."""
 
+    if _exposes_sqlx(node):
+        return False
     if isinstance(node, _ATOMS):
         return True
     if isinstance(node, (exp.Func, exp.Case, exp.Cast)):
@@ -231,6 +257,9 @@ def _redundant(paren: exp.Paren) -> bool:
     inner = paren.this
     parent = paren.parent
     if parent is None or inner is None or isinstance(inner, (exp.Query, exp.Subquery)):
+        return False
+    # The parentheses group whatever a SQLX ``${...}`` expression expands to.
+    if _exposes_sqlx(inner):
         return False
     # BigQuery names an unaliased projection after its expression.
     if isinstance(parent, (exp.Select, exp.Union)) and paren.arg_key == "expressions":
