@@ -46,7 +46,7 @@ that parses as BigQuery and is not skipped upstream. Cases that are not BigQuery
 First run, before any adapter fix: DataHub 7/18 exact with 3 wrong, OpenLineage 70/96 exact with 7 wrong, no product change
 yet. Every one traced to the harness, not to KumoSQL: schemas keyed under two spellings made sqlglot report an ambiguous
 table (DataHub), the DataHub shard and partition naming, OpenLineage's `_0` naming, two cases that are not BigQuery, and four
-tests that treat an unused CTE as reading nothing. After those the in-scope numbers are in the README scoreboard rows.
+tests that treat an unused CTE as reading nothing. After those the in-scope numbers are in the README scoreboard rows. On 2026-10-03: OpenLineage 85/94 matched, 4 disputed, 5 unknown, 0 wrong; DataHub 17/18 matched (3 only to a struct's root column), 1 unknown, 0 wrong.
 
 The four `disputed` cases: `WITH unused AS (SELECT * FROM users) SELECT ... FROM other`. OpenLineage reports data flow, so
 `users` is not an input. KumoSQL lists every table the statement names, because dropping `users` still breaks the query.

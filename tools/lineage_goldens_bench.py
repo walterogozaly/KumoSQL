@@ -24,6 +24,7 @@ as BigQuery and reported apart; they never move the headline. Cases whose expect
 from __future__ import annotations
 
 from collections import Counter
+import datetime
 import importlib.util
 import json
 import re
@@ -314,10 +315,10 @@ def write_results(result: dict, seconds: float) -> None:
     )
     common = {
         "evidence": "executed",
-        "date": "2026-10-02",
+        "date": datetime.date.today().isoformat(),
         "held_out": (
             "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to "
-            f"shape the adapter, so they are an unseen generalisation check; first run: {held}. Their wrong/missed counts are dialect differences "
+            f"shape the adapter, so they are an unseen generalisation check; this run: {held}. Their wrong/missed counts are dialect differences "
             "and are not in the headline. The in-scope cases are not held out: each mismatch was read while building the adapter."
         ),
         "performance": f"{result['datahub']['in']['total'] + result['openlineage']['in']['total']} in-scope cases in {seconds:.1f} s",
@@ -346,6 +347,14 @@ def write_results(result: dict, seconds: float) -> None:
             "metric": description + " Each case is one SQL statement with its expected table and column lineage; KumoSQL must produce exactly it or say unknown.",
             "correctness": f"{t['wrong']} cases claim a table or edge the oracle does not have; {t['missed']} confident misses",
             "coverage": {"proven": t["exact"] + t["coarse"], "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
+            **(
+                {
+                    "coverage_of": f"The {t['total'] - t['disputed']} of the {t['total']} cases with an undisputed golden; the other "
+                    f"{t['disputed']} are disputed (the oracle defines the answer differently) and have no outcome column."
+                }
+                if t["disputed"]
+                else {}
+            ),
             "docs": "docs/evals/lineage-goldens-bench.md",
             "command": "python tools/lineage_goldens_bench.py --write-results",
             "caveats": (
