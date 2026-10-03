@@ -275,3 +275,112 @@ def test_a_correlated_column_whose_table_name_is_reused_inside_is_declined():
     assert not prove_equivalent_algebraic(left, right, schema=CALCITE, dialect="mysql", compare_names=False).proven
     fixed = "SELECT name FROM dept WHERE EXISTS (SELECT 1 FROM (SELECT 2 * deptno AS f FROM dept) AS t WHERE deptno = t.f)"
     assert prove_equivalent_algebraic(fixed, right, schema=CALCITE, dialect="mysql", compare_names=False).proven
+
+
+# Wrong proofs from the S006 audit of set operations and outer joins (BigQuery SQL).
+# (left, right, schema, rows on which they differ); table names with dots are loaded with "_" for DuckDB.
+S006_WRONG_PROOFS = [
+    pytest.param(
+        "SELECT x FROM t UNION DISTINCT SELECT x FROM t LIMIT 0",
+        "SELECT DISTINCT x FROM t",
+        {"t": ["x"]},
+        {"t": [(1,)]},
+        id="s006-001-union-limit-is-kept",
+    ),
+    pytest.param(
+        "SELECT x FROM t INTERSECT DISTINCT SELECT y FROM u LIMIT 0",
+        "SELECT DISTINCT kumosql_s0.x AS x FROM (SELECT x FROM t) AS kumosql_s0"
+        " WHERE EXISTS(SELECT 1 FROM (SELECT y FROM u) AS kumosql_r0 WHERE kumosql_s0.x IS NOT DISTINCT FROM kumosql_r0.y)",
+        {"t": ["x"], "u": ["y"]},
+        {"t": [(1,)], "u": [(1,)]},
+        id="s006-002-intersect-limit-is-kept",
+    ),
+    pytest.param(
+        "SELECT x FROM p1.d.t UNION DISTINCT SELECT x FROM p2.d.t",
+        "SELECT DISTINCT x FROM p1.d.t",
+        {"p1.d.t": ["x"], "p2.d.t": ["x"]},
+        {"p1.d.t": [(1,)], "p2.d.t": [(2,)]},
+        id="s006-003-same-table-name-in-two-projects",
+    ),
+]
+
+
+def _bigquery_bags_differ(left: str, right: str, schema: dict[str, list[str]], rows: dict[str, list[tuple]]) -> bool:
+    duckdb = pytest.importorskip("duckdb")
+    from kumosql.duckdb_load import run_unoptimized
+
+    db = duckdb.connect()
+    for name, columns in schema.items():
+        db.execute(f"CREATE TABLE {name.replace('.', '_')} ({', '.join(c + ' BIGINT' for c in columns)})")
+        for row in rows.get(name, []):
+            db.execute(f"INSERT INTO {name.replace('.', '_')} VALUES ({', '.join('?' for _ in row)})", row)
+
+    def duck(sql: str) -> str:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+        for table in tree.find_all(sqlglot.exp.Table):
+            if table.args.get("db"):
+                table.replace(sqlglot.exp.to_table("_".join(p for p in (table.catalog, table.db, table.name) if p)).as_(table.alias_or_name))
+        return tree.sql(dialect="duckdb")
+
+    found_left, found_right = run_unoptimized(db, duck(left), duck(right))
+    return Counter(found_left) != Counter(found_right)
+
+
+@pytest.mark.parametrize("left,right,schema,rows", S006_WRONG_PROOFS)
+def test_s006_pairs_that_differ_are_never_proven(left, right, schema, rows):
+    assert _bigquery_bags_differ(left, right, schema, rows)
+    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+
+
+S006_STILL_PROVEN = [
+    pytest.param("SELECT x FROM t UNION DISTINCT SELECT x FROM t", "SELECT DISTINCT x FROM t", id="union-of-one-table"),
+    pytest.param("SELECT x FROM p1.d.t UNION DISTINCT SELECT x FROM p1.d.t", "SELECT DISTINCT x FROM p1.d.t", id="union-of-one-qualified-table"),
+    pytest.param(
+        "SELECT x FROM p1.d.t WHERE x > 1 UNION DISTINCT SELECT x FROM p1.d.t WHERE x < 0",
+        "SELECT DISTINCT x FROM p1.d.t WHERE x > 1 OR x < 0",
+        id="union-of-filters-of-one-qualified-table",
+    ),
+    pytest.param("SELECT x FROM p1.d.t UNION DISTINCT SELECT x FROM p2.d.t", "SELECT x FROM p2.d.t UNION DISTINCT SELECT x FROM p1.d.t", id="union-of-two-projects-commutes"),
+]
+
+
+@pytest.mark.parametrize("left,right", S006_STILL_PROVEN)
+def test_s006_near_misses_stay_proven(left, right):
+    schema = {"t": ["x"], "p1.d.t": ["x"], "p2.d.t": ["x"]}
+    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+
+
+def test_s006_dataset_names_are_case_sensitive():
+    # BigQuery dataset and table names are case-sensitive: p.d.t and p.D.t are two tables
+    from kumosql.setop_rules import merge_same_source
+
+    schema = {"p.d.t": ["x"], "p.D.t": ["x"]}
+    left, right = "SELECT x FROM p.d.t UNION DISTINCT SELECT x FROM p.D.t", "SELECT DISTINCT x FROM p.d.t"
+    assert merge_same_source(sqlglot.parse_one(left, read="bigquery")) is None
+    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+
+
+def test_s006_set_operation_rules_do_not_pair_by_name_columns_by_position():
+    # S006-006 and S006-007: the public prover aligns BY NAME first, so these are checked on the rules themselves
+    from kumosql.set_split_rules import split_distinct_select
+    from kumosql.setop_rules import merge_same_source, set_operation_to_exists
+
+    union = sqlglot.parse_one("SELECT x AS a, y AS b FROM t UNION DISTINCT BY NAME SELECT x AS b, y AS a FROM t", read="bigquery")
+    assert merge_same_source(union) is None
+    except_ = sqlglot.parse_one("SELECT x AS a, y AS b FROM t EXCEPT DISTINCT BY NAME SELECT x AS b, y AS a FROM u", read="bigquery")
+    assert set_operation_to_exists(except_) is None
+    over = sqlglot.parse_one("SELECT DISTINCT d.a, d.b FROM (SELECT x AS a, y AS b FROM t UNION ALL BY NAME SELECT x AS b, y AS a FROM u) d", read="bigquery")
+    assert split_distinct_select(over) is None
+
+
+def test_an_order_key_that_is_not_an_output_never_stands_in_for_an_output_column():
+    # LLM-SQL-Solver negatives 124/125: the hidden order key became a second core column and matched Population
+    schema = {"city": ["name", "population"]}
+    two = "SELECT name, population FROM city ORDER BY population DESC LIMIT 1"
+    one = "SELECT name FROM city ORDER BY population DESC LIMIT 1"
+    for dialect in ("bigquery", "sqlite"):
+        for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+            assert not prove(two, one, schema=schema, dialect=dialect, compare_names=False).proven
+            assert not prove(one, two, schema=schema, dialect=dialect, compare_names=False).proven
+        same = "SELECT c.name FROM city AS c ORDER BY c.population DESC LIMIT 1"
+        assert prove_equivalent_algebraic(one, same, schema=schema, dialect=dialect, compare_names=False).proven
