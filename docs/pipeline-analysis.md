@@ -1,5 +1,7 @@
 # Whole-pipeline analysis
 
+[Plain-language version](../docs_simple/pipeline-analysis.md)
+
 Loading a whole Dataform project, lineage and impact, table profiles, finding work that is already done elsewhere, and comparing outputs before and after a refactor.
 
 ## Whole-pipeline analysis

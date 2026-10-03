@@ -71,7 +71,7 @@ def test_environment_override_counts_as_configured(tmp_path, monkeypatch):
 
 def test_http_endpoints(tmp_path):
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{httpd.server_port}"
     try:
@@ -139,7 +139,7 @@ def test_a_folder_saved_by_an_older_version_is_moved_over(tmp_path):
 
 def test_clear_endpoint_empties_the_list(tmp_path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    Thread(target=server.serve_forever, daemon=True).start()
+    Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         storage.save(str(tmp_path / "data"))

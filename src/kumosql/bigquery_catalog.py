@@ -143,7 +143,7 @@ def _refresh_in_background(key: str, fetch) -> None:
         for kind, value in zip(("project", "dataset", "table"), parts[1:4]):
             console.register(kind, value)
         try:
-            with console.task(f"BigQuery catalog refresh ({parts[0]})", warn_after=30):
+            with console.task("BigQuery catalog refresh", warn_after=30):
                 data = fetch()
                 with _lock:
                     _memory[key] = {"at": time.time(), "data": data}
@@ -268,10 +268,10 @@ def _get(path: str, params: dict[str, str] | None = None) -> dict:
     except CatalogError as exc:
         # A 403 or 404 is how a project the user cannot use is found out, so only other failures are warnings.
         denied = exc.status in (403, 404)
-        console.say(f"BigQuery request GET {path} failed: HTTP {exc.status or 'none'} after {time.monotonic() - started:.1f}s",
+        console.say(f"BigQuery request GET failed: HTTP {exc.status or 'none'} after {time.monotonic() - started:.1f}s",
                     console=not denied, level="INFO" if denied else "WARN")
         raise
-    console.say(f"BigQuery request GET {path}: ok in {time.monotonic() - started:.1f}s", console=False)
+    console.say(f"BigQuery request GET: ok in {time.monotonic() - started:.1f}s", console=False)
     return result
 
 

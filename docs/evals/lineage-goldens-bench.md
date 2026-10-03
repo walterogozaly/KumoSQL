@@ -1,5 +1,7 @@
 # Lineage goldens: DataHub and OpenLineage
 
+[Plain-language version](../../docs_simple/evals/lineage-goldens-bench.md)
+
 Two public test suites state, for a SQL statement, the table and column lineage it must produce. This scores KumoSQL
 against them (`python tools/lineage_goldens_bench.py [--details] [--write-results]`). They are scored separately and never
 added together, because only one of them is an independent oracle.

@@ -63,13 +63,32 @@ def prove_main(argv: list[str] | None = None) -> int:
         help="Also require the same ORDER BY on both queries (rows tied on its keys may still come back in either order)",
     )
     parser.add_argument("--verifier-sql", type=Path, help="Write generated SQL that compares the result bags (not their order)")
+    parser.add_argument(
+        "--conditional",
+        action="store_true",
+        help="When the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
+    )
+    parser.add_argument("--schema", type=Path, help="JSON file mapping table names to column lists (for --conditional)")
     args = parser.parse_args(argv)
 
-    result = prove_statements(
-        args.left.read_text(encoding="utf-8"),
-        args.right.read_text(encoding="utf-8"),
-        ignore_row_order=not args.respect_row_order,
-    )
+    left_sql = args.left.read_text(encoding="utf-8")
+    right_sql = args.right.read_text(encoding="utf-8")
+    result = prove_statements(left_sql, right_sql, ignore_row_order=not args.respect_row_order)
+    if args.conditional and not result.proven and not args.respect_row_order:
+        from .smt_equivalence import SmtStatus
+        from .statement_proof import prove_statements_smt
+
+        schema = json.loads(args.schema.read_text(encoding="utf-8")) if args.schema else None
+        conditional = prove_statements_smt(left_sql, right_sql, conditional=True, schema=schema)
+        if conditional.status is SmtStatus.PROVEN_CONDITIONALLY:
+            print(conditional.status.value)
+            print(conditional.reason)
+            for condition in conditional.conditions:
+                print(f"condition: {condition.text}")
+                print(f"check: {condition.check_sql}")
+            for assumption in conditional.assumptions:
+                print(f"diagnostic: assumption: {assumption}")
+            return 3
     print(result.status.value)
     print(result.reason)
     for diagnostic in result.diagnostics:

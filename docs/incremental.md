@@ -1,5 +1,7 @@
 # Incremental models: does the incremental run equal a full refresh?
 
+[Plain-language version](../docs_simple/incremental.md)
+
 A Dataform incremental table runs its full query once, then on later runs only the `when(incremental(), ...)` form, appending (or merging on `uniqueKey`). It is correct when, after every batch of source changes, the table equals what a full refresh would produce. `kumosql.incremental` checks that.
 
 ```python

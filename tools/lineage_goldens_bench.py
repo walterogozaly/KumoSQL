@@ -349,8 +349,8 @@ def write_results(result: dict, seconds: float) -> None:
             "coverage": {"proven": t["exact"] + t["coarse"], "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
             **(
                 {
-                    "coverage_of": f"The {t['total'] - t['disputed']} of the {t['total']} cases with an undisputed golden; the other "
-                    f"{t['disputed']} are disputed (the oracle defines the answer differently) and have no outcome column."
+                    "coverage_of": f"The {t['total'] - t['disputed']} of the {t['total']} cases with an undisputed golden; the other {t['disputed']} are disputed "
+                    "(the oracle defines the answer differently) and have no outcome column."
                 }
                 if t["disputed"]
                 else {}

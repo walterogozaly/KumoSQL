@@ -1,5 +1,7 @@
 # Getting started
 
+[Plain-language version](../docs_simple/getting-started.md)
+
 KumoSQL helps you change BigQuery SQL and Dataform models with evidence. It gives you Python functions, command-line tools and a local browser UI. It requires Python 3.11 or newer, and it works on Windows, macOS and Linux.
 
 This guide takes you from install to a first useful result in about ten minutes. Nothing here needs a BigQuery account; the optional BigQuery features are at the end.
@@ -174,6 +176,8 @@ python -m pytest                 # serial
 ```
 
 `tools/run_tests.py` uses pytest-xdist on every CPU (about 9 minutes instead of 35 on 4 CPUs); see the README's testing section. Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
+
+Most of the suite is thousands of small tests, so keep a test's fixed cost low. Load DuckDB rows with `kumosql.duckdb_load.insert_rows` (one statement of literals instead of one `execute` per row) and reuse one connection across a helper's trials (`CREATE OR REPLACE TABLE` gives fresh tables, and a new connection costs about 10 ms). Start a test HTTP server with `serve_forever(poll_interval=0.01)`, or its `shutdown()` waits up to half a second. `tests/conftest.py` gives each test its own state directory without making a `tmp_path` unless the test asks for one.
 
 ## Where to go next
 

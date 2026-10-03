@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
 import time
 
 import sqlglot
+from sqlglot import exp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sqlsolver_bench as sb  # noqa: E402
@@ -29,10 +31,45 @@ import sqlsolver_bench as sb  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "rbot"
 
 
-def normalise(sql: str) -> str:
-    """Calcite quotes identifiers with double quotes; the shared harness reads MySQL."""
+_COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
 
-    return sqlglot.transpile(sql.strip().rstrip(";"), read="postgres", write="mysql")[0]
+
+def normalise(sql: str) -> str:
+    """Calcite quotes identifiers with double quotes; the shared harness reads MySQL.
+
+    Calcite's ``IS [NOT] TRUE/FALSE/NULL/UNKNOWN`` binds more loosely than a comparison, so its
+    ``a > b IS NOT TRUE`` means ``(a > b) IS NOT TRUE``. sqlglot parses the test as the comparison's
+    right operand (``a > NOT b IS TRUE``), so the tests are moved back onto the whole comparison and
+    the comparison is printed in parentheses, which every reader (sqlglot, DuckDB) takes the same way.
+    """
+
+    text = sql.strip().rstrip(";")
+    tree = sqlglot.parse_one(text, read="postgres")
+    if re.search(r"(=|<|>)\s*NOT\b", text, re.IGNORECASE):
+        # ``a > NOT b IS TRUE`` parses to the same tree as ``a > b IS NOT TRUE``; Calcite never prints it.
+        raise ValueError("a comparison operand starting with NOT is ambiguous after parsing")
+    for node in list(tree.find_all(*_COMPARISONS)):
+        layers, operand = [], node.expression
+        while True:  # the unparenthesized IS tests sqlglot hung on the right operand, outermost first
+            if isinstance(operand, exp.Is):
+                layers.append(operand)
+                operand = operand.this
+            elif isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is):
+                layers.append(operand)
+                operand = operand.this.this
+            else:
+                break
+        if not layers:
+            continue
+        # comparison(a, L1(... Ln(b) ...)) becomes L1((... Ln((comparison(a, b))) ...))
+        node.replace(layers[0])
+        inner = node
+        for layer in reversed(layers):
+            test = layer.this if isinstance(layer, exp.Not) else layer
+            test.set("this", exp.Paren(this=inner))
+            inner = layer
+        node.set("expression", operand)
+    return tree.sql(dialect="mysql")
 
 
 def load_pairs() -> list[tuple[str, str, str]]:
