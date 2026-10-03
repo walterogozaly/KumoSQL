@@ -1398,12 +1398,14 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
         if not any(id(c) in refs for c in other.find_all(exp.Column)) and _key(other) not in {_key(o) for o in operands}:
             operands.append(other)
     for x in operands:
+        # one encoding serves every reading: its variables are named by role and atom, so it is the same each time
+        encoder, condition = encoder_for(x)
+        x_value = encoder.val(x)
+        facts = _state_facts(encoder, y_never_null, y_unique)
         for quantifier_all in (False, True):
             for op in (">", ">=", "<", "<=", "=" if quantifier_all else "<>"):
-                encoder, condition = encoder_for(x)
-                x_value = encoder.val(x)
                 semantics = _quantified_semantics(encoder, x_value, op, quantifier_all)
-                if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique), witnesses):
+                if _same(encoder, condition, semantics, mode, facts, witnesses):
                     quantifier = exp.All if quantifier_all else exp.Any
                     return _compare(op, _operand(x), quantifier(this=exp.Subquery(this=rows_group.rows.copy())))
     return None
