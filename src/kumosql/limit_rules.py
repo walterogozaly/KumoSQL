@@ -13,7 +13,7 @@ rows that come out are the same for every way of breaking ties.
 * An outer ``ORDER BY o LIMIT n OFFSET m`` over projections of an inner
   ``ORDER BY o .. LIMIT k OFFSET j`` is one cut, ``LIMIT min(n, k - m) OFFSET j + m``,
   and over ``UNION ALL`` an inner branch cut ``ORDER BY o LIMIT k`` with
-  ``k >= n + m`` changes nothing (``_merge_top_k``). Both need every output column
+  ``k >= n + m`` changes nothing, nor does such a cut on the whole ``UNION ALL`` (``_merge_top_k``). Both need every output column
   of the outer query to be a function of its ``ORDER BY`` keys: then the rows
   kept are fixed by the sorted key values alone, whichever tied rows each cut
   picks.
@@ -314,6 +314,16 @@ def _ordering(query: exp.Expression):
             if names is None or not 1 <= position <= len(names):
                 return None
             key = exp.column(names[position - 1])
+        elif any(c.table for c in key.find_all(exp.Column)):
+            key = key.copy()
+            for column in [c for c in key.find_all(exp.Column) if c.table]:
+                position = _set_operation_column(query, column, names)
+                if position is None:
+                    return None
+                if column is key:
+                    key = exp.column(names[position])
+                else:
+                    column.replace(exp.column(names[position]))
         if not _deterministic(key):
             return None
         form = _position_form(key, names, alias)
@@ -323,6 +333,36 @@ def _ordering(query: exp.Expression):
         nulls_first = item.args.get("nulls_first")
         keys.append((form, desc, (not desc) if nulls_first is None else bool(nulls_first)))
     return keys
+
+
+def _set_operation_column(query: exp.Expression, key: exp.Column, names: list[str]) -> int | None:
+    """The output position a qualified column ``t.c`` in a set operation's ORDER BY reads, or ``None``.
+
+    Engines differ here: some reject it, DuckDB matches it against the branches' select lists. Only
+    a reading every engine that accepts it agrees on is taken: ``c`` names exactly one output, and
+    every branch item that is ``t.c`` sits at that same position."""
+
+    if key.args.get("db") or key.args.get("catalog") or isinstance(key.this, exp.Star):
+        return None
+    named = [i for i, n in enumerate(names) if n == key.name.lower()]
+    if len(named) != 1:
+        return None
+    branches, found = [query.this, query.expression], set()
+    while branches:
+        branch = branches.pop()
+        if isinstance(branch, exp.SetOperation):
+            branches += [branch.this, branch.expression]
+            continue
+        if isinstance(branch, exp.Subquery):
+            branches.append(branch.this)
+            continue
+        if not isinstance(branch, exp.Select):
+            return None
+        for i, item in enumerate(branch.expressions):
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Column) and value.name.lower() == key.name.lower() and value.table.lower() == key.table.lower():
+                found.add(i)
+    return named[0] if found == {named[0]} else None
 
 
 # --- dropping an unread ORDER BY -------------------------------------------------------------
@@ -521,10 +561,11 @@ def _merge_top_k(select: exp.Select) -> exp.Expression | None:
         own = _ordering(inner)
         if own is None or _key_text(own)[: len(lowered)] != _key_text(lowered):
             continue
-        if through_union:
-            # A branch that keeps at least the n + m first rows of its own order loses none of the
-            # rows the outer cut keeps.
-            if inner_skip or (inner_count is not None and (count is None or inner_count < count + skip)):
+        # A branch (or a whole set operation) that keeps at least the n + m first rows of its own order
+        # loses none of the rows the outer cut keeps.
+        keeps_enough = not inner_skip and (inner_count is None or (count is not None and inner_count >= count + skip))
+        if through_union or (keeps_enough and isinstance(inner, exp.SetOperation)):
+            if not keeps_enough:
                 continue
             inner.set("order", None)
             _set_cut(inner, None, 0)

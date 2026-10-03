@@ -584,9 +584,29 @@ _FLOW = {"RAISE", "RETURN", "BREAK", "LEAVE", "CONTINUE", "ITERATE"}
 _TRANSACTION = {"BEGIN", "COMMIT", "ROLLBACK", "START"}
 
 
+def _code_start(text: str) -> int:
+    """Index of the first character after the leading whitespace and comments."""
+
+    i, n = 0, len(text)
+    while i < n:
+        if text[i].isspace():
+            i += 1
+        elif text[i] == "#" or text.startswith("--", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j + 1
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            break
+    return i
+
+
 def _first_words(text: str, count: int = 8) -> list[str]:
+    # Only the start is lexed, measured from the first code: a long header comment must not hide the statement's kind.
+    start = _code_start(text)
     words: list[str] = []
-    for tok in lex(text[:600]):
+    for tok in lex(text[start : start + 600]):
         if tok.kind == "w":
             words.append(tok.up)
         elif tok.text == "(" and not words:

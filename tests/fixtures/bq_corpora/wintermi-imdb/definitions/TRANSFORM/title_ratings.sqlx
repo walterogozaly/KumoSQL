@@ -1,0 +1,22 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.TARGET_DATA,
+  description: "Contains the rating and votes information for titles",
+  columns: {
+    tconst: "Alphanumeric unique identifier for title.",
+    average_rating: "Weighted average of all the individual user ratings.",
+    num_votes: "Number of votes the title has received."
+  },
+  dependencies: ["stg_title_ratings_uniqueKey"],
+  assertions: {
+    uniqueKey: ["tconst"]
+  },
+  tags: ["TRANSFORM_DATA"]
+}
+
+
+SELECT
+    tconst
+  , average_rating
+  , num_votes
+FROM ${ ref({ schema: dataform.projectConfig.vars.RAW_DATA, name: "stg_title_ratings" }) }

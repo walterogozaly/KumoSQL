@@ -29,6 +29,7 @@ from sqlglot import exp
 
 from . import scopes as scope_store
 from . import state
+from .ast_utils import captured_names
 from .pipeline_equivalence import prove_models
 from .prover_schema import ProverSchema, _select_names
 
@@ -201,11 +202,19 @@ def _alias_of(table: exp.Table, key: str) -> str:
     return table.alias or key.split(".")[-1]
 
 
+class _Captured(ValueError):
+    """The move would put a table read where a WITH table of the reader captures its name."""
+
+
 def _inline_into(reader_sql: str, target: str, body_sql: str, resolve) -> str:
+    body = _parse(body_sql)
+
     def swap(table: exp.Table, key: str):
         if key != target:
             return None
-        return exp.Subquery(this=_parse(body_sql), alias=exp.TableAlias(this=exp.to_identifier(_alias_of(table, key))))
+        if captured_names(body, table):
+            raise _Captured(target)
+        return exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(_alias_of(table, key))))
 
     return _replace_tables(reader_sql, resolve, swap)
 
@@ -214,6 +223,8 @@ def _redirect(reader_sql: str, old: str, new: str, resolve) -> str:
     def swap(table: exp.Table, key: str):
         if key != old:
             return None
+        if captured_names(_table_for(new, "x"), table):
+            raise _Captured(new)
         return _table_for(new, _alias_of(table, key))
 
     return _replace_tables(reader_sql, resolve, swap)
@@ -328,9 +339,12 @@ def _after_table(table: exp.Table, model) -> exp.Expression:
 
 def check_observable(
     pipeline, candidate: Mapping[str, str], observable: Iterable[str], reads: _Reads,
-    *, schema: ProverSchema | None = None, timeout_ms: int = 5000, cache: dict | None = None,
+    *, schema: ProverSchema | None = None, timeout_ms: int = 5000, cache: dict | None = None, declared: list | None = None,
 ) -> tuple[bool, list[str], str]:
-    """``(every observable model proved equal, assumptions, why not)`` for a candidate pipeline."""
+    """``(every observable model proved equal, assumptions, why not)`` for a candidate pipeline.
+
+    ``declared`` are the saved equivalences the prover may use (default: the ones saved in the app).
+    """
 
     observable = list(observable)
     missing = [key for key in observable if key not in candidate]
@@ -346,7 +360,8 @@ def check_observable(
         signature = (key, _closure_signature(candidate, key, reads)) if cache is not None else None
         hit = cache.get(signature) if cache is not None else None
         if hit is None:
-            result = prove_models(combined, key, renamed[key], schema=schema, timeout_ms=timeout_ms)
+            result = prove_models(combined, key, renamed[key], declared=declared, schema=schema, timeout_ms=timeout_ms,
+                                  edited_copy=True)
             hit = (result.proven, [*result.assumptions, *result.equivalences], f"{key}: {result.reason}")
             if cache is not None:
                 cache[signature] = hit
@@ -408,7 +423,7 @@ def _moves(setup: _Setup, current: Mapping[str, str]):
         if all(_modifiable(setup, user) for user in users):
             try:
                 changed = {user: _inline_into(current[user], key, current[key], resolve) for user in users}
-            except sqlglot.errors.SqlglotError:
+            except (sqlglot.errors.SqlglotError, _Captured):
                 continue
             if all(len(sql) <= MAX_INLINE_CHARS for sql in changed.values()):
                 new = {k: changed.get(k, v) for k, v in current.items() if k != key}
@@ -430,7 +445,7 @@ def _moves(setup: _Setup, current: Mapping[str, str]):
                     continue
                 try:
                     changed = {user: _redirect(current[user], key, other, resolve) for user in users}
-                except sqlglot.errors.SqlglotError:
+                except (sqlglot.errors.SqlglotError, _Captured):
                     continue
                 new = {k: changed.get(k, v) for k, v in current.items() if k != key}
                 yield f"merge {key} into {other}", new

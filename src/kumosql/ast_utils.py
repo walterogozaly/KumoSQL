@@ -163,6 +163,37 @@ def table_function_reads_cte(tree: exp.Expression) -> bool:
     return False
 
 
+# sqlglot parses IS [NOT] DISTINCT FROM (NullSafeEQ, NullSafeNEQ) beside LIKE, IN and BETWEEN: tighter than ``=`` and ``<``,
+# left to right, and prints the tree back without parentheses. PostgreSQL and DuckDB read it below all of those
+# (``a = b IS NOT DISTINCT FROM c`` is ``(a = b) IS NOT DISTINCT FROM c``, ``a IS DISTINCT FROM b IN (c)`` is
+# ``a IS DISTINCT FROM (b IN (c))``) and refuse to chain it with another IS; MySQL puts ``<=>``, ``=``, LIKE and IN on
+# one level, left to right. GoogleSQL's grouping was not confirmed; declining holds under any of them.
+_COMPARISON_LEVEL = (
+    exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ, exp.Is, exp.Like,
+    exp.ILike, exp.SimilarTo, exp.Glob, exp.RegexpLike, exp.RegexpILike, exp.In, exp.Between,
+)
+
+
+def _comparison_operator(node: exp.Expression | None) -> bool:
+    if isinstance(node, exp.Not):
+        node = node.this
+    return isinstance(node, _COMPARISON_LEVEL)
+
+
+def check_distinct_from_grouping(tree: exp.Expression) -> None:
+    """Decline IS [NOT] DISTINCT FROM next to another comparison without parentheses between them.
+
+    Engines group such text differently from sqlglot's tree, so it is not proved under either reading.
+    An IN list item is in parentheses already.
+    """
+
+    for node in tree.find_all(exp.NullSafeEQ, exp.NullSafeNEQ):
+        parent = node.parent
+        nested = isinstance(parent, _COMPARISON_LEVEL) and not (isinstance(parent, exp.In) and node.arg_key != "this")
+        if nested or _comparison_operator(node.this) or _comparison_operator(node.expression):
+            raise UnmodeledConstruct("IS DISTINCT FROM next to another comparison without parentheses reads differently across engines")
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
@@ -171,6 +202,7 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     anything carried on the node is refused whichever version produced it.
     """
 
+    check_distinct_from_grouping(tree)
     for node in tree.walk():
         for kind, arg in _UNMODELED_ARGS:
             if isinstance(node, kind) and node.args.get(arg):
@@ -409,6 +441,24 @@ def select_sources(select: exp.Select) -> list[exp.Expression]:
     return ([from_.this] if from_ is not None else []) + [join.this for join in select.args.get("joins") or []]
 
 
+def plain_distinct(select: exp.Expression) -> bool:
+    """Whether ``select`` is ``SELECT DISTINCT``: duplicate removal over whole output rows.
+
+    ``DISTINCT ON (k)`` is not: it keeps one row per ``k``, the first in the select's ``ORDER BY``, so it
+    picks values (and its ORDER BY shows) rather than only dropping repeats.
+    """
+
+    distinct = select.args.get("distinct")  # a set operation's is a bool
+    return isinstance(distinct, exp.Distinct) and not distinct.args.get("on")
+
+
+def distinct_on(select: exp.Expression) -> bool:
+    """Whether ``select`` is a ``SELECT DISTINCT ON (..)``."""
+
+    distinct = select.args.get("distinct")
+    return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
+
+
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 
@@ -553,3 +603,59 @@ def cte_dependency_errors(statement: exp.Expression) -> list[str]:
             )
 
     return list(dict.fromkeys(errors))
+
+
+_EXTENDED_GROUPING = tuple(getattr(exp, name) for name in ("Rollup", "Cube", "GroupingSets") if hasattr(exp, name))
+
+
+def extended_grouping(group: exp.Expression | None) -> bool:
+    """``GROUP BY`` with ``ROLLUP``, ``CUBE``, ``GROUPING SETS`` or ``WITH TOTALS``: more than one grouping.
+
+    Recent sqlglot keeps ``ROLLUP (x)`` as an item of ``group.expressions``, older versions (and MySQL's
+    ``WITH ROLLUP``) in ``group.args``, so both are checked. Such a grouping can add a grand-total row
+    that exists even over no input rows.
+    """
+
+    if group is None:
+        return False
+    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        return True
+    return any(isinstance(e, _EXTENDED_GROUPING) for e in group.expressions)
+
+
+def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set[str]:
+    """Names of the WITH tables in scope at ``node``, looking up to ``top`` (its own WITH included; default: the root).
+
+    A non-recursive WITH table sees only the ones listed before it; the query under the WITH sees them all.
+    """
+
+    names: set[str] = set()
+    child = node
+    while child is not None and child is not top:
+        parent = child.parent
+        if isinstance(parent, exp.With):
+            ctes = list(parent.expressions)
+            seen = ctes if parent.args.get("recursive") else ctes[: next((i for i, c in enumerate(ctes) if c is child), len(ctes))]
+            names |= {c.alias_or_name.lower() for c in seen}
+        elif parent is not None:
+            clause = parent.args.get("with_") or parent.args.get("with")
+            if isinstance(clause, exp.With) and child is not clause:
+                names |= {c.alias_or_name.lower() for c in clause.expressions}
+        child = parent
+    return names
+
+
+def free_reads(body: exp.Expression) -> set[str]:
+    """One-part table names ``body`` reads that none of its own WITH tables binds: what an outer WITH could capture."""
+
+    return {
+        t.name.lower() for t in body.find_all(exp.Table)
+        if t.name and not t.args.get("db") and not t.args.get("catalog") and t.name.lower() not in visible_ctes(t, body)
+    }
+
+
+def captured_names(body: exp.Expression, at: exp.Expression) -> set[str]:
+    """Tables ``body`` reads by a one-part name that a WITH table in scope at ``at`` would capture if ``body``
+    replaced ``at``."""
+
+    return free_reads(body) & visible_ctes(at)
