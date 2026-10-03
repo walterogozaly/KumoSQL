@@ -71,7 +71,7 @@ def run(repo: str, sample_rows: int = 10_000, psql: list[str] | None = None,
     names = [n for n, _ in files]
     queries = [parse_join_query(sql) for _, sql in files]
 
-    stats_path = os.path.join(base, f"job_stats_{sample_rows}.pkl.gz")
+    stats_path = os.path.join(base, f"job_stats_{sample_rows}.json.gz")
     if not os.path.exists(stats_path):
         pairs = sorted({((q.tables[e.left], e.left_col), (q.tables[e.right], e.right_col))
                         for q in queries for e in q.edges})

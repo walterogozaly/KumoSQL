@@ -19,6 +19,10 @@ _SQLX_BLOCK_RE = re.compile(
 _SQLX_WHEN_CONNECTIVE_RE = re.compile(r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*[`'\"]\s*(AND|OR)\b", re.IGNORECASE)
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"__sqlx_token_\d+__")
+_QUOTED = r"""(?:"[^"\\]*"|'[^'\\]*'|`[^`\\]*`)"""
+_TABLE_REFERENCE_RE = re.compile(
+    rf"^\$\{{\s*(?:(?:ref|resolve)\s*\(\s*{_QUOTED}(?:\s*,\s*{_QUOTED})?\s*\)|self\s*\(\s*\))\s*\}}$"
+)
 
 
 class SqlxRestorationError(ValueError):
@@ -180,6 +184,23 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
         cursor = closing + 1
 
     return "".join(output), tuple(restorations)
+
+
+def is_table_reference(original: str) -> bool:
+    """``${ref("t")}``, ``${ref("dataset", "t")}``, ``${resolve("t")}`` or ``${self()}``: one table name once compiled."""
+
+    return bool(_TABLE_REFERENCE_RE.match(original))
+
+
+def opaque_tokens(restorations: tuple[SqlxRestoration, ...]) -> frozenset[str]:
+    """Sentinels of the interpolations that are not table references.
+
+    Such an expression (``${"x OR y"}``, ``${when(incremental(), "AND b > 1")}``) compiles to arbitrary SQL text:
+    a clause, a predicate that binds looser than its neighbours, or a query that reads a CTE. A rule sees only an
+    opaque name in its place.
+    """
+
+    return frozenset(item.token for item in restorations if not is_table_reference(item.original))
 
 
 def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, ...]) -> str:

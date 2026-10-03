@@ -1,5 +1,7 @@
 # Targeted test data, multi-database checking and counterexample minimization
 
+[Plain-language version](../../docs_simple/evals/targeted-test-data.md)
+
 Three evals strengthen and measure the synthetic checker (the DuckDB execution engine in `kumosql.result_equivalence`). They share that one engine; nothing here is a second implementation.
 
 | Piece | Module | Role |

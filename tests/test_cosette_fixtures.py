@@ -20,6 +20,7 @@ def _jsonl(path: Path) -> list[dict]:
 
 COSETTE_CASES = _jsonl(COSETTE / "cosette_cases.jsonl")
 SPES_PAIRS = _jsonl(SPES / "spes_only_pairs.jsonl")
+ADAPTED = _jsonl(COSETTE / "cosette_adapted.jsonl")
 
 
 def test_counts_match_summaries():
@@ -64,6 +65,28 @@ def test_cosette_cases_run_in_duckdb():
         for sql in (case["sql_a"], case["sql_b"]):
             con.execute(re.sub(r'(?<![\w"])(\$\w+)', r'"\1"', sql)).fetchall()
         con.close()
+
+
+def test_adapted_cases_stand_for_skipped_files():
+    skipped = {row["name"]: row for row in _jsonl(COSETTE / "cosette_skipped.jsonl")}
+    originals = {case["name"] for case in COSETTE_CASES}
+    names = [case["name"] for case in ADAPTED]
+    assert len(names) == len(set(names)) and not set(names) & originals
+    duckdb = pytest.importorskip("duckdb")
+    for case in ADAPTED:
+        assert case["adapted"] is True and case["adaptation"]
+        assert skipped[case["adapted_from"]]["category"] == "no_declared_columns"
+        assert case["source_file"] == skipped[case["adapted_from"]]["source_file"]
+        assert case["label"] in {"equivalent", "not_equivalent"}
+        con = duckdb.connect()
+        con.execute(case["ddl"])
+        for sql in (case["sql_a"], case["sql_b"]):
+            con.execute(sql).fetchall()
+        con.close()
+    # every adapted file has its equivalent pair and at least one not-equivalent sibling
+    for source in {case["adapted_from"] for case in ADAPTED}:
+        labels = {case["label"] for case in ADAPTED if case["adapted_from"] == source}
+        assert labels == {"equivalent", "not_equivalent"}, source
 
 
 def test_overlap_inventory():
