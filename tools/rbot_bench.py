@@ -8,7 +8,7 @@ at run time, so there are no pairs to score.
 
 For every pair this reports ``proved``, ``different`` (the prover failed and a
 random-database search found a counterexample, re-checked by running both
-queries in DuckDB), ``unknown`` and ``wrong`` (proved, yet a counterexample
+queries in DuckDB; these leave the score's denominator, since they are not equivalent), ``unknown`` and ``wrong`` (proved, yet a counterexample
 exists; must stay 0).
 
     python tools/rbot_bench.py
@@ -66,6 +66,7 @@ def run(prove=sb.default_prove, trials: int = 60) -> dict:
             out["different"].append(name)
         else:
             out["unknown"].append(name)
+    out["scored"] = out["total"] - len(out["different"])  # a pair with a replayed counterexample is not one to prove
     out["seconds"] = time.time() - start
     return out
 
@@ -81,7 +82,7 @@ def _parses(*queries: str) -> bool:
 
 def main() -> int:
     r = run()
-    print(f"rbot-calcite {r['proved']}/{r['total']} proved, {len(r['different'])} different (counterexample), {len(r['unknown'])} unknown, {len(r['wrong'])} wrong, {r['seconds']:.1f}s")
+    print(f"rbot-calcite {r['proved']}/{r['scored']} proved ({r['total']} pairs), {len(r['different'])} different (counterexample), {len(r['unknown'])} unknown, {len(r['wrong'])} wrong, {r['seconds']:.1f}s")
     for key in ("different", "unknown", "wrong"):
         if r[key]:
             print(f"  {key}: {', '.join(r[key])}")

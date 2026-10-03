@@ -22,7 +22,8 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [BigQuery test bed](bigquery-testbed.md) | A messy, low-cost model layer with real job history |
 | [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
+| [Test history](test-history.md) | Recording every test run, ranking the tests that break changes that otherwise work, and running likely failures first |
 
 ## Evals
 
-The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur and SQL-IQ equivalence suites, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).
+The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).

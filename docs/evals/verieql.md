@@ -61,12 +61,16 @@ python tools/verieql_bench.py leetcode --jobs 4 --audit              # all cases
 
 `tests/test_verieql_benchmarks.py` pins floors on small samples (skipped, with a "data unavailable" message, when the data cannot be downloaded; downloads are retried, checked against pinned SHA-256 sums and written atomically).
 
+## Pairs known not to be equivalent
+
+The suites carry no labels, but four pairs are known to differ and `tests/test_verieql_benchmarks.py` runs the prover on them directly (so a counterexample the harness finds first cannot hide a proof): Calcite-397 positions 12 and 231 (0-based; indexes 13 and 232 in the artifact), which are `testAggregateCaseToFilter` ([CALCITE-5578](https://issues.apache.org/jira/browse/CALCITE-5578): `SUM(CASE WHEN c THEN x ELSE 0 END)` is 0 where `SUM(x) FILTER (WHERE c)` is NULL, on a table without a row for `c`) and `testReduceWithNonTypePredicate` ([CALCITE-5516](https://issues.apache.org/jira/browse/CALCITE-5516): `AVG` against an integer cast of the `SUM`/`COUNT` quotient), and Literature positions 46 and 47, which the paper says need more than 1,000 tuples to tell apart. The harness runs DuckDB, where `AVG` of an integer is a double, so it refutes the second Calcite pair; under Calcite's own typing (`AVG(INTEGER)` is `INTEGER`) the two sides can agree, and that pair is counted only as refuted, never as a label. The two Literature pairs come out `agrees`: no database of the sizes the generator reaches separates them. None is proved. `tests/test_known_nonequivalences.py` pins the same two Calcite rewrites on plain SQL with DuckDB witnesses. The current Calcite rule tests (the mined set) already carry the fixed form of `testAggregateCaseToFilter`, which is equivalent and proves.
+
 ## Results (2026-10-02)
 
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Literature | 64 | 20 | 25 | 17 | 2 | 0 |
-| Calcite-397 | 397 | 306 | 29 | 53 | 9 | 0 |
+| Literature | 64 | 24 | 25 | 13 | 2 | 0 |
+| Calcite-397 | 397 | 315 | 28 | 45 | 9 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,793 | 5,676 | 12,454 | 1,071 | 0 |
 
 The [harness translation](#harness-translation), with the bare-word and `$` fixes from the full LeetCode rerun, took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks five of our Calcite refutations equivalent (pairs 80, 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows, and pair 80 returns `'TABLE'` against `'TABLE '` because Calcite pads CHAR literals and DuckDB's VARCHAR does not).

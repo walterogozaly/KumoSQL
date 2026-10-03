@@ -216,7 +216,10 @@ def prove_models(
                     "conditional", attempt.reason, method, notes, [i.label for i in used_declared] if method == "layers" else [],
                     list(dict.fromkeys([*extra, *attempt.assumptions])), conditions=conditions_json(attempt),
                 )
-    outcome = PipelineResult("unknown", result.reason, "", notes)
+    # The layer attempt compares a model with its rewritten copy, which read different tables, so its reason says
+    # little; when the flat queries were compared too, theirs is the reason the proof failed.
+    why = direct.reason if flat[0] and flat[1] else result.reason
+    outcome = PipelineResult("unknown", why, "", notes)
     if bounded_check is not None:
         pair = (flat[0][0], flat[1][0]) if flat[0] and flat[1] else (left_sql, right_sql)
         outcome.bounded = bounded_check(*pair)

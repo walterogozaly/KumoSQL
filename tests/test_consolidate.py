@@ -11,6 +11,7 @@ import pytest
 pytest.importorskip("z3")
 
 from kumosql import consolidate, load_sqlx_project
+from kumosql.prover_schema import from_pipeline
 from kumosql.ui import UIHandler
 
 TABLE = 'config { type: "table" }\n'
@@ -127,6 +128,59 @@ def test_the_proof_catches_a_wrong_fold(diamond, monkeypatch):
     monkeypatch.setattr(consolidate, "fold_sql", wrong)
     result = consolidate.consolidate_tables(diamond, ["a", "b", "c"], "d")
     assert result.status == "unknown"
+
+
+UNION_C = TABLE + 'SELECT customer_id, id AS n FROM ${ref("a")} UNION ALL SELECT customer_id, id FROM ${ref("a")} WHERE id > 5\n'
+STAR_A = TABLE + 'WITH x AS (SELECT * FROM ${ref("raw","upstream")}) SELECT id, customer_id, amount, status FROM x WHERE amount > 0\n'
+
+
+def with_source_columns(pipeline):
+    schema = from_pipeline(pipeline)
+    schema.columns["proj.raw.upstream"] = ["id", "customer_id", "amount", "status"]
+    return schema
+
+
+def test_a_fold_through_union_all_is_proved(tmp_path):
+    pipeline = build(tmp_path, c=UNION_C)
+    result = consolidate.consolidate_tables(pipeline, ["a", "b", "c"], "d")
+    assert result.proven and result.sql.count("UNION ALL") == 1 and "proj.an." not in result.sql
+
+
+def test_a_fold_through_union_all_and_a_with_table_inside_a_folded_table_is_proved(tmp_path):
+    pipeline = build(tmp_path, a=STAR_A, c=UNION_C)
+    result = consolidate.consolidate_tables(pipeline, ["a", "b", "c"], "d", schema=with_source_columns(pipeline))
+    assert result.proven and "UNION ALL" in result.sql
+
+
+def test_select_star_over_undeclared_columns_is_unknown_and_says_why(tmp_path):
+    pipeline = build(tmp_path, a=STAR_A, c=UNION_C)
+    result = consolidate.consolidate_tables(pipeline, ["a", "b", "c"], "d")
+    assert result.status == "unknown" and "proj.raw.upstream" in result.reason and "not declared" in result.reason
+    assert "UNION shapes differ" not in result.reason
+
+
+def _drop_second_branch(sql):
+    import sqlglot
+    from sqlglot import exp
+
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    union = tree.find(exp.Union)
+    union.replace(union.this)
+    return tree.sql(dialect="bigquery")
+
+
+def test_a_wrong_union_all_fold_is_not_called_equivalent(tmp_path, monkeypatch):
+    pipeline = build(tmp_path, c=UNION_C)
+    real = consolidate.fold_sql
+    mistakes = {
+        "branch filter dropped": lambda sql: sql.replace("id > 5", "TRUE"),
+        "UNION ALL became UNION": lambda sql: sql.replace("UNION ALL", "UNION DISTINCT"),
+        "second branch lost": _drop_second_branch,
+    }
+    for label, damage in mistakes.items():
+        monkeypatch.setattr(consolidate, "fold_sql", lambda p, m, t, damage=damage: damage(real(p, m, t)))
+        result = consolidate.consolidate_tables(pipeline, ["a", "b", "c"], "d")
+        assert not result.proven, label
 
 
 def test_command_line(tmp_path, capsys):

@@ -2,7 +2,11 @@
 
 * no flag: the whole fast suite (``-m "not slow"``);
 * ``--evals``: only the benchmark floors (tests marked ``eval``);
-* ``--no-evals``: everything except the floors.
+* ``--no-evals``: everything except the floors;
+* ``--quick``: skip the slow tier (a few minutes instead of the whole run; ``tests/order.json`` lists the slow tests);
+* ``--label TEXT`` and ``--target PATH`` (repeatable): what this run is for, written to the shared test history
+  (``tools/test_history.py``) so a later report can tell a failure inside your targets from one outside them. Without
+  ``--target`` the test files your branch changed are the targets.
 
 sqlglot runs compiled when ``sqlglotc`` (mypyc wheels, same version as ``sqlglot``) is installed, which is
 about 10-15% faster on the prover tests; ``--install-compiled`` installs it. ``--pure`` runs the same suite
@@ -58,6 +62,9 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--evals", action="store_true", help="only the benchmark floors")
     group.add_argument("--no-evals", action="store_true", help="everything except the benchmark floors")
+    parser.add_argument("--quick", action="store_true", help="skip the slow tier of tests (see tests/order.json)")
+    parser.add_argument("--label", help="what this run is for (default: the branch name); recorded in the test history")
+    parser.add_argument("--target", action="append", default=[], help="a test file or test id this run is aiming at (repeatable); recorded in the test history")
     parser.add_argument("--pure", action="store_true", help="test against pure-Python sqlglot even if sqlglotc is installed")
     parser.add_argument("--install-compiled", action="store_true", help="pip install the sqlglotc that matches the installed sqlglot first")
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1, help="worker processes (default: all CPUs)")
@@ -68,6 +75,10 @@ def main(argv: list[str] | None = None) -> int:
 
         subprocess.call([sys.executable, "-m", "pip", "install", f"sqlglotc=={version('sqlglot')}"])
     env = dict(os.environ)
+    if args.label:
+        env["KUMOSQL_TASK"] = args.label
+    if args.target:
+        env["KUMOSQL_TEST_TARGETS"] = ",".join(args.target)
     if args.pure:
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(_pure_copy()), env.get("PYTHONPATH")]))
         print("sqlglot: pure Python", file=sys.stderr)
@@ -81,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         marker = "eval and not slow"
     elif args.no_evals:
         marker = "not eval and not slow"
-    command = [sys.executable, "-m", "pytest", "-m", marker, "-q", *rest]
+    command = [sys.executable, "-m", "pytest", "-m", marker, "-q", *(["--quick"] if args.quick else []), *rest]
     if args.jobs > 1:
         if importlib.util.find_spec("xdist") is None:
             print("pytest-xdist is not installed (pip install -e '.[dev]'); running serially", file=sys.stderr)
