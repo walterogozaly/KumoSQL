@@ -124,9 +124,11 @@ def _find_interpolation_end(text: str, opening: int) -> int:
 
 
 def sql_comment_spans(sql: str) -> list[tuple[int, int]]:
-    """``(start, end)`` of every SQL comment (``--``, ``#`` and ``/* */``) in ``sql``.
+    """``(start, end)`` of every ``--`` and ``/* */`` comment in ``sql``.
 
-    Dataform leaves a ``${...}`` inside a comment as literal text: it is neither evaluated nor a dependency.
+    Dataform leaves a ``${...}`` inside these as literal text: it is neither evaluated nor a dependency. A ``#`` comment
+    is not one of them (checked against ``@dataform/cli`` 3.0.71, which evaluates ``${ref(...)}`` after ``#``), nor is a
+    ``--`` inside a string.
     Quotes inside a comment do not open a string, and comment markers inside a string or a ``${...}``
     expression do not open a comment. An unterminated block comment runs to the end of the text.
     """
@@ -140,7 +142,7 @@ def sql_comment_spans(sql: str) -> list[tuple[int, int]]:
                 index = _find_interpolation_end(sql, index) + 1
             except ValueError:
                 return spans
-        elif char == "#" or sql.startswith("--", index):
+        elif sql.startswith("--", index):
             end = index
             while end < size and sql[end] not in "\r\n":
                 end += 1

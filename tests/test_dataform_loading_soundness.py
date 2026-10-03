@@ -169,7 +169,7 @@ def test_compiled_graph_keeps_layout_and_assertion_columns():
 # --------------------------------------------------------------- refs in SQL comments
 
 
-COMMENT_SQL = 'SELECT 2 AS other\n-- ${ref("base")}\n/* ${ref("base")} */\n# ${ref("base")}\n'
+COMMENT_SQL = 'SELECT 2 AS other\n-- ${ref("base")}\n/* ${ref("base")} */\n'
 
 
 def test_refs_in_comments_are_not_dependencies(tmp_path):
@@ -180,6 +180,16 @@ def test_refs_in_comments_are_not_dependencies(tmp_path):
     assert pl.models["p.ds.reader"].declared_dependencies == ()
     assert pl.upstream["p.ds.reader"] == set()
     assert pl.dead_columns() == {}  # base is a terminal output, its only column stays
+
+
+def test_a_hash_comment_is_evaluated_by_dataform(tmp_path):
+    # @dataform/cli 3.0.71 records a dependency for a ref after "#" and for one inside a string
+    pl = project(tmp_path, {
+        "base.sqlx": 'config { type: "table" }\nSELECT 1 AS id\n',
+        "other.sqlx": 'config { type: "table" }\nSELECT 1 AS id\n',
+        "reader.sqlx": 'config { type: "table" }\nSELECT 1 AS a, \'-- ${ref("other")}\' AS s\n# ${ref("base")}\n',
+    })
+    assert pl.upstream["p.ds.reader"] == {"p.ds.base", "p.ds.other"}
 
 
 def test_a_ref_next_to_a_comment_still_counts(tmp_path):
@@ -210,7 +220,7 @@ def test_refs_in_comments_of_pre_and_post_operations_are_not_dependencies(tmp_pa
 def test_comment_spans():
     sql = "SELECT 'a--b' -- one\n, 2 /* two ${x} */ , `c#d`, \"e/*f\" # three\nFROM t -- four"
     found = [sql[start:end] for start, end in sql_comment_spans(sql)]
-    assert found == ["-- one", "/* two ${x} */", "# three", "-- four"]
+    assert found == ["-- one", "/* two ${x} */", "-- four"]
     for text, comment in (
         ('SELECT ${ref("a")} -- ${ref("b")}', '-- ${ref("b")}'),
         ("SELECT 1 /* unterminated", "/* unterminated"),
