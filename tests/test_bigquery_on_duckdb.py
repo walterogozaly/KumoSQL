@@ -59,10 +59,28 @@ def fails(db, sql: str) -> bool:
 
 
 def test_row6_nulls_sort_first_ascending_and_last_descending(db):
-    # also for SQL that does not spell NULLS FIRST (sqlglot writes it; raw DuckDB SQL may not)
-    assert db.execute("SELECT x FROM (VALUES (2), (NULL), (1)) t(x) ORDER BY x").fetchall() == [(None,), (1,), (2,)]
-    assert db.execute("SELECT x FROM (VALUES (2), (NULL), (1)) t(x) ORDER BY x DESC").fetchall() == [(2,), (1,), (None,)]
+    # BigQuery: NULL first ascending, last descending, unless the query says otherwise
+    rows = "FROM UNNEST([2, NULL, 1]) x"
+    assert run(db, f"SELECT x {rows} ORDER BY x") == [(None,), (1,), (2,)]
+    assert run(db, f"SELECT x {rows} ORDER BY x DESC") == [(2,), (1,), (None,)]
     assert run(db, "SELECT x, SUM(1) OVER (ORDER BY x) FROM UNNEST([3, NULL, 1]) x ORDER BY x") == [(None, 1), (1, 2), (3, 3)]
+
+
+def test_countif_is_zero_over_no_rows_or_only_nulls(db):
+    # BigQuery: COUNTIF over no rows or only NULL conditions is 0; DuckDB's count_if gives NULL
+    assert one(db, "SELECT COUNTIF(x > 1) FROM UNNEST(CAST([] AS ARRAY<INT64>)) x") == 0
+    assert one(db, "SELECT COUNTIF(x) FROM UNNEST([CAST(NULL AS BOOL)]) x") == 0
+    assert one(db, "SELECT COUNTIF(x > 1) FROM UNNEST([1, 2, 3]) x") == 2
+    assert run(db, "SELECT COUNTIF(x > 1) OVER (ORDER BY x) FROM UNNEST([1, 2]) x ORDER BY x") == [(0,), (1,)]
+
+
+def test_explicit_nulls_last_and_first_are_kept(db):
+    # sqlglot writes ASC NULLS LAST as a bare ASC (DuckDB's default): BigQuery returns 1 here, not NULL
+    rows = "FROM UNNEST([1, NULL, 2]) x"
+    assert run(db, f"SELECT x {rows} ORDER BY x ASC NULLS LAST LIMIT 1") == [(1,)]
+    assert run(db, f"SELECT x {rows} ORDER BY x DESC NULLS FIRST LIMIT 1") == [(None,)]
+    assert run(db, f"SELECT ROW_NUMBER() OVER (ORDER BY x NULLS LAST) AS r, x {rows} ORDER BY r") == [(1, 1), (2, 2), (3, None)]
+    assert run(db, f"SELECT ROW_NUMBER() OVER (ORDER BY x) AS r, x {rows} ORDER BY r") == [(1, None), (2, 1), (3, 2)]
 
 
 def test_rows24_25_timestamps_are_read_in_utc(db):
@@ -318,6 +336,28 @@ def test_row19_in_unnest_with_null_is_null(db):
 def test_rows11_12_structs_compared_are_refused_and_returned_by_position(db):
     assert fails(db, "SELECT STRUCT(1 AS a) = STRUCT(1 AS b)")  # BigQuery: TRUE
     assert one(db, "SELECT STRUCT(1 AS a, 2 AS b) AS s") == (1, 2)
+
+
+def test_unnest_of_struct_rows_is_an_inline_table(db):
+    # BigQuery: (1, NULL, 1, 'a'), (3, 3, 3, NULL)
+    sql = (
+        "SELECT t0.c1, t0.c2, t.X, t.Y FROM UNNEST([STRUCT(1 AS c1, NULL AS c2), STRUCT(3 AS c1, 3 AS c2)]) AS t0 "
+        "LEFT JOIN UNNEST([STRUCT(1 AS X, 'a' AS Y), STRUCT(3 AS X, NULL AS Y)]) AS t ON t0.c1 = t.X ORDER BY t0.c1"
+    )
+    assert run(db, sql) == [(1, None, 1, "a"), (3, 3, 3, None)]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "STRUCT(10 AS x, 1 AS y), STRUCT(30, 3)",  # sqlglot 26 names the second row's fields _0 and _1
+        "STRUCT(10 AS x, 1 AS y), STRUCT(30 AS a, 3 AS b)",  # DuckDB adds columns a and b
+        "STRUCT(10 AS x, 1 AS y), STRUCT(30 AS y, 3 AS x)",  # DuckDB matches the fields by name
+        "STRUCT(STRUCT(1 AS a) AS s)",
+    ],
+)
+def test_unnest_of_struct_rows_named_unlike_the_first_is_refused(db, rows):
+    assert fails(db, f"SELECT * FROM UNNEST([{rows}]) AS t")
 
 
 def test_with_offset_is_refused(db):

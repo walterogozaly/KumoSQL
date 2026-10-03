@@ -346,6 +346,14 @@ def write_results(result: dict, seconds: float) -> None:
             "metric": description + " Each case is one SQL statement with its expected table and column lineage; KumoSQL must produce exactly it or say unknown.",
             "correctness": f"{t['wrong']} cases claim a table or edge the oracle does not have; {t['missed']} confident misses",
             "coverage": {"proven": t["exact"] + t["coarse"], "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
+            **(
+                {
+                    "coverage_of": f"The {t['total'] - t['disputed']} of the {t['total']} cases with an undisputed golden; the other {t['disputed']} are disputed "
+                    "(the oracle defines the answer differently) and have no outcome column."
+                }
+                if t["disputed"]
+                else {}
+            ),
             "docs": "docs/evals/lineage-goldens-bench.md",
             "command": "python tools/lineage_goldens_bench.py --write-results",
             "caveats": (

@@ -28,6 +28,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Reduce the number of models | [Refactor](refactor.md) |
 | Simplify an explicit set of table definitions | [Table minimization](table-minimization.md) |
 | Extract a copied WITH query into one model | [Shared models](shared-models.md) |
+| Shrink a Dataform project to the outputs you need | [Project reduction](project-reduction.md) |
 | Learn what a query guarantees about its rows | [Output properties](output-properties.md) |
 | Use keys and other data guarantees in a proof | [Constraint-dependent rewrites](constraint-rewrites.md) |
 | Check incremental updates | [Incremental models](incremental.md) |

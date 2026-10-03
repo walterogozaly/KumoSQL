@@ -10,6 +10,7 @@
     "proven": 2737,
     "unknown": 0
   },
+  "coverage_of": "Output columns (2,737 across the 948 generated models), not models: proven is traced to exactly the right sources, unknown is reported unknown.",
   "held_out": "First run of the held-out families (474 models, 1,151 columns): 0 columns traced wrongly, but 83 impacted models missed and 13 live columns called dead, all from SELECT * EXCEPT (...) columns that were not counted as read. Fixed afterwards, so those families no longer count as held out.",
   "docs": "docs/evals/lineage-bench.md#lineage-and-change-impact",
   "command": "python tools/lineage_bench.py --scale --write-results",

@@ -26,6 +26,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Join rewrites](join-rewrites.md) | When does changing a join type preserve results? |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Does the prover avoid accepting known faulty rewrites? |
 | [DB-GPT examples](dbgpt-rules.md) | Which demonstration rewrites preserve results under reviewed schemas? |
+| [Documented rewrites](documented-rewrites.md) | Do rewrites recommended by vendor docs keep the results? |
 | [DLBench](dlbench.md) | Are translations across SQL dialects faithful? |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Are observable outputs preserved across several changed models? |
 | [Targeted test data](targeted-test-data.md) | Can carefully chosen data reveal subtle differences? |
@@ -40,6 +41,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [LLM-R2 query sets](llmr2-bench.md) | How do the rules behave across many queries? |
 | [Materialized-view rewriting](mv-benchmark.md) | Can shared joins supply other queries? |
 | [Table minimization](table-minimization.md) | Can the search remove models while protecting outputs? |
+| [Project reduction](project-reduction.md) | How small can a whole Dataform project get while its chosen outputs stay the same? |
 | [Duplicate detection](duplicate-detection.md) | Can it find copies without confusing similar queries? |
 
 ## Coverage, lineage, and Dataform
