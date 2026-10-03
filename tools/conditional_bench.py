@@ -62,7 +62,7 @@ WITHOUT_DATABASES = 300  # random databases without the conditions, to show they
 
 @dataclass
 class Outcome:
-    kind: str  # equivalent | conditional | refuted | unknown | wrong
+    kind: str  # equivalent | conditional | refuted | unknown | wrong | crash (a harness bug: must stay 0)
     detail: str = ""
     conditions: list[dict] = field(default_factory=list)
     validated: int = 0  # databases that met the conditions and ran on both queries
@@ -314,14 +314,18 @@ def decide_verieql(case: dict) -> Outcome:
         return Outcome("conditional", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
     stricter = veri.build_spec(case)  # the spec again, with the conditions as extra constraints
     names = {t.name.lower(): t for t in stricter.tables.values()}
+    def actual(table, name):  # the spec keeps each column's own case; the prover works in lower case
+        return next(col.name for col in table.columns if col.name.lower() == name.lower())
+
     for c in conditions:
         table = names[c.table]
         if c.kind == "not_null":
-            table.column(c.columns[0]).not_null = True
+            table.column(actual(table, c.columns[0])).not_null = True
         elif c.kind == "unique":
-            table.unique.append(tuple(c.columns))
+            table.unique.append(tuple(actual(table, n) for n in c.columns))
         else:
-            stricter.foreign_keys.append((table.name, c.columns[0], names[c.parent].name, c.parent_columns[0]))
+            parent = names[c.parent]
+            stricter.foreign_keys.append((table.name, actual(table, c.columns[0]), parent.name, actual(parent, c.parent_columns[0])))
     searcher = cx.Searcher(stricter, left, right)
     if not searcher.runs():
         return Outcome("conditional", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
@@ -346,7 +350,7 @@ def _decide_verieql_job(case: dict) -> Outcome:
     try:
         return decide_verieql(case)
     except Exception as error:
-        return Outcome("unknown", f"crash: {type(error).__name__}")
+        return Outcome("crash", f"{type(error).__name__}: {error}"[:200])
 
 
 # --- running ------------------------------------------------------------------------------------------------
@@ -369,7 +373,7 @@ class Report:
         minimal = sum(1 for o in conditional if o.minimal)
         return (
             f"{self.suite}: {len(self.outcomes)} pairs: {c['equivalent']} proved outright, {c['conditional']} equivalent under conditions, "
-            f"{c['refuted']} refuted by a database meeting every candidate condition, {c['unknown']} unknown, {c['wrong']} wrong; "
+            f"{c['refuted']} refuted by a database meeting every candidate condition, {c['unknown']} unknown, {c['wrong']} wrong, {c['crash']} crashed; "
             f"of the conditional ones {needed} separated without the conditions and {minimal} have a minimal set"
         )
 
