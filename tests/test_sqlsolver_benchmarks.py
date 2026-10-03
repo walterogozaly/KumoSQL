@@ -40,3 +40,18 @@ def test_benchmark_suite(suite):
     result = bench.run_suite(suite, bench.default_prove)
     assert result.wrong == [], f"wrong proofs in {suite}: {[i for i, _ in result.wrong]}"
     assert result.proved >= FLOORS[suite], f"{suite}: proved {result.proved}, floor {FLOORS[suite]}"
+    assert result.scored == result.total - len(bench.must_not_prove(suite))
+
+
+def test_pairs_that_hold_only_with_fixed_tie_breaking_must_stay_unproven():
+    """LIMIT without ORDER BY keeps whichever rows the engine picks, so these Spark pairs leave the score's
+    denominator and a proof of one is a wrong proof."""
+
+    pairs = bench.load_pairs(bench.FIXTURES / bench.SUITES["spark"][0])
+    reasons = bench.must_not_prove("spark")
+    assert sorted(reasons) == [50, 60, 61] and all(reasons.values())
+    chosen = {pairs[index] for index in reasons}
+    result = bench.run_suite("spark", lambda left, right, tables: (left, right) in chosen, limit=62, trials=2)
+    assert result.excluded == [50, 60, 61]
+    assert [index for index, _ in result.wrong] == [50, 60, 61]
+    assert result.scored == 62 - 3

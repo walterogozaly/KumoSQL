@@ -11,7 +11,11 @@ A record holds:
 - the commit, branch, whether the checkout had uncommitted changes, and a task label (`--label`, `$KUMOSQL_TASK`, else the branch name);
 - the **targets**: the tests the run was aiming at. They come from `--target PATH` (repeatable; `$KUMOSQL_TEST_TARGETS` for plain pytest), else the test files given on the command line, else the test files the branch added or changed against the master it branched from. A run with none of these has no targets and cannot be attributed;
 - the tests that failed, each marked as inside or outside the targets, with the first line of the message;
-- the run mode (`full`, `evals`, `no-evals` or `partial`), counts, wall time, library versions (sqlglot, sqlfluff, z3, DuckDB), how many tests ran per file, and the duration of every test that took 3 seconds or more.
+- the run mode (`full`, `evals`, `no-evals` or `partial`), counts, library versions (sqlglot, sqlfluff, z3, DuckDB) and how many tests ran per file;
+- the times: the run's wall time (`seconds`) and CPU time across every worker (`cpu_seconds`, start-up and collection included), each file's wall and CPU seconds (`file_seconds`, setup to teardown, summed over its tests), their totals (`test_seconds`, `test_cpu_seconds`), and, for every test whose call took 3 seconds or more, that duration (`slow`) and its CPU seconds from setup to teardown (`slow_cpu`);
+- the machine: cores, processor, memory, operating system and whether sqlglot ran compiled or pure (no host or user names).
+
+CPU time counts every thread of a worker (DuckDB's too) and the child processes a test waited for, such as a benchmark's process pool. On Windows only the worker's own time is counted. Wall time depends on how busy the machine was; CPU time is the steadier measure of the work a test does, and the one to compare when a change is meant to make a test cheaper.
 
 ## Reading it
 
@@ -24,6 +28,13 @@ python tools/test_history.py report --since 7  # the last week
 - **Tests that fail most, by where.** Failures inside the targets, outside them, on master and in runs with no known targets, over the number of runs that ran the test's file.
 - **Flaky candidates.** Tests that failed in one run and passed in another at the same clean commit.
 - **Slowest tests.** Median seconds.
+
+```shell
+python tools/test_history.py trend                                       # test times over time
+python tools/test_history.py trend --test tests/test_qed_benchmarks.py   # one file's (or one test's) history
+```
+
+`trend` lists the whole runs (`full`, `evals`, `no-evals`), newest last, with commit, workers, cores, the sqlglot build, wall and CPU time; then the files whose wall time moved most between the earliest and the latest whole runs of the same mode on the same core count; then where the CPU goes in the newest whole run, file by file. `--test` prints every recorded time of the files, or the slow tests (an id with `::` or `[`), whose name contains the text. Runs recorded before the times were kept show the slow tests' summed seconds and no CPU.
 
 Runs with 20 or more failures at once (a missing z3 or a wrong library version) are left out of the rankings.
 

@@ -88,10 +88,35 @@ def _or(*parts: exp.Expression) -> exp.Expression:
     return result
 
 
+_VOLATILE = {"random", "rand", "uuid", "gen_random_uuid", "generate_uuid", "newid", "now", "current_timestamp", "clock_timestamp"}
+
+
+def _volatile(node: exp.Expression) -> bool:
+    """Whether evaluating ``node`` twice may give two different values."""
+
+    return any(
+        isinstance(n, exp.Rand) or (isinstance(n, exp.Anonymous) and str(n.this).lower() in _VOLATILE)
+        for n in node.find_all(exp.Rand, exp.Anonymous)
+    )
+
+
+def _plain_group(group: exp.Expression | None) -> bool:
+    """A GROUP BY of plain expressions: each group occurs once (no GROUPING SETS, ROLLUP, CUBE or ALL)."""
+
+    if group is None:
+        return True
+    if any(group.args.get(k) for k in ("grouping_sets", "rollup", "cube", "all", "totals")):
+        return False
+    extensions = tuple(getattr(exp, n) for n in ("GroupingSets", "Rollup", "Cube") if hasattr(exp, n))
+    return not any(isinstance(e, extensions) for e in group.expressions)
+
+
 def lower_quantified(tree: exp.Expression) -> exp.Expression:
     """Write each ``x op ANY/ALL (SELECT y ...)`` with EXISTS (see the module docstring)."""
 
-    taken = {a.name for a in tree.find_all(exp.TableAlias) if a.name}
+    # Every identifier is reserved (aliases, table and CTE names, columns), so a generated alias can
+    # never shadow a relation the comparison reads.
+    taken = {i.name.lower() for i in tree.find_all(exp.Identifier)}
     counter = itertools.count()
 
     def fresh() -> str:
@@ -129,13 +154,27 @@ def lower_quantified(tree: exp.Expression) -> exp.Expression:
             replacement = exp.Paren(this=exp.Not(this=test)) if quantifier_all else test
             comparison.replace(replacement)
             continue
+        # The output is renamed to one name, so two spellings of a subquery lower alike, unless a clause
+        # that may name the output alias (ORDER BY, GROUP BY, HAVING, QUALIFY, WINDOW) would then read
+        # something else: there the probe reads the output by its own name.
         inner = body.copy()
         item = inner.expressions[0]
-        inner.set("expressions", [exp.alias_(item.unalias().copy(), _VALUE_NAME)])
+        name = None
+        if any(inner.args.get(k) for k in ("order", "group", "having", "qualify", "windows")):
+            name = item.args.get("alias") if isinstance(item, exp.Alias) else item.this if isinstance(item, exp.Column) else None
+            if not isinstance(name, exp.Identifier) or not name.name:
+                name = None
+        if name is None:
+            if any(c.name.lower() == _VALUE_NAME for c in inner.find_all(exp.Column)):
+                continue
+            inner.set("expressions", [exp.alias_(item.copy(), _VALUE_NAME)])
+            name = exp.to_identifier(_VALUE_NAME)
+        if _mode(comparison) == "full" and (_volatile(x) or _volatile(inner)):
+            continue  # the full value reads x and the subquery twice
 
         def probe(condition) -> exp.Exists:
             alias = fresh()
-            value = exp.column(_VALUE_NAME, table=alias)
+            value = exp.Column(this=name.copy(), table=exp.to_identifier(alias))
             select = exp.Select(expressions=[exp.Literal.number(1)]).from_(
                 exp.Subquery(this=inner.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))
             )
@@ -505,12 +544,18 @@ def _collapse(select: exp.Select) -> exp.Select:
         outer = sub.find_ancestor(exp.Select)
         alias = _alias_of(sub)
         names = {e.alias_or_name.lower(): e.unalias().name for e in inner.expressions}
-        columns = [c for c in outer.find_all(exp.Column) if c.table.lower() == alias and c.find_ancestor(exp.Select) is outer]
-        if any(c.name.lower() not in names for c in columns):
+        readers = [c for c in outer.find_all(exp.Column) if not _inside(c, sub) and (c.table.lower() == alias or not c.table)]
+        # Only qualified reads in the outer select itself are renamed: a reader in a deeper select, or an
+        # unqualified one, would keep the old output name and could bind to another column.
+        if any(not c.table or c.find_ancestor(exp.Select) is not outer for c in readers):
             continue
-        for column in columns:
+        if any(c.name.lower() not in names for c in readers):
+            continue
+        for column in readers:
             column.set("this", exp.to_identifier(names[column.name.lower()].lower()))
-        sub.replace(exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=exp.TableAlias(this=exp.to_identifier(alias))))
+        renamed = table.copy()  # keeps TABLESAMPLE, FOR SYSTEM_TIME and every other table argument
+        renamed.set("alias", exp.TableAlias(this=exp.to_identifier(alias)))
+        sub.replace(renamed)
     return select
 
 
@@ -612,6 +657,8 @@ def _indicator(body: exp.Select, hops: tuple, schema, not_null, groups: dict) ->
     # The indicator need not be grouped: each row of the reading select then pairs with every
     # match, but whether a match exists, which is all the condition reads, is the same.
     group_by = body.args.get("group")
+    if not _plain_group(group_by):
+        return None
     if len(body.expressions) != 2 or any(body.args.get(k) for k in ("having", "qualify", "limit", "offset", "windows")):
         return None
     # Constants in the GROUP BY (Calcite writes ``GROUP BY y, TRUE``) do not split groups.
@@ -743,6 +790,8 @@ def _probe(lineage: _Lineage, schema, groups: dict) -> tuple | None:
     counted = _query_select(counted_source)
     alias = _alias_of(counted_source)
     group = counted.args.get("group") if counted is not None else None
+    if not _plain_group(group):
+        return None
     if group is None or len(group.expressions) != 1 or any(counted.args.get(k) for k in ("where", "having", "joins", "laterals", "distinct", "qualify", "windows", "order", "limit", "offset")):
         return None
     key = group.expressions[0]
@@ -1239,7 +1288,7 @@ def _at_most_one_match(join: exp.Join, select: exp.Select, schema, keys: dict) -
             return False
         equated.append(mine[0])
     group = body.args.get("group")
-    if group is not None and not body.args.get("having"):
+    if group is not None and not body.args.get("having") and _plain_group(group):
         outputs = {e.alias_or_name.lower(): e.unalias().sql() for e in body.expressions}
         grouped = {e.sql() for e in group.expressions if not isinstance(e, (exp.Boolean, exp.Literal))}
         if grouped <= {outputs.get(c.name.lower()) for c in equated}:
