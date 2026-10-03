@@ -28,6 +28,8 @@ py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
 
 pip may warn that the scripts (`kumosql-ui.exe` and others) are installed in a folder that is not on `PATH`. That is harmless: on a locked-down Windows machine where `.exe` files are blocked, skip the launchers and run everything through Python, always as `python -m kumosql COMMAND` (the `kumosql-` prefix is optional): `python -m kumosql ui`, `python -m kumosql rewrite-sql query.sql`, `python -m kumosql pipeline-report demo`. The UI also starts with `python -m kumosql.ui`. This guide always uses the `python -m` form, which works everywhere; the launcher names (`kumosql-ui`, `rewrite-sql`, ...) are optional shortcuts for the same programs. Use the same Python you installed with, for example `& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m kumosql ui`, or `py -3.11 -m kumosql ui` when you installed without a virtual environment.
 
+**What can change files.** `--help` on any command only prints text. Most commands only read and print (`consolidate-tables` is a read-only preview that has no option to write; `refactor`, `minimize-tables` and the `prove-*` commands also only print). A file is written only for an option that names it (`-o`, `--output`, `--patch`, `--csv`), and `reduce-project --write` is the only option that edits a project folder. `python -m kumosql` with no arguments lists the commands and says the same.
+
 To install a local checkout instead, run `python -m pip install .` from the repository root. The distribution and the Python import package are both named `kumosql`.
 
 Optional extras add capabilities; install them the same way, for example `python -m pip install "kumosql[smt,execution]"`:

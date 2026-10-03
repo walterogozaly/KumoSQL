@@ -302,8 +302,9 @@ def generate_synthetic_dataset(
 
     Seed 0 is always an empty dataset, which catches rewrites that differ only
     when an input is empty (for example aggregates without ``GROUP BY``).
-    Every other seed includes NULLs and at least one exact duplicate row per
-    non-empty table, so bag semantics are exercised. With ``rules`` (declared
+    On every other seed each value is NULL with probability ``null_rate`` (so a
+    small table can have none) and each non-empty table gets one exact duplicate
+    row, so bag semantics are exercised. With ``rules`` (declared
     NOT NULL columns and keys, by lower-case table name) rows that break a rule
     are dropped, and a table with a key gets no exact duplicate row.
     """
@@ -684,7 +685,11 @@ def compare_outputs(
     check_column_names: bool = True,
     float_digits: int = 12,
 ) -> tuple[bool, str, tuple[Row, ...], tuple[Row, ...]]:
-    """Compare two outputs; returns (equal, reason, only_left, only_right)."""
+    """Compare two outputs; returns (equal, reason, only_left, only_right).
+
+    Values are compared, not their types: ``1`` and ``1.0`` are equal, and floats are
+    rounded to ``float_digits`` significant digits first.
+    """
 
     if len(left.columns) != len(right.columns):
         return False, f"column counts differ ({len(left.columns)} vs {len(right.columns)})", (), ()

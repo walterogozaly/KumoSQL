@@ -713,13 +713,14 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql refactor", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="python -m kumosql refactor",
+        description=__doc__.split("\n")[0] + " READ-ONLY: it prints suggestions as JSON and never edits the project folder.")
     parser.add_argument("project", help="Dataform or SQL folder")
     parser.add_argument("--protect", action="append", default=[], metavar="MODEL", help="a table that must keep existing and stay equivalent")
     parser.add_argument("--editable", action="append", default=[], metavar="MODEL", help="a model that may be dropped, merged, inlined or rewritten")
     parser.add_argument("--protect-scope", action="append", default=[], metavar="SCOPE")
     parser.add_argument("--editable-scope", action="append", default=[], metavar="SCOPE")
-    parser.add_argument("--save", action="store_true", help="save the classes given here for the app")
+    parser.add_argument("--save", action="store_true", help="remember the protected/editable choices in the app's own data folder (never the project folder)")
     parser.add_argument("--max-states", type=int, default=40)
     parser.add_argument("--max-seconds", type=float, default=300)
     parser.add_argument("--timeout-ms", type=int, default=5000)

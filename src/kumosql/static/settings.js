@@ -43,6 +43,7 @@
   let activeId = "";
   let current = "appearance";
   let saveTimer;
+  let uiWaiters = [];
   let formatTimer;
   // sqlfluff's rule list (from the installed sqlfluff) and the active
   // configuration's enabled rule codes while the formatting section is shown.
@@ -103,6 +104,7 @@
     return data;
   }
 
+  // Resolves once the server has stored the settings (calls within 200 ms share one write).
   function saveUi() {
     ui = structuredClone({ ...ui, ...(provider ? provider.getUi() : {}), ...pending() });
     try {
@@ -112,9 +114,20 @@
     }
     notify();
     clearTimeout(saveTimer);
+    const written = new Promise((resolve, reject) => uiWaiters.push({ resolve, reject }));
+    written.catch(() => {}); // callers that do not wait still see the error in the status line
     saveTimer = setTimeout(() => {
-      putJson("/api/settings/ui", ui, "Could not save settings").catch((error) => setStatus(error.message, true));
+      const waiters = uiWaiters;
+      uiWaiters = [];
+      putJson("/api/settings/ui", ui, "Could not save settings").then(
+        () => waiters.forEach((waiter) => waiter.resolve()),
+        (error) => {
+          setStatus(error.message, true);
+          waiters.forEach((waiter) => waiter.reject(error));
+        },
+      );
     }, 200);
+    return written;
   }
 
   // Values owned by this panel; they win over whatever the page last saved.
@@ -296,7 +309,7 @@
       const profile = active();
       try {
         profile.format = await putJson("/api/settings/format", readFormat(form), "Could not save sqlfluff settings");
-        saveUi();
+        await saveUi();
         setStatus("Saved");
       } catch (error) {
         setStatus(error.message, true);
@@ -333,8 +346,7 @@
       name.value = next;
       select.querySelector(`option[value="${profile.id}"]`).textContent = next;
       renameButton.disabled = true;
-      saveUi();
-      setStatus("Renamed");
+      saveUi().then(() => setStatus("Renamed"), () => {});
     };
     const name = h("input", {
       id: "sp-profile-name", class: "sp-input", type: "text", maxlength: "60", value: profile.name,
