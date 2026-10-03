@@ -155,12 +155,37 @@ _APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLA
 _STRUCT_COMPARISONS = _class("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "NullSafeEQ", "NullSafeNEQ", "In", "Is")
 
 
+def _fields(node: exp.Struct) -> list[str] | None:
+    """The field names of ``STRUCT(.. AS a, .. AS b)``, or ``None`` when a field is unnamed."""
+
+    if not all(isinstance(field, (exp.PropertyEQ, exp.Alias)) for field in node.expressions):
+        return None
+    return [field.alias_or_name for field in node.expressions]
+
+
+def _table_row(node: exp.Struct) -> bool:
+    """A row of ``FROM UNNEST([STRUCT(.. AS a), STRUCT(.. AS a)])``, an inline table. DuckDB reads the
+    rows by field name and BigQuery by position, so every row must name its fields as the first does
+    (sqlglot 26 names an unnamed field ``_0``, which DuckDB reads as a new column)."""
+
+    array, unnest = node.parent, node.parent and node.parent.parent
+    if not (isinstance(array, exp.Array) and isinstance(unnest, exp.Unnest) and isinstance(unnest.parent, (exp.From, exp.Join))):
+        return False
+    if len(unnest.expressions) != 1 or unnest.args.get("offset"):
+        return False
+    rows = [_fields(row) if isinstance(row, exp.Struct) else None for row in array.expressions]
+    first = rows[0]
+    return bool(first) and len({name.lower() for name in first}) == len(first) and all(row == first for row in rows)
+
+
 def struct_refusal(tree: exp.Expression) -> str | None:
     """A STRUCT may only be read field by field: DuckDB compares and groups whole structs by field
     name (BigQuery by position) and treats NULL fields differently."""
 
     names = set()
     for node in tree.find_all(exp.Struct):
+        if _table_row(node):
+            continue
         if not (isinstance(node.parent, exp.Alias) and isinstance(node.parent.parent, exp.Select)):
             return "STRUCT outside a select list"
         names.add(node.parent.alias.lower())

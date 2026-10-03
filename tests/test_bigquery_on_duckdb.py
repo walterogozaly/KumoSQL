@@ -338,6 +338,28 @@ def test_rows11_12_structs_compared_are_refused_and_returned_by_position(db):
     assert one(db, "SELECT STRUCT(1 AS a, 2 AS b) AS s") == (1, 2)
 
 
+def test_unnest_of_struct_rows_is_an_inline_table(db):
+    # BigQuery: (1, NULL, 1, 'a'), (3, 3, 3, NULL)
+    sql = (
+        "SELECT t0.c1, t0.c2, t.X, t.Y FROM UNNEST([STRUCT(1 AS c1, NULL AS c2), STRUCT(3 AS c1, 3 AS c2)]) AS t0 "
+        "LEFT JOIN UNNEST([STRUCT(1 AS X, 'a' AS Y), STRUCT(3 AS X, NULL AS Y)]) AS t ON t0.c1 = t.X ORDER BY t0.c1"
+    )
+    assert run(db, sql) == [(1, None, 1, "a"), (3, 3, 3, None)]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "STRUCT(10 AS x, 1 AS y), STRUCT(30, 3)",  # sqlglot 26 names the second row's fields _0 and _1
+        "STRUCT(10 AS x, 1 AS y), STRUCT(30 AS a, 3 AS b)",  # DuckDB adds columns a and b
+        "STRUCT(10 AS x, 1 AS y), STRUCT(30 AS y, 3 AS x)",  # DuckDB matches the fields by name
+        "STRUCT(STRUCT(1 AS a) AS s)",
+    ],
+)
+def test_unnest_of_struct_rows_named_unlike_the_first_is_refused(db, rows):
+    assert fails(db, f"SELECT * FROM UNNEST([{rows}]) AS t")
+
+
 def test_with_offset_is_refused(db):
     # BigQuery's offset counts from 0; sqlglot writes WITH ORDINALITY, which counts from 1
     assert fails(db, "SELECT x FROM UNNEST([1, 2, 3]) x WITH OFFSET o WHERE o > 0")
