@@ -3992,6 +3992,8 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
             walker = walker.parent
         if not in_list or walker is None or not all(isinstance(left, exp.Column) for left in lefts):
             continue
+        if _global_aggregate(walker):
+            continue  # a bare column of an aggregate without GROUP BY reads NULL over no rows (SQLite, MySQL)
         outer_known = _declared_not_null(node, declared)
         inner_known = _declared_not_null(inner.expressions[0], declared)
         values = [(item.this if isinstance(item, exp.Alias) else item) for item in inner.expressions]
