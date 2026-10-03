@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .string_literals import canonical_literals, invalid_literal
@@ -3758,11 +3758,11 @@ def _probe_and_nth_value(tree: exp.Expression) -> exp.Expression:
     return tree.transform(probe)
 
 
-def _except_of_same_table_filters(tree: exp.Expression, schema: dict[str, list[str]] | None) -> exp.Expression:
+def _except_of_same_table_filters(tree: exp.Expression, schema: dict[str, list[str]] | None, dialect: str = "bigquery") -> exp.Expression:
     """``SELECT * FROM t WHERE a EXCEPT SELECT * FROM t WHERE b`` is ``SELECT DISTINCT * FROM t WHERE a AND NOT COALESCE(b, FALSE)``.
 
     Both sides list every column of the same table, so a row is in the second side exactly when ``b`` holds
-    for it (equal rows agree on any condition over their columns).
+    for it (equal rows agree on any condition over their columns). Same in every qualifier: ``s1.t`` is not ``s2.t``.
     """
 
     if not schema:
@@ -3792,7 +3792,7 @@ def _except_of_same_table_filters(tree: exp.Expression, schema: dict[str, list[s
         if type(node) is not exp.Except or not node.args.get("distinct", True):
             return node
         left, right = single(node.this), single(node.expression)
-        if left is None or right is None or left[0].name.lower() != right[0].name.lower():
+        if left is None or right is None or not same_table(left[0], right[0], dialect):
             return node
         (a_table, a_where), (b_table, b_where) = left, right
         a_alias, b_alias = (a_table.alias_or_name or "").lower(), (b_table.alias_or_name or "").lower()
@@ -4269,11 +4269,12 @@ def _drop_empty_null_extended_side(select: exp.Select) -> exp.Expression | None:
     return copy
 
 
-def _drop_exists_witnessed_by_join(select: exp.Select) -> exp.Expression | None:
+def _drop_exists_witnessed_by_join(select: exp.Select, dialect: str = "bigquery") -> exp.Expression | None:
     """``WHERE EXISTS (SELECT 1 FROM d WHERE d.k = o.x)`` is implied by a joined ``d AS s`` with ``s.k = o.x``.
 
     The row of ``s`` is a witness for every row the select returns, so the test is TRUE and can go. Only
     inner joins (nothing is null-extended), and only a test that is a plain conjunction of such equalities.
+    The joined table must be the probed one in every qualifier: ``s1.d`` is no witness for ``s2.d``.
     """
 
     joins = select.args.get("joins") or []
@@ -4329,7 +4330,7 @@ def _drop_exists_witnessed_by_join(select: exp.Select) -> exp.Expression | None:
         witnessed = False
         if pairs:
             for src in sources:
-                if isinstance(src, exp.Table) and src.name.lower() == table.name.lower() and src.alias_or_name:
+                if isinstance(src, exp.Table) and same_table(src, table, dialect) and src.alias_or_name:
                     alias = src.alias_or_name.lower()
                     if all((alias, col, o_table, o_col) in equalities for col, o_table, o_col in pairs):
                         witnessed = True
@@ -4803,7 +4804,7 @@ def normalize(
     tree = _name_derived_columns(tree)
     if schema:
         tree = _using_to_on(_expand_stars(tree, schema), schema)  # USING over a derived table read once its stars are known
-    tree = _except_of_same_table_filters(tree, schema)
+    tree = _except_of_same_table_filters(tree, schema, dialect)
     tree = _probe_and_nth_value(tree)
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
@@ -4841,7 +4842,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map)):
+            for rule in (distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, lambda sel: _drop_exists_witnessed_by_join(sel, dialect), _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
