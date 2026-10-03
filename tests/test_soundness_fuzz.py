@@ -159,6 +159,13 @@ def test_guarded_window_limit_and_integer_float_cast_are_allowed():
         assert fuzz.convert_sql(sql, case)
 
 
+def test_operator_operands_keep_sqlglots_reading_in_duckdb():
+    # sqlglot writes Is(Not(Is(x, NULL)), NULL) as NOT x IS NULL IS NULL, which DuckDB reads as NOT ((x IS NULL) IS NULL)
+    case = basic_case()
+    assert rows(case, "SELECT (x IS NOT NULL) IS NULL AS b FROM t") == [(False,), (False,), (False,)]
+    assert rows(case, "SELECT NOT (x = 1) IS NULL AS b FROM t") == [(True,), (False,), (True,)]
+
+
 def test_large_integer_arithmetic_is_refused_but_float_coercion_is_measured():
     case = basic_case("SELECT x*1e0 AS v FROM t", "SELECT x AS v FROM t", None)
     case["tables"]["t"] = [[0, 9007199254740993, None]]

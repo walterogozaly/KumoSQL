@@ -1,23 +1,5 @@
 [
  {
-  "left": "SELECT x * 1e0 AS v FROM t",
-  "right": "SELECT x AS v FROM t",
-  "cause": "numeric exactness: INT64 values above 2^53 change when widened to FLOAT64, and the prover's numbers are exact",
-  "owner": "Core and SMT soundness fixes"
- },
- {
-  "left": "SELECT COALESCE(x, CAST(1 AS FLOAT64)) AS v FROM t WHERE x IS NOT NULL",
-  "right": "SELECT x AS v FROM t WHERE x IS NOT NULL",
-  "cause": "numeric exactness: INT64 values above 2^53 change when widened to FLOAT64, and the prover's numbers are exact",
-  "owner": "Core and SMT soundness fixes"
- },
- {
-  "left": "SELECT CASE WHEN x IS NOT NULL THEN x ELSE CAST(1 AS FLOAT64) END AS v FROM t WHERE x IS NOT NULL",
-  "right": "SELECT x AS v FROM t WHERE x IS NOT NULL",
-  "cause": "numeric exactness: INT64 values above 2^53 change when widened to FLOAT64, and the prover's numbers are exact",
-  "owner": "Core and SMT soundness fixes"
- },
- {
   "left": "SELECT COUNT(x) AS n FROM t",
   "right": "SELECT COUNT(g.n) AS n FROM (SELECT COUNT(x) AS n FROM t) AS g",
   "cause": "_collapse_aggregate collapses COUNT over a one-row-per-group aggregate (here a global one) into the inner aggregate; the outer COUNT is 1 per group, not the inner count",
@@ -31,27 +13,9 @@
   ]
  },
  {
-  "left": "SELECT x AS c FROM t INTERSECT DISTINCT SELECT k AS c FROM u LIMIT 0",
-  "right": "SELECT x AS c FROM t INTERSECT DISTINCT SELECT k AS c FROM u",
-  "cause": "setop_rules.set_operation_to_exists drops the LIMIT/ORDER BY tail of INTERSECT and EXCEPT (S006-001)",
-  "owner": "Prover soundness fixes",
-  "match": [
-   "LIMIT 0"
-  ],
-  "families": [
-   "set_operations"
-  ]
- },
- {
-  "left": "SELECT x FROM t UNION DISTINCT SELECT x FROM t LIMIT 0",
-  "right": "SELECT DISTINCT x FROM t",
-  "cause": "setop_rules.merge_same_source drops the LIMIT tail of a same-source UNION DISTINCT (S006-001)",
-  "owner": "Prover soundness fixes",
-  "match": [
-   "LIMIT 0"
-  ],
-  "families": [
-   "set_operations"
-  ]
+  "left": "SELECT x, COUNT(y) AS m FROM t GROUP BY x",
+  "right": "SELECT d.x, COUNT(d.n) AS m FROM (SELECT x, COUNT(y) AS n FROM t GROUP BY x) AS d GROUP BY d.x",
+  "cause": "_collapse_aggregate collapses COUNT over a one-row-per-group aggregate (here a global one) into the inner aggregate; the outer COUNT is 1 per group, not the inner count",
+  "owner": "Core and SMT soundness fixes"
  }
 ]
