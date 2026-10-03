@@ -792,6 +792,7 @@ def reduce_project(
     pipeline: Pipeline | None = None,
     keep_assertions: bool = False,
     strict: bool = False,
+    rewrite: bool = True,
     factor: bool = True,
     new_table_type: str = "view",
     source_columns: Mapping[str, object] | None = None,
@@ -803,7 +804,8 @@ def reduce_project(
 
     ``keep`` names actions by key (``project.dataset.name``), ``dataset.name``, name or file path. With
     ``strict``, every table that survives (not only those with assertions) must stay proved equal to the
-    original on the columns it keeps. ``source_columns`` adds columns (and keys) of declared sources, in the
+    original on the columns it keeps. With ``rewrite=False`` only what the kept outputs do not need is
+    deleted; no query is changed. ``source_columns`` adds columns (and keys) of declared sources, in the
     format :func:`kumosql.table_minimizer.minimize_tables` takes. Raises :class:`ReductionError` on a kept
     output that is unknown, ambiguous or a declaration.
     """
@@ -891,14 +893,15 @@ def reduce_project(
 
     minimized = None
     notes: list[str] = []
-    try:
-        minimized = minimize_tables(
-            tables, protected, sources=sources, fixed=fixed, checked=checked, keep_columns=keep_columns,
-            factor=factor, timeout_ms=timeout_ms, max_seconds=max(1.0, max_seconds - (time.time() - started)),
-            progress=progress, lower_score_only=True,
-        )
-    except MinimizationError as error:
-        notes.append(f"queries were not rewritten: {error}")
+    if rewrite:
+        try:
+            minimized = minimize_tables(
+                tables, protected, sources=sources, fixed=fixed, checked=checked, keep_columns=keep_columns,
+                factor=factor, timeout_ms=timeout_ms, max_seconds=max(1.0, max_seconds - (time.time() - started)),
+                progress=progress, lower_score_only=True,
+            )
+        except MinimizationError as error:
+            notes.append(f"queries were not rewritten: {error}")
 
     result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, minimized,
                     new_table_type, notes)
@@ -1122,6 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep", action="append", default=[], help="an output to keep: name, dataset.name or file path")
     parser.add_argument("--keep-assertions", action="store_true", help="keep every assertion over needed tables, proved unchanged")
     parser.add_argument("--strict", action="store_true", help="every surviving table must stay proved equal")
+    parser.add_argument("--drop-only", action="store_true", help="only delete what the kept outputs do not need")
     parser.add_argument("--no-factor", action="store_true", help="never move repeated queries into a shared table")
     parser.add_argument("--table-type", default="view", choices=("view", "table"), help="type of a new shared table")
     parser.add_argument("--max-seconds", type=float, default=300.0)
@@ -1131,7 +1135,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = reduce_project(
-            args.project, args.keep, keep_assertions=args.keep_assertions, strict=args.strict, factor=not args.no_factor,
+            args.project, args.keep, keep_assertions=args.keep_assertions, strict=args.strict, rewrite=not args.drop_only,
+            factor=not args.no_factor,
             new_table_type=args.table_type, max_seconds=args.max_seconds, timeout_ms=args.timeout_ms,
             progress=lambda line: print(line, file=sys.stderr),
         )

@@ -110,6 +110,14 @@ def test_one_output_kept_folds_its_chain_and_deletes_the_rest(tmp_path):
     assert "definitions/staging/paid_orders.sqlx" in data["changed_files"]
 
 
+def test_drop_only_deletes_what_is_not_needed_and_rewrites_nothing(tmp_path):
+    root = _write(tmp_path / "shop", SHOP)
+    result = reduce_project(root, ["rpt_revenue"], rewrite=False)
+    assert result.verified and result.moves == [] and result.changed == []
+    assert {entry["model"] for entry in result.removed} == {"shop.an.rpt_events", "shop.raw.customers", "shop.raw.events"}
+    assert all(change.action == "delete" for change in result.files)
+
+
 def test_kept_outputs_by_name_path_or_dataset_and_bad_names(tmp_path):
     root = _write(tmp_path / "shop", SHOP)
     for name in ("an.rpt_events", "definitions/reports/rpt_events.sqlx", "shop.an.rpt_events"):

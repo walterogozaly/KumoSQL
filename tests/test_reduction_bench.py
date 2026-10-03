@@ -30,12 +30,13 @@ bench = _load("reduction_bench")
 CASES = mc.load_cases()
 DEV = [c for c in CASES if c["split"] == "dev"]
 
-# Floors on every 18th dev case (15 cases; see floor_cases), measured at
-FLOOR_REDUCED = 0
-FLOOR_REMOVED_SHARE = 0.0
-FLOOR_STEPS_PROVED = 0
-# The real-project cases the floor runs, all on the dev split.
-REAL_FLOOR = []
+# Floors on every 18th dev case (15 cases; see floor_cases), measured at 14 reduced, 27.2% of the
+# complexity removed (8.8% by dropping alone) and 49 of 67 steps proved.
+FLOOR_REDUCED = 13
+FLOOR_REMOVED_SHARE = 0.25
+FLOOR_STEPS_PROVED = 44
+# Real-project cases the floor runs, all on the dev split: each is reduced and re-proved.
+REAL_FLOOR = ["real-wintermi-imdb-season_ratings", "real-wintermi-fashion-product", "real-wintermi-bqe-WAITFOR"]
 
 
 def floor_cases():
@@ -97,7 +98,16 @@ def test_real_projects_floor():
         assert result.score_after < result.score_before
 
 
+def test_jaffle_shop_floor():
+    # a real dbt project with its seed data: the reduction is executed on DuckDB as well as proved
+    case = next(c for c in bench.jaffle_cases() if c["id"] == "jaffle-orders")
+    result = bench.run([("jaffle", case)], databases=20)[0]
+    assert result.status == "reduced" and result.verified and result.executed == "agreed", result.reason
+    assert result.score_after < result.graph_only_score < result.score_before
+
+
 def test_results_file_matches_the_case_set():
     row = json.loads((ROOT / "benchmarks" / "results" / "project-reduction.json").read_text(encoding="utf-8"))
     real = [c for c in bench.real_cases() if c["split"] == "dev"]
-    assert row["size"] == len(DEV) + len(real)
+    jaffle = [c for c in bench.jaffle_cases() if c["split"] == "dev"]
+    assert row["size"] == len(DEV) + len(real) + len(jaffle)

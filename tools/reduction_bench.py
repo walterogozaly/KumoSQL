@@ -288,7 +288,7 @@ class CaseResult:
 def _graph_only(root: Path, keep: list[str], source_columns=None) -> tuple[int, float]:
     from kumosql.project_reduction import reduce_project
 
-    result = reduce_project(root, keep, factor=False, max_seconds=0.0, source_columns=source_columns)
+    result = reduce_project(root, keep, rewrite=False, source_columns=source_columns)
     return result.actions_after, result.score_after
 
 
