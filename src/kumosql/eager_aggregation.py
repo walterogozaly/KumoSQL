@@ -27,7 +27,7 @@ import itertools
 
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _conjuncts
+from .ast_utils import FROM_KEY, conjuncts as _conjuncts
 
 _counter = itertools.count()
 
@@ -372,7 +372,7 @@ def unnest_grouped_source(select: exp.Select) -> exp.Expression | None:
             conds.append(join.args["on"].copy())
     if result.args.get("where") is not None:
         conds.append(result.args["where"].this.copy())
-    result.set("from_", exp.From(this=all_items[0]))
+    result.set(FROM_KEY, exp.From(this=all_items[0]))
     result.set("joins", [exp.Join(this=i) for i in all_items[1:]])
     condition = None
     for c in conds:
@@ -624,7 +624,7 @@ def flatten_grouped_join(select: exp.Select) -> exp.Expression | None:
     for group in groups:
         group_by.extend(e.copy() for e in renamed_keys[group.alias.lower()].values())
     result = exp.Select(expressions=outputs)
-    result.set("from_", exp.From(this=flat_items[0]))
+    result.set(FROM_KEY, exp.From(this=flat_items[0]))
     result.set("joins", [exp.Join(this=i) for i in flat_items[1:]])
     condition = None
     for c in flat_conditions:
@@ -763,7 +763,7 @@ def pull_up_aggregate(select: exp.Select, keys: dict[str, list[tuple[str, ...]]]
             seen.add(column.sql().lower())
             group_by.append(column.copy())
     result = exp.Select(expressions=outputs)
-    result.set("from_", exp.From(this=table.copy()))
+    result.set(FROM_KEY, exp.From(this=table.copy()))
     result.set("joins", [exp.Join(this=i) for i in new_items])
     result.set("where", exp.Where(this=_product_and(where_parts)) if where_parts else None)
     result.set("group", exp.Group(expressions=group_by))

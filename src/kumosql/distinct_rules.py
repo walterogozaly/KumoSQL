@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import FROM_KEY
+
 
 def _plain_distinct(select: exp.Select) -> bool:
     distinct = select.args.get("distinct")
@@ -443,7 +445,7 @@ def distinct_join_to_exists(select: exp.Select) -> exp.Select | None:
         if position == 0:
             head = new_joins.pop(0)
             moved += kept_on.pop(0)
-            result.set("from_" if "from_" in select.args or select.args.get("from_") is not None else "from", exp.From(this=head.this))
+            result.set(FROM_KEY, exp.From(this=head.this))
         else:
             del new_joins[position - 1]
             del kept_on[position - 1]

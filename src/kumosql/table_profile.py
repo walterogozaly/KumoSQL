@@ -23,6 +23,7 @@ from typing import Any, Mapping, Sequence
 
 from sqlglot import exp
 
+from .ast_utils import EXCEPT_KEY, is_aggregate
 from .pipeline import ColumnRef, Model, Pipeline, Target, _parse_script, _table_name_for_schema
 from .set_operations import is_by_name
 
@@ -421,7 +422,7 @@ def _has_aggregate(expr: exp.Expression) -> bool:
         node = stack.pop()
         if isinstance(node, (exp.Window, exp.Query)):
             continue
-        if isinstance(node, exp.AggFunc):
+        if is_aggregate(node):
             return True
         stack.extend(node.iter_expressions())
     return False
@@ -643,7 +644,7 @@ class _Profiler:
         stars = [expr for _, expr in ctx.projs if _is_star(expr)]
         for star in stars:
             qualifier = star.table.lower() if isinstance(star, exp.Column) else ""
-            excluded = {c.name.lower() for c in star.args.get("except_") or []} if isinstance(star, exp.Star) else set()
+            excluded = {c.name.lower() for c in star.args.get(EXCEPT_KEY) or []} if isinstance(star, exp.Star) else set()
             if name in excluded:
                 continue
             replaced = (
@@ -766,7 +767,7 @@ class _Profiler:
             if isinstance(node, exp.Window):
                 wrapped += 1
                 return exp.Var(this="window:" + _canon_sql(node))
-            if isinstance(node, exp.AggFunc):
+            if is_aggregate(node):
                 wrapped += 1
                 collapsed = _collapse_nested(node)
                 if collapsed is not None:
@@ -1002,7 +1003,7 @@ class _Profiler:
             elif len(ctx.srcs) != 1 and column.table.lower() not in ctx.by_alias:
                 continue
             if isinstance(proj, exp.Star):
-                if name in {c.name.lower() for c in proj.args.get("except_") or []}:
+                if name in {c.name.lower() for c in proj.args.get(EXCEPT_KEY) or []}:
                     continue
                 if name in {a.alias.lower() for a in proj.args.get("replace") or [] if isinstance(a, exp.Alias)}:
                     continue

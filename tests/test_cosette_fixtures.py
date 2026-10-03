@@ -22,6 +22,18 @@ COSETTE_CASES = _jsonl(COSETTE / "cosette_cases.jsonl")
 SPES_PAIRS = _jsonl(SPES / "spes_only_pairs.jsonl")
 
 
+def _parses(sql: str) -> bool:
+    try:
+        sqlglot.parse_one(sql, read="mysql")
+    except sqlglot.errors.ParseError:
+        return False
+    return True
+
+
+# sqlglot 26 cannot parse a qualified column named CASE (one SPES pair has t2.CASE)
+QUALIFIED_CASE = _parses("SELECT t2.CASE FROM t AS t2")
+
+
 def test_counts_match_summaries():
     cos = json.loads((COSETTE / "summary.json").read_text())
     assert cos["converted"] == len(COSETTE_CASES)
@@ -53,6 +65,8 @@ def test_cosette_case_parses(case):
 def test_spes_pair_parses(pair):
     assert pair["label"] == "equivalent" or (pair["label"] == "not_equivalent" and pair.get("label_note"))
     for sql in (pair["sql_a"], pair["sql_b"]):
+        if not QUALIFIED_CASE and re.search(r"\.CASE\b", sql):
+            pytest.skip("this sqlglot version cannot parse a qualified column named CASE")
         assert sqlglot.parse_one(sql, read="mysql") is not None
 
 

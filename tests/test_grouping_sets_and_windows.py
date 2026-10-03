@@ -1,5 +1,6 @@
 """ROLLUP / CUBE / GROUPING SETS expansion, key-only HAVING, and window rewrites (cluster 20)."""
 
+import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
@@ -27,7 +28,22 @@ def test_rollup_cube_and_mixed_lists_spell_out_their_sets():
     assert _sets("SELECT a FROM t GROUP BY CUBE(a, b)") == "SELECT a FROM t GROUP BY GROUPING SETS ((a, b), (a), (b), ())"
     assert _sets("SELECT a FROM t GROUP BY x, ROLLUP(a)") == "SELECT a FROM t GROUP BY GROUPING SETS ((x, a), (x))"
     assert _sets("SELECT a FROM t GROUP BY a, b WITH ROLLUP") == "SELECT a FROM t GROUP BY GROUPING SETS ((a, b), (a), ())"
-    assert _sets("SELECT a FROM t GROUP BY GROUPING SETS (a, ROLLUP(b))") == "SELECT a FROM t GROUP BY GROUPING SETS ((a), (b), ())"
+
+
+NESTED = "SELECT a FROM t GROUP BY GROUPING SETS (a, ROLLUP(b))"
+
+
+def _parses(sql: str) -> bool:
+    try:
+        sqlglot.parse_one(sql, read="mysql")
+    except sqlglot.errors.ParseError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(not _parses(NESTED), reason="older sqlglot versions cannot parse a ROLLUP inside GROUPING SETS")
+def test_a_rollup_nested_in_grouping_sets_spells_out_its_sets():
+    assert _sets(NESTED) == "SELECT a FROM t GROUP BY GROUPING SETS ((a), (b), ())"
 
 
 def test_a_repeated_set_is_left_alone():

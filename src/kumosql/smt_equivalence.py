@@ -46,7 +46,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, star_modified
 from .set_operations import positional_sql_pair
 from .string_literals import canonical_literals
 
@@ -996,7 +996,7 @@ class _Compiler:
         aliases: dict[str, exp.Expression] = {}
         for item in node.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
-                if item.args.get("except") or item.args.get("replace"):
+                if star_modified(item if isinstance(item, exp.Star) else item.this):
                     raise Unsupported("SELECT * EXCEPT/REPLACE")
                 if isinstance(item, exp.Star):
                     sources = list(env.values())

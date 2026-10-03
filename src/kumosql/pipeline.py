@@ -40,7 +40,7 @@ from . import lineage_limits
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
-from .ast_utils import is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
+from .ast_utils import EXCEPT_KEY, is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -1017,7 +1017,7 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
     stars = [
         star
         for star in query.find_all(exp.Star)
-        if star.args.get("except_") and isinstance(star.parent, (exp.Select, exp.Column))
+        if star.args.get(EXCEPT_KEY) and isinstance(star.parent, (exp.Select, exp.Column))
     ]
     if not stars:
         return set()
@@ -1039,7 +1039,7 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
             ]
             for table in tables:
                 resolved = pipeline.resolve(table) or _table_name_for_schema(table)
-                for column in star.args["except_"]:
+                for column in star.args[EXCEPT_KEY]:
                     found.add(ColumnRef(resolved, column.name))
     return found
 

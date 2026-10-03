@@ -6,6 +6,8 @@ duplicate sets, or missing outer keys are deliberately not approximated.
 
 from sqlglot import exp
 
+from .ast_utils import is_call
+
 
 class _Decline(Exception):
     pass
@@ -66,7 +68,7 @@ def collapse_grouping_expansion(select):
             return node.this
         if isinstance(node, exp.Literal) and not node.is_string:
             return int(node.this)
-        if isinstance(node, exp.Grouping):
+        if is_call(node, "Grouping"):
             mask = 0
             for arg in node.expressions:
                 if key(arg) not in all_keys:

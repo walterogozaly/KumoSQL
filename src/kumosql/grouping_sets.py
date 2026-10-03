@@ -16,6 +16,8 @@ from itertools import combinations
 
 from sqlglot import exp
 
+from .ast_utils import is_call
+
 MAX_SETS = 64
 
 
@@ -28,6 +30,10 @@ def expand_grouping_sets(tree: exp.Expression) -> exp.Expression:
 
     for select in tree.find_all(exp.Select):
         group = select.args.get("group")
+        if group is not None and not group.expressions and group.args.get("grouping_sets") and not _needs_expansion(group):
+            # one list that older sqlglot versions keep under its own argument: move it where current ones put it
+            group.set("expressions", group.args["grouping_sets"])
+            group.set("grouping_sets", None)
         if group is None or not _needs_expansion(group):
             continue
         try:
@@ -194,7 +200,7 @@ def _branches(select: exp.Select) -> list[exp.Select] | None:
             branch = select.copy()
             branch.set("group", exp.Group(expressions=[m.copy() for m in members]) if members else None)
             for node in _own_scope(branch):
-                if isinstance(node, exp.Grouping):
+                if is_call(node, "Grouping"):
                     bits = 0
                     for argument in node.expressions:
                         key = _key_of(argument, keys)
@@ -222,7 +228,7 @@ def _branches(select: exp.Select) -> list[exp.Select] | None:
 
 def _aggregates(select: exp.Select) -> bool:
     roots = list(select.expressions) + [select.args["having"]] if select.args.get("having") else list(select.expressions)
-    return any(not isinstance(n, exp.Grouping) for root in roots for n in root.find_all(exp.AggFunc))
+    return any(not is_call(n, "Grouping") for root in roots for n in root.find_all(exp.AggFunc))
 
 
 def _key_of(column: exp.Expression, keys: list[exp.Column]) -> str | None:
@@ -260,7 +266,7 @@ def _own_scope(select: exp.Select) -> list[exp.Expression]:
             if any(True for _ in node.find_all(exp.Column)):
                 raise _Decline
             return
-        if isinstance(node, exp.Grouping):
+        if is_call(node, "Grouping"):
             found.append(node)
             return
         if isinstance(node, exp.AggFunc):

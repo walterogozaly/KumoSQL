@@ -32,7 +32,7 @@ from typing import Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _conjuncts
+from .ast_utils import conjuncts as _conjuncts, is_call
 from .smt_equivalence import TableConstraints
 
 # A fact's provenance: the declared facts it rests on (empty = follows from the query).
@@ -693,8 +693,8 @@ class _Analyzer:
             if isinstance(n, _NULL_ON_EMPTY_AGGREGATES):
                 return none if possibly_empty else all_args(n)
             if isinstance(n, exp.Window):
-                return (True, frozenset()) if isinstance(n.this, (exp.RowNumber, exp.Rank, exp.DenseRank, exp.Count)) else none
-            if isinstance(n, (exp.Is, exp.Exists, exp.Grouping)):
+                return (True, frozenset()) if isinstance(n.this, (exp.RowNumber, exp.Count)) or is_call(n.this, "Rank") or is_call(n.this, "DenseRank") else none
+            if isinstance(n, (exp.Is, exp.Exists)) or is_call(n, "Grouping"):
                 return True, frozenset()
             if isinstance(n, exp.Coalesce):
                 best = none

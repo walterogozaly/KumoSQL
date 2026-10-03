@@ -36,6 +36,7 @@ from typing import Any, Iterable
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import spell_for_duckdb
 from .sqlx import _find_interpolation_end, split_sqlx_sections
 
 
@@ -259,7 +260,7 @@ def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
             return exp.cast(exp.Literal.string(literal[:10]), "date")
         return node
 
-    return tree.transform(pin).sql(dialect="duckdb")
+    return spell_for_duckdb(tree.transform(pin)).sql(dialect="duckdb")
 
 
 def _norm(value: Any) -> Any:

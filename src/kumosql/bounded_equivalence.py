@@ -42,6 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import is_call, spell_for_duckdb
 from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised through the tests
@@ -1615,10 +1616,10 @@ class Compiler:
             for j, row in enumerate(context.rows)
         ]
         before = [self._precedes(Row(None, [], keyed[j][1]), Row(None, [], keyed[index][1])) if order is not None else _false() for j in range(len(context.rows))]
-        if isinstance(function, (exp.RowNumber, exp.Rank, exp.DenseRank)):
+        if isinstance(function, exp.RowNumber) or is_call(function, "Rank") or is_call(function, "DenseRank"):
             if order is None:
                 raise Unsupported("ranking function without ORDER BY")
-            if isinstance(function, exp.DenseRank):
+            if is_call(function, "DenseRank"):
                 total = []
                 for j in range(len(context.rows)):
                     first = z3.Not(z3.Or(*[
@@ -1944,7 +1945,7 @@ class DuckDBReplay:
                 table.set("catalog", None)
                 table.set("db", None)
                 table.set("this", exp.to_identifier(found.name))
-        return tree.sql(dialect="duckdb")
+        return spell_for_duckdb(tree).sql(dialect="duckdb")
 
     def _run(self, data: dict[str, list[tuple]]):
         for name, table in self.schema.tables.items():
