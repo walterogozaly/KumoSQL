@@ -26,6 +26,13 @@ _spec.loader.exec_module(bench)
 FLOORS = {"singh-sample": 17, "verieql-sample": 11, "singh-all": 570}
 
 
+@pytest.fixture(autouse=True)
+def _own_singh_module(monkeypatch):
+    """The Singh eval's own test loads ``singh_bedathur_bench`` under the same name; pickling a ``Pair`` for the worker
+    processes finds the class by that name, so point it at the module these pairs come from while a test runs."""
+    monkeypatch.setitem(sys.modules, "singh_bedathur_bench", bench.singh)
+
+
 def _singh_pairs():
     try:
         return bench.singh.load_pairs()
