@@ -2,6 +2,8 @@
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def collapse_counted_intersection(select):
     source = select.args.get("from_") or select.args.get("from")
@@ -10,7 +12,7 @@ def collapse_counted_intersection(select):
         return None
     if any(select.args.get(k) for k in ("joins", "where", "distinct", "qualify", "order", "limit", "offset")):
         return None
-    if any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup", "totals")):
+    if extended_grouping(group):
         return None
     condition = having.this
     if not isinstance(condition, exp.EQ):
@@ -36,7 +38,7 @@ def collapse_counted_intersection(select):
     parts = []
     for branch in branches:
         bg = branch.args.get("group")
-        if bg is None or any(bg.args.get(k) for k in ("grouping_sets", "cube", "rollup", "totals")):
+        if bg is None or extended_grouping(bg):
             return None
         if any(branch.args.get(k) for k in ("having", "qualify", "limit", "offset", "distinct")) or branch.find(exp.Window):
             return None

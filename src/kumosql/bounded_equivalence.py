@@ -42,6 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import distinct_on, extended_grouping
 from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised through the tests
@@ -734,7 +735,7 @@ class Compiler:
     def select(self, node: exp.Select, outer: Scope | None) -> Rel:
         if node.args.get("qualify") or node.args.get("windows"):
             raise Unsupported("window clause")
-        if node.args.get("distinct") is not None and isinstance(node.args["distinct"], exp.Distinct) and node.args["distinct"].args.get("on"):
+        if distinct_on(node):
             raise Unsupported("DISTINCT ON")
         source = self.from_clause(node, outer)
         where = node.args.get("where")
@@ -1071,7 +1072,7 @@ class Compiler:
         alias_nodes = {i.alias.lower(): i.this for i in items if isinstance(i, exp.Alias)}
         key_nodes = []
         if group is not None:
-            if group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube") or group.args.get("totals"):
+            if extended_grouping(group):
                 raise Unsupported("grouping sets")
             for key in group.expressions:
                 if isinstance(key, exp.Literal) and not key.is_string and not self.group_constants:
