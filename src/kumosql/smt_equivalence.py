@@ -2051,7 +2051,7 @@ class _Prover:
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
         self.opaque_sets: set[str] = set()
-        self.candidates: list[tuple[object, list[_Occ]]] = []
+        self.candidates: list[tuple[object, list[_Occ], list[_Val]]] = []
 
     @staticmethod
     def _typing(occs: list[_Occ]):
@@ -2159,32 +2159,45 @@ class _Prover:
         if result == z3.unsat:
             return True
         if result == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
         else:
             self.unknown = True
         return False
 
-    def _counterexample(self, solver, occs):
+    def _candidate(self, solver, occs):
+        # Internal proof attempts often discard their candidates or prove the pair.
+        # Only extract a model if refutation search actually consumes this candidate.
+        # Snapshot the values now: occurrences can acquire more columns later.
+        values = [v for occ in occs for v in occ.cols.values()]
+        self.candidates.append((solver, list(occs), values))
+
+    def _counterexample(self, solver, values):
         """A model of the last satisfiable check, preferring an integral one.
 
-        The plain model is read first: ``_nice_model`` runs further checks, and
-        after those the solver holds no model to fall back on.
+        Extract candidates in a fresh context: the shared context's term ids can
+        change which unconstrained NULL flags Z3 picks across identical calls.
+        The proof check above is unchanged, and every candidate is still checked
+        against the constraints and both queries before it is returned.
         """
 
         base = solver.model()
-        return self._nice_model(solver, occs) or base
+        isolated = solver.translate(z3.Context())
+        if isolated.check() != z3.sat:
+            return base  # A timeout in the extra search must not lose a satisfiable model.
+        base = isolated.model()
+        model = self._nice_model(isolated, values) or base
+        return model.translate(solver.ctx)
 
-    def _nice_model(self, solver, occs):
+    def _nice_model(self, solver, values):
         """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
         column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
-        values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
         for extra in (integral + numeric, numeric, integral):
             solver.push()
-            solver.add(*extra)
+            solver.add(*[fact.translate(solver.ctx) for fact in extra])
             model = solver.model() if solver.check() == z3.sat else None
             solver.pop()
             if model is not None:
@@ -2199,7 +2212,7 @@ class _Prover:
         solver.add(*facts)
         solver.add(pred)
         if solver.check() == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
 
     def unify_subs(self, a_subs: list, b_subs: list, base_pairs: list, scope: list, facts):
         """Group equivalent existence tests so equal tests share one atom.
@@ -3478,7 +3491,8 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         prover.witness(block.cond.t, block.occs, block.facts)
     empty = z3.Solver()
     empty.check()
-    for model, occs in [(empty.model(), [])] + prover.candidates:
+    for solver, occs, values in [(empty, [], [])] + prover.candidates:
+        model = prover._counterexample(solver, values) if occs else solver.model()
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})
