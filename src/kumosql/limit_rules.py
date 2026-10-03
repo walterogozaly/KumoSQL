@@ -13,7 +13,7 @@ rows that come out are the same for every way of breaking ties.
 * An outer ``ORDER BY o LIMIT n OFFSET m`` over projections of an inner
   ``ORDER BY o .. LIMIT k OFFSET j`` is one cut, ``LIMIT min(n, k - m) OFFSET j + m``,
   and over ``UNION ALL`` an inner branch cut ``ORDER BY o LIMIT k`` with
-  ``k >= n + m`` changes nothing (``_merge_top_k``). Both need every output column
+  ``k >= n + m`` changes nothing, nor does such a cut on the whole ``UNION ALL`` (``_merge_top_k``). Both need every output column
   of the outer query to be a function of its ``ORDER BY`` keys: then the rows
   kept are fixed by the sorted key values alone, whichever tied rows each cut
   picks.
@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 
 from sqlglot import exp
+
+from .ast_utils import distinct_on
 
 _VOLATILE = (exp.Subquery, exp.AggFunc, exp.Window, exp.Rand, exp.Anonymous, exp.Star)
 
@@ -39,7 +41,7 @@ def limit_rule(select: exp.Select, types: dict[str, dict[str, str]] | None = Non
         if rewritten is not None:
             return rewritten
     if types and dialect != "bigquery":
-        return _order_by_uncast(select, types)
+        return _order_by_uncast(select, types, dialect)
     return None
 
 
@@ -215,6 +217,56 @@ def _deterministic(expr: exp.Expression) -> bool:
     return not any(isinstance(n, _VOLATILE) for n in expr.walk())
 
 
+def _owns_aggregate(select: exp.Select, clauses) -> bool:
+    for clause in clauses:
+        value = select.args.get(clause)
+        for node in value if isinstance(value, list) else [value] if value is not None else []:
+            if any(a.find_ancestor(exp.Select) is select for a in node.find_all(exp.AggFunc)):
+                return True
+    return False
+
+
+def drops_global_aggregate(before: exp.Select, after: exp.Select) -> bool:
+    """``after``, ``before`` with a new select list, no longer aggregates though ``before`` aggregates without GROUP BY.
+
+    Such a select gives one row even over no input. With no aggregate of its own left in the select list or
+    HAVING it is a plain select, a row per input row: ``SELECT 7 AS c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t)``
+    is not ``SELECT 7 AS c FROM t``.
+    """
+
+    if before.args.get("group") or not _owns_aggregate(before, ("expressions", "having", "order")):
+        return False
+    return not _owns_aggregate(after, ("expressions", "having"))
+
+
+def _renamed(expressions) -> dict[str, str]:
+    """Output alias -> its value's SQL, for each alias that is not the column of that name."""
+
+    return {
+        e.alias.lower(): e.this.sql()
+        for e in expressions
+        if isinstance(e, exp.Alias) and e.alias and not (isinstance(e.this, exp.Column) and e.this.name.lower() == e.alias.lower())
+    }
+
+
+def rebinds_grouping_names(before: exp.Select, outputs, moved=(), clauses=("group", "having")) -> bool:
+    """A name in ``before``'s GROUP BY or HAVING means something else once its select list is ``outputs``.
+
+    Those clauses may name an output alias (``SELECT k AS kk .. GROUP BY kk``), and a name an alias shares
+    with a column may be read as the alias. A new select list can drop the alias, leaving the name to a
+    column, or bring one (``SELECT x AS k .. HAVING MAX(k) > 1``). ``moved`` are conditions over the input
+    columns that join HAVING alongside the new list; ``clauses`` adds ``"order"`` for an ORDER BY kept too.
+    """
+
+    old, new = _renamed(before.expressions), _renamed(outputs)
+    clauses = [(before.args.get(clause), old) for clause in clauses] + [(m, {}) for m in moved]
+    for node, meaning in clauses:
+        for column in node.find_all(exp.Column) if node is not None else ():
+            if not column.table and meaning.get(column.name.lower()) != new.get(column.name.lower()):
+                return True
+    return False
+
+
 def _ordering(query: exp.Expression):
     """The ``ORDER BY`` of ``query`` as ``(key in position form, descending, nulls first)`` over the
     relation the keys read: the FROM source of a select, the output of a set operation."""
@@ -264,6 +316,16 @@ def _ordering(query: exp.Expression):
             if names is None or not 1 <= position <= len(names):
                 return None
             key = exp.column(names[position - 1])
+        elif any(c.table for c in key.find_all(exp.Column)):
+            key = key.copy()
+            for column in [c for c in key.find_all(exp.Column) if c.table]:
+                position = _set_operation_column(query, column, names)
+                if position is None:
+                    return None
+                if column is key:
+                    key = exp.column(names[position])
+                else:
+                    column.replace(exp.column(names[position]))
         if not _deterministic(key):
             return None
         form = _position_form(key, names, alias)
@@ -273,6 +335,36 @@ def _ordering(query: exp.Expression):
         nulls_first = item.args.get("nulls_first")
         keys.append((form, desc, (not desc) if nulls_first is None else bool(nulls_first)))
     return keys
+
+
+def _set_operation_column(query: exp.Expression, key: exp.Column, names: list[str]) -> int | None:
+    """The output position a qualified column ``t.c`` in a set operation's ORDER BY reads, or ``None``.
+
+    Engines differ here: some reject it, DuckDB matches it against the branches' select lists. Only
+    a reading every engine that accepts it agrees on is taken: ``c`` names exactly one output, and
+    every branch item that is ``t.c`` sits at that same position."""
+
+    if key.args.get("db") or key.args.get("catalog") or isinstance(key.this, exp.Star):
+        return None
+    named = [i for i, n in enumerate(names) if n == key.name.lower()]
+    if len(named) != 1:
+        return None
+    branches, found = [query.this, query.expression], set()
+    while branches:
+        branch = branches.pop()
+        if isinstance(branch, exp.SetOperation):
+            branches += [branch.this, branch.expression]
+            continue
+        if isinstance(branch, exp.Subquery):
+            branches.append(branch.this)
+            continue
+        if not isinstance(branch, exp.Select):
+            return None
+        for i, item in enumerate(branch.expressions):
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Column) and value.name.lower() == key.name.lower() and value.table.lower() == key.table.lower():
+                found.add(i)
+    return named[0] if found == {named[0]} else None
 
 
 # --- dropping an unread ORDER BY -------------------------------------------------------------
@@ -317,6 +409,8 @@ def _drop_unread_order(select: exp.Select) -> exp.Expression | None:
     if isinstance(source, exp.Subquery) and isinstance(source.this, exp.SetOperation):
         targets.append(source.this)
     for query in targets:
+        if distinct_on(query):
+            continue  # DISTINCT ON keeps the first row of each group in this order
         if query.args.get("order") is not None and query.args.get("limit") is None and query.args.get("offset") is None and _order_unread(query):
             query.set("order", None)
             changed = True
@@ -345,21 +439,30 @@ def _dedupe_order_keys(select: exp.Select) -> exp.Expression | None:
 
 
 # A 32-bit integer column cast to one of these keeps distinct values distinct and in order.
-_SMALL_INT = re.compile(r"^\s*(tinyint|smallint|mediumint|int|integer|int2|int4)\b", re.I)
+# Integer type names of at most 32 bits, per dialect, as each documents them. Elsewhere a name such as
+# ``INT`` may be wider (Snowflake's is NUMBER(38, 0), SQLite's 64 bits), so the cast stays.
+_SMALL_INTS = {
+    "mysql": "tinyint|smallint|mediumint|int|integer",
+    "postgres": "smallint|int|integer|int2|int4",
+    "redshift": "smallint|int|integer|int2|int4",
+    "duckdb": "tinyint|smallint|int|integer|int1|int2|int4",
+    "tsql": "tinyint|smallint|int",
+}
 _WIDE = (exp.DataType.Type.DOUBLE, exp.DataType.Type.BIGINT)
 
 
-def _order_by_uncast(select: exp.Select, types: dict[str, dict[str, str]]) -> exp.Expression | None:
+def _order_by_uncast(select: exp.Select, types: dict[str, dict[str, str]], dialect: str) -> exp.Expression | None:
     """``ORDER BY CAST(i AS DOUBLE)`` is ``ORDER BY i`` for a 32-bit integer column ``i``: the cast is
     strictly increasing, so it neither reorders rows nor makes or breaks ties (NULL stays NULL).
 
-    Only for dialects whose ``INT`` is 32 bits (BigQuery's is 64, and a DOUBLE cannot hold every
-    64-bit integer, so it could tie two values)."""
+    Only for type names ``dialect`` documents as at most 32 bits (BigQuery's ``INT`` is 64, and a DOUBLE
+    cannot hold every 64-bit integer, so it could tie two values)."""
 
     from .algebraic_equivalence import _origin_type
 
     order = select.args.get("order")
-    if order is None:
+    small = _SMALL_INTS.get(str(dialect).lower())
+    if order is None or small is None:
         return None
     outputs: dict[str, list[exp.Expression]] = {}
     for e in select.expressions:
@@ -377,7 +480,7 @@ def _order_by_uncast(select: exp.Select, types: dict[str, dict[str, str]]) -> ex
         if not column.table and any(not (isinstance(v, exp.Column) and v.name.lower() == column.name.lower()) for v in named):
             continue  # the name may mean an output alias
         declared = _origin_type(select, column, types)
-        if declared and _SMALL_INT.match(declared):
+        if declared and re.match(rf"^\s*({small})\b", declared, re.I):
             item.set("this", column.copy())
             changed = True
     return select if changed else None
@@ -462,10 +565,11 @@ def _merge_top_k(select: exp.Select) -> exp.Expression | None:
         own = _ordering(inner)
         if own is None or _key_text(own)[: len(lowered)] != _key_text(lowered):
             continue
-        if through_union:
-            # A branch that keeps at least the n + m first rows of its own order loses none of the
-            # rows the outer cut keeps.
-            if inner_skip or (inner_count is not None and (count is None or inner_count < count + skip)):
+        # A branch (or a whole set operation) that keeps at least the n + m first rows of its own order
+        # loses none of the rows the outer cut keeps.
+        keeps_enough = not inner_skip and (inner_count is None or (count is not None and inner_count >= count + skip))
+        if through_union or (keeps_enough and isinstance(inner, exp.SetOperation)):
+            if not keeps_enough:
                 continue
             inner.set("order", None)
             _set_cut(inner, None, 0)
@@ -552,7 +656,11 @@ def _lift_cut(select: exp.Select) -> exp.Expression | None:
             value = new_names.get(column.name.lower())
             if not column.table and value is not None and value.sql() != column.sql():
                 return None
+    if rebinds_grouping_names(inner, items):
+        return None
     result = inner.copy()
     result.set("expressions", items)
     result.set("order", exp.Order(expressions=keys))
+    if drops_global_aggregate(inner, result):
+        return None
     return result

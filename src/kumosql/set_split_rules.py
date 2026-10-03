@@ -279,8 +279,8 @@ def _union_branches(node: exp.Expression) -> list[exp.Select] | None:
     if isinstance(node, exp.Subquery) and not node.alias and not any(node.args.get(k) for k in ("order", "limit", "offset")):
         return _union_branches(node.this)
     if type(node) is exp.Union:
-        if any(node.args.get(k) for k in ("order", "limit", "offset", "with_", "with")):
-            return None
+        if any(node.args.get(k) for k in ("order", "limit", "offset", "with_", "with", "by_name", "side", "kind", "on")):
+            return None  # BY NAME (and OUTER / CORRESPONDING) unions pair columns by name, not position
         left, right = _union_branches(node.this), _union_branches(node.expression)
         if left is None or right is None:
             return None

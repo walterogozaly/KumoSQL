@@ -1,0 +1,45 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.TARGET_DATA,
+  description: "Contains a conformed product category hierarchy for each `product_code` grouping",
+  dependOnDependencyAssertions: true,
+  assertions: {
+    uniqueKey: ["product_code"],
+    nonNull: ["product_code"]
+  },
+  tags: ["TRANSFORM_DATA"]
+}
+
+
+SELECT
+    product_code
+  , prod_name
+  , product_group_name
+  , product_type_name
+  , index_group_name
+  , index_name
+  , section_name
+  , garment_group_name
+  , CASE WHEN     product_group_name = "Unknown"
+              AND product_type_name = "Unknown"
+         THEN FORMAT("%s > %s", section_name, garment_group_name)
+         WHEN     garment_group_name = product_group_name
+               OR garment_group_name = product_type_name
+               OR garment_group_name IN ("Unknown", "Under-, Nightwear")
+         THEN FORMAT("%s > %s > %s", section_name, product_group_name, product_type_name)
+         ELSE FORMAT("%s > %s > %s > %s", section_name, product_group_name, product_type_name, garment_group_name)
+    END AS product_category
+  , detail_desc
+FROM (SELECT
+          product_code
+        , REGEXP_REPLACE(INITCAP(prod_name), r'\([^)]*\)', "") AS prod_name
+        , REPLACE(REPLACE(INITCAP(product_group_name), ">", "-"), " And ", " & ") AS product_group_name
+        , REPLACE(REPLACE(INITCAP(product_type_name), ">", "-"), " And ", " & ") AS product_type_name
+        , REPLACE(REPLACE(INITCAP(index_group_name), ">", "-"), " And ", " & ") AS index_group_name
+        , REPLACE(REPLACE(INITCAP(index_name), ">", "-"), " And ", " & ") AS index_name
+        , REPLACE(REPLACE(INITCAP(section_name), ">", "-"), " And ", " & ") AS section_name
+        , REPLACE(REPLACE(INITCAP(garment_group_name), ">", "-"), " And ", " & ") AS garment_group_name
+        , detail_desc
+      FROM ${ ref({ schema: dataform.projectConfig.vars.RAW_DATA, name: "stg_articles" }) }
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY product_code
+                                 ORDER BY article_id DESC) = 1) AS dt

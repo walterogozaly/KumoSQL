@@ -1,0 +1,36 @@
+{
+ "note": "Authored for this eval (not upstream): written by hand from the five Jaffle Shop models. For every output column, 'sources' are the columns of the models or seeds it reads whose values it is computed from (filter, join and grouping columns are not value sources), 'transform' is the strongest step inside the model in KumoSQL's vocabulary (passthrough, renamed, expression, aggregate), and 'seed_sources' are the seed columns it comes from, followed through every model.",
+ "columns": {
+  "stg_customers.customer_id": {"sources": ["raw_customers.id"], "transform": "renamed", "seed_sources": ["raw_customers.id"]},
+  "stg_customers.first_name": {"sources": ["raw_customers.first_name"], "transform": "passthrough", "seed_sources": ["raw_customers.first_name"]},
+  "stg_customers.last_name": {"sources": ["raw_customers.last_name"], "transform": "passthrough", "seed_sources": ["raw_customers.last_name"]},
+
+  "stg_orders.order_id": {"sources": ["raw_orders.id"], "transform": "renamed", "seed_sources": ["raw_orders.id"]},
+  "stg_orders.customer_id": {"sources": ["raw_orders.user_id"], "transform": "renamed", "seed_sources": ["raw_orders.user_id"]},
+  "stg_orders.order_date": {"sources": ["raw_orders.order_date"], "transform": "passthrough", "seed_sources": ["raw_orders.order_date"]},
+  "stg_orders.status": {"sources": ["raw_orders.status"], "transform": "passthrough", "seed_sources": ["raw_orders.status"]},
+
+  "stg_payments.payment_id": {"sources": ["raw_payments.id"], "transform": "renamed", "seed_sources": ["raw_payments.id"]},
+  "stg_payments.order_id": {"sources": ["raw_payments.order_id"], "transform": "passthrough", "seed_sources": ["raw_payments.order_id"]},
+  "stg_payments.payment_method": {"sources": ["raw_payments.payment_method"], "transform": "passthrough", "seed_sources": ["raw_payments.payment_method"]},
+  "stg_payments.amount": {"sources": ["raw_payments.amount"], "transform": "expression", "seed_sources": ["raw_payments.amount"]},
+
+  "customers.customer_id": {"sources": ["stg_customers.customer_id"], "transform": "passthrough", "seed_sources": ["raw_customers.id"]},
+  "customers.first_name": {"sources": ["stg_customers.first_name"], "transform": "passthrough", "seed_sources": ["raw_customers.first_name"]},
+  "customers.last_name": {"sources": ["stg_customers.last_name"], "transform": "passthrough", "seed_sources": ["raw_customers.last_name"]},
+  "customers.first_order": {"sources": ["stg_orders.order_date"], "transform": "aggregate", "seed_sources": ["raw_orders.order_date"]},
+  "customers.most_recent_order": {"sources": ["stg_orders.order_date"], "transform": "aggregate", "seed_sources": ["raw_orders.order_date"]},
+  "customers.number_of_orders": {"sources": ["stg_orders.order_id"], "transform": "aggregate", "seed_sources": ["raw_orders.id"]},
+  "customers.customer_lifetime_value": {"sources": ["stg_payments.amount"], "transform": "aggregate", "seed_sources": ["raw_payments.amount"]},
+
+  "orders.order_id": {"sources": ["stg_orders.order_id"], "transform": "passthrough", "seed_sources": ["raw_orders.id"]},
+  "orders.customer_id": {"sources": ["stg_orders.customer_id"], "transform": "passthrough", "seed_sources": ["raw_orders.user_id"]},
+  "orders.order_date": {"sources": ["stg_orders.order_date"], "transform": "passthrough", "seed_sources": ["raw_orders.order_date"]},
+  "orders.status": {"sources": ["stg_orders.status"], "transform": "passthrough", "seed_sources": ["raw_orders.status"]},
+  "orders.credit_card_amount": {"sources": ["stg_payments.amount", "stg_payments.payment_method"], "transform": "aggregate", "seed_sources": ["raw_payments.amount", "raw_payments.payment_method"]},
+  "orders.coupon_amount": {"sources": ["stg_payments.amount", "stg_payments.payment_method"], "transform": "aggregate", "seed_sources": ["raw_payments.amount", "raw_payments.payment_method"]},
+  "orders.bank_transfer_amount": {"sources": ["stg_payments.amount", "stg_payments.payment_method"], "transform": "aggregate", "seed_sources": ["raw_payments.amount", "raw_payments.payment_method"]},
+  "orders.gift_card_amount": {"sources": ["stg_payments.amount", "stg_payments.payment_method"], "transform": "aggregate", "seed_sources": ["raw_payments.amount", "raw_payments.payment_method"]},
+  "orders.amount": {"sources": ["stg_payments.amount"], "transform": "aggregate", "seed_sources": ["raw_payments.amount"]}
+ }
+}
