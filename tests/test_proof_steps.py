@@ -17,6 +17,7 @@ from kumosql import cleanup, equivalence, proof_steps
 from kumosql.engine import RewriteRule, RuleOutput
 from kumosql.proof_steps import PREDICATE_FAMILY, RewriteStep, check_predicate_step
 from kumosql.rewrite import INDEPENDENT_CHECK, VerificationStatus
+from kumosql.sqlx_fragments import is_relation_reference
 
 
 def step(before: str, after: str) -> RewriteStep:
@@ -293,6 +294,9 @@ def test_ui_exposes_the_independent_check():
     # The expression reads c, so c is not unused.
     ("remove_unused_ctes", 'WITH c AS (SELECT 1 AS x) SELECT * FROM t WHERE ${"x IN (SELECT x FROM c)"}'),
     ("inline_single_use_ctes", 'WITH c AS (SELECT 1 AS x), d AS (SELECT x FROM c) SELECT * FROM d WHERE ${"x IN (SELECT x FROM c)"}'),
+    # A JavaScript constant inside a table name, and a ref() the expression goes on past.
+    ("remove_trivial_predicates", 'SELECT x FROM ${sp.schema}.events${sp.suffix} WHERE TRUE AND y = 1'),
+    ("remove_trivial_predicates", 'SELECT x FROM ${ref("t") + suffix} WHERE TRUE AND y = 1'),
 ])
 def test_a_changed_statement_with_a_dynamic_sqlx_expression_is_unproven(rule, source):
     result = apply_rule(rule, source)
@@ -306,6 +310,7 @@ def test_a_changed_statement_with_a_dynamic_sqlx_expression_is_unproven(rule, so
     ("remove_trivial_predicates", "SELECT x FROM ${ref('s', 't')} WHERE d = '${constants.START}' AND TRUE"),
     ("remove_trivial_predicates", 'SELECT x FROM ${self()} WHERE TRUE AND y = 1'),
     ("inline_single_use_ctes", 'WITH c AS (SELECT * FROM ${resolve("t")}) SELECT * FROM c'),
+    ("remove_trivial_predicates", 'SELECT x FROM ${ref({schema: dataform.projectConfig.vars.S, name: "t"})} WHERE TRUE AND y = 1'),
     # The dynamic expression is in a statement the rule left alone.
     ("remove_trivial_predicates", 'SELECT x FROM t WHERE TRUE AND y = 1;\nSELECT ${when(incremental(), "z")} FROM u'),
 ])
@@ -313,6 +318,24 @@ def test_relation_references_and_string_contents_stay_provable(rule, source):
     result = apply_rule(rule, source)
     assert result.changes
     assert result.success, result.verification
+
+
+@pytest.mark.parametrize("interpolation", [
+    '${ref("t")}', "${ref('s', 't')}", '${ resolve("t") }', "${self()}", '${ref("a)")}', "${ref(names[0])}",
+    '${ref({ schema: dataform.projectConfig.vars.TARGET, name: "t" })}', '${ref(\n  "s",\n  "t"\n)}',
+])
+def test_one_ref_or_resolve_call_is_a_relation_reference(interpolation):
+    assert is_relation_reference(interpolation)
+
+
+@pytest.mark.parametrize("interpolation", [
+    '${ref("t") + " OR x"}', '${ref("t"), " OR x"}', '${ref("t").replace("t", "u")}', '${self() + "x"}',
+    # A comment, template literal or backslash could end the call where the scan does not see it.
+    '${ref(a /* ( */) + x)}', '${ref("t" // )\n)}', '${ref(`t`)}', '${ref("a\\\\b")}',
+    '${refs("t")}', '${ref("t"}', '${ref("t"]}', '${sp.entropy}', '${when(incremental(), "AND b > 1")}',
+])
+def test_anything_else_is_dynamic(interpolation):
+    assert not is_relation_reference(interpolation)
 
 
 @pytest.mark.parametrize("call", ["CURRENT_DATETIME()", "SESSION_USER()"])

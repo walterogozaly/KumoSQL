@@ -2,8 +2,8 @@
 
 To prove a SQLX rewrite, every interpolation is masked with a sentinel derived from its text
 (``mask_sqlx_by_content``), and the prover reads that sentinel as an ordinary identifier. That is
-only faithful for an expression that expands to one relation name: ``${ref("t")}``,
-``${ref("schema", "t")}``, ``${resolve("t")}`` and ``${self()}`` with literal arguments. Any other
+only faithful for an expression that expands to one relation name: a single ``ref(...)`` or
+``resolve(...)`` call (``${ref("t")}``, ``${ref({schema: vars.S, name: "t"})}``) and ``${self()}``. Any other
 expression (``${when(incremental(), "AND ts > ...")}``, ``${"x OR y"}``, a JavaScript constant) can
 expand to any SQL: several operators, a whole clause, nothing at all, or a reference to a CTE the
 masked text never mentions. A changed statement holding one cannot be proven from the masked text,
@@ -22,16 +22,43 @@ from sqlglot import exp
 
 from .sqlx import mask_sqlx_interpolations
 
-_ARGUMENT = r"""(?:"[^"\\\n]*"|'[^'\\\n]*')"""
-_RELATION_REFERENCE = re.compile(
-    rf"\$\{{\s*(?:(?:ref|resolve)\(\s*{_ARGUMENT}(?:\s*,\s*{_ARGUMENT}){{0,2}}\s*\)|self\(\s*\))\s*\}}"
-)
+_SELF = re.compile(r"\$\{\s*self\(\s*\)\s*\}")
+_CALL = re.compile(r"\$\{\s*(?:ref|resolve)\s*\(")
+_CLOSE = re.compile(r"\s*\}")
 
 
 def is_relation_reference(interpolation: str) -> bool:
-    """Whether a ``${...}`` expression always expands to exactly one table or view name."""
+    """Whether a ``${...}`` expression always expands to exactly one table or view name.
 
-    return bool(_RELATION_REFERENCE.fullmatch(interpolation))
+    That is ``self()``, or one ``ref(...)`` or ``resolve(...)`` call whose closing parenthesis ends the
+    expression: Dataform returns a relation name whatever the arguments are. Arguments may hold quoted
+    strings, objects and names, but no template literal, comment, ``/`` or backslash, so the call cannot end
+    anywhere the scan does not see (``${ref("t") + " OR x"}`` and ``${ref(a /* ( */) + x)}`` are dynamic).
+    """
+
+    if _SELF.fullmatch(interpolation):
+        return True
+    call = _CALL.match(interpolation)
+    if call is None:
+        return False
+    depth, quote, index = 1, "", call.end()
+    while index < len(interpolation):
+        char = interpolation[index]
+        if char in "`/\\" or (quote and char == "\n"):
+            return False
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return char == ")" and bool(_CLOSE.fullmatch(interpolation, index + 1))
+        index += 1
+    return False
 
 
 def dynamic_sentinels(sql: str) -> frozenset[str]:
