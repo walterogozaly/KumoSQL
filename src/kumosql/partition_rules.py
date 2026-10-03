@@ -26,6 +26,8 @@ from itertools import combinations
 import z3
 from sqlglot import exp
 
+from .solver_lock import bounded_solver, serialized
+
 _SOLVER_TIMEOUT_MS = 2000
 _MAX_BRANCHES = 32
 _MAX_PARTITION_SEARCH = 8
@@ -34,6 +36,7 @@ _VOLATILE_TYPES = {"Rand", "Randn", "Uuid", "TableSample", "AnyValue"}
 _RECOMBINE = {exp.Count: exp.Sum, exp.Sum: exp.Sum, exp.Min: exp.Min, exp.Max: exp.Max}
 
 
+@serialized
 def recombine_partitions(tree: exp.Expression) -> exp.Expression:
     """Apply both rules everywhere in ``tree``."""
 
@@ -222,8 +225,7 @@ class _Logic:
         return self._atom(node)
 
     def unsat(self, formula) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", _SOLVER_TIMEOUT_MS)
+        solver = bounded_solver(_SOLVER_TIMEOUT_MS)
         solver.add(*self.facts)
         solver.add(formula)
         return solver.check() == z3.unsat

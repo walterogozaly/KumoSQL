@@ -1,6 +1,6 @@
 import json
 import threading
-import urllib.request
+from ui_http import urlopen
 
 from kumosql import console, ui
 
@@ -25,7 +25,7 @@ def test_requests_are_logged_not_printed(tmp_path, monkeypatch, capsys):
     server = ui.UIServer(("127.0.0.1", 0), ui.UIHandler)
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/version").read()
+        urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/version").read()
     finally:
         server.shutdown()
         server.server_close()

@@ -23,6 +23,17 @@ The result is a `Pipeline` that qualifies every model in dependency order, so ea
 
 Source table columns come from `source_schema={"project.dataset.table": {"col": "TYPE"}}`. `fetch_table_schemas()` fills it from BigQuery with free dry runs.
 
+`table_reads()` and `table_writes()` describe SQL statements separately from the model graph. For example,
+`INSERT INTO first SELECT id FROM source; INSERT INTO second SELECT id FROM first` reads `source` and `first`
+and writes both `first` and `second`. An explicit query of a model's own target remains a table read without making a
+self-cycle in the graph. A DML target alone is not counted as an input. Writes include `DELETE`, `UPDATE`, `MERGE`,
+`ALTER`, `DROP`, `TRUNCATE`, `CREATE ... LIKE/CLONE`, and pre/post operations; a rename reads the old table and writes
+the new name. Temporary tables remain folded into their real sources. These table connections do not imply complete
+column lineage: unsupported assignments and physical STRUCT sub-fields retain their existing unknown or root-column limits.
+Partition and snapshot decorators use the base table's schema, so `SELECT * FROM events$__UNPARTITIONED__` can expand
+when the schema for `events` is known.
+`report()` exposes the same `table_reads` and `table_writes` lists per model, filtered by model in a scoped report.
+
 ```shell
 python -m kumosql pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```

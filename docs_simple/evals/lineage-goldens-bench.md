@@ -20,4 +20,11 @@ The harness must adapt naming conventions without changing the expected meaning.
 
 BigQuery-relevant cases are distinct from other-dialect cases read as BigQuery. The latter are a generalization check, not part of the same headline score.
 
+The table checks include statements that change tables. A rename keeps the old input name and new output name,
+and a script writing two tables checks both outputs. A partition name uses the base table's schema when that schema
+is known. The full reference records the current scores and parser version.
+
+Matching these table connections does not prove complete column tracing. Nested fields of a stored STRUCT still
+trace only to the containing column, and unsupported column shapes remain unknown.
+
 The full guide lists source versions, exclusions, disputes, and development exposure. Use it to see whether a result came from a genuinely independent test and which mismatches were inspected during development.

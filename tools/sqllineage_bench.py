@@ -195,6 +195,7 @@ def predict(case: dict) -> dict:
         "key": key,
         "edges": edges,
         "reads": reads,
+        "writes": {_table(name) for name in pipeline.table_writes().get(key, ())},
         "unknown": unknown,
         "diagnostics": diagnostics,
     }
