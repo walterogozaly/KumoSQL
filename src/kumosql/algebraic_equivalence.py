@@ -4794,7 +4794,7 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
         )
     except sqlglot.errors.SqlglotError:
         replaced = False
-    result = prove_equivalent_smt(left, right, **kwargs)
+    result = prove_equivalent_smt(left, right, types=types, **kwargs)
     if result.status is SmtStatus.NOT_PROVEN and not replaced:
         reduced = set_aggregates.reduce(left, right, dialect, kwargs.get("compare_names", True))
         if reduced:

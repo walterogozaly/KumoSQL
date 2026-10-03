@@ -34,9 +34,9 @@ Numeric conversions that the query text makes visible are kept: a CASE, IF,
 COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
 cast, or arithmetic over one) reads each other non-literal branch as
 ``CAST(.. AS FLOAT64)``, and ``x * 1`` is ``x`` only for an integer (or exact
-decimal) ``1``. Conversions between operands whose types the query does not
-show (two untyped columns, one INT64 and one FLOAT64, or a FLOAT64 column of a
-derived table) are not modeled.
+decimal) ``1``; declared column types (``types``) count as visible. Values
+from different sources whose types are not known (two undeclared columns) are
+combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``.
 
 When a proof fails the prover looks for a small concrete database on which
 the two queries return different rows; if it finds one the result is
@@ -128,6 +128,9 @@ BASE_ASSUMPTIONS = (
     "result column types are not compared; confirm schemas with a BigQuery dry run",
 )
 EXACT_ARITHMETIC_ASSUMPTION = "+, - and * are exact (no FLOAT64 rounding or INT64 overflow)"
+MIXED_NUMERIC_ASSUMPTION = (
+    "values combined by CASE, IF, COALESCE or a set operation have the same numeric type (no INT64 to FLOAT64 conversion)"
+)
 
 _NONDETERMINISTIC_NAMES = {
     "ANY_VALUE",
@@ -703,6 +706,16 @@ def _float64_kind(node: exp.Expression, dialect: str) -> bool | None:
     return None
 
 
+_FLOAT_TYPES = {"FLOAT64", "FLOAT", "FLOAT32", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL"}
+
+
+def _type_is_float(declared: str) -> bool | None:
+    """Whether a declared column type is a binary floating type (None when it does not say)."""
+
+    name = re.sub(r"\(.*", "", declared).strip().upper()
+    return name in _FLOAT_TYPES if name else None
+
+
 def _plain_literal(node: exp.Expression, dialect: str) -> bool:
     """A literal (or literal arithmetic folded exactly): its model value stands for it in every numeric type."""
 
@@ -757,8 +770,14 @@ MAX_OUTER_JOIN_CASES = 256
 
 
 class _Compiler:
-    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
+    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery", types=None):
         self.dialect = dialect
+        # Declared column types by table key, and the table of each base-table occurrence.
+        self.types = {key.lower(): {c.lower(): t for c, t in cols.items()} for key, cols in (types or {}).items()}
+        self.occ_tables: dict[str, str] = {}
+        # A CASE/COALESCE/IF/NULLIF or set-operation column combined values whose numeric types are not known
+        # to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
+        self.mixed_numeric = False
         self.schema = {
             key.lower(): [c.lower() for c in cols] for key, cols in (schema or {}).items()
         }
@@ -891,21 +910,18 @@ class _Compiler:
         return exp.select(*[exp.column(n, table=alias) for n in names]).from_(exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias))))
 
     def _common_column_types(self, children: list, subs: list[_Union]) -> None:
-        """Convert the outputs of set-operation operands to the common type of each column: where another
-        operand's column is visibly FLOAT64, as in ``_common_type`` (NULLs and literals stay as they are)."""
+        """Convert the outputs of set-operation operands to the common type of each column (``_coerce``)."""
 
         kinds = [_output_kinds(child, self.dialect) or [] for child in children]
-        for i, sub in enumerate(subs):
-            for block in sub.branches:
-                for j, v in enumerate(block.outputs):
-                    if j < len(kinds[i]) and kinds[i][j]:
-                        continue
-                    if not any(j < len(k) and k[j] for n, k in enumerate(kinds) if n != i):
-                        continue
-                    if z3.is_true(v.null) or (not self.exact and _is_ground(v.val)):
-                        continue
-                    _, val_fn = self._function("CAST:FLOAT64", 1)
-                    block.outputs[j] = _Val(v.null, val_fn(*self._uf_args([v])))
+        blocks = [(kind, block) for kind, sub in zip(kinds, subs) for block in sub.branches]
+        for j in range(min((len(block.outputs) for _, block in blocks), default=0)):
+            entries = []
+            for kind, block in blocks:
+                v = block.outputs[j]
+                literal = z3.is_true(v.null) or (not self.exact and _is_ground(v.val))
+                entries.append((kind[j] if j < len(kind) else None, literal, v))
+            for (_, block), v in zip(blocks, self._coerce(entries)):
+                block.outputs[j] = v
 
     def _set_operation(self, node: exp.Expression, ctes: dict) -> _Union:
         """``A INTERSECT B`` and ``A EXCEPT B`` (set semantics) as existence tests.
@@ -1197,6 +1213,7 @@ class _Compiler:
                 return alias, self._derived(body, cte_env, occs, conds)
             key = self._table_key(node)
             occ = _Occ(key, self.fresh("r"), self.schema.get(key.lower()))
+            self.occ_tables[occ.uid] = key.lower()
             occs.append(occ)
             return alias, _Source(occ=occ)
         if isinstance(node, exp.Subquery):
@@ -1591,7 +1608,7 @@ class _Compiler:
             raise Unsupported(f"aggregate {e.sql(dialect='bigquery')}")
         if isinstance(e, exp.Coalesce):
             args = [self._val(a, env, agg, aliases) for a in [e.this, *e.expressions]]
-            args = self._common_type(e, [e.this, *e.expressions], args)
+            args = self._common_type([e.this, *e.expressions], args)
             result = args[-1]
             for a in reversed(args[:-1]):
                 result = _Val(z3.And(a.null, result.null), z3.If(a.null, result.val, a.val))
@@ -1601,7 +1618,7 @@ class _Compiler:
             then = self._val(e.args["true"], env, agg, aliases)
             other = e.args.get("false")
             if other is not None:
-                then, other = self._common_type(e, [e.args["true"], other], [then, self._val(other, env, agg, aliases)])
+                then, other = self._common_type([e.args["true"], other], [then, self._val(other, env, agg, aliases)])
             else:
                 other = _Val(z3.BoolVal(True), V.Num(0))
             return _Val(z3.If(cond.t, then.null, other.null), z3.If(cond.t, then.val, other.val))
@@ -1609,23 +1626,22 @@ class _Compiler:
             operand = e.args.get("this")
             operand_val = self._val(operand, env, agg, aliases) if operand is not None else None
             default = e.args.get("default")
-            result = self._val(default, env, agg, aliases) if default is not None else _Val(z3.BoolVal(True), V.Num(0))
-            if default is not None:
-                result = self._common_type(e, [default], [result])[0]
-            for branch in reversed(e.args.get("ifs") or []):
+            ifs = e.args.get("ifs") or []
+            branches = [b.args["true"] for b in ifs] + ([default] if default is not None else [])
+            values = self._common_type(branches, [self._val(b, env, agg, aliases) for b in branches])
+            result = values.pop() if default is not None else _Val(z3.BoolVal(True), V.Num(0))
+            for branch, then in reversed(list(zip(ifs, values))):
                 if operand_val is not None:
                     cond = self._compare("=", operand_val, self._val(branch.this, env, agg, aliases))
                 else:
                     cond = self._pred(branch.this, env, agg, aliases)
-                then = self._val(branch.args["true"], env, agg, aliases)
-                then = self._common_type(e, [branch.args["true"]], [then])[0]
                 result = _Val(z3.If(cond.t, then.null, result.null), z3.If(cond.t, then.val, result.val))
             return result
         if isinstance(e, exp.Nullif):
-            a = self._val(e.this, env, agg, aliases)
-            eq = self._compare("=", a, self._val(e.expression, env, agg, aliases))
+            a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
+            eq = self._compare("=", a, b)
             if self.dialect in _NULLIF_SUPERTYPE:
-                a = self._common_type(e, [e.this], [a])[0]
+                a = self._common_type([e.this, e.expression], [a, b])[0]
             elif self.dialect not in _NULLIF_FIRST_TYPE and _float64_kind(e.expression, self.dialect):
                 raise Unsupported(f"NULLIF result type in {self.dialect}")
             return _Val(z3.Or(a.null, eq.t), a.val)
@@ -1709,25 +1725,55 @@ class _Compiler:
             return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
 
-    def _common_type(self, node: exp.Expression, exprs: list, vals: list[_Val]) -> list[_Val]:
-        """``vals`` (of the branches ``exprs`` of ``node``) converted to the type of ``node``.
+    def _declared_float(self, v: _Val) -> bool | None:
+        """Whether a base-table column value is declared FLOAT64 (None when it is not a declared column)."""
 
-        When another branch of ``node`` is visibly FLOAT64 the result is FLOAT64, and a branch that may
-        be INT64 or NUMERIC is converted, rounding past 2**53: it reads as CAST(branch AS FLOAT64), an
-        uninterpreted function that is the identity on FLOAT64 values. A literal is its own value in
-        either type. Without a visibly FLOAT64 branch the values are kept: a type hidden behind a
-        column (untyped, or a derived table's) is not seen."""
+        if not (z3.is_const(v.val) and v.val.decl().kind() == z3.Z3_OP_UNINTERPRETED):
+            return None
+        uid, _, name = str(v.val).partition(".")
+        declared = self.types.get(self.occ_tables.get(uid, ""), {}).get(name)
+        return _type_is_float(declared) if declared else None
 
-        branches = _branch_values(node, self.dialect)
-        if not any(_float64_kind(b, self.dialect) for b in branches):
-            return vals
+    def _type_key(self, v: _Val):
+        """Values with equal keys have the same type: one table column, or one term."""
+
+        if z3.is_const(v.val) and v.val.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+            uid, _, name = str(v.val).partition(".")
+            if uid in self.occ_tables:
+                return (self.occ_tables[uid], name)
+        return v.val.get_id()
+
+    def _coerce(self, entries: list) -> list[_Val]:
+        """Each ``(visible float kind, is literal, value)`` converted to the common type of all of them.
+
+        When one is FLOAT64 (visibly, or by its declared column type) the result is FLOAT64, and a
+        value that may be INT64 or NUMERIC is converted, rounding past 2**53: it reads as
+        CAST(value AS FLOAT64), an uninterpreted function that is the identity on FLOAT64 values. A
+        literal is its own value in either type. Otherwise the values are kept; when two of them come
+        from different sources whose types are not known, that is MIXED_NUMERIC_ASSUMPTION."""
+
+        kinds = [self._declared_float(v) if kind is None else kind for kind, _, v in entries]
+        if not any(kinds):
+            unknown = [self._type_key(v) for k, (_, literal, v) in zip(kinds, entries) if not literal and k is None]
+            known = [self._type_key(v) for k, (_, literal, v) in zip(kinds, entries) if not literal and k is False]
+            if unknown and len(set(unknown + known)) > 1:
+                self.mixed_numeric = True
+            return [v for _, _, v in entries]
         result = []
-        for expr, v in zip(exprs, vals):
-            if not _float64_kind(expr, self.dialect) and not _plain_literal(expr, self.dialect):
+        for kind, (_, literal, v) in zip(kinds, entries):
+            if not kind and not literal:
                 _, val_fn = self._function("CAST:FLOAT64", 1)
                 v = _Val(v.null, val_fn(*self._uf_args([v])))
             result.append(v)
         return result
+
+    def _common_type(self, exprs: list, vals: list[_Val]) -> list[_Val]:
+        """``vals`` of the branches ``exprs`` of a CASE, COALESCE, IF or NULLIF, in their common type."""
+
+        # A value that is always NULL (a column of the unmatched side of an outer join) converts like a literal.
+        return self._coerce([
+            (_float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null), v) for e, v in zip(exprs, vals)
+        ])
 
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
@@ -3472,6 +3518,7 @@ def _prove_core(
     constraints: dict[str, TableConstraints] | None = None,
     compare_names: bool = True,
     dialect: str = "bigquery",
+    types: dict[str, dict[str, str]] | None = None,
 ) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
@@ -3483,6 +3530,7 @@ def _prove_core(
     ``"project.dataset.table"``) to column lists; it enables ``SELECT *`` and
     unqualified columns in joins. ``exact_arithmetic`` models ``+``, ``-``
     and ``*`` as exact arithmetic, which is only right for INT64/NUMERIC.
+    ``types`` maps table names to declared column types, used for numeric conversions.
     """
 
     assumptions = BASE_ASSUMPTIONS + ((EXACT_ARITHMETIC_ASSUMPTION,) if exact_arithmetic else ())
@@ -3493,7 +3541,7 @@ def _prove_core(
     used = [False]
 
     def attempt(semijoin: bool, blind: bool = False) -> SmtEquivalenceResult:
-        compiler = _Compiler(schema, exact_arithmetic, dialect)
+        compiler = _Compiler(schema, exact_arithmetic, dialect, types)
         compiler.semijoin = semijoin
         compiler.blind_sets = blind
         try:
@@ -3510,10 +3558,11 @@ def _prove_core(
             exact_arithmetic=exact_arithmetic,
             timeout_ms=timeout_ms,
             constraints=constraints,
+            types=types,
         )
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
-        )
+        ) + ((MIXED_NUMERIC_ASSUMPTION,) if compiler.mixed_numeric else ())
         if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
             # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)

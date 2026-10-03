@@ -16,7 +16,7 @@ pytest.importorskip("z3")
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.duckdb_load import run_unoptimized
-from kumosql.smt_equivalence import EXACT_ARITHMETIC_ASSUMPTION, prove_equivalent_smt
+from kumosql.smt_equivalence import EXACT_ARITHMETIC_ASSUMPTION, MIXED_NUMERIC_ASSUMPTION, prove_equivalent_smt
 
 SCHEMA = {"t": ["x", "y"]}
 DDL = "CREATE TABLE t (x BIGINT, y BIGINT)"
@@ -148,3 +148,53 @@ def test_duckdb_converts_to_an_exponent_literal_but_not_to_a_decimal_one():
     assert not _bags_differ(left, right)
     for prove in (prove_equivalent_smt, prove_equivalent_algebraic):
         assert prove(left, right, schema=SCHEMA, dialect="duckdb").proven, prove.__name__
+
+
+# x INT64 and y FLOAT64: the common type of a CASE, COALESCE or union column holding both is FLOAT64.
+TYPED_DDL = "CREATE TABLE t (x BIGINT, y DOUBLE)"
+TYPES = {"t": {"x": "INT64", "y": "FLOAT64"}}
+UNDECLARED_MIXING = [
+    pytest.param(f"SELECT COALESCE(x, y) AS v FROM t {NOT_NULL}", f"SELECT x AS v FROM t {NOT_NULL}", id="coalesce-two-columns"),
+    pytest.param(
+        f"SELECT CASE WHEN x IS NULL THEN y ELSE x END AS v FROM t {NOT_NULL}", f"SELECT x AS v FROM t {NOT_NULL}", id="case-two-columns"
+    ),
+    pytest.param(
+        f"SELECT x FROM t {NOT_NULL} UNION ALL SELECT y FROM t WHERE FALSE", f"SELECT x FROM t {NOT_NULL}", id="union-two-columns"
+    ),
+]
+
+
+@pytest.mark.parametrize("left,right", UNDECLARED_MIXING)
+@pytest.mark.parametrize("prove", [prove_equivalent_smt, prove_equivalent_algebraic], ids=["smt", "algebraic"])
+def test_declared_types_convert_an_int64_branch(left, right, prove):
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute(TYPED_DDL)
+    db.executemany("INSERT INTO t VALUES (?, ?)", [(BIG, 1.0), (None, None)])
+    left_rows, right_rows = run_unoptimized(db, _duckdb(left), _duckdb(right))
+    assert Counter(left_rows) != Counter(right_rows)
+    assert not prove(left, right, schema=SCHEMA, types=TYPES).proven
+
+
+@pytest.mark.parametrize("left,right", UNDECLARED_MIXING)
+@pytest.mark.parametrize("prove", [prove_equivalent_smt, prove_equivalent_algebraic], ids=["smt", "algebraic"])
+def test_undeclared_mixing_is_proven_under_a_stated_assumption(left, right, prove):
+    result = prove(left, right, schema=SCHEMA)
+    assert result.proven
+    assert MIXED_NUMERIC_ASSUMPTION in result.assumptions
+
+
+NO_MIXING = [
+    pytest.param(f"SELECT COALESCE(x, 1) AS v FROM t {NOT_NULL}", f"SELECT x AS v FROM t {NOT_NULL}", None, id="literal-fallback"),
+    pytest.param("SELECT CASE WHEN x > 0 THEN x ELSE x END AS v FROM t", "SELECT x AS v FROM t", None, id="same-column-branches"),
+    pytest.param(f"SELECT COALESCE(x, y) AS v FROM t {NOT_NULL}", f"SELECT COALESCE(x, y) AS v FROM t {NOT_NULL} AND TRUE", {"t": {"x": "INT64", "y": "INT64"}}, id="declared-same-type"),
+    pytest.param("SELECT x FROM t UNION ALL SELECT x FROM t", "SELECT x FROM t UNION ALL SELECT x FROM t WHERE TRUE", None, id="union-same-column"),
+]
+
+
+@pytest.mark.parametrize("left,right,types", NO_MIXING)
+@pytest.mark.parametrize("prove", [prove_equivalent_smt, prove_equivalent_algebraic], ids=["smt", "algebraic"])
+def test_no_mixing_adds_no_assumption(left, right, types, prove):
+    result = prove(left, right, schema=SCHEMA, types=types)
+    assert result.proven
+    assert MIXED_NUMERIC_ASSUMPTION not in result.assumptions
