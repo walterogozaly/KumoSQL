@@ -42,6 +42,13 @@ def test_aggregate_only_group_by_all_is_not_proved_equal_to_a_grouped_query(prov
 
 
 @pytest.mark.parametrize("prove", PROVERS)
+def test_aggregate_only_group_by_all_is_not_a_constant_key(prove):
+    left, right = "SELECT COUNT(*) AS n FROM t GROUP BY ALL", "SELECT COUNT(*) AS n FROM t GROUP BY 1 + 0"
+    assert _duckdb_rows(left, []) == [(0,)] and _duckdb_rows(right, []) == []
+    assert prove(left, right, schema=SCHEMA).status is not SmtStatus.PROVEN_EQUIVALENT
+
+
+@pytest.mark.parametrize("prove", PROVERS)
 def test_aggregate_only_group_by_all_is_the_global_aggregate(prove):
     left = "SELECT COUNT(*) AS n FROM t GROUP BY ALL"
     right = "SELECT COUNT(*) AS n FROM t"

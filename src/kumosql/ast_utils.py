@@ -259,6 +259,48 @@ def expand_group_by_all(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+# Table reads a query makes once every CTE reference is expanded in place. Provers inline CTEs, so a CTE
+# read twice per level doubles the work each level; past this the pair is declined rather than run for minutes.
+MAX_EXPANDED_READS = 256
+
+
+def expanded_reads(tree: exp.Expression, limit: int = MAX_EXPANDED_READS) -> int:
+    """An upper bound on the table reads of ``tree`` with its CTEs inlined, counting stops past ``limit``."""
+
+    definitions: dict[str, list[exp.CTE]] = {}
+    for cte in tree.find_all(exp.CTE):
+        definitions.setdefault(cte.alias_or_name.lower(), []).append(cte)
+    if not definitions:
+        return 0
+    memo: dict[int, int] = {}
+
+    def reads(node: exp.Expression) -> int:
+        total = 0
+        for table in node.find_all(exp.Table):
+            ancestor = table.parent
+            while ancestor is not None and ancestor is not node and not isinstance(ancestor, exp.CTE):
+                ancestor = ancestor.parent
+            if ancestor is not None and ancestor is not node:
+                continue  # inside a CTE definition: counted where it is read
+            name = table.name.lower()
+            if not table.args.get("db") and not table.args.get("catalog") and name in definitions:
+                total += max(cte_reads(cte) for cte in definitions[name])
+            else:
+                total += 1
+            if total > limit:
+                break
+        return total
+
+    def cte_reads(cte: exp.CTE) -> int:
+        key = id(cte)
+        if key not in memo:
+            memo[key] = 1  # a recursive reference
+            memo[key] = reads(cte.this)
+        return memo[key]
+
+    return reads(tree)
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
@@ -269,6 +311,12 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     """
 
     tree = expand_group_by_all(tree)
+    for literal in tree.find_all(exp.Literal):
+        if not literal.is_string and len(literal.this) > 100:
+            # No FLOAT64, INT64 or NUMERIC needs this many characters; int() and Fraction() on it can take minutes.
+            raise UnmodeledConstruct("a numeric literal longer than 100 characters is not modeled")
+    if expanded_reads(tree) > MAX_EXPANDED_READS:
+        raise UnmodeledConstruct(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
     check_distinct_from_grouping(tree)
     for node in tree.walk():
         for kind, arg in _UNMODELED_ARGS:
@@ -289,6 +337,36 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
+
+
+def drop_case_conflicts(tables: dict | None) -> dict | None:
+    """``tables`` (a schema, types or constraints mapping) without the entries whose names differ only in case and disagree.
+
+    The provers look tables up case-insensitively, so ``{"t": ["a"], "T": ["b"]}`` used to mean whichever entry
+    came last. Both entries are dropped instead (the prover then knows nothing about that table's columns);
+    entries that agree once lower-cased are kept.
+    """
+
+    if not tables:
+        return tables
+
+    def folded(value):
+        if isinstance(value, dict):
+            return sorted((str(k).lower(), str(v)) for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return [str(c).lower() for c in value]
+        return value
+
+    seen: dict[str, object] = {}
+    clashes: set[str] = set()
+    for name, value in tables.items():
+        key = str(name).lower()
+        if key in seen and seen[key] != folded(value):
+            clashes.add(key)
+        seen.setdefault(key, folded(value))
+    if not clashes:
+        return tables
+    return {name: value for name, value in tables.items() if str(name).lower() not in clashes}
 
 
 def _output_names(query: exp.Expression) -> list[str] | None:
