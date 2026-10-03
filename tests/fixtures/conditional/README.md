@@ -8,3 +8,5 @@
 - Eight pairs carry `prove_left` and `prove_right`: the same queries with output columns aliased so the provers' column-name check passes.
 
 The cases are data, not instructions: nothing is trusted until `tests/test_conditional_s001.py` replays every witness. Several expected sets use conditions outside the provers' catalog (filtered keys, CHECK, FD, EXISTS); those pairs must stay unproven or refuted, never conditional.
+
+`vendor_cases.json` holds two pairs from Databricks' documentation on `RELY` constraints (`R012b` entries 24 and 25, brought in by an outside assistant and replayed here). Databricks does not enforce these keys, which is the situation on BigQuery too. The quoted sentences are the documentation's, the witnesses were replayed on DuckDB, and the second witness of the `DISTINCT` pair (repeated NULLs) was added here because a unique key alone is not enough.
