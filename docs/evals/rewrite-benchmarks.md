@@ -103,6 +103,54 @@ WeTune itself rewrote 38 of the 50 (as its paper reports) with rules discovered 
 
 WeTune's application workloads (8,518 queries from 20 applications) are stored in `wtune_data/wtune.db` through Git LFS, which this environment cannot download, so they are not scored yet.
 
+## QueryBooster experiment rewrites
+
+[QueryBooster](https://github.com/ISG-ICS/QueryBooster) (Bai et al., VLDB 2023, GPL-3.0) keeps the inputs of its experiments in `experiments/`: pairs of an original query and a rewrite that a rule produced or a person wrote. Such a rewrite is a claim of equivalence, not a proof. `tools/querybooster_bench.py` checks every pair two ways: the algebraic prover tries to prove it, and a counterexample search looks for a database on which the two sides return different rows. A refuted pair is a **label failure**. It stays in the eval as a negative, together with its counterexample. GPL-3.0 means the files are downloaded at commit `19008ac` when the eval runs, checked against pinned SHA-256 digests and never committed. Only the digests and this harness are stored here.
+
+```
+python tools/querybooster_bench.py --write-results          # all 68 pairs, about 3 minutes on 3 cores
+python tools/querybooster_bench.py --family tpch-pg --show refuted,unknown
+```
+
+| Family | Source | Pairs | Proven | Refuted (label failures) | Unknown |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `wetune-app` | `Test_wetune.csv`: WeTune's rewrites of Broadleaf, Diaspora and Discourse queries | 30 | 7 | 15 | 8 |
+| `rule-training` | the three `Train_*.csv` examples for "LEFT OUTER JOIN to INNER JOIN" and "remove a useless INNER JOIN" | 14 | 5 | 9 | 0 |
+| `tweets-cast` | `tweets_cast_{2..5}q.csv`: 18 rows, of which 4 are rule templates (`<x1>` placeholders, not SQL) and 14 are concrete pairs (5 distinct) | 5 | 0 | 5 | 0 |
+| `tpch-pg` | `tpch_pg.md`: Tableau's TPC-H query against each rewrite below it (14 by hand, 4 by WeTune, 1 by ChatGPT; the deprecated Q18 included) | 19 | 6 | 3 | 10 |
+| **All** | | **68** | **18** | **32** | **18** |
+
+**0 wrong**: no pair is both proven and refuted. The held-out fifth (17 pairs, chosen by a SHA-1 hash of the case id) is 10/17 decided: 2 proven, 8 refuted.
+
+**Schemas.** The WeTune pairs and the training rows use the applications' schema dumps from [WeTune](https://github.com/WeTune/WeTune-code) (Apache-2.0, commit `f99ee9e`, also downloaded and checked by digest). They are read with `tools/wetune_bench.py`, and this harness adds column types, unique indexes over nullable columns and declared foreign keys. The prover gets columns, types, NOT NULL, keys and declared foreign keys. Generated databases respect all of these. TPC-H uses `tests/fixtures/sqlsolver/tpch.schema.sql`. Some training rows rename tables or columns (`posts0`, `id0`, `t`/`tf`). For those, the missing columns are added to the application's schema (nullable, never in a key, typed from the column they are equated with), or the whole schema is inferred when a table is missing. The Twitter pairs have no DDL, so `tweets` and `users` are inferred from the SQL, with `*_at` columns as `TIMESTAMP`. Each case records which schema it used.
+
+**Refutations.** The search tries the prover's own counterexample first, when it is a database the schema allows, then KumoSQL's targeted and random databases (`kumosql.refute`). A difference counts only if DuckDB shows it with its optimizer on and off. When a side has a `LIMIT`, the difference must also appear with the rows loaded in reverse order, so ties cannot decide a pair. DuckDB runs MySQL pairs with MySQL's NULL ordering, and with a case-insensitive collation for Broadleaf (whose tables use MySQL's default `utf8` collation). Diaspora's tables are `utf8mb4_bin`. Each counterexample is shrunk row by row and stored in the run's `--json` output.
+
+What the 32 label failures are:
+
+| Reason | Pairs |
+| --- | --- |
+| A join is removed although no foreign key is declared (Rails associations the schema does not state), or on an inferred schema without a key | 17: wetune-app 04, 07, 13, 19, 24–28; train-join 0–3; train-join-agg 0–3 |
+| `LEFT JOIN` turned into `JOIN` although the `WHERE` keeps unmatched rows (an `OR`, or no condition on the inner side) | 5: wetune-app 10, 15, 20, 22; train-loj-5 |
+| `CAST(ts AS DATE) = TIMESTAMP '2016-10-01 00:00:00'` rewritten to `ts = TIMESTAMP '2016-10-01 00:00:00'` (a row at `2016-10-01 01:00:00` separates them) | 5: tweets-cast 0–4 |
+| The two sides return different numbers of columns (`SELECT *` for a column list; WeTune's TPC-H Q2 rewrite returns 2 of 3 columns) | 2: wetune-app-02, tpch-q2-wetune-1 |
+| A join on a nullable column is removed (`o_auth_application_id` is NULL) | 1: wetune-app-03 |
+| Q11 by hand: Tableau's `CASE WHEN total = 0 THEN NULL` guard becomes a `HAVING` that keeps a group when every cost is 0 | 1: tpch-q11-human-1 |
+| Q17 by hand: `LOWER(..)` prefix `'med'` becomes the case-sensitive `LIKE 'MED%'`, and the output columns change | 1: tpch-q17-human-1 |
+
+The 18 proofs are WeTune join eliminations backed by declared foreign keys and NOT NULL columns (wetune-app 00, 01, 08, 11), a `WHERE 1 = 0` pair (wetune-app-18), seven `LEFT JOIN` to `JOIN` rewrites whose `WHERE` rejects NULLs (wetune-app 21, 23; train-loj 0–4), the TPC-H rewrites that only add `pg_hint_plan` hints or move a filter (Q7 twice, Q8 twice, Q9), and WeTune's Q18 rewrite. The 18 unknowns are timestamp literals the prover does not read (`'1995-01-01 00:00:00.000'`, `'2021-04-28T06:05:27.000z'`, 6 pairs), `LIMIT` without `ORDER BY` (2), a 17-digit numeric literal (1), derived tables not joined on all their columns (2) and pairs with no row-preserving mapping (7). Two of the unknowns look like label failures on reading, but the search does not reach them: the hand-written and ChatGPT Q2 rewrites replace Tableau's case-insensitive suffix test on `p_type` (`SUBSTR(RTRIM(LOWER(..)))`) with a different `LIKE`.
+
+**Overlap.** `calcite_tests.csv` (228 rows, 227 distinct test names) is SQLSolver's Calcite set. All 228 names are in `tests/fixtures/sqlsolver/calcite_pairs.txt`, and 137 rows have the same text up to aliases. Checked once against the `winoros/wetune` clone, 176 match WeTune's own `calcite_tests` file. Those rows are scored under `sqlsolver-calcite` and are not scored again here. The other files share no pair with `wetune-issues`: none of the 30 WeTune application queries or 14 training queries is one of WeTune's 50 GitHub issues (closest text similarity 0.6).
+
+**Baseline and changes.** The first run (12 proven, 28 refuted, 28 unknown, 0 wrong) printed every pair, held-out ones included. The harness was then changed with all pairs visible, so the score is marked tuned on test (harness only):
+
+* the prover gets the declared foreign keys and compares result columns by position, not by name (+6 proofs);
+* the prover's own counterexample is replayed;
+* a column added for a renamed training row takes the type of the column it is equated with, because DuckDB rejected the pair before (+1 refutation);
+* Tableau's `"public".` schema prefix is dropped, and so is the text after the final semicolon of a markdown block (ChatGPT's explanation). Both changes keep the query's meaning, and they let DuckDB run the TPC-H pairs (+3 refutations).
+
+No SQL is otherwise adapted, and no prover module was changed.
+
 ## ClickBench
 
 [ClickBench](https://github.com/ClickHouse/ClickBench) (CC BY-NC-SA 4.0; its files are read from a checkout, not copied here) times 43 queries over one wide `hits` table. `tools/clickbench_bench.py` rewrites each query from the table definition alone, then runs original and rewrite on PostgreSQL 16 (one warm-up each, then five alternating timed runs, medians compared) and checks that both return the same rows.

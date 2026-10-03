@@ -19,6 +19,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [SQLSolver and related corpora](sqlsolver.md) | Which optimizer query pairs can be proved? |
 | [VeriEQL](verieql.md) | Can queries be proved or separated on constraint-respecting data? |
 | [Singh and Bedathur](singh-bedathur.md) | Do alternative LeetCode solutions agree? |
+| [Equivalent under conditions](conditional-equivalence.md) | How often is a pair equal under a short list of facts, and is any answer wrong? |
 | [Bounded verification](bounded-verification.md) | Do queries agree on every modeled small database? |
 | [SQL-IQ](sql-iq.md) | Equivalence, candidate choice, and error classification |
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |
