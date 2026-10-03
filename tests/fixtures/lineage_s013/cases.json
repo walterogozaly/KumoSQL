@@ -1,0 +1,788 @@
+{
+ "source": "Hand-derived lineage and impact cases from an external audit of master 9df1c461 (S013). Each case gives the SQL, the expected one-hop value lineage (filter, join and correlation keys are reads, not value sources; a physical STRUCT column is traced to its root) and every column the SQL reads. `finding_family` names the defect a case reproduced before the fix.",
+ "schemas": {
+  "src": {
+   "k": "INT64",
+   "v": "INT64",
+   "w": "INT64",
+   "g": "STRING",
+   "flag": "BOOL",
+   "arr": "ARRAY<INT64>",
+   "rec": "STRUCT<a INT64, b INT64>"
+  },
+  "other": {
+   "k": "INT64",
+   "v": "INT64",
+   "w": "INT64"
+  }
+ },
+ "cases": [
+  {
+   "id": "C01",
+   "construct": "passthrough control",
+   "sql": "SELECT v AS out FROM src",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C02",
+   "construct": "filter control",
+   "sql": "SELECT v AS out FROM src WHERE flag",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.flag"
+   ],
+   "probes": [
+    "src.flag"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C03",
+   "construct": "SELECT * EXCEPT/REPLACE",
+   "sql": "SELECT * EXCEPT(arr,rec,w) REPLACE(v + w AS v) FROM src",
+   "expected_edges": {
+    "k": [
+     "src.k"
+    ],
+    "v": [
+     "src.v",
+     "src.w"
+    ],
+    "g": [
+     "src.g"
+    ],
+    "flag": [
+     "src.flag"
+    ]
+   },
+   "expected_consumed": [
+    "src.k",
+    "src.v",
+    "src.w",
+    "src.g",
+    "src.flag",
+    "src.arr",
+    "src.rec"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C04",
+   "construct": "UNNEST WITH OFFSET",
+   "sql": "SELECT item, off FROM src CROSS JOIN UNNEST(arr) AS item WITH OFFSET AS off",
+   "expected_edges": {
+    "item": [
+     "src.arr"
+    ],
+    "off": [
+     "src.arr"
+    ]
+   },
+   "expected_consumed": [
+    "src.arr"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C05",
+   "construct": "UNNEST literals control",
+   "sql": "SELECT item, off FROM UNNEST([10,20]) AS item WITH OFFSET AS off",
+   "expected_edges": {
+    "item": [],
+    "off": []
+   },
+   "expected_consumed": [],
+   "finding_family": null
+  },
+  {
+   "id": "C06",
+   "construct": "STRUCT field access",
+   "sql": "SELECT rec.a AS out FROM src",
+   "expected_edges": {
+    "out": [
+     "src.rec"
+    ]
+   },
+   "expected_consumed": [
+    "src.rec"
+   ],
+   "finding_family": null,
+   "note": "Root-column golden; documented struct field precision is coarse."
+  },
+  {
+   "id": "C07",
+   "construct": "STRUCT construction",
+   "sql": "SELECT STRUCT(v AS a, w AS b) AS out FROM src",
+   "expected_edges": {
+    "out": [
+     "src.v",
+     "src.w"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C08",
+   "construct": "ARRAY_AGG STRUCT",
+   "sql": "SELECT ARRAY_AGG(STRUCT(v AS a,w AS b)) AS out FROM src",
+   "expected_edges": {
+    "out": [
+     "src.v",
+     "src.w"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C09",
+   "construct": "UNION BY NAME",
+   "sql": "SELECT v AS a,w AS b FROM src UNION ALL BY NAME SELECT v AS b,w AS a FROM other",
+   "expected_edges": {
+    "a": [
+     "src.v",
+     "other.w"
+    ],
+    "b": [
+     "src.w",
+     "other.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.w",
+    "other.v",
+    "other.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C10",
+   "construct": "pipe syntax",
+   "sql": "FROM src |> WHERE flag |> SELECT v AS out",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.flag",
+    "src.v"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C11",
+   "construct": "QUALIFY",
+   "sql": "SELECT v AS out FROM src QUALIFY ROW_NUMBER() OVER(PARTITION BY g ORDER BY w)=1",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.g",
+    "src.w"
+   ],
+   "probes": [
+    "src.g",
+    "src.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C12",
+   "construct": "window PARTITION BY",
+   "sql": "SELECT SUM(v) OVER(PARTITION BY g ORDER BY w) AS out FROM src",
+   "expected_edges": {
+    "out": [
+     "src.v",
+     "src.g",
+     "src.w"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.g",
+    "src.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C13",
+   "construct": "MERGE per WHEN",
+   "sql": "MERGE dst T USING src S ON T.k=S.k WHEN MATCHED AND S.flag THEN UPDATE SET a=S.v WHEN MATCHED AND NOT S.flag THEN UPDATE SET a=S.w WHEN NOT MATCHED THEN INSERT (k,a) VALUES(S.k,S.v)",
+   "expected_edges": {
+    "a": [
+     "src.v",
+     "src.w"
+    ],
+    "k": [
+     "src.k"
+    ]
+   },
+   "expected_consumed": [
+    "src.k",
+    "src.v",
+    "src.w",
+    "src.flag",
+    "dst.k"
+   ],
+   "model": "dst",
+   "extra_schema": {
+    "dst": {
+     "k": "INT64",
+     "a": "INT64"
+    }
+   },
+   "probes": [
+    "src.flag"
+   ],
+   "finding_family": null,
+   "note": "Self-read omitted from table graph by design; dst.k must still be consumed."
+  },
+  {
+   "id": "C14",
+   "construct": "INSERT column list",
+   "sql": "INSERT INTO dst (a,b) SELECT w,v FROM src",
+   "expected_edges": {
+    "a": [
+     "src.w"
+    ],
+    "b": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.w",
+    "src.v"
+   ],
+   "model": "dst",
+   "finding_family": null
+  },
+  {
+   "id": "C15",
+   "construct": "INSERT no column list",
+   "sql": "INSERT INTO dst SELECT w,v FROM src",
+   "expected_edges": {
+    "a": [
+     "src.w"
+    ],
+    "b": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.w",
+    "src.v"
+   ],
+   "model": "dst",
+   "extra_schema": {
+    "dst": {
+     "a": "INT64",
+     "b": "INT64"
+    }
+   },
+   "allow_unknown": true,
+   "finding_family": "F5"
+  },
+  {
+   "id": "C16",
+   "construct": "CREATE TEMP TABLE",
+   "sql": "CREATE TEMP TABLE tmp AS SELECT v AS x FROM src; SELECT x AS out FROM tmp",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C17",
+   "construct": "EXECUTE IMMEDIATE dynamic",
+   "sql": "DECLARE q STRING DEFAULT CONCAT('SELECT v FROM ', 'src'); EXECUTE IMMEDIATE q",
+   "expected_edges": {},
+   "expected_consumed": [],
+   "require_unknown": true,
+   "finding_family": null
+  },
+  {
+   "id": "C18",
+   "construct": "EXECUTE IMMEDIATE literal",
+   "sql": "EXECUTE IMMEDIATE 'SELECT v AS out FROM src'",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v"
+   ],
+   "allow_unknown": true,
+   "finding_family": null
+  },
+  {
+   "id": "C19",
+   "construct": "wildcard _TABLE_SUFFIX",
+   "sql": "SELECT v AS out FROM `p.d.events_*` WHERE _TABLE_SUFFIX='20261002'",
+   "expected_edges": {
+    "out": [
+     "p.d.events_*.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.events_*.v"
+   ],
+   "extra_schema": {
+    "p.d.events_*": {
+     "v": "INT64"
+    }
+   },
+   "finding_family": null,
+   "note": "_TABLE_SUFFIX is a pseudocolumn, not a droppable physical column. Separately test concrete matched shards."
+  },
+  {
+   "id": "C20",
+   "construct": "correlated scalar subquery",
+   "sql": "SELECT (SELECT MAX(o.v) FROM other o WHERE o.k=s.k) AS out FROM src s",
+   "expected_edges": {
+    "out": [
+     "other.v"
+    ]
+   },
+   "expected_consumed": [
+    "other.v",
+    "other.k",
+    "src.k"
+   ],
+   "probes": [
+    "src.k"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C21",
+   "construct": "USING join",
+   "sql": "SELECT k,s.v AS out FROM src s JOIN other o USING(k)",
+   "expected_edges": {
+    "k": [
+     "src.k"
+    ],
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.k",
+    "other.k",
+    "src.v"
+   ],
+   "probes": [
+    "other.k"
+   ],
+   "finding_family": "F7"
+  },
+  {
+   "id": "C22",
+   "construct": "GROUP BY ALL",
+   "sql": "SELECT g,SUM(v) AS out FROM src GROUP BY ALL",
+   "expected_edges": {
+    "g": [
+     "src.g"
+    ],
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.g",
+    "src.v"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C23",
+   "construct": "condition-only downstream",
+   "sql": "SELECT v AS out FROM src WHERE flag",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.flag"
+   ],
+   "probes": [
+    "src.flag"
+   ],
+   "chain": true,
+   "finding_family": "F2"
+  },
+  {
+   "id": "C24",
+   "construct": "STRUCT constructed field selection",
+   "sql": "WITH c AS (SELECT STRUCT(v AS a,w AS b) AS rec FROM src) SELECT rec.a AS out FROM c",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.w"
+   ],
+   "finding_family": "F6",
+   "note": "Unlike physical struct root coarsening, selecting a constructed field has a known independent value source."
+  },
+  {
+   "id": "C25",
+   "construct": "Dataform ref/self/incremental",
+   "sql": "SELECT v AS out FROM ${ref(\"src\")} WHERE ${when(incremental(), `w > (SELECT MAX(out) FROM ${self()})`, `flag`)}",
+   "expected_edges": {
+    "out": [
+     "p.d.src.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.src.v",
+    "p.d.src.w",
+    "p.d.src.flag",
+    "p.d.model.out"
+   ],
+   "dataform": true,
+   "allow_unknown": true,
+   "finding_family": "F1"
+  },
+  {
+   "id": "C26",
+   "construct": "Dataform ref control",
+   "sql": "SELECT v AS out FROM ${ref(\"src\")}",
+   "expected_edges": {
+    "out": [
+     "p.d.src.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.src.v"
+   ],
+   "dataform": true,
+   "finding_family": null
+  },
+  {
+   "id": "C27",
+   "construct": "Dataform simple incremental branch",
+   "sql": "SELECT v AS out FROM ${ref(\"src\")} WHERE ${when(incremental(), `w > 0`, `flag`)}",
+   "expected_edges": {
+    "out": [
+     "p.d.src.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.src.v",
+    "p.d.src.w",
+    "p.d.src.flag"
+   ],
+   "dataform": true,
+   "finding_family": "F1"
+  },
+  {
+   "id": "C28",
+   "construct": "Dataform self control",
+   "sql": "SELECT s.v AS out FROM ${ref(\"src\")} s WHERE s.w > (SELECT MAX(`out`) FROM ${self()})",
+   "expected_edges": {
+    "out": [
+     "p.d.src.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.src.v",
+    "p.d.src.w",
+    "p.d.model.out"
+   ],
+   "dataform": true,
+   "finding_family": null
+  },
+  {
+   "id": "C29",
+   "construct": "wildcard concrete shard",
+   "sql": "SELECT v AS out FROM `p.d.events_*` WHERE _TABLE_SUFFIX='20261002'",
+   "expected_edges": {
+    "out": [
+     "p.d.events_*.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.events_*.v"
+   ],
+   "extra_schema": {
+    "p.d.events_*": {
+     "v": "INT64"
+    },
+    "p.d.events_20261002": {
+     "v": "INT64"
+    }
+   },
+   "probes": [
+    "p.d.events_20261002.v"
+   ],
+   "finding_family": "F3"
+  },
+  {
+   "id": "C30",
+   "construct": "Dataform modeled-parent branch control",
+   "sql": "SELECT v AS out FROM ${ref(\"src\")} WHERE ${when(incremental(), `w > 0`, `flag`)}",
+   "expected_edges": {
+    "out": [
+     "p.d.src.v"
+    ]
+   },
+   "expected_consumed": [
+    "p.d.src.v",
+    "p.d.src.w",
+    "p.d.src.flag"
+   ],
+   "dataform": true,
+   "modeled_parent": true,
+   "finding_family": null
+  },
+  {
+   "id": "C31",
+   "construct": "correlated subquery downstream",
+   "sql": "SELECT (SELECT MAX(o.v) FROM other o WHERE o.k=s.k) AS out FROM src s",
+   "expected_edges": {
+    "out": [
+     "other.v"
+    ]
+   },
+   "expected_consumed": [
+    "other.v",
+    "other.k",
+    "src.k"
+   ],
+   "chain": true,
+   "finding_family": "F2"
+  },
+  {
+   "id": "C32",
+   "construct": "QUALIFY downstream",
+   "sql": "SELECT v AS out FROM src QUALIFY ROW_NUMBER() OVER(PARTITION BY g ORDER BY w)=1",
+   "expected_edges": {
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.g",
+    "src.w"
+   ],
+   "chain": true,
+   "finding_family": "F2"
+  },
+  {
+   "id": "C33",
+   "construct": "INSERT no-list downstream",
+   "sql": "INSERT INTO dst SELECT w,v FROM src",
+   "expected_edges": {
+    "a": [
+     "src.w"
+    ],
+    "b": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.w",
+    "src.v"
+   ],
+   "model": "dst",
+   "extra_schema": {
+    "dst": {
+     "a": "INT64",
+     "b": "INT64"
+    }
+   },
+   "chain": true,
+   "chain_query": "SELECT a FROM dst",
+   "chain_refs": [
+    "src.w"
+   ],
+   "finding_family": "F5"
+  },
+  {
+   "id": "C34",
+   "construct": "LEFT USING",
+   "sql": "SELECT k,s.v AS out FROM src s LEFT JOIN other o USING(k)",
+   "expected_edges": {
+    "k": [
+     "src.k"
+    ],
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.k",
+    "other.k",
+    "src.v"
+   ],
+   "finding_family": "F7"
+  },
+  {
+   "id": "C35",
+   "construct": "RIGHT USING",
+   "sql": "SELECT k,s.v AS out FROM src s RIGHT JOIN other o USING(k)",
+   "expected_edges": {
+    "k": [
+     "other.k"
+    ],
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.k",
+    "other.k",
+    "src.v"
+   ],
+   "finding_family": "F7"
+  },
+  {
+   "id": "C36",
+   "construct": "FULL USING control",
+   "sql": "SELECT k,s.v AS out FROM src s FULL JOIN other o USING(k)",
+   "expected_edges": {
+    "k": [
+     "src.k",
+     "other.k"
+    ],
+    "out": [
+     "src.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.k",
+    "other.k",
+    "src.v"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C37",
+   "construct": "EXISTS projected boolean",
+   "sql": "SELECT EXISTS(SELECT 1 FROM other o WHERE o.k=s.k) AS out FROM src s",
+   "expected_edges": {
+    "out": [
+     "other.k",
+     "src.k"
+    ]
+   },
+   "expected_consumed": [
+    "other.k",
+    "src.k"
+   ],
+   "chain": true,
+   "finding_family": "F4"
+  },
+  {
+   "id": "C38",
+   "construct": "ARRAY_AGG STRUCT ordering control",
+   "sql": "SELECT ARRAY_AGG(STRUCT(v AS a,w AS b) ORDER BY k) AS out FROM src",
+   "expected_edges": {
+    "out": [
+     "src.v",
+     "src.w",
+     "src.k"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.w",
+    "src.k"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C39",
+   "construct": "FULL BY NAME control",
+   "sql": "SELECT v AS a FROM src FULL OUTER UNION ALL BY NAME SELECT w AS b FROM other",
+   "expected_edges": {
+    "a": [
+     "src.v"
+    ],
+    "b": [
+     "other.w"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "other.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C40",
+   "construct": "BY NAME ON ordering control",
+   "sql": "SELECT v AS a,w AS b FROM src UNION ALL BY NAME ON (b,a) SELECT v AS b,w AS a FROM other",
+   "expected_edges": {
+    "a": [
+     "src.v",
+     "other.w"
+    ],
+    "b": [
+     "src.w",
+     "other.v"
+    ]
+   },
+   "expected_consumed": [
+    "src.v",
+    "src.w",
+    "other.v",
+    "other.w"
+   ],
+   "finding_family": null
+  },
+  {
+   "id": "C41",
+   "construct": "EXISTS irrelevant projection",
+   "sql": "SELECT EXISTS(SELECT o.v FROM other o WHERE o.k=s.k) AS out FROM src s",
+   "expected_edges": {
+    "out": [
+     "other.k",
+     "src.k"
+    ]
+   },
+   "expected_consumed": [
+    "other.k",
+    "other.v",
+    "src.k"
+   ],
+   "finding_family": "F4"
+  }
+ ]
+}

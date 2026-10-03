@@ -37,13 +37,15 @@ import sys
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.qualify import qualify
+from sqlglot.schema import MappingSchema
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bench_common import quiet as _quiet, today, write_results as _write_results  # noqa: E402
 
-from kumosql.pipeline import Pipeline  # noqa: E402
+from kumosql.pipeline import Pipeline, _adopt_statement_ctes, _name_unaliased_casts, _nested_schema  # noqa: E402
 from kumosql.pipeline_types import ColumnRef, Model, Target  # noqa: E402
 
 CASES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "sqllineage" / "cases.json"
@@ -56,6 +58,7 @@ EXCLUDED = (
     (r"test_tmp_table|test_drop|test_alter|rename", "table lifecycle across statements (DROP, RENAME, temporary tables) is not tracked"),
     (r"postgres_style|test_metadata_target_column", "not BigQuery semantics (``::`` casts; INSERT mapped by the target table's column order)"),
     (r"union_where_later_branch|quoted_alias_case_sensitive|quoted_table|keyword_as_column_alias", "not valid BigQuery (mismatched UNION arms, double-quoted identifiers)"),
+    (r"without_table_qualifier_from_table_join", "not BigQuery semantics (a LEFT JOIN ... USING key takes the left input's value; SQLLineage counts both sides)"),
 )
 _EXPRESSION_TARGET = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -128,7 +131,45 @@ def build(case: dict) -> tuple[Pipeline, str]:
         for name, columns in (case.get("schemas") or {}).items()
     }
     model = Model(target, "table", case["sql"])
+    convention = _insert_convention(statements, model.key, schemas)
+    if convention:
+        schemas[model.key] = convention
     return Pipeline({model.key: model}, source_schema=schemas), model.key
+
+
+def _insert_convention(statements: list[exp.Expression], key: str, schemas: dict) -> dict[str, str] | None:
+    """SQLLineage's assumption for ``INSERT INTO t SELECT ...`` when the case gives no schema for ``t``.
+
+    BigQuery maps the SELECT's columns to ``t``'s own columns by position, so without ``t``'s schema
+    KumoSQL reports the outputs unknown. SQLLineage assumes ``t``'s columns are named like the SELECT's
+    outputs; the harness states that assumption as ``t``'s schema (in SELECT order) so the case still
+    scores column lineage. Counted in ``by_convention``.
+    """
+
+    if key.lower() in schemas:
+        return None
+    for statement in reversed(statements):
+        if isinstance(statement, exp.Insert) and not isinstance(statement.this, exp.Schema):
+            query = statement.expression
+            if not isinstance(query, exp.Query):
+                return None
+            if any(_table(".".join(p.name for p in t.parts)) == _table(key) for t in query.find_all(exp.Table)):
+                return None  # the INSERT reads its own target, whose other columns the case does not give
+            statement = statement.copy()
+            query = statement.expression
+            _adopt_statement_ctes(statement, query)
+            _name_unaliased_casts(query)
+            try:
+                names = list(qualify(query, schema=MappingSchema(_nested_schema(schemas), dialect="bigquery"),
+                                     dialect="bigquery", validate_qualify_columns=False).named_selects)
+            except Exception:
+                return None
+            if not names or "*" in names or len({n.lower() for n in names}) != len(names):
+                return None
+            return {name.lower(): "UNKNOWN" for name in names}
+        if _destination(statement):
+            return None
+    return None
 
 
 def predict(case: dict) -> dict:
@@ -140,6 +181,9 @@ def predict(case: dict) -> dict:
     unknown: list[str] = []
     for ref, record in records.items():
         if ref.table != key:
+            continue
+        if ref.column == "*":
+            unknown.append(f"*:{record.reason}")  # output columns not known (an INSERT with no column list): no edge claimed
             continue
         for source in record.sources:
             edges.add((_table(source.table), source.column.lower(), _table(key), _target_column(ref.column)))
@@ -264,7 +308,10 @@ def write_results(result: dict, seconds: float) -> None:
                 "date": today(),
                 "caveats": (
                     f"Adapted from SQLLineage's tests (MIT); {left} of the {t['total'] + left} adapted cases are left out because they are not BigQuery SQL "
-                    "(other dialects, lateral column aliases, DROP/RENAME lifecycles). Bugs it found were fixed in the same change, so it is a floor, not a held-out score."
+                    "(other dialects, lateral column aliases, DROP/RENAME lifecycles, a LEFT JOIN USING key counted from both sides). "
+                    "Where a case gives no schema for an INSERT target, the harness states SQLLineage's assumption that the target's columns "
+                    "are named like the SELECT's outputs; KumoSQL itself reports such outputs unknown, since BigQuery maps them by the target's column order. "
+                    "Bugs it found were fixed in the same change, so it is a floor, not a held-out score."
                 ),
                 "analysis": (
                     f"Column edges: precision {result['column']['edge_precision']:.3f}, recall {result['column']['edge_recall']:.3f} "
