@@ -219,12 +219,11 @@ def expand_alias_columns(tree: exp.Expression, schema: dict[str, list[str]] | No
     resolved (unknown table, star select, more names than columns) is declined.
     """
 
+    from .canonical import visible_ctes
+
     lowered = {k.lower(): v for k, v in (schema or {}).items()}
-    ctes = {}
-    for cte in tree.find_all(exp.CTE):
-        if cte.alias:
-            ctes[cte.alias.lower()] = cte.this
-    for alias in list(tree.find_all(exp.TableAlias)):
+    # Innermost lists first, so a derived table copied into an outer expansion carries its own expanded.
+    for alias in reversed(list(tree.find_all(exp.TableAlias))):
         renamed = [c.name for c in alias.args.get("columns") or []]
         source = alias.parent
         if not renamed or isinstance(source, exp.CTE):
@@ -235,6 +234,9 @@ def expand_alias_columns(tree: exp.Expression, schema: dict[str, list[str]] | No
             if not isinstance(source.this, exp.Identifier):
                 raise UnmodeledConstruct("a column list on a table function alias is not modeled")
             key = ".".join(p.name for p in source.parts).lower()
+            ctes: dict[str, exp.Expression] = {}
+            for name, body in visible_ctes(source).items():  # the nearest WITH that defines the name
+                ctes.setdefault(name.lower(), body)
             if not source.db and key in ctes:
                 columns = _output_names(ctes[key])
             else:
@@ -551,3 +553,41 @@ def cte_dependency_errors(statement: exp.Expression) -> list[str]:
             )
 
     return list(dict.fromkeys(errors))
+
+
+def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set[str]:
+    """Names of the WITH tables in scope at ``node``, looking up to ``top`` (its own WITH included; default: the root).
+
+    A non-recursive WITH table sees only the ones listed before it; the query under the WITH sees them all.
+    """
+
+    names: set[str] = set()
+    child = node
+    while child is not None and child is not top:
+        parent = child.parent
+        if isinstance(parent, exp.With):
+            ctes = list(parent.expressions)
+            seen = ctes if parent.args.get("recursive") else ctes[: next((i for i, c in enumerate(ctes) if c is child), len(ctes))]
+            names |= {c.alias_or_name.lower() for c in seen}
+        elif parent is not None:
+            clause = parent.args.get("with_") or parent.args.get("with")
+            if isinstance(clause, exp.With) and child is not clause:
+                names |= {c.alias_or_name.lower() for c in clause.expressions}
+        child = parent
+    return names
+
+
+def free_reads(body: exp.Expression) -> set[str]:
+    """One-part table names ``body`` reads that none of its own WITH tables binds: what an outer WITH could capture."""
+
+    return {
+        t.name.lower() for t in body.find_all(exp.Table)
+        if t.name and not t.args.get("db") and not t.args.get("catalog") and t.name.lower() not in visible_ctes(t, body)
+    }
+
+
+def captured_names(body: exp.Expression, at: exp.Expression) -> set[str]:
+    """Tables ``body`` reads by a one-part name that a WITH table in scope at ``at`` would capture if ``body``
+    replaced ``at``."""
+
+    return free_reads(body) & visible_ctes(at)

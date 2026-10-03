@@ -208,6 +208,12 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
         from_ = select.args.get("from_") or select.args.get("from")
         return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
+    def names(node: exp.Expression) -> set[str]:
+        alias = node.args.get("alias")
+        element = alias.args.get("columns") if isinstance(node, exp.Unnest) and alias is not None else None
+        # BigQuery: ``UNNEST(..) AS e`` declares the element ``e``, which hides an outer alias ``e``
+        return {(node.alias_or_name or "").lower()} | ({element[0].name.lower()} if element else set())
+
     renames: list[tuple[exp.Column, str]] = []
     for column in body.find_all(exp.Column):
         qualifier = column.table.lower()
@@ -224,7 +230,7 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
             continue
         scope = column.find_ancestor(exp.Select)
         while scope is not None:
-            hit = next((n for n in declared(scope) if (n.alias_or_name or "").lower() == qualifier), None)
+            hit = next((n for n in declared(scope) if qualifier in names(n)), None)
             if hit is not None:
                 if id(hit) in fresh:
                     renames.append((column, fresh[id(hit)]))
@@ -520,6 +526,8 @@ class _Source:
     order: list[str] = field(default_factory=list)
     # The unmatched side of an outer join over a table whose columns are not declared: every column is NULL.
     all_null: _Val | None = None
+    # An UNNEST named by its element (``UNNEST(..) AS e``): ``e`` is a value, so ``e.f`` and ``e.*`` read its fields.
+    value_table: bool = False
 
     def lookup(self, name: str) -> _Val | None:
         if self.all_null is not None:
@@ -856,9 +864,10 @@ class _Compiler:
                 if side or (join is not None and join.args.get("on") is not None) or len(source_node.expressions) != 1:
                     raise Unsupported("UNNEST outside a cross join")
                 alias_node = source_node.args.get("alias")
-                alias = (alias_node.name if alias_node is not None else "") or self.fresh("unnest")
-                alias = alias.lower()
                 columns = alias_node.args.get("columns") if alias_node is not None else None
+                # BigQuery names the element ``e`` in ``UNNEST(..) AS e``; it hides an outer alias ``e``
+                alias = (alias_node.name if alias_node is not None else "") or (columns[0].name if columns else "")
+                alias = (alias or self.fresh("unnest")).lower()
                 element = (columns[0].name if columns else alias).lower()
                 offset_arg = source_node.args.get("offset")
                 offset = ((offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else "").lower()
@@ -866,7 +875,7 @@ class _Compiler:
                 cols = {element: occ.col("value")}
                 if offset:
                     cols[offset] = occ.col("offset")
-                source = _Source(cols=cols, order=list(cols))
+                source = _Source(cols=cols, order=list(cols), value_table=alias == element)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -993,7 +1002,7 @@ class _Compiler:
                     sources = list(env.values())
                 else:
                     table = item.table.lower()
-                    if table not in env:
+                    if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
                 for source in sources:
@@ -1138,15 +1147,17 @@ class _Compiler:
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
 
-        Its columns are free values; the atom says some row of the table has
-        exactly those values. Joined on all of its columns, each outer row matches
-        at most one row, so the join is that test (``resolve_set_sources``).
+        Its columns are free values, NULL or not; the atom says some row of the
+        table has exactly those values (NULL matching NULL, as DISTINCT does).
+        Joined on all of its columns, each outer row matches at most one row, so
+        the join is that test (``resolve_set_sources``).
         """
 
         V = _value_sort()
         uid = self.fresh("set")
-        columns = [_Val(z3.BoolVal(False), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
-        match = [z3.And(z3.Not(o.null), o.val == c.val) for o, c in zip(branch.outputs, columns)]
+        # Not ``#null``: ``resolve_set_sources`` reads that suffix as an outer column's NULL flag.
+        columns = [_Val(z3.Bool(f"{uid}.{i}#setnull"), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
+        match = [_null_eq(o, c) for o, c in zip(branch.outputs, columns)]
         atom = z3.Bool(f"{self.fresh('ex')}#exists")
         guard = z3.And(branch.cond.t, *match)
         self.collector.append(_Sub(atom, list(branch.occs), guard, list(branch.subs), setsrc=(branch, columns)))
@@ -1248,6 +1259,8 @@ class _Compiler:
                 scope = getattr(scope, "outer", None)
             if scope is None:
                 raise Unsupported(f"unknown alias {table}")
+            if scope[table].value_table:
+                raise Unsupported(f"field {table}.{name} of an UNNEST element")
             val = scope[table].lookup(name)
             if val is None:
                 raise Unsupported(f"{table}.{name} is not a column of {table}")
@@ -2397,6 +2410,24 @@ class _Prover:
             return self.valid(z3.Implies(a.cond.t, call_a.arg.null == arg.null), a.occs, facts)
         return False
 
+    def set_source_facts(self, block) -> list:
+        """``NOT NULL`` for each column of the block's DISTINCT derived tables that the table never
+        returns as NULL (a NOT NULL column, or one its WHERE filters), so ``d.x IS NULL`` is FALSE."""
+
+        facts, stack = [], list(block.subs)
+        while stack:
+            sub = stack.pop()
+            stack.extend(sub.nested)
+            if not sub.setsrc:
+                continue
+            inner, columns = sub.setsrc
+            for output, column in zip(inner.outputs, columns):
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(inner.cond.t, z3.Not(output.null)), inner.occs, inner.facts):
+                    facts.append(z3.Not(column.null))
+                del self.candidates[saved:]
+        return facts
+
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
 
@@ -2435,8 +2466,12 @@ class _Prover:
             for position, column in enumerate(columns):
                 produced = inner.outputs[position] if position < len(inner.outputs) else None
                 if produced is not None and _is_ground(produced.val) and _is_ground(produced.null):
-                    pairs.append((column.val, produced.val))  # a constant column is pinned by what it is
+                    # a constant column is pinned by what it is
+                    pairs.extend([(column.val, produced.val), (column.null, produced.null)])
                     continue
+                if not _implied(conjuncts, z3.Not(column.null), ids):
+                    raise _SetSourceUnresolved  # only a non-NULL column can be pinned by an equality
+                pairs.append((column.null, z3.BoolVal(False)))
                 for term in conjuncts:
                     if not z3.is_eq(term):
                         continue
@@ -2896,7 +2931,7 @@ def _prune(prover: "_Prover", union: _Union) -> None:
             if (isinstance(block, _Agg) and block.is_global) or not z3.is_false(z3.simplify(block.cond.t)):
                 kept.append(block)
             continue
-        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
+        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts + prover.set_source_facts(block)):
             kept.append(block)
             continue
         if isinstance(block, _Agg) and block.is_global and block.having is None and all(c.func in _NULL_WHEN_EMPTY + _CONST_PAIRS_NULL for c in block.aggs):
