@@ -47,6 +47,9 @@ ASSETS = {
     "/browse": ("browse.html", "text/html; charset=utf-8"),
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/refactor": ("refactor.html", "text/html; charset=utf-8"),
+    "/shared-models": ("shared-models.html", "text/html; charset=utf-8"),
+    "/assets/shared-models.js": ("shared-models.js", "text/javascript; charset=utf-8"),
+    "/assets/shared-models.css": ("shared-models.css", "text/css; charset=utf-8"),
     "/assets/refactor.js": ("refactor.js", "text/javascript; charset=utf-8"),
     "/assets/refactor.css": ("refactor.css", "text/css; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
@@ -209,6 +212,11 @@ class UIHandler(BaseHTTPRequestHandler):
             from . import refactor
 
             self._json(200, refactor.classes_view())
+            return
+        if self.path == "/api/shared-models":
+            from . import shared_models
+
+            self._json(200, shared_models.repeated_payload())
             return
         if self.path == "/api/equivalences":
             from . import equivalences
@@ -602,7 +610,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries", "/api/consolidate-tables",
-            "/api/refactor/run", "/api/refactor/cancel",
+            "/api/refactor/run", "/api/refactor/cancel", "/api/shared-models/patch",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -649,6 +657,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import refactor
 
                 result = refactor.cancel_job()
+            elif self.path == "/api/shared-models/patch":
+                from . import shared_models
+
+                result = shared_models.patch_payload(payload)
             elif self.path == "/api/consolidate-tables":
                 from . import consolidate
 
@@ -797,7 +809,11 @@ def main(argv: list[str] | None = None) -> int:
         from .pipeline import load_sqlx_project
 
         try:
-            live_graph.set_project(load_sqlx_project(args.project), args.project)
+            from .shared_models import read_project_files
+
+            pipeline = load_sqlx_project(args.project)
+            pipeline.source_files = read_project_files(args.project)
+            live_graph.set_project(pipeline, args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
     defer_autoload = False
