@@ -141,6 +141,12 @@ def check_containment(
     if semantics not in ("set", "bag"):
         raise ValueError("semantics must be 'set' or 'bag'")
     base = {t.lower(): [c.lower() for c in cols] for t, cols in schema.items()}
+    try:
+        clash = mr._name_clash((q1_sql, q2_sql), base, dialect, "")
+    except sqlglot.errors.SqlglotError:
+        clash = ""  # the parse error surfaces below as it always did
+    if clash:
+        return Containment("unsupported", semantics, clash)
     prove = lambda a, b: _prove(a, b, schema=base, constraints=constraints, types=types, timeout_ms=timeout_ms, dialect=dialect)  # noqa: E731
 
     def proven(a: str, b: str, method: str) -> Containment | None:

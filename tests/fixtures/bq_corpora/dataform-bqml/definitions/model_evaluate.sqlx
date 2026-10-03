@@ -1,0 +1,20 @@
+config {
+  type: 'assertion',
+  tags: ["evaluate"]
+}
+
+SELECT
+  *
+FROM
+  ML.EVALUATE (
+    MODEL ${ref('model_train')},
+    (
+      SELECT
+        *
+      FROM
+        ${ref('census_input')}
+      WHERE
+        dataframe = 'evaluation'
+    )
+  )
+WHERE accuracy < .80
