@@ -19,3 +19,5 @@ The prover may not support a move, or the search may reach its time or state lim
 The reference pipeline is a comparison target, not a guarantee that the search finds a global minimum. Unknown or rejected candidates stay visible.
 
 The full guide contains case formats, development and held-out families, verification methods, and results. [Refactor](../refactor.md) explains protected, editable, and unchanged model classes; [table minimization](../table-minimization.md) shows an explicit set of queries as input.
+
+One more limit: the check only looks at the tables you protect. If you remove a table that something outside the pipeline still reads, the score counts that as a reduction, so add such tables to the protected list.

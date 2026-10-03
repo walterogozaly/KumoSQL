@@ -310,8 +310,8 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
     ``SELECT k, SUM(p) AS n FROM (SELECT k, COUNT(*) AS p FROM t GROUP BY k)
     GROUP BY k`` is the inner query: every group of the outer select holds one
     inner row, so SUM, MIN or MAX of its one value returns that value (SUM of a
-    COUNT included). A global inner aggregate has exactly one row, so the same
-    holds with no keys at all.
+    COUNT included). COUNT of it is not: it counts that one row (1, or 0 for NULL). A global inner
+    aggregate has exactly one row, so the same holds with no keys at all.
     """
 
     if not _no_extras(select, allow_group=True) or select.args.get("having"):
@@ -365,7 +365,8 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
             items.append(_named(key_outputs[expr.this.name].copy(), name))
         elif _is_agg(expr) and isinstance(expr.this, exp.Column) and expr.this.name in agg_outputs:
             inner_agg = agg_outputs[expr.this.name]
-            ok = isinstance(inner_agg, (exp.Sum, exp.Count)) if isinstance(expr, exp.Sum) else type(expr) is type(inner_agg)
+            # SUM of a SUM or COUNT, MIN of a MIN, MAX of a MAX is the one value; COUNT of it is 1 or 0
+            ok = isinstance(inner_agg, (exp.Sum, exp.Count)) if isinstance(expr, exp.Sum) else type(expr) is type(inner_agg) and not isinstance(expr, exp.Count)
             if not ok:
                 return None
             items.append(_named(inner_agg.copy(), name))
