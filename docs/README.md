@@ -1,5 +1,7 @@
 # KumoSQL documentation
 
+[Plain-language version](../docs_simple/README.md)
+
 Start with [Getting started](getting-started.md): install, a first verified rewrite, a pipeline impact report and the browser UI. The [README](../README.md) has the benchmark scoreboard, a summary of every feature and the CLI table.
 
 ## Using KumoSQL

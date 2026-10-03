@@ -1,5 +1,7 @@
 # Output properties
 
+[Plain-language version](../docs_simple/output-properties.md)
+
 `kumosql.output_properties.infer_properties(sql, constraints, schema, dialect="bigquery")` says, without running the query, which facts about its output are guaranteed. It is a deterministic pass over the syntax tree (no solver, no LLM), so it is cheap enough to call for every model. Anything it cannot establish is left out: "not known" is always a safe answer.
 
 ```python

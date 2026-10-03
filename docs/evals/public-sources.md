@@ -1,5 +1,7 @@
 # Public SQL evaluation sources: inventory
 
+[Plain-language version](../../docs_simple/evals/public-sources.md)
+
 [Public SQL evaluation sources](../public-sql-evaluation-sources.md) (research dated 2026-10-02) lists 50 public suites, databases, rewrite corpora and BigQuery projects; [Additional public SQL sources](../additional-public-sql-sources.md) adds 60 more (see [Additional sources](#additional-sources)). This page records, for each one, whether KumoSQL already scores it, what it overlaps, its licence, whether it can be downloaded from here, and what is being added. It was checked on 2026-10-03 by cloning every repository at its current head; the commit is the pin for anything added.
 
 Downloads go through a proxy that blocks HuggingFace, Google Drive, Dropbox, Git LFS, Aliyun OSS, `yale-lily.github.io`, `downloads.mysql.com`, `postgrespro.ru`, `duckdb.org` and `docs.cloud.google.com`. GitHub clones, raw files and release assets work.

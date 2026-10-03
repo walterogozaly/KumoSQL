@@ -1,5 +1,7 @@
 # BigQuery and Dataform syntax coverage
 
+[Plain-language version](../../docs_simple/evals/bigquery-syntax-coverage.md)
+
 `tests/fixtures/bq_syntax/` is a checked-in manifest of small, valid cases, one per construct: every GoogleSQL statement family (query syntax, pipe syntax, DDL, DML, procedural language, transactions, DCL, `EXPORT DATA`/`LOAD DATA`, search and vector functions, JSON, geography, `ML.*`, UDFs, wildcard tables, `FOR SYSTEM_TIME AS OF`, `INFORMATION_SCHEMA`, quoting) and the Dataform action types (table, view, incremental, operations, assertion, declaration, test), their config options, the `ref`/`resolve`/`self`/`when`/`incremental()` helpers, `js` blocks and includes, plus whole-project layouts (`workflow_settings.yaml`, `dataform.json`, `actions.yaml`, the JavaScript API).
 
 ```

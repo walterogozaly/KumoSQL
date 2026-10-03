@@ -1,5 +1,7 @@
 # Query rewriting benchmarks
 
+[Plain-language version](../../docs_simple/evals/rewrite-benchmarks.md)
+
 KumoSQL rewrites a query only when its prover proves the rewrite returns the same rows. `kumosql.query_optimizer.optimize(sql, catalog)` applies general relational rules, keeps a rewrite only when it is proven, and otherwise answers "no rewrite". Nothing is learned from the benchmarks' answers and no language model runs at evaluation time. These pages measure how often that produces a useful, verified rewrite.
 
 Scores keep four things apart:

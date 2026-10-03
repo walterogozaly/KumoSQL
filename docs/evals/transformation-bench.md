@@ -1,5 +1,7 @@
 # Transformations on TPC-H, TPC-DS and the Join Order Benchmark
 
+[Plain-language version](../../docs_simple/evals/transformation-bench.md)
+
 `tools/transformation_bench.py` applies KumoSQL's transformations to three standard workloads and measures four things separately. A rewrite suite can preserve every result by changing nothing, so "nothing broke" is never the only number reported.
 
 - **Correctness**: a rewrite KumoSQL marks *proven* that returns different rows from the original is wrong. Both queries run in DuckDB on the benchmark's real data, and on generated tables as well.

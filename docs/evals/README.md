@@ -1,5 +1,7 @@
 # Evals
 
+[Plain-language version](../../docs_simple/evals/README.md)
+
 KumoSQL is scored on public benchmarks and on suites generated for its own features. None of them calls a language model at run time. This folder has one page per eval family: where the data comes from, how a case is scored, how to rerun it and what the limits are. The headline numbers are in the [README scoreboard](../../README.md#benchmark-scoreboard).
 
 ## How the evals are organised
