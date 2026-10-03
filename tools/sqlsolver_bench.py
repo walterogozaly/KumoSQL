@@ -323,8 +323,8 @@ class SuiteResult:
 
 
 def must_not_prove(name: str) -> dict[int, str]:
-    """Pairs of a suite that hold only if tie-breaking is fixed (LIMIT without ORDER BY) and so must never be
-    proved as written, with the reason. They stay in the suite as a guard and leave the score's denominator."""
+    """Pairs of a suite that hold only if tie-breaking is fixed (LIMIT without ORDER BY) or only on some strings
+    (a case map of another one) and so must never be proved as written, with the reason. They stay in the suite as a guard and leave the score's denominator."""
 
     path = FIXTURES / "not_provable.json"
     return {int(index): reason for index, reason in json.loads(path.read_text(encoding="utf-8")).get(name, {}).items()}
