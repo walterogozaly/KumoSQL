@@ -67,6 +67,7 @@ from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
 from .string_literals import canonical_literals
+from . import string_number_compare
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -3694,6 +3695,9 @@ def _prove_core(
     """
 
     assumptions = BASE_ASSUMPTIONS + ((EXACT_ARITHMETIC_ASSUMPTION,) if exact_arithmetic else ())
+    compared = string_number_compare.problem(left_sql, dialect, types) or string_number_compare.problem(right_sql, dialect, types)
+    if compared:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {compared}", assumptions=assumptions)
     if z3 is None:
         return SmtEquivalenceResult(
             SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install kumosql[smt])"

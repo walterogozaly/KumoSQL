@@ -46,4 +46,10 @@ It may mean the SQL uses an unsupported feature, a table's columns are missing, 
 
 A replayed counterexample does establish a difference: the report includes a database where the results disagree. Matching a few random databases does not establish that no counterexample exists.
 
+## Strings compared with numbers
+
+`WHERE '2' <> 2` looks like a condition that is never true, but engines disagree: MySQL turns the string into a number and finds them equal, DuckDB and PostgreSQL cast it the same way, and BigQuery refuses the query. Treating the two as always different once led the checker to say this query matches one with no filter, when real engines return different rows.
+
+The checkers now say "not proven" whenever a string is compared with a number (or one column is compared with both a string and a number). Comparing two numbers or two strings is unaffected. The limit is that only comparisons the checker can see are caught: a string reaching a number through a join or a `COALESCE` is not covered. See the [full reference](../docs/provers.md) for the exact list.
+
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
