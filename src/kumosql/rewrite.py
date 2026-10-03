@@ -27,7 +27,7 @@ from .scripts import block_statements, script_skeleton
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
-from .layout_equivalence import layout_only_change
+from .layout_equivalence import created_function_calls, layout_only_change, touching_literal_chunks
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
@@ -187,6 +187,12 @@ def _verify_sql(
         # Only whitespace and the case of reserved words and built-in calls changed: proven for any
         # statement, including ones sqlglot cannot parse or keeps as an opaque command.
         return True, []
+    if touching_literal_chunks(before) or touching_literal_chunks(after):
+        return False, ["two string literals touch ('a''b'); GoogleSQL needs whitespace or a comment between them"]
+    calls = created_function_calls(before), created_function_calls(after)
+    if calls[0] is None or calls[0] != calls[1]:
+        # sqlglot prints `abs(1)` and `ABS(1)` alike, but a script can create both as temporary functions.
+        return False, ["a call to a function the script creates changed (function names are case sensitive)"]
     try:
         left = block_statements(before)
         right = block_statements(after)

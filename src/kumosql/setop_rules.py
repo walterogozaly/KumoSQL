@@ -28,6 +28,7 @@ import itertools
 
 from sqlglot import exp
 
+from .ast_utils import distinct_on
 from .canonical import canonical_copy
 from .empty_rules import is_empty
 
@@ -526,6 +527,8 @@ def merge_same_source(node: exp.Expression) -> exp.Expression | None:
     if isinstance(node, exp.Union) and (node.find_ancestor(exp.SetOperation) is not None or any(isinstance(_sf_unwrap(o), exp.SetOperation) for o in (node.this, node.expression))):
         return None  # a chain of unions is flattened into one n-ary union instead, on both sides alike
     left, right = _sf_operand(node.this), _sf_operand(node.expression)
+    if any(o is not None and distinct_on(o) for o in (left, right)):
+        return None  # DISTINCT ON picks one row per key: a filter on it is not a filter on the table
     left, right = left and _sf_flatten(left), right and _sf_flatten(right)
     if left is None or right is None:
         return None
