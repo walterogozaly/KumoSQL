@@ -33,7 +33,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| D01 | Jaffle Shop DuckDB (`dbt-labs/jaffle_shop_duckdb`, `duckdb` branch) | Apache-2.0 | yes | 3 seeds, 5 models, YAML tests | **new** (batch 1): models rendered to SQL, seeds loaded into DuckDB, upstream dbt tests and lineage as expectations |
+| D01 | Jaffle Shop DuckDB (`dbt-labs/jaffle_shop_duckdb`, `duckdb` branch) | Apache-2.0 | yes | 3 seeds, 5 models, YAML tests | covered: `jaffle-shop`, `jaffle-shop-refactors`, `jaffle-shop-refutation` ([page](pipeline-equivalence.md#jaffle-shop-a-real-dbt-project)) |
 | D02 | Chinook | MIT-style | yes | 11 tables, no views | **new** (batch 1, with D03): sample-database eval |
 | D03 | Northwind (`instnwnd.sql`) | MIT | yes (raw file) | 13 tables, 16 views | **new** (batch 1): the 16 upstream views are original workload queries |
 | D04 | Pagila | PostgreSQL | yes | 15+ tables, 11 views | **new** (batch 2): adapter for the sample-database eval |
