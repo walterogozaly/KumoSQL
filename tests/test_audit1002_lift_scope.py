@@ -188,6 +188,31 @@ def test_escaped_outputs_are_not_proven():
     assert "table local" in " ".join(verify_rewrite(F10, F10_ESCAPED).details)
 
 
+def test_structural_prover_rejects_hand_written_escapes():
+    # The structural prover lifts with ``rewrite_pipe_syntax=True`` (the analysis path), not the rewrite rule.
+    db = _database()
+    db.execute("CREATE TABLE c(x BIGINT); INSERT INTO c VALUES (5)")
+    db.execute("CREATE TABLE a(x BIGINT); INSERT INTO a VALUES (1), (2); CREATE TABLE b(x BIGINT); INSERT INTO b VALUES (2)")
+    nested = (
+        "SELECT * FROM (WITH c AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM c) AS d) AS e",
+        "WITH l1 AS (SELECT x FROM c), l2 AS (WITH c AS (SELECT 1 AS x) SELECT * FROM l1 AS d) SELECT * FROM l2 AS e",
+    )
+    assert (_rows(db, nested[0]), _rows(db, nested[1])) == (Counter({(1,): 1}), Counter({(5,): 1}))
+    lateral = (
+        "SELECT * FROM a, (SELECT * FROM b WHERE b.x = a.x) AS s",
+        "WITH __lifted_subquery_001 AS (SELECT * FROM b WHERE b.x = a.x) "
+        "SELECT * FROM a CROSS JOIN __lifted_subquery_001 AS s",
+    )
+    assert _rows(db, lateral[0]) == Counter({(2, 2): 1})  # DuckDB reads the derived table laterally
+    with pytest.raises(duckdb.Error):
+        _rows(db, lateral[1])
+    for left, right in (nested, lateral):
+        assert lift_subqueries(left, rewrite_pipe_syntax=True).remaining_inline_subqueries == 1
+        assert not prove_equivalent(left, right).proven
+        assert not prove_equivalent_algebraic(left, right).proven
+        assert verify_rewrite(left, right).status.value == "unproven"
+
+
 def test_structural_prover_compares_a_kept_subquery_where_it_stands():
     assert prove_equivalent(F2, F2 + " WHERE TRUE").proven
     assert not prove_equivalent(F2, F2.replace("MAX", "MIN")).proven
@@ -203,3 +228,10 @@ def test_algebraic_cte_inlining_does_not_capture_a_nested_with():
         "WITH l1 AS (SELECT a FROM t), l2 AS (SELECT a FROM l1 WHERE a > 1) SELECT * FROM l2",
         "SELECT a FROM t WHERE a > 1",
     ).proven
+    # A body reading the real table its own WITH name hides is still inlined.
+    assert prove_equivalent_algebraic("WITH t AS (SELECT a FROM t AS t) SELECT a FROM t", "SELECT a FROM t").proven
+    # A body reading a later table of its own WITH reads the real table; inlining would capture it.
+    forward = "WITH l1 AS (SELECT a FROM l2), l2 AS (SELECT 1 AS a) SELECT a FROM l1"
+    db.execute("CREATE TABLE l2(a BIGINT); INSERT INTO l2 VALUES (9)")
+    assert _rows(db, forward) == Counter({(9,): 1})
+    assert not prove_equivalent_algebraic(forward, "SELECT 1 AS a").proven

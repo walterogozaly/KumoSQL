@@ -2984,7 +2984,9 @@ def _inline_ctes(tree: exp.Expression) -> exp.Expression:
                     for t in owner.find_all(exp.Table)
                     if not t.db and not t.catalog and t.name.lower() == name and _declaring_cte(t, name, owner) is cte
                 ]
-                reads = free_reads(body) if uses else set()
+                # The body's own name is the real table there (``WITH t AS (SELECT * FROM t)``); copies placed now
+                # are not revisited for it. Earlier tables of this WITH are already replaced inside the body.
+                reads = free_reads(body) - {name} if uses else set()
                 for table in uses:
                     if reads & visible_ctes(table, owner):
                         # A WITH nested around the use (or a later table of this WITH) defines a name the body
