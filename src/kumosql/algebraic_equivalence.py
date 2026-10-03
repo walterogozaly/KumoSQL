@@ -658,6 +658,17 @@ def _fold_dates(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+def _plain_union(node: exp.Expression) -> bool:
+    """A bare ``UNION [ALL]`` of its two operands: no LIMIT or OFFSET over the whole union, no ``BY NAME``,
+    side, CTE or other clause. Only then is it the sum (or set) of its operands' rows; an ORDER BY alone
+    keeps every row."""
+
+    if type(node) is not exp.Union:
+        return False
+    extra = {key for key, value in node.args.items() if value and key not in ("this", "expression", "distinct")}
+    return not extra or extra == {"order"}
+
+
 def _union_all_branches(node: exp.Expression) -> list[exp.Select] | None:
     """The SELECTs of a (nested) UNION ALL, or ``None`` for any other shape."""
 
@@ -701,16 +712,28 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
 
 
 def _null_extended(select: exp.Select, source: exp.Expression) -> bool:
-    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join."""
+    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join.
+
+    Its own LEFT or FULL join pads it, and so does every later RIGHT or FULL join, which pads all
+    that was joined before it (``t JOIN d ON .. RIGHT JOIN b ON FALSE`` gives rows where ``d`` is
+    NULL). A source that is not one of the select's own items, or that carries joins of its own
+    (a parenthesized join), counts as padded.
+    """
 
     joins = select.args.get("joins") or []
     sides = [(j.args.get("side") or "").upper() for j in joins]
     kinds = [(j.args.get("kind") or "").upper() for j in joins]
-    for join, side, kind in zip(joins, sides, kinds):
-        if join.this is source:
-            return side in ("LEFT", "FULL") or kind in ("LEFT", "FULL")
-    # the FROM item, or anything joined before a RIGHT or FULL join, is padded by that join
-    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides, kinds))
+    if source.args.get("joins"):
+        return True
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is not None and from_.this is source:
+        later = 0
+    else:
+        position = next((i for i, j in enumerate(joins) if j.this is source), None)
+        if position is None or sides[position] in ("LEFT", "FULL") or kinds[position] in ("LEFT", "FULL"):
+            return True
+        later = position + 1
+    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides[later:], kinds[later:]))
 
 
 _STRICT = (exp.Paren, exp.Neg, exp.Cast, exp.Add, exp.Sub, exp.Mul, exp.Div, exp.IntDiv, exp.Mod, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
@@ -1251,8 +1274,8 @@ def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
     if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Union) or source.this.args.get("distinct"):
         return None
     union = source.this
-    if not isinstance(union, exp.Union) or isinstance(union, (exp.Intersect, exp.Except)) or type(union) is not exp.Union:
-        return None
+    if not _plain_union(union):
+        return None  # the rewrite keeps only the operands, so a LIMIT over the whole union would be lost
     names = _select_names(union)
     wanted = [e.name.lower() for e in select.expressions if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)]
     if names is None or wanted != names or len(wanted) != len(select.expressions):
@@ -4394,19 +4417,20 @@ def _in_over_union(tree: exp.Expression) -> exp.Expression:
     """``x IN (SELECT a FROM p UNION ALL SELECT b FROM q)`` is ``x IN (SELECT a FROM p) OR x IN (SELECT b FROM q)``.
 
     A match in either branch is a match in the union and an unknown stays unknown, so the three-valued
-    result agrees (and so does ``NOT IN`` as the negation).
+    result agrees (and so does ``NOT IN`` as the negation). Every union in the tree must be bare: a
+    ``LIMIT`` over the whole union (or ``BY NAME``) changes which rows it has, and the split would lose it.
     """
 
     def step(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.In) or node.args.get("expressions") or node.args.get("unnest"):
             return node
         query = node.args.get("query")
-        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union:
+        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union or any(v for k, v in query.args.items() if k != "this"):
             return node
         branches, stack = [], [query.this]
         while stack:
             part = stack.pop()
-            if type(part) is exp.Union:
+            if _plain_union(part):
                 stack.extend([part.expression, part.this])
             elif isinstance(part, exp.Select):
                 branches.append(part)
