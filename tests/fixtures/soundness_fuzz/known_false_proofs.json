@@ -1,0 +1,21 @@
+[
+ {
+  "left": "SELECT COUNT(x) AS n FROM t",
+  "right": "SELECT COUNT(g.n) AS n FROM (SELECT COUNT(x) AS n FROM t) AS g",
+  "cause": "_collapse_aggregate collapses COUNT over a one-row-per-group aggregate (here a global one) into the inner aggregate; the outer COUNT is 1 per group, not the inner count",
+  "owner": "Core and SMT soundness fixes",
+  "match": [
+   "SELECT COUNT(g.n) AS n FROM (SELECT COUNT(e.c) AS n FROM"
+  ],
+  "families": [
+   "setop_aggregate",
+   "mutant:setop_aggregate"
+  ]
+ },
+ {
+  "left": "SELECT x, COUNT(y) AS m FROM t GROUP BY x",
+  "right": "SELECT d.x, COUNT(d.n) AS m FROM (SELECT x, COUNT(y) AS n FROM t GROUP BY x) AS d GROUP BY d.x",
+  "cause": "_collapse_aggregate collapses COUNT over a one-row-per-group aggregate (here a global one) into the inner aggregate; the outer COUNT is 1 per group, not the inner count",
+  "owner": "Core and SMT soundness fixes"
+ }
+]

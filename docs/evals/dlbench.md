@@ -1,5 +1,7 @@
 # DLBench
 
+[Plain-language version](../../docs_simple/evals/dlbench.md)
+
 [DLBench](https://github.com/DLBenchll/DLBench) (Apache-2.0, ASE 2025) pairs a query with its translation into another database's dialect: BIRDTrans translates 3,206 of BIRD's SQLite queries and BUTTERTrans 3,196 queries from MySQL's and PostgreSQL's own test suites, into MySQL, MariaDB, PostgreSQL, ClickHouse, MonetDB and DuckDB. Its labels (6,199 "exact", 203 "approximate" equivalence) come from language models and human review. KumoSQL uses it for cross-dialect coverage: does each side parse in its own dialect, and can the translation be proved equal to its source? The repository pins 807 pairs: every approximate pair and one exact pair in ten ([source, subset rule and overlap](../../tests/fixtures/dlbench/README.md)). Results file: `dlbench`.
 
 ```

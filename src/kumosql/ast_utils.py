@@ -127,7 +127,7 @@ _UNMODELED_ARGS = (
 
 
 # sqlglot reads ``a = b IS TRUE`` as ``a = (b IS TRUE)``; BigQuery, MySQL, PostgreSQL, DuckDB and Calcite read
-# ``(a = b) IS TRUE``. Written without parentheses the query is declined rather than proved under one reading.
+# ``(a = b) IS TRUE`` (see ``read_is_after_comparison``).
 _COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ)
 
 
@@ -138,6 +138,38 @@ def parenthesize_is_operands(tree: exp.Expression) -> exp.Expression:
         operand = node.expression
         if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
             operand.replace(exp.Paren(this=operand.copy()))
+    return tree
+
+
+def read_is_after_comparison(tree: exp.Expression) -> exp.Expression:
+    """Read ``a = b IS TRUE`` as the engines do, ``(a = b) IS TRUE``, in place.
+
+    sqlglot parses an ``IS`` test after a comparison as the comparison's right operand. In
+    PostgreSQL, DuckDB and Calcite ``IS`` binds more loosely than ``=``; in MySQL they share a level
+    and associate to the left: all read the test as applying to the whole comparison (so
+    ``NULL = 1 IS NULL`` is true, not NULL). The tree is rebuilt as sqlglot parses the parenthesized
+    text ``(a = b) IS TRUE``. An explicit ``a = (b IS TRUE)`` keeps its ``Paren`` and is left alone.
+
+    ``a = b IS NOT TRUE`` and ``a = NOT b IS TRUE`` parse to the same tree but read differently
+    (DuckDB: ``(a = b) IS NOT TRUE`` and ``a = NOT (b IS TRUE)``), so a ``NOT`` among the operand's
+    ``IS`` tests is declined.
+    """
+
+    for node in list(tree.find_all(*_COMPARISONS)):
+        tests, operand = [], node.expression
+        while isinstance(operand, exp.Is):
+            tests.append(operand)
+            operand = operand.this
+        if isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is):
+            raise UnmodeledConstruct("a comparison followed by IS NOT without parentheses reads differently across engines")
+        if not tests:
+            continue
+        # comparison(a, IS_1(... IS_n(b) ...)) becomes IS_1(... IS_n((comparison(a, b))) ...)
+        if node is tree:
+            tree = tests[0]
+        node.replace(tests[0])
+        tests[-1].set("this", exp.Paren(this=node))
+        node.set("expression", operand)
     return tree
 
 
@@ -307,7 +339,8 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     Covers ``TABLESAMPLE``, time travel, ``SYMMETRIC`` ranges, ``WITH TIES`` and ``PERCENT``
     limits, ``OUTER APPLY`` and the like. sqlglot versions differ in which of these they parse, so
     anything carried on the node is refused whichever version produced it. ``GROUP BY ALL`` is
-    spelled out first (see :func:`expand_group_by_all`).
+    spelled out first (see :func:`expand_group_by_all`). An ``IS`` test after a
+    comparison is re-read as the engines read it (:func:`read_is_after_comparison`).
     """
 
     tree = expand_group_by_all(tree)
@@ -330,10 +363,7 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
-    for node in tree.find_all(*_COMPARISONS):
-        operand = node.expression
-        if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
-            raise UnmodeledConstruct("a comparison followed by IS without parentheses reads differently across engines")
+    tree = read_is_after_comparison(tree)
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
