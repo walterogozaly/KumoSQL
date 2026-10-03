@@ -77,7 +77,7 @@ The outside cases are data in `tests/fixtures/conditional/` with a source note p
 
 ## Limits
 
-- Minimal means minimal for the prover: dropping any condition loses the proof. Two different minimal sets can exist; the search keeps NOT NULL conditions longest and leaves unique keys out first.
+- Minimal means minimal for the prover: every single condition, the last one included, was tried against the final set and dropping it loses the proof. That is not a proof the condition is necessary (a "not proven" after a deletion is the prover giving up), and the search returns one sufficient set, not every alternative. Two different minimal sets can exist; the search keeps NOT NULL conditions longest and leaves unique keys out first.
 - The catalog is NOT NULL, unique keys and single-column foreign keys read off the queries, at most 40 candidates. Non-empty tables, CHECK and value ranges, filtered keys and functional dependencies are outside it; pairs that need them stay unproven or refuted.
 - A condition is data the owner must make true: the verdict carries a SQL check for each, and BigQuery does not enforce keys.
 - Results: [`conditional-equivalence-singh`](../../benchmarks/results/conditional-equivalence-singh.json), [`conditional-equivalence-verieql`](../../benchmarks/results/conditional-equivalence-verieql.json).

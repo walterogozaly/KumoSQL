@@ -5,9 +5,10 @@ primary key, ``customer_id`` is never NULL, every order has a customer. When the
 a pair outright, :func:`add_conditions` asks whether such facts would settle it. It collects *candidate
 conditions* from the queries (every column they read may be NOT NULL; the columns they join, group,
 order and project may be unique; two joined tables may be linked by a foreign key), assumes them all,
-and runs the prover again. If that proves the pair, it removes conditions one at a time (chunks first)
-while the proof survives, so what is reported is minimal: drop any one condition and the prover can no
-longer prove the pair.
+and runs the prover again. If that proves the pair, it removes conditions (chunks first) while the proof
+survives, until every single condition has been tried and removing it loses the proof. The reported set is
+therefore minimal *for the prover*: it is a set the prover can prove the pair under and cannot shrink by one
+condition. A prover that fell silent without a condition does not show the condition is semantically needed.
 
 The result is a real proof under exactly the listed conditions, together with everything the prover
 already assumes about declared keys and NOT NULL columns. Each condition carries a SQL check (a query
@@ -411,15 +412,16 @@ def broken_by(condition: Condition, tables: Mapping[str, list]) -> bool:
 
 
 def minimal_conditions(candidates: list[Condition], proves: Callable[[list[Condition]], bool], deadline: float | None = None) -> tuple[list[Condition], bool]:
-    """A subset of ``candidates`` that still proves, from which no single condition can be dropped.
+    """A subset of ``candidates`` that still proves, from which the prover let no single condition be dropped.
 
     Chunks are dropped first (delta debugging), so a handful of provers calls handle dozens of
-    candidates. The flag is ``False`` when the deadline cut the search short (still a proof, not minimal).
+    candidates. The last condition is tried too: the result may be empty when the prover proves without any.
+    The flag is ``False`` when the deadline cut the search short (still a proof, not minimal).
     """
 
     keep = list(candidates)
     parts = 2
-    while len(keep) >= 2:
+    while keep:
         if deadline is not None and time.monotonic() > deadline:
             return keep, False
         size = max(1, -(-len(keep) // parts))
@@ -552,7 +554,8 @@ def add_conditions(
     ``prove(constraints, pair=None)`` runs the prover on the pair (or on another pair, names ignored) with the given
     constraints. A set of conditions is passed over for another set when no database meets it, when the prover then
     shows the query is always empty (a prover given contradictory facts proves that and everything else), or when it
-    makes both queries return one result on every test database (see :func:`data_independent`).
+    makes both queries return one result on every test database (see :func:`data_independent`; when that check
+    cannot run, the conditions are not cleared).
     """
 
     if result.status is SmtStatus.PROVEN_EQUIVALENT:
@@ -562,15 +565,23 @@ def add_conditions(
         return result
     deadline = time.monotonic() + wall_seconds
 
+    proofs: dict[frozenset, SmtEquivalenceResult] = {}
+
+    def attempt(chosen: Iterable[Condition]) -> SmtEquivalenceResult:
+        chosen = list(chosen)
+        key = frozenset(c.key for c in chosen)
+        if key not in proofs:
+            proofs[key] = prove(with_conditions(constraints, chosen))
+        return proofs[key]
+
     def proves(chosen: list[Condition]) -> bool:
-        return prove(with_conditions(constraints, chosen)).status is SmtStatus.PROVEN_EQUIVALENT
+        return attempt(chosen).status is SmtStatus.PROVEN_EQUIVALENT
 
     # Foreign keys come second: their rules can rewrite one side out of the shape the other side's proof needs, so a
     # pair the other facts prove is never lost to them.
     without_keys = [c for c in candidates if c.kind != "foreign_key"]
     for universe in dict.fromkeys([tuple(without_keys), tuple(candidates)]):
-        full = prove(with_conditions(constraints, universe))
-        if universe and full.status is SmtStatus.PROVEN_EQUIVALENT:
+        if universe and proves(list(universe)):
             candidates = list(universe)
             break
     else:
@@ -589,14 +600,15 @@ def add_conditions(
         merged = with_conditions(constraints, chosen)
 
         def vacuous() -> bool:
-            if not (always_empty(left_sql, prove, merged) or data_independent(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect)):
+            # Fail closed: a check that could not run (``None``) does not clear the conditions.
+            if not (always_empty(left_sql, prove, merged) or data_independent(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect) is not False):
                 return False
             # A query written to be empty or constant (WHERE 1 = 0, SELECT 0) is what the other side is meant to equal.
             declared = {k.lower(): v for k, v in (constraints or {}).items()}
             return not (
                 always_empty(left_sql, prove, declared) or always_empty(right_sql, prove, declared)
-                or data_independent(left_sql, left_sql, declared, schema=schema, types=types, dialect=dialect)
-                or data_independent(right_sql, right_sql, declared, schema=schema, types=types, dialect=dialect)
+                or data_independent(left_sql, left_sql, declared, schema=schema, types=types, dialect=dialect) is True
+                or data_independent(right_sql, right_sql, declared, schema=schema, types=types, dialect=dialect) is True
             )
 
         constant = not jointly_satisfiable(chosen, constraints) or vacuous()
@@ -610,6 +622,9 @@ def add_conditions(
         return result
     if result.counterexample is not None and not any(broken_by(c, result.counterexample.tables) for c in needed):
         return result  # refuted on a database that meets every condition: nothing is conditional about it
+    final = attempt(needed)  # the proof the verdict stands on: its own assumptions, not those of the full set
+    if final.status is not SmtStatus.PROVEN_EQUIVALENT:
+        return result
     reason = "equivalent whenever: " + describe(needed)
     if not minimal:
         reason += " (the search for fewer conditions ran out of time)"
@@ -617,7 +632,7 @@ def add_conditions(
         SmtStatus.PROVEN_CONDITIONALLY,
         reason,
         counterexample=result.counterexample,
-        assumptions=tuple(full.assumptions),
+        assumptions=tuple(final.assumptions),
         conditions=tuple(needed),
     )
 
