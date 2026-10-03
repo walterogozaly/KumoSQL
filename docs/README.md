@@ -12,6 +12,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Connecting Dataform repositories](dataform-repositories.md) | Private repositories through local `git`, the data folder, logging and diagnostics, production schedules |
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
+| [Proof safeguards](proof-safeguards.md) | The independent predicate checker, Dataform expressions in proofs, and what is not covered yet |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
 | [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
@@ -19,7 +20,9 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |
 | [Shared models](shared-models.md) | Moving a CTE repeated across Dataform models into one shared model, as a patch checked by the prover |
 | [Table minimization](table-minimization.md) | The lowest-complexity set of tables that keeps every protected table proved unchanged |
+| [Project reduction](project-reduction.md) | The smallest Dataform project that still produces the outputs you keep, as a proved patch on the `.sqlx` files |
 | [Output properties](output-properties.md) | Never-NULL columns, unique keys and row bounds, inferred without running a query |
+| [Ties and nondeterministic results](ties.md) | Windows, LIMITs and aggregates whose result can depend on how tied rows are ordered, and what would pin them down |
 | [Constraint-dependent rewrites](constraint-rewrites.md) | Rewrites that hold only under declared NOT NULL columns, keys and foreign keys |
 | [Incremental models](incremental.md) | Whether an incremental run equals a full refresh |
 | [Join ordering and cardinality](joinorder.md) | Sub-join size estimates and join orders, in pure Python |
@@ -29,8 +32,12 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
 | [Public SQL evaluation sources](public-sql-evaluation-sources.md) | The research list of public suites, databases and projects; what KumoSQL already scores from it is in the [inventory](evals/public-sources.md) |
 | [Additional public SQL sources](additional-public-sql-sources.md) | A second research list: engine paired tests, repair corpora, more sample databases and GoogleSQL projects; see the [inventory](evals/public-sources.md#additional-sources) |
+| [Eval integrity audit status](eval-integrity-status.md) | What each finding of the October 2026 external [eval integrity audit](eval-integrity-audit-2026-10-02.md) means on current master, and what was fixed |
+| [Eval integrity audit, 2026-10-02](eval-integrity-audit-2026-10-02.md) | The external audit as received: SMT snapshots, typed result comparison, the workbook fixture gate, fuzz floors |
+| [Proof re-check](proof-recheck.md) | The heavy executed search that hunts for wrong proofs among the pairs the evals count as proven: the engine, its adapters, how to triage a difference and what the first runs found |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
+| [Picking up a workstream](handoff.md) | How an outside contributor or agent continues a `workstream` issue: a fresh clone of master, targeted tests only, the rules that never relax, and handing the work back as a pull request |
 
 ## Evals
 
-The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, DLBench's cross-dialect translations, pairs from optimizer wrong-result bugs, DB-GPT's rewrite examples, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).
+The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, DLBench's cross-dialect translations, pairs from optimizer wrong-result bugs, DB-GPT's rewrite examples, rewrites recommended by vendor docs, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).

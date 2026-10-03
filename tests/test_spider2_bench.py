@@ -95,8 +95,9 @@ def test_query_timeout_counts_cpu_time_not_machine_load(monkeypatch):
 
 def test_dev_and_held_out_floors():
     bench = _bench()
+    results = bench.run("all", workers=4)  # one pool for both splits: no worker waits for the other split
     for split in ("dev", "held-out"):
-        summary = bench.summarise(bench.run(split, workers=4))
+        summary = bench.summarise({case: out for case, out in results.items() if bench.split_of(case) == split})
         stages = summary["stages"]
         for stage in bench.STAGES:
             row = stages[stage]

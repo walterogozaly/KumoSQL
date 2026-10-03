@@ -297,6 +297,29 @@ def test_dry_run_cli_uses_planner_wording_and_labels_bytes_as_estimates(
     assert not any(word in output.lower() for word in ("equivalent", "proven", "verified", "safe"))
 
 
+def test_dry_run_cli_never_calls_an_unobserved_schema_a_match(tmp_path, monkeypatch, capsys):
+    original_path = tmp_path / "original.sql"
+    rewritten_path = tmp_path / "rewritten.sql"
+    original_path.write_text("SELECT 1", encoding="utf-8")
+    rewritten_path.write_text("SELECT 2", encoding="utf-8")
+    no_schema = (200, {"statistics": {"query": {}}})
+    fake = _FakePlanner({"SELECT 1": no_schema, "SELECT 2": no_schema})
+    monkeypatch.setattr(
+        "kumosql.cli.check_rewrite",
+        lambda before, after, project, location=None: check_rewrite(
+            before, after, project, location=location, token="token", transport=fake
+        ),
+    )
+
+    status = dry_run_main([str(original_path), "--rewritten", str(rewritten_path), "--project", "billing"])
+
+    output = capsys.readouterr().out
+    assert status == 2
+    assert "planner_check=not_run" in output
+    assert "schema_matches=unknown" in output
+    assert "schema_matches=True" not in output
+
+
 def test_evidence_summary_cli_prints_only_the_aggregate(tmp_path, capsys):
     from kumosql.cli import evidence_summary_main
 

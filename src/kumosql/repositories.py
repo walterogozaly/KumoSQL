@@ -18,8 +18,8 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from . import console, state, storage, workflow_configs
-from .git_repo import GitRepoError, load_into_graph, parse_branch, parse_remote
+from . import console, redact, state, storage, workflow_configs
+from .git_repo import GitRepoError, load_into_graph, parse_branch, parse_remote, sanitize_cached_origin
 
 SECTION = "repositories"
 MAX_REPOSITORIES = 20
@@ -41,11 +41,16 @@ def _read() -> dict:
     clean = []
     for item in items if isinstance(items, list) else []:
         if isinstance(item, dict) and isinstance(item.get("id"), str) and isinstance(item.get("url"), str):
-            clean.append(item)
+            sanitize_cached_origin(item["url"], item.get("branch"))
+            clean.append({key: redact.sanitize_credentials(value) if isinstance(value, str) else value
+                          for key, value in item.items()})
     active = saved.get("active") if isinstance(saved, dict) else None
     if not any(item["id"] == active for item in clean):
         active = clean[0]["id"] if clean else None
-    return {"items": clean, "active": active}
+    data = {"items": clean, "active": active}
+    if data != saved:
+        _write(data)  # remove historical URL/error credentials before returning any API response
+    return data
 
 
 def _write(data: dict) -> None:
@@ -141,7 +146,10 @@ def load(repo_id: object, refresh: bool = False) -> dict:
             with console.task("repo load", repo=url, branch=branch or "default", mode="fetch latest" if refresh else "cached copy if any", warn_after=60):
                 result = load_into_graph(url, branch, refresh)
         except (GitRepoError, ValueError) as exc:
-            _update(repo_id, error=str(exc), error_at=_now())
+            message = redact.sanitize_credentials(str(exc))
+            _update(repo_id, error=message, error_at=_now())
+            if message != str(exc):
+                raise GitRepoError(message) from None
             raise
         _update(repo_id, drop=("error", "error_at", "stale_reason") + (() if result.get("note") else ("note",)),
                 last_loaded=_now(), label=result["label"], files=result["files"], activate=True,
@@ -160,6 +168,9 @@ def _read_item(repo_id: str) -> dict:
 
 def _update(repo_id: str, drop: tuple = (), activate: bool = False, **fields: object) -> None:
     """Change one saved entry (re-read first: the list may have been edited while git ran)."""
+
+    fields = {key: redact.sanitize_credentials(value) if isinstance(value, str) else value
+              for key, value in fields.items()}
 
     with _LOCK:
         data = _read()
@@ -197,7 +208,7 @@ def autoload(background: bool = True) -> threading.Thread | None:
             if live_graph.restore_snapshot(item.get("content_key"), item.get("label") or "", remote):
                 console.say("start-up repository reload > showing the saved copy while the latest commit is checked")
         except Exception as exc:  # noqa: BLE001 - the normal load below still runs
-            console.warn(f"start-up repository reload: saved copy not used ({_first_line(exc)})")
+            console.warn(f"start-up repository reload: saved copy not used ({type(exc).__name__}, {console.classify(exc)})")
 
     def _autoload(active: str) -> None:
         try:

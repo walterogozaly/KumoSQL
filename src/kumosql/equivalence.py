@@ -3,8 +3,9 @@
 This module intentionally proves only a narrow class of equivalences. It
 normalizes relational shape after CTE lifting and compares query ASTs under
 bag semantics (row order ignored). It refuses to prove queries with value
-nondeterminism or row-selection nondeterminism. A false negative is therefore
-preferred to a false positive.
+nondeterminism or row-selection nondeterminism, except a volatile or possibly
+user-defined call that both sides leave identical and in place. A false
+negative is therefore preferred to a false positive.
 """
 
 from __future__ import annotations
@@ -27,8 +28,11 @@ from .ast_utils import (
     with_clause as _with_clause,
 )
 from .distinct_safety import distinct_is_redundant
+from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
+from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
+from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
 
 
@@ -51,6 +55,8 @@ class EquivalenceResult:
     normalized_right: str | None = None
     verifier_sql: str | None = None
     diagnostics: tuple[str, ...] = ()
+    #: The independent checks of this proof's own predicate normalization (see ``proof_steps``).
+    proof_checks: tuple[StepCheck, ...] = ()
 
     @property
     def proven(self) -> bool:
@@ -63,12 +69,14 @@ _VALUE_NONDETERMINISTIC_TYPES = {
     "ApproxQuantile",
     "ArrayAgg",
     "CurrentDate",
+    "CurrentDatetime",
     "CurrentTime",
     "CurrentTimestamp",
     "GroupConcat",
     "MaxBy",
     "MinBy",
     "Rand",
+    "SessionUser",
     "TableSample",
     "Uuid",
 }
@@ -93,9 +101,11 @@ _VALUE_NONDETERMINISTIC_NAMES = {
 # identical expression is not enough and it keeps blocking the proof.
 _STABLE_IF_UNCHANGED_TYPES = {
     "CurrentDate",
+    "CurrentDatetime",
     "CurrentTime",
     "CurrentTimestamp",
     "Rand",
+    "SessionUser",
     "Uuid",
 }
 
@@ -148,28 +158,50 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     _canonicalize_cte_order(query, with_clause)
 
+    # BigQuery resolves CTE names case-insensitively (`FROM A` reads CTE `a`), so
+    # references are matched by lower-cased name; a CTE name repeated up to case
+    # is ambiguous and not canonicalized.
     mapping: dict[str, str] = {}
-    for index, cte in enumerate(with_clause.expressions, start=1):
+    cte_index: dict[str, int] = {}
+    ctes = list(with_clause.expressions)
+    for index, cte in enumerate(ctes, start=1):
         old = _cte_alias(cte)
         if old:
-            mapping[old] = f"__canonical_cte_{index:03d}"
+            if old.lower() in mapping:
+                raise ValueError("CTE names repeat up to case")
+            mapping[old.lower()] = f"__canonical_cte_{index:03d}"
+            cte_index[old.lower()] = index - 1
+    recursive = bool(with_clause.args.get("recursive"))
+
+    # A non-recursive CTE is visible only after its definition, so a reference in the
+    # same or an earlier CTE body names a physical table even when it matches the CTE's
+    # name up to case. Renaming it would make `FROM A` inside CTE `a` look like a read
+    # of the CTE itself. The decision is made before the aliases are renamed.
+    renames: list[tuple[exp.Table, str]] = []
+    for table in query.find_all(exp.Table):
+        old = table.name
+        if old.lower() not in mapping or not is_cte_reference_candidate(table):
+            continue
+        owner = nearest_root_cte(table, ctes)
+        owner_index = len(ctes) if owner is None else next(
+            i for i, cte in enumerate(ctes) if cte is owner
+        )
+        defined = cte_index[old.lower()]
+        if defined < owner_index or (recursive and defined == owner_index):
+            renames.append((table, old))
 
     for cte in with_clause.expressions:
         old = _cte_alias(cte)
-        if old in mapping:
+        if old and old.lower() in mapping:
             alias = cte.args.get("alias")
-            alias.set("this", exp.to_identifier(mapping[old]))
+            alias.set("this", exp.to_identifier(mapping[old.lower()]))
 
-    for table in query.find_all(exp.Table):
-        old = table.name
-        # A one-part table reference can be a CTE reference. Qualified tables
-        # are physical objects and must never be renamed by this pass.
-        if old in mapping and is_cte_reference_candidate(table):
-            # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable
-            # name so column qualifiers still match after renaming.
-            if not table.alias:
-                table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
-            table.set("this", exp.to_identifier(mapping[old]))
+    for table, old in renames:
+        # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable name so
+        # column qualifiers still match after renaming.
+        if not table.alias:
+            table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
+        table.set("this", exp.to_identifier(mapping[old.lower()]))
 
 
 def _canonicalize_cte_order(query: exp.Expression, with_clause: exp.With) -> None:
@@ -523,11 +555,37 @@ def _remove_comments(query: exp.Expression) -> None:
 def _remove_unordered_result_order(query: exp.Expression) -> None:
     """Ignore root result ordering when it cannot affect row membership.
 
-    Under ``DISTINCT ON`` it can: the ORDER BY picks the row kept for each key.
+    Under ``DISTINCT ON`` it can: the ORDER BY picks the row kept for each key. So can a
+    sort key that may raise an error (``ORDER BY ERROR('x')``, ``ORDER BY a / b``): it is
+    kept unless the projection already evaluates it.
     """
 
-    if query.args.get("limit") is None and query.args.get("offset") is None and not distinct_on(query):
-        query.set("order", None)
+    order = query.args.get("order")
+    if order is None or query.args.get("limit") is not None or query.args.get("offset") is not None:
+        return
+    if distinct_on(query) or not all(_sort_key_cannot_fail(query, item) for item in order.expressions):
+        return
+    query.set("order", None)
+
+
+# Expressions that evaluate without a runtime error whatever their (well-typed) inputs.
+_CANNOT_FAIL_TYPES = {
+    "Column", "Identifier", "Dot", "Literal", "Null", "Boolean", "Paren", "Not", "And", "Or",
+    "EQ", "NEQ", "GT", "GTE", "LT", "LTE", "Is", "Coalesce", "Lower", "Upper",
+    "Rand", "Uuid", "CurrentDate", "CurrentDatetime", "CurrentTime", "CurrentTimestamp",
+}
+
+
+def _sort_key_cannot_fail(query: exp.Expression, item: exp.Expression) -> bool:
+    """A key built from columns, literals and total operators, or one the SELECT list already computes."""
+
+    key = item.this if isinstance(item, exp.Ordered) else item
+    if all(type(node).__name__ in _CANNOT_FAIL_TYPES for node in key.walk()):
+        return True
+    if not isinstance(query, exp.Select):
+        return False
+    rendered = key.sql(dialect="bigquery", comments=False)
+    return any(e.unalias().sql(dialect="bigquery", comments=False) == rendered for e in query.expressions)
 
 
 def _drop_redundant_distinct(query: exp.Expression) -> None:
@@ -552,6 +610,61 @@ def _value_nondeterminism_sites(query: exp.Expression) -> tuple[str, ...]:
         for node in query.walk()
         if _is_unchanged_safe_value(node)
     )
+
+
+_ANONYMOUS_CALLS = tuple({exp.Anonymous, getattr(exp, "AnonymousAggFunc", exp.Anonymous)})
+
+
+def _is_builtin_call(node: exp.Expression) -> bool:
+    """An unqualified call to a function sqlglot knows, whose name BigQuery reads in any case.
+
+    Any other call (``Foo(x)``, ``ds.foo(x)``, ```p.d.Foo`(x)``) may name a user-defined
+    function: its name is case-sensitive and its definition, and so its determinism, is unknown.
+    """
+
+    if not isinstance(node, _ANONYMOUS_CALLS):
+        return True
+    parent = node.parent
+    if isinstance(parent, exp.Dot) and node is parent.expression:
+        return False
+    name = node.args.get("this")
+    return isinstance(name, str) and name.upper() in _builtin_functions()
+
+
+def _routine_call_sites(query: exp.Expression) -> tuple[str, ...]:
+    """Exact SQL of each call that may be a user-defined function, in walk order.
+
+    Like RAND(), such a call is accepted only when a rewrite leaves it identical and in place.
+    """
+
+    return tuple(_render(node) for node in query.walk() if not _is_builtin_call(node))
+
+
+_ROUTINE_PREFIX = "KUMOSQL_ROUTINE_"
+_ROUTINE_SENTINEL = _ROUTINE_PREFIX + "{}_"
+
+
+def _render(node: exp.Expression, *, pretty: bool = False) -> str:
+    """BigQuery SQL with built-in function names upper-cased and every other call name as written."""
+
+    options = {"dialect": "bigquery", "pretty": pretty, "normalize_functions": "upper", "identify": False, "comments": False}
+    if all(_is_builtin_call(call) for call in node.find_all(*_ANONYMOUS_CALLS)):
+        return node.sql(**options)
+    copy = node.copy()
+    if _ROUTINE_PREFIX in copy.sql(**options).upper():
+        raise ValueError("the query already contains the routine-name placeholder")
+    spellings = []
+    for call in list(copy.find_all(*_ANONYMOUS_CALLS)):
+        if _is_builtin_call(call):
+            continue
+        name = call.args.get("this")
+        spellings.append(name.sql(dialect="bigquery") if isinstance(name, exp.Expression) else str(name))
+        call.set("this", _ROUTINE_SENTINEL.format(len(spellings) - 1))
+    text = copy.sql(**options)
+    # The trailing underscore keeps KUMOSQL_ROUTINE_1_ from matching inside KUMOSQL_ROUTINE_10_.
+    for index, spelling in enumerate(spellings):
+        text = text.replace(_ROUTINE_SENTINEL.format(index), spelling)
+    return text
 
 
 # Window functions whose value for a row depends only on the row's partition and its peers
@@ -607,7 +720,8 @@ def _nondeterminism_reasons(
         if allow_unchanged_values and _is_unchanged_safe_value(node):
             continue
         node_type = type(node).__name__
-        if node_type in _VALUE_NONDETERMINISTIC_TYPES:
+        # sqlglot types most APPROX_* aggregates (ApproxTopK, ApproxTopSum, ApproxQuantiles).
+        if node_type in _VALUE_NONDETERMINISTIC_TYPES or node_type.startswith("Approx"):
             reasons.append(f"value nondeterminism: {node.sql(dialect='bigquery')}")
             continue
         if node_type in {"ArgMax", "ArgMin"}:
@@ -635,12 +749,9 @@ def _has_row_selection_nondeterminism(query: exp.Expression) -> bool:
 
 
 def _canonical_sql(query: exp.Expression) -> str:
-    return _parenthesize_operators(query).sql(
-        dialect="bigquery",
-        pretty=False,
-        normalize_functions="upper",
-        identify=False,
-    )
+    # Built-in function names have no case in BigQuery; user-defined function names do,
+    # so ``Foo(x)`` and ``foo(x)`` must not render alike.
+    return _render(_parenthesize_operators(query))
 
 
 def _fingerprint(sql: str) -> str:
@@ -690,13 +801,59 @@ SELECT COUNTIF(left_count != right_count) = 0 AS equivalent
 FROM joined_counts"""
 
 
+class _StepRejected(ValueError):
+    """The independent checker refused a normalization step, so the proof must not rely on it."""
+
+    def __init__(self, check: StepCheck):
+        super().__init__(check.reason)
+        self.check = check
+
+
+def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
+    """Run ``_normalize_predicates`` and have ``proof_steps`` re-derive the change from scratch.
+
+    Rules such as ``remove_trivial_predicates`` fold predicates the same way, so a folding bug would
+    make both sides of a proof agree. The checker shares no code with either. ``None`` when nothing
+    changed; raises ``_StepRejected`` when the checker refuses the change.
+    """
+
+    before = query.copy()
+    _normalize_predicates(query)
+    if same_tree(before, query):
+        return None
+    rendered = lambda q: _parenthesize_operators(q).sql(dialect="bigquery", comments=False)
+    step = RewriteStep("normalize_predicates", PREDICATE_FAMILY, 0, rendered(before), rendered(query))
+    check = check_predicate_transition(step, before, query)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
+_GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
+
+
+def _reads_table_named_like_generated_cte(query: exp.Expression) -> bool:
+    cte_names = {
+        alias.lower() for cte in query.find_all(exp.CTE) if (alias := _cte_alias(cte))
+    }
+    return any(
+        table.name.lower().startswith(_GENERATED_CTE_PREFIXES)
+        and (table.args.get("db") or table.name.lower() not in cte_names)
+        for table in query.find_all(exp.Table)
+    )
+
+
 def _prepare_query(
-    sql: str, *, ignore_row_order: bool
+    sql: str, *, ignore_row_order: bool, checks: list[StepCheck] | None = None
 ) -> tuple[exp.Expression, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     # Require strict parsing before invoking the lifting transformer. Recovery
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
     parsed = _parse_single_query(sql)
+    if _reads_table_named_like_generated_cte(parsed):
+        # Lifting and CTE canonicalization give CTEs these names; a real table with one
+        # could be confused with them, and the proof would compare the wrong relation.
+        raise ValueError("the query reads a table named like a CTE the normalizer generates")
     if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
     if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):
@@ -712,11 +869,13 @@ def _prepare_query(
         _remove_unordered_result_order(query)
     # Recorded before the remaining structure-changing normalizations so that
     # merging, dropping or simplifying around a call cannot hide a change to it.
-    sites_before = _value_nondeterminism_sites(query)
+    sites_before = _value_nondeterminism_sites(query) + _routine_call_sites(query)
     _drop_redundant_distinct(query)
     _strip_grouping_parens(query)
     _flatten_connectors(query)
-    _normalize_predicates(query)
+    check = _checked_predicate_normalization(query)
+    if check is not None and checks is not None:
+        checks.append(check)
     unambiguous = _cte_references_are_unambiguous(query)
     _canonicalize_cte_names(query)
     if unambiguous and _merge_duplicate_ctes(query):
@@ -724,7 +883,8 @@ def _prepare_query(
     _remove_comments(query)
     canonical = _canonical_sql(query)
     reasons = tuple(_nondeterminism_reasons(query, allow_unchanged_values=True))
-    return query, canonical, reasons, sites_before, _value_nondeterminism_sites(query)
+    sites_after = _value_nondeterminism_sites(query) + _routine_call_sites(query)
+    return query, canonical, reasons, sites_before, sites_after
 
 
 def _output_names(query: exp.Expression) -> list[str] | None:
@@ -821,10 +981,12 @@ def _drop_noop_limit(sql: str) -> str | None:
         return None
     body = query.copy()
     body.set("limit", None)
-    body.set("order", None)
-    bound = _max_rows(body)
+    unordered = body.copy()
+    unordered.set("order", None)
+    bound = _max_rows(unordered)
     if bound is None or bound > int(count.name):
         return None
+    # Keep the ORDER BY: only the prover's own ordering step may erase it, and only when no key can raise.
     return body.sql(dialect="bigquery")
 
 
@@ -879,6 +1041,9 @@ def prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
         )
+    masked = masked_template_problem(left_sql, right_sql)
+    if masked:
+        return EquivalenceResult(status=EquivalenceStatus.NOT_PROVEN, reason=masked)
     left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     if ignore_row_order:
         left_sql = _drop_noop_limit(left_sql) or left_sql
@@ -905,14 +1070,22 @@ def _prove_equivalent(
     ignore_row_order: bool = True,
 ) -> EquivalenceResult:
     verifier_sql: str | None = None
+    checks: list[StepCheck] = []
     try:
         left_query, left_canonical, left_nondeterminism, left_before, left_after = _prepare_query(
-            left_sql, ignore_row_order=ignore_row_order
+            left_sql, ignore_row_order=ignore_row_order, checks=checks
         )
         right_query, right_canonical, right_nondeterminism, right_before, right_after = _prepare_query(
-            right_sql, ignore_row_order=ignore_row_order
+            right_sql, ignore_row_order=ignore_row_order, checks=checks
         )
         verifier_sql = build_bag_verifier_sql(left_sql, right_sql)
+    except _StepRejected as exc:
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="the independent check of predicate normalization refused a step",
+            diagnostics=(exc.check.reason,),
+            proof_checks=(*checks, exc.check),
+        )
     except Exception as exc:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
@@ -921,27 +1094,8 @@ def _prove_equivalent(
         )
 
     diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))
-    sites_untouched = (
-        left_before == right_before
-        and left_before == left_after
-        and right_before == right_after
-    )
-    if not diagnostics and not sites_untouched:
-        diagnostics = tuple(
-            f"value nondeterminism changed: {site}"
-            for site in dict.fromkeys(left_before + right_before + left_after + right_after)
-        )
     if diagnostics:
-        return EquivalenceResult(
-            status=EquivalenceStatus.NOT_PROVEN,
-            reason="nondeterministic value or window behavior was not proven stable",
-            left_fingerprint=_fingerprint(left_canonical),
-            right_fingerprint=_fingerprint(right_canonical),
-            normalized_left=left_canonical,
-            normalized_right=right_canonical,
-            verifier_sql=verifier_sql,
-            diagnostics=diagnostics,
-        )
+        return _not_stable(left_canonical, right_canonical, verifier_sql, diagnostics, tuple(checks))
 
     if _has_row_selection_nondeterminism(left_query) or _has_row_selection_nondeterminism(right_query):
         return EquivalenceResult(
@@ -952,12 +1106,14 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
             diagnostics=("row-selection nondeterminism",),
         )
 
     left_fingerprint = _fingerprint(left_canonical)
     right_fingerprint = _fingerprint(right_canonical)
-    if left_fingerprint != right_fingerprint:
+    # The hash is a prefilter and an identifier; the proof condition is equal canonical text.
+    if left_fingerprint != right_fingerprint or left_canonical != right_canonical:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="normalized query structures differ",
@@ -966,7 +1122,20 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
         )
+
+    sites_untouched = (
+        left_before == right_before
+        and left_before == left_after
+        and right_before == right_after
+    )
+    if not sites_untouched:
+        diagnostics = tuple(
+            f"call that may be nondeterministic changed: {site}"
+            for site in dict.fromkeys(left_before + right_before + left_after + right_after)
+        )
+        return _not_stable(left_canonical, right_canonical, verifier_sql, diagnostics, tuple(checks))
 
     if not ignore_row_order:
         if left_query.args.get("order") is None or right_query.args.get("order") is None:
@@ -978,13 +1147,30 @@ def _prove_equivalent(
                 normalized_left=left_canonical,
                 normalized_right=right_canonical,
                 verifier_sql=verifier_sql,
+                proof_checks=tuple(checks),
             )
 
     unchanged = (
-        (f"{len(left_before)} nondeterministic value expression(s) left unchanged",)
+        (f"{len(left_before)} possibly nondeterministic call(s) left unchanged",)
         if left_before
         else ()
     )
+    if not ignore_row_order:
+        # Equal ORDER BY clauses order equal rows alike, but nothing shows the keys are unique:
+        # rows tied on them may come back in either order, as on two runs of either query.
+        return EquivalenceResult(
+            status=EquivalenceStatus.PROVEN_EQUIVALENT,
+            reason=(
+                "canonical query structures and ORDER BY clauses match; rows tied on the ORDER BY"
+                " keys may come back in a different order"
+            ),
+            left_fingerprint=left_fingerprint,
+            right_fingerprint=right_fingerprint,
+            normalized_left=left_canonical,
+            normalized_right=right_canonical,
+            verifier_sql=verifier_sql,
+            diagnostics=unchanged + ("tie order unchecked", "verifier_sql compares result bags, not order"),
+        )
     return EquivalenceResult(
         status=EquivalenceStatus.PROVEN_EQUIVALENT,
         reason="canonical query structures match under the selected result-order semantics",
@@ -994,4 +1180,25 @@ def _prove_equivalent(
         normalized_right=right_canonical,
         verifier_sql=verifier_sql,
         diagnostics=unchanged,
+        proof_checks=tuple(checks),
+    )
+
+
+def _not_stable(
+    left_canonical: str,
+    right_canonical: str,
+    verifier_sql: str | None,
+    diagnostics: tuple[str, ...],
+    proof_checks: tuple[StepCheck, ...] = (),
+) -> EquivalenceResult:
+    return EquivalenceResult(
+        status=EquivalenceStatus.NOT_PROVEN,
+        reason="nondeterministic value or window behavior was not proven stable",
+        left_fingerprint=_fingerprint(left_canonical),
+        right_fingerprint=_fingerprint(right_canonical),
+        normalized_left=left_canonical,
+        normalized_right=right_canonical,
+        verifier_sql=verifier_sql,
+        proof_checks=proof_checks,
+        diagnostics=diagnostics,
     )

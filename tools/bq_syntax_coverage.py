@@ -306,7 +306,8 @@ def expected_dependencies(text: str) -> tuple[set[str], set[str]]:
 
     Static names come from literal ``${ref(...)}`` calls and config ``dependencies``;
     computed ones are ``ref()`` calls inside a ``js`` block, which only running the
-    JavaScript can resolve.
+    JavaScript can resolve. A ``ref`` inside a SQL comment is not a dependency
+    (checked against ``@dataform/cli`` 3.0.71: the comment text is kept literally).
     """
 
     from kumosql.sqlx import split_sqlx_sections
@@ -318,11 +319,22 @@ def expected_dependencies(text: str) -> tuple[set[str], set[str]]:
         if kind == "block" and body.lstrip().startswith("js"):
             computed |= _refs_in(body)
         else:
-            names |= _refs_in(body)
+            names |= _refs_in(_without_comments(body))
     config = re.search(r"dependencies\s*:\s*\[([^\]]*)\]", text)
     if config:
         names.update(re.findall(r"""["']([^"']+)["']""", config.group(1)))
     return names, computed - names
+
+
+def _without_comments(sql: str) -> str:
+    """``sql`` with every SQL comment blanked out: Dataform does not evaluate ``${...}`` in them."""
+
+    from kumosql.sqlx import sql_comment_spans
+
+    chars = list(sql)
+    for start, end in sql_comment_spans(sql):
+        chars[start:end] = " " * (end - start)
+    return "".join(chars)
 
 
 def _refs_in(text: str) -> set[str]:

@@ -9,7 +9,7 @@ SQL pairs converted from the example corpus of the Cosette SQL prover.
   `python tools/cosette_to_sql.py --src <Cosette checkout>`; needs `duckdb`)
 * Test: `tests/test_cosette_fixtures.py`
 
-These are fixtures only; no benchmark scores them yet.
+`python tools/cosette_bench.py` scores them (`docs/evals/sqlsolver.md#cosette-and-spes-fixtures`).
 
 ## Files
 
@@ -18,6 +18,7 @@ These are fixtures only; no benchmark scores them yet.
 | `cosette_cases.jsonl` | one case per line: `name`, `source_dir`, `source_file`, `label`, `schema` (tables with `columns` (`name`, `type`, Cosette's `source_type`, `nullable`, `hidden_predicate`) and `open` for a `??` schema), `constraints`, `sql_a`, `sql_b`, `ddl`, `duckdb` (execution check), plus `constraint_source`, `predicates` and, for `calcite`, `cosette_result` (Cosette's own result from `calcite_result_with_label.csv`) when they apply |
 | `cosette_skipped.jsonl` | files not converted: `category` and `reason` |
 | `summary.json` | counts per folder and skip category |
+| `cosette_adapted.jsonl` | adapted pairs, written by hand and scored apart (`python tools/cosette_bench.py cosette-adapted`): the 4 `sqlrewrites` files skipped for a table with no declared columns, given two `INTEGER NOT NULL` columns per table, and 5 not-equivalent siblings. Fields: `name`, `adapted` (true), `adapted_from`, `source_file`, `source_sha256` (of the `.cos` file at the pinned commit), `label`, `adaptation`, `ddl`, `sql_a`, `sql_b`. Not counted in `summary.json` |
 
 ## Labels
 

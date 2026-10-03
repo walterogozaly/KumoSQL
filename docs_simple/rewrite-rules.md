@@ -21,21 +21,35 @@ KumoSQL checks each changed result against its input. Read the evidence label be
 | `deduplicate_ctes` | Share identical `WITH` queries |
 | `remove_unused_ctes` | Remove `WITH` queries nobody reads |
 | `remove_redundant_distinct` | Remove `DISTINCT` when supported grouping already prevents duplicates |
+| `qualify_columns` | Write `orders.id` instead of bare `id` when a query reads two or more tables and only one has that column (opt in) |
 | `format_sql` | Apply saved SQLFluff formatting preferences |
 
 These rules have exceptions. For example, combining duplicate queries containing random calls can change results. A rule may leave such SQL alone.
+
+## Qualify columns
+
+`qualify_columns` is for queries that join tables. `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` becomes `SELECT o.id, c.name ...`, so a reader sees where each column comes from. It does not run in the default pipeline; ask for it with `-r qualify_columns`.
+
+It only adds a table name when it is sure. It leaves a column alone when:
+
+- the query reads one table;
+- a table's columns are not known;
+- the join is `NATURAL` or the column is the one in `USING (...)`, because the merged column has no single table;
+- two tables both have the column, or an output name from `SELECT ... AS` is used in `GROUP BY` or `ORDER BY`.
+
+Limits: it needs to know each table's columns, which come from the loaded project or the saved BigQuery catalog, so on the command line only queries built from `WITH` queries and subqueries are qualified. Without those columns the checker may call the result `unproven`. The final `ORDER BY` keeps its bare names, because the checker only accepts a rewrite that leaves the ordering text alone. See the [full reference](../docs/rewrite-rules.md) for the complete list of cases that are skipped.
 
 ## Understand the label
 
 | Label | What to do with it |
 | --- | --- |
-| `unchanged` | No change was made |
+| `unchanged` | The text is identical to the input; a rule may have skipped it, and its step says why |
 | `proven` | Equivalence was established; read any assumptions |
 | `planner_checked` | BigQuery could plan the query, but equal results were not proved |
 | `unproven` | Review it; the checker could not establish equivalence |
 | `failed` | The rewrite failed; its output is not accepted |
 
-Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Fatal rule failures exit 2 without writing the result.
+Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL. Fatal rule failures exit 2 without writing the result.
 
 ## Rule order matters
 

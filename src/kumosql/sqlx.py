@@ -19,6 +19,10 @@ _SQLX_BLOCK_RE = re.compile(
 _SQLX_WHEN_CONNECTIVE_RE = re.compile(r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*[`'\"]\s*(AND|OR)\b", re.IGNORECASE)
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"__sqlx_token_\d+__")
+_QUOTED = r"""(?:"[^"\\]*"|'[^'\\]*'|`[^`\\]*`)"""
+_TABLE_REFERENCE_RE = re.compile(
+    rf"^\$\{{\s*(?:(?:ref|resolve)\s*\(\s*{_QUOTED}(?:\s*,\s*{_QUOTED})?\s*\)|self\s*\(\s*\))\s*\}}$"
+)
 
 
 class SqlxRestorationError(ValueError):
@@ -119,6 +123,60 @@ def _find_interpolation_end(text: str, opening: int) -> int:
     raise ValueError("unterminated SQLX interpolation")
 
 
+def sql_comment_spans(sql: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of every ``--`` and ``/* */`` comment in ``sql``.
+
+    Dataform leaves a ``${...}`` inside these as literal text: it is neither evaluated nor a dependency. A ``#`` comment
+    is not one of them (checked against ``@dataform/cli`` 3.0.71, which evaluates ``${ref(...)}`` after ``#``), nor is a
+    ``--`` inside a string.
+    Quotes inside a comment do not open a string, and comment markers inside a string or a ``${...}``
+    expression do not open a comment. An unterminated block comment runs to the end of the text.
+    """
+
+    spans: list[tuple[int, int]] = []
+    index, size = 0, len(sql)
+    while index < size:
+        char = sql[index]
+        if sql.startswith("${", index):
+            try:
+                index = _find_interpolation_end(sql, index) + 1
+            except ValueError:
+                return spans
+        elif sql.startswith("--", index):
+            end = index
+            while end < size and sql[end] not in "\r\n":
+                end += 1
+            spans.append((index, end))
+            index = end
+        elif sql.startswith("/*", index):
+            end = sql.find("*/", index + 2)
+            end = size if end < 0 else end + 2
+            spans.append((index, end))
+            index = end
+        elif char in "'\"`":
+            quote = sql[index : index + 3] if sql[index : index + 3] in ("'''", '"""') else char
+            index += len(quote)
+            while index < size and not sql.startswith(quote, index):
+                if sql.startswith("${", index):
+                    try:
+                        index = _find_interpolation_end(sql, index) + 1
+                    except ValueError:
+                        return spans
+                    continue
+                index += 2 if sql[index] == "\\" else 1
+            index += len(quote)
+        else:
+            index += 1
+    return spans
+
+
+def outside_sql_comments(sql: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
+    """The matches of ``pattern`` in ``sql`` that do not start inside a SQL comment."""
+
+    spans = sql_comment_spans(sql)
+    return [m for m in pattern.finditer(sql) if not any(start <= m.start() < end for start, end in spans)]
+
+
 @dataclass(frozen=True)
 class SqlxRestoration:
     token: str
@@ -180,6 +238,23 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
         cursor = closing + 1
 
     return "".join(output), tuple(restorations)
+
+
+def is_table_reference(original: str) -> bool:
+    """``${ref("t")}``, ``${ref("dataset", "t")}``, ``${resolve("t")}`` or ``${self()}``: one table name once compiled."""
+
+    return bool(_TABLE_REFERENCE_RE.match(original))
+
+
+def opaque_tokens(restorations: tuple[SqlxRestoration, ...]) -> frozenset[str]:
+    """Sentinels of the interpolations that are not table references.
+
+    Such an expression (``${"x OR y"}``, ``${when(incremental(), "AND b > 1")}``) compiles to arbitrary SQL text:
+    a clause, a predicate that binds looser than its neighbours, or a query that reads a CTE. A rule sees only an
+    opaque name in its place.
+    """
+
+    return frozenset(item.token for item in restorations if not is_table_reference(item.original))
 
 
 def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, ...]) -> str:

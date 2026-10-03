@@ -12,8 +12,11 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import importlib.metadata
 import os
 from pathlib import Path
+import platform
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,9 +39,38 @@ def today() -> str:
     return datetime.date.today().isoformat()
 
 
-def write_results(name: str, row: dict, *, scoreboard: bool = True) -> Path:
-    """Write ``benchmarks/results/<name>.json`` and regenerate the README scoreboard from it."""
+_PACKAGES = ("sqlglot", "sqlglotc", "duckdb", "z3-solver", "sqlfluff")
 
+
+def environment() -> dict:
+    """The code and library versions a run measured, so scores from different setups aren't compared blindly.
+
+    Solver outcomes depend on the z3 version and timeouts, and parsing on the sqlglot version.
+    """
+
+    versions = {"python": platform.python_version()}
+    for package in _PACKAGES:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        versions["commit"] = commit + ("+changes" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return versions
+
+
+def write_results(name: str, row: dict, *, scoreboard: bool = True) -> Path:
+    """Write ``benchmarks/results/<name>.json`` (with :func:`environment`) and regenerate the README scoreboard."""
+
+    row = {**row, "environment": row.get("environment") or environment()}
     path = RESULTS_DIR / f"{name}.json"
     path.write_text(json.dumps(row, indent=2) + "\n", encoding="utf-8")
     if scoreboard:

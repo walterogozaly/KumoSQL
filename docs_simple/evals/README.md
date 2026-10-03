@@ -19,12 +19,14 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [SQLSolver and related corpora](sqlsolver.md) | Which optimizer query pairs can be proved? |
 | [VeriEQL](verieql.md) | Can queries be proved or separated on constraint-respecting data? |
 | [Singh and Bedathur](singh-bedathur.md) | Do alternative LeetCode solutions agree? |
+| [Equivalent under conditions](conditional-equivalence.md) | How often is a pair equal under a short list of facts, and is any answer wrong? |
 | [Bounded verification](bounded-verification.md) | Do queries agree on every modeled small database? |
 | [SQL-IQ](sql-iq.md) | Equivalence, candidate choice, and error classification |
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |
 | [Join rewrites](join-rewrites.md) | When does changing a join type preserve results? |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Does the prover avoid accepting known faulty rewrites? |
 | [DB-GPT examples](dbgpt-rules.md) | Which demonstration rewrites preserve results under reviewed schemas? |
+| [Documented rewrites](documented-rewrites.md) | Do rewrites recommended by vendor docs keep the results? |
 | [DLBench](dlbench.md) | Are translations across SQL dialects faithful? |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Are observable outputs preserved across several changed models? |
 | [Targeted test data](targeted-test-data.md) | Can carefully chosen data reveal subtle differences? |
@@ -39,6 +41,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [LLM-R2 query sets](llmr2-bench.md) | How do the rules behave across many queries? |
 | [Materialized-view rewriting](mv-benchmark.md) | Can shared joins supply other queries? |
 | [Table minimization](table-minimization.md) | Can the search remove models while protecting outputs? |
+| [Project reduction](project-reduction.md) | How small can a whole Dataform project get while its chosen outputs stay the same? |
 | [Duplicate detection](duplicate-detection.md) | Can it find copies without confusing similar queries? |
 
 ## Coverage, lineage, and Dataform
