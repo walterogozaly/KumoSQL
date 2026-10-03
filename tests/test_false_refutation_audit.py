@@ -130,3 +130,11 @@ def test_bounded_numeric_stays_in_range_and_scale():
     # a NUMERIC difference is still found
     result = be.check_bounded("SELECT x FROM t WHERE x > 0.5", "SELECT x FROM t WHERE x > 1", schema, rows=2, dialect="bigquery", timeout_ms=2000)
     assert result.status is be.BoundedStatus.DIFFERENT
+
+
+@pytest.mark.parametrize("label", ["nan_eq", "nan_gt", "safe_overflow"])
+def test_direct_executed_search_does_not_refute(label):
+    from kumosql.executed_refutation import search_counterexample
+
+    left, right = EQUAL_IN_BIGQUERY[label]
+    assert search_counterexample(left, right, schema=COLUMNS, types=TYPES) is None
