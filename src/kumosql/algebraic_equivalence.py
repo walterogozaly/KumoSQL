@@ -784,7 +784,7 @@ def _null_propagating(node: exp.Expression) -> bool:
     return False
 
 
-def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
+def _inline_expression_projection(select: exp.Select, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """``(SELECT f(a) AS x FROM t) AS d`` joined in: read ``t AS d`` and replace ``d.x`` by ``f(d.a)``.
 
     A derived table that only computes expressions over one table keeps every row, so it can be
@@ -832,6 +832,9 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
             continue
         # Alias clashes with another declared name would capture references.
         if sum(1 for n in select.walk() if isinstance(n, (exp.Table, exp.Subquery)) and (n.alias_or_name or "").lower() == alias.lower()) != 1:
+            continue
+        # the table's other columns become visible where only the derived outputs were
+        if _may_capture(select, source, table, set(), schema):
             continue
         for column in uses:
             replacement = by_name[column.name.lower()].copy()
@@ -2114,7 +2117,49 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
     return select if changed else None
 
 
-def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
+def _declared_names(select: exp.Select) -> set[str]:
+    """The names ``select``'s FROM and JOIN items declare, lower-case (an UNNEST's element name included)."""
+
+    names = set()
+    for source in _sources_of(select):
+        if source.alias_or_name:
+            names.add(source.alias_or_name.lower())
+        alias = source.args.get("alias")
+        if isinstance(source, exp.Unnest) and alias is not None and alias.args.get("columns"):
+            names.add(alias.args["columns"][0].name.lower())  # BigQuery: the element is a range variable
+    return names
+
+
+def _may_capture(outer: exp.Select, node: exp.Subquery, table: exp.Table, exposed: set[str], schema: dict[str, list[str]] | None) -> bool:
+    """Whether reading ``node`` as its base ``table`` could change what a column in ``outer``'s scope names.
+
+    The table may have columns ``node`` does not expose. A bare column that is not one of ``exposed``
+    (it named an outer query's column, or another source's) could then bind to such a column, and so
+    could the head of a path ``s.f`` that names no visible alias, unless ``schema`` lists the table's
+    columns and none is that name. A qualifier that names a visible alias is read as that alias, as the
+    provers read it. Sibling derived tables cannot see ``node`` and are not searched.
+    """
+
+    known = {k.lower(): v for k, v in (schema or {}).items()}.get(".".join(p.name for p in table.parts).lower())
+    hidden = None if known is None else {c.lower() for c in known} - exposed
+    siblings = [s for s in _sources_of(outer) if isinstance(s, exp.Subquery) and s is not node]
+    for column in outer.find_all(exp.Column):
+        if isinstance(column.this, exp.Star) or _within(column, node) or any(_within(column, s) for s in siblings):
+            continue
+        lead = column.parts[0].name.lower()
+        if lead in exposed or (hidden is not None and lead not in hidden):
+            continue
+        if not column.table:
+            return True
+        scope = column.find_ancestor(exp.Select)
+        while scope is not None and lead not in _declared_names(scope):
+            scope = scope.find_ancestor(exp.Select)
+        if scope is None:
+            return True
+    return False
+
+
+def _inline_projection(node: exp.Subquery, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """``(SELECT a, b FROM t) AS u`` is ``t AS u`` when every column is passed through.
 
     Only the columns of ``u`` the enclosing query uses matter, so dropping the
@@ -2136,6 +2181,8 @@ def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
         return None
     outer = node.find_ancestor(exp.Select)
     if outer is None or any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in outer.find_all(exp.Star)):
+        return None
+    if _may_capture(outer, node, table, {e.name.lower() for e in inner.expressions}, schema):
         return None
     return exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=node.args.get("alias"))
 
@@ -2865,6 +2912,37 @@ def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _declaring_cte(table: exp.Table, name: str, stop: exp.Expression) -> exp.CTE | None:
+    """The CTE a reference to ``name`` at ``table`` reads, searching the WITH clauses out to ``stop``.
+
+    The nearest WITH that defines the name wins, so an inner ``WITH q`` hides an outer one. Inside a
+    CTE's own body only the CTEs before it are visible (all of them in a ``WITH RECURSIVE``).
+    """
+
+    child, parent = table, table.parent
+    while parent is not None:
+        if isinstance(parent, exp.CTE) and isinstance(parent.parent, exp.With):
+            with_ = parent.parent
+            for cte in with_.expressions:
+                if cte is parent and not with_.args.get("recursive"):
+                    break
+                if cte.alias_or_name.lower() == name:
+                    return cte
+            # the WITH's own names were just searched; its owner must not search them again
+            child, parent = with_, with_.parent
+            if parent is None:
+                return None
+        with_ = parent.args.get("with_") or parent.args.get("with")
+        if isinstance(with_, exp.With) and child is not with_:
+            for cte in with_.expressions:
+                if cte.alias_or_name.lower() == name:
+                    return cte
+        if parent is stop:
+            return None
+        child, parent = parent, parent.parent
+    return None
+
+
 def _inline_ctes(tree: exp.Expression) -> exp.Expression:
     """Replace each reference to a WITH table by the table's query as a derived table."""
 
@@ -2888,8 +2966,7 @@ def _inline_ctes(tree: exp.Expression) -> exp.Expression:
                 uses = [
                     t
                     for t in owner.find_all(exp.Table)
-                    if not t.db and not t.catalog and t.name.lower() == name and t.find_ancestor(exp.CTE) is not cte
-                    and not any(a is cte for a in _ancestors_of(t, owner))
+                    if not t.db and not t.catalog and t.name.lower() == name and _declaring_cte(t, name, owner) is cte
                 ]
                 for table in uses:
                     derived = exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name)))
@@ -4715,7 +4792,7 @@ def normalize(
 
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Subquery):
-            return _inline_projection(node) or node
+            return _inline_projection(node, schema) or node
         if isinstance(node, exp.SetOperation):
             return merge_same_source(node) or set_operation_to_exists(node) or node
         if isinstance(node, exp.Select):
@@ -4731,7 +4808,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (distribute_over_constant_union, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select):
+            for rule in (distribute_over_constant_union, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
