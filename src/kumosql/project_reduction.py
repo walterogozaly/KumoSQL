@@ -1120,7 +1120,9 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql reduce-project", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="python -m kumosql reduce-project",
+        description=__doc__.split("\n")[0] + " PREVIEW BY DEFAULT: it prints the result and changes no file. "
+        "Only --write edits the project folder, and only when the reduction verified.")
     parser.add_argument("project", help="Dataform project folder (or a folder of .sql files)")
     parser.add_argument("--keep", action="append", default=[], help="an output to keep: name, dataset.name or file path")
     parser.add_argument("--keep-assertions", action="store_true", help="keep every assertion over needed tables, proved unchanged")
@@ -1131,7 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-seconds", type=float, default=300.0)
     parser.add_argument("--timeout-ms", type=int, default=5000)
     parser.add_argument("--patch", help="write the unified diff here (- for stdout)")
-    parser.add_argument("--write", action="store_true", help="apply the patch to the project folder")
+    parser.add_argument("--write", action="store_true", help="the only option that edits the project folder: apply the patch (without it, nothing is written)")
     args = parser.parse_args(argv)
     try:
         result = reduce_project(

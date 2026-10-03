@@ -69,7 +69,11 @@ class ColumnTrace:
 
 @dataclass
 class Model:
-    """One pipeline node: a table, view, incremental table, assertion or operation."""
+    """One pipeline node: a table, view, incremental table, assertion or operation.
+
+    ``kind`` is ``unknown`` when the config's ``type`` is computed (a project variable, a call): the node could be an
+    incremental table, so nothing that depends on its stored rows is concluded from its query alone.
+    """
 
     target: Target
     kind: str
@@ -88,6 +92,11 @@ class Model:
     operations_sql: tuple[str, ...] = ()
     # How many leading entries of ``operations_sql`` run before the query; the rest run after it.
     pre_operations: int = 0
+    # Lower-case words of the config expressions that read this table's own columns (built-in assertions, partitioning,
+    # clustering, ``uniqueKey``, ``updatePartitionFilter``): an output column named here is used even when no model reads it.
+    config_reads: tuple[str, ...] = ()
+    # Config keys that read columns but whose value could not be read without running the project (a variable, a call).
+    config_reads_unread: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
@@ -107,7 +116,7 @@ class Model:
 
     @property
     def is_query(self) -> bool:
-        return self.kind in {"table", "view", "incremental", "assertion", "sql"}
+        return self.kind in {"table", "view", "incremental", "assertion", "sql", "unknown"}
 
 
 @dataclass(frozen=True)

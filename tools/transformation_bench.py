@@ -211,7 +211,7 @@ def _shares_root_limit(left: str, right: str) -> bool:
 
 
 def transformations() -> list[str]:
-    return [*engine.available_rules(), "pipeline"]
+    return [*(name for name, rule in engine.available_rules().items() if not rule.opt_in), "pipeline"]
 
 
 def apply(name: str, sql: str):

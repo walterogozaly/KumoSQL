@@ -30,6 +30,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Extract a copied WITH query into one model | [Shared models](shared-models.md) |
 | Shrink a Dataform project to the outputs you need | [Project reduction](project-reduction.md) |
 | Learn what a query guarantees about its rows | [Output properties](output-properties.md) |
+| Find results that change when rows tie | [Ties](ties.md) |
 | Use keys and other data guarantees in a proof | [Constraint-dependent rewrites](constraint-rewrites.md) |
 | Check incremental updates | [Incremental models](incremental.md) |
 | Understand join size estimates | [Join ordering](joinorder.md) |
@@ -37,6 +38,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Create a real BigQuery demo dataset | [BigQuery test bed](bigquery-testbed.md) |
 | Analyze scripts or MERGE | [Scripts](scripts.md) |
 | Reuse an existing summary table | [Model reuse](model-reuse.md) |
+| Search harder for wrong proofs | [Proof re-check](proof-recheck.md) |
 | Run tests and understand their history | [Test history](test-history.md) |
 | Continue a workstream someone else started | [Picking up a workstream](handoff.md) |
 | Understand the test suites and their scores | [Evals](evals/README.md) |

@@ -33,9 +33,10 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
+from .solver_lock import serialized
 from .string_literals import canonical_literals, invalid_literal
 from .sqlx_fragments import masked_template_problem
 
@@ -75,6 +76,7 @@ from .sum_of_counts import sum_of_grouped_counts
 from .lone_source import lift_derived_expressions
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .keyed_set_join import lift_keyed_set_join
 from .aggregate_rules import rewrite_aggregates
 from .null_rejecting_joins import left_join_to_inner
 from .outer_on_rejection import strengthen_under_outer_on
@@ -303,8 +305,8 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
     ``SELECT k, SUM(p) AS n FROM (SELECT k, COUNT(*) AS p FROM t GROUP BY k)
     GROUP BY k`` is the inner query: every group of the outer select holds one
     inner row, so SUM, MIN or MAX of its one value returns that value (SUM of a
-    COUNT included). A global inner aggregate has exactly one row, so the same
-    holds with no keys at all.
+    COUNT included). COUNT of it is not: it counts that one row (1, or 0 for NULL). A global inner
+    aggregate has exactly one row, so the same holds with no keys at all.
     """
 
     if not _no_extras(select, allow_group=True) or select.args.get("having"):
@@ -358,7 +360,8 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
             items.append(_named(key_outputs[expr.this.name].copy(), name))
         elif _is_agg(expr) and isinstance(expr.this, exp.Column) and expr.this.name in agg_outputs:
             inner_agg = agg_outputs[expr.this.name]
-            ok = isinstance(inner_agg, (exp.Sum, exp.Count)) if isinstance(expr, exp.Sum) else type(expr) is type(inner_agg)
+            # SUM of a SUM or COUNT, MIN of a MIN, MAX of a MAX is the one value; COUNT of it is 1 or 0
+            ok = isinstance(inner_agg, (exp.Sum, exp.Count)) if isinstance(expr, exp.Sum) else type(expr) is type(inner_agg) and not isinstance(expr, exp.Count)
             if not ok:
                 return None
             items.append(_named(inner_agg.copy(), name))
@@ -4758,6 +4761,7 @@ def limit_rule(select: exp.Select, types: dict[str, dict[str, str]] | None = Non
     return None if distinct_on(select) else _limit_rule(select, types, dialect)
 
 
+@serialized
 def normalize(
     sql: str,
     *,
@@ -4847,7 +4851,7 @@ def normalize(
             # them would silently redirect those reads (to another column of the same name, say)
             names = _derived_output_names(node) if isinstance(node.parent, (exp.Subquery, exp.CTE)) else None
             snapshot = node.copy() if names is not None else None  # rules rewrite in place
-            constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
+            constrained = lift_keyed_set_join(node, keys, not_null, types_map) or normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
                 if names is None or _keeps_names(names, _derived_output_names(constrained)):
                     return constrained
@@ -4882,6 +4886,7 @@ def normalize(
     return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
+@serialized
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result.
 
@@ -4894,22 +4899,31 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (:mod:`kumosql.conditional_equivalence`).
     A proof over a set operation whose branch types are not all known carries
     ``set_operation_types.ASSUMPTION``; one whose branches have different known types is declined.
+    Text that cannot be tokenized or nests too deeply is ``NOT_PROVEN``, never an exception.
     """
 
     dialect = kwargs.get("dialect", "bigquery")
-    if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
-    masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
-    if masked:
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
-    result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
-    if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
-        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    try:
+        if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
+        if masked:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
+        result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
+        if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
+            result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    except sqlglot.errors.SqlglotError as error:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {str(error)[:200]}")
+    except RecursionError:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: the query nests too deeply")
     return result
 
 
 def _prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     search = kwargs.pop("search_counterexample", False)
+    for name in ("schema", "types", "constraints"):
+        if kwargs.get(name):
+            kwargs[name] = drop_case_conflicts(kwargs[name])
     conditional = kwargs.pop("conditional", False)
     wall = kwargs.pop("conditional_seconds", None)
     result = _prove_algebraic_levels(left_sql, right_sql, search, **kwargs)
