@@ -14,7 +14,10 @@ import pytest
 pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
+import sqlglot  # noqa: E402
+
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic  # noqa: E402
+from kumosql.ast_utils import extended_grouping  # noqa: E402
 from kumosql.duckdb_load import run_unoptimized  # noqa: E402
 from kumosql.smt_equivalence import TableConstraints, prove_equivalent_smt  # noqa: E402
 
@@ -133,6 +136,27 @@ WRONG_PROOFS = [
         TWO_J_GROUPS,
         None,
         id="flatten-key-only-source-with-hidden-key",
+    ),
+    pytest.param(
+        "SELECT DISTINCT 1 AS a FROM t GROUP BY ROLLUP (x)",
+        "SELECT DISTINCT 1 AS a FROM t",
+        {},
+        None,
+        id="rollup-grand-total-exists-over-no-rows",
+    ),
+    pytest.param(
+        "SELECT x + 0 AS y, COUNT(*) AS n FROM t GROUP BY GROUPING SETS ((x + 0), ()) HAVING COUNT(*) > 0",
+        "SELECT x + 0 AS y, COUNT(*) AS n FROM t GROUP BY GROUPING SETS ((x + 0), ())",
+        {},
+        None,
+        id="grouping-sets-empty-group-has-no-rows",
+    ),
+    pytest.param(
+        "SELECT b.k, SUM(p.c) AS v FROM b JOIN (SELECT k, COUNT(*) AS c FROM a GROUP BY k) AS p ON b.k = p.k GROUP BY ROLLUP (b.k)",
+        "SELECT b.k, COUNT(*) AS v FROM b JOIN a ON b.k = a.k GROUP BY ROLLUP (b.k)",
+        {},
+        None,
+        id="rollup-sum-of-counts-is-null-over-no-rows",
     ),
 ]
 
@@ -256,3 +280,16 @@ def test_joined_aggregates_reading_an_output_alias_are_not_merged():
         " JOIN (SELECT k, MAX(x) AS m FROM t2 GROUP BY k) AS d2 ON d1.k IS NOT DISTINCT FROM d2.k"
     )
     assert "HAVING s > 5) AS d1" in normalize(sql, schema=SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "sql,extended",
+    [
+        ("SELECT x FROM t GROUP BY ROLLUP (x)", True),
+        ("SELECT x FROM t GROUP BY CUBE (x)", True),
+        ("SELECT x FROM t GROUP BY GROUPING SETS ((x), ())", True),
+        ("SELECT x FROM t GROUP BY x", False),
+    ],
+)
+def test_extended_grouping_sees_rollup_cube_and_grouping_sets(sql, extended):
+    assert extended_grouping(sqlglot.parse_one(sql, read="bigquery").args["group"]) is extended

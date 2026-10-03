@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
+
 _BLIND = (exp.Min, exp.Max)
 
 
@@ -117,7 +120,7 @@ def _set_former(select: exp.Expression) -> bool:
     if distinct is not None:
         return not distinct.args.get("on") and not select.args.get("group")
     group = select.args.get("group")
-    return bool(group) and not any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup", "totals"))
+    return bool(group) and not extended_grouping(group)
 
 
 def _strip_set_formers(select: exp.Select) -> bool:

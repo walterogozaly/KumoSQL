@@ -28,6 +28,7 @@ import itertools
 from sqlglot import exp
 
 from .ast_utils import conjuncts as _conjuncts
+from .ast_utils import extended_grouping
 
 _counter = itertools.count()
 
@@ -48,7 +49,7 @@ def _plain(select: exp.Select, *, grouped: bool, allow_having: bool = False) -> 
     if any(select.args.get(key) for key in banned):
         return False
     group = select.args.get("group")
-    if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is not None and extended_grouping(group):
         return False  # a grand-total row exists with no input rows: SUM of counts is NULL there, COUNT is 0
     return not any(select.find_all(exp.Window))
 
@@ -112,7 +113,7 @@ class _Grouped:
         if not isinstance(select, exp.Select) or not self.alias or not _plain(select, grouped=True):
             return False
         group = select.args.get("group")
-        if not group or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if not group or extended_grouping(group):
             return False
         group_sql = {key.sql() for key in group.expressions}
         for item in select.expressions:

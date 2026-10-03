@@ -31,6 +31,8 @@ from decimal import Decimal
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 # Aggregates that skip NULL inputs, so a NULL argument is the same as a missing row.
 _NULL_IGNORING = (exp.Sum, exp.Min, exp.Max, exp.Avg, exp.Count, exp.LogicalAnd, exp.LogicalOr)
 # Aggregate -> how per-branch partial results combine.
@@ -89,9 +91,7 @@ def _plain(select: exp.Select, *, group: bool) -> bool:
     if any(select.args.get(k) for k in banned) or any(select.find_all(exp.Window)):
         return False
     grouping = select.args.get("group")
-    if grouping is not None and (
-        not grouping.expressions or any(grouping.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals"))
-    ):
+    if grouping is not None and (not grouping.expressions or extended_grouping(grouping)):
         return False
     return not any(isinstance(e, exp.Star) for e in select.expressions)
 
@@ -313,7 +313,7 @@ def _pull_shared_filter(select: exp.Select) -> exp.Expression | None:
 
 def _keys(select: exp.Select) -> set[str] | None:
     group = select.args.get("group")
-    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or not group.expressions or extended_grouping(group):
         return None
     if select.args.get("qualify"):
         return None
@@ -739,7 +739,7 @@ def _split_compound_aggregates(select: exp.Select) -> exp.Expression | None:
     if any(select.find_all(exp.Window)):
         return None
     group = select.args.get("group")
-    if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is not None and extended_grouping(group):
         return None
     sources = _plain_sources(select)
     if not sources or len(sources) != 1:

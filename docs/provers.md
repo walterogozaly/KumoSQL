@@ -141,6 +141,7 @@ Aggregate queries written in different shapes are brought to one form (`src/kumo
 - A `GROUP BY` key the select does not output still splits groups (`SELECT k, SUM(x) .. GROUP BY k, j`): flattening or pulling up such a grouped table is declined, and splitting its aggregate over `UNION ALL` branches carries the hidden key.
 - `CASE` results compared with a literal fold only when exact and `FLOAT64` comparison agree, so `2^53 + 1` is never equal to `2^53`.
 - A `HAVING` existence test moves into `WHERE` only when `ORDER BY` reads no aggregate, since an ordered `LIMIT` would then pick other groups.
+- `ROLLUP`, `CUBE` and `GROUPING SETS` are recognized wherever sqlglot keeps them (`kumosql.ast_utils.extended_grouping`), so rules that assume one row per group of real input rows decline them: their grand-total group exists even over no rows.
 
 `tests/test_soundness_regressions.py` keeps each wrong proof found so far, with the database on which DuckDB shows the two queries differ, next to equivalent near misses that must stay proven. `tests/test_aggregate_rule_soundness.py` does the same for the aggregate, eager-aggregation and `DISTINCT` rules.
 
