@@ -614,7 +614,7 @@ SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are sco
 
 ## Whole-pipeline analysis
 
-`load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. As in Dataform, `${ref("name")}` finds the action or declaration with that name wherever its config puts it (its own `schema` or `database`); the project defaults apply only when no action, or more than one, has the name. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
+Analysis stays offline by default: the optional BigQuery lookup of unknown tables' columns runs only after an opt-in (`KUMOSQL_SCHEMA_FETCH=1`, `--fetch-schema`, or the Settings checkbox; see [Pipeline analysis](docs/pipeline-analysis.md)). `load_sqlx_project(root)` loads a Dataform project (`definitions/**/*.sqlx`, with `workflow_settings.yaml` or `dataform.json` defaults) or a plain folder of `.sql` files. As in Dataform, `${ref("name")}` finds the action or declaration with that name wherever its config puts it (its own `schema` or `database`); the project defaults apply only when no action, or more than one, has the name. `load_compiled_graph(path)` loads the JSON from `dataform compile --json`, which is the exact compiled SQL and is preferred when available.
 
 The result is a `Pipeline` that qualifies every model in dependency order, so each model sees the output columns of the models it reads:
 
