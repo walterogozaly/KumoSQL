@@ -1138,15 +1138,17 @@ class _Compiler:
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
 
-        Its columns are free values; the atom says some row of the table has
-        exactly those values. Joined on all of its columns, each outer row matches
-        at most one row, so the join is that test (``resolve_set_sources``).
+        Its columns are free values, NULL or not; the atom says some row of the
+        table has exactly those values (NULL matching NULL, as DISTINCT does).
+        Joined on all of its columns, each outer row matches at most one row, so
+        the join is that test (``resolve_set_sources``).
         """
 
         V = _value_sort()
         uid = self.fresh("set")
-        columns = [_Val(z3.BoolVal(False), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
-        match = [z3.And(z3.Not(o.null), o.val == c.val) for o, c in zip(branch.outputs, columns)]
+        # Not ``#null``: ``resolve_set_sources`` reads that suffix as an outer column's NULL flag.
+        columns = [_Val(z3.Bool(f"{uid}.{i}#setnull"), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
+        match = [_null_eq(o, c) for o, c in zip(branch.outputs, columns)]
         atom = z3.Bool(f"{self.fresh('ex')}#exists")
         guard = z3.And(branch.cond.t, *match)
         self.collector.append(_Sub(atom, list(branch.occs), guard, list(branch.subs), setsrc=(branch, columns)))
@@ -2397,6 +2399,24 @@ class _Prover:
             return self.valid(z3.Implies(a.cond.t, call_a.arg.null == arg.null), a.occs, facts)
         return False
 
+    def set_source_facts(self, block) -> list:
+        """``NOT NULL`` for each column of the block's DISTINCT derived tables that the table never
+        returns as NULL (a NOT NULL column, or one its WHERE filters), so ``d.x IS NULL`` is FALSE."""
+
+        facts, stack = [], list(block.subs)
+        while stack:
+            sub = stack.pop()
+            stack.extend(sub.nested)
+            if not sub.setsrc:
+                continue
+            inner, columns = sub.setsrc
+            for output, column in zip(inner.outputs, columns):
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(inner.cond.t, z3.Not(output.null)), inner.occs, inner.facts):
+                    facts.append(z3.Not(column.null))
+                del self.candidates[saved:]
+        return facts
+
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
 
@@ -2435,8 +2455,12 @@ class _Prover:
             for position, column in enumerate(columns):
                 produced = inner.outputs[position] if position < len(inner.outputs) else None
                 if produced is not None and _is_ground(produced.val) and _is_ground(produced.null):
-                    pairs.append((column.val, produced.val))  # a constant column is pinned by what it is
+                    # a constant column is pinned by what it is
+                    pairs.extend([(column.val, produced.val), (column.null, produced.null)])
                     continue
+                if not _implied(conjuncts, z3.Not(column.null), ids):
+                    raise _SetSourceUnresolved  # only a non-NULL column can be pinned by an equality
+                pairs.append((column.null, z3.BoolVal(False)))
                 for term in conjuncts:
                     if not z3.is_eq(term):
                         continue
@@ -2896,7 +2920,7 @@ def _prune(prover: "_Prover", union: _Union) -> None:
             if (isinstance(block, _Agg) and block.is_global) or not z3.is_false(z3.simplify(block.cond.t)):
                 kept.append(block)
             continue
-        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
+        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts + prover.set_source_facts(block)):
             kept.append(block)
             continue
         if isinstance(block, _Agg) and block.is_global and block.having is None and all(c.func in _NULL_WHEN_EMPTY + _CONST_PAIRS_NULL for c in block.aggs):
