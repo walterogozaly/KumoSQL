@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def _plain_distinct(select: exp.Select) -> bool:
     distinct = select.args.get("distinct")
@@ -68,7 +70,7 @@ def drop_membership_dedup(select: exp.Select) -> exp.Select | None:
     group = select.args.get("group")
     if group is None or select.args.get("having") is not None or select.args.get("distinct") is not None:
         return None
-    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")) or not group.expressions:
+    if extended_grouping(group) or not group.expressions:
         return None
     if any(a.find_ancestor(exp.Select) is select for a in select.find_all(exp.AggFunc)):
         return None
@@ -97,7 +99,7 @@ def _set_output_group(select: exp.Select) -> bool:
     group = select.args.get("group")
     if group is None or select.args.get("having") is not None or not group.expressions:
         return False
-    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if extended_grouping(group):
         return False
     if _own(select, exp.AggFunc):
         return False
@@ -166,7 +168,7 @@ def merge_grouped_source(select: exp.Select) -> exp.Select | None:
         return None
     inner = source.this
     group = inner.args.get("group")
-    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or not group.expressions or extended_grouping(group):
         return None
     if any(inner.args.get(k) for k in ("limit", "offset", "qualify", "windows", "with", "with_", "order")):
         return None
@@ -279,14 +281,18 @@ def _reads_as_set(select: exp.Select, depth: int = 0) -> bool:
     if depth > 16 or any(select.args.get(k) for k in ("limit", "offset", "qualify", "windows")) or _own(select, exp.Window):
         return False
     distinct = select.args.get("distinct")
-    if distinct is not None:
-        return not distinct.args.get("on")
+    if distinct is not None and distinct.args.get("on"):
+        return False
     aggregates = _own(select, exp.AggFunc)
     group = select.args.get("group")
-    if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is not None and extended_grouping(group):
         return False
+    # DISTINCT dedups the select's output rows, not the input its aggregates read:
+    # ``SELECT DISTINCT COUNT(*)`` still counts repeats, so aggregates are checked first.
     if group is not None or aggregates:
         return all(_insensitive(a) for a in aggregates)
+    if distinct is not None:
+        return True
     if _membership_query(select):
         return True
     reader = _reader(select)
@@ -516,7 +522,7 @@ def regroup_distinct(select: exp.Select) -> exp.Select | None:
         return None
     inner = source.this
     group = inner.args.get("group")
-    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or extended_grouping(group):
         return None
     if any(inner.args.get(k) for k in ("distinct", "limit", "offset", "qualify", "windows", "with", "with_", "order")) or _own(inner, exp.Window):
         return None
@@ -550,7 +556,7 @@ def regroup_distinct(select: exp.Select) -> exp.Select | None:
     grouped = outer_group is not None
     outer_names: list[str] = []
     if grouped:
-        if any(outer_group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if extended_grouping(outer_group):
             return None
         for key in outer_group.expressions:
             name = name_of(key)
@@ -683,7 +689,7 @@ def drop_group_under_distinct(select: exp.Select) -> exp.Select | None:
     if not _plain_distinct(select) or select.args.get("having") is not None:
         return None
     group = select.args.get("group")
-    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or not group.expressions or extended_grouping(group):
         return None
     if _own(select, (exp.AggFunc, exp.Window, exp.Star)) or _reads_output_alias(select):
         return None
@@ -711,7 +717,7 @@ def drop_distinct_over_group_keys(select: exp.Select) -> exp.Select | None:
     if not _plain_distinct(select):
         return None
     group = select.args.get("group")
-    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or not group.expressions or extended_grouping(group):
         return None
     if _own(select, exp.Window) or select.args.get("qualify"):
         return None

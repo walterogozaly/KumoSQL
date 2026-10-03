@@ -12,11 +12,14 @@ comments in the same order, and every token is spelled the same except for the c
 * a reserved keyword (``SELECT``, ``FROM``, ``PARTITION``) that is not part of a dotted path; reserved
   words can never be names, and
 * a call to a built-in function (``count(x)``, ``date(ts)``) that is not dotted, does not follow a word
-  that introduces a table or routine name, and is not a function the text itself creates. User-defined
-  function and table names are case sensitive in BigQuery.
+  that introduces a table or routine name, and is not a function the text itself creates (in any case,
+  quoted or not, with or without a comment before its name). User-defined function and table names are
+  case sensitive in BigQuery.
 
 Unreserved keywords (``TEMP``, ``OPTIONS``, ``DATE``) can be table names, so their case must match, as
-must string literals, quoted identifiers and numbers, character for character. This is the fallback
+must string literals, quoted identifiers and numbers, character for character. Adjacent string or bytes
+literals must be separated in both texts or in neither: ``'a' 'b'`` is one concatenated literal, while
+``'a''b'`` is not valid GoogleSQL. This is the fallback
 check for statements the query prover cannot read; it never replaces a proof it could make.
 """
 
@@ -29,11 +32,6 @@ from sqlglot.dialects.bigquery import BigQuery
 from sqlglot.tokens import Token, TokenType
 
 _GAP_RE = re.compile(r"(?:\s|--[^\n]*|#[^\n]*|/\*.*?\*/)*", re.S)
-_CREATED_FUNCTION_RE = re.compile(
-    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:AGGREGATE\s+|TABLE\s+)?FUNCTION\s+"
-    r"(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-    re.I,
-)
 # GoogleSQL's reserved keywords (those sqlfluff's BigQuery dialect also reserves).
 _RESERVED = frozenset(
     """ALL AND ANY ARRAY AS ASC ASSERT_ROWS_MODIFIED AT BETWEEN BY CASE CAST COLLATE CONTAINS CREATE CROSS
@@ -125,8 +123,57 @@ def _case_insensitive(tokens: list[Token], index: int, created: set[str]) -> boo
     return _builtin_call(tokens, index, created)
 
 
-def _created_functions(*texts: str) -> set[str]:
-    return {name.upper() for text in texts for name in _CREATED_FUNCTION_RE.findall(text)}
+def _created_functions(*token_lists: list[Token]) -> set[str]:
+    """Upper-cased names of the functions the texts create: every name part after ``FUNCTION``."""
+
+    created = set()
+    for tokens in token_lists:
+        for index, token in enumerate(tokens):
+            if token.token_type != TokenType.FUNCTION:
+                continue
+            position = index + 1
+            if [t.text.upper() for t in tokens[position : position + 3]] == ["IF", "NOT", "EXISTS"]:
+                position += 3
+            while position < len(tokens) and tokens[position].token_type not in (TokenType.L_PAREN, TokenType.R_PAREN, TokenType.SEMICOLON):
+                if tokens[position].token_type != TokenType.DOT:
+                    created.add(tokens[position].text.upper())
+                position += 1
+    return created
+
+
+def created_function_calls(sql: str) -> list[str] | None:
+    """How each call to a function the text creates is spelled, in order; None when the text cannot be read.
+
+    A temporary function's name is case sensitive (``abs`` and ``ABS`` may be two functions the script
+    creates), while sqlglot prints any call to a built-in name in one case, so a rewrite that changes a
+    call's case can look unchanged once parsed. Comparing these spellings catches that.
+    """
+
+    tokens = tokenize_exactly(sql)
+    if tokens is None:
+        return None if "FUNCTION" in sql.upper() else []
+    created = _created_functions(tokens)
+    return [
+        token.text
+        for index, token in enumerate(tokens)
+        if token.text.upper() in created
+        and index + 1 < len(tokens)
+        and tokens[index + 1].token_type == TokenType.L_PAREN
+        and not _dotted(tokens, index)
+    ]
+
+
+def touching_literal_chunks(sql: str) -> bool:
+    """Whether two string or bytes literals touch (``'a''b'``), which GoogleSQL rejects but some parsers accept."""
+
+    tokens = tokenize_exactly(sql) or []
+    return any(
+        _literal_chunk(a) and _literal_chunk(b) and a.end + 1 == b.start for a, b in zip(tokens, tokens[1:])
+    )
+
+
+def _literal_chunk(token: Token) -> bool:
+    return token.token_type.name.endswith("STRING")
 
 
 def _touching(tokens: list[Token], index: int) -> tuple[bool, bool]:
@@ -162,9 +209,11 @@ def layout_only_change(before: str, after: str) -> bool:
     left, right = aligned
     if _comments(left) != _comments(right):
         return False
-    created = _created_functions(before, after)
+    created = _created_functions(left, right)
     for index, (a, b) in enumerate(zip(left, right)):
         if a.token_type in _ADJACENT and _touching(left, index) != _touching(right, index):
+            return False
+        if index and _literal_chunk(a) and _literal_chunk(left[index - 1]) and _touching(left, index)[0] != _touching(right, index)[0]:
             return False
         old, new = _spelling(before, a), _spelling(after, b)
         if old == new:
@@ -186,7 +235,7 @@ def restore_function_case(original: str, formatted: str) -> str:
     if aligned is None:
         return formatted
     left, right = aligned
-    created = _created_functions(original)
+    created = _created_functions(left)
     pieces: list[str] = []
     position = 0
     for index, (a, b) in enumerate(zip(left, right)):
