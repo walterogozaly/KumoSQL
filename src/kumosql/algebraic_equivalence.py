@@ -46,7 +46,7 @@ from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
 from .named_windows import inline_named_windows
 from .having_rules import key_having_to_where
 from .window_rules import window_rules
-from .intersection_rules import collapse_counted_intersection
+from .intersection_rules import collapse_counted_intersection, collapse_named_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
@@ -61,7 +61,7 @@ from . import set_aggregates
 from .outer_join_flatten import outer_join_rules
 from .set_split_rules import split_distinct_select
 from .empty_rules import canonical_empty, propagate_empty
-from .setop_rules import _sf_flatten as _flatten_projections, collapse_named_counted_intersection, merge_same_source, normalize_set_operations, set_operation_to_exists
+from .setop_rules import _sf_flatten as _flatten_projections, merge_same_source, normalize_set_operations, set_operation_to_exists
 from .outer_join_exists import move_exists_into_padded_side
 from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
