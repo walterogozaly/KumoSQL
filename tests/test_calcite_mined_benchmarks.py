@@ -23,3 +23,4 @@ def test_calcite_mined_pairs():
     result = bench.run()
     assert result["wrong"] == [], f"wrong proofs: {result['wrong']}"
     assert len(result["proven"]) >= FLOOR, f"proved {len(result['proven'])}, floor {FLOOR}"
+    assert result["scored"] == result["total"] - len(result["refuted"])

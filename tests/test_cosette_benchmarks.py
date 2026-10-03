@@ -23,3 +23,4 @@ def test_suite(suite):
     result = bench.run(suite)
     assert result["wrong"] == [], f"wrong verdicts in {suite}: {result['wrong']}"
     assert result["correct"] >= FLOORS[suite], f"{suite}: {result['correct']} correct, floor {FLOORS[suite]}"
+    assert result["scored"] == result["total"] - len(result["disputed"])
