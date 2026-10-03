@@ -30,7 +30,7 @@ Moves: drop an unread editable model; inline an editable model into all its read
 
 Name the intermediate tables and the table that ends the chain, and KumoSQL rewrites that table to read straight from what the chain read, then proves the new table returns the same rows. With `upstream -> A -> (B, C) -> D`, folding `A`, `B` and `C` into `D` leaves `upstream -> D`.
 
-- **CLI:** `python -m kumosql consolidate-tables DIR D A B C`. Output is JSON: `status` (`equivalent` or `unknown`), `sql` (the new SQL of `D`), `original_sql`, `folded` (sources first), the proof's `assumptions` and `notes`. Exit code 0 only when proved, 1 for `unknown`, 2 when the fold is refused.
+- **CLI:** `python -m kumosql consolidate-tables DIR D A B C`. It is a **read-only preview**: it prints JSON and never writes, moves or deletes a file, and it has no option that does (`--help` only prints the usage; the only option is `--timeout-ms`). To see the usage without running anything, run `python -m kumosql consolidate-tables --help`. Output is JSON: `status` (`equivalent` or `unknown`), `sql` (the new SQL of `D`), `original_sql`, `folded` (sources first), the proof's `assumptions` and `notes`. Exit code 0 only when proved, 1 for `unknown`, 2 when the fold is refused.
 - **Python:** `kumosql.consolidate.consolidate_tables(pipeline, ["A", "B", "C"], "D", schema=None, timeout_ms=5000)` returns a `ConsolidationResult` (`.proven`, `.sql`, `.status`, `.reason`, `.to_json()`).
 - **API:** `POST /api/consolidate-tables` with `{"tables": [...], "target": "..."}` on the project loaded in the app.
 

@@ -1534,7 +1534,8 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql minimize-tables", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="python -m kumosql minimize-tables",
+        description=__doc__.split("\n")[0] + " READ-ONLY: it prints the result and writes no file.")
     parser.add_argument("case", help="JSON file with tables, protected and (optionally) sources and dialect; - reads stdin")
     parser.add_argument("--max-seconds", type=float, default=120.0)
     parser.add_argument("--timeout-ms", type=int, default=5000)

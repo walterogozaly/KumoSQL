@@ -660,7 +660,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="kumosql shared-model",
-        description="List CTEs repeated across Dataform models, or write the patch that moves one into a shared model",
+        description="List CTEs repeated across Dataform models, or write the patch that moves one into a shared model. "
+        "It never edits the project folder: --patch only saves a patch file for you to apply with git apply.",
     )
     parser.add_argument("project", help="Dataform project folder")
     parser.add_argument("group", nargs="?", help="id of the repeated CTE to extract (omit to list them)")

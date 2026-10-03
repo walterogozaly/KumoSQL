@@ -38,6 +38,6 @@ If `A` feeds `B` and `C`, which feed `D`, you can ask to place their SQL inside 
 python -m kumosql consolidate-tables path/to/project D A B C
 ```
 
-The command returns proposed SQL and an equivalence result. It refuses folds that leave a known outside reader or involve unsupported model types or operations. It does not write the result into your SQLX files.
+The command is a read-only preview: it prints proposed SQL and an equivalence result on screen, and it has no option that writes, moves or deletes anything. To see its usage without running anything, run `python -m kumosql consolidate-tables --help`. It refuses folds that leave a known outside reader or involve unsupported model types or operations. It does not write the result into your SQLX files.
 
 The loaded project does not reveal dashboards or other projects reading these tables. Include those consumers in your review before removing a table. Missing source columns, especially with `SELECT *`, can also prevent a proof. See [pipeline analysis](pipeline-analysis.md) and [table minimization tests](evals/table-minimization.md).
