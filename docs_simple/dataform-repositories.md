@@ -19,7 +19,7 @@ For a one-off load:
 python -m kumosql ui --git https://github.com/owner/dataform-project.git --branch main
 ```
 
-Replace the URL and branch with your own. Authentication must already work for git. If you use GitHub CLI for HTTPS authentication, `gh auth setup-git` lets git use that login; `gh auth login` alone is not enough.
+Replace the URL and branch with your own. Do not put a token, password or user name inside an https URL, or a password inside an ssh URL: those URLs are rejected, as is any URL with a query string. Use a Git credential helper for HTTPS, or an SSH key with `git@host:path` or `ssh://git@host/path`. Authentication must already work for git. If you use GitHub CLI for HTTPS authentication, `gh auth setup-git` lets git use that login; `gh auth login` alone is not enough.
 
 ## What gets stored
 
@@ -41,4 +41,4 @@ Run:
 python -m kumosql.ui --diagnose-repo https://github.com/owner/dataform-project.git
 ```
 
-This reports the steps and environment details. Logs replace known names with placeholders such as `repo#1`; check the report before sharing it. `redaction-map.json` contains the real-name mappings and should stay on your computer. The full guide covers HTTPS fallback, cache behavior, schedules, and diagnostic codes.
+This reports the steps and environment details. Logs use placeholders such as `repo#1` and report counts, timing, error categories and positions rather than SQL, row values, variables or exception messages. Quoted secrets, JSON credential fields and private-key blocks are removed. Copy diagnostics includes only summarized log entries and leaves older or free-form entries out; settings values and unknown field names are withheld. Repository URLs and cached clone origins do not retain embedded credentials. `redaction-map.json` contains the real-name mappings and should stay on your computer. The full guide covers HTTPS fallback, cache behavior, schedules, and diagnostic codes.

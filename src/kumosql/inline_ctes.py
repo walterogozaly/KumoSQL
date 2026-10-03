@@ -98,6 +98,7 @@ class InlineSingleUseCtesRule(RewriteRule):
 
     name = "inline_single_use_ctes"
     summary = "Inline root CTEs that are referenced exactly once"
+    keep_sqlx_expressions = True
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int

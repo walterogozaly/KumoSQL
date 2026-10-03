@@ -1,10 +1,10 @@
 """Folding intermediate tables into one table, with the result proved equal."""
 
 import json
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
@@ -12,7 +12,7 @@ pytest.importorskip("z3")
 
 from kumosql import consolidate, load_sqlx_project
 from kumosql.prover_schema import from_pipeline
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 TABLE = 'config { type: "table" }\n'
 
@@ -201,8 +201,8 @@ def test_the_command_is_registered():
 
 @pytest.fixture
 def ui_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=server.serve_forever, daemon=True)
+    server = UIServer(("127.0.0.1", 0), UIHandler)
+    thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}"

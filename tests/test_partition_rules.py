@@ -146,12 +146,14 @@ def test_normalization_preserves_results_on_random_databases(sql):
 
     rewritten = normalize(sql, schema=SCHEMA)
     assert rewritten != sqlglot.parse_one(sql, read="bigquery").sql(dialect="bigquery")
+    from kumosql.duckdb_load import insert_rows
+
     rng = random.Random(5)
+    db = duckdb.connect()  # one connection, new tables each trial
+    left, right = (sqlglot.transpile(q, read="bigquery", write="duckdb")[0] for q in (sql, rewritten))
     for _ in range(60):
-        db = duckdb.connect()
         for table in ("t", "u"):
-            db.execute(f"CREATE TABLE {table} (a INT, b INT, c INT)")
-            for _ in range(rng.choice([0, 1, 3, 6])):
-                db.execute(f"INSERT INTO {table} VALUES (?, ?, ?)", [rng.choice([None, 0, 1, 2, 3]) for _ in range(3)])
-        run = lambda q: Counter(db.execute(sqlglot.transpile(q, read="bigquery", write="duckdb")[0]).fetchall())  # noqa: E731
-        assert run(sql) == run(rewritten), rewritten
+            db.execute(f"CREATE OR REPLACE TABLE {table} (a INT, b INT, c INT)")
+            insert_rows(db, table, [[rng.choice([None, 0, 1, 2, 3]) for _ in range(3)] for _ in range(rng.choice([0, 1, 3, 6]))])
+        run = lambda q: Counter(db.execute(q).fetchall())  # noqa: E731
+        assert run(left) == run(right), rewritten

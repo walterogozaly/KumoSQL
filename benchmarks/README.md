@@ -26,7 +26,18 @@ Required keys:
 
 Optional keys, shown in their own table when any row has them: `usefulness` (how often a rewrite gives a verified improvement), `analysis` (lineage and duplicate-detection precision and recall) and `performance` (runtime and memory by query complexity).
 
-Rule: report like `X/Y, 0 wrong`; unknown beats wrong. Counts in `coverage` should add up to `size` where the eval has such outcomes.
+Optional keys that are checked but not shown in the README:
+
+| Key | Meaning |
+| --- | --- |
+| `coverage_of` | One sentence naming what `coverage` counts and its total, when that is not the `size` items: another unit (traced columns, the rewrite steps that changed the SQL), a stage (cases skipped before translation counted as `unsupported` beside the scored ones), a subset (the pairs another row's prover leaves unknown) or failures only (`{"error": 0}` over estimates that have no equivalence outcome) |
+| `environment` | Object recording where the numbers were measured, such as library versions and the git commit; optional, and must be an object when present |
+
+Rule: report like `X/Y, 0 wrong`; unknown beats wrong. Nonempty `coverage` counts must add up to `size`, or the row says what they count instead in `coverage_of`; `python tools/scoreboard.py` (and `--check`) fails otherwise. Fix a count that misses an outcome rather than explaining it away: `coverage_of` is for a different unit, stage or subset, not for cases that went uncounted.
+
+## Held-out splits
+
+Where an eval has a held-out split, its bench takes `--split dev|held-out|all` and reports the held-out cases on their own; the results file's `held_out` gives that score. Develop on `dev`. `tools/llm_sql_solver_bench.py` defaults to `dev` (its `--write-results` scores every pair), `tools/analytical_coverage.py` to `dev`, and `tools/calcite_mined_bench.py` to `all`, the published command, which prints the held-out pairs (those new to every other corpus) separately.
 
 ## Checking that a change moves no score
 
