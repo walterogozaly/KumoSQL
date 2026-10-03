@@ -25,7 +25,7 @@ import itertools
 import z3
 from sqlglot import exp
 
-from .solver_lock import serialized
+from .solver_lock import bounded_solver, serialized
 
 _OPS = {exp.GT: ">", exp.GTE: ">=", exp.LT: "<", exp.LTE: "<=", exp.EQ: "=", exp.NEQ: "<>"}
 _CLASS = {op: cls for cls, op in _OPS.items()}
@@ -1107,8 +1107,7 @@ def _in_semantics(encoder: _Encoder, x):
 
 
 def _same(encoder: _Encoder, condition, semantics, mode: str, extra: list) -> bool:
-    solver = z3.Solver()
-    solver.set("timeout", 2000)
+    solver = bounded_solver(2000)
     solver.add(*encoder.facts, *extra)
     if mode == "pos":
         solver.add(condition[0] != semantics[0])

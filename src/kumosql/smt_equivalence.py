@@ -66,7 +66,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
-from .solver_lock import serialized
+from .solver_lock import bounded_solver, serialized
 from .string_literals import canonical_literals
 
 try:  # pragma: no cover - exercised by the import itself
@@ -325,8 +325,7 @@ def _implied(conjuncts: list, fact, ids: set) -> bool:
 
     if fact.get_id() in ids:
         return True
-    solver = z3.Solver()
-    solver.set("timeout", 2000)
+    solver = bounded_solver(2000)
     solver.add(*conjuncts)
     solver.add(z3.Not(fact))
     return solver.check() == z3.unsat
@@ -2069,6 +2068,7 @@ class _Prover:
         # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
+        self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
         self.candidates: list[tuple[object, list[_Occ]]] = []
 
@@ -2167,8 +2167,7 @@ class _Prover:
         return facts
 
     def valid(self, formula, occs: list[_Occ], facts=()) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*self._group_member_facts(occs))
@@ -2181,6 +2180,7 @@ class _Prover:
             self.candidates.append((self._counterexample(solver, occs), list(occs)))
         else:
             self.unknown = True
+            self.wall_clock = self.wall_clock or solver.reason_unknown() == "timeout"
         return False
 
     def _counterexample(self, solver, occs):
@@ -2211,8 +2211,7 @@ class _Prover:
         return None
 
     def witness(self, pred, occs: list[_Occ], facts=()) -> None:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
@@ -2262,8 +2261,7 @@ class _Prover:
         return False
 
     def unsatisfiable(self, pred, occs: list[_Occ], facts=()) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
@@ -3758,8 +3756,10 @@ def _prove_core(
                     counterexample=counterexample,
                     assumptions=assumed,
                 )
-        if prover.unknown:
+        if prover.wall_clock:
             reason += " (the solver timed out on some checks)"
+        elif prover.unknown:
+            reason += " (the solver ran out of its work budget on some checks)"
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumed)
 
     result = attempt(True)

@@ -1,4 +1,4 @@
-"""One lock around every use of Z3's shared default context.
+"""Shared rules for using Z3: one lock around its default context, and a deterministic work cap per check.
 
 Z3 terms, sorts and solvers built without an explicit context share one global context, and Z3 objects
 must not be used from two threads at once: concurrent first calls fail with ``Context mismatch`` and can
@@ -12,6 +12,11 @@ from __future__ import annotations
 import functools
 import threading
 
+try:
+    import z3
+except ImportError:  # pragma: no cover - z3-solver is optional
+    z3 = None
+
 SOLVER_LOCK = threading.RLock()
 
 
@@ -24,3 +29,23 @@ def serialized(function):
             return function(*args, **kwargs)
 
     return locked
+
+
+# Each solver check also gets a deterministic work cap (Z3's rlimit) of ``timeout_ms * WORK_PER_MS`` units.
+# A check that runs out of it stops at the same point on any machine and under any load; the wall-clock
+# ``timeout_ms`` still stops checks that do little counted work. Measured on the QED pairs, checks do 150 to
+# 1,000,000 units per millisecond and the largest finished check used 4.3 million units, so the cap
+# (100 million at the default 5000 ms) never binds before a check that finishes today would.
+WORK_PER_MS = 20000
+
+
+def bounded_solver(timeout_ms: int):
+    """A ``z3.Solver`` whose checks stop at a deterministic work cap or at ``timeout_ms`` (see ``WORK_PER_MS``).
+
+    Z3 reports ``reason_unknown()`` ``"canceled"`` for the cap and ``"timeout"`` for the wall clock.
+    """
+
+    solver = z3.Solver()
+    solver.set("rlimit", timeout_ms * WORK_PER_MS)
+    solver.set("timeout", timeout_ms)
+    return solver
