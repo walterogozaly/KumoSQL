@@ -299,6 +299,109 @@ def infer_schema(
     return schema
 
 
+def order_dependence(sql: str, dialect: str = "bigquery") -> str | None:
+    """Why ``sql`` may return different rows on the same data, or ``None``.
+
+    ``LIMIT``/``OFFSET`` without ``ORDER BY`` and nondeterministic functions (``ANY_VALUE``,
+    ``ARRAY_AGG``, ``RAND``...): BigQuery may pick other rows than DuckDB, so a difference
+    such a query shows may be a different choice, not a different answer.
+    """
+
+    import sqlglot
+    from sqlglot import exp
+
+    from .smt_equivalence import _NONDETERMINISTIC_NAMES, _NONDETERMINISTIC_TYPES
+
+    tree = sqlglot.parse_one(sql, read=dialect)
+    for node in tree.walk():
+        if (
+            isinstance(node, (exp.Select, exp.Union, exp.Intersect, exp.Except))
+            and (node.args.get("limit") or node.args.get("offset"))
+            and not node.args.get("order")
+        ):
+            return "LIMIT without ORDER BY"
+        if type(node).__name__ in _NONDETERMINISTIC_TYPES or (
+            isinstance(node, exp.Anonymous) and (node.name or "").upper() in _NONDETERMINISTIC_NAMES
+        ):
+            return f"nondeterministic: {node.sql(dialect='bigquery')}"
+    return None
+
+
+def legal(
+    dataset: SyntheticDataset,
+    rules: Mapping[str, DataRules] | None = None,
+    foreign_keys: Sequence[tuple] = (),
+) -> bool:
+    """Whether ``dataset`` keeps the declared facts: NOT NULL columns, unique keys, and
+    ``(child, child_columns, parent, parent_columns)`` foreign keys (a child row with no NULL
+    in its columns has a parent row holding the same values)."""
+
+    def column_index(table: str) -> dict[str, int]:
+        return {c.lower(): i for i, (c, _) in enumerate(dataset.tables[table].columns)}
+
+    for name, rule in (rules or {}).items():
+        if name not in dataset.tables:
+            continue
+        index, rows = column_index(name), dataset.tables[name].rows
+        if any(c in index and r[index[c]] is None for c in rule.not_null for r in rows):
+            return False
+        for key in rule.keys:
+            if not all(c in index for c in key):
+                continue
+            values = [v for v in (tuple(r[index[c]] for c in key) for r in rows) if None not in v]
+            if len(values) != len(set(values)):
+                return False
+    for child, columns, parent, parent_columns in foreign_keys:
+        if child not in dataset.tables:
+            continue
+        ci = column_index(child)
+        if not all(c in ci for c in columns):
+            continue
+        values = {v for v in (tuple(r[ci[c]] for c in columns) for r in dataset.tables[child].rows) if None not in v}
+        if not values:
+            continue
+        if parent not in dataset.tables:
+            return False
+        pi = column_index(parent)
+        if not all(c in pi for c in parent_columns):
+            return False
+        if not values <= {tuple(r[pi[c]] for c in parent_columns) for r in dataset.tables[parent].rows}:
+            return False
+    return True
+
+
+def _orders(dataset: SyntheticDataset, limit: int = 24):
+    """``dataset`` with its rows stored in other orders: every order of a table of up to three
+    rows, else reversed and rotated."""
+
+    import itertools
+
+    names, options = [], []
+    for name, table in dataset.tables.items():
+        rows = list(table.rows)
+        if len(rows) <= 3:
+            orders = [tuple(p) for p in itertools.permutations(rows)]
+        else:
+            orders = [tuple(rows), tuple(reversed(rows)), tuple(rows[1:] + rows[:1]), tuple(rows[-1:] + rows[:-1])]
+        names.append(name)
+        options.append(list(dict.fromkeys(orders)))
+    for combination in itertools.islice(itertools.product(*options), limit):
+        yield SyntheticDataset(
+            dataset.seed,
+            {n: SyntheticTable(dataset.tables[n].columns, rows) for n, rows in zip(names, combination)},
+        )
+
+
+def _order_stable(runner, sql: str, dataset: SyntheticDataset, compare: Mapping[str, Any]) -> bool:
+    """``sql`` returns the same rows whatever order the rows are stored in (no tie broken by position)."""
+
+    try:
+        first = runner.run(sql, dataset)
+        return all(compare_outputs(first, runner.run(sql, other), **compare)[0] for other in _orders(dataset))
+    except ExecutionError:
+        return False
+
+
 def counterexample_from_search(
     left: str,
     right: str,
@@ -306,28 +409,59 @@ def counterexample_from_search(
     rules: Mapping[str, DataRules] | None = None,
     types: Mapping[str, Mapping[str, str]] | None = None,
     *,
+    foreign_keys: Sequence[tuple] = (),
     budget: float = 15.0,
 ) -> dict | None:
-    """A minimal (fewest rows) database on which two pasted queries differ, as JSON, or ``None``."""
+    """A minimal (fewest rows) database on which two pasted queries differ, as JSON, or ``None``.
+
+    The database keeps ``rules`` and the ``(child, child_columns, parent, parent_columns)``
+    ``foreign_keys``, and both queries are run on it as written. A query that may pick rows
+    freely (:func:`order_dependence`) gets no database, and neither does a pair whose output
+    changes with the order rows are stored in. BigQuery SQL runs on DuckDB through
+    :mod:`kumosql.bigquery_on_duckdb`.
+    """
 
     from .minimize import minimize_failure
 
+    compare = {"check_column_names": False, "ignore_row_order": True}
+    single = tuple(
+        (child, cols[0], parent, parent_cols[0])
+        for child, cols, parent, parent_cols in foreign_keys
+        if len(cols) == 1 and len(parent_cols) == 1
+    )
     try:
+        if order_dependence(left) or order_dependence(right):
+            return None
         schema = infer_schema([left, right], known, types)
-        found = find_targeted_difference(left, right, schema, rules, budget=budget)
+        found = find_targeted_difference(left, right, schema, rules, foreign_keys=single, budget=budget)
         if found is None:
             return None
-        small = minimize_failure(left, right, schema, found.dataset, rules, time_limit=budget)
+        candidates = [found.dataset]
+        try:
+            small = minimize_failure(left, right, schema, found.dataset, rules, time_limit=budget)
+            candidates.insert(0, small.dataset)
+        except Exception:  # noqa: BLE001 - the unshrunk database still tells them apart
+            pass
+        with DatasetRunner(schema) as runner:
+            for dataset in candidates:
+                if not legal(dataset, rules, foreign_keys):
+                    continue
+                try:
+                    a, b = runner.run(left, dataset), runner.run(right, dataset)
+                except ExecutionError:
+                    continue
+                if compare_outputs(a, b, **compare)[0]:
+                    continue
+                if not (_order_stable(runner, left, dataset, compare) and _order_stable(runner, right, dataset, compare)):
+                    return None
+                return {
+                    "tables": {
+                        name: [dict(zip((c for c, _ in t.columns), row)) for row in t.rows]
+                        for name, t in dataset.tables.items()
+                    },
+                    "left_rows": [list(r) for r in a.rows],
+                    "right_rows": [list(r) for r in b.rows],
+                }
     except Exception:  # noqa: BLE001 - no witness is the same as not searching
         return None
-    with DatasetRunner(small.schema) as runner:
-        a = runner.run(small.left_sql, small.dataset)
-        b = runner.run(small.right_sql, small.dataset)
-    return {
-        "tables": {
-            name: [dict(zip((c for c, _ in t.columns), row)) for row in t.rows]
-            for name, t in small.dataset.tables.items()
-        },
-        "left_rows": [list(r) for r in a.rows],
-        "right_rows": [list(r) for r in b.rows],
-    }
+    return None
