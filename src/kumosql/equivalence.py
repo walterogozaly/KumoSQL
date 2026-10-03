@@ -148,28 +148,33 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     _canonicalize_cte_order(query, with_clause)
 
+    # BigQuery resolves CTE names case-insensitively (`FROM A` reads CTE `a`), so
+    # references are matched by lower-cased name; a CTE name repeated up to case
+    # is ambiguous and not canonicalized.
     mapping: dict[str, str] = {}
     for index, cte in enumerate(with_clause.expressions, start=1):
         old = _cte_alias(cte)
         if old:
-            mapping[old] = f"__canonical_cte_{index:03d}"
+            if old.lower() in mapping:
+                raise ValueError("CTE names repeat up to case")
+            mapping[old.lower()] = f"__canonical_cte_{index:03d}"
 
     for cte in with_clause.expressions:
         old = _cte_alias(cte)
-        if old in mapping:
+        if old and old.lower() in mapping:
             alias = cte.args.get("alias")
-            alias.set("this", exp.to_identifier(mapping[old]))
+            alias.set("this", exp.to_identifier(mapping[old.lower()]))
 
     for table in query.find_all(exp.Table):
         old = table.name
         # A one-part table reference can be a CTE reference. Qualified tables
         # are physical objects and must never be renamed by this pass.
-        if old in mapping and is_cte_reference_candidate(table):
+        if old.lower() in mapping and is_cte_reference_candidate(table):
             # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable
             # name so column qualifiers still match after renaming.
             if not table.alias:
                 table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
-            table.set("this", exp.to_identifier(mapping[old]))
+            table.set("this", exp.to_identifier(mapping[old.lower()]))
 
 
 def _canonicalize_cte_order(query: exp.Expression, with_clause: exp.With) -> None:

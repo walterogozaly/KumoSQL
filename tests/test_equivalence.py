@@ -263,3 +263,11 @@ def test_canonical_cte_name_does_not_match_a_physical_table():
     right = "WITH x AS (SELECT a FROM t) SELECT a FROM __canonical_cte_001 AS z"
 
     assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_cte_references_resolve_case_insensitively():
+    # BigQuery reads CTE `a` for `FROM A` (confirmed on BigQuery): the left query returns 1, the right 2.
+    left = "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS x) SELECT x FROM A"
+    right = "WITH b AS (SELECT 1 AS x), a AS (SELECT 2 AS x) SELECT x FROM A"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
