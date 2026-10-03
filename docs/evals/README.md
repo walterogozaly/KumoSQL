@@ -10,6 +10,10 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 - **Held-out cases.** Where a held-out split exists, the page and the results file say so. Cases a rule was developed against are marked `tuned on test`.
 - **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout.
 
+## Source inventory
+
+[Public SQL evaluation sources](public-sources.md) lists every public suite, database and project considered, whether an eval below already scores it, and what is being added.
+
 ## Equivalence and proofs
 
 | Page | What it scores | Results files |
