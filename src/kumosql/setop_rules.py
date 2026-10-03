@@ -507,9 +507,21 @@ def _sf_reads_only(condition: exp.Expression | None, projected: set[str]) -> boo
     return all(c.name.lower() in projected for c in condition.find_all(exp.Column))
 
 
+def _sf_table_identity(table: exp.Table) -> tuple:
+    """Everything that picks the rows a table reference reads: project, dataset, name and modifiers
+    such as ``FOR SYSTEM_TIME AS OF`` (only the alias is left out)."""
+
+    rest = table.copy()
+    for key in ("this", "db", "catalog", "alias"):
+        rest.set(key, None)
+    return (table.name.lower(), (table.text("db") or "").lower(), (table.text("catalog") or "").lower(), rest.sql())
+
+
 def merge_same_source(node: exp.Expression) -> exp.Expression | None:
     if not isinstance(node, (exp.Union, exp.Intersect, exp.Except)) or not node.args.get("distinct", True):
         return None
+    if not _plain_setop(node):
+        return None  # ORDER BY, LIMIT, WITH or BY NAME on the set operation would be dropped by the merge
     if isinstance(node, exp.Union) and (node.find_ancestor(exp.SetOperation) is not None or any(isinstance(_sf_unwrap(o), exp.SetOperation) for o in (node.this, node.expression))):
         return None  # a chain of unions is flattened into one n-ary union instead, on both sides alike
     left, right = _sf_operand(node.this), _sf_operand(node.expression)
@@ -520,7 +532,7 @@ def merge_same_source(node: exp.Expression) -> exp.Expression | None:
     if a is None or b is None:
         return None
     (a_table, a_alias, a_items, p), (b_table, b_alias, b_items, q) = a, b
-    if a_table.name.lower() != b_table.name.lower() or a_table.args.get("db") != b_table.args.get("db") or len(a_items) != len(b_items):
+    if _sf_table_identity(a_table) != _sf_table_identity(b_table) or len(a_items) != len(b_items):
         return None
     target = a_table.alias_or_name
     if [_sf_rename(_sf_value(i), a_alias, target).sql() for i in a_items] != [_sf_rename(_sf_value(i), b_alias, target).sql() for i in b_items]:
@@ -561,7 +573,7 @@ def _sf_names(select: exp.Select) -> list[str] | None:
 
 
 def set_operation_to_exists(node: exp.Expression) -> exp.Expression | None:
-    if not isinstance(node, (exp.Intersect, exp.Except)) or not node.args.get("distinct", True):
+    if not isinstance(node, (exp.Intersect, exp.Except)) or not node.args.get("distinct", True) or not _plain_setop(node):
         return None
     left, right = _sf_operand(node.this), _sf_operand(node.expression)
     if left is None or right is None or not all(f is not None and _sf_plain(f) for f in (_sf_flatten(left), _sf_flatten(right))):
