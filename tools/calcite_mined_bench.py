@@ -61,7 +61,7 @@ def _tables(ddl: str) -> dict:
 
 def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> dict:
     schemas = json.loads((FIXTURES / "schemas.json").read_text(encoding="utf-8"))
-    out = {"total": 0, "proven": [], "refuted": [], "unknown": [], "wrong": [], "new": {"total": 0, "proven": 0}, "seconds": 0.0}
+    out = {"total": 0, "proven": [], "refuted": [], "unknown": [], "wrong": [], "new": {"total": 0, "proven": 0, "refuted": 0}, "seconds": 0.0}
     loaded: dict[str, tuple] = {}
     start = time.time()
     for pair in load_pairs()[:limit]:
@@ -90,6 +90,9 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> d
         if pair["new"]:
             out["new"]["total"] += 1
             out["new"]["proven"] += bool(proof and not found)
+            out["new"]["refuted"] += bool(found and not proof)
+    out["scored"] = out["total"] - len(out["refuted"])  # a pair with a replayed counterexample is not one to prove
+    out["new"]["scored"] = out["new"]["total"] - out["new"]["refuted"]
     out["seconds"] = time.time() - start
     return out
 
@@ -97,9 +100,9 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> d
 def main() -> int:
     r = run()
     print(
-        f"calcite-mined {len(r['proven'])}/{r['total']} proved, {len(r['refuted'])} refuted (counterexample), "
+        f"calcite-mined {len(r['proven'])}/{r['scored']} proved ({r['total']} pairs), {len(r['refuted'])} refuted (counterexample), "
         f"{len(r['unknown'])} unknown, {len(r['wrong'])} wrong; new to every other corpus: "
-        f"{r['new']['proven']}/{r['new']['total']} proved; {r['seconds']:.1f}s"
+        f"{r['new']['proven']}/{r['new']['scored']} proved; {r['seconds']:.1f}s"
     )
     for key in ("refuted", "wrong"):
         if r[key]:

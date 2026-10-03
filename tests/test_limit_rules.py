@@ -99,3 +99,16 @@ def test_union_branch_cut_reads_as_a_derived_table():
     branch = "(SELECT a, b FROM t LIMIT 0) UNION ALL (SELECT a, b FROM t ORDER BY a LIMIT 1)"
     assert _proven(f"({branch}) ORDER BY a", branch)
     assert not _proven(branch, "(SELECT a, b FROM t LIMIT 0) UNION ALL (SELECT a, b FROM t ORDER BY b LIMIT 1)")
+
+
+def test_a_cut_to_no_rows_over_a_union_of_empty_cuts_is_an_empty_query():
+    left = "SELECT d.a FROM (SELECT a FROM t UNION ALL SELECT a FROM u) AS d ORDER BY d.a LIMIT 0"
+    right = "SELECT e.a FROM ((SELECT a FROM t ORDER BY a LIMIT 0) UNION ALL (SELECT a FROM u ORDER BY a LIMIT 0)) AS e ORDER BY e.a LIMIT 0"
+    assert _proven(left, right)
+    assert _proven(right, "SELECT a FROM t LIMIT 0")
+    # One branch that still returns rows is not empty.
+    assert not _proven(right, "SELECT e.a FROM ((SELECT a FROM t ORDER BY a LIMIT 0) UNION ALL (SELECT a FROM u ORDER BY a LIMIT 1)) AS e")
+    # A global aggregate over an emptied source still returns its one row.
+    count = "SELECT COUNT(*) AS n FROM (SELECT a FROM t ORDER BY a LIMIT 1) AS d WHERE FALSE"
+    assert not _proven(count, "SELECT a FROM t LIMIT 0")
+    assert _proven(count, "SELECT 0 AS n")
