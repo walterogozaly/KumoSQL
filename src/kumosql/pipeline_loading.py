@@ -814,6 +814,7 @@ def load_compiled_graph(
                     operations_sql=tuple(
                         text for key_ in ("preOps", "postOps") for text in (item.get(key_) or []) if isinstance(text, str) and text.strip()
                     ),
+                    pre_operations=sum(1 for text in (item.get("preOps") or []) if isinstance(text, str) and text.strip()),
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(

@@ -86,6 +86,8 @@ class Model:
     unique_keys: tuple[tuple[str, ...], ...] = ()
     # Dataform ``pre_operations`` and ``post_operations`` statements, with refs resolved: scripts that run around the query.
     operations_sql: tuple[str, ...] = ()
+    # How many leading entries of ``operations_sql`` run before the query; the rest run after it.
+    pre_operations: int = 0
 
     @property
     def key(self) -> str:
