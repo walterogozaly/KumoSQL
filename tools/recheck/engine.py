@@ -961,6 +961,40 @@ def shrink(runner: Runner, data: Database, rng: random.Random, seconds: float = 
 
 # --- the search ----------------------------------------------------------------------------------
 
+_PICKS = {"ANY_VALUE", "ANYVALUE", "FIRST", "LAST", "ARBITRARY", "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE"}
+_ORDERED_AGGREGATES = {"ARRAY_AGG", "ARRAYAGG", "STRING_AGG", "GROUP_CONCAT", "GROUPCONCAT", "LIST", "LISTAGG"}
+_RANKS = {"ROW_NUMBER", "ROWNUMBER", "RANK", "DENSE_RANK", "NTILE", "LAG", "LEAD", "PERCENT_RANK", "CUME_DIST"}
+
+
+def order_sensitive(*queries: str) -> list[str]:
+    """Constructs whose result may depend on row order or on the engine's choice (a difference found
+    with them needs a second look, even after the row-order checks)."""
+
+    found: set[str] = set()
+    for query in queries:
+        try:
+            tree = sqlglot.parse_one(query, read="duckdb")
+        except (sqlglot.errors.SqlglotError, ValueError, RecursionError):
+            found.add("unparsed")
+            continue
+        for node in tree.walk():
+            name = (node.sql_name() if isinstance(node, exp.Func) else "").upper()
+            if isinstance(node, exp.Anonymous):
+                name = str(node.this).upper()
+            if name in _PICKS:
+                found.add(name.lower())
+            elif name in _ORDERED_AGGREGATES and not node.find(exp.Order):
+                found.add(f"unordered {name.lower()}")
+            elif name in _RANKS:
+                found.add(name.lower())
+            elif isinstance(node, (exp.Limit, exp.Offset, exp.Fetch)):
+                found.add("limit")
+            elif isinstance(node, exp.Distinct) and node.args.get("on"):
+                found.add("distinct on")
+            elif name in ("RAND", "RANDOM", "UUID", "GEN_RANDOM_UUID", "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE"):
+                found.add("volatile")
+    return sorted(found)
+
 
 def _json_value(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, str)):
@@ -1045,6 +1079,9 @@ def recheck(case: Case, *, budget: int = 3000, seconds: float = 240.0, seed: int
     start = time.time()
     rng = random.Random(f"{seed}:{case.eval}:{case.pair}")
     record: dict[str, Any] = {"eval": case.eval, "pair": case.pair, "held_out": case.held_out, "verdict": "survived", "dbs": 0}
+    sensitive = order_sensitive(case.left, case.right)
+    if sensitive:
+        record["order_sensitive"] = sensitive
     try:
         runner = Runner(case)
     except Exception as error:  # a schema DuckDB cannot create
