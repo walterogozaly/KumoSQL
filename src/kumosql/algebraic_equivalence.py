@@ -2232,16 +2232,17 @@ def _int_value(node: exp.Expression) -> int | None:
 def _fold_constants(tree: exp.Expression) -> exp.Expression:
     """Evaluate integer arithmetic on literals, e.g. ``10 / 2`` to ``5``.
 
-    Decimal literals lose trailing zeros (``1.00`` is ``1``). Only exact results are folded (a division must divide evenly, nothing may
+    Decimal literals lose trailing zeros (``1.00`` is ``1.0``; the point stays, since BigQuery reads
+    ``1.0`` as FLOAT64 and ``x * 1.0`` rounds an INT64 ``x``). Only exact results are folded (a division must divide evenly, nothing may
     leave the range where FLOAT64 and INT64 agree), so INT64 and FLOAT64
     readings of the expression coincide.
     """
 
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Literal) and not node.is_string and re.fullmatch(r"\d+\.\d*0", node.name):
-            # 1.00 and 0.20 name the same numbers as 1 and 0.2.
-            text = node.name.rstrip("0").rstrip(".")
-            return exp.Literal.number(text)
+            # 1.00 and 0.20 name the same numbers as 1.0 and 0.2.
+            text = node.name.rstrip("0")
+            return exp.Literal.number(text + "0" if text.endswith(".") else text)
         if isinstance(node, exp.Case) and node.this is None and len(node.args.get("ifs") or []) == 1:
             branch = node.args["ifs"][0]
             if isinstance(branch.this, exp.Boolean):

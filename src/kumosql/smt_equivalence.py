@@ -12,14 +12,32 @@ symbolic table rows and the equivalence conditions are discharged with Z3:
   self-join elimination;
 * ``GROUP BY`` blocks are compared by proving that both sides form the same
   groups and that their aggregates agree row by row;
-* ``UNION ALL`` branches are matched one to one.
+* ``UNION ALL`` branches are matched one to one; ``INTERSECT`` and ``EXCEPT``
+  (DISTINCT) keep or drop each row by an existence test.
 
-Values use three-valued logic with explicit NULL flags. Columns are modeled
-as an untyped value domain (number, string or boolean); proofs therefore hold
-for every column typing, which keeps them sound without a schema.
+Outer joins are split into one case per matched/unmatched combination (at most
+``MAX_OUTER_JOIN_CASES``). ``EXISTS`` and ``IN`` subqueries, correlated or not,
+are existence atoms. A derived table that cannot be inlined (one with a
+``LIMIT``, or the ``kqw*`` table the normalizer puts window functions in) is an
+opaque relation named by its text, under ``LIMIT_SOURCE_ASSUMPTION`` or
+``WINDOW_SOURCE_ASSUMPTION``; a top-level ``ORDER BY .. LIMIT`` is proved when
+both sides cut alike (``TIE_ASSUMPTION`` unless the ordering covers every
+column). Recursive CTEs, a top-level ``LIMIT`` without ``ORDER BY``, ``PIVOT``,
+nondeterministic functions and the like yield ``not_proven``.
 
-Anything outside the subset (outer joins, windows, ``LIMIT``, correlated or
-predicate subqueries, nondeterministic functions, ...) yields ``not_proven``.
+Values use three-valued logic with explicit NULL flags over an untyped domain
+(an exact rational, a string or a boolean), so no schema types are needed.
+Every proof assumes ``BASE_ASSUMPTIONS``: no NaN, runtime errors not modeled,
+SUM/AVG independent of row order, result column types not compared; with
+``exact_arithmetic`` also that ``+``, ``-`` and ``*`` never round or overflow.
+Numeric conversions that the query text makes visible are kept: a CASE, IF,
+COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
+cast, or arithmetic over one) reads each other non-literal branch as
+``CAST(.. AS FLOAT64)``, and ``x * 1`` is ``x`` only for an integer (or exact
+decimal) ``1``. Conversions between operands whose types the query does not
+show (two untyped columns, one INT64 and one FLOAT64, or a FLOAT64 column of a
+derived table) are not modeled.
+
 When a proof fails the prover looks for a small concrete database on which
 the two queries return different rows; if it finds one the result is
 ``not_equivalent`` with that database attached. A counterexample is only
@@ -599,6 +617,10 @@ _STRICT_FUNCTIONS = tuple(
 # Dialects whose decimal literals are exact DECIMAL/NUMERIC values (BigQuery's are FLOAT64).
 _EXACT_DECIMAL_LITERALS = {"mysql", "postgres", "duckdb"}
 
+# NULLIF(a, b) has the common type of a and b in these dialects, and a's own type in the second set.
+_NULLIF_SUPERTYPE = {"bigquery", "postgres"}
+_NULLIF_FIRST_TYPE = {"duckdb", "mysql", "sqlite"}
+
 
 def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
     """The value of ``+``, ``-``, ``*`` and parentheses over numeric literals, when the engine computes it
@@ -623,6 +645,104 @@ def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
             return None
         value = a + b if isinstance(node, exp.Add) else a - b if isinstance(node, exp.Sub) else a * b
         return value if abs(value) <= 2**53 else None
+    return None
+
+
+def _exact_literals(node: exp.Expression, dialect: str) -> bool:
+    """Whether every numeric literal in ``node`` has an exact type: an integer, or a decimal where
+    decimal literals are DECIMAL/NUMERIC (never one with an exponent, which is FLOAT64/DOUBLE)."""
+
+    return not any(
+        "e" in lit.this.lower() or ("." in lit.this and dialect not in _EXACT_DECIMAL_LITERALS)
+        for lit in node.find_all(exp.Literal) if not lit.is_string
+    )
+
+
+def _float64_kind(node: exp.Expression, dialect: str) -> bool | None:
+    """Whether ``node`` visibly has type FLOAT64, so that CASE, COALESCE, IF, NULLIF and set operations
+    convert their other numeric operands to FLOAT64 (rounding INT64 and NUMERIC values past 2**53):
+    True when it does, False when it visibly does not, None when its type is not visible (a column)."""
+
+    if dialect == "sqlite":
+        return False  # dynamic typing: branches keep their own values, no common type is imposed
+    if isinstance(node, exp.Paren):
+        return _float64_kind(node.this, dialect)
+    if isinstance(node, exp.Literal):
+        if node.is_string:
+            return False
+        text = node.this.lower()
+        if "e" in text:
+            return dialect != "postgres"  # an approximate (DOUBLE) literal; NUMERIC in PostgreSQL
+        # BigQuery decimal literals are FLOAT64; elsewhere they are exact DECIMAL/NUMERIC.
+        return "." in text and dialect == "bigquery"
+    if isinstance(node, (exp.Null, exp.Boolean, exp.Predicate, exp.Connector, exp.Not, exp.Count, exp.CountIf)):
+        return False
+    if isinstance(node, exp.Neg):
+        return _float64_kind(node.this, dialect)
+    if isinstance(node, exp.Cast):
+        to = node.args["to"]
+        if to.is_type(exp.DataType.Type.DOUBLE) or (to.is_type(exp.DataType.Type.FLOAT) and dialect == "bigquery"):
+            return True
+        if to.this in _INTEGER_TYPES or to.is_type(
+            exp.DataType.Type.DECIMAL, exp.DataType.Type.BIGDECIMAL, exp.DataType.Type.TEXT, exp.DataType.Type.VARCHAR,
+            exp.DataType.Type.BOOLEAN, exp.DataType.Type.DATE, exp.DataType.Type.TIMESTAMP, exp.DataType.Type.DATETIME,
+        ):
+            return False
+        return None
+    if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod)):
+        kinds = [_float64_kind(node.this, dialect), _float64_kind(node.expression, dialect)]
+        if True in kinds:
+            return True
+        # INT64 / INT64 is FLOAT64 in BigQuery, so a quotient's type is visible only from a FLOAT64 operand.
+        return False if kinds == [False, False] and not isinstance(node, exp.Div) else None
+    if isinstance(node, (exp.Coalesce, exp.If, exp.Case, exp.Nullif)):
+        kinds = [_float64_kind(b, dialect) for b in _branch_values(node, dialect)]
+        return True if True in kinds else False if all(k is False for k in kinds) else None
+    if isinstance(node, (exp.Sum, exp.Min, exp.Max, exp.Avg)) and isinstance(node.this, exp.Expression):
+        return True if _float64_kind(node.this, dialect) else None
+    return None
+
+
+def _plain_literal(node: exp.Expression, dialect: str) -> bool:
+    """A literal (or literal arithmetic folded exactly): its model value stands for it in every numeric type."""
+
+    node = node.unnest() if isinstance(node, exp.Paren) else node
+    if isinstance(node, (exp.Null, exp.Boolean, exp.Literal)):
+        return True
+    if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal):
+        return True
+    return _literal_arithmetic(node, dialect) is not None
+
+
+def _branch_values(node: exp.Expression, dialect: str) -> list[exp.Expression]:
+    """The expressions whose common type is the type of a CASE, COALESCE, IF or NULLIF."""
+
+    if isinstance(node, exp.Coalesce):
+        return [node.this, *node.expressions]
+    if isinstance(node, exp.If):
+        return [v for v in (node.args.get("true"), node.args.get("false")) if v is not None]
+    if isinstance(node, exp.Case):
+        return [b.args["true"] for b in node.args.get("ifs") or []] + (
+            [node.args["default"]] if node.args.get("default") is not None else []
+        )
+    # NULLIF: the supertype of both arguments, or the first argument's type
+    return [node.this, node.expression] if dialect in _NULLIF_SUPERTYPE else [node.this]
+
+
+def _output_kinds(node: exp.Expression, dialect: str) -> list | None:
+    """``_float64_kind`` of each output column of a query (None for the whole list when not visible)."""
+
+    while isinstance(node, exp.Subquery):
+        node = node.this
+    if isinstance(node, exp.SetOperation):
+        left, right = _output_kinds(node.this, dialect), _output_kinds(node.expression, dialect)
+        if left is None or right is None or len(left) != len(right):
+            return None
+        return [True if True in pair else False if pair == (False, False) else None for pair in zip(left, right)]
+    if isinstance(node, exp.Select):
+        if any(isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)) for item in node.expressions):
+            return None
+        return [_float64_kind(item.this if isinstance(item, exp.Alias) else item, dialect) for item in node.expressions]
     return None
 
 
@@ -733,8 +853,10 @@ class _Compiler:
                 raise Unsupported("UNION variants other than ALL/DISTINCT")
             distinct = bool(node.args.get("distinct"))
             branches = []
-            for child in (node.this, node.expression):
-                sub = self._query(self._cut_branch(child), ctes)
+            children = [node.this, node.expression]
+            subs = [self._query(self._cut_branch(child), ctes) for child in children]
+            self._common_column_types(children, subs)
+            for sub in subs:
                 if not sub.distinct or distinct:
                     branches.extend(sub.branches)
                 elif len(sub.branches) == 1:
@@ -768,6 +890,23 @@ class _Compiler:
         alias = self.fresh("kq_cut")
         return exp.select(*[exp.column(n, table=alias) for n in names]).from_(exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias))))
 
+    def _common_column_types(self, children: list, subs: list[_Union]) -> None:
+        """Convert the outputs of set-operation operands to the common type of each column: where another
+        operand's column is visibly FLOAT64, as in ``_common_type`` (NULLs and literals stay as they are)."""
+
+        kinds = [_output_kinds(child, self.dialect) or [] for child in children]
+        for i, sub in enumerate(subs):
+            for block in sub.branches:
+                for j, v in enumerate(block.outputs):
+                    if j < len(kinds[i]) and kinds[i][j]:
+                        continue
+                    if not any(j < len(k) and k[j] for n, k in enumerate(kinds) if n != i):
+                        continue
+                    if z3.is_true(v.null) or (not self.exact and _is_ground(v.val)):
+                        continue
+                    _, val_fn = self._function("CAST:FLOAT64", 1)
+                    block.outputs[j] = _Val(v.null, val_fn(*self._uf_args([v])))
+
     def _set_operation(self, node: exp.Expression, ctes: dict) -> _Union:
         """``A INTERSECT B`` and ``A EXCEPT B`` (set semantics) as existence tests.
 
@@ -779,6 +918,7 @@ class _Compiler:
             raise Unsupported(f"{type(node).__name__.upper()} ALL")
         left = self._query(node.this, ctes)
         right = self._query(node.expression, ctes)
+        self._common_column_types([node.this, node.expression], [left, right])
         if len(left.names) != len(right.names) or any(
             len(b.outputs) != len(left.branches[0].outputs) for b in left.branches + right.branches
         ):
@@ -1451,6 +1591,7 @@ class _Compiler:
             raise Unsupported(f"aggregate {e.sql(dialect='bigquery')}")
         if isinstance(e, exp.Coalesce):
             args = [self._val(a, env, agg, aliases) for a in [e.this, *e.expressions]]
+            args = self._common_type(e, [e.this, *e.expressions], args)
             result = args[-1]
             for a in reversed(args[:-1]):
                 result = _Val(z3.And(a.null, result.null), z3.If(a.null, result.val, a.val))
@@ -1459,32 +1600,43 @@ class _Compiler:
             cond = self._pred(e.this, env, agg, aliases)
             then = self._val(e.args["true"], env, agg, aliases)
             other = e.args.get("false")
-            other = self._val(other, env, agg, aliases) if other is not None else _Val(z3.BoolVal(True), V.Num(0))
+            if other is not None:
+                then, other = self._common_type(e, [e.args["true"], other], [then, self._val(other, env, agg, aliases)])
+            else:
+                other = _Val(z3.BoolVal(True), V.Num(0))
             return _Val(z3.If(cond.t, then.null, other.null), z3.If(cond.t, then.val, other.val))
         if isinstance(e, exp.Case):
             operand = e.args.get("this")
             operand_val = self._val(operand, env, agg, aliases) if operand is not None else None
             default = e.args.get("default")
             result = self._val(default, env, agg, aliases) if default is not None else _Val(z3.BoolVal(True), V.Num(0))
+            if default is not None:
+                result = self._common_type(e, [default], [result])[0]
             for branch in reversed(e.args.get("ifs") or []):
                 if operand_val is not None:
                     cond = self._compare("=", operand_val, self._val(branch.this, env, agg, aliases))
                 else:
                     cond = self._pred(branch.this, env, agg, aliases)
                 then = self._val(branch.args["true"], env, agg, aliases)
+                then = self._common_type(e, [branch.args["true"]], [then])[0]
                 result = _Val(z3.If(cond.t, then.null, result.null), z3.If(cond.t, then.val, result.val))
             return result
         if isinstance(e, exp.Nullif):
             a = self._val(e.this, env, agg, aliases)
             eq = self._compare("=", a, self._val(e.expression, env, agg, aliases))
+            if self.dialect in _NULLIF_SUPERTYPE:
+                a = self._common_type(e, [e.this], [a])[0]
+            elif self.dialect not in _NULLIF_FIRST_TYPE and _float64_kind(e.expression, self.dialect):
+                raise Unsupported(f"NULLIF result type in {self.dialect}")
             return _Val(z3.Or(a.null, eq.t), a.val)
         if isinstance(e, (exp.Add, exp.Sub, exp.Mul)) and not self.exact:
             folded = _literal_arithmetic(e, self.dialect)
             if folded is not None:
                 return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{folded.numerator}/{folded.denominator}")))
-            # x * 1 is x for every numeric type (arithmetic operands are numbers, as in exact mode).
+            # x * 1 is x for every numeric type (arithmetic operands are numbers, as in exact mode). Not
+            # x * 1e0, nor BigQuery's x * 1.0: a FLOAT64 factor converts an INT64 x, rounding it past 2**53.
             for side, other in ((e.this, e.expression), (e.expression, e.this)):
-                if isinstance(e, exp.Mul) and _literal_arithmetic(side, self.dialect) == 1:
+                if isinstance(e, exp.Mul) and _literal_arithmetic(side, self.dialect) == 1 and _exact_literals(side, self.dialect):
                     value = self._val(other, env, agg, aliases)
                     self._numeric(value)
                     return value
@@ -1556,6 +1708,26 @@ class _Compiler:
             self.uses_uf = True
             return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
+
+    def _common_type(self, node: exp.Expression, exprs: list, vals: list[_Val]) -> list[_Val]:
+        """``vals`` (of the branches ``exprs`` of ``node``) converted to the type of ``node``.
+
+        When another branch of ``node`` is visibly FLOAT64 the result is FLOAT64, and a branch that may
+        be INT64 or NUMERIC is converted, rounding past 2**53: it reads as CAST(branch AS FLOAT64), an
+        uninterpreted function that is the identity on FLOAT64 values. A literal is its own value in
+        either type. Without a visibly FLOAT64 branch the values are kept: a type hidden behind a
+        column (untyped, or a derived table's) is not seen."""
+
+        branches = _branch_values(node, self.dialect)
+        if not any(_float64_kind(b, self.dialect) for b in branches):
+            return vals
+        result = []
+        for expr, v in zip(exprs, vals):
+            if not _float64_kind(expr, self.dialect) and not _plain_literal(expr, self.dialect):
+                _, val_fn = self._function("CAST:FLOAT64", 1)
+                v = _Val(v.null, val_fn(*self._uf_args([v])))
+            result.append(v)
+        return result
 
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
