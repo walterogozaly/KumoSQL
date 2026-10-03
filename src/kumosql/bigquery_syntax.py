@@ -20,6 +20,8 @@ from sqlglot.errors import ParseError
 from sqlglot.generator import Generator
 from sqlglot.tokens import Token, TokenType
 
+from .string_literals import _bytes_literal, _decode_bytes, _string_end
+
 
 TABLE_ARGUMENT = "__KUMO_TABLE_ARGUMENT__"
 
@@ -271,6 +273,95 @@ def _rewrite_model_arguments(sql: str, tokens: list) -> str:
     return "".join(pieces) + sql[position:] if pieces else sql
 
 
+def _rewrite_raw_bytes(sql: str, tokens: list) -> str:
+    """``rb'..'`` and ``br'..'``, which sqlglot reads as a name and a string, written as the ``b'..'`` with the same bytes."""
+
+    pieces: list[str] = []
+    position = 0
+    for prefix, literal in zip(tokens, tokens[1:]):
+        if (
+            prefix.token_type == TokenType.VAR and prefix.text.lower() in ("rb", "br")
+            and literal.token_type == TokenType.STRING and prefix.end + 1 == literal.start
+        ):
+            end, _, body = _string_end(sql, literal.start)
+            if body is not None and end == literal.end + 1:
+                pieces += [sql[position : prefix.start], _bytes_literal(_decode_bytes(body, raw=True))]
+                position = end
+    return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _query_start(tokens: list, index: int) -> int:
+    """Index of the first token of the query that holds ``tokens[index]``: just after the parenthesis it sits in, or after
+    the statement's start."""
+
+    depth = 0
+    for i in range(index - 1, -1, -1):
+        kind = tokens[i].token_type
+        if kind in (TokenType.R_PAREN, TokenType.R_BRACKET):
+            depth += 1
+        elif kind in (TokenType.L_PAREN, TokenType.L_BRACKET):
+            if depth == 0:
+                return i + 1
+            depth -= 1
+        elif kind == TokenType.SEMICOLON and depth == 0:
+            return i + 1
+    return 0
+
+
+def _rewrite_pipe_with(sql: str, tokens: list) -> str:
+    """``FROM t |> WITH y AS (q) |> ...`` written as ``WITH y AS (q) FROM t |> ...``, which sqlglot reads.
+
+    A pipe ``WITH`` names its queries for the operators after it. Moved to the front, a name would also cover the part
+    before it, so the move is made only when nothing before its definition spells the name (later definitions and operators
+    may), and only for a query that has no ``WITH`` of its own. The innermost query goes first; the reparse moves the rest.
+    """
+
+    if _PIPE is None:
+        return sql
+    found: dict[int, list[int]] = {}
+    for index, token in enumerate(tokens[:-1]):
+        if token.token_type == _PIPE and tokens[index + 1].token_type == TokenType.WITH:
+            found.setdefault(_query_start(tokens, index), []).append(index)
+    for start in sorted(found, reverse=True):
+        moved = _move_pipe_with(sql, tokens, start, found[start])
+        if moved is not None:
+            return moved
+    return sql
+
+
+def _move_pipe_with(sql: str, tokens: list, start: int, pipes: list[int]) -> str | None:
+    if tokens[start].token_type not in (TokenType.FROM, TokenType.SELECT):
+        return None
+    definitions: list[str] = []
+    cuts: list[tuple[int, int]] = []
+    aliases: dict[str, int] = {}  # name -> index of the token that defines it
+    for index in pipes:
+        items, after = _pipe_items(tokens, index + 2)
+        if not items or items[0][0].text.upper() == "RECURSIVE":
+            return None
+        for item in items:
+            if (
+                len(item) < 4 or item[0].token_type not in (TokenType.VAR, TokenType.IDENTIFIER)
+                or item[1].token_type != TokenType.ALIAS or item[2].token_type != TokenType.L_PAREN
+                or item[-1].token_type != TokenType.R_PAREN or item[0].text.upper() in aliases
+            ):
+                return None
+            aliases[item[0].text.upper()] = tokens.index(item[0], start)
+            definitions.append(sql[item[0].start : item[-1].end + 1])
+        cuts.append((tokens[index].start, tokens[after - 1].end + 1))
+    if any(
+        token.token_type in (TokenType.VAR, TokenType.IDENTIFIER) and i < aliases.get(token.text.upper(), -1)
+        for i, token in enumerate(tokens[start:], start)
+    ):
+        return None
+    head = tokens[start].start
+    kept, position = [], head
+    for cut_start, cut_end in cuts:
+        kept.append(sql[position:cut_start])
+        position = cut_end
+    return f"{sql[:head]}WITH {', '.join(definitions)} {''.join(kept)}{sql[position:]}"
+
+
 def _quoted(text: str) -> str:
     """``text`` as a BigQuery string literal that reads back as exactly ``text``."""
 
@@ -304,6 +395,32 @@ def _resolve_table_arguments(trees):
         yield tree
 
 
+class UnclosedLiteral(ParseError):
+    """A string, bytes literal or quoted name that is not triple-quoted runs onto another line, which BigQuery rejects."""
+
+
+_ONE_LINE = tuple(
+    kind for kind in (getattr(TokenType, name, None) for name in ("STRING", "BYTE_STRING", "RAW_STRING", "NATIONAL_STRING", "IDENTIFIER"))
+    if kind is not None
+)
+
+
+def _check_literals(sql: str, tokens: list) -> None:
+    """Raise ``UnclosedLiteral`` for a quoted token that is not triple-quoted and holds a line break.
+
+    sqlglot reads ``'a<line break>b'`` as the string ``a\\nb``; BigQuery stops with "Unclosed string literal". Reading it
+    would let a prover equate an invalid query with a valid one.
+    """
+
+    if "\n" not in sql and "\r" not in sql:
+        return
+    for token in tokens:
+        if token.token_type in _ONE_LINE:
+            text = sql[token.start : token.end + 1].lstrip("rRbB")  # a command's remaining text is a STRING token too
+            if text[:1] in ("'", '"', "`") and ("\n" in text or "\r" in text) and not text.startswith(("'''", '"""')):
+                raise UnclosedLiteral(f"Unclosed literal: a quoted string or name that is not triple-quoted runs past the end of line {token.line}")
+
+
 def install() -> None:
     global _installed
     if _installed:
@@ -312,16 +429,19 @@ def install() -> None:
     # The parser is not touched: a compiled sqlglot (sqlglotc) dispatches parser methods through a table built when the class
     # is defined, ignores a method assigned afterwards and refuses a subclass. SQL it rejects is parsed again with the
     # tokens rewritten, and the marker call is turned into a table argument after, which works the same on every build.
-    parse = BigQuery.parse
-
     def parse_with_table_arguments(self, sql, **opts):
         # Whatever sqlglot reads on its own is left alone; only SQL it rejects is retried with the table arguments marked.
+        tokens = self.tokenize(sql)
         try:
-            return parse(self, sql, **opts)
+            _check_literals(sql, tokens)
+            return self.parser(**opts).parse(tokens, sql)  # what the dialect's own parse does
+        except UnclosedLiteral:
+            raise
         except ParseError as error:
-            tokens = self.tokenize(sql)
             rewritten = sql
-            for rewrite in (_rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators):
+            for rewrite in (
+                _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with
+            ):
                 rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
             if rewritten != sql:
                 try:

@@ -1,6 +1,6 @@
 # Join rewrites to LEFT JOIN
 
-Can the prover show that a query written with one join type equals one written with a LEFT JOIN? This eval is a hand-checked set of such pairs. Each rewrites a CROSS, comma, INNER, RIGHT or FULL join, or a semi or anti join, into or out of a LEFT JOIN. Results file: `benchmarks/results/join-rewrites.json`.
+Can the prover show that a query written with one join type equals one written with a LEFT JOIN? This eval is a hand-checked set of such pairs. Each rewrites a CROSS, comma, INNER, RIGHT or FULL join, or a semi or anti join, into or out of a LEFT JOIN, or moves an equality through one. Results file: `benchmarks/results/join-rewrites.json`.
 
 ## What proves
 
@@ -21,6 +21,7 @@ These rewrites prove with no declared facts:
 - **Aggregates.** A grouped LEFT JOIN is inner when two things hold:
   - every aggregate skips null-extended rows (`COUNT(b.k)`, `SUM(b.y)`, `MAX(b.y)`, `COUNT(DISTINCT b.y)`);
   - HAVING drops a group with no match (`COUNT(b.k) > 0`, `SUM(b.y) > 10`).
+- **Equalities through the join.** `a LEFT JOIN b ON a.k = b.k WHERE a.k = 2` also filters `b.k = 2` in the ON, as CockroachDB's MapEqualityIntoJoinLeftAndRight does. Inside an ON, `a.k = b.k` makes any test on `a.k` the same test on `b.k`.
 
 These need a declared fact:
 
@@ -42,10 +43,11 @@ Each of these pairs is refuted with a counterexample:
 - `NOT IN` against an anti join over a nullable column.
 - A semi join without DISTINCT or a key.
 - A nested join group rewritten as a flat chain.
+- A WHERE test copied into the ON when it sits under OR or reads a column the ON does not equate.
 
 ## Data and scoring
 
-The pairs are in `tests/fixtures/join_rewrites/`: 87 development pairs (`pairs.jsonl`) and 16 held-out pairs (`held_out.jsonl`). They were written for this eval, not adapted from a public benchmark. All use tables `a(id, k, x)`, `b(id, k, y)` and `c(id, k, z)`. Each pair names its declared facts, and `why` says why the label holds. A non-equivalent pair also carries the smallest database found on which the two queries differ.
+The pairs are in `tests/fixtures/join_rewrites/`: 100 development pairs (`pairs.jsonl`) and 16 held-out pairs (`held_out.jsonl`). They were written for this eval, not adapted from a public benchmark. All use tables `a(id, k, x)`, `b(id, k, y)` and `c(id, k, z)`. Each pair names its declared facts, and `why` says why the label holds. A non-equivalent pair also carries the smallest database found on which the two queries differ.
 
 Every label was checked on 400 to 600 random DuckDB databases with at most four rows per table. A difference counts only when DuckDB also shows it with its optimizer off.
 
@@ -61,14 +63,15 @@ Every label was checked on 400 to 600 random DuckDB databases with at most four 
 
 | Split | Proved | Refuted | Unknown | Wrong |
 | --- | ---: | ---: | ---: | ---: |
-| Development (87 pairs) | 50/50 | 37/37 | 0 | 0 |
+| Development (100 pairs) | 58/58 | 42/42 | 0 | 0 |
 | Held out (16 pairs) | 10/10 | 6/6 | 0 | 0 |
 
-Before the rules added with this eval, master proved 36 of the 50 equivalent development pairs. The 14 gaps were:
+Before the rules added with this eval, master proved 41 of the 58 equivalent development pairs. The 17 gaps were:
 
 - the foreign-key LEFT JOIN (three pairs);
 - HAVING over a LEFT JOIN (six);
 - `IN (subquery)`, correlated `EXISTS` and `CONCAT` filters (three);
-- nested join groups, including the mirrored three-way RIGHT JOIN (two).
+- nested join groups, including the mirrored three-way RIGHT JOIN (two);
+- a WHERE test on a joined column carried into the far side (three).
 
 The development pairs drove these rules, so the development score is tuned on test. The held-out pairs were written and checked on DuckDB before the prover saw them, then run once.

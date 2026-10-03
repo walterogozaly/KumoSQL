@@ -70,6 +70,13 @@ class IncrementalModel:
     ignore_columns: tuple[str, ...] = ()
     # sqlglot dialect the query and pre_operations are written in.
     dialect: str = "bigquery"
+    # ``bigquery.updatePartitionFilter``: Dataform adds ``AND DATAFORM_DEST.<filter>`` to the MERGE condition,
+    # so a target row outside it is never matched (a changed row then lands as a second copy).
+    update_partition_filter: str = ""
+    # Settings that change what an incremental run executes and that are not modelled (an ``insert_overwrite``
+    # strategy, ``post_operations``, a ``uniqueKey`` that is not a literal list, ...). With any of them no
+    # proof rule applies and the simulator refuses the model, so the answer is ``unsupported``, never ``safe``.
+    unmodelled: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -196,21 +203,55 @@ def parse_incremental_sqlx(sqlx: str, target: str) -> IncrementalModel:
     body = "".join(t for kind, t in sections if kind == "sql").strip()
     pre_blocks = [t for kind, t in sections if kind == "block" and t.lstrip().startswith("pre_operations")]
     pre: list[str] = []
+    unmodelled: list[str] = []
     for block in pre_blocks:
         inner = block[block.index("{") + 1 : block.rindex("}")]
         # ``${when(incremental(), `stmt`)}`` yields a statement only on incremental runs.
         rendered = _resolve(inner, target, True).strip()
-        if _resolve(inner, target, False).strip() != rendered:
+        on_full = _resolve(inner, target, False).strip()
+        if on_full != rendered:
             pre.extend(s.strip() for s in rendered.split(";") if s.strip())
+            if on_full:
+                unmodelled.append("pre_operations that run on full builds")
         elif rendered:
             raise IncrementalError("pre_operations that run on every run are not simulated")
+    for block in (t for kind, t in sections if kind == "block" and t.lstrip().startswith("post_operations")):
+        inner = block[block.index("{") + 1 : block.rindex("}")]
+        if _resolve(inner, target, True).strip() or _resolve(inner, target, False).strip():
+            unmodelled.append("post_operations")
+            break
+    unique_key = _config_list(config, "uniqueKey")
+    if not unique_key and re.search(r"\buniqueKey\s*:", config):
+        unmodelled.append("a uniqueKey that is not a literal list of names")
+    partition_filter = ""
+    if re.search(r"\bupdatePartitionFilter\s*:", config):
+        found = re.search(rf"\bupdatePartitionFilter\s*:\s*({_STRING})\s*[,}}\n]", config)
+        if found is None:
+            unmodelled.append("an updatePartitionFilter that is not a plain string")
+        elif unique_key:  # without a uniqueKey the run appends and the filter is never used
+            partition_filter = _js_string(found.group(1)).strip()
+    strategy = re.search(rf"\b(?:incrementalStrategy|strategy)\s*:\s*({_STRING})?", config)
+    if strategy:
+        value = _js_string(strategy.group(1) or "").strip().lower()
+        if not ((value == "merge" and unique_key) or (value == "append" and not unique_key)):
+            unmodelled.append(f"incremental strategy {value or '(not a plain string)'}")
+    if re.search(r"\bincrementalPredicates?\s*:", config):
+        unmodelled.append("incrementalPredicates")
     return IncrementalModel(
         target=target,
         full_sql=_resolve(body, target, False).strip().rstrip(";"),
         incremental_sql=_resolve(body, target, True).strip().rstrip(";"),
-        unique_key=_config_list(config, "uniqueKey"),
+        unique_key=unique_key,
         pre_operations=tuple(pre),
+        update_partition_filter=partition_filter,
+        unmodelled=tuple(unmodelled),
     )
+
+
+def modelled_exactly(model: IncrementalModel) -> bool:
+    """Whether the proof rules may read the model as plain append (no key) or MERGE on its key."""
+
+    return not model.unmodelled and not model.update_partition_filter
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +288,10 @@ def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
         tree = sqlglot.parse_one(sql, read=read)
     except sqlglot.errors.SqlglotError as exc:
         raise IncrementalError(f"cannot parse: {exc}") from exc
+    return _pin_clock(tree, clock, read).sql(dialect="duckdb")
+
+
+def _pin_clock(tree: exp.Expression, clock: dt.datetime, read: str) -> exp.Expression:
     literal = f"{clock:%Y-%m-%d %H:%M:%S}"
 
     def pin(node: exp.Expression) -> exp.Expression:
@@ -259,7 +304,15 @@ def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
             return exp.cast(exp.Literal.string(literal[:10]), "date")
         return node
 
-    return tree.transform(pin).sql(dialect="duckdb")
+    tree = tree.transform(pin)
+    if read == "bigquery":
+        from .bigquery_on_duckdb import faithful
+
+        try:
+            tree = faithful(tree)
+        except sqlglot.errors.SqlglotError as exc:
+            raise IncrementalError(f"cannot run as BigQuery does: {exc}") from exc
+    return tree
 
 
 def _norm(value: Any) -> Any:
@@ -296,9 +349,15 @@ class Simulation:
         sources: dict[str, SourceTable],
         initial: Iterable[str] = (),
     ):
+        if model.unmodelled:
+            raise IncrementalError("the simulator does not model " + ", ".join(model.unmodelled))
         self.model = model
         self.sources = sources
         self.con = _connect()
+        if model.dialect == "bigquery":
+            from .bigquery_on_duckdb import configure
+
+            configure(self.con)
         self.clock = dt.datetime(2030, 1, 1)
         self.runs = 0
         self.failed: str | None = None
@@ -340,17 +399,37 @@ class Simulation:
             self.con.execute(_to_duckdb(statement, self.clock, m.dialect))
         self.con.execute(f"CREATE OR REPLACE TEMP TABLE __incr AS {_to_duckdb(m.incremental_sql, self.clock, m.dialect)}")
         columns = [r[0] for r in self.con.execute(f'SELECT column_name FROM information_schema.columns WHERE table_name = \'{m.target}\' ORDER BY ordinal_position').fetchall()]
-        if m.unique_key:
-            on = " AND ".join(f't."{k}" = s."{k}"' for k in m.unique_key)
-            # BigQuery MERGE raises when one target row matches several source rows.
-            dup = self.con.execute(
-                f'SELECT count(*) FROM (SELECT t.rowid FROM "{m.target}" t JOIN __incr s ON {on} GROUP BY t.rowid HAVING count(*) > 1)'
-            ).fetchone()[0]
-            if dup:
-                raise MergeConflict("MERGE: a target row matches more than one source row")
-            self.con.execute(f'DELETE FROM "{m.target}" t USING __incr s WHERE {on}')
         collist = ", ".join(f'"{c}"' for c in columns)
-        self.con.execute(f'INSERT INTO "{m.target}" ({collist}) SELECT {collist} FROM __incr')
+        if not m.unique_key:
+            self.con.execute(f'INSERT INTO "{m.target}" ({collist}) SELECT {collist} FROM __incr')
+            return
+        # Dataform's MERGE: ON the key (plus ``DATAFORM_DEST.<updatePartitionFilter>``), WHEN MATCHED UPDATE
+        # every column, WHEN NOT MATCHED INSERT. Matches are decided once, against the table before the run.
+        on = " AND ".join(f't."{k}" = s."{k}"' for k in m.unique_key)
+        if m.update_partition_filter:
+            on += f" AND ({self._destination_condition(m.update_partition_filter)})"
+        # BigQuery MERGE raises when one target row matches several source rows.
+        dup = self.con.execute(
+            f'SELECT count(*) FROM (SELECT t.rowid FROM "{m.target}" t JOIN __incr s ON {on} GROUP BY t.rowid HAVING count(*) > 1)'
+        ).fetchone()[0]
+        if dup:
+            raise MergeConflict("MERGE: a target row matches more than one source row")
+        self.con.execute(
+            f'CREATE OR REPLACE TEMP TABLE __unmatched AS SELECT * FROM __incr s WHERE NOT EXISTS (SELECT 1 FROM "{m.target}" t WHERE {on})'
+        )
+        # Every matched target row is updated in place, so copies of a row already in the table stay copies.
+        assignments = ", ".join(f'"{c}" = s."{c}"' for c in columns)
+        self.con.execute(f'UPDATE "{m.target}" AS t SET {assignments} FROM __incr AS s WHERE {on}')
+        self.con.execute(f'INSERT INTO "{m.target}" ({collist}) SELECT {collist} FROM __unmatched')
+
+    def _destination_condition(self, text: str) -> str:
+        """``DATAFORM_DEST.<text>`` as Dataform writes it, read against the target alias ``t``."""
+
+        try:
+            condition = sqlglot.parse_one(f"t.{text}", read=self.model.dialect)
+        except sqlglot.errors.SqlglotError as exc:
+            raise IncrementalError(f"cannot parse updatePartitionFilter: {exc}") from exc
+        return _pin_clock(condition, self.clock, self.model.dialect).sql(dialect="duckdb")
 
     def full_rows(self) -> tuple[list[str], list[tuple]]:
         cur = self.con.execute(self._full_query())
@@ -712,29 +791,78 @@ def _watermark_predicate(conjunct: exp.Expression, target: str, source_column: s
         return None
     lookback = False
     if isinstance(right, (exp.TimestampSub, exp.DatetimeSub)):
+        # Only a constant, non-negative amount lowers the boundary; ``INTERVAL -1 DAY`` raises it.
+        if not _nonnegative_amount(right):
+            return None
         right, lookback = right.this, True
     # An empty table gives MAX = NULL and ``ts > NULL`` reads nothing, so only a
     # COALESCE to a date before any event keeps the first rows from being lost.
-    if not isinstance(right, exp.Coalesce):
-        return None
-    year = re.search(r"(\d{4})-\d{2}-\d{2}", right.expressions[0].sql()) if right.expressions else None
-    if not year or int(year.group(1)) > 2000:
+    if not isinstance(right, exp.Coalesce) or len(right.expressions) != 1 or not _old_date(right.expressions[0]):
         return None
     right = right.this
     if isinstance(right, exp.Paren):
         right = right.this
     if isinstance(right, exp.Subquery):
+        if any(v for k, v in right.args.items() if k != "this"):
+            return None
         right = right.this
     if not isinstance(right, exp.Select) or len(right.expressions) != 1:
         return None
+    # Exactly ``SELECT MAX(col) FROM self``: a WHERE, HAVING, join, LIMIT, ... can change or remove the one
+    # row the aggregate returns (``HAVING FALSE`` makes it NULL, so every run re-reads everything).
+    if any(v for k, v in right.args.items() if k not in ("expressions", "from", "from_")):
+        return None
     agg = right.expressions[0]
+    if isinstance(agg, exp.Alias):
+        agg = agg.this
     if not (isinstance(agg, exp.Max) and isinstance(agg.this, exp.Column) and agg.this.name.lower() == target_column.lower()):
+        return None
+    if any(v for k, v in agg.args.items() if k != "this"):
         return None
     source = right.args.get("from_") or right.args.get("from")
     table = source.this if source is not None else None
-    if not (isinstance(table, exp.Table) and table.name.lower() == target.lower()) or right.args.get("where"):
+    if not (isinstance(table, exp.Table) and table.name.lower() == target.lower()):
         return None
+    if any(v for k, v in table.args.items() if k not in ("this", "alias")):
+        return None  # another dataset's table of that name, a snapshot (FOR SYSTEM_TIME AS OF), a sample, ...
+    if agg.this.table and agg.this.table.lower() not in (table.alias_or_name.lower(),):
+        return None  # MAX over an outer column, not the table's own
     return ">=" if isinstance(conjunct, exp.GTE) or lookback else ">"
+
+
+def _nonnegative_amount(node: exp.Expression) -> bool:
+    """``TIMESTAMP_SUB(x, INTERVAL n unit)`` with ``n`` a constant at least zero."""
+
+    amount = node.args.get("expression")
+    if isinstance(amount, exp.Interval):
+        amount = amount.this
+    while isinstance(amount, exp.Paren):
+        amount = amount.this
+    if not isinstance(amount, exp.Literal):
+        return False
+    try:
+        return float(amount.this) >= 0
+    except ValueError:
+        return False
+
+
+_DATE_WRAPPERS = tuple(
+    getattr(exp, name)
+    for name in ("Cast", "DataType", "Timestamp", "Date", "Datetime", "TsOrDsToDatetime", "TsOrDsToTimestamp", "TsOrDsToDate", "StrToTime")
+    if hasattr(exp, name)
+)
+
+
+def _old_date(node: exp.Expression) -> bool:
+    """A literal date or timestamp (``TIMESTAMP('1999-01-01')``, ``TIMESTAMP '1999-01-01'``, ...) no later than 2000."""
+
+    literals = [n for n in node.walk() if isinstance(n, exp.Literal)]
+    if len(literals) != 1 or not literals[0].is_string:
+        return False
+    if any(not isinstance(n, (exp.Literal, *_DATE_WRAPPERS)) for n in node.walk()):
+        return False
+    found = re.fullmatch(r"(\d{4})-\d{2}-\d{2}(?:[ T][0-9:.]+)?", literals[0].this.strip())
+    return bool(found) and int(found.group(1)) <= 2000
 
 
 def _row_wise(select: exp.Select, ignore: frozenset[str] = frozenset()) -> bool:
@@ -816,7 +944,7 @@ def prove_watermark(
       row fail the filter would leave its old version in the table.
     """
 
-    if model.pre_operations:
+    if model.pre_operations or not modelled_exactly(model):
         return None
     try:
         full = sqlglot.parse_one(model.full_sql, read=model.dialect)
@@ -872,6 +1000,8 @@ def check_incremental(
     """
 
     kinds = frozenset(kinds)
+    if model.unmodelled:
+        return Verdict("unsupported", "configuration", "not modelled: " + ", ".join(model.unmodelled))
     try:
         proof = prove_watermark(model, sources, kinds)
         if proof is None:

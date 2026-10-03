@@ -28,6 +28,7 @@ import itertools
 from sqlglot import exp
 
 from .ast_utils import conjuncts as _conjuncts
+from .ast_utils import extended_grouping
 
 _counter = itertools.count()
 
@@ -47,6 +48,9 @@ def _plain(select: exp.Select, *, grouped: bool, allow_having: bool = False) -> 
         banned += ["group"]
     if any(select.args.get(key) for key in banned):
         return False
+    group = select.args.get("group")
+    if group is not None and extended_grouping(group):
+        return False  # a grand-total row exists with no input rows: SUM of counts is NULL there, COUNT is 0
     return not any(select.find_all(exp.Window))
 
 
@@ -99,6 +103,9 @@ class _Grouped:
         self.select: exp.Select = source.this
         self.keys: dict[str, exp.Expression] = {}
         self.aggs: dict[str, exp.Expression] = {}
+        # every grouping key is an output: a GROUP BY key the select hides (``GROUP BY k, j``
+        # showing only ``k``) still splits groups, so ``keys`` alone does not identify a row
+        self.complete = False
         self.ok = self._read()
 
     def _read(self) -> bool:
@@ -106,13 +113,13 @@ class _Grouped:
         if not isinstance(select, exp.Select) or not self.alias or not _plain(select, grouped=True):
             return False
         group = select.args.get("group")
-        if not group or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if not group or extended_grouping(group):
             return False
         group_sql = {key.sql() for key in group.expressions}
         for item in select.expressions:
             expr = item.this if isinstance(item, exp.Alias) else item
             name = item.alias_or_name
-            if not name or name in self.keys or name in self.aggs:
+            if not name or name.lower() in self.keys or name.lower() in self.aggs:
                 return False
             if isinstance(expr, (exp.Sum, exp.Count, exp.Min, exp.Max)):
                 if expr.args.get("distinct") or isinstance(expr.this, exp.Distinct):
@@ -124,6 +131,8 @@ class _Grouped:
                 self.keys[name.lower()] = expr
             else:
                 return False
+        shown = {expr.sql() for expr in self.keys.values()}
+        self.complete = all(key.sql() in shown for key in group.expressions)
         return True
 
 
@@ -441,7 +450,7 @@ def flatten_grouped_join(select: exp.Select) -> exp.Expression | None:
         if not isinstance(item, exp.Subquery):
             return None
         grouped = _Grouped(item)
-        if not grouped.ok:
+        if not grouped.ok or not grouped.complete:
             return None
         groups.append(grouped)
     aggregated = [g for g in groups if g.aggs]
@@ -662,7 +671,7 @@ def pull_up_aggregate(select: exp.Select, keys: dict[str, list[tuple[str, ...]]]
     if any(isinstance(n, exp.Subquery) and n is not source for n in select.find_all(exp.Subquery)) or any(select.find_all(exp.Exists)):
         return None
     grouped = _Grouped(source)
-    if not grouped.ok or not grouped.aggs or any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+    if not grouped.ok or not grouped.complete or not grouped.aggs or any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
         return None
     t_alias, g_alias = table.alias_or_name.lower(), grouped.alias.lower()
     if t_alias == g_alias:

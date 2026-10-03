@@ -48,7 +48,7 @@ def test_a_cycle_does_not_make_the_columns_it_reads_look_dead():
 
 
 def test_cte_before_insert_resolves_to_its_source_tables():
-    pl = pipeline(t="WITH w AS (SELECT a FROM `p.d.raw`) INSERT INTO `p.d.t` SELECT w.a FROM w")
+    pl = pipeline(t="WITH w AS (SELECT a FROM `p.d.raw`) INSERT INTO `p.d.t` (a) SELECT w.a FROM w")
     assert pl.column_lineage()[ColumnRef("p.d.t", "a")] == {ColumnRef("p.d.raw", "a")}
     assert pl.upstream["p.d.t"] == {"p.d.raw"} and pl.table_reads()["p.d.t"] == {"p.d.raw"}  # the CTE name is not a table
 

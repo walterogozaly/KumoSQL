@@ -53,6 +53,36 @@ def test_pipe_set_inside_a_subquery_stops_at_its_parenthesis():
     assert "* EXCEPT (a)" in " ".join(_projections(tree)) and tree.find(exp.Where) is not None
 
 
+@needs_pipes
+def test_pipe_with_moves_to_the_front_of_its_query():
+    sql = "SELECT * FROM (FROM d.t |> WITH y AS (SELECT 2 AS z), w AS (SELECT * FROM y) |> CROSS JOIN w) |> WITH v AS (SELECT 1 AS q) |> CROSS JOIN v"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    assert {cte.alias for cte in tree.find_all(exp.CTE)} >= {"y", "w", "v"}
+    assert {table.name for table in tree.find_all(exp.Table)} >= {"t", "w", "v"}
+
+
+@needs_pipes
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "FROM y |> WITH y AS (SELECT 2 AS z) |> CROSS JOIN y",  # the name already means a table before the WITH
+        "FROM d.t |> WHERE `Y` > 1 |> WITH y AS (SELECT 2 AS z) |> CROSS JOIN y",
+        "FROM d.t |> WITH y AS (SELECT 1) |> CROSS JOIN y |> WITH y AS (SELECT 2) |> CROSS JOIN y",
+        "WITH a AS (SELECT 1 AS x) FROM a |> WITH y AS (SELECT 2 AS z) |> CROSS JOIN y",
+        "FROM d.t |> WITH RECURSIVE y AS (SELECT 1) |> CROSS JOIN y",
+    ],
+)
+def test_pipe_with_stays_unread_when_moving_it_could_change_a_name(sql):
+    with pytest.raises(sqlglot.errors.ParseError):
+        sqlglot.parse_one(sql, read="bigquery")
+
+
+def test_raw_bytes_read_as_the_same_bytes():
+    # BigQuery: br'a\d' = b'a\\d', the bytes a, backslash, d
+    tree = sqlglot.parse_one("SELECT br'a\\d' AS x, RB\"q'\" AS y", read="bigquery")
+    assert tree.sql("bigquery") == r"SELECT b'a\x5Cd' AS x, b'q\x27' AS y"
+
+
 def test_pipe_rename_is_not_guessed():
     # RENAME keeps the column in place, which no SELECT can say without the column list.
     with pytest.raises(sqlglot.errors.ParseError):
@@ -94,3 +124,20 @@ def test_ml_functions_sqlglot_reads_itself_are_unchanged():
     tree = sqlglot.parse_one(sql, read="bigquery")
     assert tree.sql("bigquery") == sql
     assert type(tree.find(exp.Predict)).__name__ == "Predict"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT 'a\nb' AS v", 'SELECT "a\r\nb"', "SELECT b'x\ny'", "SELECT r'p\nq'", "SELECT rb'm\nn'", "SELECT `c\nd` FROM t"],
+)
+def test_a_one_line_literal_with_a_line_break_is_rejected_like_bigquery_does(sql):
+    # BigQuery: "Syntax error: Unclosed string literal" (and bytes, identifier); only triple-quoted literals span lines.
+    with pytest.raises(sqlglot.errors.ParseError, match="Unclosed literal"):
+        sqlglot.parse(sql, read="bigquery")
+
+
+def test_triple_quoted_literals_and_escaped_line_breaks_still_read():
+    tree = sqlglot.parse_one("SELECT '''a\nb''' AS x, \"\"\"c\nd\"\"\" AS y, 'e\\nf' AS z\nFROM t", read="bigquery")
+    assert [e.this.this for e in tree.expressions] == ["a\nb", "c\nd", "e\nf"]
+    # a command such as EXECUTE IMMEDIATE keeps its remaining text as one STRING token that spans the line break
+    assert sqlglot.parse_one("EXECUTE IMMEDIATE 'SELECT ? + ?' USING 1, 2\n", read="bigquery") is not None

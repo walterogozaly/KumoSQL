@@ -15,7 +15,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["join_rewrite_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {False: (50, 37), True: (10, 6)}  # (proved, refuted) for the development and held-out pairs
+FLOORS = {False: (58, 42), True: (10, 6)}  # (proved, refuted) for the development and held-out pairs
 
 
 @pytest.mark.parametrize("held_out", [False, True], ids=["dev", "held_out"])

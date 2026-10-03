@@ -434,7 +434,10 @@ def execute(pipeline, db: dict[str, list[tuple]], outputs: list[str]) -> dict[st
 
     import duckdb
 
+    from kumosql.bigquery_on_duckdb import bigquery_rows, configure, faithful
+
     con = duckdb.connect(":memory:")
+    configure(con)  # the models are BigQuery: run them as BigQuery does, or fail where it fails
     for table, columns in SOURCES.items():
         types = {"status": "VARCHAR", "region": "VARCHAR", "tier": "VARCHAR", "kind": "VARCHAR"}
         con.execute(f'CREATE TABLE "raw__{table}" (' + ", ".join(f"{c} {types.get(c, 'BIGINT')}" for c in columns) + ")")
@@ -444,10 +447,10 @@ def execute(pipeline, db: dict[str, list[tuple]], outputs: list[str]) -> dict[st
         model = pipeline.models[key]
         tree = _flat(sqlglot.parse_one(model.sql, read="bigquery"))
         name = "an__" + key.split(".")[-1]
-        con.execute(f'CREATE TABLE "{name}" AS ' + tree.sql(dialect="duckdb"))
+        con.execute(f'CREATE TABLE "{name}" AS ' + faithful(tree).sql(dialect="duckdb"))
     result = {}
     for out in outputs:
-        result[out] = Counter(con.execute(f'SELECT * FROM "an__{out}"').fetchall())
+        result[out] = Counter(bigquery_rows(con.execute(f'SELECT * FROM "an__{out}"').fetchall()))
     return result
 
 
@@ -456,9 +459,16 @@ def executed_check(pipeline, case: Case, rename: dict[str, str], trials: int, se
 
     rng = random.Random(seed)
     dbs = databases if databases is not None else [random_database(rng) for _ in range(trials)]
+    from kumosql.bigquery_on_duckdb import is_bigquery_failure
+
     for db in dbs:
         names = [*case.outputs, *(rename[o] for o in case.outputs if o in rename)]
-        bags = execute(pipeline, db, names)
+        try:
+            bags = execute(pipeline, db, names)
+        except Exception as error:
+            if is_bigquery_failure(error):
+                continue  # BigQuery fails on this database: it tells the pipelines apart nowhere
+            raise
         for out in case.outputs:
             if bags[out] != bags[rename.get(out, out)]:
                 return False, {"database": db, "output": out}

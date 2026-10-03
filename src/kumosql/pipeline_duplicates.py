@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import hashlib
+import re
 
 from sqlglot import exp
 
@@ -62,7 +63,25 @@ def _fingerprint(select: exp.Expression) -> tuple[str, str]:
     return _fingerprint_hash(select), _remembered(select, "kumosql_text", lambda: _plain_sql(select))
 
 
-def _find_duplicates(parsed: dict[str, exp.Expression], *, min_nodes: int) -> list[DuplicateGroup]:
+_TOKEN = re.compile(r"__sqlx_token_(\d+)__")
+
+
+def _masked_suffix(select: exp.Expression, masked: tuple[str, ...]) -> str:
+    """The Dataform expressions behind the loader's placeholders in ``select``.
+
+    Placeholders are numbered per model, so ``__sqlx_token_000__`` stands for different expressions in
+    different models; two copies are the same code only when the expressions are the same too.
+    """
+
+    found = _TOKEN.findall(_fingerprint(select)[1])
+    if not found:
+        return ""
+    return "|".join(masked[int(n)] if int(n) < len(masked) else f"?{n}" for n in found)
+
+
+def _find_duplicates(
+    parsed: dict[str, exp.Expression], *, min_nodes: int, masked: dict[str, tuple[str, ...]] | None = None
+) -> list[DuplicateGroup]:
     groups: dict[str, list[tuple[str, exp.Expression]]] = defaultdict(list)
     sql_of: dict[str, str] = {}
     size_of: dict[str, int] = {}
@@ -74,6 +93,9 @@ def _find_duplicates(parsed: dict[str, exp.Expression], *, min_nodes: int) -> li
             if size < min_nodes:
                 continue
             fingerprint, sql = _fingerprint(select)
+            suffix = _masked_suffix(select, (masked or {}).get(key, ()))
+            if suffix:  # a different identity, which shared-logic proposals cannot find a copy by
+                fingerprint = hashlib.sha1(f"{fingerprint}|{suffix}".encode("utf-8")).hexdigest()[:16]
             groups[fingerprint].append((key, select))
             sql_of[fingerprint] = sql
             size_of[fingerprint] = size

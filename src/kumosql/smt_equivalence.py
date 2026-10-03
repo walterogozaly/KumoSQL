@@ -12,14 +12,32 @@ symbolic table rows and the equivalence conditions are discharged with Z3:
   self-join elimination;
 * ``GROUP BY`` blocks are compared by proving that both sides form the same
   groups and that their aggregates agree row by row;
-* ``UNION ALL`` branches are matched one to one.
+* ``UNION ALL`` branches are matched one to one; ``INTERSECT`` and ``EXCEPT``
+  (DISTINCT) keep or drop each row by an existence test.
 
-Values use three-valued logic with explicit NULL flags. Columns are modeled
-as an untyped value domain (number, string or boolean); proofs therefore hold
-for every column typing, which keeps them sound without a schema.
+Outer joins are split into one case per matched/unmatched combination (at most
+``MAX_OUTER_JOIN_CASES``). ``EXISTS`` and ``IN`` subqueries, correlated or not,
+are existence atoms. A derived table that cannot be inlined (one with a
+``LIMIT``, or the ``kqw*`` table the normalizer puts window functions in) is an
+opaque relation named by its text, under ``LIMIT_SOURCE_ASSUMPTION`` or
+``WINDOW_SOURCE_ASSUMPTION``; a top-level ``ORDER BY .. LIMIT`` is proved when
+both sides cut alike (``TIE_ASSUMPTION`` unless the ordering covers every
+column). Recursive CTEs, a top-level ``LIMIT`` without ``ORDER BY``, ``PIVOT``,
+nondeterministic functions and the like yield ``not_proven``.
 
-Anything outside the subset (outer joins, windows, ``LIMIT``, correlated or
-predicate subqueries, nondeterministic functions, ...) yields ``not_proven``.
+Values use three-valued logic with explicit NULL flags over an untyped domain
+(an exact rational, a string or a boolean), so no schema types are needed.
+Every proof assumes ``BASE_ASSUMPTIONS``: no NaN, runtime errors not modeled,
+SUM/AVG independent of row order, result column types not compared; with
+``exact_arithmetic`` also that ``+``, ``-`` and ``*`` never round or overflow.
+Numeric conversions that the query text makes visible are kept: a CASE, IF,
+COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
+cast, or arithmetic over one) reads each other non-literal branch as
+``CAST(.. AS FLOAT64)``, and ``x * 1`` is ``x`` only for an integer (or exact
+decimal) ``1``; declared column types (``types``) count as visible. Values
+from different sources whose types are not known (two undeclared columns) are
+combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``.
+
 When a proof fails the prover looks for a small concrete database on which
 the two queries return different rows; if it finds one the result is
 ``not_equivalent`` with that database attached. A counterexample is only
@@ -110,6 +128,9 @@ BASE_ASSUMPTIONS = (
     "result column types are not compared; confirm schemas with a BigQuery dry run",
 )
 EXACT_ARITHMETIC_ASSUMPTION = "+, - and * are exact (no FLOAT64 rounding or INT64 overflow)"
+MIXED_NUMERIC_ASSUMPTION = (
+    "values combined by CASE, IF, COALESCE or a set operation have the same numeric type (no INT64 to FLOAT64 conversion)"
+)
 
 _NONDETERMINISTIC_NAMES = {
     "ANY_VALUE",
@@ -185,6 +206,24 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
+    """A bare column in ``select``'s ORDER BY, GROUP BY, HAVING or QUALIFY that may name one of its output
+    aliases rather than a source column (``SELECT y AS v FROM u ORDER BY v`` sorts by ``y``)."""
+
+    node = column
+    while node.parent is not None and node.parent is not select:
+        node = node.parent
+    if node.parent is not select or node.arg_key not in ("order", "group", "having", "qualify"):
+        return False
+    name = column.name.lower()
+    for item in select.expressions:
+        if isinstance(item, exp.Alias) and item.alias.lower() == name:
+            value = item.this
+            if not (isinstance(value, exp.Column) and value.name.lower() == name and not value.table):
+                return True
+    return False
+
+
 def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
@@ -208,13 +247,19 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
         from_ = select.args.get("from_") or select.args.get("from")
         return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
+    def names(node: exp.Expression) -> set[str]:
+        alias = node.args.get("alias")
+        element = alias.args.get("columns") if isinstance(node, exp.Unnest) and alias is not None else None
+        # BigQuery: ``UNNEST(..) AS e`` declares the element ``e``, which hides an outer alias ``e``
+        return {(node.alias_or_name or "").lower()} | ({element[0].name.lower()} if element else set())
+
     renames: list[tuple[exp.Column, str]] = []
     for column in body.find_all(exp.Column):
         qualifier = column.table.lower()
         if not qualifier and schema:
             scope = column.find_ancestor(exp.Select)
             sources = declared(scope) if scope is not None else []
-            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star):
+            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star) and not _names_output_alias(column, scope):
                 key = ".".join(p.name for p in sources[0].parts).lower()
                 known = schema.get(key)
                 if known is not None and column.name.lower() in [c.lower() for c in known]:
@@ -224,7 +269,7 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
             continue
         scope = column.find_ancestor(exp.Select)
         while scope is not None:
-            hit = next((n for n in declared(scope) if (n.alias_or_name or "").lower() == qualifier), None)
+            hit = next((n for n in declared(scope) if qualifier in names(n)), None)
             if hit is not None:
                 if id(hit) in fresh:
                     renames.append((column, fresh[id(hit)]))
@@ -520,6 +565,8 @@ class _Source:
     order: list[str] = field(default_factory=list)
     # The unmatched side of an outer join over a table whose columns are not declared: every column is NULL.
     all_null: _Val | None = None
+    # An UNNEST named by its element (``UNNEST(..) AS e``): ``e`` is a value, so ``e.f`` and ``e.*`` read its fields.
+    value_table: bool = False
 
     def lookup(self, name: str) -> _Val | None:
         if self.all_null is not None:
@@ -599,6 +646,10 @@ _STRICT_FUNCTIONS = tuple(
 # Dialects whose decimal literals are exact DECIMAL/NUMERIC values (BigQuery's are FLOAT64).
 _EXACT_DECIMAL_LITERALS = {"mysql", "postgres", "duckdb"}
 
+# NULLIF(a, b) has the common type of a and b in these dialects, and a's own type in the second set.
+_NULLIF_SUPERTYPE = {"bigquery", "postgres"}
+_NULLIF_FIRST_TYPE = {"duckdb", "mysql", "sqlite"}
+
 
 def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
     """The value of ``+``, ``-``, ``*`` and parentheses over numeric literals, when the engine computes it
@@ -626,6 +677,114 @@ def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
     return None
 
 
+def _exact_literals(node: exp.Expression, dialect: str) -> bool:
+    """Whether every numeric literal in ``node`` has an exact type: an integer, or a decimal where
+    decimal literals are DECIMAL/NUMERIC (never one with an exponent, which is FLOAT64/DOUBLE)."""
+
+    return not any(
+        "e" in lit.this.lower() or ("." in lit.this and dialect not in _EXACT_DECIMAL_LITERALS)
+        for lit in node.find_all(exp.Literal) if not lit.is_string
+    )
+
+
+def _float64_kind(node: exp.Expression, dialect: str) -> bool | None:
+    """Whether ``node`` visibly has type FLOAT64, so that CASE, COALESCE, IF, NULLIF and set operations
+    convert their other numeric operands to FLOAT64 (rounding INT64 and NUMERIC values past 2**53):
+    True when it does, False when it visibly does not, None when its type is not visible (a column)."""
+
+    if dialect == "sqlite":
+        return False  # dynamic typing: branches keep their own values, no common type is imposed
+    if isinstance(node, exp.Paren):
+        return _float64_kind(node.this, dialect)
+    if isinstance(node, exp.Literal):
+        if node.is_string:
+            return False
+        text = node.this.lower()
+        if "e" in text:
+            return dialect != "postgres"  # an approximate (DOUBLE) literal; NUMERIC in PostgreSQL
+        # BigQuery decimal literals are FLOAT64; elsewhere they are exact DECIMAL/NUMERIC.
+        return "." in text and dialect == "bigquery"
+    if isinstance(node, (exp.Null, exp.Boolean, exp.Predicate, exp.Connector, exp.Not, exp.Count, exp.CountIf)):
+        return False
+    if isinstance(node, exp.Neg):
+        return _float64_kind(node.this, dialect)
+    if isinstance(node, exp.Cast):
+        to = node.args["to"]
+        if to.is_type(exp.DataType.Type.DOUBLE) or (to.is_type(exp.DataType.Type.FLOAT) and dialect == "bigquery"):
+            return True
+        if to.this in _INTEGER_TYPES or to.is_type(
+            exp.DataType.Type.DECIMAL, exp.DataType.Type.BIGDECIMAL, exp.DataType.Type.TEXT, exp.DataType.Type.VARCHAR,
+            exp.DataType.Type.BOOLEAN, exp.DataType.Type.DATE, exp.DataType.Type.TIMESTAMP, exp.DataType.Type.DATETIME,
+        ):
+            return False
+        return None
+    if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod)):
+        kinds = [_float64_kind(node.this, dialect), _float64_kind(node.expression, dialect)]
+        if True in kinds:
+            return True
+        # INT64 / INT64 is FLOAT64 in BigQuery, so a quotient's type is visible only from a FLOAT64 operand.
+        return False if kinds == [False, False] and not isinstance(node, exp.Div) else None
+    if isinstance(node, (exp.Coalesce, exp.If, exp.Case, exp.Nullif)):
+        kinds = [_float64_kind(b, dialect) for b in _branch_values(node, dialect)]
+        return True if True in kinds else False if all(k is False for k in kinds) else None
+    if isinstance(node, (exp.Sum, exp.Min, exp.Max, exp.Avg)) and isinstance(node.this, exp.Expression):
+        return True if _float64_kind(node.this, dialect) else None
+    return None
+
+
+_FLOAT_TYPES = {"FLOAT64", "FLOAT", "FLOAT32", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL"}
+
+
+def _type_is_float(declared: str) -> bool | None:
+    """Whether a declared column type is a binary floating type (None when it does not say)."""
+
+    name = re.sub(r"\(.*", "", declared).strip().upper()
+    return name in _FLOAT_TYPES if name else None
+
+
+def _plain_literal(node: exp.Expression, dialect: str) -> bool:
+    """A literal (or literal arithmetic folded exactly): its model value stands for it in every numeric type."""
+
+    node = node.unnest() if isinstance(node, exp.Paren) else node
+    if isinstance(node, (exp.Null, exp.Boolean, exp.Literal)):
+        return True
+    if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal):
+        return True
+    return _literal_arithmetic(node, dialect) is not None
+
+
+def _branch_values(node: exp.Expression, dialect: str) -> list[exp.Expression]:
+    """The expressions whose common type is the type of a CASE, COALESCE, IF or NULLIF."""
+
+    if isinstance(node, exp.Coalesce):
+        return [node.this, *node.expressions]
+    if isinstance(node, exp.If):
+        return [v for v in (node.args.get("true"), node.args.get("false")) if v is not None]
+    if isinstance(node, exp.Case):
+        return [b.args["true"] for b in node.args.get("ifs") or []] + (
+            [node.args["default"]] if node.args.get("default") is not None else []
+        )
+    # NULLIF: the supertype of both arguments, or the first argument's type
+    return [node.this, node.expression] if dialect in _NULLIF_SUPERTYPE else [node.this]
+
+
+def _output_kinds(node: exp.Expression, dialect: str) -> list | None:
+    """``_float64_kind`` of each output column of a query (None for the whole list when not visible)."""
+
+    while isinstance(node, exp.Subquery):
+        node = node.this
+    if isinstance(node, exp.SetOperation):
+        left, right = _output_kinds(node.this, dialect), _output_kinds(node.expression, dialect)
+        if left is None or right is None or len(left) != len(right):
+            return None
+        return [True if True in pair else False if pair == (False, False) else None for pair in zip(left, right)]
+    if isinstance(node, exp.Select):
+        if any(isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)) for item in node.expressions):
+            return None
+        return [_float64_kind(item.this if isinstance(item, exp.Alias) else item, dialect) for item in node.expressions]
+    return None
+
+
 class _AggCtx:
     def __init__(self, compiler: "_Compiler"):
         self.compiler = compiler
@@ -637,8 +796,14 @@ MAX_OUTER_JOIN_CASES = 256
 
 
 class _Compiler:
-    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery"):
+    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery", types=None):
         self.dialect = dialect
+        # Declared column types by table key, and the table of each base-table occurrence.
+        self.types = {key.lower(): {c.lower(): t for c, t in cols.items()} for key, cols in (types or {}).items()}
+        self.occ_tables: dict[str, str] = {}
+        # A CASE/COALESCE/IF/NULLIF or set-operation column combined values whose numeric types are not known
+        # to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
+        self.mixed_numeric = False
         self.schema = {
             key.lower(): [c.lower() for c in cols] for key, cols in (schema or {}).items()
         }
@@ -663,6 +828,7 @@ class _Compiler:
         self._blind = False
         self.used_setsrc = False
         self.limit_opaque = False
+        self.numeric_differences = False  # ABS(x - y) was read with x and y numbers
         self.window_opaque = False
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
@@ -733,8 +899,10 @@ class _Compiler:
                 raise Unsupported("UNION variants other than ALL/DISTINCT")
             distinct = bool(node.args.get("distinct"))
             branches = []
-            for child in (node.this, node.expression):
-                sub = self._query(self._cut_branch(child), ctes)
+            children = [node.this, node.expression]
+            subs = [self._query(self._cut_branch(child), ctes) for child in children]
+            self._common_column_types(children, subs)
+            for sub in subs:
                 if not sub.distinct or distinct:
                     branches.extend(sub.branches)
                 elif len(sub.branches) == 1:
@@ -768,6 +936,20 @@ class _Compiler:
         alias = self.fresh("kq_cut")
         return exp.select(*[exp.column(n, table=alias) for n in names]).from_(exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias))))
 
+    def _common_column_types(self, children: list, subs: list[_Union]) -> None:
+        """Convert the outputs of set-operation operands to the common type of each column (``_coerce``)."""
+
+        kinds = [_output_kinds(child, self.dialect) or [] for child in children]
+        blocks = [(kind, block) for kind, sub in zip(kinds, subs) for block in sub.branches]
+        for j in range(min((len(block.outputs) for _, block in blocks), default=0)):
+            entries = []
+            for kind, block in blocks:
+                v = block.outputs[j]
+                literal = z3.is_true(v.null) or (not self.exact and _is_ground(v.val))
+                entries.append((kind[j] if j < len(kind) else None, literal, v))
+            for (_, block), v in zip(blocks, self._coerce(entries)):
+                block.outputs[j] = v
+
     def _set_operation(self, node: exp.Expression, ctes: dict) -> _Union:
         """``A INTERSECT B`` and ``A EXCEPT B`` (set semantics) as existence tests.
 
@@ -779,6 +961,7 @@ class _Compiler:
             raise Unsupported(f"{type(node).__name__.upper()} ALL")
         left = self._query(node.this, ctes)
         right = self._query(node.expression, ctes)
+        self._common_column_types([node.this, node.expression], [left, right])
         if len(left.names) != len(right.names) or any(
             len(b.outputs) != len(left.branches[0].outputs) for b in left.branches + right.branches
         ):
@@ -855,9 +1038,10 @@ class _Compiler:
                 if side or (join is not None and join.args.get("on") is not None) or len(source_node.expressions) != 1:
                     raise Unsupported("UNNEST outside a cross join")
                 alias_node = source_node.args.get("alias")
-                alias = (alias_node.name if alias_node is not None else "") or self.fresh("unnest")
-                alias = alias.lower()
                 columns = alias_node.args.get("columns") if alias_node is not None else None
+                # BigQuery names the element ``e`` in ``UNNEST(..) AS e``; it hides an outer alias ``e``
+                alias = (alias_node.name if alias_node is not None else "") or (columns[0].name if columns else "")
+                alias = (alias or self.fresh("unnest")).lower()
                 element = (columns[0].name if columns else alias).lower()
                 offset_arg = source_node.args.get("offset")
                 offset = ((offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else "").lower()
@@ -865,7 +1049,7 @@ class _Compiler:
                 cols = {element: occ.col("value")}
                 if offset:
                     cols[offset] = occ.col("offset")
-                source = _Source(cols=cols, order=list(cols))
+                source = _Source(cols=cols, order=list(cols), value_table=alias == element)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -992,7 +1176,7 @@ class _Compiler:
                     sources = list(env.values())
                 else:
                     table = item.table.lower()
-                    if table not in env:
+                    if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
                 for source in sources:
@@ -1057,6 +1241,7 @@ class _Compiler:
                 return alias, self._derived(body, cte_env, occs, conds)
             key = self._table_key(node)
             occ = _Occ(key, self.fresh("r"), self.schema.get(key.lower()))
+            self.occ_tables[occ.uid] = key.lower()
             occs.append(occ)
             return alias, _Source(occ=occ)
         if isinstance(node, exp.Subquery):
@@ -1137,15 +1322,17 @@ class _Compiler:
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
 
-        Its columns are free values; the atom says some row of the table has
-        exactly those values. Joined on all of its columns, each outer row matches
-        at most one row, so the join is that test (``resolve_set_sources``).
+        Its columns are free values, NULL or not; the atom says some row of the
+        table has exactly those values (NULL matching NULL, as DISTINCT does).
+        Joined on all of its columns, each outer row matches at most one row, so
+        the join is that test (``resolve_set_sources``).
         """
 
         V = _value_sort()
         uid = self.fresh("set")
-        columns = [_Val(z3.BoolVal(False), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
-        match = [z3.And(z3.Not(o.null), o.val == c.val) for o, c in zip(branch.outputs, columns)]
+        # Not ``#null``: ``resolve_set_sources`` reads that suffix as an outer column's NULL flag.
+        columns = [_Val(z3.Bool(f"{uid}.{i}#setnull"), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
+        match = [_null_eq(o, c) for o, c in zip(branch.outputs, columns)]
         atom = z3.Bool(f"{self.fresh('ex')}#exists")
         guard = z3.And(branch.cond.t, *match)
         self.collector.append(_Sub(atom, list(branch.occs), guard, list(branch.subs), setsrc=(branch, columns)))
@@ -1247,6 +1434,8 @@ class _Compiler:
                 scope = getattr(scope, "outer", None)
             if scope is None:
                 raise Unsupported(f"unknown alias {table}")
+            if scope[table].value_table:
+                raise Unsupported(f"field {table}.{name} of an UNNEST element")
             val = scope[table].lookup(name)
             if val is None:
                 raise Unsupported(f"{table}.{name} is not a column of {table}")
@@ -1451,6 +1640,7 @@ class _Compiler:
             raise Unsupported(f"aggregate {e.sql(dialect='bigquery')}")
         if isinstance(e, exp.Coalesce):
             args = [self._val(a, env, agg, aliases) for a in [e.this, *e.expressions]]
+            args = self._common_type([e.this, *e.expressions], args)
             result = args[-1]
             for a in reversed(args[:-1]):
                 result = _Val(z3.And(a.null, result.null), z3.If(a.null, result.val, a.val))
@@ -1459,32 +1649,42 @@ class _Compiler:
             cond = self._pred(e.this, env, agg, aliases)
             then = self._val(e.args["true"], env, agg, aliases)
             other = e.args.get("false")
-            other = self._val(other, env, agg, aliases) if other is not None else _Val(z3.BoolVal(True), V.Num(0))
+            if other is not None:
+                then, other = self._common_type([e.args["true"], other], [then, self._val(other, env, agg, aliases)])
+            else:
+                other = _Val(z3.BoolVal(True), V.Num(0))
             return _Val(z3.If(cond.t, then.null, other.null), z3.If(cond.t, then.val, other.val))
         if isinstance(e, exp.Case):
             operand = e.args.get("this")
             operand_val = self._val(operand, env, agg, aliases) if operand is not None else None
             default = e.args.get("default")
-            result = self._val(default, env, agg, aliases) if default is not None else _Val(z3.BoolVal(True), V.Num(0))
-            for branch in reversed(e.args.get("ifs") or []):
+            ifs = e.args.get("ifs") or []
+            branches = [b.args["true"] for b in ifs] + ([default] if default is not None else [])
+            values = self._common_type(branches, [self._val(b, env, agg, aliases) for b in branches])
+            result = values.pop() if default is not None else _Val(z3.BoolVal(True), V.Num(0))
+            for branch, then in reversed(list(zip(ifs, values))):
                 if operand_val is not None:
                     cond = self._compare("=", operand_val, self._val(branch.this, env, agg, aliases))
                 else:
                     cond = self._pred(branch.this, env, agg, aliases)
-                then = self._val(branch.args["true"], env, agg, aliases)
                 result = _Val(z3.If(cond.t, then.null, result.null), z3.If(cond.t, then.val, result.val))
             return result
         if isinstance(e, exp.Nullif):
-            a = self._val(e.this, env, agg, aliases)
-            eq = self._compare("=", a, self._val(e.expression, env, agg, aliases))
+            a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
+            eq = self._compare("=", a, b)
+            if self.dialect in _NULLIF_SUPERTYPE:
+                a = self._common_type([e.this, e.expression], [a, b])[0]
+            elif self.dialect not in _NULLIF_FIRST_TYPE and _float64_kind(e.expression, self.dialect):
+                raise Unsupported(f"NULLIF result type in {self.dialect}")
             return _Val(z3.Or(a.null, eq.t), a.val)
         if isinstance(e, (exp.Add, exp.Sub, exp.Mul)) and not self.exact:
             folded = _literal_arithmetic(e, self.dialect)
             if folded is not None:
                 return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{folded.numerator}/{folded.denominator}")))
-            # x * 1 is x for every numeric type (arithmetic operands are numbers, as in exact mode).
+            # x * 1 is x for every numeric type (arithmetic operands are numbers, as in exact mode). Not
+            # x * 1e0, nor BigQuery's x * 1.0: a FLOAT64 factor converts an INT64 x, rounding it past 2**53.
             for side, other in ((e.this, e.expression), (e.expression, e.this)):
-                if isinstance(e, exp.Mul) and _literal_arithmetic(side, self.dialect) == 1:
+                if isinstance(e, exp.Mul) and _literal_arithmetic(side, self.dialect) == 1 and _exact_literals(side, self.dialect):
                     value = self._val(other, env, agg, aliases)
                     self._numeric(value)
                     return value
@@ -1529,6 +1729,13 @@ class _Compiler:
             if isinstance(e, exp.Div):
                 nulls = z3.Or(nulls, null_fn(*args))  # SAFE_DIVIDE-like shapes stay possible
             return _Val(nulls, val_fn(*args))
+        if isinstance(e, exp.Abs) and self.exact:
+            a = self._val(e.this, env, agg, aliases)
+            self._numeric(a)
+            x = V.num(a.val)
+            return _Val(a.null, V.Num(z3.If(x < 0, -x, x)))
+        if isinstance(e, exp.Abs) and isinstance(e.this.unnest() if isinstance(e.this, exp.Paren) else e.this, exp.Sub):
+            return self._abs_difference(e, env, agg, aliases)
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
             inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
@@ -1556,6 +1763,91 @@ class _Compiler:
             self.uses_uf = True
             return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
+
+    def _abs_difference(self, e, env, agg, aliases) -> _Val:
+        """``ABS(x - y)`` with ``-`` and ``ABS`` left uninterpreted, plus what holds for every
+        number type (IEEE subtraction rounds ``x - y`` to exactly ``-(y - x)``, and is zero only
+        when ``x = y``): it is ``ABS(y - x)``, it is ``x - y`` when ``y < x`` and ``y - x`` when
+        ``x < y``, it is 0 when ``x = y`` and positive otherwise. ``x`` and ``y`` are taken to be
+        numbers (MySQL also subtracts strings, which sort differently), which the proof's
+        assumptions record."""
+
+        V = _value_sort()
+        diff = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+        a, b = self._val(diff.this, env, agg, aliases), self._val(diff.expression, env, agg, aliases)
+        self._numeric(a)
+        self._numeric(b)
+        self.numeric_differences = True
+        swapped = exp.Sub(this=diff.expression.copy(), expression=diff.this.copy())
+        result = self._generic(e, env, agg, aliases)
+        mirror = self._generic(exp.Abs(this=swapped), env, agg, aliases)
+        forward, backward = self._val(diff, env, agg, aliases), self._val(swapped, env, agg, aliases)
+        value = result.val
+        self.facts.append(
+            z3.Implies(
+                z3.And(z3.Not(a.null), z3.Not(b.null)),
+                z3.And(
+                    z3.Not(result.null),
+                    z3.Not(mirror.null),
+                    value == mirror.val,
+                    z3.Implies(_lt(b.val, a.val), value == forward.val),
+                    z3.Implies(_lt(a.val, b.val), value == backward.val),
+                    z3.Implies(a.val == b.val, value == V.Num(0)),
+                    z3.Implies(a.val != b.val, z3.And(V.is_Num(value), V.num(value) > 0)),
+                ),
+            )
+        )
+        return result
+
+    def _declared_float(self, v: _Val) -> bool | None:
+        """Whether a base-table column value is declared FLOAT64 (None when it is not a declared column)."""
+
+        if not (z3.is_const(v.val) and v.val.decl().kind() == z3.Z3_OP_UNINTERPRETED):
+            return None
+        uid, _, name = str(v.val).partition(".")
+        declared = self.types.get(self.occ_tables.get(uid, ""), {}).get(name)
+        return _type_is_float(declared) if declared else None
+
+    def _type_key(self, v: _Val):
+        """Values with equal keys have the same type: one table column, or one term."""
+
+        if z3.is_const(v.val) and v.val.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+            uid, _, name = str(v.val).partition(".")
+            if uid in self.occ_tables:
+                return (self.occ_tables[uid], name)
+        return v.val.get_id()
+
+    def _coerce(self, entries: list) -> list[_Val]:
+        """Each ``(visible float kind, is literal, value)`` converted to the common type of all of them.
+
+        When one is FLOAT64 (visibly, or by its declared column type) the result is FLOAT64, and a
+        value that may be INT64 or NUMERIC is converted, rounding past 2**53: it reads as
+        CAST(value AS FLOAT64), an uninterpreted function that is the identity on FLOAT64 values. A
+        literal is its own value in either type. Otherwise the values are kept; when two of them come
+        from different sources whose types are not known, that is MIXED_NUMERIC_ASSUMPTION."""
+
+        kinds = [self._declared_float(v) if kind is None else kind for kind, _, v in entries]
+        if not any(kinds):
+            unknown = [self._type_key(v) for k, (_, literal, v) in zip(kinds, entries) if not literal and k is None]
+            known = [self._type_key(v) for k, (_, literal, v) in zip(kinds, entries) if not literal and k is False]
+            if unknown and len(set(unknown + known)) > 1:
+                self.mixed_numeric = True
+            return [v for _, _, v in entries]
+        result = []
+        for kind, (_, literal, v) in zip(kinds, entries):
+            if not kind and not literal:
+                _, val_fn = self._function("CAST:FLOAT64", 1)
+                v = _Val(v.null, val_fn(*self._uf_args([v])))
+            result.append(v)
+        return result
+
+    def _common_type(self, exprs: list, vals: list[_Val]) -> list[_Val]:
+        """``vals`` of the branches ``exprs`` of a CASE, COALESCE, IF or NULLIF, in their common type."""
+
+        # A value that is always NULL (a column of the unmatched side of an outer join) converts like a literal.
+        return self._coerce([
+            (_float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null), v) for e, v in zip(exprs, vals)
+        ])
 
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
@@ -1826,7 +2118,7 @@ class _Prover:
                 if value is not None and kind in ("count", "count*"):
                     facts.append(z3.And(V.is_Num(value.val), z3.IsInt(V.num(value.val)), V.num(value.val) >= (1 if kind == "count*" else 0)))
             for s in occs:
-                if s.opaque or s.table.lower() != table:
+                if s.opaque or s.table != table:
                     continue
                 pairs = [(s.cols.get(k), d.cols.get(f"c{i}")) for k, i in keys]
                 if any(a is None or b is None for a, b in pairs):
@@ -2354,6 +2646,24 @@ class _Prover:
             return self.valid(z3.Implies(a.cond.t, call_a.arg.null == arg.null), a.occs, facts)
         return False
 
+    def set_source_facts(self, block) -> list:
+        """``NOT NULL`` for each column of the block's DISTINCT derived tables that the table never
+        returns as NULL (a NOT NULL column, or one its WHERE filters), so ``d.x IS NULL`` is FALSE."""
+
+        facts, stack = [], list(block.subs)
+        while stack:
+            sub = stack.pop()
+            stack.extend(sub.nested)
+            if not sub.setsrc:
+                continue
+            inner, columns = sub.setsrc
+            for output, column in zip(inner.outputs, columns):
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(inner.cond.t, z3.Not(output.null)), inner.occs, inner.facts):
+                    facts.append(z3.Not(column.null))
+                del self.candidates[saved:]
+        return facts
+
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
 
@@ -2392,8 +2702,12 @@ class _Prover:
             for position, column in enumerate(columns):
                 produced = inner.outputs[position] if position < len(inner.outputs) else None
                 if produced is not None and _is_ground(produced.val) and _is_ground(produced.null):
-                    pairs.append((column.val, produced.val))  # a constant column is pinned by what it is
+                    # a constant column is pinned by what it is
+                    pairs.extend([(column.val, produced.val), (column.null, produced.null)])
                     continue
+                if not _implied(conjuncts, z3.Not(column.null), ids):
+                    raise _SetSourceUnresolved  # only a non-NULL column can be pinned by an equality
+                pairs.append((column.null, z3.BoolVal(False)))
                 for term in conjuncts:
                     if not z3.is_eq(term):
                         continue
@@ -2525,7 +2839,7 @@ class _Prover:
                 continue
             inner = sub.occs[0]
             for occ in block.occs:
-                if occ.table.lower() != inner.table.lower() or occ.columns != inner.columns:
+                if occ.table != inner.table or occ.columns != inner.columns:  # BigQuery: ds.T is not ds.t
                     continue
                 extra.append(z3.Implies(_subst(sub.guard, _occ_pairs(inner, occ)), sub.atom))
         if extra:
@@ -2788,14 +3102,22 @@ class _Prover:
             if z3.is_and(term):
                 stack.extend(term.children())
             elif z3.is_or(term) and 2 <= term.num_args() <= 4:
-                disjunctions.append(term)
+                disjunctions.append(term.children())
+            elif z3.is_distinct(term) and term.num_args() == 2 and term.arg(0).sort() == _value_sort():
+                # x <> y is x < y OR y < x where the order is total on the two values.
+                x, y = term.children()
+                parts = [_lt(x, y), _lt(y, x)]
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(block.cond.t, z3.Or(*parts)), block.occs, block.facts):
+                    disjunctions.append(parts)
+                del self.candidates[saved:]
         # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
         return [
             [
                 self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
-                for part in disjunction.children()
+                for part in parts
             ]
-            for disjunction in disjunctions
+            for parts in disjunctions
         ]
 
     def groups_unique(self, block) -> bool:
@@ -2845,7 +3167,7 @@ def _prune(prover: "_Prover", union: _Union) -> None:
             if (isinstance(block, _Agg) and block.is_global) or not z3.is_false(z3.simplify(block.cond.t)):
                 kept.append(block)
             continue
-        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
+        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts + prover.set_source_facts(block)):
             kept.append(block)
             continue
         if isinstance(block, _Agg) and block.is_global and block.having is None and all(c.func in _NULL_WHEN_EMPTY + _CONST_PAIRS_NULL for c in block.aggs):
@@ -2910,6 +3232,18 @@ def _duplicate_blind(select: exp.Select) -> bool:
     return not any(n.find_ancestor(exp.Select) is select for n in select.find_all(exp.AggFunc, exp.Window))
 
 
+def _repeat_blind(block) -> bool:
+    """Repeating a row of the block's input leaves its distinct rows alone: no aggregate counts it.
+
+    DISTINCT dedups a block's output rows, not what its aggregates read: ``SELECT DISTINCT COUNT(*)``
+    still sees every repeat.
+    """
+
+    if not isinstance(block, _Agg):
+        return True
+    return all(c.distinct or c.func in _DUPLICATE_INSENSITIVE for c in block.aggs)
+
+
 def _is_set(u: _Union) -> bool:
     return u.distinct or (len(u.branches) == 1 and u.branches[0].distinct)
 
@@ -2929,7 +3263,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             b = prover.merge_equivalent_subs(b)
             b = prover.sub_consequences(b)
             b = prover.self_witness_facts(b)
-            if union.distinct or b.distinct:
+            if (union.distinct or b.distinct) and _repeat_blind(b):
                 b = prover.inline_unique_subs(b, require_unique=False)
             branches.append(prover.merge_key_occurrences(b))
         union.branches = branches
@@ -3225,7 +3559,7 @@ def _group_shape(key: str):
             else:
                 outputs.append((None, None))
         if {k for k, _ in keys} == group_names:
-            shape = (_Compiler._table_key(from_.this).lower(), keys, outputs)
+            shape = (_Compiler._table_key(from_.this), keys, outputs)
     _GROUP_SHAPES[key] = shape
     return shape
 
@@ -3302,6 +3636,7 @@ def _prove_core(
     constraints: dict[str, TableConstraints] | None = None,
     compare_names: bool = True,
     dialect: str = "bigquery",
+    types: dict[str, dict[str, str]] | None = None,
 ) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
@@ -3313,6 +3648,7 @@ def _prove_core(
     ``"project.dataset.table"``) to column lists; it enables ``SELECT *`` and
     unqualified columns in joins. ``exact_arithmetic`` models ``+``, ``-``
     and ``*`` as exact arithmetic, which is only right for INT64/NUMERIC.
+    ``types`` maps table names to declared column types, used for numeric conversions.
     """
 
     assumptions = BASE_ASSUMPTIONS + ((EXACT_ARITHMETIC_ASSUMPTION,) if exact_arithmetic else ())
@@ -3323,7 +3659,7 @@ def _prove_core(
     used = [False]
 
     def attempt(semijoin: bool, blind: bool = False) -> SmtEquivalenceResult:
-        compiler = _Compiler(schema, exact_arithmetic, dialect)
+        compiler = _Compiler(schema, exact_arithmetic, dialect, types)
         compiler.semijoin = semijoin
         compiler.blind_sets = blind
         try:
@@ -3340,9 +3676,12 @@ def _prove_core(
             exact_arithmetic=exact_arithmetic,
             timeout_ms=timeout_ms,
             constraints=constraints,
+            types=types,
         )
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
+        ) + ((NUMERIC_DIFFERENCE_ASSUMPTION,) if compiler.numeric_differences else ()) + (
+            (MIXED_NUMERIC_ASSUMPTION,) if compiler.mixed_numeric else ()
         )
         if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
             # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
@@ -3440,6 +3779,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 WINDOW_SOURCE_ASSUMPTION = "window functions over the same input with the same text give the same values (ties in ORDER BY resolve alike)"
+NUMERIC_DIFFERENCE_ASSUMPTION = "x and y in ABS(x - y) are numbers"
 LIMIT_SOURCE_ASSUMPTION = "a LIMIT subquery with the same text returns the same rows each time"
 TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for equal inputs"
 
@@ -3447,8 +3787,9 @@ TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for eq
 def _split_limit(sql: str, dialect: str):
     """``(core_sql, spec)`` for a query ending in ORDER BY .. LIMIT, ``(sql, None)`` without a limit.
 
-    ``spec`` is ``(limit, offset, ordering, covers_all)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
-    ``(output position, descending, nulls first)``; ``None`` as the core means the
+    ``spec`` is ``(limit, offset, ordering, covers_all, visible)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
+    ``(output position, descending, nulls first)`` and ``visible`` counts the output columns (order keys that are
+    not outputs become extra columns of the core); ``None`` as the core means the
     shape is not handled (``spec`` then says why).
     """
 
@@ -3520,6 +3861,7 @@ def _split_limit(sql: str, dialect: str):
         int(offset.expression.this) if offset is not None else 0,
         tuple(ordering),
         covers,
+        len(outputs),
     )
     return faithful_sql(core, dialect), spec
 
@@ -3564,6 +3906,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
     if left_spec[:3] != right_spec[:3]:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")
+    if left_spec[4] != right_spec[4]:
+        # An order key that is not an output is an extra column of the core: it must not stand in for an output.
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"different column counts ({left_spec[4]} vs {right_spec[4]})")
     result = _prove_core(left_core, right_core, **kwargs)
     if result.status is SmtStatus.NOT_EQUIVALENT:
         # The rows before the cut differ, but the first rows may still agree.

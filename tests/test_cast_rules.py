@@ -1,7 +1,11 @@
+from collections import Counter
+
+import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.cast_rules import fold_casts_and_constant_cases
+from kumosql.duckdb_load import run_unoptimized
 
 TYPES = {"t": {"i": "int", "b": "bigint", "s": "varchar(20)", "d": "date", "n": "decimal(5,2)", "ti": "tinyint"}}
 SCHEMA = {"t": ["i", "b", "s", "d", "n", "ti"], "u": ["k", "x"], "v": ["k", "y"]}
@@ -101,3 +105,104 @@ def test_exact_numeric_casts_keep_order_and_nulls():
     assert _fold("SELECT i FROM t ORDER BY CAST(i AS DOUBLE) IS NULL, CAST(i AS DOUBLE)") == "SELECT i FROM t ORDER BY i IS NULL, i"
     assert _fold("SELECT b FROM t ORDER BY CAST(b AS DOUBLE)") is None  # BIGINT is not exact in a double
     assert _fold("SELECT i FROM t ORDER BY CAST(i AS DECIMAL(5, 2))") is None  # too narrow
+    assert _fold("SELECT i FROM t ORDER BY CAST(i AS FLOAT64)", dialect="bigquery") is None  # BigQuery's INT is INT64
+    assert _fold("SELECT ti FROM t GROUP BY ti ORDER BY CAST(SUM(ti) AS DOUBLE)") is None  # a sum of many rows has no bound
+    assert _fold("SELECT i FROM t ORDER BY CAST(i * ti AS DOUBLE)") is None  # up to 13 digits
+    assert _fold("SELECT ti FROM t ORDER BY CAST(ti * ti + 1 AS DOUBLE)") == "SELECT ti FROM t ORDER BY ti * ti + 1"
+
+
+def _duckdb_bags(ddl, rows, *queries):
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute(ddl)
+    db.executemany(f"INSERT INTO t VALUES ({', '.join('?' for _ in rows[0])})", rows)
+    return [Counter(result) for result in run_unoptimized(db, *queries)]
+
+
+# BigQuery's integer literals are INT64; DuckDB reads 2000000000 as a 32-bit INTEGER.
+_BIG = "CAST(2000000000 AS BIGINT)"
+
+# A cast dropped from an ORDER BY key must neither tie nor reorder rows. Each pair below differs on
+# DuckDB (with the declared type replayed as DuckDB's equal type; a tie-breaking second key under
+# LIMIT 1 shows a tie the cast makes), so it must stay unproven.
+# (left, right, dialect, declared type of t.x and t.y, DuckDB table, rows, DuckDB spelling or None to transpile)
+TIES_MADE_BY_A_CAST = [
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(CASE WHEN x = 0 THEN 2000000000 * 2000000000 ELSE 2000000000 * 2000000000 - 1 END AS FLOAT64), x LIMIT 1",
+        "SELECT x FROM t ORDER BY CASE WHEN x = 0 THEN 2000000000 * 2000000000 ELSE 2000000000 * 2000000000 - 1 END, x LIMIT 1",
+        "bigquery", "INT64", "CREATE TABLE t (x BIGINT)", [(0,), (1,)],
+        (
+            f"SELECT x FROM t ORDER BY CAST(CASE WHEN x = 0 THEN {_BIG} * {_BIG} ELSE {_BIG} * {_BIG} - 1 END AS DOUBLE), x LIMIT 1",
+            f"SELECT x FROM t ORDER BY CASE WHEN x = 0 THEN {_BIG} * {_BIG} ELSE {_BIG} * {_BIG} - 1 END, x LIMIT 1",
+        ),
+        id="s007-004-a-product-outgrows-its-operands",
+    ),
+    pytest.param(
+        # MySQL multiplies INT columns as BIGINT, so the DuckDB table holds the INT values as BIGINT.
+        "SELECT y FROM t ORDER BY CAST(x * 8388608 + y AS DOUBLE), y DESC LIMIT 1",
+        "SELECT y FROM t ORDER BY x * 8388608 + y, y DESC LIMIT 1",
+        "mysql", "INT", "CREATE TABLE t (x BIGINT, y BIGINT)", [(2**31 - 1, 0), (2**31 - 1, 1)], None,
+        id="s007-004-int-column-arithmetic-outgrows-a-double",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS FLOAT), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "duckdb", "INT", "CREATE TABLE t (x INTEGER)", [(2**24,), (2**24 + 1,)], None,
+        id="s007-005-duckdb-float-is-32-bit",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS FLOAT(24)), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "postgres", "int4", "CREATE TABLE t (x INTEGER)", [(2**24,), (2**24 + 1,)],
+        ("SELECT x FROM t ORDER BY CAST(x AS REAL), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x, x DESC LIMIT 1"),
+        id="s007-005-postgres-float-24-is-real",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS FLOAT64), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "bigquery", "INT", "CREATE TABLE t (x BIGINT)", [(2**53,), (2**53 + 1,)], None,
+        id="s007-003-bigquery-int-is-int64",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(CAST(x AS INT) AS FLOAT64), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "bigquery", "INT64", "CREATE TABLE t (x BIGINT)", [(2**53,), (2**53 + 1,)],
+        ("SELECT x FROM t ORDER BY CAST(CAST(x AS BIGINT) AS DOUBLE), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x, x DESC LIMIT 1"),
+        id="s007-003-bigquery-cast-to-int-is-int64",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS DOUBLE PRECISION), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "postgres", "int8", "CREATE TABLE t (x BIGINT)", [(2**53,), (2**53 + 1,)], None,
+        id="s007-003-postgres-int8-is-bigint",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS DOUBLE), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "mysql", "INT8", "CREATE TABLE t (x BIGINT)", [(2**53,), (2**53 + 1,)], None,
+        id="s007-003-mysql-int8-is-bigint",
+    ),
+]
+
+
+@pytest.mark.parametrize("left, right, dialect, declared, ddl, rows, replay", TIES_MADE_BY_A_CAST)
+def test_casts_that_can_tie_values_stay_in_order_by(left, right, dialect, declared, ddl, rows, replay):
+    replay = replay or [sqlglot.transpile(q, read=dialect, write="duckdb")[0] for q in (left, right)]
+    before, after = _duckdb_bags(ddl, rows, *replay)
+    assert before != after
+    assert not prove_equivalent_algebraic(left, right, schema={"t": ["x", "y"]}, types={"t": {"x": declared, "y": declared}}, dialect=dialect, compare_names=False).proven
+
+
+# Near misses: the cast is exact on every value of the declared type, so these stay proven.
+EXACT_CASTS = [
+    pytest.param("SELECT x FROM t ORDER BY CAST(x AS DOUBLE PRECISION), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x LIMIT 1", "postgres", "int4", id="postgres-int4-in-a-double"),
+    pytest.param("SELECT x FROM t ORDER BY CAST(x AS DOUBLE), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x LIMIT 1", "duckdb", "INTEGER", id="duckdb-integer-in-a-double"),
+    pytest.param("SELECT CAST(x AS INT64) AS c FROM t", "SELECT x AS c FROM t", "bigquery", "INT", id="bigquery-int-is-already-int64"),
+    pytest.param("SELECT x FROM t ORDER BY CAST(x * x AS DOUBLE), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x * x, x DESC LIMIT 1", "mysql", "SMALLINT", id="smallint-product-in-a-double"),
+    pytest.param("SELECT x FROM t ORDER BY CAST(x AS FLOAT), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x LIMIT 1", "duckdb", "SMALLINT", id="duckdb-smallint-in-a-float"),
+]
+
+
+@pytest.mark.parametrize("left, right, dialect, declared", EXACT_CASTS)
+def test_exact_casts_stay_proven(left, right, dialect, declared):
+    assert prove_equivalent_algebraic(left, right, schema={"t": ["x"]}, types={"t": {"x": declared}}, dialect=dialect, compare_names=False).proven

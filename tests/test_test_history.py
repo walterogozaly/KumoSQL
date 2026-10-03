@@ -75,6 +75,46 @@ def test_order_lists_slow_tests_with_medians_and_often_failing_tests():
     assert order["risky"][0] == "tests/test_b.py::flaky"
 
 
+def test_order_leaves_out_tests_whose_files_are_not_in_this_checkout(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_b.py").write_text("")
+    records = [record("a", [("tests/test_new.py::t", False), ("tests/test_b.py::t", False)], slow={"tests/test_new.py::big": 9.0, "tests/test_b.py::big": 5.0})]
+    order = th.build_order(records, root=tmp_path)
+    assert order["slow"] == {"tests/test_b.py::big": 5.0} and order["risky"] == ["tests/test_b.py::t"]
+
+
+def timed(label, ts, mode="full", cores=4, files=None, **extra):
+    return record(label, [], ts=ts, mode=mode, workers=4, machine={"cpus": cores}, seconds=600.0, cpu_seconds=2000.0, file_seconds=files or {}, **extra)
+
+
+def test_trend_compares_file_times_across_like_runs():
+    records = [
+        timed("old", "2026-10-01T10:00:00Z", files={"tests/test_a.py": [100.0, 98.0], "tests/test_b.py": [10.0, 9.0]}),
+        timed("other machine", "2026-10-01T12:00:00Z", cores=16, files={"tests/test_a.py": [5.0, 5.0]}),
+        timed("partial", "2026-10-01T13:00:00Z", mode="partial", files={"tests/test_a.py": [1.0, 1.0]}),
+        timed("new", "2026-10-02T10:00:00Z", files={"tests/test_a.py": [40.0, 39.0], "tests/test_b.py": [11.0, 10.0]}),
+    ]
+    changes = {name: (then, now, runs) for name, then, now, runs in th.file_changes(records)}
+    assert changes == {"tests/test_a.py": (100.0, 40.0, 2), "tests/test_b.py": (10.0, 11.0, 2)}
+    found = th.history_of(records, "test_a.py")
+    assert [(r["label"], wall, cpu) for r, _, wall, cpu in found] == [("old", 100.0, 98.0), ("other machine", 5.0, 5.0), ("partial", 1.0, 1.0), ("new", 40.0, 39.0)]
+    slow = record("before times", [], slow={"tests/test_a.py::big": 30.0, "tests/test_a.py::small": 4.0})
+    assert th.file_times(slow) == {"tests/test_a.py": (34.0, None)}  # older records: the slow tests' sum, no CPU
+    assert [(wall, cpu) for _, _, wall, cpu in th.history_of([slow], "tests/test_a.py::big")] == [(30.0, None)]
+
+
+def test_trend_prints_whole_runs_and_where_the_time_goes(tmp_path, capsys):
+    for index, (label, wall) in enumerate([("first", 100.0), ("second", 40.0)]):
+        saved = timed(label, f"2026-10-0{index + 1}T10:00:00Z", files={"tests/test_a.py": [wall, wall], "tests/test_b.py": [1.0, 1.0]}, test_cpu_seconds=wall + 1)
+        th.write_record(saved, tmp_path)
+    assert th.main(["trend", "--dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "10m00s" in out and "33m20s" in out  # wall and CPU of each whole run
+    assert "tests/test_a.py  100.0  40.0  -60.0" in out
+    assert th.main(["trend", "--dir", str(tmp_path), "--test", "test_b.py"]) == 0
+    assert capsys.readouterr().out.count("tests/test_b.py") == 2
+
+
 def test_a_junit_file_becomes_a_record(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_a.py").write_text("")
@@ -95,6 +135,15 @@ def test_a_junit_file_becomes_a_record(tmp_path):
     assert result["ts"] == "2026-10-02T20:00:00Z"
 
 
+def children_cpu() -> float | None:
+    try:
+        import resource
+    except ImportError:  # Windows
+        return None
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
 @pytest.mark.parametrize("workers", [1, 2])
 def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, workers):
     project = tmp_path / "project"
@@ -108,7 +157,9 @@ def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, work
     history = tmp_path / "history"
     env = {**os.environ, "KUMOSQL_TEST_HISTORY": str(history), "KUMOSQL_TEST_TARGETS": "tests/test_mine.py", "KUMOSQL_TASK": "my task"}
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *(["-n", str(workers), "--dist", "loadgroup"] if workers > 1 else [])]
+    before = children_cpu()
     done = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
+    spent = None if before is None else children_cpu() - before  # the pytest run and every process it started
     assert done.returncode == 1, done.stdout + done.stderr
     assert "outside the targets: tests/test_other.py::test_query_12" in done.stdout
     (path,) = list((history / "runs").glob("*.jsonl"))
@@ -118,6 +169,15 @@ def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, work
     assert [(f["id"], f["target"]) for f in saved["failed"]] == [("tests/test_other.py::test_query_12", False)]
     assert saved["files"] == {"tests/test_mine.py": 1, "tests/test_other.py": 2}
     assert th.working_change_run(saved) or saved["branch"] in ("master", "main")  # on a feature branch this is collateral
+    # the times: every file's wall and CPU, the run's CPU across the workers, and the machine
+    assert set(saved["file_seconds"]) == {"tests/test_mine.py", "tests/test_other.py"}
+    assert all(wall >= 0 and cpu >= 0 for wall, cpu in saved["file_seconds"].values())
+    assert saved["cpu_seconds"] >= saved["test_cpu_seconds"] >= 0 and saved["test_seconds"] >= 0
+    assert saved["cpu_seconds"] > 0  # start-up and collection count too
+    # every process of the run counted once: the workers are also finished children of the controller
+    assert spent is None or spent * 0.5 <= saved["cpu_seconds"] <= spent * 1.1 + 0.2, (saved["cpu_seconds"], spent)
+    assert saved["machine"]["cpus"] == os.cpu_count() and saved["v"] == 2
+    assert any(line.startswith("test history: recorded to") and ", CPU " in line for line in done.stdout.splitlines())
 
 
 def test_recording_is_off_without_a_history_folder(tmp_path, monkeypatch):
