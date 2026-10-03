@@ -52,6 +52,7 @@ consolidate-tables = "kumosql.consolidate:main"
 kumosql-equivalence = "kumosql.pipeline_equivalence:equivalence_main"
 kumosql-refactor = "kumosql.refactor:main"
 minimize-tables = "kumosql.table_minimizer:main"
+reduce-project = "kumosql.project_reduction:main"
 
 [build-system]
 requires = ["setuptools>=68"]

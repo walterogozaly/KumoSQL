@@ -398,3 +398,68 @@ def test_tables_with_one_name_in_two_datasets_stay_apart():
     assert outputs(tables) == outputs(result.tables)
     swapped = {**tables, "r": "SELECT id FROM b.t"}
     assert table_minimizer.verify_tables(tables, swapped, ["r", "s"], sources=SOURCES)["r"].status == "unknown"
+
+
+SHARED = {
+    "rpt_a": "SELECT p.customer_id, SUM(p.amount) AS total FROM (SELECT o.customer_id, o.amount FROM orders AS o "
+    "JOIN customers AS c ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') AS p GROUP BY p.customer_id",
+    "rpt_b": "SELECT q.customer_id, COUNT(*) AS n FROM (SELECT o.customer_id, o.amount FROM orders AS o "
+    "JOIN customers AS c ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') AS q GROUP BY q.customer_id",
+    "rpt_c": "WITH paid_eu AS (SELECT o.customer_id, o.amount FROM orders AS o JOIN customers AS c "
+    "ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') SELECT MAX(amount) AS biggest FROM paid_eu",
+}
+
+
+def test_factoring_moves_a_repeated_query_into_one_new_table():
+    protected = ["rpt_a", "rpt_b", "rpt_c"]
+    plain = minimize_tables(SHARED, protected, sources=SOURCES)
+    assert plain.added == []
+    result = minimize_tables(SHARED, protected, sources=SOURCES, factor=True)
+    assert result.added == ["paid_eu"]  # named after the CTE it replaces
+    assert set(result.tables) == {*protected, "paid_eu"}
+    assert result.score < plain.score
+    assert all("JOIN" not in result.tables[name].upper() and "paid_eu" in result.tables[name] for name in protected)
+    assert {proof.status for proof in result.proofs.values()} == {"proved"}
+    assert result.to_json()["added"] == ["paid_eu"]
+    _assert_same(SHARED, result.tables, protected)
+
+
+def test_checked_tables_keep_their_rows_and_fixed_tables_their_sql():
+    tables = {
+        "stage": "SELECT id, customer_id, amount, status FROM orders WHERE status = 'paid'",
+        "report": "SELECT customer_id, SUM(amount) AS total FROM stage GROUP BY customer_id",
+    }
+    moved = {  # the filter moved downstream: the report is the same, the stage is not
+        "stage": "SELECT id, customer_id, amount, status FROM orders",
+        "report": "SELECT customer_id, SUM(amount) AS total FROM stage WHERE status = 'paid' GROUP BY customer_id",
+    }
+    verify = table_minimizer.verify_tables
+    assert set(verify(tables, moved, ["report"], sources=SOURCES)) == {"report"}
+    found = verify(tables, moved, ["report"], sources=SOURCES, checked=["stage"])
+    assert found["report"].status == "proved" and found["stage"].status == "unknown"
+    narrowed = {**tables, "stage": "SELECT id, customer_id, amount FROM orders WHERE status = 'paid'"}
+    assert verify(tables, narrowed, ["report"], sources=SOURCES, checked=["stage"])["stage"].status == "proved"
+    # a fixed table is read as given: a candidate that changes it proves nothing
+    found = verify(tables, moved, ["report"], sources=SOURCES, fixed={"stage": ["id", "customer_id", "amount", "status"]})
+    assert found["report"].status == "unknown"
+
+    shared = {
+        "stage": "SELECT id, customer_id, CASE WHEN amount > 10 THEN 'big' WHEN amount > 0 THEN 'small' ELSE 'none' END AS size, "
+        "CASE WHEN status = 'open' THEN 1 ELSE 0 END AS is_open FROM orders WHERE status <> 'void' AND amount IS NOT NULL",
+        "a": "SELECT customer_id, size FROM stage WHERE id > 3",
+        "b": "SELECT size, COUNT(*) AS n FROM stage GROUP BY size",
+        "c": "SELECT id FROM stage WHERE size = 'big'",
+    }
+    pruned = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, checked=["stage"])
+    assert pruned.moves == ["prune unused columns of stage"] and "is_open" not in pruned.tables["stage"]
+    kept = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, checked=["stage"], keep_columns={"stage": ["is_open"]})
+    assert kept.tables == shared  # a column its assertions name is never pruned
+    fixed = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, fixed={"stage": None})
+    assert fixed.tables["stage"] == shared["stage"]
+    _assert_same(shared, pruned.tables, ["a", "b", "c"])
+
+
+def test_lower_score_only_skips_rewrites_that_do_not_lower_the_score():
+    tables = {"report": "SELECT customer_id AS c, SUM(amount) AS total FROM orders GROUP BY customer_id"}
+    result = minimize_tables(tables, ["report"], sources=SOURCES, lower_score_only=True)
+    assert result.tables == tables and result.moves == []

@@ -14,6 +14,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Cost, change reports and the BigQuery dry run](cost-and-change-reports.md) | Dry-run checks, cost attribution, change reports and refactoring proposals |
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |
 | [Table minimization](table-minimization.md) | The lowest-complexity set of tables that keeps every protected table proved unchanged |
+| [Project reduction](project-reduction.md) | The smallest Dataform project that still produces the outputs you keep, as a proved patch on the `.sqlx` files |
 | [Output properties](output-properties.md) | Never-NULL columns, unique keys and row bounds, inferred without running a query |
 | [Constraint-dependent rewrites](constraint-rewrites.md) | Rewrites that hold only under declared NOT NULL columns, keys and foreign keys |
 | [Incremental models](incremental.md) | Whether an incremental run equals a full refresh |
