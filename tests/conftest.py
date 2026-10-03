@@ -151,6 +151,7 @@ HEAVY_FILES = [
 # ``pytest -m eval`` runs just the floors and ``pytest -m "not eval"`` everything else.
 EVAL_FILES = {
     "test_cost_validity_bench.py",
+    "test_keyed_set_join.py",
     "test_engine_suites.py",
     "test_bq_behavior_eval.py",
     "test_bq_corpus_bench.py",

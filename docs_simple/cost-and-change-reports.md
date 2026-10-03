@@ -29,6 +29,12 @@ The Cost page can show repeated work from a loaded project. Add job history to a
 
 Some jobs cannot be attributed. They stay in an `unattributed` bucket with a reason, so the totals still account for them. Measured usage and estimates remain separate.
 
+Job history can come as a flat export (one row per job) or as BigQuery API job resources, where the numbers sit inside `statistics`. Both are read. If a job has no recorded billed bytes, it is not counted as free: it is left out of the totals and the number of such jobs is reported as `unmeasured`, so a small total is not mistaken for a cheap one. A job that did really bill zero bytes still counts as zero.
+
+Example: a job resource that reports one TiB billed adds one TiB. A resource with no `statistics` section adds nothing and shows up in the `unmeasured` count.
+
+When you give a price per TiB, the result repeats the price, currency, billing model and region you supplied, and says what an invoice includes that this number does not (BI Engine and reservation charges, storage, discounts, credits, taxes, jobs outside the history). It is billed bytes times your rate, nothing more. The [full reference](../docs/cost-and-change-reports.md) has the field names; it does not record how closely any figure matches a real invoice.
+
 A repeated query is an opportunity to investigate. Sharing it can have storage or refresh costs, and it might not reduce the jobs that actually run. Inspect the proposal's validation and cost rationale.
 
 ## Compare two project versions

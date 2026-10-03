@@ -214,12 +214,11 @@ def test_cli_lists_groups_and_writes_the_patch(tmp_path, capsys):
 
 @pytest.fixture
 def ui_server():
-    from http.server import ThreadingHTTPServer
     from threading import Thread
 
-    from kumosql.ui import UIHandler
+    from kumosql.ui import UIHandler, UIServer
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    server = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
@@ -233,7 +232,8 @@ def ui_server():
 def test_page_lists_groups_and_returns_the_checked_patch(ui_server, monkeypatch):
     import json
     from urllib.error import HTTPError
-    from urllib.request import Request, urlopen
+    from urllib.request import Request
+    from ui_http import urlopen
 
     from kumosql import live_graph
 
