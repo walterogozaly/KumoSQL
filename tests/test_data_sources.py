@@ -70,7 +70,7 @@ def test_an_edited_query_is_run_again_and_a_failed_run_keeps_the_old_rows(billin
     source = make()
     data_sources.populate(source)
     edited = make(query="SELECT * FROM p.d.OTHER")
-    assert data_sources.peek(edited).stale
+    assert data_sources.peek(edited) is None
     data_sources.populate(edited)
     assert len(billing) == 2
 

@@ -130,14 +130,18 @@ class Executor:
         return self.connections[name]
 
     def run(self, database: str, sql: str) -> dict:
-        """Execute once: ``{"ok", "rows", "ms"}`` or ``{"ok": False, "error"}``."""
+        """Execute once: ``{"ok", "rows", "ms", "schema"}`` or ``{"ok": False, "error"}``.
+
+        ``schema`` lists ``[output column name, PostgreSQL type OID]`` in column order.
+        """
 
         conn = self._connection(database)
         try:
             start = time.perf_counter()
             cur = conn.execute(sql.strip().rstrip(";"))
             rows = cur.fetchall() if cur.description else []
-            return {"ok": True, "rows": rows, "ms": (time.perf_counter() - start) * 1000}
+            schema = [[column.name, column.type_code] for column in cur.description or ()]
+            return {"ok": True, "rows": rows, "ms": (time.perf_counter() - start) * 1000, "schema": schema}
         except Exception as error:  # noqa: BLE001 - every database error is a result
             return {"ok": False, "error": f"{type(error).__name__}: {str(error).strip()[:300]}"}
 
@@ -161,14 +165,26 @@ class Executor:
         return {
             "benchmark_rows": first_b["rows"],
             "rewrite_rows": first_r["rows"],
+            "benchmark_schema": first_b["schema"],
+            "rewrite_schema": first_r["schema"],
             "benchmark_ms": statistics.median(tb),
             "rewrite_ms": statistics.median(tr),
         }
 
 
+FLOAT_PLACES = 9
+
+
 def _norm(value):
+    """The value as compared: floats rounded to ``FLOAT_PLACES`` (9) decimal places, everything else as is.
+
+    The tolerance is absolute, not relative. Two floats that differ by less than about 5e-10 can
+    compare equal, and above about 4e6 (where neighbouring doubles are more than 1e-9 apart) the
+    comparison is in effect exact. Decimals and dates arrive as text (``_jsonable``) and compare exactly.
+    """
+
     if isinstance(value, float):
-        return round(value, 9)
+        return round(value, FLOAT_PLACES)
     return value
 
 

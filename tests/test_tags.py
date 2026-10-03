@@ -168,7 +168,7 @@ def test_preview_does_not_save():
 @pytest.fixture
 def server():
     httpd = UIServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_port}"

@@ -16,5 +16,6 @@
     "unknown": 3,
     "unsupported": 26
   },
+  "coverage_of": "All 86 Cosette .cos files: the 60 scored pairs (proven, refuted, unknown) plus the 26 that do not convert to SQL (unsupported).",
   "held_out": "none"
 }
