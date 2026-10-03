@@ -11,8 +11,10 @@ by row is expensive, so this module generates BigQuery SQL in three tiers:
   so a refactor that only reorders columns still matches.
 * comparison: the fingerprints of both sides joined into one row per
   ``(model, column)`` with a ``matches`` flag. A mismatching column localises
-  the difference; a whole-row mismatch with every column matching means
-  values moved between rows.
+  the difference; a whole-row mismatch with every column matching usually
+  means values moved between rows, though the checksums cannot say why.
+  A column or model that exists on one side only is fingerprinted on that
+  side, so the summary reports it rather than a match.
 * drill-down: for one table, the rows whose multiplicity differs between the
   sides, or with key columns, each key that is missing, duplicated or changed
   together with the names of the columns that changed.
@@ -24,7 +26,8 @@ few rows per model. Nothing here runs a query; results are handed back to
 
 Checksums are probabilistic in principle (64-bit hashes) but a false match
 needs a hash collision that cancels in a sum, which is negligible in
-practice. Differences of representation are differences: ``1`` versus
+practice. A match is therefore strong evidence that the compared columns
+hold the same rows, not a proof. Differences of representation are differences: ``1`` versus
 ``1.0`` after a type change, or a nested ``STRUCT`` whose field order
 changed. Use ``normalize`` for expected noise such as float rounding, and
 ``ignore_columns`` for load timestamps.
@@ -100,6 +103,9 @@ class ComparisonPlan:
     normalize: dict[str, str] = field(default_factory=dict)
     where: dict[str, str] = field(default_factory=dict)
     diagnostics: list[ComparisonDiagnostic] = field(default_factory=list)
+    # Models in one pipeline only; the missing side's table is "". Each is fingerprinted on its
+    # own side so the comparison reports it as missing instead of leaving it out.
+    unmatched: list[TableComparison] = field(default_factory=list)
 
     def table(self, model: str) -> TableComparison:
         for table in self.tables:
@@ -131,8 +137,10 @@ class ComparisonPlan:
                 table.columns,
                 where=self.where.get(table.model),
                 normalize=self.normalize,
+                extra=table.only_before if side == "before" else table.only_after,
             )
-            for table in self.tables
+            for table in self.tables + self.unmatched
+            if (table.before_table if side == "before" else table.after_table)
         ]
         return _union(parts)
 
@@ -163,7 +171,7 @@ class ModelDiff:
     """The outcome of comparing one model's fingerprints."""
 
     model: str
-    status: str  # "match", "mismatch", "missing_before" or "missing_after"
+    status: str  # "match", "mismatch", "missing_before", "missing_after" or "incomplete"
     before_rows: int | None
     after_rows: int | None
     mismatched_columns: tuple[str, ...] = ()
@@ -219,12 +227,16 @@ def plan_output_comparison(
             diagnostics.append(ComparisonDiagnostic(key, "unknown_model", "no such model"))
 
     tables: list[TableComparison] = []
+    unmatched: list[TableComparison] = []
     for key in before_keys:
         if selected is not None and key not in selected:
             continue
         if key not in after_keys:
             diagnostics.append(
                 ComparisonDiagnostic(key, "missing_after", "model is not in the refactored pipeline")
+            )
+            unmatched.append(
+                _one_sided(key, _locate(before_location, before.models[key].target), "", before, ignored)
             )
             continue
         target = before.models[key].target
@@ -240,13 +252,23 @@ def plan_output_comparison(
             diagnostics.append(
                 ComparisonDiagnostic(key, "missing_before", "model is new in the refactored pipeline")
             )
+            unmatched.append(
+                _one_sided(key, "", _locate(after_location, after.models[key].target), after, ignored)
+            )
 
     return ComparisonPlan(
         tables,
         {name.lower(): template for name, template in (normalize or {}).items()},
         dict(where or {}),
         diagnostics,
+        unmatched,
     )
+
+
+def _one_sided(key: str, before_table: str, after_table: str, pipeline: Pipeline, ignored: set[str]) -> TableComparison:
+    columns = pipeline.output_columns(key)
+    kept = tuple(c for c in columns if c.lower() not in ignored) if _known(columns) else None
+    return TableComparison(key, before_table, after_table, kept)
 
 
 def _compared(pipeline: Pipeline, key: str) -> bool:
@@ -286,8 +308,8 @@ def _table_comparison(
         for column in before_columns
         if column.lower() in after_lower and column.lower() not in ignored
     )
-    only_before = tuple(c for c in before_columns if c.lower() not in after_lower)
-    only_after = tuple(c for c in after_columns if c.lower() not in before_lower)
+    only_before = tuple(c for c in before_columns if c.lower() not in after_lower and c.lower() not in ignored)
+    only_after = tuple(c for c in after_columns if c.lower() not in before_lower and c.lower() not in ignored)
     if only_before or only_after:
         diagnostics.append(
             ComparisonDiagnostic(
@@ -478,9 +500,12 @@ def _fingerprint_select(
     *,
     where: str | None,
     normalize: Mapping[str, str],
+    extra: Sequence[str] = (),
 ) -> str:
+    # ``extra`` columns exist on this side only: they get a checksum row (which then has no
+    # partner on the other side) but stay out of the whole-row checksum.
     entries = [(ROW, _row_json(columns, normalize))]
-    entries.extend((column, _value_json(column, normalize)) for column in columns or ())
+    entries.extend((column, _value_json(column, normalize)) for column in (*(columns or ()), *extra))
     aggregates = "".join(
         f",\n    {_checksum(expression)} AS c{i}" for i, (_, expression) in enumerate(entries)
     )
@@ -583,30 +608,39 @@ def summarize_comparison(rows: Iterable[Mapping]) -> list[ModelDiff]:
     results: list[ModelDiff] = []
     for model, model_rows in sorted(by_model.items()):
         whole = next((row for row in model_rows if row["column_name"] == ROW), None)
-        before_rows = _int(whole["before_rows"]) if whole else None
-        after_rows = _int(whole["after_rows"]) if whole else None
-        if whole is not None and whole["before_checksum"] is None:
+        if whole is None:
+            results.append(
+                ModelDiff(model, "incomplete", None, None, note="the results hold no whole-row checksum")
+            )
+            continue
+        before_rows = _int(whole["before_rows"])
+        after_rows = _int(whole["after_rows"])
+        if whole["before_checksum"] is None:
             results.append(ModelDiff(model, "missing_before", None, after_rows))
             continue
-        if whole is not None and whole["after_checksum"] is None:
+        if whole["after_checksum"] is None:
             results.append(ModelDiff(model, "missing_after", before_rows, None))
             continue
-        mismatched = tuple(
-            str(row["column_name"])
-            for row in model_rows
-            if row["column_name"] != ROW and not _truthy(row["matches"])
-        )
-        row_matches = whole is not None and _truthy(whole["matches"])
-        if row_matches and not mismatched:
+        columns = [row for row in model_rows if row["column_name"] != ROW]
+        mismatched = tuple(str(row["column_name"]) for row in columns if not _truthy(row["matches"]))
+        only_before = [str(row["column_name"]) for row in columns if row["after_checksum"] is None]
+        only_after = [str(row["column_name"]) for row in columns if row["before_checksum"] is None]
+        if _truthy(whole["matches"]) and not mismatched:
             results.append(ModelDiff(model, "match", before_rows, after_rows))
             continue
+        notes = []
+        if only_before:
+            notes.append("columns only before: " + ", ".join(only_before))
+        if only_after:
+            notes.append("columns only after: " + ", ".join(only_after))
+        changed = [c for c in mismatched if c not in only_before and c not in only_after]
         if before_rows != after_rows:
-            note = f"row count {before_rows} before, {after_rows} after"
-        elif mismatched:
-            note = "values differ in " + ", ".join(mismatched)
-        else:
-            note = "every column matches but whole rows do not: values moved between rows"
-        results.append(ModelDiff(model, "mismatch", before_rows, after_rows, mismatched, note))
+            notes.append(f"row count {before_rows} before, {after_rows} after")
+        elif changed:
+            notes.append("values differ in " + ", ".join(changed))
+        elif not _truthy(whole["matches"]):
+            notes.append("whole-row checksums differ but every column checksum matches: values may have moved between rows")
+        results.append(ModelDiff(model, "mismatch", before_rows, after_rows, mismatched, "; ".join(notes)))
     return results
 
 

@@ -21,7 +21,7 @@ The login command needs the Google Cloud SDK. These Application Default Credenti
 python -m kumosql dry-run original.sql --rewritten rewritten.sql --project my-project
 ```
 
-Replace the project name. The check compares the output schemas as well as planning both statements. Equal schemas do not establish equal values. Fewer estimated bytes are a planning signal, not measured savings.
+Replace the project name. The check compares the output schemas as well as planning both statements. Equal schemas do not establish equal values. If BigQuery's answer carries no output schema, the report says the schemas were not compared (`not_run`, `schema_matches=unknown`) instead of calling them a match. Fewer estimated bytes are a planning signal, not measured savings.
 
 ## Read cost with its source
 

@@ -43,13 +43,13 @@ Limits: it needs to know each table's columns, which come from the loaded projec
 
 | Label | What to do with it |
 | --- | --- |
-| `unchanged` | No change was made |
+| `unchanged` | The text is identical to the input; a rule may have skipped it, and its step says why |
 | `proven` | Equivalence was established; read any assumptions |
 | `planner_checked` | BigQuery could plan the query, but equal results were not proved |
 | `unproven` | Review it; the checker could not establish equivalence |
 | `failed` | The rewrite failed; its output is not accepted |
 
-Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Fatal rule failures exit 2 without writing the result.
+Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL. Fatal rule failures exit 2 without writing the result.
 
 ## Rule order matters
 
