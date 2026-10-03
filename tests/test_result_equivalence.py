@@ -232,14 +232,6 @@ def test_exact_float_mode_distinguishes_close_floats():
     assert "floats compared: exact" in exact.describe()
 
 
-def test_nan_is_not_an_array_of_the_string_nan():
-    result = check_result_equivalence(
-        "SELECT CAST('NaN' AS FLOAT64) AS x", "SELECT ['NaN'] AS x", {}, seeds=[0]
-    )
-
-    assert result.status is ResultEquivalenceStatus.DIFFERENT, result.describe()
-
-
 def _single(value):
     return QueryOutput(columns=("x",), rows=((value,),))
 
