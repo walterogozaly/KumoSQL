@@ -428,6 +428,7 @@ python tools/run_tests.py --evals     # only the benchmark floors (tests marked 
 python tools/run_tests.py --no-evals  # everything except the floors
 python tools/run_tests.py --quick      # skip the slow tier (a few minutes)
 python tools/test_history.py report   # which tests break most often (see docs/test-history.md)
+python tools/test_history.py trend    # wall and CPU time of runs and files over time
 python -m pytest                      # plain serial run
 ```
 
