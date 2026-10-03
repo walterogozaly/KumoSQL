@@ -40,6 +40,8 @@ python -m kumosql ci-check report.json --comment-out comment.md
 
 The first command compares the two project folders. It reports changed models, evidence, downstream consumers, and existing work that may be reused. The second turns the report into a CI conclusion and a Markdown comment file; writing that file does not post it to GitHub.
 
+A model is also reported as changed when only its surroundings changed, even with identical query text: a new statement that runs before or after the query (for example a `DELETE`), a table that became a view, an added dependency, or a changed not-null or unique-key assertion. Those changes are shown as unproven, so the CI conclusion is never success for them. For example, a model whose query stays `SELECT x FROM src` but gains `DELETE ... WHERE x = 1` afterwards now appears in the report. Details are in the [full reference](../docs/cost-and-change-reports.md).
+
 In the app, Change reports can compare the connected git project with another branch.
 
 Read a proposal's proof, consumer coverage, assumptions, and readiness together. An incomplete consumer list or unknown cost rationale is still incomplete, even when part of the SQL has a proof. The [UI roadmap](ui-roadmap.md) explains the API payloads behind the views.
