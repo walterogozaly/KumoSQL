@@ -174,8 +174,9 @@ class UIHandler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route == "/api" or route.startswith("/api/"):
             tokens = self.headers.get_all(SESSION_HEADER, [])
-            if len(tokens) != 1 or not secrets.compare_digest(
-                tokens[0].encode("utf-8"), self.server.session_token.encode("ascii")
+            expected = getattr(self.server, "session_token", None)  # a plain server has none: fail closed
+            if expected is None or len(tokens) != 1 or not secrets.compare_digest(
+                tokens[0].encode("utf-8"), expected.encode("ascii")
             ):
                 self._json(403, {"error": "reload the UI page for the current session"})
                 return False
@@ -195,8 +196,9 @@ class UIHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-            "img-src 'self'; base-uri 'none'; form-action 'none'",
+            "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         )
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
