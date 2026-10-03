@@ -3239,7 +3239,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
         inner = _flatten_projections(inner.copy()) or inner  # read through projection-only derived tables
     if not alias or not isinstance(inner, exp.Select) or inner.args.get("joins") or not isinstance(inner.args.get("from_") or inner.args.get("from"), exp.From):
         return False
-    constant_distinct = bool(inner.args.get("distinct")) and all(isinstance(e.this if isinstance(e, exp.Alias) else e, (exp.Literal, exp.Boolean)) for e in inner.expressions)
+    constant_distinct = plain_distinct(inner) and all(isinstance(e.this if isinstance(e, exp.Alias) else e, (exp.Literal, exp.Boolean)) for e in inner.expressions)
     if any(inner.args.get(k) for k in ("having", "limit", "offset", "qualify", "order", "with_", "with")) or (inner.args.get("distinct") and not constant_distinct) or any(inner.find_all(exp.Window, exp.Subquery, exp.AggFunc)):
         return False
     table = (inner.args.get("from_") or inner.args.get("from")).this
@@ -3256,7 +3256,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     group = inner.args.get("group")
     group_columns = set() if constant_distinct and group is None else None
     if group is not None:
-        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if extended_grouping(group):
             return False
         group_columns = set()
         for e in group.expressions:
