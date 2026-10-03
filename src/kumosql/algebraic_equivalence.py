@@ -653,6 +653,17 @@ def _fold_dates(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+def _plain_union(node: exp.Expression) -> bool:
+    """A bare ``UNION [ALL]`` of its two operands: no LIMIT or OFFSET over the whole union, no ``BY NAME``,
+    side, CTE or other clause. Only then is it the sum (or set) of its operands' rows; an ORDER BY alone
+    keeps every row."""
+
+    if type(node) is not exp.Union:
+        return False
+    extra = {key for key, value in node.args.items() if value and key not in ("this", "expression", "distinct")}
+    return not extra or extra == {"order"}
+
+
 def _union_all_branches(node: exp.Expression) -> list[exp.Select] | None:
     """The SELECTs of a (nested) UNION ALL, or ``None`` for any other shape."""
 
@@ -1258,8 +1269,8 @@ def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
     if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Union) or source.this.args.get("distinct"):
         return None
     union = source.this
-    if not isinstance(union, exp.Union) or isinstance(union, (exp.Intersect, exp.Except)) or type(union) is not exp.Union:
-        return None
+    if not _plain_union(union):
+        return None  # the rewrite keeps only the operands, so a LIMIT over the whole union would be lost
     names = _select_names(union)
     wanted = [e.name.lower() for e in select.expressions if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)]
     if names is None or wanted != names or len(wanted) != len(select.expressions):
@@ -4401,19 +4412,20 @@ def _in_over_union(tree: exp.Expression) -> exp.Expression:
     """``x IN (SELECT a FROM p UNION ALL SELECT b FROM q)`` is ``x IN (SELECT a FROM p) OR x IN (SELECT b FROM q)``.
 
     A match in either branch is a match in the union and an unknown stays unknown, so the three-valued
-    result agrees (and so does ``NOT IN`` as the negation).
+    result agrees (and so does ``NOT IN`` as the negation). Every union in the tree must be bare: a
+    ``LIMIT`` over the whole union (or ``BY NAME``) changes which rows it has, and the split would lose it.
     """
 
     def step(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.In) or node.args.get("expressions") or node.args.get("unnest"):
             return node
         query = node.args.get("query")
-        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union:
+        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union or any(v for k, v in query.args.items() if k != "this"):
             return node
         branches, stack = [], [query.this]
         while stack:
             part = stack.pop()
-            if type(part) is exp.Union:
+            if _plain_union(part):
                 stack.extend([part.expression, part.this])
             elif isinstance(part, exp.Select):
                 branches.append(part)
