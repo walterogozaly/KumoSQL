@@ -275,6 +275,10 @@ def assess_change(
             if not refs:
                 if name in a.template_reads.get(reader, ()):
                     unknown.setdefault(reader, "template_columns")  # a template expression may read it
+                elif name in a.script_reads.get(reader, {}):
+                    words = a.script_reads[reader][name]
+                    if words is None or wanted & words:
+                        unknown.setdefault(reader, "script_columns")  # another statement of the script may read it
                 continue
             feeds = {c for r in refs for c in children(name, r.column) if c.table == reader}
             if kind == "change_expression":
