@@ -420,11 +420,14 @@ def prove_frozen_dimensions(
 def prove_more(
     model: IncrementalModel, sources: dict[str, SourceTable], kinds: frozenset[str], tables: tuple[str, ...] | None = None
 ) -> Verdict | None:
-    """Try R3 to R6 in turn; ``None`` when none applies."""
+    """Try R3 to R7 in turn; ``None`` when none applies."""
+
+    from .incremental_merge import prove_full_rerun_merge
 
     return (
         prove_key_dedup(model, sources, kinds)
         or prove_truncated_watermark(model, sources, kinds)
         or prove_group_reaggregation(model, sources, kinds)
         or prove_frozen_dimensions(model, sources, kinds, tables)
+        or prove_full_rerun_merge(model, sources, kinds, tables)
     )
