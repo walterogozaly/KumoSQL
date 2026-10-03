@@ -80,13 +80,14 @@ def result():
 def test_openlineage_independent_oracle_floor(result):
     t = result["openlineage"]["in"]
     assert t["wrong"] == 0 and t["missed"] == 0, [r for r in result["rows"] if r["corpus"] == "openlineage" and r["scope"] == "in" and r["outcome"] in {"wrong", "missed"}]
-    assert t["total"] == 94 and t["exact"] >= 83 and t["disputed"] == len(bench.DISPUTED) == 4
+    # sqlglot 26 rejects two original forms that 30 accepts; their fixtures remain unchanged and left out.
+    assert t["total"] in {92, 94} and t["exact"] == t["total"] - 4 and t["disputed"] == len(bench.DISPUTED) == 4
 
 
 def test_datahub_goldens_floor(result):
     t = result["datahub"]["in"]
     assert t["wrong"] == 0 and t["missed"] == 0, [r for r in result["rows"] if r["corpus"] == "datahub" and r["scope"] == "in" and r["outcome"] in {"wrong", "missed"}]
-    assert t["total"] == 18 and t["exact"] >= 13 and t["exact"] + t["coarse"] >= 15
+    assert t["total"] == 18 and t["exact"] >= 15 and t["exact"] + t["coarse"] == 18
 
 
 def test_every_disputed_case_really_disagrees_with_the_oracle(result):
