@@ -33,7 +33,7 @@ from .layout_equivalence import created_function_calls, layout_only_change, touc
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
-from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment, unknown_string_constants
+from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
 
 # Import built-in rules so they are registered.
@@ -224,6 +224,13 @@ def _verify_sql(
     independent: tuple[str, str, int, list[StepCheck]] | None = None,
 ) -> tuple[bool, list[str]]:
     if layout_only_change(before, after):
+        if before != after and any(sentinel in before or sentinel in after for sentinel in dynamic):
+            # Layout in the template is not layout in the compiled SQL: an expansion can end in a line
+            # comment, so moving a newline next to it changes which tokens the comment swallows.
+            return False, [
+                "the layout changed in a statement holding a Dataform expression other than ref() or self(), "
+                "whose expansion can be a comment; compile the SQLX to prove a change to this statement"
+            ]
         # Only whitespace and the case of reserved words and built-in calls changed: proven for any
         # statement, including ones sqlglot cannot parse or keeps as an opaque command.
         return True, []
@@ -352,10 +359,9 @@ def _verify_sqlx(
         if old == new or (not old.strip() and not new.strip()):
             continue
         try:
-            # A masked expression inside a string makes the literal an unknown value, not a fixed string.
             ok, section_problems = _verify_sql(
-                unknown_string_constants(mask_sqlx_by_content(old)),
-                unknown_string_constants(mask_sqlx_by_content(new)),
+                mask_sqlx_by_content(old),
+                mask_sqlx_by_content(new),
                 smt_checks,
                 smt_timeout_ms,
                 dynamic_sentinels(old) | dynamic_sentinels(new),

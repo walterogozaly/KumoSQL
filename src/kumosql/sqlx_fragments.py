@@ -9,12 +9,9 @@ expand to any SQL: several operators, a whole clause, nothing at all, or a refer
 masked text never mentions. A changed statement holding one cannot be proven from the masked text,
 so the verifier asks for the compiled SQL instead (see ``rewrite._verify_sqlx``).
 
-An expression inside a string literal (``WHERE d = '${constants.START}'``) only adds text to that
-literal, so it is not counted here; the verifier blanks string literals before looking. The literal's
-value is still unknown: masked, ``'__sqlx_...__'`` would read as one fixed string that differs from every
-other literal, so ``status = '${vars.paid}' AND status = 'paid'`` would look contradictory. The verifier
-turns such a literal into an unknown constant first (``unknown_string_constants``), and every prover
-refuses text that still holds one (``masked_template_problem``), as it refuses the loader's positional
+An expression inside a string literal (``WHERE d = '${constants.START}'``) is dynamic too: it can close the
+quote and add operators (``x' = 'x' OR 'x``), so the same rule applies to it. Every prover also refuses text
+that still holds a masked string literal (``masked_template_problem``), as it refuses the loader's positional
 ``__sqlx_token_N__`` names, which stand for different expressions in different models.
 """
 
@@ -79,19 +76,15 @@ def dynamic_sentinels(sql: str) -> frozenset[str]:
 
 
 def holds_dynamic_fragment(statement: exp.Expression, sentinels: frozenset[str]) -> bool:
-    """Whether a masked statement uses one of ``sentinels`` outside a string literal (comments included)."""
+    """Whether a masked statement uses one of ``sentinels`` anywhere: in code, a comment or a string literal.
+
+    A string literal is no refuge: ``'${constants.P}'`` compiled with ``x' = 'x' OR 'x`` closes the quote and
+    adds an operator, so a parenthesis or an ``AND`` next to the literal can change meaning.
+    """
 
     if not sentinels:
         return False
-    text_nodes = tuple(
-        node_type for node_type in (getattr(exp, name, None) for name in ("RawString", "ByteString", "National"))
-        if node_type is not None
-    )
-    blanked = statement.copy()
-    for node in list(blanked.walk()):
-        if (isinstance(node, exp.Literal) and node.is_string) or isinstance(node, text_nodes):
-            node.set("this", "")
-    rendered = blanked.sql(dialect="bigquery")
+    rendered = statement.sql(dialect="bigquery")
     return any(sentinel in rendered for sentinel in sentinels)
 
 
@@ -138,26 +131,6 @@ def masked_template_problem(*sqls: str, dialect: str = "bigquery") -> str | None
     return None
 
 
-def unknown_string_constants(sql: str, dialect: str = "bigquery") -> str:
-    """``sql`` with every string literal that holds a masked expression replaced by an unknown constant.
-
-    The constant is a call with no arguments, named after the literal's text: the same literal on both
-    sides of a proof is the same value, and no prover can compare it with another literal. Text the
-    tokenizer cannot read comes back unchanged, and the provers then refuse it.
-    """
-
-    if "__sqlx_" not in sql:
-        return sql
-    try:
-        found = _masked_strings(sql, dialect)
-    except Exception:  # noqa: BLE001
-        return sql
-    for start, end, text in reversed(found):
-        name = f"__sqlx_value_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}__()"
-        sql = sql[:start] + name + sql[end + 1 :]
-    return sql
-
-
 __all__ = [
     "LOADER_TOKEN_REASON",
     "STRING_REASON",
@@ -165,5 +138,4 @@ __all__ = [
     "holds_dynamic_fragment",
     "is_relation_reference",
     "masked_template_problem",
-    "unknown_string_constants",
 ]

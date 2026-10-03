@@ -14,7 +14,7 @@ from sqlglot import exp
 
 from kumosql import apply_rule, apply_rules, prove_equivalent
 from kumosql import cleanup, equivalence, proof_steps
-from kumosql.engine import RewriteRule, RuleOutput
+from kumosql.engine import RewriteRule, RuleOutput, get_rule
 from kumosql.proof_steps import PREDICATE_FAMILY, RewriteStep, check_predicate_step
 from kumosql.rewrite import INDEPENDENT_CHECK, VerificationStatus
 from kumosql.sqlx_fragments import is_relation_reference
@@ -297,8 +297,14 @@ def test_ui_exposes_the_independent_check():
     # A JavaScript constant inside a table name, and a ref() the expression goes on past.
     ("remove_trivial_predicates", 'SELECT x FROM ${sp.schema}.events${sp.suffix} WHERE TRUE AND y = 1'),
     ("remove_trivial_predicates", 'SELECT x FROM ${ref("t") + suffix} WHERE TRUE AND y = 1'),
+    # An expression inside a string can close the quote: with x' = 'x' OR 'x it adds an operator.
+    ("remove_trivial_predicates", "SELECT x FROM ${ref('s', 't')} WHERE d = '${constants.START}' AND TRUE"),
+    ("remove_redundant_parentheses", "SELECT n FROM t WHERE ('${constants.P}' = 'ok') AND b"),
 ])
-def test_a_changed_statement_with_a_dynamic_sqlx_expression_is_unproven(rule, source):
+def test_a_changed_statement_with_a_dynamic_sqlx_expression_is_unproven(monkeypatch, rule, source):
+    # The rule itself now leaves such statements alone (keep_sqlx_expressions); turn that off so the verifier is
+    # what refuses, as it must for a rule or an override that does not.
+    monkeypatch.setattr(get_rule(rule), "keep_sqlx_expressions", False)
     result = apply_rule(rule, source)
     assert result.changes
     assert not result.success
@@ -307,14 +313,14 @@ def test_a_changed_statement_with_a_dynamic_sqlx_expression_is_unproven(rule, so
 
 @pytest.mark.parametrize("rule,source", [
     ("remove_trivial_predicates", 'SELECT x FROM ${ref("t")} WHERE TRUE AND y = 1'),
-    ("remove_trivial_predicates", "SELECT x FROM ${ref('s', 't')} WHERE d = '${constants.START}' AND TRUE"),
     ("remove_trivial_predicates", 'SELECT x FROM ${self()} WHERE TRUE AND y = 1'),
     ("inline_single_use_ctes", 'WITH c AS (SELECT * FROM ${resolve("t")}) SELECT * FROM c'),
     ("remove_trivial_predicates", 'SELECT x FROM ${ref({schema: dataform.projectConfig.vars.S, name: "t"})} WHERE TRUE AND y = 1'),
     # The dynamic expression is in a statement the rule left alone.
     ("remove_trivial_predicates", 'SELECT x FROM t WHERE TRUE AND y = 1;\nSELECT ${when(incremental(), "z")} FROM u'),
 ])
-def test_relation_references_and_string_contents_stay_provable(rule, source):
+def test_relation_references_and_other_statements_stay_provable(monkeypatch, rule, source):
+    monkeypatch.setattr(get_rule(rule), "keep_sqlx_expressions", False)
     result = apply_rule(rule, source)
     assert result.changes
     assert result.success, result.verification

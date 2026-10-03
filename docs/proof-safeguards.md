@@ -27,7 +27,15 @@ Tests corrupt the rule and the prover's normalizer the same way (`tests/test_pro
 
 ## Dataform expressions
 
-To prove a SQLX rewrite, each `${...}` is masked with a name derived from its text. That is faithful only for an expression that expands to one relation name: `self()`, or a single `ref(...)` or `resolve(...)` call with any arguments (`${ref({schema: vars.S, name: "t"})}` too), as long as the call ends the expression and its arguments hold no template literal, comment, `/` or backslash. Any other expression, such as `${when(incremental(), "AND ts > ...")}`, `${"x OR y"}`, `${ref("t") + " OR x"}` or a JavaScript constant, can expand to several operators, a whole clause, nothing at all, or a reference to a CTE the masked text never mentions. So a changed statement that holds one outside a string literal is `unproven`, and the reason says to compile the SQLX first. Statements the rewrite left alone are unaffected. An expression inside a string literal (`'${constants.START}'`) is read as part of the literal's text (`sqlx_fragments.py`).
+To prove a SQLX rewrite, each `${...}` is masked with a name derived from its text. That is faithful only for an expression that expands to one relation name: `self()`, or a single `ref(...)` or `resolve(...)` call with any arguments (`${ref({schema: vars.S, name: "t"})}` too), as long as the call ends the expression and its arguments hold no template literal, comment, `/` or backslash. Any other expression, such as `${when(incremental(), "AND ts > ...")}`, `${"x OR y"}`, `${ref("t") + " OR x"}` or a JavaScript constant, can expand to several operators, a whole clause, nothing at all, or a reference to a CTE the masked text never mentions. So a changed statement that holds one is `unproven`, and the reason says to compile the SQLX first. Statements the rewrite left alone are unaffected.
+
+Three cases are easy to miss, and all three are `unproven` too (`sqlx_fragments.py`, `rewrite._verify_sql`):
+
+- **An expression inside a string literal.** `'${constants.P}'` compiled with `x' = 'x' OR 'x` closes the quote and adds an operator, so removing the parentheses in `('${constants.P}' = 'ok') AND b` changes which rows match. The earlier design read such an expression as plain literal text and was wrong for this.
+- **A layout-only change.** Template layout is not compiled layout: an expansion can end in a line comment (`b --`), so moving the newline in `WHERE ${P}\n AND y` to `WHERE ${P} AND y` changes what the comment swallows. A layout-only change in text that holds a non-relation expression is refused. A layout-only change without one stays proven.
+- **The loader's masked names.** The loader masks an expression by position (`__sqlx_token_000__`), so two models with different expressions can load to the same text, and a masked string next to `'paid'` looks like a contradiction. Every prover entry point (`equivalence.prove_equivalent`, `smt_equivalence.prove_equivalent_smt`, `algebraic_equivalence.prove_equivalent_algebraic`, `sqlsolver_backend.prove_equivalent_sqlsolver`) refuses text that holds a positional token or a string literal holding a masked expression (`masked_template_problem`).
+
+The cleanup and CTE rules also leave such a statement as written (`keep_sqlx_expressions`), so the verifier is the second layer: it refuses a rule, override or pipeline that does not.
 
 Before this check, these rewrites were labeled `proven`:
 
@@ -67,7 +75,8 @@ The audit was written against an older checkout. Each finding was re-run on mast
 | `CURRENT_DATETIME()` and `SESSION_USER()` missing from the volatile node types (sqlglot parses them as `CurrentDatetime` and `SessionUser`, not by name) | Fixed: a change that moves, adds or drops one is now refused, as for `CURRENT_DATE()` |
 | A rule and the prover's normalizer share a folding bug | Guarded by the independent predicate check (above) |
 | A pipeline is trusted after an unproven step is undone, or by an end-to-end proof | Fixed for safeguarded rules: their unaccepted steps block the pipeline. For other rules, an end-to-end proof still covers a step the prover could not prove on its own, because it proves the output that is actually returned. |
-| A `${...}` expression is read as one name | Fixed (above) |
+| A `${...}` expression is read as one name | Fixed (above), including expressions inside string literals and layout-only changes next to one |
+| A masked string literal read as a fixed string (`status = "${vars.paid}" AND status = 'paid'` looks contradictory), and positional `__sqlx_token_N__` names that stand for different expressions in different models | Fixed: every prover entry point refuses them |
 | A step that fails mid-mutation is returned as if unchanged | Already fixed on master: the driver restores the statement it copied before the rule ran |
 | SQLX restoration reads backslashes in an expression as regex escapes | Reproduced; tracked as a separate fix |
 | SMT proves `SELECT * EXCEPT (b) FROM t` equal to `SELECT * FROM t` | Reproduced; tracked as a separate fix |
