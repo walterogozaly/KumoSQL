@@ -39,6 +39,7 @@ import sqlglot
 from sqlglot import exp
 
 from .algebraic_equivalence import prove_equivalent_algebraic
+from .sqlx_fragments import masked_template_problem
 from .smt_equivalence import (
     SmtEquivalenceResult,
     SmtStatus,
@@ -301,6 +302,9 @@ def prove_equivalent_sqlsolver(
     counterexample, so it is reported as ``NOT_PROVEN``.
     """
 
+    masked = masked_template_problem(left_sql, right_sql)
+    if masked:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
     if runtime is None:
         runtime, why = locate_runtime()
         if runtime is None:

@@ -398,3 +398,238 @@ def test_tables_with_one_name_in_two_datasets_stay_apart():
     assert outputs(tables) == outputs(result.tables)
     swapped = {**tables, "r": "SELECT id FROM b.t"}
     assert table_minimizer.verify_tables(tables, swapped, ["r", "s"], sources=SOURCES)["r"].status == "unknown"
+
+
+# ---- #538: a protected output must not change under a script, a name's case, a name clash or a nested WITH
+
+RAW = {"raw": {"x": "INT64"}}
+
+
+def _min(tables, protected, sources=None, **kw):
+    return minimize_tables(tables, protected, sources=sources or RAW, timeout_ms=1000, max_seconds=60, max_steps=15, **kw)
+
+
+def _execute(tables):
+    """Each table's rows after running ``tables`` in dependency order over ``raw(x) = (1)``, in DuckDB."""
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE raw (x BIGINT)")
+    con.execute("INSERT INTO raw VALUES (1)")
+    pending = dict(tables)
+    while pending:
+        progressed = False
+        for name, sql in list(pending.items()):
+            try:
+                con.execute(f"CREATE VIEW {name} AS {sqlglot.transpile(sql, read='bigquery', write='duckdb')[0]}")
+            except duckdb.CatalogException:
+                continue
+            del pending[name]
+            progressed = True
+        assert progressed, pending
+    return {name: sorted(con.execute(f"SELECT * FROM {name}").fetchall()) for name in tables}
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1 AS x; SELECT 2 AS x",
+    "SELECT 1 AS x; ",  # one statement and a stray semicolon is still one query
+])
+def test_single_query_counts_statements(sql):
+    from kumosql.minimizer_identity import single_query
+
+    assert (single_query(sql, "bigquery") is not None) == (sql.count(";") == 1 and sql.strip().endswith(";"))
+
+
+@pytest.mark.parametrize("name, tables", [
+    # a script's last result is not its first SELECT
+    ("last-result", {"stage": "SELECT x FROM raw", "out": "SELECT x FROM stage; SELECT x + 100 AS x FROM stage"}),
+    # a later statement's effect on a table is part of the script
+    ("effect", {"effect": "SELECT 0 AS x; DELETE FROM raw; SELECT 0 AS x", "out": "SELECT x FROM raw"}),
+    # a later statement's reads are dependencies
+    ("tail", {"tail": "SELECT x FROM raw", "out": "SELECT 0 AS x; SELECT x FROM tail"}),
+])
+def test_a_script_is_kept_whole_with_everything_it_mentions(name, tables):
+    result = _min(tables, ["out"])
+    assert result.tables == tables and not result.moves and not result.removed
+    assert result.proofs["out" if "out" in tables else name].status in {"unchanged"}
+
+
+def test_a_candidate_script_is_not_checked_as_its_first_select():
+    tables = {"stage": "SELECT x FROM raw", "out": "SELECT x FROM stage"}
+    candidate = {"stage": "SELECT x FROM raw", "out": "SELECT x FROM stage; SELECT x + 100 AS x FROM stage"}
+    assert table_minimizer.verify_tables(tables, candidate, ["out"], sources=RAW)["out"].status == "unknown"
+    candidate = {"stage": "SELECT x FROM raw; SELECT x + 100 AS x FROM raw", "out": "SELECT x FROM stage"}
+    assert table_minimizer.verify_tables(tables, candidate, ["out"], sources=RAW)["out"].status == "unknown"
+
+
+def test_a_protected_script_gets_a_result_instead_of_none():
+    tables = {"out": "SELECT 1 AS x; SELECT 2 AS x"}
+    assert _min(tables, ["out"]).proofs["out"].status == "unchanged"
+    assert table_minimizer.verify_tables(tables, {}, ["out"], sources=RAW)["out"].status == "unknown"
+    assert table_minimizer.verify_tables(tables, tables, ["out"], sources=RAW)["out"].status == "unchanged"
+    assert table_minimizer.verify_tables(tables, {"out": "SELECT 2 AS x"}, ["out"], sources=RAW)["out"].status == "unknown"
+
+
+@pytest.mark.parametrize("external", ["p.D.stage", "p.d.Stage"])
+def test_names_that_differ_only_by_case_are_different_tables(external):
+    tables = {"p.d.stage": "SELECT x FROM raw", "out": f"SELECT x FROM `{external}`"}
+    result = _min(tables, ["out"])
+    assert result.tables == tables and result.proofs["out"].status == "unchanged"
+    # a declared source of that name is not "both a source and a table" either
+    declared = _min(tables, ["out"], sources={**RAW, external: {"x": "INT64"}})
+    assert declared.tables == tables
+    # and a changed model is not credited to the reader of the other-case name
+    changed = {**tables, "p.d.stage": "SELECT 99 AS x"}
+    assert table_minimizer.verify_tables(tables, changed, ["out"], sources=RAW)["out"].status == "unknown"
+
+
+def test_a_case_clash_pins_what_it_touches_but_leaves_the_rest_to_the_search():
+    tables = {
+        "p.d.stage": "SELECT x FROM raw",
+        "out": "SELECT x FROM `p.D.stage`",
+        "a": "SELECT x FROM raw",
+        "b": "SELECT x + 1 AS y FROM a",
+    }
+    result = _min(tables, ["out", "b"])
+    assert result.tables["out"] == tables["out"] and "p.d.stage" in result.tables
+    assert "a" not in result.tables  # the unrelated chain is still folded, and proved
+    assert result.proofs["b"].status == "proved"
+
+
+def test_a_bare_name_cannot_be_overwritten_by_an_internal_one():
+    tables = {"t": "SELECT 1 AS x", "kumo_min.tables.t": "SELECT 2 AS x", "out": "SELECT x FROM t"}
+    result = _min(tables, ["out"])
+    assert result.original_score == pipeline_score(tables)
+    assert _execute(result.tables)["out"] == [(1,)]
+    assert _min({"kumo_min.tables.t": "SELECT 2 AS x", "out": "SELECT x FROM kumo_min.tables.t"}, ["out"]).tables
+
+
+def test_a_bare_name_and_a_two_part_name_stay_apart():
+    tables = {"t": "SELECT 1 AS x", "tables.t": "SELECT 2 AS x", "out": "SELECT x FROM t", "out2": "SELECT x FROM tables.t"}
+    result = _min(tables, ["out", "out2"])
+    assert result.original_score == pipeline_score(tables)
+    assert _execute({"t": "SELECT 1 AS x", "out": result.tables["out"]})["out"] == [(1,)]
+
+
+NESTED = ("SELECT x FROM stage UNION ALL "
+          "SELECT x FROM (WITH stage AS (SELECT 100 AS x) SELECT x FROM stage)")
+
+
+def test_a_with_table_hides_a_physical_read_only_inside_its_own_query():
+    from kumosql.refactor import _table_nodes
+
+    tree = sqlglot.parse_one(NESTED, read="bigquery")
+    assert [(t.name, t.sql()) for t in _table_nodes(tree)] == [("stage", "stage")]  # the outer read only
+    # a WITH table sees the ones listed before it, so ``b`` in the first is a physical table
+    tree = sqlglot.parse_one("WITH a AS (SELECT x FROM b), b AS (SELECT x FROM a) SELECT x FROM a", read="bigquery")
+    assert [t.name for t in _table_nodes(tree)] == ["b"]
+
+
+def test_a_nested_with_table_does_not_hide_the_outer_read():
+    tables = {"stage": "SELECT x FROM raw", "out": NESTED}
+    changed = {**tables, "stage": "SELECT 99 AS x"}
+    assert table_minimizer.verify_tables(tables, changed, ["out"], sources=RAW)["out"].status == "unknown"
+    assert _execute(tables)["out"] == [(1,), (100,)] and _execute(changed)["out"] == [(99,), (100,)]
+    result = _min(tables, ["out"])
+    assert _execute(result.tables)["out"] == [(1,), (100,)]  # whatever it kept or folded, out keeps its rows
+
+
+def test_an_answer_never_reads_a_table_it_removed():
+    from kumosql.minimizer_identity import single_query
+
+    tables = {"stage": "SELECT x FROM raw", "out": NESTED}
+    setup, names, mapping, back = table_minimizer._prepare(tables, ["out"], RAW, "bigquery", 1000)
+    state = {k: v for k, v in setup.original.items() if not k.endswith(".stage")}
+    ok, _, why = table_minimizer._check(setup, state)
+    assert not ok and "no longer exists" in why
+    out = {"out": "SELECT x FROM stage"}
+    assert not table_minimizer._holds_together(setup, state, out, names, back, "bigquery")
+    assert single_query(out["out"], "bigquery") is not None
+
+
+SHARED = {
+    "rpt_a": "SELECT p.customer_id, SUM(p.amount) AS total FROM (SELECT o.customer_id, o.amount FROM orders AS o "
+    "JOIN customers AS c ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') AS p GROUP BY p.customer_id",
+    "rpt_b": "SELECT q.customer_id, COUNT(*) AS n FROM (SELECT o.customer_id, o.amount FROM orders AS o "
+    "JOIN customers AS c ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') AS q GROUP BY q.customer_id",
+    "rpt_c": "WITH paid_eu AS (SELECT o.customer_id, o.amount FROM orders AS o JOIN customers AS c "
+    "ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') SELECT MAX(amount) AS biggest FROM paid_eu",
+}
+
+
+def test_factoring_moves_a_repeated_query_into_one_new_table():
+    protected = ["rpt_a", "rpt_b", "rpt_c"]
+    plain = minimize_tables(SHARED, protected, sources=SOURCES)
+    assert plain.added == []
+    result = minimize_tables(SHARED, protected, sources=SOURCES, factor=True)
+    assert result.added == ["paid_eu"]  # named after the CTE it replaces
+    assert set(result.tables) == {*protected, "paid_eu"}
+    assert result.score < plain.score
+    assert all("JOIN" not in result.tables[name].upper() and "paid_eu" in result.tables[name] for name in protected)
+    assert {proof.status for proof in result.proofs.values()} == {"proved"}
+    assert result.to_json()["added"] == ["paid_eu"]
+    _assert_same(SHARED, result.tables, protected)
+
+
+def test_checked_tables_keep_their_rows_and_fixed_tables_their_sql():
+    tables = {
+        "stage": "SELECT id, customer_id, amount, status FROM orders WHERE status = 'paid'",
+        "report": "SELECT customer_id, SUM(amount) AS total FROM stage GROUP BY customer_id",
+    }
+    moved = {  # the filter moved downstream: the report is the same, the stage is not
+        "stage": "SELECT id, customer_id, amount, status FROM orders",
+        "report": "SELECT customer_id, SUM(amount) AS total FROM stage WHERE status = 'paid' GROUP BY customer_id",
+    }
+    verify = table_minimizer.verify_tables
+    assert set(verify(tables, moved, ["report"], sources=SOURCES)) == {"report"}
+    found = verify(tables, moved, ["report"], sources=SOURCES, checked=["stage"])
+    assert found["report"].status == "proved" and found["stage"].status == "unknown"
+    narrowed = {**tables, "stage": "SELECT id, customer_id, amount FROM orders WHERE status = 'paid'"}
+    assert verify(tables, narrowed, ["report"], sources=SOURCES, checked=["stage"])["stage"].status == "proved"
+    # a fixed table is read as given: a candidate that changes it proves nothing
+    found = verify(tables, moved, ["report"], sources=SOURCES, fixed={"stage": ["id", "customer_id", "amount", "status"]})
+    assert found["report"].status == "unknown"
+
+    shared = {
+        "stage": "SELECT id, customer_id, CASE WHEN amount > 10 THEN 'big' WHEN amount > 0 THEN 'small' ELSE 'none' END AS size, "
+        "CASE WHEN status = 'open' THEN 1 ELSE 0 END AS is_open FROM orders WHERE status <> 'void' AND amount IS NOT NULL",
+        "a": "SELECT customer_id, size FROM stage WHERE id > 3",
+        "b": "SELECT size, COUNT(*) AS n FROM stage GROUP BY size",
+        "c": "SELECT id FROM stage WHERE size = 'big'",
+    }
+    pruned = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, checked=["stage"])
+    assert pruned.moves == ["prune unused columns of stage"] and "is_open" not in pruned.tables["stage"]
+    kept = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, checked=["stage"], keep_columns={"stage": ["is_open"]})
+    assert kept.tables == shared  # a column its assertions name is never pruned
+    fixed = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, fixed={"stage": None})
+    assert fixed.tables["stage"] == shared["stage"]
+    _assert_same(shared, pruned.tables, ["a", "b", "c"])
+
+
+def test_lower_score_only_skips_rewrites_that_do_not_lower_the_score():
+    tables = {"report": "SELECT customer_id AS c, SUM(amount) AS total FROM orders GROUP BY customer_id"}
+    result = minimize_tables(tables, ["report"], sources=SOURCES, lower_score_only=True)
+    assert result.tables == tables and result.moves == []
+
+
+def test_tables_that_reuse_with_names_can_be_folded_together():
+    # the dbt style: every staging table is WITH source AS (...), renamed AS (...) SELECT * FROM renamed
+    tables = {
+        "stg_orders": "WITH source AS (SELECT * FROM orders), renamed AS (SELECT id AS order_id, customer_id, amount "
+        "FROM source WHERE amount > 0) SELECT * FROM renamed",
+        "stg_customers": "WITH source AS (SELECT * FROM customers), renamed AS (SELECT id AS customer_id, region FROM source) "
+        "SELECT * FROM renamed",
+        "report": "SELECT c.region, SUM(o.amount) AS total FROM stg_orders AS o JOIN stg_customers AS c "
+        "ON o.customer_id = c.customer_id GROUP BY c.region",
+    }
+    result = minimize_tables(tables, ["report"], sources=SOURCES)
+    assert set(result.tables) == {"report"} and result.proofs["report"].status == "proved"
+    _assert_same(tables, result.tables, ["report"])
+    # the renaming for the proof follows scopes: a WITH name read in its own body is the pipeline's table
+    sql = "WITH orders AS (SELECT * FROM orders), b AS (SELECT * FROM orders) SELECT * FROM b JOIN (WITH b AS (SELECT 1 AS x) SELECT * FROM b) AS q ON TRUE"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    counter = [0]
+    for clause in reversed(list(tree.find_all(sqlglot.exp.With))):
+        table_minimizer._unique_ctes(clause.parent, counter)
+    assert tree.sql(dialect="bigquery") == (
+        "WITH orders__kumo2 AS (SELECT * FROM orders), b__kumo3 AS (SELECT * FROM orders__kumo2 AS orders) "
+        "SELECT * FROM b__kumo3 AS b JOIN (WITH b__kumo1 AS (SELECT 1 AS x) SELECT * FROM b__kumo1 AS b) AS q ON TRUE")

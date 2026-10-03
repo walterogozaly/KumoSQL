@@ -43,6 +43,7 @@
   let activeId = "";
   let current = "appearance";
   let saveTimer;
+  let uiWaiters = [];
   let formatTimer;
   // sqlfluff's rule list (from the installed sqlfluff) and the active
   // configuration's enabled rule codes while the formatting section is shown.
@@ -103,6 +104,7 @@
     return data;
   }
 
+  // Resolves once the server has stored the settings (calls within 200 ms share one write).
   function saveUi() {
     ui = structuredClone({ ...ui, ...(provider ? provider.getUi() : {}), ...pending() });
     try {
@@ -112,9 +114,20 @@
     }
     notify();
     clearTimeout(saveTimer);
+    const written = new Promise((resolve, reject) => uiWaiters.push({ resolve, reject }));
+    written.catch(() => {}); // callers that do not wait still see the error in the status line
     saveTimer = setTimeout(() => {
-      putJson("/api/settings/ui", ui, "Could not save settings").catch((error) => setStatus(error.message, true));
+      const waiters = uiWaiters;
+      uiWaiters = [];
+      putJson("/api/settings/ui", ui, "Could not save settings").then(
+        () => waiters.forEach((waiter) => waiter.resolve()),
+        (error) => {
+          setStatus(error.message, true);
+          waiters.forEach((waiter) => waiter.reject(error));
+        },
+      );
     }, 200);
+    return written;
   }
 
   // Values owned by this panel; they win over whatever the page last saved.
@@ -296,7 +309,7 @@
       const profile = active();
       try {
         profile.format = await putJson("/api/settings/format", readFormat(form), "Could not save sqlfluff settings");
-        saveUi();
+        await saveUi();
         setStatus("Saved");
       } catch (error) {
         setStatus(error.message, true);
@@ -333,8 +346,7 @@
       name.value = next;
       select.querySelector(`option[value="${profile.id}"]`).textContent = next;
       renameButton.disabled = true;
-      saveUi();
-      setStatus("Renamed");
+      saveUi().then(() => setStatus("Renamed"), () => {});
     };
     const name = h("input", {
       id: "sp-profile-name", class: "sp-input", type: "text", maxlength: "60", value: profile.name,
@@ -699,13 +711,20 @@
     const boundedLine = (bounded) => !bounded || bounded.status === "unknown" ? ""
       : bounded.status === "bounded_equivalent" ? ` (${bounded.label})` : ` (different results, ${bounded.bound} ${bounded.bound === 1 ? "row" : "rows"})`;
     const verdict = h("p", { class: "sp-row-hint" });
+    const verdictDetail = h("div", { class: "sp-query-detail" });
+    const conditionsOf = (conditions) => h("details", { class: "ev-assumptions", open: "" },
+      h("summary", { text: `Conditions (${conditions.length})` }),
+      h("ul", {}, ...conditions.map((item) => h("li", {}, h("details", {}, h("summary", { text: item.text }), h("pre", { class: "sp-pre", text: item.check_sql }))))));
     const compare = async () => {
       verdict.textContent = "Comparing…";
+      verdictDetail.replaceChildren();
       try {
         const result = await repoCall("POST", "/api/prove-tables", { left: left.value, right: right.value });
         verdict.textContent = result.status === "equivalent"
           ? `Equivalent (${result.method}${result.lemmas.length ? `, ${result.lemmas.length} layers matched` : ""}). ${result.assumptions.filter((a) => a.startsWith("declared")).join(" ")}`
+          : result.status === "conditional" ? `Equivalent under ${result.conditions.length} ${result.conditions.length === 1 ? "condition" : "conditions"} (${result.method}).`
           : `Not proven: ${result.reason}${boundedLine(result.bounded)}`;
+        if (result.status === "conditional") verdictDetail.append(conditionsOf(result.conditions));
       } catch (error) { verdict.textContent = error.message; }
     };
     body.append(
@@ -716,7 +735,7 @@
       h("div", { class: "sp-inline" },
         h("button", { type: "button", class: "toolbar-button", text: "Save", onclick: save }),
         h("button", { type: "button", class: "toolbar-button", text: "Compare tables", onclick: compare })),
-      verdict,
+      verdict, verdictDetail,
     );
     refresh().catch((error) => setStatus(error.message, true));
 
@@ -731,7 +750,9 @@
       try {
         const result = await repoCall("POST", "/api/prove-queries", { left: queryA.value, right: queryB.value });
         queryVerdict.textContent = result.status === "proven_equivalent" ? "Equivalent."
+          : result.status === "proven_conditionally" ? `Equivalent under ${result.conditions.length} ${result.conditions.length === 1 ? "condition" : "conditions"}.`
           : result.status === "not_equivalent" ? `Different results: ${result.reason}` : `Not proven: ${result.reason}${boundedLine(result.bounded)}`;
+        if (result.status === "proven_conditionally") queryDetail.append(conditionsOf(result.conditions));
         if (!result.counterexample && result.bounded && result.bounded.counterexample) {
           const found = Object.entries(result.bounded.counterexample.tables).map(([name, items]) => `${name}: ${items.map((row) => JSON.stringify(row)).join(" ")}`);
           queryDetail.append(h("pre", { class: "sp-pre", text: found.join("\n") }));
@@ -743,7 +764,7 @@
         }
         if (result.assumptions.length) {
           queryDetail.append(h("details", { class: "ev-assumptions" }, h("summary", { text: `Assumptions (${result.assumptions.length})` }),
-            h("ul", {}, result.assumptions.map((item) => h("li", { text: item })))));
+            h("ul", {}, ...result.assumptions.map((item) => h("li", { text: item })))));
         }
       } catch (error) { queryVerdict.textContent = error.message; }
     };

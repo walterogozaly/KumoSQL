@@ -1,5 +1,7 @@
 # Getting started
 
+[Plain-language version](../docs_simple/getting-started.md)
+
 KumoSQL helps you change BigQuery SQL and Dataform models with evidence. It gives you Python functions, command-line tools and a local browser UI. It requires Python 3.11 or newer, and it works on Windows, macOS and Linux.
 
 This guide takes you from install to a first useful result in about ten minutes. Nothing here needs a BigQuery account; the optional BigQuery features are at the end.
@@ -25,6 +27,8 @@ py -3.11 -m venv "$env:LOCALAPPDATA\kumosql"
 ```
 
 pip may warn that the scripts (`kumosql-ui.exe` and others) are installed in a folder that is not on `PATH`. That is harmless: on a locked-down Windows machine where `.exe` files are blocked, skip the launchers and run everything through Python, always as `python -m kumosql COMMAND` (the `kumosql-` prefix is optional): `python -m kumosql ui`, `python -m kumosql rewrite-sql query.sql`, `python -m kumosql pipeline-report demo`. The UI also starts with `python -m kumosql.ui`. This guide always uses the `python -m` form, which works everywhere; the launcher names (`kumosql-ui`, `rewrite-sql`, ...) are optional shortcuts for the same programs. Use the same Python you installed with, for example `& "$env:LOCALAPPDATA\kumosql\Scripts\python.exe" -m kumosql ui`, or `py -3.11 -m kumosql ui` when you installed without a virtual environment.
+
+**What can change files.** `--help` on any command only prints text. Most commands only read and print (`consolidate-tables` is a read-only preview that has no option to write; `refactor`, `minimize-tables` and the `prove-*` commands also only print). A file is written only for an option that names it (`-o`, `--output`, `--patch`, `--csv`), and `reduce-project --write` is the only option that edits a project folder. `python -m kumosql` with no arguments lists the commands and says the same.
 
 To install a local checkout instead, run `python -m pip install .` from the repository root. The distribution and the Python import package are both named `kumosql`.
 
@@ -163,7 +167,7 @@ gcloud auth application-default login
 - With a repository connected, **Settings → Repositories** also loads its Dataform workflow configurations (using the same credentials) and the graph marks models that run in a production schedule; see [production schedules](dataform-repositories.md#production-schedules-dataform-workflow-configurations).
 - The **BigQuery** page in the UI lists the projects, datasets, tables and schemas your credentials can see.
 
-Only these features contact BigQuery, and only when you ask.
+Only these features contact BigQuery, and only when you ask. Looking up the columns of tables a project does not define (so `SELECT *` over them can be traced) is off unless you turn it on: tick the checkbox in **Settings → Analysis**, pass `--fetch-schema` to `python -m kumosql pipeline-report`, or set `KUMOSQL_SCHEMA_FETCH=1`. See [whole-pipeline analysis](pipeline-analysis.md).
 
 ## Working on KumoSQL itself
 
@@ -174,6 +178,8 @@ python -m pytest                 # serial
 ```
 
 `tools/run_tests.py` uses pytest-xdist on every CPU (about 9 minutes instead of 35 on 4 CPUs); see the README's testing section. Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
+
+Most of the suite is thousands of small tests, so keep a test's fixed cost low. Load DuckDB rows with `kumosql.duckdb_load.insert_rows` (one statement of literals instead of one `execute` per row) and reuse one connection across a helper's trials (`CREATE OR REPLACE TABLE` gives fresh tables, and a new connection costs about 10 ms). Start a test HTTP server with `serve_forever(poll_interval=0.01)`, or its `shutdown()` waits up to half a second. `tests/conftest.py` gives each test its own state directory without making a `tmp_path` unless the test asks for one.
 
 ## Where to go next
 

@@ -302,8 +302,9 @@ def generate_synthetic_dataset(
 
     Seed 0 is always an empty dataset, which catches rewrites that differ only
     when an input is empty (for example aggregates without ``GROUP BY``).
-    Every other seed includes NULLs and at least one exact duplicate row per
-    non-empty table, so bag semantics are exercised. With ``rules`` (declared
+    On every other seed each value is NULL with probability ``null_rate`` (so a
+    small table can have none) and each non-empty table gets one exact duplicate
+    row, so bag semantics are exercised. With ``rules`` (declared
     NOT NULL columns and keys, by lower-case table name) rows that break a rule
     are dropped, and a table with a key gets no exact duplicate row.
     """
@@ -600,6 +601,7 @@ class DatasetRunner:
         for key, columns in columns_by_table.items():
             column_sql = ", ".join(f'"{name}" {_DUCKDB_TYPES[t]}' for name, t in columns)
             self._connection.execute(f'CREATE TABLE "{_local_name(key)}" ({column_sql})')
+        self._contents = {_local_name(key): "" for key in columns_by_table}  # each table's rows as literal text
         self._prepared: dict[str, str] = {}
 
     def close(self) -> None:
@@ -627,12 +629,17 @@ class DatasetRunner:
             return
         for key, table in dataset.tables.items():
             local = _local_name(key)
-            self._connection.execute(f'DELETE FROM "{local}"')
+            values_sql = ", ".join("(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows)
+            # Datasets of one suite often share a table's rows; a table already holding them is left as it is
+            current = self._contents.pop(local, None)
+            if values_sql == current:
+                self._contents[local] = values_sql
+                continue
+            if current != "":
+                self._connection.execute(f'DELETE FROM "{local}"')
             if table.rows:
-                values_sql = ", ".join(
-                    "(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows
-                )
                 self._connection.execute(f'INSERT INTO "{local}" VALUES {values_sql}')
+            self._contents[local] = values_sql
         self._loaded = dataset
 
     def run(self, sql: str, dataset: SyntheticDataset, *, timeout: float | None = None) -> QueryOutput:
@@ -684,7 +691,11 @@ def compare_outputs(
     check_column_names: bool = True,
     float_digits: int = 12,
 ) -> tuple[bool, str, tuple[Row, ...], tuple[Row, ...]]:
-    """Compare two outputs; returns (equal, reason, only_left, only_right)."""
+    """Compare two outputs; returns (equal, reason, only_left, only_right).
+
+    Values are compared, not their types: ``1`` and ``1.0`` are equal, and floats are
+    rounded to ``float_digits`` significant digits first.
+    """
 
     if len(left.columns) != len(right.columns):
         return False, f"column counts differ ({len(left.columns)} vs {len(right.columns)})", (), ()

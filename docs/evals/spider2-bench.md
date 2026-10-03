@@ -1,5 +1,7 @@
 # Spider 2.0 repurposed for KumoSQL
 
+[Plain-language version](../../docs_simple/evals/spider2-bench.md)
+
 Spider 2.0 ([xlang-ai/Spider2](https://github.com/xlang-ai/Spider2), MIT, Copyright (c) 2024 bird_sql) is a text-to-SQL
 benchmark. Its official score (a model writes SQL that returns the right rows) is not what this measures. This reuses
 its published **BigQuery reference queries** as realistic inputs for KumoSQL's own analyses, with no model at run time.

@@ -154,7 +154,8 @@ def run_gate() -> dict[str, object]:
 
     corpus = _load_corpus()
     rules = available_rules()
-    names = list(rules)
+    # Opt-in rules (qualify_columns) need table columns the corpus does not declare; tests cover them.
+    names = [name for name, rule in rules.items() if not rule.opt_in]
     totals: dict[str, int] = {
         "rule_count": len(names),
         "rule_applications": 0,

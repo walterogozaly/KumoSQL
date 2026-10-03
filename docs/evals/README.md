@@ -1,5 +1,7 @@
 # Evals
 
+[Plain-language version](../../docs_simple/evals/README.md)
+
 KumoSQL is scored on public benchmarks and on suites generated for its own features. None of them calls a language model at run time. This folder has one page per eval family: where the data comes from, how a case is scored, how to rerun it and what the limits are. The headline numbers are in the [README scoreboard](../../README.md#benchmark-scoreboard).
 
 ## How the evals are organised
@@ -8,7 +10,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 - **Evidence level.** A score says how strong its positive answers are: an unbounded proof, bounded verification (no difference on any database up to a row limit) or agreement on executed datasets. A suite that mixes levels has one results file per level.
 - **Zero wrong.** An eval reports `X/Y, 0 wrong`. A false proof, an incorrect counterexample or a behaviour-changing rewrite is a bug; an unknown is allowed.
 - **Held-out cases.** Where a held-out split exists, the page and the results file say so. Cases a rule was developed against are marked `tuned on test`.
-- **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout.
+- **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout. It masks timing before comparing (JSON timing keys, numbers with a unit, `HH:MM:SS`, and the bare elapsed-seconds column that ends a SQLSolver summary row), so only answers and counts count as a difference.
 
 ## Source inventory
 
@@ -18,14 +20,16 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 
 | Page | What it scores | Results files |
 | --- | --- | --- |
-| [Algebraic prover on SQLSolver, R-Bot, QED, Cosette, SPES and mined Calcite tests](sqlsolver.md) | Equivalent query pairs proved, with refutations by a replayed counterexample | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `rbot-calcite`, `qed-calcite`, `cosette`, `spes-only`, `calcite-mined` |
+| [Algebraic prover on SQLSolver, R-Bot, QED, Cosette, SPES and mined Calcite tests](sqlsolver.md) | Equivalent query pairs proved, with refutations by a replayed counterexample | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `rbot-calcite`, `qed-calcite`, `cosette`, `cosette-adapted`, `spes-only`, `calcite-mined` |
 | [VeriEQL](verieql.md) | LeetCode, Literature and Calcite suites, proofs and counterexamples scored separately | `verieql-leetcode-proof`, `verieql-leetcode-executed`, `verieql-literature-proof`, `verieql-literature-executed`, `verieql-calcite-proof`, `verieql-calcite-executed` |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs | `singh-bedathur-leetcode` |
+| [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict (proved equal under minimal NOT NULL, unique-key and foreign-key conditions) on the Singh and VeriEQL LeetCode pairs, plus three hand-checked suites | `conditional-equivalence-singh`, `conditional-equivalence-verieql` |
 | [Bounded verification](bounded-verification.md) | The same suites under the z3 bounded checker (at most 3 rows per table) | `bounded-sqlsolver-calcite`, `bounded-sqlsolver-spark`, `bounded-sqlsolver-tpch`, `bounded-sqlsolver-tpcc`, `bounded-qed`, `bounded-rbot`, `bounded-cosette`, `bounded-spes`, `bounded-singh`, `bounded-literature`, `bounded-calcite`, `bounded-leetcode` |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification | `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` |
 | [LLM-SQL-Solver](llm-sql-solver.md) | 180 Spider pairs that must never be proved, 70 pairs with expert labels | `llm-sql-solver-negatives`, `llm-sql-solver-relaxed` |
 | [DLBench](dlbench.md) | Cross-dialect translations from SQLite, MySQL and PostgreSQL into six databases: parsed, and proved equal to the source | `dlbench` |
 | [DB-GPT rewrite examples](dbgpt-rules.md) | DB-GPT's 36 PostgreSQL before/after rewrites, labelled by hand and checked on DuckDB | `dbgpt-rules` |
+| [Documented rewrites](documented-rewrites.md) | Rewrites recommended by vendor and style-guide docs, written as KumoSQL's own cases; the ones that change results must not be proved | `documented-rewrites` |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Query pairs from public optimizer bug reports (Calcite, Spark, CockroachDB, DuckDB, MySQL, ClickHouse): none may be proved | `optimizer-bugs` |
 | [Join rewrites to LEFT JOIN](join-rewrites.md) | Hand-checked rewrites between CROSS, INNER, RIGHT, FULL, semi and anti joins and LEFT JOIN, proved or refuted | `join-rewrites` |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output; the Jaffle Shop dbt project built, loaded, rewritten and refactored | `pipeline-equivalence`, `pipeline-refutation`, `jaffle-shop`, `jaffle-shop-refactors`, `jaffle-shop-refutation` |
@@ -36,11 +40,12 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 
 | Page | What it scores | Results files |
 | --- | --- | --- |
-| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `clickbench-rewrites`, `cost-recommendation-validity` |
+| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, QueryBooster's experiment rewrites, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `querybooster`, `clickbench-rewrites`, `cost-recommendation-validity` |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data | `transformation-workloads`, `job-alternative-forms` |
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on 11,353 queries, test files held out | `llm-r2-scale` |
 | [MV-based rewriting](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS | `mv-benchmark` |
 | [Table minimization](table-minimization.md) | Simplest pipeline that keeps the protected tables identical, from 3 to 20 tables, with traps; adapted cases from sqlglot, Fivetran and jaffle_shop scored apart | `table-minimization`, `table-minimization-sourced` |
+| [Project reduction](project-reduction.md) | Smallest Dataform project that keeps the chosen outputs, as a patch: converted minimization cases checked on DuckDB, and open-source Dataform projects | `project-reduction` |
 | [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors | `duplicate-exact`, `duplicate-similar`, `shared-refactors-proof`, `shared-refactors-executed` |
 
 ## Coverage and engine behaviour

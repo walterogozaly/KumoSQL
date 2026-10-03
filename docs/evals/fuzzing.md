@@ -1,5 +1,7 @@
 # Metamorphic fuzzing and unsafe-rewrite detection
 
+[Plain-language version](../../docs_simple/evals/fuzzing.md)
+
 Three seeded suites check KumoSQL's rewrites and its equivalence prover without any LLM at run time (a fourth, the [typed soundness fuzzer](#typed-soundness-fuzzer), hunts false proofs on typed schemas with integrity constraints). They share one oracle (random small DuckDB databases with NULLs, duplicates and empty tables) and one report format. Every case id names its seed, so a failure is reproduced by rerunning the same command.
 
 ```
@@ -87,7 +89,7 @@ The five false proofs Sol's S009 audit published run first (`tests/fixtures/soun
 
 **Known false proofs.** `tests/fixtures/soundness_fuzz/known_false_proofs.json` lists open false proofs with their cause and the thread fixing them. The report marks a finding `known` when its pair, or its reduced pair, is listed; the command exits 1 on any other false proof.
 
-**Results** (seed 2, 2,000 generated pairs plus the 5 published ones, master a481075, about 80 seconds on four cores): 1,059 proved, 222 refuted, 715 unknown, 8 skipped and 1 timeout, with 1 false proof and 0 label errors. The false proof is `_collapse_aggregate` folding `COUNT(d.n)` over a derived table with one row per group (here a global aggregate) into the inner `COUNT`, which is open and routed. On master 6e86a4b, 26,000 pairs over three seeds also found float widening of INT64 values above 2^53 (fixed by #427) and LIMIT 0 tails dropped from INTERSECT, EXCEPT and same-source UNION DISTINCT (S006-001, fixed since). On the same master, all but 2 of Sol's original 9 false proofs were already gone.
+**Results** (seed 2, 2,000 generated pairs plus the 5 published ones, master 884470c plus the COUNT-over-COUNT fix, about 80 seconds on four cores): 1,059 proved, 221 refuted, 716 unknown, 8 skipped and 1 timeout, with 1 false proof and 0 label errors. The false proof is a comparison of an INT64 column with a BOOL: `t.x = -1 IS NULL` parses as `t.x = (-1 IS NULL)`, which BigQuery rejects and DuckDB coerces, so the pair is either a generator typing bug or a mixed-type comparison the prover treats as never equal (the same family as #542); it is open and routed. The earlier false proof, `_collapse_aggregate` folding `COUNT(d.n)` over a derived table with one row per group (including a UNION ALL of global COUNTs) into the inner `COUNT`, is fixed and its fuzzer entry removed. On master 6e86a4b, 26,000 pairs over three seeds also found float widening of INT64 values above 2^53 (fixed by #427) and LIMIT 0 tails dropped from INTERSECT, EXCEPT and same-source UNION DISTINCT (S006-001, fixed since). On the same master, all but 2 of Sol's original 9 false proofs were already gone.
 
 One oracle bug was fixed along the way. sqlglot writes `(y IS NOT NULL) IS NULL` for DuckDB as `NOT y IS NULL IS NULL`, which DuckDB reads differently, so the translator now parenthesizes every operator operand.
 

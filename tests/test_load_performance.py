@@ -121,6 +121,10 @@ def test_status_lists_what_is_running():
 def test_other_requests_stay_fast_while_analysis_burns_cpu(ui_server_url):
     import threading
     from urllib.request import urlopen
+    from ui_http import authenticated_request
+
+    requests = [authenticated_request(f"{ui_server_url}{path}")
+                for path in ("/api/settings", "/api/status", "/favicon.svg")]
 
     stop = threading.Event()
 
@@ -132,10 +136,10 @@ def test_other_requests_stay_fast_while_analysis_burns_cpu(ui_server_url):
     worker.start()
     try:
         worst = 0.0
-        for path in ("/api/settings", "/api/status", "/favicon.svg"):
+        for request in requests:
             for _ in range(5):
                 start = time.perf_counter()
-                urlopen(f"{ui_server_url}{path}").read()
+                urlopen(request).read()
                 worst = max(worst, time.perf_counter() - start)
     finally:
         stop.set()
@@ -145,11 +149,10 @@ def test_other_requests_stay_fast_while_analysis_burns_cpu(ui_server_url):
 
 @pytest.fixture
 def ui_server_url():
-    from http.server import ThreadingHTTPServer  # noqa: F401
     from kumosql.ui import UIHandler, UIServer
 
     server = UIServer(("127.0.0.1", 0), UIHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}"

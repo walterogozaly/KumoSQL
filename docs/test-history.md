@@ -1,5 +1,7 @@
 # Test history
 
+[Plain-language version](../docs_simple/test-history.md)
+
 Every test run in this repository is recorded, so a report can show which tests break most often and which of them break changes that otherwise work.
 
 ## What is recorded

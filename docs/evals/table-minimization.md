@@ -1,5 +1,7 @@
 # Table minimization eval
 
+[Plain-language version](../../docs_simple/evals/table-minimization.md)
+
 Given a pipeline of tables (say tables 1 to 20) and the tables that must stay, how simple can the pipeline get? A **protected** table must still exist under the same name and give exactly the same output: the same column names in the same order and the same bag of rows, on every database. Every other table may be dropped, merged, inlined or rewritten. The answer is scored by complexity: the repo's sqlfluff score summed over the pipeline, plus one per table.
 
 ```
@@ -134,5 +136,6 @@ The search improves Fivetran pipelines by dropping tables no protected table rea
 - Column types are not compared (as in the provers): `SUM` of an `INT64` column is an integer either way, but a rewrite that only changes a type is not caught.
 - DuckDB stands in for BigQuery, so a function the two treat differently can mislead the check. sqlglot turns `COUNTIF` into DuckDB's `count_if`, which returns NULL rather than 0 when every input is NULL; the cases use `SUM(IF(..., 1, 0))` instead.
 - Where an original query depends on row order (a window ordered on a non-unique column, `LIMIT`, `ARRAY_AGG`, `ANY_VALUE`), a database counts for a protected table only if the original gives that table the same output with every source's rows reversed.
-- Table references are bare names; a CTE with the same name as a table shadows it everywhere in that query (scoping is not modelled further).
+- Table references are bare names; the harness's check treats a CTE with the same name as a table as shadowing it everywhere in that query. The minimizer itself scopes a `WITH` table to its own query and keeps names case-sensitive (see [Table minimization](../table-minimization.md#names-and-scripts)); the cases hold no names that differ only by case.
+- Only the pipeline's protected tables are observed. Quality rewards the reduction of the whole pipeline, so removing an unprotected table that something outside the modeled pipeline reads (a dashboard, another job) scores as a full reduction while breaking that reader. Read quality as "structural reduction with the protected set kept", not as safe to deploy; to keep an outside reader's table, add it to `protected`.
 - Generated SQL is templated: it covers the eight patterns at sizes up to 20 tables, not the variety of real projects. The hand-written and sourced files add that.

@@ -1,0 +1,19 @@
+{
+  "suite": "QueryBooster rewrites",
+  "order": 61,
+  "size": 68,
+  "score": "50/68 decided (18 proven, 32 label failures refuted), 0 wrong",
+  "metric": "QueryBooster's claimed-equivalent rewrites (WeTune application pairs, rule-training examples, Twitter CAST examples, TPC-H rewrites): proven by the algebraic prover, or refuted by a replayed counterexample on a schema-valid database (a label failure, kept as a negative).",
+  "evidence": "proof",
+  "correctness": "Every pair also goes through the counterexample search; a pair both proven and refuted counts as wrong. Refutations are DuckDB runs on databases that respect the declared types, NOT NULL, keys, unique indexes and foreign keys, confirmed with the optimizer off and, under a LIMIT, in both storage orders.",
+  "coverage": {
+    "proven": 18,
+    "refuted": 32,
+    "unknown": 18
+  },
+  "held_out": "10/17 decided (2 proven, 8 refuted)",
+  "docs": "docs/evals/rewrite-benchmarks.md#querybooster-experiment-rewrites",
+  "command": "python tools/querybooster_bench.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "GPL-3.0 source downloaded at run time (commit 19008ac), never committed. Proven+refuted per family: wetune-app 7+15/30; rule-training 5+9/14; tweets-cast 0+5/5; tpch-pg 6+3/19. calcite_tests.csv (228 pairs, all SQLSolver Calcite tests) is inventoried, not re-scored; 4 rule templates in the tweets files are not SQL. Foreign keys the applications imply but do not declare are not assumed; renamed training rows and the Twitter pairs use schemas inferred from the SQL. Tuned on test (harness only): the first run (12 proven, 28 refuted, 0 wrong) showed every pair, held-out ones included, before the harness fixes listed in the docs; no prover module was changed."
+}

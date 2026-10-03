@@ -1,5 +1,7 @@
 # Multi-statement scripts
 
+[Plain-language version](../docs_simple/scripts.md)
+
 BigQuery scripts (several statements run together, with variables, temporary tables, control flow and stored procedures) are broken apart wherever SQL comes in, and what they read and write is followed from statement to statement. The same code (`kumosql.scripts`) serves every entry point, so a script is understood the same way in each:
 
 - a model written as a script in a `.sql` file or a Dataform `operations` action, and its `pre_operations` and `post_operations` blocks;
@@ -18,12 +20,17 @@ KumoSQL has its own small lexer for this because sqlglot's BigQuery tokenizer tr
 | | Statements |
 | --- | --- |
 | Kept | queries, `CREATE [TEMP] TABLE/VIEW ... AS`, `INSERT` (`SELECT` or `VALUES`), `MERGE`, `UPDATE`, `DELETE`, `EXPORT DATA ... AS SELECT` (reads only), `CREATE [TEMP] FUNCTION` and `TABLE FUNCTION` (a definition: its body's tables are reads, it is never a skipped step), `CALL` of a procedure defined in the project or script, `EXECUTE IMMEDIATE` of literal text (also `||` and `CONCAT` of literals) |
-| Ignored | `DECLARE` and `SET` of scalars, `ASSERT`, transactions, `LOAD DATA`, DDL such as `ALTER` and `DROP`, `RAISE`, `RETURN`, `LEAVE`/`ITERATE`/`BREAK`, and the shell of `IF`, loops and `BEGIN ... END` |
+| Ignored | `DECLARE` and `SET` of scalars, `ASSERT`, transactions, `LOAD DATA`, definitions outside tables/views, `RAISE`, `RETURN`, `LEAVE`/`ITERATE`/`BREAK`, and the shell of `IF`, loops and `BEGIN ... END` |
 | Unknown | `EXECUTE IMMEDIATE` of dynamic text (a variable, `FORMAT`, concatenation with a variable), `CALL` of a procedure nobody defines, a statement that does not parse |
 
 Unknown is never guessed: a dynamic statement adds no edges, and the script is reported incomplete. A statement that does not parse, or whose first word is not a statement at all (a misspelled keyword), is *degraded*, not dropped: the tables it reads and writes are taken from its tokens (names after `FROM`, `JOIN`, `USING`, `TABLE`, `INTO`, `UPDATE`, `MERGE`, `CREATE ... TABLE|VIEW`, `LIKE` and `CLONE`, minus the CTE names it declares), so its graph edges stay, its columns are unknown, and one `parse_error` says where sqlglot stopped (line and column, no SQL text). Names in comments and strings are never tables.
 
 ### Roles
+
+`ALTER`, `DROP` and `TRUNCATE` on tables or views retain their write targets without claiming assigned column values.
+`ALTER TABLE old RENAME TO new` also retains `old` as a read. All script outputs are available through
+`Pipeline.table_writes()`, including multiple targets and pre/post operations. A temporary table's DDL stays local
+to the script. `DELETE table WHERE ...` is understood alongside `DELETE FROM table WHERE ...`.
 
 Every statement plays one role, and the later steps (column tracing, diagnostics, which models are trusted for dead columns) follow the role, not the shape of the syntax tree:
 

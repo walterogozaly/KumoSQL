@@ -334,6 +334,8 @@ class Engine:
         self.con.execute("SET threads = 1")
         self.errors: dict[str, str] = {}
         self.worlds = {label: dict(tables) for label, tables in worlds.items()}
+        self._loaded: dict[str, str] = {}  # source -> repr of the rows it holds
+        self._prepared: dict[str, str] = {}  # view -> prepared statement ("" when it could not be prepared)
         for name, spec in sources.items():
             columns = ", ".join(f'"{c}" {DUCK_TYPES[t]}' for c, t in spec["columns"].items())
             self.con.execute(f'CREATE TABLE "{name}" ({columns})')
@@ -354,8 +356,14 @@ class Engine:
         from kumosql.duckdb_load import insert_rows
 
         for name in self.sources:
+            rows = db.get(name, [])
+            held = repr(rows)  # repr tells 1 from 1.0, True and -0.0, which compare equal
+            if self._loaded.get(name) == held:
+                continue  # the table already holds exactly these rows, in this order
+            self._loaded.pop(name, None)
             self.con.execute(f'DELETE FROM "{name}"')
-            insert_rows(self.con, f'"{name}"', db.get(name, []))
+            insert_rows(self.con, f'"{name}"', rows)
+            self._loaded[name] = held
 
     def output(self, label: str, name: str) -> tuple[tuple[str, ...], Counter]:
         if label in self.errors:
@@ -363,12 +371,36 @@ class Engine:
         if name not in self.worlds[label]:
             raise WorldError(f"{name} is missing")
         try:
-            cursor = self.con.execute(f'SELECT * FROM "{label}__{name}"')
-            rows = cursor.fetchall()
+            cursor, rows = self._select(f"{label}__{name}")
         except Exception as error:
             raise WorldError(f"{name}: {type(error).__name__}: {error}"[:300]) from error
         columns = tuple(d[0].lower() for d in cursor.description)
         return columns, Counter(tuple(_norm(v) for v in row) for row in rows)
+
+    def _select(self, view: str):
+        """``(cursor, rows)`` of ``SELECT * FROM view``, through a statement prepared on first use.
+
+        With the optimizer off the plan never depends on the rows loaded, so the prepared statement returns what
+        the query would; preparing skips parsing and binding the views on every database. Anything that fails
+        prepared runs as the plain query, so its error reads as it always did.
+        """
+
+        statement = self._prepared.get(view)
+        if statement is None:
+            statement = f"kumo_select_{len(self._prepared)}"
+            try:
+                self.con.execute(f'PREPARE {statement} AS SELECT * FROM "{view}"')
+            except Exception:
+                statement = ""
+            self._prepared[view] = statement
+        if statement:
+            try:
+                cursor = self.con.execute(f"EXECUTE {statement}")
+                return cursor, cursor.fetchall()
+            except Exception:
+                pass
+        cursor = self.con.execute(f'SELECT * FROM "{view}"')
+        return cursor, cursor.fetchall()
 
     def close(self) -> None:
         self.con.close()

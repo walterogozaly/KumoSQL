@@ -15,6 +15,7 @@ duckdb = pytest.importorskip("duckdb")
 
 from kumosql.smt_equivalence import SmtStatus, TableConstraints, prove_equivalent_smt
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows
 
 SCHEMA = {"t": ["id", "a"], "u": ["id", "b"]}
 STRICT = {
@@ -133,7 +134,7 @@ def _database(rng, constrained):
         _DB.execute("CREATE TABLE u (id BIGINT, b BIGINT)")
     for table in ("t", "u"):
         _DB.execute(f"DELETE FROM {table}")
-        used = set()
+        used, rows = set(), []
         for _ in range(rng.choice([0, 1, 2, 3, 4])):
             row = [rng.choice([0, 1, 2, 3]), rng.choice([0, 1, 2, 3])]
             if constrained:
@@ -142,7 +143,8 @@ def _database(rng, constrained):
                 used.add(row[0])
             else:
                 row = [None if rng.random() < 0.25 else v for v in row]
-            _DB.execute(f"INSERT INTO {table} VALUES (?, ?)", row)
+            rows.append(row)
+        insert_rows(_DB, table, rows)
     return _DB
 
 
