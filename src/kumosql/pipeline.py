@@ -1425,10 +1425,15 @@ class _Analysis:
         template_reads: dict[str, set[str]] = {}
         opaque_readers_of: set[str] = set(operation_readers)
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
+        # A source read through a partition or snapshot decorator (``p.d.t$20261003``) shares the base table's
+        # columns. Other spellings (``t`` for ``p.d.t``) stay out of the flat schema: mixing name depths in one
+        # nested mapping makes qualify() report an ambiguous table.
         for base, aliases in spellings.items():
             if base in schema:
                 for alias in aliases:
-                    schema[alias] = schema[base]
+                    identity = normalize_table_reference(alias)
+                    if identity is not None and identity.decorator:
+                        schema[alias] = schema[base]
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
