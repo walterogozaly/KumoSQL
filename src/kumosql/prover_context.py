@@ -101,11 +101,13 @@ def status() -> dict:
     }
 
 
-def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True, search_counterexample: bool = False) -> SmtEquivalenceResult:
+def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True, search_counterexample: bool = False, conditional: bool = False) -> SmtEquivalenceResult:
     """Prove two queries return the same rows, using the project's declared facts.
 
     ``search_counterexample`` also runs an unproven pair on databases built for it
     (needs declared column types) and returns any database that tells them apart.
+    ``conditional`` retries an unproven pair under facts taken from the queries and returns
+    ``PROVEN_CONDITIONALLY`` with the minimal conditions when they settle it.
     """
 
     from . import equivalences
@@ -130,8 +132,9 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
         types=facts.types or None,
         timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
         search_counterexample=search_counterexample,
+        conditional=conditional,
     )
-    if (facts.notes or used) and result.status is SmtStatus.PROVEN_EQUIVALENT:
+    if (facts.notes or used) and result.status in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
         wanted = [*facts.notes]
         if used:
             wanted.append("declared equivalences hold in the data: " + "; ".join(i.label for i in used))

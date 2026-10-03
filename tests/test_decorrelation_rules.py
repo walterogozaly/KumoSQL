@@ -4,6 +4,7 @@ import sqlglot
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.decorrelation_rules import (
     distinct_lateral_to_in,
+    drop_implied_membership,
     existence_joins,
     extreme_of_top_rows,
     merge_correlated_derived,
@@ -103,6 +104,11 @@ DIFFERENT = [
     (
         "SELECT e.empno, d.k FROM emp AS e JOIN (SELECT y.deptno AS k FROM emp AS y GROUP BY CUBE(y.deptno)) AS d ON d.k IS NOT DISTINCT FROM e.deptno",
         "SELECT e.empno, e.deptno AS k FROM emp AS e",
+    ),
+    # GROUP BY () is a global aggregate: one row even over no input
+    (
+        "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ()) AS d",
+        "SELECT e.empno FROM emp AS e WHERE EXISTS (SELECT 1 FROM dept AS x WHERE x.deptno = e.deptno)",
     ),
     # ROLLUP(TRUE) has its grand-total row even over no input, so it is not an existence test
     (
@@ -286,3 +292,26 @@ def test_one_row_join_still_reads_an_aggregate_output():
     assert prove_equivalent_algebraic(left, right, schema=schema, dialect="postgres", compare_names=False).proven
     lateral = "SELECT t.x, d.n FROM t LEFT JOIN LATERAL (SELECT COUNT(*) AS n, 7 AS c FROM u) AS d ON TRUE"
     assert prove_equivalent_algebraic(lateral, right, schema=schema, dialect="postgres", compare_names=False).proven
+
+
+def test_existence_join_refuses_groupings_with_a_total_row():
+    for sql, dialect in [
+        ("SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY TRUE WITH TOTALS) AS d", "clickhouse"),
+        ("SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ROLLUP (TRUE)) AS d", "postgres"),
+        ("SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ()) AS d", "postgres"),
+    ]:
+        assert existence_joins(sqlglot.parse_one(sql, read=dialect)) is None, sql
+    plain = "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY TRUE) AS d"
+    assert existence_joins(sqlglot.parse_one(plain, read="postgres")) is not None
+
+
+def test_same_table_follows_the_dialects_name_case():
+    sql = "SELECT 1 FROM ds.T AS x WHERE EXISTS (SELECT 1 FROM ds.t AS y WHERE y.c = x.c)"
+    not_null = {"T": frozenset({"c"}), "t": frozenset({"c"})}
+    # BigQuery table names are case-sensitive: ds.T and ds.t are two tables
+    assert self_witnessed_exists(sqlglot.parse_one(sql, read="bigquery"), not_null, "bigquery") is None
+    # Postgres folds unquoted names, so they are one table
+    assert self_witnessed_exists(sqlglot.parse_one(sql, read="postgres"), not_null, "postgres") is not None
+    implied = "SELECT 1 FROM o WHERE o.c IN (SELECT t.c FROM ds.T AS t) AND o.c IN (SELECT t.c FROM ds.t AS t WHERE t.c > 1)"
+    assert drop_implied_membership(sqlglot.parse_one(implied, read="bigquery"), "bigquery") is None
+    assert drop_implied_membership(sqlglot.parse_one(implied, read="postgres"), "postgres") is not None

@@ -211,3 +211,37 @@ def test_extra_filter_over_a_left_join_is_proven_by_merging_the_view_back():
     assert proposal.ready
     broken = replace(proposal, residual_filters={k: ("status = 'open'",) for k in proposal.residual_filters})
     assert not verify_proposal(pipeline, broken).ready
+
+
+# A scalar subquery can read a column of the query around it; extracted on its own it is not a runnable table.
+SCHEMA = {"proj.raw.t": {"x": "INT64"}, "proj.raw.v": {"x": "INT64"}, "proj.raw.u": {"k": "INT64"}}
+
+
+def scalar_graph(subquery):
+    query = "SELECT s.x, (" + subquery + ") AS n FROM `proj.raw.%s` AS s"
+    declarations = [{"target": {"database": "proj", "schema": "raw", "name": n}} for n in ("t", "v", "u")]
+    return {"tables": [table("a", query % "t"), table("b", query % "v")], "declarations": declarations}
+
+
+def scalar_proposals(subquery, schema=SCHEMA):
+    pipeline = load_compiled_graph(scalar_graph(subquery), source_schema=schema)
+    return [p for p in propose_shared_logic(pipeline) if any("subquery" in s[1] for s in p.sites)]
+
+
+def test_correlated_scalar_subquery_is_not_a_ready_shared_table():
+    proposals = scalar_proposals("SELECT COUNT(*) AS n FROM `proj.raw.u` WHERE k = x AND k >= 0")
+    assert proposals
+    for proposal in proposals:
+        assert not proposal.ready
+        assert "proven" not in proposal.verification.values()
+        assert any("reads x from the query around it" in r for r in proposal.unready_reasons)
+
+
+def test_correlated_scalar_subquery_without_schemas_is_not_ready():
+    proposals = scalar_proposals("SELECT COUNT(*) AS n FROM `proj.raw.u` WHERE k = x AND k >= 0", schema={})
+    assert proposals and not any(p.ready for p in proposals)
+
+
+def test_closed_scalar_subquery_with_known_columns_stays_ready():
+    proposals = scalar_proposals("SELECT COUNT(*) AS n FROM `proj.raw.u` WHERE k >= 0")
+    assert proposals and all(p.ready for p in proposals)

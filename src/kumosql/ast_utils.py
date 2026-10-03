@@ -127,7 +127,7 @@ _UNMODELED_ARGS = (
 
 
 # sqlglot reads ``a = b IS TRUE`` as ``a = (b IS TRUE)``; BigQuery, MySQL, PostgreSQL, DuckDB and Calcite read
-# ``(a = b) IS TRUE``. Written without parentheses the query is declined rather than proved under one reading.
+# ``(a = b) IS TRUE`` (see ``read_is_after_comparison``).
 _COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ)
 
 
@@ -138,6 +138,38 @@ def parenthesize_is_operands(tree: exp.Expression) -> exp.Expression:
         operand = node.expression
         if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
             operand.replace(exp.Paren(this=operand.copy()))
+    return tree
+
+
+def read_is_after_comparison(tree: exp.Expression) -> exp.Expression:
+    """Read ``a = b IS TRUE`` as the engines do, ``(a = b) IS TRUE``, in place.
+
+    sqlglot parses an ``IS`` test after a comparison as the comparison's right operand. In
+    PostgreSQL, DuckDB and Calcite ``IS`` binds more loosely than ``=``; in MySQL they share a level
+    and associate to the left: all read the test as applying to the whole comparison (so
+    ``NULL = 1 IS NULL`` is true, not NULL). The tree is rebuilt as sqlglot parses the parenthesized
+    text ``(a = b) IS TRUE``. An explicit ``a = (b IS TRUE)`` keeps its ``Paren`` and is left alone.
+
+    ``a = b IS NOT TRUE`` and ``a = NOT b IS TRUE`` parse to the same tree but read differently
+    (DuckDB: ``(a = b) IS NOT TRUE`` and ``a = NOT (b IS TRUE)``), so a ``NOT`` among the operand's
+    ``IS`` tests is declined.
+    """
+
+    for node in list(tree.find_all(*_COMPARISONS)):
+        tests, operand = [], node.expression
+        while isinstance(operand, exp.Is):
+            tests.append(operand)
+            operand = operand.this
+        if isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is):
+            raise UnmodeledConstruct("a comparison followed by IS NOT without parentheses reads differently across engines")
+        if not tests:
+            continue
+        # comparison(a, IS_1(... IS_n(b) ...)) becomes IS_1(... IS_n((comparison(a, b))) ...)
+        if node is tree:
+            tree = tests[0]
+        node.replace(tests[0])
+        tests[-1].set("this", exp.Paren(this=node))
+        node.set("expression", operand)
     return tree
 
 
@@ -194,14 +226,130 @@ def check_distinct_from_grouping(tree: exp.Expression) -> None:
             raise UnmodeledConstruct("IS DISTINCT FROM next to another comparison without parentheses reads differently across engines")
 
 
+def _uncorrelated(select: exp.Select) -> bool:
+    """Whether ``select`` sits only under derived tables, CTEs and set operations, so its columns are its own."""
+
+    node = select
+    while node.parent is not None:
+        parent = node.parent
+        if isinstance(parent, (exp.Subquery, exp.CTE, exp.With, exp.From, exp.Join, exp.SetOperation)):
+            pass
+        elif isinstance(parent, exp.Select) and node.arg_key in ("from", "from_", "joins", "with", "with_"):
+            pass
+        else:
+            return False
+        node = parent
+    return True
+
+
+def expand_group_by_all(tree: exp.Expression) -> exp.Expression:
+    """Spell ``GROUP BY ALL`` as the grouping keys it infers, in place, or raise :class:`UnmodeledConstruct`.
+
+    The keys are the select items that reference a column and hold no aggregate, written as positions.
+    With no keys the query has one group even on empty input, so an aggregate-only select becomes a
+    plain global aggregate. Correlated selects, stars, windows, subqueries, unknown functions (which may
+    be aggregates) and a select of only constants (engines differ on whether constants are keys) are declined.
+    """
+
+    for group in list(tree.find_all(exp.Group)):
+        if not group.args.get("all"):
+            continue
+        select = group.parent
+        if not isinstance(select, exp.Select) or group.expressions or not _uncorrelated(select):
+            raise UnmodeledConstruct("GROUP BY ALL is not modeled here")
+        keys: list[int] = []
+        key_sql: set[str] = set()
+        aggregated: list[exp.Expression] = []
+        constants = False
+        for position, item in enumerate(select.expressions, start=1):
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Star) or (isinstance(value, exp.Column) and isinstance(value.this, exp.Star)):
+                raise UnmodeledConstruct("GROUP BY ALL with a star select is not modeled")
+            if value.find(exp.Window, exp.Subquery, exp.Select, exp.Exists, exp.Lambda):
+                raise UnmodeledConstruct("GROUP BY ALL next to a window or subquery is not modeled")
+            if value.find(exp.AggFunc):
+                aggregated.append(value)
+            elif value.find(exp.Anonymous):
+                raise UnmodeledConstruct("GROUP BY ALL with an unknown function is not modeled")
+            elif value.find(exp.Column):
+                keys.append(position)
+                key_sql.add(value.sql())
+            else:
+                constants = True
+        for value in aggregated:
+            # A column outside the aggregates must be a key, or the query is not valid.
+            for column in value.find_all(exp.Column):
+                if not column.find_ancestor(exp.AggFunc) and column.sql() not in key_sql:
+                    raise UnmodeledConstruct("GROUP BY ALL with an ungrouped column is not modeled")
+        if keys:
+            group.set("all", None)
+            group.set("expressions", [exp.Literal.number(p) for p in keys])
+        elif aggregated and not constants:
+            select.set("group", None)
+        else:
+            raise UnmodeledConstruct("GROUP BY ALL without grouping keys is not modeled")
+    return tree
+
+
+# Table reads a query makes once every CTE reference is expanded in place. Provers inline CTEs, so a CTE
+# read twice per level doubles the work each level; past this the pair is declined rather than run for minutes.
+MAX_EXPANDED_READS = 256
+
+
+def expanded_reads(tree: exp.Expression, limit: int = MAX_EXPANDED_READS) -> int:
+    """An upper bound on the table reads of ``tree`` with its CTEs inlined, counting stops past ``limit``."""
+
+    definitions: dict[str, list[exp.CTE]] = {}
+    for cte in tree.find_all(exp.CTE):
+        definitions.setdefault(cte.alias_or_name.lower(), []).append(cte)
+    if not definitions:
+        return 0
+    memo: dict[int, int] = {}
+
+    def reads(node: exp.Expression) -> int:
+        total = 0
+        for table in node.find_all(exp.Table):
+            ancestor = table.parent
+            while ancestor is not None and ancestor is not node and not isinstance(ancestor, exp.CTE):
+                ancestor = ancestor.parent
+            if ancestor is not None and ancestor is not node:
+                continue  # inside a CTE definition: counted where it is read
+            name = table.name.lower()
+            if not table.args.get("db") and not table.args.get("catalog") and name in definitions:
+                total += max(cte_reads(cte) for cte in definitions[name])
+            else:
+                total += 1
+            if total > limit:
+                break
+        return total
+
+    def cte_reads(cte: exp.CTE) -> int:
+        key = id(cte)
+        if key not in memo:
+            memo[key] = 1  # a recursive reference
+            memo[key] = reads(cte.this)
+        return memo[key]
+
+    return reads(tree)
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
     Covers ``TABLESAMPLE``, time travel, ``SYMMETRIC`` ranges, ``WITH TIES`` and ``PERCENT``
     limits, ``OUTER APPLY`` and the like. sqlglot versions differ in which of these they parse, so
-    anything carried on the node is refused whichever version produced it.
+    anything carried on the node is refused whichever version produced it. ``GROUP BY ALL`` is
+    spelled out first (see :func:`expand_group_by_all`). An ``IS`` test after a
+    comparison is re-read as the engines read it (:func:`read_is_after_comparison`).
     """
 
+    tree = expand_group_by_all(tree)
+    for literal in tree.find_all(exp.Literal):
+        if not literal.is_string and len(literal.this) > 100:
+            # No FLOAT64, INT64 or NUMERIC needs this many characters; int() and Fraction() on it can take minutes.
+            raise UnmodeledConstruct("a numeric literal longer than 100 characters is not modeled")
+    if expanded_reads(tree) > MAX_EXPANDED_READS:
+        raise UnmodeledConstruct(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
     check_distinct_from_grouping(tree)
     for node in tree.walk():
         for kind, arg in _UNMODELED_ARGS:
@@ -215,13 +363,40 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
-    for node in tree.find_all(*_COMPARISONS):
-        operand = node.expression
-        if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
-            raise UnmodeledConstruct("a comparison followed by IS without parentheses reads differently across engines")
+    tree = read_is_after_comparison(tree)
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
+
+
+def drop_case_conflicts(tables: dict | None) -> dict | None:
+    """``tables`` (a schema, types or constraints mapping) without the entries whose names differ only in case and disagree.
+
+    The provers look tables up case-insensitively, so ``{"t": ["a"], "T": ["b"]}`` used to mean whichever entry
+    came last. Both entries are dropped instead (the prover then knows nothing about that table's columns);
+    entries that agree once lower-cased are kept.
+    """
+
+    if not tables:
+        return tables
+
+    def folded(value):
+        if isinstance(value, dict):
+            return sorted((str(k).lower(), str(v)) for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return [str(c).lower() for c in value]
+        return value
+
+    seen: dict[str, object] = {}
+    clashes: set[str] = set()
+    for name, value in tables.items():
+        key = str(name).lower()
+        if key in seen and seen[key] != folded(value):
+            clashes.add(key)
+        seen.setdefault(key, folded(value))
+    if not clashes:
+        return tables
+    return {name: value for name, value in tables.items() if str(name).lower() not in clashes}
 
 
 def _output_names(query: exp.Expression) -> list[str] | None:

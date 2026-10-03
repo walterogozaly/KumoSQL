@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import bisect
 import gzip
-import pickle
-from dataclasses import dataclass, field
+import json
+import math
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
 
 
@@ -84,14 +87,158 @@ class Statistics:
     column_domain: dict[tuple[str, str], str]
 
     def save(self, path: str) -> None:
-        with gzip.open(path, "wb") as fh:
-            pickle.dump(self, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        data = {"version": 1,
+                "tables": {name: {**asdict(table), "sample": [
+                    {k: _encode_scalar(v) for k, v in row.items()} for row in table.sample],
+                    "keys": {k: {**asdict(v), "exact_bins": sorted(v.exact_bins)} for k, v in table.keys.items()}}
+                           for name, table in self.tables.items()},
+                "domains": {name: {"name": domain.name, "nbins": domain.nbins, "binning": domain.binning,
+                                   "heavy": [[_encode_scalar(k), v] for k, v in domain.heavy.items()]}
+                            for name, domain in self.domains.items()},
+                "column_domain": [[t, c, d] for (t, c), d in self.column_domain.items()]}
+        # Validate on write too: a saved file must always be readable by this version.
+        _decode_statistics(data)
+        with gzip.open(path, "wt", encoding="utf-8") as fh:
+            json.dump(data, fh, allow_nan=False)
 
     @staticmethod
     def load(path: str) -> "Statistics":
-        # Local cache written by ``collect_statistics``; never load files from elsewhere.
-        with gzip.open(path, "rb") as fh:
-            return pickle.load(fh)
+        """Read validated gzip JSON; legacy executable pickle files must be regenerated."""
+
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return _decode_statistics(data)
+        except (OSError, EOFError, UnicodeError, ValueError, TypeError, KeyError, OverflowError, InvalidOperation) as exc:
+            raise ValueError("invalid statistics cache; regenerate statistics") from exc
+
+
+def _encode_scalar(value: Any) -> Any:
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    if isinstance(value, (datetime, date, time)):
+        return {"type": type(value).__name__, "value": value.isoformat()}
+    if isinstance(value, Decimal) and value.is_finite():
+        return {"type": "decimal", "value": str(value)}
+    if isinstance(value, bytes):
+        return {"type": "bytes", "value": value.hex()}
+    if isinstance(value, timedelta):
+        return {"type": "timedelta", "value": [value.days, value.seconds, value.microseconds]}
+    raise ValueError("unsupported statistics value")
+
+
+def _decode_scalar(value: Any) -> Any:
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    obj = _fields(value, {"type", "value"})
+    kind, payload = obj["type"], obj["value"]
+    if kind == "timedelta" and isinstance(payload, list) and len(payload) == 3 and all(type(v) is int for v in payload):
+        return timedelta(days=payload[0], seconds=payload[1], microseconds=payload[2])
+    if not isinstance(payload, str):
+        raise ValueError("invalid statistics scalar")
+    decoders = {"date": date.fromisoformat, "datetime": datetime.fromisoformat,
+                "time": time.fromisoformat, "decimal": Decimal, "bytes": bytes.fromhex}
+    if kind not in decoders:
+        raise ValueError("unknown statistics scalar type")
+    result = decoders[kind](payload)
+    if isinstance(result, Decimal) and not result.is_finite():
+        raise ValueError("non-finite statistics value")
+    return result
+
+
+def _fields(value: Any, keys: set[str]) -> dict:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise ValueError("invalid statistics fields")
+    return value
+
+
+def _mapping(value: Any) -> dict:
+    if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
+        raise ValueError("invalid statistics mapping")
+    return value
+
+
+def _integer(value: Any, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError("invalid statistics integer")
+    return value
+
+
+def _number(value: Any, minimum: float = 0) -> float:
+    if type(value) not in (float, int) or not math.isfinite(value) or value < minimum:
+        raise ValueError("invalid statistics number")
+    return value
+
+
+def _list(value: Any) -> list:
+    if not isinstance(value, list):
+        raise ValueError("invalid statistics list")
+    return value
+
+
+def _decode_statistics(value: Any) -> Statistics:
+    data = _fields(value, {"version", "tables", "domains", "column_domain"})
+    if type(data["version"]) is not int or data["version"] != 1:
+        raise ValueError("unsupported statistics version")
+    domains = {}
+    for name, raw in _mapping(data["domains"]).items():
+        obj = _fields(raw, {"name", "heavy", "nbins", "binning"})
+        nbins = _integer(obj["nbins"], 1)
+        if obj["name"] != name or obj["binning"] not in ("degree", "range"):
+            raise ValueError("invalid statistics domain")
+        heavy = {}
+        for pair in _list(obj["heavy"]):
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise ValueError("invalid statistics heavy value")
+            scalar, b = _decode_scalar(pair[0]), _integer(pair[1])
+            if scalar is None or b >= nbins or scalar in heavy:
+                raise ValueError("invalid statistics heavy bin")
+            heavy[scalar] = b
+        domains[name] = Domain(name, heavy, nbins, obj["binning"])
+    tables = {}
+    for name, raw in _mapping(data["tables"]).items():
+        obj = _fields(raw, {"name", "rows", "columns", "sample", "pinned", "weight", "keys"})
+        columns = _list(obj["columns"])
+        if obj["name"] != name or not all(isinstance(c, str) for c in columns) or len(set(columns)) != len(columns):
+            raise ValueError("invalid statistics columns")
+        sample = []
+        for row in _list(obj["sample"]):
+            if set(_mapping(row)) != set(columns):
+                raise ValueError("invalid statistics sample columns")
+            sample.append({k: _decode_scalar(v) for k, v in row.items()})
+        rows, pinned = _integer(obj["rows"]), _integer(obj["pinned"])
+        weight = _number(obj["weight"], 1)
+        if pinned > len(sample) or len(sample) > rows:
+            raise ValueError("invalid statistics sample size")
+        keys = {}
+        for column, raw_key in _mapping(obj["keys"]).items():
+            key = _fields(raw_key, {"domain", "count", "distinct", "sample_bins", "exact_bins"})
+            if column not in columns or not isinstance(key["domain"], str) or key["domain"] not in domains:
+                raise ValueError("invalid statistics key domain")
+            nbins = domains[key["domain"]].nbins
+            count = [_number(v) for v in _list(key["count"])]
+            distinct = [_number(v) for v in _list(key["distinct"])]
+            bins = [_integer(v, -1) for v in _list(key["sample_bins"])]
+            exact = [_integer(v) for v in _list(key["exact_bins"])]
+            if len(count) != nbins or len(distinct) != nbins or len(bins) != len(sample) or any(b >= nbins for b in bins + exact):
+                raise ValueError("invalid statistics bin shape")
+            keys[column] = KeyStats(key["domain"], count, distinct, bins, frozenset(exact))
+        tables[name] = TableStats(name, rows, list(columns), sample, pinned, weight, keys)
+    column_domain = {}
+    for entry in _list(data["column_domain"]):
+        if not isinstance(entry, list) or len(entry) != 3 or not all(isinstance(v, str) for v in entry):
+            raise ValueError("invalid statistics column domain")
+        t, c, d = entry
+        if t not in tables or c not in tables[t].keys or d != tables[t].keys[c].domain or (t, c) in column_domain:
+            raise ValueError("invalid statistics column domain reference")
+        column_domain[(t, c)] = d
+    if set(column_domain) != {(t, c) for t, table in tables.items() for c in table.keys}:
+        raise ValueError("missing statistics column domain")
+    return Statistics(tables, domains, column_domain)
 
 
 def key_domains(pairs: Iterable[tuple[tuple[str, str], tuple[str, str]]]) -> dict[tuple[str, str], str]:

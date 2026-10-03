@@ -42,7 +42,9 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, expand_group_by_all, expanded_reads
 from .set_operations import positional_sql_pair
+from .solver_lock import serialized
 
 try:  # pragma: no cover - exercised through the tests
     import z3
@@ -52,6 +54,14 @@ except ImportError:  # pragma: no cover
 
 class Unsupported(Exception):
     """The query uses something the bounded encoding does not model."""
+
+
+def _whole(literal: exp.Literal) -> int:
+    """The value of a literal used as a position, count or offset; ``1.5`` or ``1e0`` there is not modeled."""
+
+    if not literal.this.isdigit() or len(literal.this) > 18:
+        raise Unsupported(f"{literal.this} where a whole number is expected")
+    return int(literal.this)
 
 
 class BoundedStatus(str, Enum):
@@ -653,6 +663,12 @@ class Compiler:
 
     def compile(self, sql: str) -> Rel:
         tree = sqlglot.parse_one(sql, read=self.dialect)
+        try:
+            tree = expand_group_by_all(tree)
+        except UnmodeledConstruct as error:
+            raise Unsupported(str(error)) from None
+        if expanded_reads(tree) > MAX_EXPANDED_READS:
+            raise Unsupported(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
         return self.query(tree, None)
 
     def query(self, node: exp.Expression, outer: Scope | None) -> Rel:
@@ -1043,7 +1059,7 @@ class Compiler:
             target = item.this
             descending = bool(item.args.get("desc"))
             if isinstance(target, exp.Literal) and not target.is_string:
-                position = int(target.this) - 1
+                position = _whole(target) - 1
                 if not 0 <= position < len(cells):
                     raise Unsupported("ORDER BY position")
                 value = cells[position]
@@ -1075,7 +1091,7 @@ class Compiler:
                 raise Unsupported("grouping sets")
             for key in group.expressions:
                 if isinstance(key, exp.Literal) and not key.is_string and not self.group_constants:
-                    position = int(key.this) - 1
+                    position = _whole(key) - 1
                     if not 0 <= position < len(items):
                         raise Unsupported("GROUP BY position")
                     chosen = items[position]
@@ -1170,13 +1186,13 @@ class Compiler:
             target = limit.expression
             if not (isinstance(target, exp.Literal) and not target.is_string):
                 raise Unsupported("LIMIT must be a literal")
-            count = int(target.this)
+            count = _whole(target)
         skip = 0
         if offset is not None:
             target = offset.expression if hasattr(offset, "expression") else offset
             if not (isinstance(target, exp.Literal) and not target.is_string):
                 raise Unsupported("OFFSET must be a literal")
-            skip = int(target.this)
+            skip = _whole(target)
         if node.args.get("order") is None:
             raise Unsupported("LIMIT without ORDER BY")
         rows = rel.rows
@@ -1272,8 +1288,14 @@ class Compiler:
             return const(node.this, "str")
         text = node.this
         if re.fullmatch(r"\d+", text):
+            if len(text) > 400:
+                raise Unsupported("integer literal out of range")
             return const(int(text), "int")
-        return const(Fraction(Decimal(text)), "real")
+        value = Decimal(text)
+        if value.is_finite() and value and not -400 <= value.adjusted() <= 400:
+            # Out of FLOAT64's range; Fraction(Decimal('1e100000000')) would build a hundred-million-digit integer.
+            raise Unsupported("numeric literal out of range")
+        return const(Fraction(value), "real")
 
     def _e_Boolean(self, node, scope):
         return const(bool(node.this), "bool")
@@ -1555,7 +1577,7 @@ class Compiler:
         if digits is not None:
             if not (isinstance(digits, exp.Literal) and not digits.is_string):
                 raise Unsupported("ROUND with a computed precision")
-            places = int(digits.this)
+            places = _whole(digits)
         if v.kind == "int" and places >= 0:
             return v
         if v.kind not in ("int", "real") or places < 0:
@@ -1570,13 +1592,13 @@ class Compiler:
     def _e_Substring(self, node, scope):
         value = self.expr(node.this, scope)
         start, length = node.args.get("start"), node.args.get("length")
-        if value.kind != "str" or not (isinstance(start, exp.Literal) and not start.is_string and int(start.this) >= 1):
+        if value.kind != "str" or not (isinstance(start, exp.Literal) and not start.is_string and _whole(start) >= 1):
             raise Unsupported("SUBSTRING with this form")
-        offset = int(start.this) - 1
+        offset = _whole(start) - 1
         if length is None:
             size = z3.If(z3.Length(value.val) - offset > 0, z3.Length(value.val) - offset, z3.IntVal(0))
-        elif isinstance(length, exp.Literal) and not length.is_string and int(length.this) >= 0:
-            size = z3.IntVal(int(length.this))
+        elif isinstance(length, exp.Literal) and not length.is_string and _whole(length) >= 0:
+            size = z3.IntVal(_whole(length))
         else:
             raise Unsupported("SUBSTRING with a computed length")
         return V("str", z3.SubString(value.val, offset, size), value.null)
@@ -1687,7 +1709,7 @@ class Compiler:
                 if offset_node is not None:
                     if not (isinstance(offset_node, exp.Literal) and not offset_node.is_string):
                         raise Unsupported("LAG or LEAD with a computed offset")
-                    amount = int(offset_node.this)
+                    amount = _whole(offset_node)
                 target = rank[index] + (amount if isinstance(function, exp.Lead) else -amount)
                 default = function.args.get("default")
                 fallback = self.expr(default, scope) if default is not None else null_value()
@@ -2201,6 +2223,7 @@ def _check_bounded(
         return BoundedResult(BoundedStatus.UNKNOWN, "query too deeply nested", 0, None, time.time() - began)
 
 
+@serialized
 def evaluate(sql: str, schema: BoundedSchema, data: dict[str, list[tuple]], dialect: str = "bigquery", nulls_first: bool | None = None):
     """The rows the *encoding* gives ``sql`` on a concrete database (for testing it against DuckDB)."""
 
@@ -2258,6 +2281,7 @@ def _cell(value, kind: str):
     return z3.IntVal(value)
 
 
+@serialized
 def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs) -> BoundedResult:
     """See :func:`_check_bounded`. For SQLite only a counterexample is offered: the encoding's LIKE (case-sensitive)
     and ``/`` (exact) differ from SQLite's, so "no counterexample" would not carry over."""

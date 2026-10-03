@@ -64,8 +64,9 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
+from .solver_lock import bounded_solver, serialized
 from .string_literals import canonical_literals
 
 try:  # pragma: no cover - exercised by the import itself
@@ -80,6 +81,8 @@ class SmtStatus(str, Enum):
     PROVEN_EQUIVALENT = "proven_equivalent"
     NOT_EQUIVALENT = "not_equivalent"
     NOT_PROVEN = "not_proven"
+    # Equivalent on every database that meets ``SmtEquivalenceResult.conditions``; never counted as proven.
+    PROVEN_CONDITIONALLY = "proven_conditionally"
 
 
 @dataclass(frozen=True)
@@ -97,10 +100,16 @@ class SmtEquivalenceResult:
     reason: str
     counterexample: Counterexample | None = None
     assumptions: tuple[str, ...] = ()
+    # ``kumosql.conditional_equivalence.Condition`` items of a PROVEN_CONDITIONALLY result.
+    conditions: tuple = ()
 
     @property
     def proven(self) -> bool:
         return self.status is SmtStatus.PROVEN_EQUIVALENT
+
+    @property
+    def conditionally_proven(self) -> bool:
+        return self.status is SmtStatus.PROVEN_CONDITIONALLY
 
 
 @dataclass(frozen=True)
@@ -191,6 +200,9 @@ _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CANONICAL_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
+# Select bodies and table reads compiled for one pair: a CTE read twice per level doubles each level, so
+# fourteen short lines would expand to 16,384 reads, and the solver timeout does not cover compiling.
+_MAX_EXPANSION = 4000
 
 
 _UNNEST_TABLE = "$unnest"
@@ -204,6 +216,23 @@ class _Env(dict):
 
 class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
+
+
+def _lost_null_ordering(body: exp.Expression, text: str) -> str:
+    """A suffix naming every NULLS FIRST/LAST of ``body`` when its BigQuery ``text`` lost one, else "".
+
+    sqlglot drops a NULLS placement BigQuery cannot spell there, such as ``ASC NULLS LAST`` in an aggregate's
+    window, so ``SUM(v) OVER (ORDER BY t NULLS FIRST)`` and ``.. NULLS LAST`` would print alike.
+    """
+
+    before = [bool(o.args.get("nulls_first")) for o in body.find_all(exp.Ordered)]
+    if not before:
+        return ""
+    try:
+        after = [bool(o.args.get("nulls_first")) for o in sqlglot.parse_one(text, read="bigquery").find_all(exp.Ordered)]
+    except sqlglot.errors.ParseError:
+        after = None
+    return "" if before == after else " NULLS[" + "".join("F" if b else "L" for b in before) + "]"
 
 
 def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
@@ -321,11 +350,14 @@ def _implied(conjuncts: list, fact, ids: set) -> bool:
 
     if fact.get_id() in ids:
         return True
-    solver = z3.Solver()
-    solver.set("timeout", 2000)
+    solver = bounded_solver(2000)
     solver.add(*conjuncts)
     solver.add(z3.Not(fact))
     return solver.check() == z3.unsat
+
+
+class _Exhausted(Unsupported):
+    """The compilation budget ran out; never retried as an opaque relation."""
 
 
 class _SetSourceUnresolved(Exception):
@@ -624,6 +656,9 @@ def _parse_number(text: str) -> Fraction:
         raise Unsupported(f"numeric literal {text!r}") from error
     if not dec.is_finite():
         raise Unsupported(f"numeric literal {text!r}")
+    if dec and not -400 <= dec.adjusted() <= 400:
+        # Outside FLOAT64's range (and Fraction(1e100000000) would build a hundred-million-digit integer).
+        raise Unsupported(f"numeric literal {text[:40]!r} is out of range")
     value = Fraction(dec)
     if value.denominator == 1 and "." not in text and "e" not in text.lower():
         if abs(value) > 2**53:
@@ -809,6 +844,7 @@ class _Compiler:
         }
         self.exact = exact_arithmetic
         self.counter = itertools.count()
+        self.expansion = 0
         self.uses_uf = False
         self.functions: dict[tuple[str, int], tuple] = {}
         # Hypotheses every valid query satisfies, e.g. arithmetic operands are
@@ -985,7 +1021,13 @@ class _Compiler:
             )
         return _Union(blocks, True, column_names=list(left.names))
 
+    def _expand(self) -> None:
+        self.expansion += 1
+        if self.expansion > _MAX_EXPANSION:
+            raise _Exhausted(f"the queries expand to more than {_MAX_EXPANSION} selects and table reads")
+
     def _select(self, node: exp.Select, ctes: dict):
+        self._expand()
         for key in ("qualify", "laterals", "pivots", "connect", "match", "prewhere", "windows", "into"):
             if node.args.get(key):
                 raise Unsupported(f"{key.upper()} clause")
@@ -1207,6 +1249,8 @@ class _Compiler:
                     raise Unsupported(f"GROUP BY {key.upper()}")
             for key_expr in group.expressions:
                 if isinstance(key_expr, exp.Literal) and not key_expr.is_string:
+                    if not key_expr.this.isdigit():
+                        raise Unsupported(f"GROUP BY {key_expr.this}")
                     position = int(key_expr.this)
                     if not 1 <= position <= len(outputs):
                         raise Unsupported(f"GROUP BY {position}")
@@ -1240,6 +1284,7 @@ class _Compiler:
                 body, cte_env = ctes[name]
                 return alias, self._derived(body, cte_env, occs, conds)
             key = self._table_key(node)
+            self._expand()
             occ = _Occ(key, self.fresh("r"), self.schema.get(key.lower()))
             self.occ_tables[occ.uid] = key.lower()
             occs.append(occ)
@@ -1258,6 +1303,8 @@ class _Compiler:
         saved = len(self.facts)
         try:
             sub = self._query(body, ctes)
+        except _Exhausted:
+            raise
         except Unsupported:
             del self.facts[saved:]
             return self._opaque(body, ctes, occs)
@@ -1396,10 +1443,13 @@ class _Compiler:
                     order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
                 position = {old: new for new, old in enumerate(order)}
                 root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
-        key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
+        text = canonical.sql(dialect="bigquery", normalize_functions="upper")
+        lost = _lost_null_ordering(canonical, text)
+        key = "(" + text + ")" + lost
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
-        self.opaque_bodies[key] = (key[1:-1], len(names))
+        if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
+            self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
         return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
@@ -1415,6 +1465,7 @@ class _Compiler:
             if table.db or table.catalog or name not in local:
                 continue
             inner_body, inner_env = local[name]
+            self._expand()
             expanded = self._expand_ctes(inner_body.copy(), inner_env)
             table.replace(exp.Subquery(this=expanded, alias=exp.TableAlias(this=exp.to_identifier(table.alias_or_name))))
         return body
@@ -1901,7 +1952,10 @@ class _Compiler:
             raise Unsupported(type(e).__name__)
         name_parts = [e.name.upper() if isinstance(e, exp.Anonymous) else type(e).__name__]
         vals: list[_Val] = []
-        for key, value in e.args.items():
+        # Named arguments in the class's declared order, not the order the node happened to be built in.
+        declared = list(type(e).arg_types)
+        for key in declared + sorted(k for k in e.args if k not in type(e).arg_types):
+            value = e.args.get(key)
             if key.startswith("_") or value is None:
                 continue
             children = value if isinstance(value, list) else [value]
@@ -1935,6 +1989,15 @@ class _Compiler:
         V = _value_sort()
         target = e.this
         distinct = False
+        # COUNT(a, b, ..) counts the rows where no argument is NULL, and COUNT(DISTINCT a, b, ..) the
+        # distinct tuples among them: the argument is the tuple, NULL when any component is, and its
+        # value an uninterpreted function of the components (a claim valid for every such function
+        # holds for the injective one that a tuple is).
+        arguments = None
+        if func == "COUNT" and isinstance(target, exp.Distinct) and len(target.expressions) > 1:
+            arguments, distinct, target = list(target.expressions), True, None
+        elif func == "COUNT" and e.args.get("expressions") and not isinstance(target, exp.Distinct):
+            arguments, target = [target, *e.args["expressions"]], None
         if isinstance(target, exp.Distinct):
             if len(target.expressions) != 1:
                 raise Unsupported("multi-argument DISTINCT aggregate")
@@ -1947,7 +2010,12 @@ class _Compiler:
                 raise Unsupported(f"aggregate modifier {key}")
         if func in _DUPLICATE_INSENSITIVE:
             distinct = False
-        if func == "COUNT" and (target is None or isinstance(target, exp.Star)):
+        if arguments is not None:
+            if any(isinstance(a, exp.Star) for a in arguments):
+                raise Unsupported("* among several COUNT arguments")
+            vals = [self._val(a, env, None, None) for a in arguments]
+            arg = _Val(z3.Or(*[v.null for v in vals]), self._function("Tuple", len(vals))[1](*self._uf_args(vals)))
+        elif func == "COUNT" and (target is None or isinstance(target, exp.Star)):
             arg = None
         elif func in ("COUNTIF", "LOGICAL_AND", "LOGICAL_OR"):
             arg = _box(self._pred(target, env, None, None))
@@ -2042,6 +2110,7 @@ class _Prover:
         # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
+        self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
         self.candidates: list[tuple[object, list[_Occ]]] = []
 
@@ -2140,8 +2209,7 @@ class _Prover:
         return facts
 
     def valid(self, formula, occs: list[_Occ], facts=()) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*self._group_member_facts(occs))
@@ -2154,6 +2222,7 @@ class _Prover:
             self.candidates.append((self._counterexample(solver, occs), list(occs)))
         else:
             self.unknown = True
+            self.wall_clock = self.wall_clock or solver.reason_unknown() == "timeout"
         return False
 
     def _counterexample(self, solver, occs):
@@ -2184,8 +2253,7 @@ class _Prover:
         return None
 
     def witness(self, pred, occs: list[_Occ], facts=()) -> None:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
@@ -2235,8 +2303,7 @@ class _Prover:
         return False
 
     def unsatisfiable(self, pred, occs: list[_Occ], facts=()) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
@@ -2396,16 +2463,23 @@ class _Prover:
         tables1 = Counter(o.table for o in occs1)
         if tables1 != Counter(o.table for o in occs2):
             return
-        groups = sorted(tables1)
-        per_table = []
-        for table in groups:
-            left = [o for o in occs1 if o.table == table]
-            right = [o for o in occs2 if o.table == table]
-            per_table.append([list(zip(right, perm)) for perm in itertools.permutations(left)])
-        for count, combo in enumerate(itertools.product(*per_table)):
-            if count >= _MAX_MAPPINGS:
+        sides = [
+            ([o for o in occs1 if o.table == table], [o for o in occs2 if o.table == table]) for table in sorted(tables1)
+        ]
+
+        def mappings(index: int):
+            # itertools.product order over each table's permutations, built lazily: eight occurrences of
+            # one table have 40,320 permutations, of which at most _MAX_MAPPINGS are ever read.
+            if index == len(sides):
+                yield []
                 return
-            yield [pair for group in combo for pair in group]
+            left, right = sides[index]
+            for perm in itertools.permutations(left):
+                head = list(zip(right, perm))
+                for rest in mappings(index + 1):
+                    yield head + rest
+
+        yield from itertools.islice(mappings(0), _MAX_MAPPINGS)
 
     @staticmethod
     def _homomorphisms(src: list[_Occ], dst: list[_Occ]):
@@ -3724,8 +3798,10 @@ def _prove_core(
                     counterexample=counterexample,
                     assumptions=assumed,
                 )
-        if prover.unknown:
+        if prover.wall_clock:
             reason += " (the solver timed out on some checks)"
+        elif prover.unknown:
+            reason += " (the solver ran out of its work budget on some checks)"
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumed)
 
     result = attempt(True)
@@ -3748,6 +3824,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--schema", help="JSON file mapping table names to column lists")
     parser.add_argument("--exact-arithmetic", action="store_true", help="model + - * exactly (INT64/NUMERIC)")
     parser.add_argument("--timeout-ms", type=int, default=5000)
+    parser.add_argument(
+        "--conditional",
+        action="store_true",
+        help="when the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
+    )
     args = parser.parse_args(argv)
     with open(args.left, encoding="utf-8") as handle:
         left = handle.read()
@@ -3760,13 +3841,16 @@ def main(argv: list[str] | None = None) -> int:
     from .statement_proof import prove_statements_smt
 
     result = prove_statements_smt(
-        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms
+        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms,
+        conditional=args.conditional,
     )
     payload = {
         "status": result.status.value,
         "reason": result.reason,
         "assumptions": list(result.assumptions),
     }
+    if result.conditions:
+        payload["conditions"] = [c.to_json() for c in result.conditions]
     if result.counterexample is not None:
         payload["counterexample"] = {
             "tables": result.counterexample.tables,
@@ -3775,6 +3859,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
+    if result.conditionally_proven:
+        return 3
     return 0 if result.proven else 1
 
 
@@ -3808,9 +3894,9 @@ def _split_limit(sql: str, dialect: str):
     if order is None:
         return None, "LIMIT or OFFSET without ORDER BY picks arbitrary rows"
     # ORDER BY .. OFFSET m without LIMIT keeps every row after the first m: an unbounded limit.
-    if limit is not None and (not isinstance(limit, exp.Limit) or not isinstance(limit.expression, exp.Literal) or limit.expression.is_string):
+    if limit is not None and (not isinstance(limit, exp.Limit) or not isinstance(limit.expression, exp.Literal) or limit.expression.is_string or not limit.expression.this.isdigit()):
         return None, "LIMIT is not a constant"
-    if offset is not None and (not isinstance(offset.expression, exp.Literal) or offset.expression.is_string):
+    if offset is not None and (not isinstance(offset.expression, exp.Literal) or offset.expression.is_string or not offset.expression.this.isdigit()):
         return None, "OFFSET is not a constant"
     first = root
     while isinstance(first, (exp.Union, exp.Intersect, exp.Except, exp.Subquery)):
@@ -3825,6 +3911,8 @@ def _split_limit(sql: str, dialect: str):
             return None, "ORDER BY item"
         key = item.this
         position = None
+        if isinstance(key, exp.Literal) and not key.is_string and not key.this.isdigit():
+            return None, "ORDER BY a number that is not a position"
         if isinstance(key, exp.Literal) and not key.is_string and 1 <= int(key.this) <= len(outputs):
             position = int(key.this) - 1
         else:
@@ -3866,7 +3954,70 @@ def _split_limit(sql: str, dialect: str):
     return faithful_sql(core, dialect), spec
 
 
+def _check_options(kwargs: dict) -> None:
+    """Raise ``TypeError``/``ValueError`` for an option a caller passed wrongly (a bug, not a property of the SQL).
+
+    ``timeout_ms=None`` means the default and a float is rounded down to whole milliseconds; schema, types and
+    constraints entries whose names differ only in case and disagree are dropped (:func:`drop_case_conflicts`), in place.
+    """
+
+    timeout = kwargs.get("timeout_ms")
+    if timeout is None:
+        kwargs.pop("timeout_ms", None)
+    elif isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout < 2**32:
+        raise ValueError(f"timeout_ms must be a positive number of milliseconds, not {timeout!r}")
+    else:
+        kwargs["timeout_ms"] = int(timeout)
+    for name in ("schema", "types", "constraints"):
+        value = kwargs.get(name)
+        if value is not None and not isinstance(value, dict):
+            raise TypeError(f"{name} must map table names to their entries, not {type(value).__name__}")
+    schema = kwargs.get("schema") or {}
+    for table, columns in schema.items():
+        # A column list, or a mapping whose keys are the column names (column -> type).
+        if not isinstance(table, str) or isinstance(columns, (str, bytes)) or not all(isinstance(c, str) for c in columns):
+            raise TypeError(f"schema entry {table!r} must list column names")
+    for table, columns in (kwargs.get("types") or {}).items():
+        if not isinstance(table, str) or not isinstance(columns, dict):
+            raise TypeError(f"types entry {table!r} must map column names to type names")
+    for name in ("schema", "types", "constraints"):
+        if kwargs.get(name):
+            kwargs[name] = drop_case_conflicts(kwargs[name])
+
+
+@serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    Input the prover cannot read (untokenizable text, nesting too deep for the compiler) is
+    ``not_proven``, never an exception; an option passed wrongly raises ``TypeError``/``ValueError``.
+    With ``conditional=True`` a pair that is not proven is retried under facts taken from the
+    queries (NOT NULL columns, unique keys, foreign keys); a proof that needs some of them comes back
+    as ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (see ``kumosql.conditional_equivalence``).
+    See ``_prove_with_limit`` for the rest.
+    """
+
+    conditional = kwargs.pop("conditional", False)
+    wall = kwargs.pop("conditional_seconds", None)
+    _check_options(kwargs)
+    result = _prove_with_limit(left_sql, right_sql, **kwargs)
+    if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
+        return result
+    from . import conditional_equivalence
+
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return _prove_with_limit(*pair, **{**kwargs, "constraints": constraints, "compare_names": False})
+        return _prove_with_limit(left_sql, right_sql, **{**kwargs, "constraints": constraints})
+
+    options = {} if wall is None else {"wall_seconds": wall}
+    return conditional_equivalence.add_conditions(
+        left_sql, right_sql, result, prove,
+        schema=kwargs.get("schema"), constraints=kwargs.get("constraints"), types=kwargs.get("types"), dialect=kwargs.get("dialect", "bigquery"), **options,
+    )
+
+
+def _prove_with_limit(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
     A query ending in ``ORDER BY .. LIMIT n [OFFSET m]`` is handled when both sides
@@ -3878,6 +4029,15 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     See ``_prove_core`` for the options.
     """
 
+    try:
+        return _prove_smt(left_sql, right_sql, **kwargs)
+    except sqlglot.errors.SqlglotError as error:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {str(error)[:200]}")
+    except RecursionError:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: the query nests too deeply")
+
+
+def _prove_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
     if dialect == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
