@@ -26,6 +26,7 @@ COMMANDS = {
     "kumosql-refactor": "kumosql.refactor:main",
     "minimize-tables": "kumosql.table_minimizer:main",
     "reduce-project": "kumosql.project_reduction:main",
+    "kumosql-shared-model": "kumosql.shared_models:main",
     "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
     "kumosql-ui": "kumosql.ui:main",
     "kumosql-scopes": "kumosql.cli:scopes_main",

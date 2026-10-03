@@ -1,3 +1,4 @@
+import functools
 import json
 import sys
 from pathlib import Path
@@ -6,6 +7,63 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 ORDER_FILE = Path(__file__).resolve().parent / "order.json"
+
+
+def _one_thread(config):
+    """``config`` with ``threads`` set to 1, unless the caller chose a thread count; never mutates the caller's dict."""
+
+    if config is None:
+        return {"threads": 1}
+    if not isinstance(config, dict) or any(str(key).lower() in ("threads", "worker_threads") for key in config):
+        return config  # the caller's own choice, or a value DuckDB rejects exactly as before
+    return {**config, "threads": 1}
+
+
+def _single_threaded_duckdb():
+    """Run DuckDB on one thread in tests unless a caller sets ``threads`` itself.
+
+    Tests open thousands of tiny databases. Each ``duckdb.connect`` otherwise starts a thread per core, and under
+    pytest-xdist those threads compete with the other workers for the same cores while doing nothing useful on a few
+    rows. Every other argument and config key is passed on unchanged. Pool workers forked by a test inherit this.
+    """
+
+    try:
+        import duckdb
+    except ImportError:
+        return
+    connect = duckdb.connect
+    if getattr(connect, "_kumosql_one_thread", False):
+        return
+
+    @functools.wraps(connect)
+    def connect_one_thread(*args, **kwargs):
+        if len(args) >= 3:  # connect(database, read_only, config)
+            args = (*args[:2], _one_thread(args[2]), *args[3:])
+        else:
+            kwargs["config"] = _one_thread(kwargs.get("config"))
+        return connect(*args, **kwargs)
+
+    connect_one_thread._kumosql_one_thread = True
+    duckdb.connect = connect_one_thread
+
+
+def _no_pandas_probe():
+    """Mark pandas as missing in ``sys.modules`` when it is not installed, so DuckDB stops searching for it.
+
+    DuckDB tries ``import pandas`` for every bound parameter of ``execute`` and ``executemany``; without pandas each try
+    is a full, failing search of ``sys.path``. A ``None`` entry fails the same import at once. ``import pandas`` still
+    raises ``ModuleNotFoundError`` and ``importlib.util.find_spec("pandas")`` still returns None, and an installed pandas
+    is never shadowed.
+    """
+
+    import importlib.util
+
+    try:
+        missing = importlib.util.find_spec("pandas") is None
+    except (ImportError, ValueError):
+        return
+    if missing:
+        sys.modules.setdefault("pandas", None)
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +116,7 @@ HEAVY_FILES = [
     "test_sqlfluff_fixtures_bench.py",
     "test_lineage_benchmarks.py",
     "test_pipeline_bench.py",
+    "test_jaffle_shop_bench.py",
     "test_minimization_bench.py",
     "test_unsafe_fuzz.py",
     "test_safety_corpus.py",
@@ -83,9 +142,11 @@ EVAL_FILES = {
     "test_constraint_dependence.py",
     "test_join_rewrite_bench.py",
     "test_cosette_benchmarks.py",
+    "test_dbgpt_rules_bench.py",
     "test_dlbench_bench.py",
     "test_dup_bench.py",
     "test_incremental.py",
+    "test_jaffle_shop_bench.py",
     "test_lineage_benchmarks.py",
     "test_lineage_goldens_bench.py",
     "test_llm_sql_solver_bench.py",
@@ -98,6 +159,7 @@ EVAL_FILES = {
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
     "test_rbot_benchmarks.py",
+    "test_soundness_fuzz.py",
     "test_safety_corpus.py",
     "test_schema_change.py",
     "test_script_bench.py",
@@ -132,8 +194,11 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    """Record every run in the shared test history (tools/test_history.py); a no-op without a history folder."""
+    """Run DuckDB single-threaded without the pandas probe, and record every run in the shared test history
+    (tools/test_history.py; a no-op without a history folder)."""
 
+    _single_threaded_duckdb()
+    _no_pandas_probe()
     sys.path.insert(0, str(TOOLS))
     try:
         import test_history

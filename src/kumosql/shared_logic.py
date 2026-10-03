@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
-from .canonical import free_cte_refs
+from .canonical import _declared, free_cte_refs
 from .graph import GraphResult, ObservedRead, build_query_graph
 from .pipeline_duplicates import _fingerprint, _select_location
 
@@ -309,6 +309,44 @@ def _merges_back(proposal: SharedLogicProposal, model_sql: str, sites) -> bool:
     return True
 
 
+def _not_shareable(proposal: SharedLogicProposal) -> str:
+    """Why one shared table cannot stand in for the copies whatever their text, or ``""``.
+
+    Equal canonical text says the copies are the same code, not that one materialized result serves them all:
+    a clock or RAND is evaluated again by every build, a Dataform expression the loader masked may differ
+    between models, and a SELECT that reads a column of the query around it has no rows on its own.
+    """
+
+    from .pipeline_equivalence import run_dependent
+
+    text = proposal.shared_sql or ""
+    if "__sqlx_" in text or "${" in text:
+        return "the shared SELECT holds a Dataform expression that was not resolved"
+    try:
+        shared = sqlglot.parse_one(text, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return "the shared SELECT does not parse"
+    if shared is None:
+        return "the shared SELECT does not parse"
+    why = run_dependent(shared)
+    if why:
+        return f"the shared SELECT computes {why.split(': ', 1)[-1]}, which each build evaluates again"
+    nested = any(not location.startswith(("query", "cte:", "subquery:")) for _, location in proposal.sites)
+    for column in shared.find_all(exp.Column):
+        if isinstance(column.this, exp.Star):
+            continue
+        qualifier = column.table.lower() if column.table else ""
+        scopes = [s for s in [column.find_ancestor(exp.Select)] if s is not None]
+        while scopes[-1:] and scopes[-1].find_ancestor(exp.Select) is not None:
+            scopes.append(scopes[-1].find_ancestor(exp.Select))
+        declared = {name for scope in scopes for name in _declared(scope)}
+        if qualifier and qualifier not in declared:
+            return f"the shared SELECT reads {column.sql(dialect='bigquery')} from the query around it"
+        if not qualifier and nested:
+            return "a copy sits inside an expression and reads a column it does not qualify, which may belong to the query around it"
+    return ""
+
+
 def verify_proposal(pipeline: "Pipeline", proposal: SharedLogicProposal) -> SharedLogicProposal:
     """Apply the refactor to every copy and label each consumer by what the prover shows.
 
@@ -324,7 +362,11 @@ def verify_proposal(pipeline: "Pipeline", proposal: SharedLogicProposal) -> Shar
     by_model: dict[str, list[tuple[str, str]]] = {}
     for site in proposal.sites:
         by_model.setdefault(site[0], []).append(site)
+    blocked = _not_shareable(proposal)
     for model_key, sites in by_model.items():
+        if blocked:
+            results[model_key] = ConsumerResult(model_key, "unknown", blocked)
+            continue
         model = pipeline.models.get(model_key)
         before = getattr(model, "sql", None) if model is not None else None
         outside = _outside_reads(proposal, before, sites)
