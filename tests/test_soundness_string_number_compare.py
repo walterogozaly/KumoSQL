@@ -75,11 +75,37 @@ def test_declared_types_count(prover, dialect):
     assert prover("SELECT t.a FROM t WHERE t.a = 'x' AND t.a = 'y'", "SELECT t.a FROM t WHERE FALSE", dialect=dialect, types=text).proven
 
 
+@pytest.mark.parametrize("dialect", ("mysql", "duckdb", "postgres"))
+@pytest.mark.parametrize("prover", PROVERS)
+def test_the_same_converted_comparison_on_both_sides_stays_proven(prover, dialect):
+    """A semijoin turned into a join does not depend on how the engine converts ``sal + 1 = job``."""
+
+    types = {"emp": {"deptno": "INT", "sal": "INT", "job": "VARCHAR"}}
+    schema = {"emp": ["deptno", "sal", "job"]}
+    left = "SELECT e.deptno FROM emp AS e WHERE e.deptno IN (SELECT d.deptno FROM emp AS d WHERE d.sal + 1 = d.job)"
+    right = "SELECT e.deptno FROM emp AS e JOIN (SELECT DISTINCT d.deptno FROM emp AS d WHERE d.sal + 1 = d.job) AS x ON e.deptno = x.deptno"
+    assert prover(left, right, dialect=dialect, schema=schema, types=types).status is SmtStatus.PROVEN_EQUIVALENT
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_converted_comparison_is_never_refuted(dialect):
+    """The result of the conversion is unknown to the prover, so a model of it is not a counterexample."""
+
+    result = prove_equivalent_algebraic(
+        "SELECT t.a FROM t WHERE '2' = 2", "SELECT t.a FROM t WHERE 2 = '2'", dialect=dialect, search_counterexample=True
+    )
+    assert result.status is SmtStatus.NOT_PROVEN
+
+
 def test_problem_names_the_comparison():
     assert string_number_compare.problem("SELECT a FROM t WHERE '2' <> 2", "mysql")
     assert string_number_compare.problem("SELECT a FROM t WHERE a = 'abc' AND a = 0", "duckdb")
     assert string_number_compare.problem("SELECT a FROM t WHERE a = 2 AND b = 'x'", "bigquery") is None
     assert string_number_compare.problem("SELECT a FROM t WHERE a IN (SELECT b FROM u)", "bigquery") is None
+    # a plain comparison is left to the SMT prover's opaque reading; the other forms are still declined
+    assert string_number_compare.problem("SELECT a FROM t WHERE '2' <> 2", "mysql", plain_ok=True) is None
+    assert string_number_compare.problem("SELECT a FROM t WHERE '2' IN (2)", "mysql", plain_ok=True)
+    assert string_number_compare.problem("SELECT a FROM t WHERE a = 'abc' AND a = 0", "mysql", plain_ok=True)
     assert string_number_compare.problem("not sql at all (", "bigquery") is None
 
 

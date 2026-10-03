@@ -16,7 +16,9 @@ equality, ordering, ``BETWEEN``, ``IN`` lists, simple ``CASE`` operands and ``NU
 - one column compared with a string literal in one place and a number literal in another (``a = 'abc' AND a = 0``
   is not empty on MySQL when ``a`` is an integer column, since ``'abc'`` reads as 0).
 
-It does not fold the comparison, even where the engine's reading is exact (MySQL ``'2' = 2``): a decline is safe on every
+The SMT prover reads a plain comparison of that kind as an opaque predicate of its two values, true or false whatever the
+engine's conversion rule is, so a pair that uses one the same way on both sides can still be proven (the prover declines the
+other forms and the same-column case). It does not fold the comparison, even where the engine's reading is exact (MySQL ``'2' = 2``): a decline is safe on every
 engine and the pair stays unproven.
 Not covered: an undeclared column compared with a string literal on one side of a join and a number on the other,
 and values converted by ``COALESCE``, ``GREATEST`` or ``CASE`` branches.
@@ -95,8 +97,18 @@ def _pairs(tree: exp.Expression):
             yield node.this, node.expression
 
 
-def problem(sql: str, dialect: str = "bigquery", types: dict[str, dict[str, str]] | None = None) -> str | None:
-    """A description of the first string-versus-number comparison in ``sql``, else None."""
+def mismatched(node: exp.Expression, types: dict[str, dict[str, str]] | None = None) -> bool:
+    """Whether a plain comparison (``=``, ``<>``, ``<``, ``<=``, ``>``, ``>=``, ``<=>``) sets a string against a number."""
+
+    return isinstance(node, _COMPARISONS) and {_kind(node.this, _column_kinds(types)), _kind(node.expression, _column_kinds(types))} == {"string", "number"}
+
+
+def problem(sql: str, dialect: str = "bigquery", types: dict[str, dict[str, str]] | None = None, plain_ok: bool = False) -> str | None:
+    """A description of the first string-versus-number comparison in ``sql``, else None.
+
+    With ``plain_ok`` a plain two-operand comparison is not reported: the SMT prover reads it as an opaque predicate
+    of its operands (:meth:`kumosql.smt_equivalence._Compiler._compare`), which is right for any conversion rule.
+    """
 
     try:
         tree = sqlglot.parse_one(sql, read=dialect)
@@ -106,7 +118,7 @@ def problem(sql: str, dialect: str = "bigquery", types: dict[str, dict[str, str]
     literal_kinds: dict[str, set[str]] = {}
     for left, right in _pairs(tree):
         kinds = {_kind(left, columns), _kind(right, columns)}
-        if kinds == {"string", "number"}:
+        if kinds == {"string", "number"} and not (plain_ok and isinstance(left.parent, _COMPARISONS)):
             return "a string is compared with a number (the engines convert the string; the prover does not model it)"
         for column, other in ((left, right), (right, left)):
             if isinstance(column, exp.Column) and isinstance(other, exp.Literal):
