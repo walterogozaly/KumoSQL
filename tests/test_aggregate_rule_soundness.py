@@ -169,6 +169,53 @@ WRONG_PROOFS = [
     ),
 ]
 
+# Variants from a replay of the outside reviews on master (R029): each must stay unproven too.
+VARIANT_DDL = {"tv": "x BIGINT, k BIGINT, p BIGINT, w BIGINT"}
+DEDUP_VARIANTS = [f"SELECT DISTINCT {agg} AS n FROM (SELECT DISTINCT x FROM tv) AS d" for agg in ("COUNT(x)", "SUM(x)", "AVG(x)", "COUNT(*) + 1")]
+HAVING_ORDER_VARIANTS = ["SUM(w)", "MAX(w)", "COUNT(p)"]
+SPLIT_VARIANTS = [("SUM(u.x) + 2", "SUM(p) + 2", "SUM(x)"), ("MAX(u.x) + 1", "MAX(p) + 1", "MAX(x)"), ("MIN(u.x) + 1", "MIN(p) + 1", "MIN(x)"), ("COUNT(u.x) + 1", "SUM(p) + 1", "COUNT(x)")]
+VARIANTS = (
+    [(left, left.replace("(SELECT DISTINCT x FROM tv)", "(SELECT x FROM tv)"), {"tv": [(1, 0, 0, 0), (1, 0, 0, 0), (3, 0, 0, 0)]}) for left in DEDUP_VARIANTS]
+    + [
+        (
+            f"SELECT k FROM tv GROUP BY k HAVING COUNT(CASE WHEN p = 1 THEN 1 END) > 0 ORDER BY {order} DESC LIMIT 1",
+            f"SELECT k FROM tv WHERE p = 1 GROUP BY k ORDER BY {order} DESC LIMIT 1",
+            {"tv": [(0, 1, 1, 1), (0, 1, 0, 9), (0, 1, 0, 9), (0, 2, 1, 5), (0, 2, 1, 5)]},
+        )
+        for order in HAVING_ORDER_VARIANTS
+    ]
+    + [
+        (
+            f"SELECT u.k, {outer} AS v FROM {UNION} GROUP BY u.k, u.j",
+            f"SELECT k, {combined} AS v FROM (SELECT k, {partial} AS p FROM a GROUP BY k, j UNION ALL SELECT k, {partial} AS p FROM b GROUP BY k, j) AS d GROUP BY k",
+            {"a": [(1, 1, 10), (1, 2, 20)]},
+        )
+        for outer, combined, partial in SPLIT_VARIANTS
+    ]
+    + [
+        (
+            "SELECT k, COUNT(DISTINCT k) AS n FROM tv GROUP BY k"
+            " HAVING CASE WHEN COUNT(DISTINCT k) > 0 THEN 9007199254740995 ELSE 9007199254740996 END = 9007199254740996",
+            "SELECT k, COUNT(DISTINCT k) AS n FROM tv GROUP BY k HAVING TRUE",
+            {"tv": [(0, 1, 0, 0)]},
+        )
+    ]
+)
+
+
+@pytest.mark.parametrize("left,right,rows", VARIANTS)
+def test_review_variants_are_never_proven(left, right, rows):
+    db = duckdb.connect()
+    for name, columns in {**DDL, **VARIANT_DDL}.items():
+        db.execute(f"CREATE TABLE {name} ({columns})")
+        for row in rows.get(name, []):
+            db.execute(f"INSERT INTO {name} VALUES ({', '.join('?' for _ in row)})", row)
+    ran_left, ran_right = run_unoptimized(db, left, right)
+    assert Counter(ran_left) != Counter(ran_right)
+    schema = {**SCHEMA, "tv": ["x", "k", "p", "w"]}
+    for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+        assert not prove(left, right, schema=schema, compare_names=False).proven, prove.__name__
+
 
 def _rows(sql_pair: tuple[str, str], rows: dict[str, list[tuple]]) -> tuple[Counter, Counter]:
     db = duckdb.connect()
