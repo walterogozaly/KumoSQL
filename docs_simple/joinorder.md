@@ -16,6 +16,8 @@ KumoSQL gathers row counts, samples, and counts grouped into join-key bins. Freq
 
 Statistics collection uses DuckDB. Planning from those stored statistics runs in Python without contacting a database or using a language model.
 
+Saved statistics use compressed JSON with checks on the format and join-key bins. Old pickle files are refused. Collect them again after upgrading; the benchmark commands create the new cache automatically.
+
 ## Understand the measurements
 
 | Measurement | Meaning |

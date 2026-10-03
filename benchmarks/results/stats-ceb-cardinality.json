@@ -13,6 +13,7 @@
   "coverage": {
     "error": 0
   },
+  "coverage_of": "Failures only: 0 errors over the 2,603 sub-plan estimates; equivalence outcomes do not apply.",
   "held_out": "none (JOB families 17-33 are the held-out workload)",
   "performance": "Pure Python; about 12 ms per sub-plan estimate"
 }

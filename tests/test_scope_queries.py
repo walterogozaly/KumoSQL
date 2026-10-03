@@ -73,19 +73,19 @@ def test_results_are_cached_until_the_timer_ends_and_refresh_runs_again(_fresh):
     scope_queries.result_for(SQL, refresh=True)
     assert len(_fresh) == 2
     state.set_section("scope_queries", {"max_bytes_billed": 50_000_000})
-    state.set_section("bigquery", {"billingProject": "billing-p", "queryCacheHours": 0.001})
-    time.sleep(3.7)
+    state.set_section("bigquery", {"billingProject": "billing-p", "queryCacheHours": 0.0001})  # 0.36 seconds
+    time.sleep(0.5)
     scope_queries.result_for(SQL)
     assert len(_fresh) == 3 and _fresh[-1][3] == 50_000_000
 
 
-def test_default_timer_is_48_hours_and_survives_a_restart(_fresh, monkeypatch):
+def test_default_timer_is_48_hours_and_restart_reloads_values(_fresh, monkeypatch):
     assert scope_queries.cache_seconds() == 48 * 3600
     result = scope_queries.result_for(SQL)
     assert result.expires_at - result.fetched_at == 48 * 3600
     monkeypatch.setattr(scope_queries, "_memory", {})
     monkeypatch.setattr(scope_queries, "_disk_loaded", False)
-    assert scope_queries.result_for(SQL).values == result.values and len(_fresh) == 1
+    assert scope_queries.result_for(SQL).values == result.values and len(_fresh) == 2
 
 
 def test_a_failed_rerun_keeps_the_older_copy_and_says_so(monkeypatch):
@@ -187,7 +187,7 @@ def test_runner_reads_every_page(monkeypatch):
 @pytest.fixture
 def server():
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_port}"

@@ -1,5 +1,7 @@
 import functools
+import itertools
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -66,11 +68,24 @@ def _no_pandas_probe():
         sys.modules.setdefault("pandas", None)
 
 
-@pytest.fixture(autouse=True)
-def isolated_state(tmp_path, monkeypatch):
-    """Keep saved UI, scope and formatting state out of the real user directory."""
+@pytest.fixture(scope="session")
+def _homes(tmp_path_factory):
+    return tmp_path_factory.mktemp("homes"), itertools.count()
 
-    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path / "kumosql-home"))
+
+@pytest.fixture(autouse=True)
+def isolated_state(request, _homes, monkeypatch):
+    """Keep saved UI, scope and formatting state out of the real user directory.
+
+    A test that asks for ``tmp_path`` finds the folder at ``tmp_path / "kumosql-home"``; any other test gets an
+    empty folder of its own without the cost of making a ``tmp_path`` for it."""
+
+    if "tmp_path" in request.fixturenames:
+        parent = request.getfixturevalue("tmp_path")
+    else:
+        parent = _homes[0] / str(next(_homes[1]))
+        os.mkdir(parent)
+    monkeypatch.setenv("KUMOSQL_HOME", str(parent / "kumosql-home"))
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +133,7 @@ HEAVY_FILES = [
     "test_pipeline_bench.py",
     "test_jaffle_shop_bench.py",
     "test_minimization_bench.py",
+    "test_reduction_bench.py",
     "test_unsafe_fuzz.py",
     "test_safety_corpus.py",
     "test_bq_syntax_coverage.py",
@@ -144,6 +160,7 @@ EVAL_FILES = {
     "test_join_rewrite_bench.py",
     "test_cosette_benchmarks.py",
     "test_dbgpt_rules_bench.py",
+    "test_documented_rewrites_bench.py",
     "test_dlbench_bench.py",
     "test_dup_bench.py",
     "test_incremental.py",
@@ -162,6 +179,7 @@ EVAL_FILES = {
     "test_querybooster_bench.py",
     "test_rbot_benchmarks.py",
     "test_rbot_normalise.py",
+    "test_reduction_bench.py",
     "test_soundness_fuzz.py",
     "test_safety_corpus.py",
     "test_schema_change.py",

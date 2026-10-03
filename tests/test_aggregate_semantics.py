@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("z3")
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows
 from kumosql.set_aggregates import reduce
 
 SCHEMA = {"t": ["k", "x", "y"], "u": ["num"]}
@@ -29,11 +30,9 @@ def _differ(left: str, right: str, trials: int = 300) -> bool:
         con.execute("CREATE OR REPLACE TABLE u (num INTEGER)")
         pick = lambda: rng.choice([None, 0, 1, 2, 3])  # noqa: E731
         rows = [(pick(), pick(), pick()) for _ in range(rng.randint(0, 6))]
-        if rows:
-            con.executemany("INSERT INTO t VALUES (?, ?, ?)", rows)
+        insert_rows(con, "t", rows)
         nums = [(pick(),) for _ in range(rng.randint(0, 6))]
-        if nums:
-            con.executemany("INSERT INTO u VALUES (?)", nums)
+        insert_rows(con, "u", nums)
         a = sorted(map(repr, con.execute(left).fetchall()))
         b = sorted(map(repr, con.execute(right).fetchall()))
         if a != b:
