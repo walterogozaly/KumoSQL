@@ -1,5 +1,7 @@
 # Public SQL evaluation sources for KumoSQL
 
+[Plain-language version](../docs_simple/public-sql-evaluation-sources.md)
+
 Research date: **October 2, 2026** (America/New_York).
 
 This is the research input as written. What KumoSQL already scores, and what is being added from it, is in the [inventory](evals/public-sources.md).

@@ -1,5 +1,7 @@
 # Model reuse, containment and aggregate decomposition
 
+[Plain-language version](../docs_simple/model-reuse.md)
+
 Three deterministic Python engines (no LLM at run time) and their evals. All answer by proof first: the algebraic/SMT prover decides, and a positive answer is then re-run on random DuckDB databases that respect the schema (`src/kumosql/random_check.py`); a mismatch counts as **wrong**.
 
 | Eval | Engine | Command | Results file |

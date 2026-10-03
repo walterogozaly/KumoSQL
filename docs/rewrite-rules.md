@@ -1,5 +1,7 @@
 # Rewrite rules
 
+[Plain-language version](../docs_simple/rewrite-rules.md)
+
 The rewrite rule registry and the subquery lifter.
 
 ## Rewrite rules
@@ -16,6 +18,8 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 | `remove_unused_ctes` | Removes root CTEs that nothing references |
 | `remove_redundant_distinct` | Removes `DISTINCT` over a plain `GROUP BY` whose keys are all projected unchanged (see *Cost rules*) |
 | `format_sql` | Formats with sqlfluff using your saved formatting preferences (SQL only, not SQLX) |
+
+In SQLX, `inline_single_use_ctes`, `remove_trivial_predicates`, `remove_redundant_parentheses`, `deduplicate_ctes` and `remove_unused_ctes` leave a statement as written (diagnostic `sqlx_expression_kept`) when it holds a `${...}` expression other than `${ref(...)}`, `${resolve(...)}` or `${self()}`. Such an expression compiles to arbitrary SQL text, which the rule sees only as a placeholder name: `z AND (${"x OR y"})` would lose the parentheses its OR needs, `WHERE TRUE ${when(incremental(), "AND b > 1")}` would lose the `TRUE` its `AND` continues, and a CTE read only inside an expression would look unused.
 
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
 

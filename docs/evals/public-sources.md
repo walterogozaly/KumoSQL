@@ -1,5 +1,7 @@
 # Public SQL evaluation sources: inventory
 
+[Plain-language version](../../docs_simple/evals/public-sources.md)
+
 [Public SQL evaluation sources](../public-sql-evaluation-sources.md) (research dated 2026-10-02) lists 50 public suites, databases, rewrite corpora and BigQuery projects; [Additional public SQL sources](../additional-public-sql-sources.md) adds 60 more (see [Additional sources](#additional-sources)). This page records, for each one, whether KumoSQL already scores it, what it overlaps, its licence, whether it can be downloaded from here, and what is being added. It was checked on 2026-10-03 by cloning every repository at its current head; the commit is the pin for anything added.
 
 Downloads go through a proxy that blocks HuggingFace, Google Drive, Dropbox, Git LFS, Aliyun OSS, `yale-lily.github.io`, `downloads.mysql.com`, `postgrespro.ru`, `duckdb.org` and `docs.cloud.google.com`. GitHub clones, raw files and release assets work.
@@ -57,9 +59,9 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | R01 | SQLGlot optimizer fixtures | MIT | yes | optimizer, qualify, simplify, identity | covered: `engine-sqlglot-fixtures-plain`, `-amplified`; each fixture's expected output is executed ([page](engine-suites.md)) |
 | R02 | SQLSolver artifacts | Apache-2.0 | yes | as E01 | covered with E01 |
 | R03 | WeTune Calcite pairs (`winoros/wetune`) | Apache-2.0 | yes | 232 pairs | covered: the same 232 pairs, in the same order, as SQLSolver's Calcite file (165 identical, 67 with small text changes). WeTune's 50 issues: `wetune-issues`. Its application workloads are in Git LFS (blocked) |
-| R04 | QueryBooster experiments | GPL-3.0 | yes | 30 WeTune-application pairs, 14 rule-training pairs, 18 Twitter CAST pairs; its 228 Calcite pairs are SQLSolver's | **new** (batch 1): downloaded at run time |
+| R04 | QueryBooster experiments | GPL-3.0 | yes | 30 WeTune-application pairs, 14 rule-training pairs, 18 Twitter CAST pairs; its 228 Calcite pairs are SQLSolver's | added: `querybooster` ([page](rewrite-benchmarks.md#querybooster-experiment-rewrites)), downloaded at run time; the Calcite pairs are inventoried against SQLSolver's, not re-scored |
 | R05 | Calcite `RelOptRulesTest.xml` | Apache-2.0 | yes | — | covered: `calcite-mined` ([page](sqlsolver.md)) |
-| R06 | Cosette | BSD-2-Clause | yes | 59 cases | covered: `cosette`. The two cases the source document names: `countbug` is scored (not equivalent); `SelfJoin0` is skipped because its table has no declared columns. **new** (batch 2): an adapted `SelfJoin0` with declared columns and its negative sibling without DISTINCT |
+| R06 | Cosette | BSD-2-Clause | yes | 59 cases | covered: `cosette`. The two cases the source document names: `countbug` is scored (not equivalent); `SelfJoin0` is skipped because its table has no declared columns. Added (batch 2): `cosette-adapted`, `SelfJoin0` and the other three files skipped for no declared columns, written with declared columns, plus 5 negative siblings ([page](sqlsolver.md#adapted-cosette-pairs)) |
 | R07 | Logos core corpus | as E13 | yes | as E13 | with E13 |
 | R08 | BigQuery computation and nested-field guides | Google docs terms | `docs.cloud.google.com` is blocked here | — | left to the vendor-documentation rewrites eval of the "New equivalence evals" thread; the nested-layout migration needs a schema-mapping contract KumoSQL does not have |
 | R09 | SPES | Apache-2.0 | yes | Calcite pairs | covered: `spes-only` and `bounded-spes` |

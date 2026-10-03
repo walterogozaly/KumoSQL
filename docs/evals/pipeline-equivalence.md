@@ -1,5 +1,7 @@
 # Whole-pipeline equivalence eval
 
+[Plain-language version](../../docs_simple/evals/pipeline-equivalence.md)
+
 Does a change spread over several Dataform models keep every output consumers can see? Each case is a pipeline of `.sqlx` models over declared source tables, a refactor of it, and the list of **observable outputs**. An exposed intermediate model counts as an output; a hidden one does not, so the same edit can be sound with one output list and wrong with another.
 
 ```

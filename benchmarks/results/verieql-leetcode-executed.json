@@ -10,6 +10,7 @@
     "unknown": 12454,
     "unsupported": 1071
   },
+  "coverage_of": "The 19,201 pairs the prover leaves unknown in verieql-leetcode-proof (the other 4,793 of 23,994 are proved there): refuted, unknown (agree on every database tried) or unsupported (not run).",
   "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,071 pairs are not run (DuckDB rejects them, mostly a table name the schema spells differently and GROUP BY positions that name aggregates). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. Measured on master 7b7ba13 (harness translation #347, HAVING-only wider search #356); prover rules merged later (cast_rules.py and after) are not rerun yet. In this row 'unknown' counts pairs that agree on every database tried and 'unsupported' counts pairs DuckDB or the parser rejects. VeriEQL marks 30 of these refutations equivalent; those read by hand differ on an empty table or a NULL that VeriEQL's bounded search did not reach.",
   "size": 23994,
   "docs": "docs/evals/verieql.md",

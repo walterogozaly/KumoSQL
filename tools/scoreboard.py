@@ -26,7 +26,7 @@ EXTRA = (("usefulness", "Usefulness"), ("analysis", "Analysis quality"), ("perfo
 
 
 def load() -> list[dict]:
-    rows = []
+    rows, problems = [], []
     for path in sorted((ROOT / "benchmarks" / "results").glob("*.json")):
         row = json.loads(path.read_text(encoding="utf-8"))
         missing = [k for k in KEYS if k not in row]
@@ -34,11 +34,42 @@ def load() -> list[dict]:
             raise SystemExit(f"{path.name}: missing {', '.join(missing)}")
         if row["evidence"] not in EVIDENCE:
             raise SystemExit(f"{path.name}: evidence must be one of {', '.join(EVIDENCE)}")
-        bad = [k for k in row["coverage"] if k not in OUTCOMES]
-        if bad:
-            raise SystemExit(f"{path.name}: unknown coverage outcome {', '.join(bad)}")
+        problem = check(row)
+        if problem:
+            problems.append(f"{path.name}: {problem}")
         rows.append(row)
+    if problems:
+        raise SystemExit("\n".join(problems))
     return sorted(rows, key=lambda r: (r["order"], r["suite"]))
+
+
+def check(row: dict) -> str | None:
+    """What is wrong with a results row's optional keys and coverage counts, or None.
+
+    Nonempty ``coverage`` counts must add up to ``size``. When they count another unit (traced columns, the
+    rewrite steps that changed the SQL), a stage (cases skipped before translation as well as the scored ones) or a
+    subset (the pairs another row leaves unknown, failures only), the row says so in ``coverage_of``: one sentence
+    naming the unit and its total. ``environment``, when present, is an object (library versions, git commit)."""
+
+    coverage = row["coverage"]
+    if not isinstance(coverage, dict):
+        return "coverage must be an object"
+    bad = [k for k in coverage if k not in OUTCOMES]
+    if bad:
+        return f"unknown coverage outcome {', '.join(bad)}"
+    invalid = [v for v in coverage.values() if not (isinstance(v, int) and not isinstance(v, bool) and v >= 0)]
+    if invalid:
+        return "coverage counts must be whole numbers, 0 or more"
+    if "coverage_of" in row and not (isinstance(row["coverage_of"], str) and row["coverage_of"].strip()):
+        return "coverage_of must be a sentence naming what coverage counts and its total"
+    if coverage and sum(coverage.values()) != row["size"] and "coverage_of" not in row:
+        return (
+            f"coverage adds up to {sum(coverage.values())}, not size {row['size']}: fix the counts, or say what they count "
+            "in coverage_of (see benchmarks/README.md)"
+        )
+    if "environment" in row and not isinstance(row["environment"], dict):
+        return "environment must be an object"
+    return None
 
 
 def cell(text: object) -> str:

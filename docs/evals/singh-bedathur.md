@@ -1,5 +1,7 @@
 # Singh & Bedathur LeetCode equivalence pairs
 
+[Plain-language version](../../docs_simple/evals/singh-bedathur.md)
+
 Rajat Singh and Srikanta Bedathur (IIT Delhi), "Can the Rookies Cut the Tough Cookie? Exploring the Use of LLMs for SQL Equivalence Checking" ([arXiv 2412.05561](https://arxiv.org/abs/2412.05561), [repository](https://github.com/rajatb115/LLMs-for-SQL-Equivalence-Checking)), studied language models as SQL equivalence judges. KumoSQL answers the same question with no model at run time: the algebraic prover, a few extra rewrites, and counterexample databases checked in DuckDB.
 
 ## Which data is public

@@ -1,10 +1,14 @@
 # Constraint-dependent rewrites
 
+[Plain-language version](../docs_simple/constraint-rewrites.md)
+
 Some rewrites are only valid when the data satisfies a declared guarantee. KumoSQL's prover takes declared NOT NULL columns, unique keys and foreign keys (from the BigQuery catalog's table constraints and Dataform assertions, see `src/kumosql/prover_schema.py`), and a proof that rests on them says so in its assumptions. This page covers the three pieces added for them.
 
 ## Foreign-key join elimination
 
 `TableConstraints` has a `foreign_keys` field: `((columns, parent_table, parent_columns), ...)`. BigQuery's `foreignKeys` metadata fills it. The normalizer (`src/kumosql/fk_rules.py`) drops an inner join to the parent when all three hold: the foreign key is declared, every child column in the join is NOT NULL, and the parent columns cover a declared key. Reads of the parent's joined columns become reads of the equal child columns; any other read of the parent (a selected column, an extra filter) keeps the join. The SMT encoding does not model foreign keys, so counterexamples are checked against them instead (`legal_database` rejects one that breaks a declared foreign key).
+
+The same declarations drop an uncorrelated `EXISTS (SELECT .. FROM parent)` from the WHERE clause of a select that reads the child as a real (not NULL-extended) source (`src/kumosql/exists_constant_rules.py`): every tested row carries a child row whose NOT NULL foreign-key value names a parent row, so the test is TRUE. The test may filter the parent only by conjuncts that row passes (`c = c` or `c IS NOT NULL` on a NOT NULL or referenced column). The same module reads a correlated reference to an integer column that a WHERE conjunct, or the derived table it comes from, equates to an integer literal as that literal (`.. WHERE t0.deptno = 200 AND EXISTS (.. = t0.deptno)`).
 
 ## Which guarantees a proof needs
 

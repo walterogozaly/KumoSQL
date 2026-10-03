@@ -8,11 +8,18 @@ and ``wrong`` (proven, yet a counterexample exists; must stay 0). Results are
 also split into pairs new to every other corpus and pairs SQLSolver, QED or
 R-Bot already hold.
 
+The pairs new to every other corpus (``new`` in the fixture) are the held-out
+split; the other pairs are the dev split. ``--split`` picks one: ``all`` (the
+default, the published command) scores every pair and reports the held-out
+ones on their own as well; ``dev`` is for development runs.
+
     python tools/calcite_mined_bench.py
+    python tools/calcite_mined_bench.py --split dev
 """
 
 from __future__ import annotations
 
+import argparse
 from collections import Counter
 import datetime
 import json
@@ -27,8 +34,19 @@ import sqlsolver_bench as sb  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "calcite_mined"
 
 
+SPLITS = ("all", "dev", "held-out")
+
+
 def load_pairs() -> list[dict]:
     return [json.loads(line) for line in (FIXTURES / "pairs.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def split_pairs(pairs: list[dict], split: str = "all") -> list[dict]:
+    """The pairs of one split: ``held-out`` is the pairs new to every other corpus (``new``), ``dev`` the rest."""
+
+    if split not in SPLITS:
+        raise ValueError(f"split must be one of {', '.join(SPLITS)}")
+    return pairs if split == "all" else [p for p in pairs if p["new"] == (split == "held-out")]
 
 
 def _value(value):
@@ -59,12 +77,12 @@ def _tables(ddl: str) -> dict:
         return sb.load_schema(path)
 
 
-def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> dict:
+def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None, split: str = "all") -> dict:
     schemas = json.loads((FIXTURES / "schemas.json").read_text(encoding="utf-8"))
     out = {"total": 0, "proven": [], "refuted": [], "unknown": [], "wrong": [], "new": {"total": 0, "proven": 0, "refuted": 0}, "seconds": 0.0}
     loaded: dict[str, tuple] = {}
     start = time.time()
-    for pair in load_pairs()[:limit]:
+    for pair in split_pairs(load_pairs(), split)[:limit]:
         out["total"] += 1
         key = pair["schema_id"]
         if key not in loaded:
@@ -97,10 +115,16 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> d
     return out
 
 
-def main() -> int:
-    r = run()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--split", choices=SPLITS, default="all",
+        help="all (default, the published score) reports the held-out pairs apart; dev for development runs; held-out for final scoring",
+    )
+    split = parser.parse_args(argv).split
+    r = run(split=split)
     print(
-        f"calcite-mined {len(r['proven'])}/{r['scored']} proved ({r['total']} pairs), {len(r['refuted'])} refuted (counterexample), "
+        f"calcite-mined{'' if split == 'all' else f' ({split})'} {len(r['proven'])}/{r['scored']} proved ({r['total']} pairs), {len(r['refuted'])} refuted (counterexample), "
         f"{len(r['unknown'])} unknown, {len(r['wrong'])} wrong; new to every other corpus: "
         f"{r['new']['proven']}/{r['new']['scored']} proved; {r['seconds']:.1f}s"
     )
