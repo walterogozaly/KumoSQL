@@ -19,6 +19,7 @@ from sqlglot import exp
 
 from .ast_utils import (
     ambiguous_unnest_names,
+    distinct_on,
     is_cte_reference_candidate,
     nearest_root_cte,
     set_with_clause,
@@ -28,7 +29,7 @@ from .ast_utils import (
 from .distinct_safety import distinct_is_redundant
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
-from .string_literals import canonical_literals
+from .string_literals import canonical_literals, invalid_literal
 
 
 class EquivalenceStatus(str, Enum):
@@ -520,9 +521,12 @@ def _remove_comments(query: exp.Expression) -> None:
 
 
 def _remove_unordered_result_order(query: exp.Expression) -> None:
-    """Ignore root result ordering when it cannot affect row membership."""
+    """Ignore root result ordering when it cannot affect row membership.
 
-    if query.args.get("limit") is None and query.args.get("offset") is None:
+    Under ``DISTINCT ON`` it can: the ORDER BY picks the row kept for each key.
+    """
+
+    if query.args.get("limit") is None and query.args.get("offset") is None and not distinct_on(query):
         query.set("order", None)
 
 
@@ -870,6 +874,11 @@ def prove_equivalent(
     proven when the rows underneath are.
     """
 
+    if invalid_literal(left_sql) or invalid_literal(right_sql):
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
+        )
     left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     if ignore_row_order:
         left_sql = _drop_noop_limit(left_sql) or left_sql
