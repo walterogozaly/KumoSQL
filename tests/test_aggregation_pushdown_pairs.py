@@ -104,10 +104,12 @@ PAIRS = [
 PROVED = {1, 2, 3, 4, 5, 14, 17, 19, "19b"}
 
 
-def _database(rows):
-    db = duckdb.connect()
+def _database(rows, db=None):
+    """``rows`` in new tables, on ``db`` when given (a connection costs about 10 ms)."""
+
+    db = db or duckdb.connect()
     for table, ddl in DDL.items():
-        db.execute(f"CREATE TABLE {table} ({ddl})")
+        db.execute(f"CREATE OR REPLACE TABLE {table} ({ddl})")
         insert_rows(db, table, rows.get(table, []))
     return db
 
@@ -149,8 +151,9 @@ def _random_rows(rng):
 @pytest.mark.parametrize("n, left, right", EQUIVALENT)
 def test_equivalent_pair_agrees_on_random_databases(n, left, right):
     rng = random.Random(9)
+    db = duckdb.connect()
     for _ in range(60):
-        first, second = run_unoptimized(_database(_random_rows(rng)), left, right)
+        first, second = run_unoptimized(_database(_random_rows(rng), db), left, right)
         assert _bag(first) == _bag(second), (n, first, second)
 
 

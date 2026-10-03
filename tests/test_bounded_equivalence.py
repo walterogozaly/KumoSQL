@@ -10,6 +10,7 @@ duckdb = pytest.importorskip("duckdb")
 
 from kumosql import bounded_equivalence as be  # noqa: E402
 from kumosql.bounded_equivalence import BColumn, BoundedSchema, BoundedStatus, BTable, check_bounded  # noqa: E402
+from kumosql.duckdb_load import insert_rows  # noqa: E402
 
 
 def schema(**overrides):
@@ -168,8 +169,7 @@ def concrete(rng):
 def duck_rows(db, data, sql):
     for name in ("t", "u", "e"):
         db.execute(f"delete from {name}")
-        for row in data[name]:
-            db.execute(f"insert into {name} values (?, ?)", row)
+        insert_rows(db, name, data[name])
     return db.execute(sql).fetchall()
 
 

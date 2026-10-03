@@ -919,6 +919,9 @@ def _skip_message(analysis: ScriptAnalysis) -> str:
 _TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
 _PROCEDURE_WORD = re.compile(r"\bprocedure\b", re.IGNORECASE)
 _TABLE_FUNCTION_WORD = re.compile(r"\btable\s+function\b", re.IGNORECASE)
+# A project with fewer models is not collected and frozen after reading (``_Analysis.run``): its syntax trees are small,
+# and a full collection walks the whole process, which in a long-lived one (the UI, a test run) holds far more.
+_FREEZE_MIN_MODELS = 100
 
 
 def _last_part(name: str) -> str:
@@ -1192,8 +1195,8 @@ class _Analysis:
     def run(cls, pipeline: Pipeline) -> "_Analysis":
         # Every parsed query stays alive for the whole run, so with the default thresholds the
         # collector keeps re-walking millions of long-lived syntax-tree nodes (seconds per pass
-        # late in a large project). Collect less often, and park what exists in the permanent
-        # generation once reading is done.
+        # late in a large project). Collect less often, and in a large project park what exists in the
+        # permanent generation once reading is done.
         thresholds = gc.get_threshold()
         gc.set_threshold(max(thresholds[0], 200_000), 50, 100)
         try:
@@ -1409,8 +1412,9 @@ class _Analysis:
         reading.finish()
         for target, sources in written.items():
             upstream.setdefault(target, set()).update(sources - {target})
-        gc.collect()
-        gc.freeze()
+        if len(pipeline.models) >= _FREEZE_MIN_MODELS:
+            gc.collect()
+            gc.freeze()
 
         with stage("order models", models=len(upstream)):
             order = _topological_order(upstream, diagnostics)

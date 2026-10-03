@@ -24,3 +24,13 @@ def test_calcite_mined_pairs():
     assert result["wrong"] == [], f"wrong proofs: {result['wrong']}"
     assert len(result["proven"]) >= FLOOR, f"proved {len(result['proven'])}, floor {FLOOR}"
     assert result["scored"] == result["total"] - len(result["refuted"])
+
+
+def test_the_held_out_split_is_the_pairs_new_to_every_other_corpus():
+    pairs = bench.load_pairs()
+    dev, held = bench.split_pairs(pairs, "dev"), bench.split_pairs(pairs, "held-out")
+    assert all(p["new"] for p in held) and not any(p["new"] for p in dev)
+    assert (len(dev), len(held)) == (334, 168)
+    assert bench.split_pairs(pairs) == pairs  # the default is the published command's: every pair
+    with pytest.raises(ValueError):
+        bench.split_pairs(pairs, "test")

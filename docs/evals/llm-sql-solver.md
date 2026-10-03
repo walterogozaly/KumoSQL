@@ -12,9 +12,10 @@
 The negatives are a **must-not-prove** set: a proof of any of them is a soundness bug. The source's third file (232 equivalent pairs) is SQLSolver's Calcite set, already scored in [sqlsolver.md](sqlsolver.md).
 
 ```
-python tools/llm_sql_solver_bench.py                    # both sets, about 10 seconds on 4 cores
-python tools/llm_sql_solver_bench.py --split dev --show proven,unknown
-python tools/llm_sql_solver_bench.py --write-results    # update both results files and the scoreboard
+python tools/llm_sql_solver_bench.py                    # dev pairs of both sets (the default), about 10 seconds on 4 cores
+python tools/llm_sql_solver_bench.py --show proven,unknown
+python tools/llm_sql_solver_bench.py --split all        # every pair: dev, held-out and all reported apart
+python tools/llm_sql_solver_bench.py --write-results    # every pair; update both results files and the scoreboard
 ```
 
 ## How a pair is decided
@@ -25,14 +26,14 @@ python tools/llm_sql_solver_bench.py --write-results    # update both results fi
 
 `wrong` is a proof of a pair labelled inequivalent, except a pair whose two queries are the same once parsed (a label error: one query cannot return two results on one database). The labels are only read to score.
 
-**Held out.** One pair in five, by a hash of its two queries (57 of 250), is held out; `--split dev` runs the rest. The first baseline printed every pair, held-out ones included; the fixes below come from dev pairs.
+**Held out.** One pair in five, by a hash of its two queries (57 of 250: 40 negatives, 17 relaxed), is held out. A run without `--split` reads only the 193 dev pairs; `--split held-out` is for final scoring, and `--split all` prints the dev, held-out and combined counts on separate lines. `--write-results` scores every pair (it needs `--split all` or no split), so the results files' command regenerates the published numbers: the headline is over all pairs and each file's `held_out` field is the held-out pairs alone. `--show` prints a held-out pair's SQL only under `--split held-out`; in other runs it gives the pair's id and outcome. The first baseline printed every pair, held-out ones included; the fixes below come from dev pairs.
 
 ## Scores
 
 | Date | Negatives | Relaxed | What moved it |
 | --- | --- | --- | --- |
 | 2026-10-03 | 172/180 refuted, **7 proved** | 22/70 agree | baseline on master (bags only, no type check) |
-| 2026-10-03 | 177/180 refuted, 2 proved (both label errors), 0 wrong; held out 38/40 refuted, 1 proved (a label error) | 20/70 agree, 0 wrong; held out 2/17 agree | the fixes below |
+| 2026-10-03 | 177/180 refuted, 2 proved (both label errors), 0 wrong; dev 139/140 refuted, 1 proved (a label error); held out 38/40 refuted, 1 proved (a label error) | 20/70 agree, 0 wrong; dev 18/53 agree; held out 2/17 agree | the fixes below |
 
 Relaxed agreement fell from 22 to 20: relaxed-023 (one output column against two, an "equivalent" label) was a proof through the bug below and is now refuted, and relaxed-038 (`ORDER BY rating` against `ORDER BY Rating DESC`) is now a list comparison and refuted.
 

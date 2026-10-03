@@ -2,15 +2,15 @@
 
 import json
 import subprocess
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
 from kumosql import live_graph, repositories
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 from test_git_repo import FILES, commit, run
 
@@ -36,8 +36,8 @@ def bare(tmp_path):
 
 @pytest.fixture
 def server():
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=httpd.serve_forever, daemon=True)
+    httpd = UIServer(("127.0.0.1", 0), UIHandler)
+    thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_port}"
@@ -203,3 +203,55 @@ def test_a_project_whose_compilation_was_unreachable_is_still_saved_for_a_restar
     monkeypatch.setattr(live_graph, "load_sqlx_project", lambda *a, **k: parsed.append(1) or real(*a, **k))
     live_graph.pipeline_from_files(files, "https://example.com/r.git")
     assert parsed
+
+
+def test_credential_url_save_is_rejected_and_api_and_state_never_include_token(server):
+    from kumosql import state
+    payload = {'repositories': [{'url': 'https://FAKE_TOKEN@host/repo.git'}]}
+    with pytest.raises(HTTPError) as caught:
+        call(server, '/api/repositories', payload)
+    assert caught.value.code == 400
+    assert 'FAKE_TOKEN' not in caught.value.read().decode()
+    assert 'FAKE_TOKEN' not in json.dumps(call(server, '/api/repositories'))
+    assert 'FAKE_TOKEN' not in json.dumps(state.load_state())
+
+
+def test_historical_urls_and_errors_migrate_before_api_response(server):
+    from kumosql import state
+    state.set_section('repositories', {'active': 'old', 'items': [{
+        'id': 'old', 'url': 'https://FAKE_TOKEN@host/repo.git',
+        'error': "fatal: https://FAKE_ERROR@host/repo.git password='FAKE_PASSWORD'",
+    }]})
+    listing = call(server, '/api/repositories')
+    assert listing['repositories'][0]['url'] == 'https://host/repo.git'
+    assert 'FAKE_' not in json.dumps(listing)
+    assert 'FAKE_' not in json.dumps(state.load_state())
+
+
+def test_failed_load_sanitizes_saved_error_and_api(server, monkeypatch):
+    from kumosql import state
+    from kumosql.git_repo import GitRepoError
+    repo = repositories.replace([{'url': '/safe/repo.git'}])['repositories'][0]
+    def fail(*args, **kwargs):
+        raise GitRepoError('fatal: https://FAKE_ERROR@host/repo.git')
+    monkeypatch.setattr(repositories, 'load_into_graph', fail)
+    with pytest.raises(GitRepoError):
+        repositories.load(repo['id'])
+    with pytest.raises(HTTPError) as rejected:
+        call(server, '/api/repositories/refresh', {'id': repo['id']})
+    assert 'FAKE_ERROR' not in rejected.value.read().decode()
+    assert 'FAKE_ERROR' not in json.dumps(call(server, '/api/repositories'))
+    assert 'FAKE_ERROR' not in json.dumps(state.load_state())
+
+
+def test_historical_credential_cache_is_repaired_before_saved_url_migration(bare):
+    from kumosql import git_repo, state
+    bare, _ = bare
+    old_url = 'https://FAKE_TOKEN@host/repo.git'
+    old_cache = git_repo._cache_path(old_url, None)
+    git_repo._clone(str(bare), None, old_cache)
+    run('remote', 'set-url', 'origin', old_url, cwd=old_cache)
+    state.set_section('repositories', {'active': 'old', 'items': [{'id': 'old', 'url': old_url}]})
+    assert repositories.listing()['repositories'][0]['url'] == 'https://host/repo.git'
+    assert 'FAKE_TOKEN' not in (old_cache / '.git' / 'config').read_text()
+    assert 'FAKE_TOKEN' not in json.dumps(state.load_state())

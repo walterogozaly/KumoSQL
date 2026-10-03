@@ -139,19 +139,19 @@ def cost_payload(scope_name: str | None = None, rate: float | None = None) -> di
     payload: dict = {
         "source": source_info(), "scope": plan.to_json() if plan else None,
         "has_jobs": bool(reads), "needs_jobs": not current["observed_reads"],
-        "unit": "bytes_billed", "currency": None, "window": {"start": None, "end": None},
+        "unit": "bytes_billed", "currency": None, "basis": None, "window": {"start": None, "end": None},
         "totals": None, "nodes": [], "unattributed": [], "counts": None,
     }
     nodes: dict[str, dict] = {}
 
     def unit_value(billed: int) -> float:
-        return round(billed / 1024 ** 4 * rate, 6) if rate is not None else float(billed)
+        return round(billed / 1024 ** 4 * rate, 6) if rate is not None else int(billed)
 
     if reads:
         built = build_cost(pipeline, [ObservedJob.from_record(row) for row in reads], usd_per_tib=rate)
         if keep is not None:
             built["nodes"] = [node for node in built["nodes"] if node["node"] in keep]
-        payload.update({key: built[key] for key in ("unit", "currency", "window", "totals", "nodes", "unattributed", "counts")})
+        payload.update({key: built[key] for key in ("unit", "currency", "basis", "window", "totals", "nodes", "unattributed", "counts")})
         nodes = {node["node"]: node for node in built["nodes"]}
     payload["opportunities"] = _opportunities(pipeline, reads, nodes, payload["window"], keep, unit_value)
     payload["rules"] = rule_catalog()

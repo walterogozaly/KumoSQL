@@ -9,6 +9,7 @@
     "proven": 90,
     "unknown": 0
   },
+  "coverage_of": "The 90 of the 94 cases with an undisputed golden; the other 4 are disputed (the oracle defines the answer differently) and have no outcome column.",
   "docs": "docs/evals/lineage-goldens-bench.md",
   "command": "python tools/lineage_goldens_bench.py --write-results",
   "caveats": "Cases left out: 46 (other dialects, upstream-skipped tests, USE state, not BigQuery); 18 upstream tests could not be harvested. Table reads and explicit writes include DML, table DDL, LIKE/CLONE and all script targets; this does not establish complete column lineage for those statements. Physical STRUCT sub-fields remain coarse at the root column.",

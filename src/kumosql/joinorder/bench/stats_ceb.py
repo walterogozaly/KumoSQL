@@ -129,7 +129,7 @@ def run(repo: str, sample_rows: int = 10_000, psql: list[str] | None = None,
     truth = cached_json(os.path.join(base, "stats_sub_truth.json"),
                         lambda: [exact_count(con, q, all_tables(q)) for q in sub_queries])
     mismatched = sum(exact_count(con, q, all_tables(q)) != card for q, (card, _) in zip(queries, wl))
-    stats_path = os.path.join(base, f"stats_stats_{sample_rows}.pkl.gz")
+    stats_path = os.path.join(base, f"stats_stats_{sample_rows}.json.gz")
     if not os.path.exists(stats_path):
         collect_statistics(con, TABLES, join_pairs([sql for _, sql in wl]), sample_rows=sample_rows).save(stats_path)
     est = FactorEstimator(Statistics.load(stats_path))

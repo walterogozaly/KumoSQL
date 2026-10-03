@@ -10,6 +10,7 @@
     "unknown": 13,
     "unsupported": 2
   },
+  "coverage_of": "The 40 pairs the prover leaves unknown in verieql-literature-proof (the other 24 of 64 are proved there): refuted, unknown (agree on every database tried) or unsupported (not run).",
   "caveats": "Pairs carry no labels; wrongness is checked against VeriEQL's published counterexamples and a second random search. 14 of the 64 pairs differ between our file and VeriEQL's published outcomes file and were not audited. Developed against these pairs (tuned on test). Whole-row predicates (B1(X)) are spelled out over the row's columns; DuckDB runs them as a fixed hashed macro and the prover as uninterpreted functions. In this row 'unknown' counts pairs that agree on every database tried and 'unsupported' counts pairs DuckDB or the parser rejects. Measured on master 80ac740, after the structural aggregate rules (src/kumosql/aggregate_rules.py, #371).",
   "size": 64,
   "docs": "docs/evals/verieql.md",
