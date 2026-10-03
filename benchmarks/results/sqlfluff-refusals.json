@@ -1,0 +1,22 @@
+{
+  "suite": "KumoSQL rules on SQLFluff refusal cases",
+  "order": 333,
+  "size": 212,
+  "score": "190/212 left alone or changed with a proof (190/198 KumoSQL can read), 0 wrong",
+  "metric": "Each structure-rule (ST) and CV12 fixture from sqlfluff with no fix_str, a query sqlfluff leaves alone (correlated derived tables, recursive WITH, data-modifying CTEs, Jinja, CV12's outer joins), run through KumoSQL's own structural rules (lift_subqueries, the CTE rules, the predicate and parenthesis rules): every rule must either make no change or make a change it proves that keeps the meaning.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every changed output is checked without the prover for a qualified column that lost its source, a data-modifying CTE that disappeared and a changed Jinja tag, and run with its input on 120 random DuckDB databases (optimizer-off rerun must agree). The baseline had 6 wrong: lift_subqueries moved 4 correlated derived tables (one correlated only in a later UNION ALL branch) and a Jinja subquery into top-level CTEs, and remove_unused_ctes dropped PostgreSQL data-modifying CTEs; all were fixed in the rules. 1 case is caught (an unproven garbled output from a PL/SQL block read in sqlglot's recovery mode).",
+  "coverage": {
+    "proven": 190,
+    "unknown": 8,
+    "unsupported": 14,
+    "refuted": 0,
+    "timeout": 0,
+    "error": 0
+  },
+  "held_out": "37/39 left alone or proved (37/37 readable), 0 wrong; one case in five by hash of the case id. The baseline held-out score was 36/37 with 1 wrong (the PostgreSQL data-modifying CTE), which was read and fixed: tuned on test for that case",
+  "docs": "docs/evals/sqlfluff-fixtures.md#refusal-cases",
+  "command": "python tools/sqlfluff_fixtures_bench.py refusals",
+  "date": "2026-10-03",
+  "caveats": "Proven counts 139 cases no rule changed plus 51 whose changes were all proved; unknown is 7 cases with a change KumoSQL's verification refused (correctly unproven, no difference found) and 1 caught. 14 are unsupported: dialects KumoSQL's BigQuery parser cannot read (Exasol, Spark VALUES aliases, PostgreSQL ~, T-SQL brackets) and 7 Jinja-templated queries, which the rules now leave exactly as written. Every case, held-out ones included, was visible while the fixes were made; the fixes are general (correlation and nested-WITH checks in the lifter, no rewriting of data-modifying CTEs or templated SQL). The structural prover still proves the lifted forms of a correlated derived table and of a subquery reading a nested WITH name (its normalization lifts them); this is tracked as a known prover false proof, not counted here, because no rule produces those outputs any more."
+}

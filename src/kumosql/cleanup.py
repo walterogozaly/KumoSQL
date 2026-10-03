@@ -290,6 +290,8 @@ def _root_ctes(statement: exp.Expression) -> tuple[exp.Expression, exp.With] | N
         return None
     if ambiguous_unnest_names(query) or cte_dependency_errors(statement):
         return None
+    if not all(isinstance(cte.this, exp.Query) for cte in clause.expressions):
+        return None  # a data-modifying CTE (PostgreSQL) runs even when nothing reads it
     names = [cte_alias_name(cte) for cte in clause.expressions]
     if any(name is None for name in names):
         return None

@@ -117,6 +117,37 @@ def _uses_pipe_syntax(sql: str) -> bool:
         return "|>" in sql
 
 
+def has_template_tags(sql: str) -> bool:
+    """Whether ``sql`` holds a Jinja tag (``{{``, ``{%`` or ``{#``) outside string literals and comments.
+
+    sqlglot reads ``{{ x }}`` as a nested struct literal and prints it back as ``STRUCT(STRUCT(x))``, so a rule
+    would silently rewrite the template; templated SQL is left exactly as written instead.
+    """
+
+    i, n = 0, len(sql)
+    while i < n:
+        char = sql[i]
+        if char == "{" and sql[i + 1 : i + 2] in ("{", "%", "#"):
+            return True
+        if char in "'\"`":
+            quote = sql[i : i + 3] if sql[i : i + 3] in ("'''", '"""') else char
+            j = i + len(quote)
+            while j < n and not sql.startswith(quote, j):
+                j += 2 if sql[j] == "\\" else 1
+            i = j + len(quote)
+            continue
+        if char == "#" or sql.startswith("--", i):
+            end = sql.find("\n", i)
+            i = n if end < 0 else end + 1
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        i += 1
+    return False
+
+
 def _rewriteable_statements(statements: list[exp.Expression]) -> list[tuple[int, exp.Expression]]:
     """Ignore parser-only semicolon nodes while keeping original indices."""
 
@@ -316,6 +347,9 @@ class RewriteRule:
     #: Rewrite statements written in pipe syntax. sqlglot parses ``|>`` into nested CTEs and prints them
     #: as standard SQL, so only analysis that never shows its output (the prover) turns this on.
     rewrite_pipe_syntax: ClassVar[bool] = False
+    #: Only the prover's normalization reads the output, never a user: templated SQL is read the way sqlglot
+    #: reads it, and ``lift_subqueries`` lifts correlated derived tables too, as it always has for the prover.
+    analysis_only: ClassVar[bool] = False
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -339,6 +373,11 @@ class RewriteRule:
     def _apply_sql(self, sql: str) -> RuleOutput:
         if not sql or not sql.strip():
             return RuleOutput("", 0, 0, 0, 0, ())
+        if not self.analysis_only and has_template_tags(sql):
+            return RuleOutput(
+                sql, 0, 0, 0, 0,
+                (RuleDiagnostic(-1, "templated_sql_kept", "Jinja templating ({{ }}, {% %}, {# #}) is left as written"),),
+            )
         if _BLOCK_WORDS.search(sql) and has_blocks(sql):
             return self._apply_script(sql)
 

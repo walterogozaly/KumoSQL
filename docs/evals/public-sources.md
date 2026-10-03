@@ -106,7 +106,7 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-SQLFluff | ST01, ST02, ST04, ST05, ST06, ST09, CV12 fixes | MIT | yes | 119 fixes | covered: all 119 are in `sqlfluff-semantic-fixes` (sqlfluff 4.3.0). **new** (batch 2): the `pass_str` refusal cases (recursive CTEs, name clashes, correlated subqueries, templating, ST05's later-branch correlation from PR 8169, CV12's templated joins) run through KumoSQL's own lifter and CTE rules, which must decline or prove |
+| A-SQLFluff | ST01, ST02, ST04, ST05, ST06, ST09, CV12 fixes | MIT | yes | 119 fixes | covered: all 119 are in `sqlfluff-semantic-fixes` (sqlfluff 4.3.0). covered (batch 2): the 212 ST and CV12 cases with no fix, PR 8169's later-branch correlation included, in [`sqlfluff-refusals`](sqlfluff-fixtures.md#refusal-cases) |
 | A-R01 | Trino `AbstractTestJoinQueries` two-query assertions | Apache-2.0 | yes (raw file) | 6 named, more in the file | **new** (batch 2, with A-R02): paired engine tests |
 | A-R02 | Spark `SubquerySuite` EXISTS/IN/NOT IN cases | Apache-2.0 | yes (raw file) | 5 | **new** (batch 2): two positive pairs and the NULL-sensitive NOT IN / NOT EXISTS negative |
 | A-R03 | EET bug bundles | GPL-3.0 | links only | — | not added: the index links to reports on blocked hosts |

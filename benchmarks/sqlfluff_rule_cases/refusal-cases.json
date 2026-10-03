@@ -1,0 +1,2023 @@
+{
+ "source": {
+  "repository": "https://github.com/sqlfluff/sqlfluff",
+  "version": "4.3.0",
+  "commit": "2e2275713d078f29529250f7ff883fbf66f83e0d",
+  "path": "test/fixtures/rules/std_rule_cases/*.yml",
+  "licence": "MIT (Copyright (c) 2018-2026 Alan Cruickshank), see benchmarks/sqlfluff_rule_cases/LICENSE.md"
+ },
+ "cases": [
+  {
+   "id": "CV12/test_fail_sqlite_left_join_without_fix",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "sqlite",
+   "sql": "SELECT a.k, b.k FROM a LEFT JOIN b WHERE a.k = b.k;",
+   "configs": {
+    "core": {
+     "dialect": "sqlite"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_fail_ansi_left_join_without_fix",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT a.k, b.k FROM a LEFT JOIN b WHERE a.k = b.k;",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_fail_ansi_right_join_without_fix",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT a.k, b.k FROM a RIGHT JOIN b WHERE a.k = b.k;",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_fail_ansi_full_outer_join_without_fix",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT a.k, b.k FROM a FULL OUTER JOIN b WHERE a.k = b.k;",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_noop_select_comma",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT a.*, b.* FROM a, b\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_noop_no_where_clause",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT foo.a, bar.b FROM foo JOIN bar\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_noop_delete",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "mysql",
+   "sql": "DELETE t1, t2 FROM t1 JOIN t2 JOIN t3\nWHERE t1.id=t2.id AND t2.id=t3.id;\n",
+   "configs": {
+    "core": {
+     "dialect": "mysql"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_noop_condition",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT foo.a, bar.b FROM foo LEFT JOIN bar ON foo.x = bar.x\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_noop_crossjoin",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT foo.a, bar.b FROM foo CROSS JOIN bar WHERE bar.x > 3\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_noop_natural_join",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT foo.a, bar.b FROM foo NATURAL JOIN bar WHERE bar.x > 3\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_fail_natural_join_mixed_with_later_outer_join",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT * FROM a NATURAL JOIN b LEFT JOIN c WHERE a.k = b.k AND a.m = c.m\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_fail_cross_join_mixed_with_later_outer_join",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT * FROM a CROSS JOIN b LEFT JOIN c WHERE a.k = b.k AND a.m = c.m\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_noop_using",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT foo.id, bar.id FROM foo LEFT JOIN bar USING (id)\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_noop_global_cross_join_clickhouse",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "clickhouse",
+   "sql": "SELECT foo.a, bar.b FROM foo GLOBAL CROSS JOIN bar;\n",
+   "configs": {
+    "core": {
+     "dialect": "clickhouse"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_noop_positional_join_duckdb",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "duckdb",
+   "sql": "SELECT foo.a, bar.b FROM foo POSITIONAL JOIN bar WHERE bar.x > 3;\n",
+   "configs": {
+    "core": {
+     "dialect": "duckdb"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_noop_outer_apply_tsql",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "tsql",
+   "sql": "SELECT foo.a, bar.b FROM foo OUTER APPLY bar(foo.a) AS bar WHERE bar.x > 3;\n",
+   "configs": {
+    "core": {
+     "dialect": "tsql"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_fail_unqualified",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT foo.a, bar.b FROM foo JOIN bar WHERE a = b\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_fail_not_simplifable",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT foo.a, bar.b FROM foo JOIN bar WHERE (foo.x = bar.y) OR foo.x != foo.z\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_fail_join_with_bracketed_join",
+   "rule": "CV12",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT * FROM\n  bar\n  JOIN (\n    foo1\n    JOIN foo2 ON (foo1.id = foo2.id)\n  )\nWHERE\n  bar.id = foo1.id;\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_pass_left_join_unnest_where_aliased",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n  t.user_id,\n  unnested_value AS purchased_product\nFROM\n  t\nLEFT JOIN\n  UNNEST(t.purchases) AS unnested_value\nWHERE\n  unnested_value = 'laptop'\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_pass_left_join_unnest_where_unaliased",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n  t.user_id\nFROM\n  t\nLEFT JOIN\n  UNNEST(t.purchases)\nWHERE\n  t.user_id != 1\n",
+   "configs": {}
+  },
+  {
+   "id": "CV12/test_pass_templated_join_clause_not_fixed",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "select a.id, b.id as b_id\nfrom table_a as a\nleft join {{ ref('table_b') }} as b\nwhere a.region = b.region\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake",
+     "templater": "jinja"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_pass_templated_join_clause_keeps_other_filters",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "select a.id\nfrom table_a as a\nleft join {{ ref('table_b') }} as b\nwhere a.region = b.region and a.x = 1\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake",
+     "templater": "jinja"
+    }
+   }
+  },
+  {
+   "id": "CV12/test_pass_sqlite_left_join_with_on_and_where",
+   "rule": "CV12",
+   "kind": "pass",
+   "dialect": "sqlite",
+   "sql": "SELECT a.k, b.k\nFROM a LEFT JOIN b ON a.k = b.k\nWHERE a.active\n",
+   "configs": {
+    "core": {
+     "dialect": "sqlite"
+    }
+   }
+  },
+  {
+   "id": "ST01/no_redundant_else_null",
+   "rule": "ST01",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case\n        when name = 'cat' then 'meow'\n        when name = 'dog' then 'woof'\n    end\nfrom x\n",
+   "configs": {}
+  },
+  {
+   "id": "ST01/alternate_case_when_syntax_boolean",
+   "rule": "ST01",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case name\n        when 'cat' then true\n        when 'dog' then true\n        else name is null\n    end\nfrom x\n",
+   "configs": {}
+  },
+  {
+   "id": "ST01/else_expression",
+   "rule": "ST01",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case name\n        when 'cat' then 'meow'\n        when 'dog' then 'woof'\n        else iff(wing_type is not null, 'tweet', 'invalid')\n    end\nfrom x\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_1",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    fab > 0 as is_fab\nfrom fancy_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_2",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case when fab > 0 then true end as is_fab\nfrom fancy_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_3",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case when fab is not null then false end as is_fab\nfrom fancy_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_4",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case when fab > 0 then true else true end as is_fab\nfrom fancy_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_5",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case when fab <> 0 then 'just a string' end as fab_category\nfrom fancy_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_6",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    case\n      when fab <> 0 then true\n      when fab < 0 then 'not a bool'\n    end as fab_category\nfrom fancy_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_7",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo,\n    case\n        when\n            bar is null then bar\n        else '123'\n    end as test\nfrom baz;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_8",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo,\n    case\n        when\n            bar is not null then '123'\n        else bar\n    end as test\nfrom baz;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_9",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo,\n    case\n        when\n            bar is not null then '123'\n        when\n            foo is not null then '456'\n        else bar\n    end as test\nfrom baz;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_10",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo,\n    case\n        when\n            bar is not null and abs(foo) > 0 then '123'\n        else bar\n    end as test\nfrom baz;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_11",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    dv_runid,\n    CASE\n        WHEN LEAD(dv_startdateutc) OVER (\n            PARTITION BY rowid ORDER BY dv_startdateutc\n        ) IS NULL\n        THEN 1\n        ELSE 0\n    END AS loadstate\nFROM d;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_12",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    field_1,\n    field_2,\n    field_3,\n    case\n        when coalesce(field_2, field_3) is null then 1 else 0\n    end as field_4\nfrom my_table;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_case_cannot_be_reduced_13",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "postgres",
+   "sql": "SELECT\n    CASE\n        WHEN item.submitted_timestamp IS NOT NULL\n        THEN item.sitting_id\n    END\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_array_accessors",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT\nCASE\n    WHEN genres[0] IS NULL\n       THEN 'x'\n    ELSE genres\nEND\nAS g\nFROM table_t\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_fail_no_copy_code_out_of_template",
+   "rule": "ST02",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select\n    foo,\n    case\n        when\n            bar is null then {{ result }}\n        else bar\n    end as test\nfrom baz;\n",
+   "configs": {
+    "core": {
+     "ignore_templated_areas": false
+    },
+    "templater": {
+     "jinja": {
+      "context": {
+       "result": "'123'"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_simple_case_ignored",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "redshift",
+   "sql": "SELECT\n    CASE status_code\n        WHEN 100 THEN true\n        ELSE false\n    END AS is_success\nFROM a\n",
+   "configs": {
+    "core": {
+     "dialect": "redshift"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_indexed_condition_does_not_change_bare_then_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE WHEN genres[0] IS NOT NULL THEN genres END\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_null_condition_does_not_change_bare_then_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE WHEN genres[0] IS NULL THEN genres END\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_null_condition_does_not_change_indexed_then_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE WHEN genres[0] IS NULL THEN genres[0] END\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_composite_condition_does_not_change_indexed_then_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE WHEN genres[0] + other IS NOT NULL THEN genres[0] END\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_composite_condition_with_else_null_does_not_change_indexed_then_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE\n  WHEN genres[0] + other IS NOT NULL THEN genres[0]\n  ELSE NULL\nEND\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_distinct_from_null_does_not_change_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT CASE WHEN value IS DISTINCT FROM NULL THEN NULL ELSE value END\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_not_distinct_from_null_does_not_change_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT CASE WHEN value IS NOT DISTINCT FROM NULL THEN value ELSE NULL END\n",
+   "configs": {}
+  },
+  {
+   "id": "ST02/test_pass_dynamic_index_does_not_change_expression",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE\n  WHEN genres[uniform(0, 9, random())] IS NOT NULL\n  THEN genres[uniform(0, 9, random())]\nEND\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_differently_cased_quoted_indexed_columns",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT CASE WHEN \"genres\"[0] IS NOT NULL THEN \"GENRES\"[0] END\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_differently_cased_clickhouse_indexed_columns_with_else_null",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "clickhouse",
+   "sql": "SELECT CASE WHEN genres[1] IS NOT NULL THEN GENRES[1] ELSE NULL END\n",
+   "configs": {
+    "core": {
+     "dialect": "clickhouse"
+    }
+   }
+  },
+  {
+   "id": "ST02/test_pass_differently_cased_clickhouse_indexed_columns_no_else",
+   "rule": "ST02",
+   "kind": "pass",
+   "dialect": "clickhouse",
+   "sql": "SELECT CASE WHEN genres[1] IS NOT NULL THEN GENRES[1] END\n",
+   "configs": {
+    "core": {
+     "dialect": "clickhouse"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_no_cte_defined_1",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select * from t",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_1",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "with cte as (\n    select\n        a, b\n    from\n        t\n)\nselect * from cte\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_2",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH cte1 AS (\n  SELECT a\n  FROM t\n),\ncte2 AS (\n  SELECT b\n  FROM u\n)\nSELECT *\nFROM cte1\nJOIN cte2\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_case_insensitive",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH cte1 AS (\n  SELECT a\n  FROM t\n),\ncte2 AS (\n  SELECT b\n  FROM u\n)\nSELECT *\nFROM cte1\nJOIN Cte2\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_fail_cte_defined_but_unused_1",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH cte1 AS (\n  SELECT a\n  FROM t\n),\ncte2 AS (\n  SELECT b\n  FROM u\n)\nSELECT *\nFROM cte1\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_fail_cte_defined_but_unused_2",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH cte_orders AS (\n  SELECT customer_id, total\n  FROM orders\n)\nSELECT *\nFROM\n  orders AS cte_orders\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_3",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH cte1 AS (\n  SELECT a\n  FROM t\n),\ncte2 AS (\n  SELECT b\n  FROM cte1\n)\nSELECT *\nFROM cte2\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_fail_cte_defined_but_unused_3",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH cte1 AS (\n  SELECT a\n  FROM t\n),\ncte2 AS (\n  SELECT b\n  FROM cte1\n)\nSELECT *\nFROM cte1\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_no_cte_defined_2",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "CREATE TABLE my_table (id INTEGER)",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_4",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH max_date_cte AS (\n    SELECT MAX(row_updated_date) AS max_date\n    FROM warehouse.loaded_monthly\n)\nSELECT stuff\nFROM warehouse.updated_weekly\nWHERE row_updated_date <= (SELECT max_date FROM max_date_cte)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_5",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH max_date_cte AS (\n  SELECT MAX(row_updated_date) AS max_date\n  FROM warehouse.loaded_monthly\n),\nuses_max_date_cte AS (\n  SELECT stuff\n      FROM warehouse.updated_weekly\n      WHERE row_updated_date <= (SELECT max_date FROM max_date_cte)\n)\nSELECT stuff\nFROM uses_max_date_cte\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_6",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "with pages_xf as (\n  select pages.received_at\n  from pages\n  where pages.received_at > (select max(received_at) from pages_xf )\n),\nfinal as (\n  select pages_xf.received_at\n  from pages_xf\n)\nselect * from final\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_fail_cte_defined_but_unused_4",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "with pages_xf as (\n  select pages.received_at\n  from pages\n  where pages.received_at > (select max(received_at) from pages_xf )\n),\nfinal as (\n  select pages_xf.received_at\n  from pages_xf\n),\nunused as (\n  select pages.received_at from pages\n)\nselect * from final\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_cte_defined_and_used_7",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "with pages_xf as (\n  select pages.received_at\n  from pages\n  where pages.received_at > (select max(received_at) from final )\n),\nfinal as (\n  select pages_xf.received_at\n  from pages_xf\n)\nselect * from final\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_oracle_select_into_record_fields",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "oracle",
+   "sql": "CREATE OR REPLACE PROCEDURE test_proc(out_rec OUT SYS_REFCURSOR) IS\n  TYPE t_rec IS RECORD (a NUMBER, b NUMBER);\n  out_metrics t_rec;\nBEGIN\n  WITH cte1 AS (\n    SELECT 1 AS x FROM dual\n  )\n  SELECT\n    cte1.x,\n    cte1.x\n  INTO\n    out_metrics.a,\n    out_metrics.b\n  FROM cte1;\nEND;\n/\n",
+   "configs": {
+    "core": {
+     "dialect": "oracle"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_snowflake_delete_cte",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "snowflake",
+   "sql": "DELETE FROM MYTABLE1\n    USING (\n        WITH MYCTE AS (SELECT COLUMN2 FROM MYTABLE3)\n        SELECT COLUMN3 FROM MYTABLE3\n    ) X\nWHERE COLUMN1 = X.COLUMN3\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_exasol_values_clause_cte_1",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "exasol",
+   "sql": "WITH txt AS (\n    VALUES (1)\n    AS t (id)\n)\nSELECT *\nFROM txt\n",
+   "configs": {
+    "core": {
+     "dialect": "exasol"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_exasol_values_clause_cte_2",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "exasol",
+   "sql": "WITH txt AS (\n    VALUES (1, 'foo')\n    AS t (id, name)\n)\nSELECT *\nFROM txt\n",
+   "configs": {
+    "core": {
+     "dialect": "exasol"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_sparksql_values_clause_cte_1",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "sparksql",
+   "sql": "WITH txt AS (\n    VALUES (1)\n    AS t (id)\n)\nSELECT *\nFROM txt\n",
+   "configs": {
+    "core": {
+     "dialect": "sparksql"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_sparksql_values_clause_cte_2",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "sparksql",
+   "sql": "WITH txt AS (\n    VALUES (1, 'foo')\n    AS t (id, name)\n)\nSELECT *\nFROM txt\n",
+   "configs": {
+    "core": {
+     "dialect": "sparksql"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_fail_query_uses_templating",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH\nrandom_gibberish AS (\n    SELECT 1\n)\nSELECT var_bar\nFROM {{ ref('issue_2235') }}\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_update_cte",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "postgres",
+   "sql": "WITH cte AS (\n    SELECT\n        id,\n        name,\n        description\n    FROM table1\n)\nUPDATE table2\nSET\n    name = cte.name,\n    description = cte.description\nFROM cte\nWHERE table2.id = cte.id;\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_fail_update_cte",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "postgres",
+   "sql": "WITH cte AS (\n    SELECT\n        id,\n        name,\n        description\n    FROM table1\n)\nUPDATE table2\nSET\n    name = 1,\n    description = 2\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_fail_nested_cte",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "with a as (\n    with b as (\n        select 1 from foo\n    )\n    select 1\n)\nselect * from a\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_nested_query",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH\nfoo AS (\n    SELECT\n        *\n    FROM\n        zipcode\n),\n\nbar AS (\n    SELECT\n        *\n    FROM\n        county\n),\n\nstage AS (\n    (SELECT\n        *\n    FROM\n        foo)\n\n        UNION ALL\n\n    (SELECT\n        *\n    FROM\n        bar)\n)\n\nSELECT\n    *\nFROM\n    stage\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_fail_nested_query",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH\nfoo AS (\n    SELECT\n        *\n    FROM\n        zipcode\n),\n\nbar AS (\n    SELECT\n        *\n    FROM\n        county\n),\n\nstage AS (\n    (SELECT\n        *\n    FROM\n        foo)\n\n        UNION ALL\n\n    (SELECT\n        *\n    FROM\n        foo)\n)\n\nSELECT\n    *\nFROM\n    stage\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_nested_query_in_from_clause",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH\nfoo AS (\n    SELECT\n        *\n    FROM\n        zipcode\n),\n\nstage AS (\n    SELECT\n        *\n    FROM\n        (\n            SELECT * FROM foo\n        )\n)\n\nSELECT\n    *\nFROM\n    stage\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_fail_nested_query_in_from_clause",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH\nfoo AS (\n    SELECT\n        *\n    FROM\n        zipcode\n),\n\nstage AS (\n    SELECT\n        *\n    FROM\n        (\n            SELECT * FROM foofoo\n        )\n)\n\nSELECT\n    *\nFROM\n    stage\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_nested_with_cte",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH\nexample_cte AS (\n    SELECT 1\n),\n\ncontainer_cte AS (\n    WITH\n    nested_cte AS (\n        SELECT *\n        FROM example_cte\n    )\n\n    SELECT *\n    FROM nested_cte\n)\n\nSELECT *\nFROM container_cte\n",
+   "configs": {}
+  },
+  {
+   "id": "ST03/test_pass_bigquery_quoted_cte_unquoted_ref",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "with `tabx` as (\n  select 1\n)\n\nselect *\nfrom tabx;\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_bigquery_quoted_cte_quoted_ref",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "with `tabx` as (\n  select 1\n)\n\nselect *\nfrom `tabx`;\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_pass_bigquery_unquoted_cte_quoted_ref",
+   "rule": "ST03",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "with tabx as (\n  select 1\n)\n\nselect *\nfrom `tabx`;\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST03/test_fail_postgres_dml_ctes_not_flagged",
+   "rule": "ST03",
+   "kind": "fail_no_fix",
+   "dialect": "postgres",
+   "sql": "WITH\ncte_select AS (\n    SELECT foo FROM t\n),\ncte_insert AS (\n    INSERT INTO t (foo) VALUES (1)\n),\ncte_update AS (\n    UPDATE t SET foo = 2\n),\ncte_delete AS (\n    DELETE FROM t\n)\n\nSELECT 1\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST04/test_pass_1",
+   "rule": "ST04",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    c1,\n    CASE\n        WHEN species = 'Rat' THEN\n          CASE\n              WHEN colour = 'Black' THEN 'Growl'\n              WHEN colour = 'Grey' THEN 'Squeak'\n          END\n    END AS sound\nFROM mytable\n",
+   "configs": {}
+  },
+  {
+   "id": "ST04/test_pass_2",
+   "rule": "ST04",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT CASE 'b'\n        WHEN 'a' THEN\n            TRUE\n        ELSE\n            '2022-01-01'::date > CURRENT_DATE + CASE 'b'\n                WHEN 'b' THEN\n                    8\n                WHEN 'c' THEN\n                    9\n            END\n            AND (c > 10)\n    END AS test\n",
+   "configs": {}
+  },
+  {
+   "id": "ST04/test_fail_no_copy_code_out_of_template",
+   "rule": "ST04",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    c1,\n    CASE\n        WHEN species = 'Rat' THEN 'Squeak'\n        ELSE\n            CASE\n                {{ inner_when }}\n            END\n    END AS sound\nFROM mytable\n",
+   "configs": {
+    "core": {
+     "ignore_templated_areas": false
+    },
+    "templater": {
+     "jinja": {
+      "context": {
+       "inner_when": "WHEN species = 'Dog' THEN 'Woof'"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "ST04/test_pass_different_case_expressions1",
+   "rule": "ST04",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    CASE\n        WHEN DayOfMonth IN (11, 12, 13) THEN 'TH'\n        ELSE\n            CASE MOD(DayOfMonth, 10)\n                WHEN 1 THEN 'ST'\n                WHEN 2 THEN 'ND'\n                WHEN 3 THEN 'RD'\n                ELSE 'TH'\n            END\n    END AS OrdinalSuffix\nFROM Calendar;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST04/test_pass_different_case_expressions2",
+   "rule": "ST04",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    CASE DayOfMonth\n        WHEN 11 THEN 'TH'\n        WHEN 12 THEN 'TH'\n        WHEN 13 THEN 'TH'\n        ELSE\n            CASE MOD(DayOfMonth, 10)\n                WHEN 1 THEN 'ST'\n                WHEN 2 THEN 'ND'\n                WHEN 3 THEN 'RD'\n                ELSE 'TH'\n            END\n    END AS OrdinalSuffix\nFROM Calendar;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/with_recursive_fail_no_fix",
+   "rule": "ST05",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "with recursive p_cte as (\n  select 1 from tbl_foo\n)\nselect\n    a.x, a.y, b.z\nfrom a\njoin (\n  select x, z from p_cte\n) as b on a.x = b.x\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/simple_pass",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "with c as (\n    select x, z from b\n)\nselect\n    a.x, a.y, c.z\nfrom a\njoin c on (a.x = c.x)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/from_clause_pass",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    a.x, a.y\nfrom (\n    select * from b\n) as a\n",
+   "configs": {
+    "rules": {
+     "structure.subquery": {
+      "forbid_subquery_in": "join"
+     }
+    }
+   }
+  },
+  {
+   "id": "ST05/no_inner_from_pass",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select a\nfrom (select 1 as a)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/uses_templating",
+   "rule": "ST05",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    a_table.id,\n    b_table.id\nFROM a_table\nINNER JOIN (\n    SELECT\n        id,\n        {{\"mrgn\"}} AS margin\n    FROM b_tbl\n) AS b_table ON a_table.some_column = b_table.some_column\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/issue_3617_parentheses_around_ctas_select",
+   "rule": "ST05",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "CREATE TABLE t\nAS\n(SELECT\n    Col1\nFROM\n(\n    SELECT 'x' AS COl1\n) x\n)\n",
+   "configs": {
+    "rules": {
+     "structure.subquery": {
+      "forbid_subquery_in": "both"
+     }
+    }
+   }
+  },
+  {
+   "id": "ST05/issue_3572_correlated_subquery_1",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    pd.*\nfrom person_dates\njoin\n    (select *\n     from events\n     where events.name = person_dates.name)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/issue_3572_correlated_subquery_2",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    pd.*\nfrom person_dates as pd\njoin\n    (select *\n     from events as ce\n     where ce.name = pd.name)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/issue_3572_correlated_subquery_3",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    pd.*\nfrom person_dates as pd\njoin\n    (select *\n     from events as ce\n     where ce.name = person_dates.name)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/correlated_subquery_in_later_set_expression_branch",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    pd.*\nfrom person_dates as pd\njoin\n    (select name\n     from events as ce\n     union all\n     select name\n     from events2 as ce2\n     where ce2.name = pd.name)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/test_fail_no_fix_nested_subquery_join",
+   "rule": "ST05",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    x.a,\n    w2.b\nFROM x\nLEFT JOIN (\n    (\n        SELECT\n            w.a,\n            w.b,\n            w.c\n        FROM w\n    ) AS w2\n    LEFT JOIN y\n        ON w2.a = y.a\n)\n    ON x.a = w2.a;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST05/test_pass_nested_table_function",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "SELECT *\nFROM `func`((\n  SELECT 1\n));\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    },
+    "rules": {
+     "structure.subquery": {
+      "forbid_subquery_in": "both"
+     }
+    }
+   }
+  },
+  {
+   "id": "ST05/test_pass_nested_table_function_with_subquery",
+   "rule": "ST05",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "SELECT\n  t.col1,\n  res.result\nFROM t,\n  TABLE(\n    utils.udfs.udtf(\n      t.col1,\n      (SELECT dist.stats FROM dist)\n    ) OVER (\n      PARTITION BY t.col1\n      ORDER BY t.col2 DESC\n    )\n  ) AS res;\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST06/test_pass_select_statement_order",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n  a,\n  cast(b as int) as b,\n  c\nfrom x\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_union_statements_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n  a + b as c,\n  d\nfrom table_a\nunion all\nselect\n  c,\n  d\nfrom table_b\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_insert_statements_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "INSERT INTO example_schema.example_table\n(id,\n    example_column,\n    rank_asc,\n    rank_desc)\nSELECT\n    id,\n    CASE\n        WHEN col_a IN('a',\n                              'b',\n                'c') THEN col_a\n    END AS example_column,\n    rank_asc,\n    rank_desc\nFROM\n  another_schema.another_table\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_insert_statement_with_cte_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "INSERT INTO my_table\nWITH my_cte AS (SELECT * FROM t1)\nSELECT MAX(field1), field2\nFROM t1\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_merge_statements_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "MERGE INTO t\nUSING\n(\n    SELECT\n        DATE_TRUNC('DAY', end_time) AS time_day,\n        b\n    FROM u\n) AS u ON (a = b)\nWHEN MATCHED THEN\nUPDATE SET a = b\nWHEN NOT MATCHED THEN\nINSERT (b) VALUES (c)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_merge_statement_with_cte_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "MERGE INTO t\nUSING\n(\n    WITH my_cte AS (SELECT * FROM t1)\n    SELECT MAX(field1), field2\n    FROM t1\n) AS u ON (a = b)\nWHEN MATCHED THEN\nUPDATE SET a = b\nWHEN NOT MATCHED THEN\nINSERT (b) VALUES (c)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_create_table_as_select_statements_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "CREATE TABLE new_table AS (\n  SELECT\n      id,\n      CASE\n          WHEN col_a IN('a',\n                                'b',\n                  'c') THEN col_a\n      END AS example_column,\n      rank_asc,\n      rank_desc\n  FROM\n    another_schema.another_table\n)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_create_table_as_select_with_cte_ignored",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "CREATE TABLE new_table AS (\n  WITH my_cte AS (SELECT * FROM t1)\n  SELECT MAX(field1), field2\n  FROM t1\n)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_implicit_column_references",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    DATE_TRUNC('DAY', end_time) AS time_day,\n    b_field\nFROM table_name\nGROUP BY 1, 2\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_pass_cte_used_in_set",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "WITH T1 AS (\n  SELECT\n    'a'::varchar AS A,\n    1::bigint AS B\n),\nT2 AS (\n  SELECT\n    CASE WHEN COL > 1 THEN 'x' ELSE 'y' END AS A,\n    COL AS B\n  FROM T\n)\nSELECT * FROM T1\nUNION ALL\nSELECT * FROM T2;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_pass_subquery_used_in_set",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT * FROM (SELECT 'a'::varchar AS A, 1::bigint AS B)\nUNION ALL\nSELECT * FROM (SELECT CASE WHEN COL > 1 THEN 'x' ELSE 'y' END AS A, COL AS B FROM T);\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_pass_create_view_with_explicit_columns",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "CREATE OR REPLACE VIEW FRANCONNECT_REPORTING.GYM_ATTRIBUTES(\n  FRANCHISEENAME,\n  FRANCHISEID,\n  STORESTATUS,\n  GRANDSTOREOPENINGDATE,\n  SAME_GYM,\n  STATE\n) AS\nSELECT\n  f.franchiseename,\n  TRY_TO_DOUBLE(f.franchiseename) AS franchiseid,\n  f.storestatus,\n  f.grandstoreopeningdate,\n  CASE WHEN f.grandstoreopeningdate < dateadd(month, -18, current_date) THEN 'Same Gym' ELSE NULL END as same_gym,\n  f.state\nFROM FRANCONNECT_REPORTING.franchisee f\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_pass_create_view_with_explicit_columns_tsql",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "tsql",
+   "sql": "CREATE VIEW dbo.MyView (\n  EmployeeName,\n  EmployeeID,\n  Department\n) AS\nSELECT\n  e.name,\n  TRY_CAST(e.id AS INT) AS employee_id,\n  e.department\nFROM employees e\n",
+   "configs": {
+    "core": {
+     "dialect": "tsql"
+    }
+   }
+  },
+  {
+   "id": "ST06/test_pass_create_view_with_explicit_columns_bigquery",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "CREATE VIEW v (nm, i, d) AS\nSELECT\n  e.name,\n  TRY_CAST(e.id AS INT) AS eid,\n  e.dept\nFROM employees e\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST06/test_pass_create_view_with_explicit_columns_clickhouse",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "clickhouse",
+   "sql": "CREATE VIEW v (nm, i, d) AS\nSELECT\n  e.name,\n  TRY_CAST(e.id AS INT) AS eid,\n  e.dept\nFROM employees e\n",
+   "configs": {
+    "core": {
+     "dialect": "clickhouse"
+    }
+   }
+  },
+  {
+   "id": "ST06/test_pass_create_view_with_explicit_quoted_columns_clickhouse",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "clickhouse",
+   "sql": "CREATE VIEW v (`nm`, `i`, `d`) AS\nSELECT\n  e.name,\n  TRY_CAST(e.id AS INT) AS eid,\n  e.dept\nFROM employees e\n",
+   "configs": {
+    "core": {
+     "dialect": "clickhouse"
+    }
+   }
+  },
+  {
+   "id": "ST06/test_fail_no_fix_trailing_inline_comments",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    (a - b) AS calc_alias,  -- calc_alias comment\n    a AS a_alias  -- a_alias comment\nFROM\n    tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_trailing_comment_on_final_target",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    (a - b) AS calc_alias,\n    a AS a_alias  -- a_alias comment\nFROM\n    tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_pass_ordered_select_with_inline_comments",
+   "rule": "ST06",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    a AS a_alias,  -- a_alias comment\n    (a - b) AS calc_alias  -- calc_alias comment\nFROM\n    tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_trailing_comment_inside_cte",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "WITH defaults AS (\n    SELECT\n        (1 + 1) AS calc_default,\n        0 AS simple_default -- fallback value used when no match is found\n)\nSELECT t.id, COALESCE(t.val, d.calc_default) AS val\nFROM my_table AS t\nCROSS JOIN defaults AS d\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_leading_comment_on_moved_target",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    id,\n    -- calculation\n    (a - b) AS calc,\n    name\nFROM tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_block_comment_between_unchanged_and_moved_targets",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT id, /* calculation */ (a - b) AS calc, name FROM tbl",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_comment_before_final_comma",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    (a - b) AS calc,\n    name\n    -- name comment\n    ,\nFROM tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_block_comment_before_final_comma",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    (a - b) AS calc,\n    name\n    /* name comment */ ,\nFROM tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_standalone_comment_after_moved_target",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    (a - b) AS calc1,\n    x,\n    -- one line comment\n    SUM(c) AS total\nFROM tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST06/test_fail_no_fix_standalone_block_comment_after_moved_target",
+   "rule": "ST06",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    (a - b) AS calc1,\n    x,\n    /* x comment */\n    SUM(c) AS total\nFROM tbl\n",
+   "configs": {}
+  },
+  {
+   "id": "ST07/test_pass_specify_join_keys",
+   "rule": "ST07",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select x.a from x inner join y on x.id = y.id",
+   "configs": {}
+  },
+  {
+   "id": "ST07/test_fail_specify_join_keys_2",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select x.a from x inner join y on x.id = y.id inner join z using (id)",
+   "configs": {}
+  },
+  {
+   "id": "ST07/select_using_fail",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT *\nFROM A_TABLE\nINNER JOIN (\n    SELECT margin\n    FROM B_TABLE\n) USING (SOME_COLUMN)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST07/fail_but_dont_fix_templated_table_names",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    {{ \"table_a\" }}.field_1,\n    table_b.field_2\nFROM\n    {{ \"table_a\" }}\nINNER JOIN table_b USING (id)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST07/test_pass_clickhouse",
+   "rule": "ST07",
+   "kind": "pass",
+   "dialect": "clickhouse",
+   "sql": "SELECT * FROM test1 as t1 LEFT SEMI JOIN test2 USING ty1,ty2;",
+   "configs": {
+    "core": {
+     "dialect": "clickhouse"
+    }
+   }
+  },
+  {
+   "id": "ST07/test_fail_no_fix_when_using_col_referenced_unqualified",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select field_1, field_2\nfrom table_a\ninner join table_b using (field_1)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST07/test_fail_no_fix_when_using_col_referenced_unqualified_in_where",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select table_a.field_2\nfrom table_a\ninner join table_b using (field_1)\nwhere field_1 > 0\n",
+   "configs": {}
+  },
+  {
+   "id": "ST07/test_fail_no_fix_when_using_col_accessed_as_struct",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "bigquery",
+   "sql": "select field_1.nested_field, field_2\nfrom table_a\ninner join table_b using (field_1)\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST07/test_fail_no_fix_when_using_col_name_matches_table_name",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select field_1, table_a.field_2\nfrom table_a\ninner join field_1 using (field_1)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST07/test_fail_no_fix_when_using_col_struct_access_matches_table_name",
+   "rule": "ST07",
+   "kind": "fail_no_fix",
+   "dialect": "bigquery",
+   "sql": "select field_1.nested_field, table_a.field_2\nfrom table_a\ninner join field_1 using (field_1)\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST08/test_fail_distinct_with_parenthesis_4",
+   "rule": "ST08",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT DISTINCT (a + b) * c",
+   "configs": {}
+  },
+  {
+   "id": "ST08/test_fail_distinct_with_parenthesis_7",
+   "rule": "ST08",
+   "kind": "pass",
+   "dialect": "postgres",
+   "sql": "SELECT\n    DISTINCT ON(bcolor) bcolor,\n    fcolor\nFROM\n    distinct_demo\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST08/test_pass_no_distinct",
+   "rule": "ST08",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT a, b\n",
+   "configs": {}
+  },
+  {
+   "id": "ST08/test_pass_distinct_subquery_inside_count",
+   "rule": "ST08",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    COUNT(\n        DISTINCT(\n            SELECT ANY_VALUE(id)\n            FROM UNNEST(tag) t\n        )\n    )\nFROM\n    dataset_name.table_name;\n",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_no_join_clauses",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select * from foo",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_no_join_on_conditions",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select foo.a, bar.b from foo left join bar using (a)",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_ignored_subconditions",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select foo.a, bar.b from foo left join bar on bar.a between foo.a and foo.b",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_unqualified_column_reference",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select foo.a, bar.b from foo left join bar on bar.b = a",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_earlier_table_first",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo.a,\n    bar.b\nfrom foo\nleft join bar\n    on foo.a = bar.a\n",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_later_table_first",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo.a,\n    bar.b\nfrom foo\nleft join bar\n    on bar.a = foo.a\n",
+   "configs": {
+    "rules": {
+     "structure.join_condition_order": {
+      "preferred_first_table_in_join_clause": "later"
+     }
+    }
+   }
+  },
+  {
+   "id": "ST09/test_pass_later_table_first_cross",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo.a,\n    bar.b\nfrom foo\ncross join bar\nwhere bar.a = foo.a\n",
+   "configs": {}
+  },
+  {
+   "id": "ST09/test_pass_jinja_templated_tables_correct_order",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "select\n    t1.a,\n    t2.b\nfrom `{{ params.project_id }}.my_dataset.table_1` as t1\nleft join `{{ params.project_id }}.my_dataset.table_2` as t2\n    on t1.id = t2.id\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    },
+    "templater": {
+     "jinja": {
+      "context": {
+       "params": {
+        "project_id": "my_project"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "ST09/test_pass_directional_operator_tilde_postgres",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "postgres",
+   "sql": "SELECT *\nFROM table1 AS t0\nINNER JOIN other_table AS t1\n    ON t1.col ~ t0.regex\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST09/test_pass_directional_operator_not_tilde_postgres",
+   "rule": "ST09",
+   "kind": "pass",
+   "dialect": "postgres",
+   "sql": "SELECT *\nFROM table1 AS t0\nINNER JOIN other_table AS t1\n    ON t1.col !~ t0.regex\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST10/test_pass_where",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select * from foo where col = 3\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_pass_select",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select bar = baz AS are_equal\nFROM foo\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_pass_join",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    foo.a,\n    bar.b\nfrom foo\nleft join bar\non foo.a = bar.a\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_where",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select * from foo where col = col\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_select",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select bar = bar AS are_equal\nFROM foo\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_join",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select\n    foo.a,\n    bar.b\nfrom foo\nleft join bar\non foo.a = foo.a\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_pass_allowed_literal_true",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE 1=1 AND col = 'val'\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_pass_allowed_literal_false",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE 1=0 OR col = 'val'\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_disallowed_literal_true",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE 'a'!='b' AND col = 'val'\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_disallowed_literal_false",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE 1 = 2 OR col = 'val'\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_disallowed_literal_false2",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE 1 <> 1 OR col = 'val'\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_disallowed_literal_false3",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE col = 'val' OR 1 = 2\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_fail_bracketed",
+   "rule": "ST10",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE cond=1 AND (score=score OR avg_score >= 3)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_pass_bracketed",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE ((c1 = 'x' OR c2 != 'y') AND (c3 <> 'z'))\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_noop_true_literal",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select * from foo where true and x > 3\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_noop_false_literal",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select * from foo where false OR x < 1 OR y != z\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_noop_between",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select col from foo WHERE score BETWEEN 1 and 10\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_other_operators_with_unknown_precedence",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "with\ncte as (\n    select 1 as num\n    union all\n    select 2 as num\n    union all\n    select 3 as num\n    union all\n    select 4 as num\n)\n\nselect\n    *,\n    case\n        when num % 2 = 0 then 1\n        else 2\n    end as test\nfrom cte\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_other_operators_with_bracketed_precedence",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "with\ncte as (\n    select 1 as num\n    union all\n    select 2 as num\n    union all\n    select 3 as num\n    union all\n    select 4 as num\n)\n\nselect\n    *,\n    case\n        when (num % 2) = 0 then 1\n        else 2\n    end as test\nfrom cte\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_other_operators_on_rhs",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT flags FROM t WHERE flags = flags & 4\n",
+   "configs": {}
+  },
+  {
+   "id": "ST10/test_bitwise_operator_on_rhs_tsql",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "tsql",
+   "sql": "SELECT BitFlagValue FROM Dbo.BitFlags WHERE BitFlagValue = BitFlagValue & @Mask\n",
+   "configs": {
+    "core": {
+     "dialect": "tsql"
+    }
+   }
+  },
+  {
+   "id": "ST10/test_pass_templated_queries",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT a, col FROM t WHERE a = :a\n",
+   "configs": {
+    "core": {
+     "templater": "placeholder"
+    },
+    "templater": {
+     "placeholder": {
+      "param_style": "colon",
+      "a": "a"
+     }
+    }
+   }
+  },
+  {
+   "id": "ST10/test_pass_array_access",
+   "rule": "ST10",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT my_array[1] = [1] FROM t\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_simple",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select\n    1\nfrom b\nleft join c on b.x = c.x\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_single_table",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    1\nfrom foo\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_values",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    1\nfrom (VALUES (1, 'one'), (2, 'two'), (3, 'three'))\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_unqualified_select",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    a\nfrom b\nleft join c using(d)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_unqualified_where",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    1\nfrom b\nleft join c using(d)\nwhere e\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_unqualified_group_by",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    1\nfrom b\nleft join c using(d)\ngroup by e\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_unused_table_in_join",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select\n  widget.id,\n  widget.name,\nfrom\n  widget\n  left join inventor\n    on widget.inventor_id = inventor.id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_unused_table_in_join",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n  widget.id,\n  widget.name,\n  inventor.id\nfrom\n  widget\n  left join inventor\n    on widget.inventor_id = inventor.id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_inner_unreferenced",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    a.*\nfrom a\ninner join b using(x)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_left_semi_unreferenced",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "sparksql",
+   "sql": "SELECT\n    employee.id\nFROM employee\nLEFT SEMI JOIN department\n    ON employee.deptno = department.deptno\n",
+   "configs": {
+    "core": {
+     "dialect": "sparksql"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_left_anti_unreferenced",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "sparksql",
+   "sql": "SELECT\n    employee.id\nFROM employee\nLEFT ANTI JOIN department\n    ON employee.deptno = department.deptno\n",
+   "configs": {
+    "core": {
+     "dialect": "sparksql"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_unqualified_unreferenced",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "select\n    a.*\nfrom a\njoin b using(x)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_left_unreferenced",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select\n    a.*\nfrom a\nleft join c using(x)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_right_unreferenced",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "select\n    a.*\nfrom a\nright join d using(x)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_subquery",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT a.col1\nFROM a\nLEFT JOIN b ON a.id = b.a_id\nWHERE a.some_column IN (\n    SELECT c.some_column\n    FROM c\n    WHERE c.other_column = b.col\n)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_subquery",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT a.col1\nFROM a\nLEFT JOIN b ON a.id = b.a_id\nWHERE a.some_column IN (\n    SELECT c.some_column\n    FROM c\n    WHERE c.other_column = a.col\n)\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_inner_subquery",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT *\nFROM (\n    SELECT t1.col1\n    FROM db1.t1\n    LEFT JOIN t2\n        ON t1.id = t2.id\n);\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_table_with_schema_6496",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    t1.col1,\n    t2.col2\nFROM\n    db1.t1\nLEFT JOIN\n    t2\n    ON\n        t1.id = t2.id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_wildcard_6511",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "select\n    simulation_source_data_reference.*,\n    sourcings.* exclude sourcing_job_id\nfrom simulation_source_data_reference\nleft join sourcings\n    on simulation_source_data_reference.sourcing_job_id = sourcings.sourcing_job_id;\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_bare_select_wildcard",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT *\nFROM a\nLEFT JOIN b\n    ON a.id = b.id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_cross_join_6511",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "snowflake",
+   "sql": "select\n    cast(fpids.value as integer) as party_id\nfrom kyc_dossiers as kds,\n    lateral flatten(input => kds.party_ids) as fpids;\n",
+   "configs": {
+    "core": {
+     "dialect": "snowflake"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_table_expression_function_6558",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "SELECT\n    ft.id,\n    n.generic_field\nFROM fact_table AS ft\nLEFT JOIN UNNEST(ft.generic_array) AS g\nLEFT JOIN UNNEST(g.nested_array) AS n;\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_unnest_deeply_nested_struct_6997",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "WITH test_table AS (\n    SELECT\n        1 AS id,\n        ARRAY<\n            STRUCT<repeated_structs STRUCT<nested_struct STRUCT<generic_field STRING>>>\n        >[\n            STRUCT(STRUCT(STRUCT('abc' AS generic_field)))\n        ] AS generic_array\n)\n\nSELECT\n    test_table.id,\n    g.repeated_structs.nested_struct.generic_field\nFROM test_table\nLEFT JOIN UNNEST(test_table.generic_array) AS g\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_mysql_identifier_with_backticks_should_not_except",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "mysql",
+   "sql": "SELECT `f`.`bar`, `g`.`baz` FROM `foo` AS `f` LEFT JOIN `foobar` AS `g`;\n",
+   "configs": {
+    "core": {
+     "dialect": "mysql"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_quoted_table_name",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    test.one,\n    \"test-2\".two\nFROM test\nLEFT JOIN \"test-2\"\n    ON test.id = \"test-2\".id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_quoted_brackets_table_name",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "tsql",
+   "sql": "SELECT\n    test.one,\n    [test-2].two\nFROM test\nLEFT JOIN [test-2]\n    ON test.id = [test-2].id\n",
+   "configs": {
+    "core": {
+     "dialect": "tsql"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_struct_field_access",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "SELECT\n    a.id,\n    b.my_struct.field1,\n    b.my_struct.field2\nFROM a\nLEFT JOIN b\n    ON a.id = b.id\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_deeply_nested_struct_field_access",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "bigquery",
+   "sql": "SELECT\n    a.id,\n    b.struct1.struct2.field\nFROM a\nLEFT JOIN b\n    ON a.id = b.id\n",
+   "configs": {
+    "core": {
+     "dialect": "bigquery"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_fail_struct_field_access_unused",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    a.id,\n    a.my_struct.field\nFROM a\nLEFT JOIN b\n    ON a.id = b.id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_pass_unaliased_schema_table_column",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "ansi",
+   "sql": "SELECT\n    my_schema.a.id,\n    my_schema.b.name\nFROM my_schema.a\nLEFT JOIN my_schema.b\n    ON my_schema.a.id = my_schema.b.id\n",
+   "configs": {}
+  },
+  {
+   "id": "ST11/test_fail_placeholder_templater_unused_join",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "ansi",
+   "sql": "SELECT\n    foo.a\nFROM ${CATALOG}.foo\nLEFT JOIN ${CATALOG}.bar\n    ON foo.a = bar.a\n",
+   "configs": {
+    "core": {
+     "templater": "placeholder"
+    },
+    "templater": {
+     "placeholder": {
+      "param_style": "dollar",
+      "CATALOG": "my_catalog"
+     }
+    }
+   }
+  },
+  {
+   "id": "ST11/test_pass_wildcard_row_passed_to_function",
+   "rule": "ST11",
+   "kind": "pass",
+   "dialect": "postgres",
+   "sql": "SELECT\n    to_jsonb(other_table.*) AS other_table_jsonb\nFROM my_table\nLEFT JOIN other_table ON (other_table.my_table_id = my_table.id)\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST11/test_fail_wildcard_row_from_unrelated_table",
+   "rule": "ST11",
+   "kind": "fail_no_fix",
+   "dialect": "postgres",
+   "sql": "SELECT\n    to_jsonb(my_table.*) AS my_table_jsonb\nFROM my_table\nLEFT JOIN other_table ON (other_table.my_table_id = my_table.id)\n",
+   "configs": {
+    "core": {
+     "dialect": "postgres"
+    }
+   }
+  },
+  {
+   "id": "ST12/test_pass_databricks_command_cell_not_terminator",
+   "rule": "ST12",
+   "kind": "pass",
+   "dialect": "databricks",
+   "sql": "-- Databricks notebook source\n\nSELECT COL1 FROM TABLE1;\n\n-- COMMAND ----------\n\nSELECT COL2 FROM TABLE2\n",
+   "configs": {
+    "core": {
+     "dialect": "databricks"
+    }
+   }
+  }
+ ]
+}
