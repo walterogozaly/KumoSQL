@@ -39,7 +39,11 @@ def adapters() -> dict:
     for path in sorted((TOOLS / "recheck").glob("*.py")):
         if path.stem in ("__init__", "engine"):
             continue
-        module = importlib.import_module(f"recheck.{path.stem}")
+        try:
+            module = importlib.import_module(f"recheck.{path.stem}")
+        except Exception as error:  # one broken adapter must not stop the others
+            print(f"warning: tools/recheck/{path.name} does not import: {type(error).__name__}: {error}", file=sys.stderr)
+            continue
         found.update(getattr(module, "ADAPTERS", {}))
     return found
 
