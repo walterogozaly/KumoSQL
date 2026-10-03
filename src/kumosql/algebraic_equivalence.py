@@ -2345,8 +2345,10 @@ def _fold_trivia(tree: exp.Expression) -> exp.Expression:
                 node.set("group", None)
                 node.set("distinct", exp.Distinct())
                 return node
-        if isinstance(node, (exp.Upper, exp.Lower)) and isinstance(node.this, (exp.Upper, exp.Lower)):
-            return type(node)(this=node.this.this.copy())  # the outer case wins whatever the inner one did
+        if isinstance(node, (exp.Upper, exp.Lower)) and type(node.this) is type(node):
+            # Repeating a case map changes nothing; across maps the inner one can matter
+            # (LOWER(UPPER('ς')) is 'σ', UPPER(LOWER('İ')) is 'I'), so those are kept.
+            return node.this.copy()
         if isinstance(node, exp.Anonymous) and node.name.upper() == "POSITIVE" and len(node.expressions) == 1:
             return node.expressions[0].copy()
         if isinstance(node, exp.Concat) and any(isinstance(e, exp.Concat) for e in node.expressions):
