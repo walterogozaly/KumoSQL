@@ -861,8 +861,11 @@ def _prepare_query(
         # parameters, so the query would compare equal to its valid unparameterized twin.
         raise ValueError("BigQuery does not allow parameterized types in CAST")
     lifted = lift_subqueries(sql, rewrite_pipe_syntax=True)
-    if lifted.diagnostics:
-        details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)
+    # A subquery the lifter leaves in place (its body reads a correlated column or a
+    # nested WITH table) is compared where it stands; any other diagnostic declines.
+    diagnostics = [d for d in lifted.diagnostics if d.code != "inline_subqueries_remaining"]
+    if diagnostics:
+        details = "; ".join(f"{d.code}: {d.message}" for d in diagnostics)
         raise ValueError(f"query could not be normalized without diagnostics: {details}")
     query = _parse_single_query(lifted.sql)
     if ignore_row_order:
