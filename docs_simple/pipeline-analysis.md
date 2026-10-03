@@ -25,6 +25,11 @@ Replace the target with your table and column. A direct reader can be marked `br
 
 **Lineage** follows where data came from. Table lineage says that `monthly_sales` reads `daily_sales`; column lineage says which input columns contribute to `monthly_sales.total`.
 
+Statements that change tables also retain their inputs and outputs. A script that inserts into `first` and then `second`
+lists both written tables, and a rename connects the old name to the new one. These table connections do not guarantee
+that every assigned column can be traced. Nested fields of a stored STRUCT still trace to the containing column.
+A partition name such as `events$__UNPARTITIONED__` uses the schema of `events` when it is available.
+
 ## Find work already done elsewhere
 
 A table profile describes its sources, attributes, and grain. Grain means what one row represents: one sale, one customer, or one customer per day.
@@ -37,7 +42,7 @@ Profiles and match reports include reasons and unknowns. Check whether the match
 
 ## Why missing schemas matter
 
-`SELECT *` over an external table needs that table's column list. Without it, KumoSQL cannot reliably trace the columns. Saved catalog data or an explicitly requested schema lookup can fill the gap.
+`SELECT *` over an external table needs that table's column list. Without it, KumoSQL cannot reliably trace the columns. Saved catalog data can fill the gap. A live lookup in BigQuery can too, but it is off by default so that nothing reaches the network unless you ask: tick the checkbox in Settings, pass `--fetch-schema` to the pipeline report command, or set `KUMOSQL_SCHEMA_FETCH=1`. Without it, those columns simply stay unknown. The log says only that a lookup ran and how many tables it answered, never their names. See the [full reference](../docs/pipeline-analysis.md) for the details.
 
 An unresolved Dataform template can also hide a dependency. The report marks analysis gaps; it does not silently treat them as no dependency.
 

@@ -1,0 +1,19 @@
+{
+  "suite": "Project reduction (Dataform)",
+  "order": 113,
+  "size": 316,
+  "score": "282/316 projects reduced, 0 wrong; 29% of project complexity removed (21% by dropping unneeded actions alone)",
+  "metric": "A Dataform project and the outputs to keep: kumosql.project_reduction returns a patch on its .sqlx files that deletes what the kept outputs do not need and folds, merges, prunes and simplifies the rest, every step proved. Complexity is project_score (sqlfluff structure of every action plus one per action), summed over the cases; the baseline only drops unneeded actions (reduce-project --drop-only).",
+  "evidence": "proof",
+  "correctness": "0 wrong: every patch is accepted by git apply and every reduced project re-proves each kept output against the original after it is reloaded (316/316). The 270 converted table-minimization projects and the 6 Jaffle Shop cases are also compiled by the harness and run on DuckDB (optimizer off): converted cases on targeted, 60 random and every trap-witness database, Jaffle Shop on its seed data and 60 random databases; no kept output and no surviving assertion differs. Negative control: the first trap of 6 dev cases, written as a patched project, is counted wrong, and so is a project that lost a kept output. Proofs are as sound as KumoSQL's prover.",
+  "coverage": {
+    "proven": 316
+  },
+  "held_out": "70 cases (64 converted, 6 real-project selections), run once: 65/70 reduced, 0 wrong, 70/70 re-proved; converted complexity -28.2% (dropping alone -10.2%), quality 0.66",
+  "docs": "docs/evals/project-reduction.md",
+  "command": "python tools/reduction_bench.py --jobs 4",
+  "date": "2026-10-03",
+  "caveats": "Converted cases are the table-minimization cases written as Dataform projects with assertions, a project variable, incremental tables and dependencies mixed in by a hash of the case id; the 40 real cases are kept-output selections over the 8 open-source projects in tests/fixtures/bq_corpora (proved, not executed, since there is no data) and Jaffle Shop is one small dbt project. The reducer was written against dev cases only; nothing was tuned on held-out cases. Models that use a project variable as a value are kept as written (the prover would read the variable as a fixed string). No dev case gained a new shared table; one held-out case reused an existing one.",
+  "usefulness": "282/316 dev projects reduced, 233 beyond dropping unneeded actions: converted 240/270 (complexity 5,056.5 -> 3,547.0, -29.9%; dropping alone -14.2%; 220 beyond dropping; 65.5% of the minimization reference reduction), real projects 36/40 (5,084.2 -> 3,754.9, -26.1%; dropping alone -26.0%; 7 beyond dropping), Jaffle Shop 6/6 (198 -> 60, -69.7%; dropping alone -59.1%; 6 beyond dropping). Actions 4,329 -> 2,557 (dropping alone 3,106). 788 of 1,275 proof steps proved (61.8%); 302 assertions over removed or rewritten tables dropped and listed.",
+  "performance": "Reducer: median 4.1 s per case, max 75 s, 2,114 s in total on the dev split (4 workers; 60 s search limit for converted cases, 120 s for real projects and Jaffle Shop), re-proof included. Checking: 1,460 s."
+}
