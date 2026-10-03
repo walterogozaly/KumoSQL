@@ -215,6 +215,28 @@ def _deterministic(expr: exp.Expression) -> bool:
     return not any(isinstance(n, _VOLATILE) for n in expr.walk())
 
 
+def _owns_aggregate(select: exp.Select, clauses) -> bool:
+    for clause in clauses:
+        value = select.args.get(clause)
+        for node in value if isinstance(value, list) else [value] if value is not None else []:
+            if any(a.find_ancestor(exp.Select) is select for a in node.find_all(exp.AggFunc)):
+                return True
+    return False
+
+
+def drops_global_aggregate(before: exp.Select, after: exp.Select) -> bool:
+    """``after``, ``before`` with a new select list, no longer aggregates though ``before`` aggregates without GROUP BY.
+
+    Such a select gives one row even over no input. With no aggregate of its own left in the select list or
+    HAVING it is a plain select, a row per input row: ``SELECT 7 AS c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t)``
+    is not ``SELECT 7 AS c FROM t``.
+    """
+
+    if before.args.get("group") or not _owns_aggregate(before, ("expressions", "having", "order")):
+        return False
+    return not _owns_aggregate(after, ("expressions", "having"))
+
+
 def _ordering(query: exp.Expression):
     """The ``ORDER BY`` of ``query`` as ``(key in position form, descending, nulls first)`` over the
     relation the keys read: the FROM source of a select, the output of a set operation."""
@@ -555,4 +577,6 @@ def _lift_cut(select: exp.Select) -> exp.Expression | None:
     result = inner.copy()
     result.set("expressions", items)
     result.set("order", exp.Order(expressions=keys))
+    if drops_global_aggregate(inner, result):
+        return None
     return result

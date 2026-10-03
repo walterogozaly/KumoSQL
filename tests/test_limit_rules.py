@@ -1,6 +1,10 @@
+from collections import Counter
+
+import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import run_unoptimized
 from kumosql.limit_rules import limit_rule
 
 SCHEMA = {"t": ["a", "b"], "u": ["a", "b"], "dept": ["deptno", "name"]}
@@ -112,3 +116,101 @@ def test_a_cut_to_no_rows_over_a_union_of_empty_cuts_is_an_empty_query():
     count = "SELECT COUNT(*) AS n FROM (SELECT a FROM t ORDER BY a LIMIT 1) AS d WHERE FALSE"
     assert not _proven(count, "SELECT a FROM t LIMIT 0")
     assert _proven(count, "SELECT 0 AS n")
+
+
+def _differ(left, right, rows):
+    """The two BigQuery queries return different bags on DuckDB over ``t(a, b)`` holding ``rows``."""
+
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (a BIGINT, b BIGINT)")
+    for row in rows:
+        db.execute("INSERT INTO t VALUES (?, ?)", row)
+    queries = [sqlglot.transpile(sql, read="bigquery", write="duckdb")[0] for sql in (left, right)]
+    first, second = run_unoptimized(db, *queries)
+    return Counter(first) != Counter(second)
+
+
+def _proven_bigquery(left, right):
+    return prove_equivalent_algebraic(left, right, schema=SCHEMA, dialect="bigquery").proven
+
+
+# A select that aggregates without GROUP BY gives one row, even over an empty table; without its
+# aggregate it gives a row per input row. (left, right, rows of t on which they differ)
+LOST_GLOBAL_AGGREGATE = [
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d",
+        "SELECT 7 AS c FROM t",
+        [(1, 1), (2, 1), (3, 1)],
+        id="s007-001-cut-over-a-global-aggregate",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d",
+        "SELECT 7 AS c FROM t",
+        [],
+        id="s007-001-cut-over-a-global-aggregate-of-nothing",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d",
+        "SELECT 7 AS c FROM t ORDER BY TRUE LIMIT 2",
+        [(1, 1), (2, 1), (3, 1)],
+        id="s007-001-lifted-cut",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT 7 AS c, COUNT(*) AS n FROM t) d",
+        "SELECT 7 AS c FROM t",
+        [(1, 1), (2, 1)],
+        id="s007-001-pruned-derived-aggregate",
+    ),
+    pytest.param(
+        "SELECT 1 AS one FROM (SELECT MAX(a) AS n FROM t) d",
+        "SELECT 1 AS one FROM t",
+        [],
+        id="s007-001-folded-derived-aggregate",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 'a' AS c FROM t) d",
+        "SELECT 'a' AS c FROM t",
+        [(1, 1), (2, 1)],
+        id="s007-001-unwrapped-derived-aggregate",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 'a' AS c FROM t ORDER BY 1 LIMIT 2) d",
+        "SELECT 'a' AS c FROM t",
+        [],
+        id="s007-001-unwrapped-cut-aggregate",
+    ),
+]
+
+
+@pytest.mark.parametrize("left, right, rows", LOST_GLOBAL_AGGREGATE)
+def test_a_global_aggregate_keeps_its_one_row(left, right, rows):
+    assert _differ(left, right, rows)
+    assert not _proven_bigquery(left, right)
+
+
+def test_s007_001_cut_does_not_lift_off_the_last_aggregate():
+    assert _rule("SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) AS d") is None
+    # The aggregate read through the cut still lifts, and a grouped select keeps its groups without one.
+    assert _rule("SELECT d.n FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) AS d") == "SELECT COUNT(*) AS n FROM t ORDER BY TRUE LIMIT 2"
+    assert _rule("SELECT d.a FROM (SELECT a, COUNT(*) AS n FROM t GROUP BY a ORDER BY a LIMIT 2) AS d") == "SELECT a FROM t GROUP BY a ORDER BY a LIMIT 2"
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        pytest.param(
+            "SELECT d.n FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d", "SELECT COUNT(*) AS n FROM t", id="s007-001-near-miss-aggregate-read"
+        ),
+        pytest.param("SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d", "SELECT 7 AS c", id="s007-001-near-miss-one-row"),
+        pytest.param(
+            "SELECT d.a FROM (SELECT a, COUNT(*) AS n FROM t GROUP BY a ORDER BY a LIMIT 2) d",
+            "SELECT a FROM t GROUP BY a ORDER BY a LIMIT 2",
+            id="s007-001-near-miss-grouped",
+        ),
+    ],
+)
+def test_a_global_aggregate_near_misses_stay_proven(left, right):
+    assert not _differ(left, right, [(1, 1), (2, 1), (3, 2)])
+    assert not _differ(left, right, [])
+    assert _proven_bigquery(left, right)

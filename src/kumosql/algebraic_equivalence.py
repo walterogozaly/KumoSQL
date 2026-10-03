@@ -51,7 +51,7 @@ from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
-from .limit_rules import limit_rule
+from .limit_rules import drops_global_aggregate, limit_rule
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
@@ -2066,7 +2066,8 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
     A grouped or plain derived table keeps its rows when an output is removed,
     so ``SELECT 1 FROM (SELECT k, COUNT(*) FROM t GROUP BY k) AS d`` is the same
     as ``SELECT 1 FROM (SELECT k FROM t GROUP BY k) AS d``. Not applied under
-    ``DISTINCT`` (removing a column changes which rows collapse) or with a star.
+    ``DISTINCT`` (removing a column changes which rows collapse) or with a star,
+    nor where it would remove the last aggregate of a select without GROUP BY.
     """
 
     if any(
@@ -3161,6 +3162,8 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
         return None
     result = inner.copy()
     result.set("expressions", items)
+    if drops_global_aggregate(inner, result):
+        return None
     return result
 
 
