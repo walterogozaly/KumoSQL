@@ -69,10 +69,23 @@ class _Types:
     def __init__(self, tree: exp.Expression, types: dict[str, dict[str, str]]):
         self.types = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in types.items()}
         self.ctes = {cte.alias_or_name.lower(): cte.this for cte in tree.find_all(exp.CTE)}
+        self._outputs: dict[tuple[int, int], list[str | None] | None] = {}  # (node id, depth) -> outputs
 
     def outputs(self, query: exp.Expression, depth: int) -> list[str | None] | None:
-        """The type family of each output of ``query``, ``None`` per unknown one; ``None`` if unreadable."""
+        """The type family of each output of ``query``, ``None`` per unknown one; ``None`` if unreadable.
 
+        Each column of a derived table asks for the outputs of the whole query below it, so a chain of nested
+        set operations over wide selects would repeat that work once per column per level (exponentially);
+        the answer for a node at a depth is kept.
+        """
+
+        key = (id(query), depth)
+        if key not in self._outputs:
+            self._outputs[key] = self._read_outputs(query, depth)
+        result = self._outputs[key]
+        return None if result is None else list(result)
+
+    def _read_outputs(self, query: exp.Expression, depth: int) -> list[str | None] | None:
         leaves = _leaves(query)
         if len(leaves) > 1:
             per_leaf = [self.outputs(leaf, depth + 1) for leaf in leaves]
