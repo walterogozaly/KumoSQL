@@ -144,6 +144,31 @@ def _no_extras(select: exp.Select, *, allow_group: bool) -> bool:
     return not any(select.find_all(exp.Window))
 
 
+def _global_aggregate(select: exp.Select) -> bool:
+    """``select`` aggregates without a GROUP BY: it returns one row even over no input.
+
+    Pruning its outputs must keep one of its aggregates, or it becomes a plain select with a row per input row.
+    """
+
+    return not select.args.get("group") and any(
+        a.find_ancestor(exp.Select) is select and not isinstance(a.parent, exp.Window) for a in select.find_all(exp.AggFunc)
+    )
+
+
+def _where_false_is_empty(select: exp.Select) -> bool:
+    """``select`` has ``WHERE FALSE`` and so no rows: not with an aggregate, which still returns its one row
+    over no input, nor with a GROUP BY (an empty grouping set does the same)."""
+
+    where = select.args.get("where")
+    return (
+        where is not None
+        and isinstance(where.this, exp.Boolean)
+        and not where.this.this
+        and not select.args.get("group")
+        and not any(select.find_all(exp.AggFunc))
+    )
+
+
 def _is_agg(node: exp.Expression) -> bool:
     return isinstance(node, tuple(_COMBINE)) and not node.args.get("distinct") and not isinstance(
         node.this, exp.Distinct
@@ -1254,6 +1279,8 @@ def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
         conditions.append(substitute(select.args["where"].this))
     if conditions:
         result.set("having", exp.Having(this=_and_all([c for cond in conditions for c in _conjuncts(cond)])))
+    if _global_aggregate(inner) and not _global_aggregate(result):
+        return None  # the outer select drops every aggregate: the merged select would lose the one-row result
     return result
 
 
@@ -2071,6 +2098,15 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
         keep = [e for e in inner.expressions if e.alias_or_name and e.alias_or_name.lower() in used]
         if not keep:
             keep = inner.expressions[:1]
+        if _global_aggregate(inner):
+            # keep an aggregate output, or the one-row aggregate becomes a row per input row
+            pruned = inner.copy()
+            pruned.set("expressions", [e.copy() for e in keep])
+            if not _global_aggregate(pruned):
+                witness = next((e for e in inner.expressions if any(a.find_ancestor(exp.Select) is inner for a in e.find_all(exp.AggFunc))), None)
+                if witness is None:
+                    continue
+                keep = [e for e in inner.expressions if e is witness or any(e is k for k in keep)]
         if len(keep) == len(inner.expressions):
             continue
         inner.set("expressions", [e.copy() for e in keep])
@@ -2301,14 +2337,13 @@ def _fold_constants(tree: exp.Expression) -> exp.Expression:
 
 
 def _is_empty_select(node: exp.Expression) -> bool:
-    """A SELECT whose WHERE is literally FALSE (or that has LIMIT 0) returns no rows."""
+    """A SELECT whose WHERE is literally FALSE (and has no aggregate) or that has LIMIT 0 returns no rows."""
 
     while isinstance(node, exp.Subquery):
         node = node.this
     if not isinstance(node, exp.Select) or node.args.get("group") or node.args.get("having"):
         return False
-    where = node.args.get("where")
-    if where is not None and isinstance(where.this, exp.Boolean) and not where.this.this:
+    if _where_false_is_empty(node):
         return True
     limit = node.args.get("limit")
     return limit is not None and isinstance(limit.expression, exp.Literal) and limit.expression.name == "0"
@@ -4000,14 +4035,7 @@ def _provably_empty(node: exp.Expression) -> bool:
     while isinstance(node, exp.Subquery) and not node.args.get("limit") and not node.args.get("order"):
         node = node.this
     if isinstance(node, exp.Select):
-        where = node.args.get("where")
-        return (
-            where is not None
-            and isinstance(where.this, exp.Boolean)
-            and not where.this.this
-            and not node.args.get("group")
-            and not any(node.find_all(exp.AggFunc))
-        )
+        return _where_false_is_empty(node)
     if isinstance(node, exp.Union):
         return _provably_empty(node.this) and _provably_empty(node.expression)
     if isinstance(node, exp.Intersect):
@@ -4407,6 +4435,8 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
         return None
     result = inner.copy()
     result.set("expressions", items)
+    if _global_aggregate(inner) and not _global_aggregate(result):
+        return None  # the outer select drops every aggregate: unwrapping would lose the one-row result
     return result
 
 
