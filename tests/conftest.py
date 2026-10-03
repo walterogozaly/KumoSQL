@@ -157,6 +157,7 @@ EVAL_FILES = {
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
     "test_rbot_benchmarks.py",
+    "test_soundness_fuzz.py",
     "test_safety_corpus.py",
     "test_schema_change.py",
     "test_script_bench.py",
