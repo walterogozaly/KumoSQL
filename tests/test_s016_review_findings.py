@@ -6,7 +6,7 @@ from kumosql import rewrite
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.equivalence import prove_equivalent
 from kumosql.layout_equivalence import layout_only_change, restore_function_case
-from kumosql.set_operation_types import mixed_types
+from kumosql.set_operation_types import ASSUMPTION as SET_TYPES, mixed_types
 from kumosql.set_operations import positional_sql_pair
 from kumosql.smt_equivalence import prove_equivalent_smt
 
@@ -54,6 +54,15 @@ def test_filter_is_not_moved_before_a_set_operation_converts_types(operation, di
     assert not _algebraic(left, right, schema=SCHEMA, types=MIXED, dialect=dialect)
     assert not _algebraic(left, right, schema=SCHEMA, types={"a": {"x": "INT64"}, "b": {"x": "FLOAT64"}}, dialect=dialect)
     assert _algebraic(left, right, schema=SCHEMA, types={"a": {"x": "INT64"}, "b": {"x": "INT64"}}, dialect=dialect)
+
+
+def test_without_types_a_proof_through_a_set_operation_states_that_branch_types_match():
+    left = "SELECT x FROM (SELECT x FROM a UNION ALL SELECT x FROM b) d WHERE x = '01'"
+    right = "SELECT x FROM a WHERE x = '01' UNION ALL SELECT x FROM b WHERE x = '01'"
+    result = prove_equivalent_algebraic(left, right, dialect="duckdb", compare_names=False, timeout_ms=3000)
+    assert not result.proven or SET_TYPES in result.assumptions
+    typed = prove_equivalent_algebraic(left, right, schema=SCHEMA, types={"a": {"x": "INT64"}, "b": {"x": "INT64"}}, compare_names=False, timeout_ms=3000)
+    assert typed.proven and SET_TYPES not in typed.assumptions
 
 
 def test_mixed_types_are_followed_through_ctes_and_derived_tables():
@@ -115,12 +124,13 @@ def test_literal_chunks_may_change_their_separator():
 
 # A single-quoted bytes literal holding a line break is not valid GoogleSQL; canonicalizing it must not make it
 # equal to the valid ``b'a\x0Ab'`` (PR #401).
-@pytest.mark.parametrize("prefix,quote", [("b", "'"), ("b", '"'), ("rb", "'"), ("br", '"')])
-def test_a_bytes_literal_with_a_line_break_is_not_canonicalized(prefix, quote):
+@pytest.mark.parametrize("prefix,quote", [("b", "'"), ("b", '"'), ("rb", "'"), ("br", '"'), ("", "'"), ("r", '"')])
+def test_a_literal_with_a_line_break_is_not_proved_equal_to_a_valid_one(prefix, quote):
     left = f"SELECT {prefix}{quote}a\nb{quote} AS v, '\\n' AS marker FROM t"
-    right = f"SELECT {prefix}{quote}a\\x0Ab{quote} AS v, '\\n' AS marker FROM t"
-    assert not prove_equivalent(left, right).proven
-    assert not _algebraic(left, right)
+    escaped = "\\x0A" if "b" in prefix else "\\n"
+    for right in (f"SELECT {prefix}{quote}a{escaped}b{quote} AS v, '\\n' AS marker FROM t", f"SELECT {prefix.replace('r', '')}'a{escaped}b' AS v, '\\n' AS marker FROM t"):
+        assert not prove_equivalent(left, right).proven
+        assert not _algebraic(left, right)
 
 
 def test_triple_quoted_bytes_may_hold_a_line_break():

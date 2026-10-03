@@ -36,7 +36,7 @@ from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, parenthesize_is_operands, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
-from .string_literals import canonical_literals
+from .string_literals import canonical_literals, invalid_literal
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -73,7 +73,7 @@ from .join_rewrites import join_rewrites
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .union_filter_rules import push_filter_into_set_operation
-from .set_operation_types import mixed_types
+from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types, unchecked_types
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -4842,8 +4842,21 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     With ``search_counterexample=True`` an unproven pair the solver cannot refute is
     run on databases built for it (:mod:`kumosql.executed_refutation`); a database
     on which the results differ comes back as a ``NOT_EQUIVALENT`` counterexample.
+
+    A proof over a set operation whose branch types are not all known carries
+    ``set_operation_types.ASSUMPTION``; one whose branches have different known types is declined.
     """
 
+    dialect = kwargs.get("dialect", "bigquery")
+    if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+    result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
+    if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
+        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    return result
+
+
+def _prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     search = kwargs.pop("search_counterexample", False)
     if kwargs.get("dialect", "bigquery") == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)

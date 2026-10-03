@@ -163,6 +163,15 @@ def created_function_calls(sql: str) -> list[str] | None:
     ]
 
 
+def touching_literal_chunks(sql: str) -> bool:
+    """Whether two string or bytes literals touch (``'a''b'``), which GoogleSQL rejects but some parsers accept."""
+
+    tokens = tokenize_exactly(sql) or []
+    return any(
+        _literal_chunk(a) and _literal_chunk(b) and a.end + 1 == b.start for a, b in zip(tokens, tokens[1:])
+    )
+
+
 def _literal_chunk(token: Token) -> bool:
     return token.token_type.name.endswith("STRING")
 

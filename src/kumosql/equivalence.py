@@ -28,7 +28,7 @@ from .ast_utils import (
 from .distinct_safety import distinct_is_redundant
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
-from .string_literals import canonical_literals
+from .string_literals import canonical_literals, invalid_literal
 
 
 class EquivalenceStatus(str, Enum):
@@ -870,6 +870,11 @@ def prove_equivalent(
     proven when the rows underneath are.
     """
 
+    if invalid_literal(left_sql) or invalid_literal(right_sql):
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
+        )
     left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     if ignore_row_order:
         left_sql = _drop_noop_limit(left_sql) or left_sql

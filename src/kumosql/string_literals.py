@@ -104,6 +104,39 @@ def _invalid(quote: str, body: str | None) -> bool:
     return body is None or (len(quote) == 1 and ("\n" in body or "\r" in body))
 
 
+def invalid_literal(sql: str) -> bool:
+    """Whether ``sql`` has a single-quoted string or bytes literal holding a line break.
+
+    GoogleSQL rejects such a query, while sqlglot reads the literal, so the provers decline it rather than prove
+    it equal to a valid query with the escaped spelling.
+    """
+
+    if "\n" not in sql and "\r" not in sql:
+        return False
+    i, size = 0, len(sql)
+    while i < size:
+        char = sql[i]
+        if sql.startswith("--", i) or char == "#":
+            end = sql.find("\n", i)
+            i = size if end < 0 else end
+        elif sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = size if end < 0 else end + 2
+        elif char == "`":
+            j = i + 1
+            while j < size and sql[j] != "`":
+                j += 2 if sql[j] == "\\" else 1
+            i = j + 1
+        elif char in "'\"":
+            end, quote, body = _string_end(sql, i)
+            if body is not None and _invalid(quote, body):
+                return True
+            i = end
+        else:
+            i += 1
+    return False
+
+
 def canonical_literals(sql: str) -> str:
     """``sql`` with BigQuery string literals and adjacent quoted names spelled one way (see the module docstring)."""
 

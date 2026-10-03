@@ -10,7 +10,8 @@ and ``b.x VARCHAR`` DuckDB makes the union ``VARCHAR``, so
 drops the integer 1 (it becomes ``'1'``), while ``SELECT x FROM a WHERE x = '01' UNION ALL ...``
 keeps it (``1 = '01'`` compares as integers). An ``INT64`` above 2**53 compared before it
 becomes ``FLOAT64`` can differ the same way. :func:`mixed_types` names such an output so the
-prover declines instead of proving through the conversion.
+prover declines instead of proving through the conversion, and :func:`unchecked_types` tells it when a proof
+must carry :data:`ASSUMPTION` because some branch's type is not known.
 
 Types come from the declared column types, casts and literals, followed through derived tables,
 CTEs and nested set operations; an output whose type is not known on some branch is not reported.
@@ -148,22 +149,54 @@ class _Types:
         return found[0] if len(found) == 1 else None
 
 
+ASSUMPTION = "the branches of each set operation give each output the same type (no implicit conversion)"
+
+
+def _per_operation(sql: str, types: dict[str, dict[str, str]] | None, dialect: str):
+    """``(first leaf, per-leaf output types)`` for each set operation; the types are ``None`` when unreadable."""
+
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except Exception:  # noqa: BLE001 - the prover reports the parse error itself
+        return
+    reader = _Types(tree, types or {})
+    for operation in tree.find_all(exp.SetOperation):
+        leaves = _leaves(operation)
+        try:
+            per_leaf = [reader.outputs(leaf, 0) for leaf in leaves]
+        except Exception:  # noqa: BLE001 - a shape this reader does not know is an unknown type
+            yield leaves[0], None
+            continue
+        if any(p is None for p in per_leaf) or len({len(p) for p in per_leaf}) != 1:
+            yield leaves[0], None
+        else:
+            yield leaves[0], per_leaf
+
+
+def unchecked_types(sql: str, types: dict[str, dict[str, str]] | None, dialect: str = "bigquery") -> bool:
+    """Whether some set operation has an output whose type is not known on every branch (so a proof assumes them equal).
+
+    Without types DuckDB, MySQL and others convert ``1`` and ``'01'`` to one type silently; a proof that moved a
+    filter into the branches then holds only under :data:`ASSUMPTION`.
+    """
+
+    for _, per_leaf in _per_operation(sql, types, dialect):
+        if per_leaf is None:
+            return True
+        for column in zip(*per_leaf):
+            if None in column and len([c for c in column if c != "null"]) > 1:
+                return True
+    return False
+
+
 def mixed_types(sql: str, types: dict[str, dict[str, str]] | None, dialect: str = "bigquery") -> str | None:
     """A description of the first set-operation output whose branches have different known types, else None."""
 
     if not types:
         return None
-    try:
-        tree = sqlglot.parse_one(sql, read=dialect)
-    except sqlglot.errors.SqlglotError:
-        return None
-    reader = _Types(tree, types)
-    for operation in tree.find_all(exp.SetOperation):
-        leaves = _leaves(operation)
-        per_leaf = [reader.outputs(leaf, 0) for leaf in leaves]
-        if any(p is None for p in per_leaf) or len({len(p) for p in per_leaf}) != 1:
+    for first, per_leaf in _per_operation(sql, types, dialect):
+        if per_leaf is None:
             continue
-        first = leaves[0]
         names = [e.alias_or_name for e in first.expressions] if isinstance(first, exp.Select) else []
         for position, column in enumerate(zip(*per_leaf)):
             known = _conflict(column)
