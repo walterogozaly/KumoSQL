@@ -82,15 +82,21 @@ def count_inline_subqueries(sql: str) -> int:
     return sum(len(_relation_subqueries(statement)) for statement in parse_statements(sql))
 
 
-def _used_cte_names(query: exp.Expression) -> set[str]:
-    clause = with_clause(query)
-    if not clause:
-        return set()
-    return {
-        alias
-        for cte in clause.expressions
+def _used_relation_names(query: exp.Expression) -> set[str]:
+    """Every relation name visible anywhere in the statement, lower-cased.
+
+    A lifted CTE named like a table the query already reads would shadow that table
+    (a WITH name hides a same-named unqualified table, and BigQuery matches CTE names
+    case-insensitively), silently changing the result, so tables count as well as CTEs.
+    """
+
+    names = {
+        alias.lower()
+        for cte in query.root().find_all(exp.CTE)
         if (alias := identifier_name(cte.args.get("alias")))
     }
+    names.update(table.name.lower() for table in query.root().find_all(exp.Table) if table.name)
+    return names
 
 
 def _next_name(used: set[str], counter: list[int]) -> str:
@@ -141,7 +147,7 @@ def _tree_depth(node: exp.Expression) -> int:
 def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
     """Lift relation subqueries from a SELECT/UNION query, recursively."""
 
-    used = _used_cte_names(query)
+    used = _used_relation_names(query)
     counter = counter if counter is not None else [0]
     lifted = 0
     current = with_clause(query)

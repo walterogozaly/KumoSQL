@@ -690,6 +690,20 @@ SELECT COUNTIF(left_count != right_count) = 0 AS equivalent
 FROM joined_counts"""
 
 
+_GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
+
+
+def _reads_table_named_like_generated_cte(query: exp.Expression) -> bool:
+    cte_names = {
+        alias.lower() for cte in query.find_all(exp.CTE) if (alias := _cte_alias(cte))
+    }
+    return any(
+        table.name.lower().startswith(_GENERATED_CTE_PREFIXES)
+        and (table.args.get("db") or table.name.lower() not in cte_names)
+        for table in query.find_all(exp.Table)
+    )
+
+
 def _prepare_query(
     sql: str, *, ignore_row_order: bool
 ) -> tuple[exp.Expression, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -697,6 +711,10 @@ def _prepare_query(
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
     parsed = _parse_single_query(sql)
+    if _reads_table_named_like_generated_cte(parsed):
+        # Lifting and CTE canonicalization give CTEs these names; a real table with one
+        # could be confused with them, and the proof would compare the wrong relation.
+        raise ValueError("the query reads a table named like a CTE the normalizer generates")
     if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
     if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):

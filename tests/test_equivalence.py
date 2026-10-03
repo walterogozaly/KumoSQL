@@ -234,3 +234,24 @@ def test_parameterized_cast_types_are_not_proven():
         )
         assert result.status is EquivalenceStatus.NOT_PROVEN
         assert "parameterized types in CAST" in result.diagnostics[0]
+
+
+def test_lifting_does_not_prove_a_rewrite_that_shadows_a_table():
+    # Eval-integrity audit 2026-10-02: with one table row x = 7 the original returns
+    # (1, 7), and a lift that reuses the table's name as its CTE name returns (1, 1).
+    original = "SELECT a.x AS ax, b.x AS bx FROM (SELECT 1 AS x) a JOIN __lifted_subquery_001 b ON TRUE"
+    shadowed = (
+        "WITH __lifted_subquery_001 AS (SELECT 1 AS x) "
+        "SELECT a.x AS ax, b.x AS bx FROM __lifted_subquery_001 AS a JOIN __lifted_subquery_001 AS b ON TRUE"
+    )
+
+    assert prove_equivalent(original, shadowed).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_canonical_cte_names_do_not_capture_a_table():
+    # Renaming CTE `a` to __canonical_cte_001 made it indistinguishable from the table
+    # of that name, so a CTE self-join was "proved" equal to a join with the table.
+    left = "WITH a AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM a CROSS JOIN __canonical_cte_001 AS z"
+    right = "WITH b AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM b AS a CROSS JOIN b AS z"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT

@@ -163,3 +163,24 @@ def test_parse_failure_is_not_reported_as_success():
     assert not result.success
     assert result.sql == source
     assert result.diagnostics
+
+
+def test_lifted_cte_never_shadows_a_table_the_query_reads():
+    # Eval-integrity audit 2026-10-02: naming the CTE __lifted_subquery_001 hid the
+    # physical table of that name, turning (1, 7) into (1, 1).
+    sql = "SELECT a.x AS ax, b.x AS bx FROM (SELECT 1 AS x) a JOIN __lifted_subquery_001 b ON TRUE"
+
+    lifted = lift_subqueries(sql).sql
+
+    statement = sqlglot.parse_one(lifted, read="bigquery")
+    cte_names = {cte.alias_or_name.lower() for cte in statement.find_all(exp.CTE)}
+    assert "__lifted_subquery_001" not in cte_names
+    assert "JOIN __lifted_subquery_001 AS b" in lifted
+
+
+def test_lifted_cte_names_skip_tables_in_any_case():
+    sql = "SELECT * FROM (SELECT 1 AS x) a JOIN __LIFTED_SUBQUERY_001 b ON TRUE"
+
+    statement = sqlglot.parse_one(lift_subqueries(sql).sql, read="bigquery")
+
+    assert {cte.alias_or_name.lower() for cte in statement.find_all(exp.CTE)} == {"__lifted_subquery_002"}

@@ -23,6 +23,8 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
 | [Public SQL evaluation sources](public-sql-evaluation-sources.md) | The research list of public suites, databases and projects; what KumoSQL already scores from it is in the [inventory](evals/public-sources.md) |
+| [Eval integrity audit status](eval-integrity-status.md) | What each finding of the October 2026 external [eval integrity audit](eval-integrity-audit-2026-10-02.md) means on current master, and what was fixed |
+| [Eval integrity audit, 2026-10-02](eval-integrity-audit-2026-10-02.md) | The external audit as received: SMT snapshots, typed result comparison, the workbook fixture gate, fuzz floors |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
 
 ## Evals
