@@ -69,7 +69,7 @@ def test_log_and_console_never_hold_real_names(tmp_path, monkeypatch, capsys):
     assert logged.count("failed (PermissionError)") == 1  # logged once, by the innermost stage
     assert "repo load: failed after" in logged and "details above" in logged
     assert "at kumosql/test_redaction.py" not in logged  # test frames are not package frames
-    assert "PermissionError: [Errno 13]" in logged  # traceback kept, message redacted
+    assert "PermissionError: [KS-IO-PERM]" in logged  # frames and category kept, exception values withheld
 
 
 def test_error_has_code_hint_in_python_m_form_and_traceback_only_in_log(tmp_path, monkeypatch, capsys):
@@ -164,3 +164,87 @@ def test_request_log_drops_query_values(tmp_path, monkeypatch):
 def test_sql_parse_error_excerpts_keep_only_line_and_column():
     text = console.scrub("Invalid expression / Unexpected token. Line 3, Col: 14.\n  select a from \x1b[4mcorp_sales.orders\x1b[0m where")
     assert text == "Invalid expression / Unexpected token. Line 3, Col: 14. <SQL excerpt withheld>"
+
+
+@pytest.mark.parametrize('payload', [
+    "password='FAKE_PASSWORD'", 'password="FAKE_PASSWORD"', "password='FAKE_ONE''FAKE_TWO'",
+    '{"access_token": "FAKE_ACCESS", "refresh_token": "FAKE_REFRESH"}',
+    '{"client_secret": "FAKE_CLIENT", "private_key": "FAKE_PRIVATE"}',
+    '{"api_key": "FAKE_API"}',
+    '-----BEGIN PRIVATE KEY-----\nFAKE_PEM\n-----END PRIVATE KEY-----',
+    '-----BEGIN RSA PRIVATE KEY-----\nFAKE_TRUNCATED',
+])
+def test_secret_formats_do_not_reach_logs_maps_or_final_diagnostics(payload, tmp_path, monkeypatch):
+    monkeypatch.setenv('KUMOSQL_HOME', str(tmp_path))
+    console.log(payload)
+    console.say(payload, console=False)
+    assert 'FAKE_' not in console.scrub(payload)
+    assert 'FAKE_' not in (tmp_path / 'ui.log').read_text()
+    assert 'FAKE_' not in console.diagnostics()
+    assert 'FAKE_' not in json.dumps(redact.GLOBAL.mapping())
+
+
+def test_url_credentials_never_enter_reverse_map_including_existing_sessions(tmp_path, monkeypatch):
+    monkeypatch.setenv('KUMOSQL_HOME', str(tmp_path))
+    old = {'sessions': {'old': {'started': '2026-01-01', 'map': {'repo:repo#1': 'https://FAKE_OLD@host/repo.git'}}}}
+    (tmp_path / redact.MAP_NAME).write_text(json.dumps(old))
+    assert 'FAKE_OLD' not in json.dumps(redact.lookup('repo#1'))
+    url = 'https://user:FAKE_TOKEN@host/repo.git'
+    console.ref('repo', url)
+    console.scrub(url)
+    redact.GLOBAL.write_map()
+    assert 'FAKE_' not in json.dumps(redact.GLOBAL.mapping())
+    assert 'FAKE_' not in (tmp_path / redact.MAP_NAME).read_text()
+
+
+@pytest.mark.parametrize('payload', [
+    "SELECT salary_private FROM internal_payroll WHERE note = 'FAKE_LITERAL'; row=('FAKE_ROW_VALUE', 987654)",
+    "row=('FAKE_ROW_VALUE', 987654)",
+    "variables={'region': 'FAKE_VARIABLE'}",
+])
+def test_data_dumps_are_withheld_at_sink_and_from_diagnostics(payload, tmp_path, monkeypatch):
+    monkeypatch.setenv('KUMOSQL_HOME', str(tmp_path))
+    console.log(payload)
+    console.say(payload, console=False)
+    assert console.scrub(payload) == '<data payload withheld>'
+    text = (tmp_path / 'ui.log').read_text()
+    for private in ('FAKE_', 'salary_private', 'internal_payroll', '987654'):
+        assert private not in text and private not in console.diagnostics()
+
+
+def test_diagnostics_omit_unstructured_historical_and_free_form_payloads(tmp_path, monkeypatch):
+    monkeypatch.setenv('KUMOSQL_HOME', str(tmp_path))
+    (tmp_path / 'ui.log').write_text('2026-01-01 old INFO FAKE_LEGACY salary_private 987654\n')
+    console.log('FAKE_FREEFORM payroll_private 987654')
+    console.say('analysis: finished in 1.0s (models 10)')
+    text = console.diagnostics()
+    assert 'FAKE_' not in text and 'salary_private' not in text and 'payroll_private' not in text and '987654' not in text
+    assert '2 unsummarized log entries omitted' in text
+    assert 'models 10' in text
+
+
+def test_producer_exception_and_variable_values_are_not_logged(tmp_path, monkeypatch):
+    monkeypatch.setenv('KUMOSQL_HOME', str(tmp_path))
+    with pytest.raises(ValueError):
+        with console.task('parse project', variables={'region': 'FAKE_VARIABLE'}, parameter=987654):
+            raise ValueError("FAKE_ROW_VALUE salary_private 987654 Line 2, Col: 5. SELECT * FROM payroll")
+    text = (tmp_path / 'ui.log').read_text() + console.diagnostics()
+    assert 'FAKE_' not in text and 'salary_private' not in text and '987654' not in text
+    assert 'Line 2, Col: 5' in text and '[KS-INTERNAL]' in text
+
+
+def test_diagnostics_settings_do_not_leak_unknown_keys_or_variable_numbers(tmp_path, monkeypatch):
+    from kumosql import state
+    monkeypatch.setenv('KUMOSQL_HOME', str(tmp_path))
+    state.set_section('settings', {'vars': {'salary_private': 987654}, 'salary_private': 987654, 'project': 'FAKE_PROJECT'})
+    text = console.diagnostics()
+    assert 'salary_private' not in text and '987654' not in text and 'FAKE_PROJECT' not in text
+    assert 'FAKE_PROJECT' not in json.dumps(redact.GLOBAL.mapping())
+
+
+def test_no_redact_still_never_retains_or_shows_credentials():
+    console.set_redaction(False)
+    url = 'https://FAKE_TOKEN@host/repo.git'
+    assert console.ref('repo', url) == 'https://host/repo.git'
+    assert 'FAKE_TOKEN' not in console.scrub(url)
+    assert 'FAKE_PASSWORD' not in console.scrub("password='FAKE_PASSWORD'")

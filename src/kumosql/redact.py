@@ -11,8 +11,9 @@ The placeholder-to-real map is written to ``redaction-map.json`` in the local
 data folder (the last few sessions are kept). It is never part of the
 diagnostics bundle. ``python -m kumosql.ui --lookup model#417`` reads it.
 
-Redaction is on by default. ``--no-redact`` (or ``KUMOSQL_NO_REDACT=1``) turns it
-off for local debugging; the diagnostics bundle is scrubbed regardless.
+Name redaction is on by default. ``--no-redact`` (or ``KUMOSQL_NO_REDACT=1``)
+turns it off for local debugging; credentials are always removed and the
+diagnostics bundle is scrubbed regardless.
 """
 
 from __future__ import annotations
@@ -43,7 +44,16 @@ _SECRET = re.compile(
     r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}"
     r"|ya29\.[A-Za-z0-9._-]{20,}|AIza[A-Za-z0-9_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}"
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{12,}")
-_ASSIGNED_SECRET = re.compile(r"(?i)\b(password|passwd|token|secret|api[_-]?key|access[_-]?key|authorization)(\s*[=:]\s*)(?!<)[^\s,;&'\"]+")
+_ASSIGNED_SECRET = re.compile(
+    r"(?i)\b(password|passwd|token|secret|api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|private[_-]?key|authorization)"
+    r"([\"']?\s*[=:]\s*)(?:\"(?:\\.|[^\"\\])*(?:\"|$)|'(?:\\.|''|[^'\\])*(?:'|$)|(?!<)[^\s,;&'\"]+)")
+_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9 ]* )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9 ]* )?PRIVATE KEY-----|$)", re.S)
+# SQL and value dumps cannot be made safe by guessing which names are private.
+_DATA_PAYLOAD = re.compile(
+    r"(?i)\b(?:select\s+(?!projects?\b)|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|merge\s+into\b|with\s+\S+\s+as\s*\()"
+    r"|\b(?:sql|query|rows?|results|vars|variables|parameters|bindings)[\"']?\s*[=:]\s*(?:[\"'\[({]|\S)"
+    r"|(?:^|\s)[\[{(]\s*[\"']"
+    r"|(?:\b(?:project|dataset|table|model)\s*[=:]\s*[\"'])")
 _URL = re.compile(r"""(?i)\b(?:https?|ssh|git|ftp|file)://[^\s'"`<>)\]]+""")
 _SCP_URL = re.compile(r"(?<![\w@./-])[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}:[A-Za-z0-9._~/-][^\s'\"`<>)]*")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
@@ -121,7 +131,7 @@ class Redactor:
     def ref(self, kind: str, value: object) -> str:
         """The placeholder for ``value`` (registering it); the real text when redaction is off."""
 
-        text = str(value or "")
+        text = sanitize_credentials(str(value or ""))
         if not text:
             return text
         if not self.enabled:
@@ -129,7 +139,7 @@ class Redactor:
         return self._register(kind, text)
 
     def _register(self, kind: str, text: str) -> str:
-        text = text.strip()
+        text = sanitize_credentials(text).strip()
         if not text:
             return text
         with self._lock:
@@ -170,7 +180,7 @@ class Redactor:
     # ---------- scrubbing ----------
 
     def scrub(self, text: object, force: bool = False) -> str:
-        value = text if isinstance(text, str) else str(text)
+        value = sanitize_credentials(text if isinstance(text, str) else str(text))
         if not (self.enabled or force):
             return value
         try:
@@ -181,8 +191,9 @@ class Redactor:
     def _scrub(self, text: str) -> str:
         text = _ANSI.sub("", text)
         text = _SQL_EXCERPT.sub(lambda m: m.group(1) + " <SQL excerpt withheld>", text)
-        text = _SECRET.sub("secret~", text)
-        text = _ASSIGNED_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}secret~", text)
+        text = sanitize_credentials(text)
+        if _DATA_PAYLOAD.search(text):
+            return "<data payload withheld>"
         text = _URL.sub(lambda m: self._url(m.group(0)), text)
         text = _SCP_URL.sub(lambda m: self._url(m.group(0)), text)
         text = _HOST.sub(lambda m: m.group(1) + self._register("host", m.group(2)), text)
@@ -272,6 +283,10 @@ class Redactor:
             except (OSError, ValueError):
                 existing = {}
             sessions = existing.get("sessions") if isinstance(existing.get("sessions"), dict) else {}
+            # Old sessions may contain URL credentials from releases before this guard.
+            for body in sessions.values():
+                if isinstance(body, dict) and isinstance(body.get("map"), dict):
+                    body["map"] = {key: sanitize_credentials(str(value)) for key, value in body["map"].items()}
             sessions[self.session] = {"started": self.started, "map": entries}
             for stale in sorted(sessions, key=lambda key: sessions[key].get("started", ""))[:-KEEP_SESSIONS]:
                 sessions.pop(stale, None)
@@ -304,13 +319,28 @@ def lookup(placeholder: str, path: Path | None = None) -> list[tuple[str, str, s
         for key, value in (body.get("map") or {}).items():
             token = key.split(":", 1)[-1]
             if token.lower() == wanted or token.lower().split("/")[-1].split(".")[0] == wanted.split("/")[-1].split(".")[0]:
-                found.append((session, token, value))
+                found.append((session, token, sanitize_credentials(str(value))))
     return found
 
 
 def _split_tail(text: str) -> tuple[str, str]:
     stripped = text.rstrip(".,;:!?'\"")
     return stripped, text[len(stripped):]
+
+
+def strip_url_userinfo(url: str) -> str:
+    """Drop URL authority userinfo without parsing/re-emitting a possibly malformed URL."""
+
+    return re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)([^/\s?#]*@)", lambda m: m.group(1), url)
+
+
+def sanitize_credentials(text: str) -> str:
+    """Remove credential material without retaining it in the private name map."""
+
+    text = strip_url_userinfo(text)
+    text = _PRIVATE_KEY.sub("secret~", text)
+    text = _SECRET.sub("secret~", text)
+    return _ASSIGNED_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}secret~", text)
 
 
 def _repo_names(url: str) -> list[str]:
