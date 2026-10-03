@@ -1,0 +1,18 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.TARGET_DATA,
+  description: "Contains one tag applied to one movie by one user",
+  dependencies: [ "stg_user_tags_uniqueKey"],
+  assertions: {
+    uniqueKey: ["user_id", "movie_id", "tag"]
+  },
+  tags: ["TRANSFORM_DATA"]
+}
+
+
+SELECT
+    userId AS user_id
+  , movieId AS movie_id
+  , tag
+  , time
+FROM ${ ref({ schema: dataform.projectConfig.vars.RAW_DATA, name: "stg_user_tags" }) }
