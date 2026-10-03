@@ -8,6 +8,8 @@ Two queries are equivalent when they return the same results under the compariso
 
 Suppose you replace `WHERE 1 = 1` with no WHERE clause. A checker can establish that the removed condition never filtered anything. More complicated changes need stronger reasoning.
 
+Before comparing, the structural prover lifts nested queries into `WITH` tables on both sides. A nested query that reads something from the query around it is no longer moved out, so a broken lift can no longer be "proven" equal to its input. See [rewrite rules](rewrite-rules.md).
+
 ## The different kinds of checks
 
 | Check | What a successful result establishes |

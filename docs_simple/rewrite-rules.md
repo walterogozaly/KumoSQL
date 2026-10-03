@@ -26,6 +26,8 @@ KumoSQL checks each changed result against its input. Read the evidence label be
 
 These rules have exceptions. For example, combining duplicate queries containing random calls can change results. A rule may leave such SQL alone.
 
+`lift_subqueries` only moves a nested query out when that query is self-contained. `SELECT (SELECT MAX(s.v) FROM (SELECT t.a AS v) AS s) FROM t` has an inner query that reads `t.a` from the query around it; a `WITH` at the top could not see `t`, so that query stays where it is and the result is reported as not fully lifted. The same goes for a nested query that reads a table of a `WITH` placed inside its parent. Inside an `EXISTS`, `IN` or scalar subquery, a bare column name (such as `customer_id`) also keeps its query in place, because without the table's columns it may belong to the query around it. The cost is a missed tidy-up, never a wrong answer; the checker also refuses an output that reads a name it could not see before. Details and recorded scores are in the [full reference](../docs/rewrite-rules.md#subquery-lifting).
+
 ## Qualify columns
 
 `qualify_columns` is for queries that join tables. `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` becomes `SELECT o.id, c.name ...`, so a reader sees where each column comes from. It does not run in the default pipeline; ask for it with `-r qualify_columns`.
