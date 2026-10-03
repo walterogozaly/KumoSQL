@@ -5,7 +5,8 @@ query pairs from Apache Calcite's optimizer tests as relational-algebra JSON.
 ``tools/qed_to_sql.py`` turns 375 of them into SQL (``tests/fixtures/qed``;
 the rest are skipped with a reason, never guessed). For every pair this
 reports ``proved``, ``different`` (not proved, and a random DuckDB database
-shows the two queries disagree), ``unknown`` and ``wrong`` (proved, yet a
+shows the two queries disagree; these leave the score's denominator, since
+they are not equivalent), ``unknown`` and ``wrong`` (proved, yet a
 counterexample exists; must stay 0).
 
     python tools/qed_bench.py
@@ -62,13 +63,14 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> d
             out["different"].append(case["name"])
         else:
             out["unknown"].append(case["name"])
+    out["scored"] = out["total"] - len(out["different"])  # a pair with a replayed counterexample is not one to prove
     out["seconds"] = time.time() - start
     return out
 
 
 def main() -> int:
     r = run()
-    print(f"qed-calcite {r['proved']}/{r['total']} proved, {len(r['different'])} different (counterexample), {len(r['unknown'])} unknown, {len(r['wrong'])} wrong, {r['seconds']:.1f}s")
+    print(f"qed-calcite {r['proved']}/{r['scored']} proved ({r['total']} pairs), {len(r['different'])} different (counterexample), {len(r['unknown'])} unknown, {len(r['wrong'])} wrong, {r['seconds']:.1f}s")
     for key in ("different", "wrong"):
         if r[key]:
             print(f"  {key}: {', '.join(r[key])}")

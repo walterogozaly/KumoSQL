@@ -1,0 +1,7 @@
+{
+ "spark": {
+  "50": "LIMIT 5 without ORDER BY over ROW_NUMBER() OVER (ORDER BY f): which five rows come back is the engine's choice, so the rewrite to the first five sorted rows holds only if the window output is returned sorted.",
+  "60": "LIMIT 10 without ORDER BY pushed into both UNION ALL branches: which rows are kept is the engine's choice, so the two sides agree only if tie-breaking is fixed.",
+  "61": "LIMIT 10 without ORDER BY pushed below a LEFT JOIN: which rows are kept is the engine's choice, so the two sides agree only if tie-breaking is fixed."
+ }
+}
