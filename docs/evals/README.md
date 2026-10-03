@@ -21,6 +21,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Bounded verification](bounded-verification.md) | The same suites under the z3 bounded checker (at most 3 rows per table) | `bounded-sqlsolver-calcite`, `bounded-sqlsolver-spark`, `bounded-sqlsolver-tpch`, `bounded-sqlsolver-tpcc`, `bounded-qed`, `bounded-rbot`, `bounded-cosette`, `bounded-spes`, `bounded-singh`, `bounded-literature`, `bounded-calcite`, `bounded-leetcode` |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification | `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` |
 | [LLM-SQL-Solver](llm-sql-solver.md) | 180 Spider pairs that must never be proved, 70 pairs with expert labels | `llm-sql-solver-negatives`, `llm-sql-solver-relaxed` |
+| [DLBench](dlbench.md) | Cross-dialect translations from SQLite, MySQL and PostgreSQL into six databases: parsed, and proved equal to the source | `dlbench` |
 | [Join rewrites to LEFT JOIN](join-rewrites.md) | Hand-checked rewrites between CROSS, INNER, RIGHT, FULL, semi and anti joins and LEFT JOIN, proved or refuted | `join-rewrites` |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output | `pipeline-equivalence`, `pipeline-refutation` |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking and counterexample minimization | `targeted-test-data`, `multi-database-semantic`, `counterexample-minimization`, `unsafe-rewrite-variants` |
@@ -55,6 +56,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Lineage goldens](lineage-goldens-bench.md) | DataHub and OpenLineage lineage tests (OpenLineage is the independent oracle) | `lineage-goldens-openlineage`, `lineage-goldens-datahub` |
 | [Spider 2.0](spider2-bench.md) | Spider 2.0 BigQuery reference queries as inputs to KumoSQL's analyses | `spider2-bigquery` |
 | [Dataform preservation](dataform-bench.md) | Protected SQLX text and dependencies | `dataform-preservation` |
+| [Real BigQuery projects](bq-real-corpora.md) | Open-source Dataform projects and BigQuery SQL loaded whole, cleaned up and formatted | `bq-real-corpora` |
 | [Schema-change compatibility](schema-change-bench.md) | Which models break when a column changes | `schema-change` |
 
 ## Evals documented with their feature

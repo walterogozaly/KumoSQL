@@ -406,7 +406,7 @@ def test_a_left_join_is_not_a_right_join_in_an_aggregate():
         ("SELECT COUNT(NULL) FROM dept", "SELECT 0"),
         ("SELECT COUNT(DISTINCT (deptno = NULL)) FROM dept", "SELECT 0"),
         ("SELECT SUM(NULL) FROM dept", "SELECT NULL"),
-        ("SELECT UPPER(LOWER(name)) FROM dept", "SELECT UPPER(name) FROM dept"),
+        ("SELECT UPPER(UPPER(name)) FROM dept", "SELECT UPPER(name) FROM dept"),
         ("SELECT POSITIVE(deptno) FROM dept", "SELECT deptno FROM dept"),
         ('SELECT CONCAT("a", CONCAT("b", "c")) AS c1 FROM dept', 'SELECT CONCAT("a", "b", "c") AS c1 FROM dept'),
     ],
@@ -422,6 +422,7 @@ def test_constant_aggregates_and_function_identities(left, right):
         ("SELECT COUNT(NULL) FROM dept", "SELECT 1"),
         ("SELECT COUNT(NULL) FROM dept", "SELECT 0 FROM dept"),  # one row versus one per department
         ("SELECT LOWER(UPPER(name)) FROM dept", "SELECT UPPER(name) FROM dept"),
+        ("SELECT UPPER(LOWER(name)) FROM dept", "SELECT UPPER(name) FROM dept"),  # UPPER(LOWER('İ')) is 'I'
         ("SELECT deptno FROM dept WHERE (deptno, name) IN (SELECT deptno, name FROM dept WHERE deptno > 1)", "SELECT deptno FROM dept WHERE deptno IN (SELECT deptno FROM dept WHERE deptno > 1)"),
     ],
 )

@@ -12,18 +12,29 @@ When layer matching cannot connect the two (the pipelines are cut at different p
 fallback is the baseline: inline every upstream model as a derived table and prove the
 flat queries, within a size limit. Either way a verdict of equivalent needs every step
 proven; anything else is unknown, never wrong.
+
+A model is read as its query only when its stored rows are what that query returns: an incremental
+model, one with pre or post operations, a script, or one whose values change from run to run (a clock,
+RAND, a UUID) is never matched with another model nor inlined into a reader; it equals only itself.
+Two models with the same SQL are matched without the solver only when nothing in it depends on row
+order or ties (LIMIT, ARRAY_AGG, ROW_NUMBER, ...); otherwise the solver decides, and the assumptions it
+needs (such as ties in a window's ORDER BY resolving alike) are listed with the result. An upstream query is inlined only where no WITH table of the reader shares the name of
+a table it reads, which would otherwise capture the read.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import sqlglot
 from sqlglot import exp
 
 from . import equivalences as saved
+from .ast_utils import captured_names
 from .algebraic_equivalence import prove_equivalent_algebraic
 from .conditional_equivalence import conditions_json
+from .equivalence import _has_row_selection_nondeterminism, _nondeterminism_reasons, _value_nondeterminism_sites
 from .prover_schema import DECLARED_FACTS_NOTE, ProverSchema, _select_names
 from .smt_equivalence import SmtStatus
 
@@ -57,7 +68,53 @@ class PipelineResult:
 
 
 def _opaque(model) -> bool:
-    return (not model.is_query) or "__sqlx_token_" in model.sql or "${" in model.sql
+    return (not model.is_query) or "__sqlx_token_" in model.sql or "${" in model.sql or not _one_query(model.sql)
+
+
+@lru_cache(maxsize=4096)
+def _one_query(sql: str) -> bool:
+    """The text is a single query. A script's result is its last statement and its DML changes tables, so
+    reading only its first SELECT (what ``parse_one`` returns) would compare the wrong rows."""
+
+    try:
+        statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
+    except sqlglot.errors.SqlglotError:
+        return True  # the callers report the parse error themselves
+    return len(statements) == 1 and isinstance(statements[0], exp.Query)
+
+
+def stored_rows_differ(model) -> str:
+    """Why the table a model writes may hold other rows than its query returns when read, or ``""``."""
+
+    if model.kind == "incremental":
+        return "is incremental, so its rows depend on its run history"
+    if model.operations_sql:
+        return "runs pre or post operations, which can change its rows"
+    return ""
+
+
+def run_dependent(tree: exp.Expression) -> str:
+    """A value that changes from run to run even on the same input (a clock, RAND, a UUID), or ``""``."""
+
+    sites = _value_nondeterminism_sites(tree)
+    if sites:
+        return f"value nondeterminism: {sites[0]}"
+    found = next((n for n in tree.walk() if type(n).__name__ in _RUN_DEPENDENT_TYPES), None)
+    return f"value nondeterminism: {found.sql(dialect='bigquery')}" if found is not None else ""
+
+
+_RUN_DEPENDENT_TYPES = {"CurrentDatetime", "CurrentUser", "Randn", "Uuid", "Rand", "CurrentDate", "CurrentTime", "CurrentTimestamp"}
+
+
+def nondeterministic(tree: exp.Expression) -> str:
+    """Why two evaluations of the query can return different rows (a clock, RAND, an unordered LIMIT, ...), or ``""``."""
+
+    reasons = _nondeterminism_reasons(tree)
+    if reasons:
+        return reasons[0]
+    if _has_row_selection_nondeterminism(tree):
+        return "LIMIT or OFFSET may select different rows on each run"
+    return ""
 
 
 def _tables(tree: exp.Expression) -> set[str]:
@@ -97,13 +154,16 @@ def prove_models(
     timeout_ms: int = 5000,
     bounded_check=None,
     conditional: bool = False,
+    edited_copy: bool = False,
 ) -> PipelineResult:
     """Prove two models of ``pipeline`` return the same rows (columns compared by position).
 
     ``bounded_check(left_sql, right_sql)`` (optional) runs when nothing was proven; its JSON lands in
-    ``PipelineResult.bounded`` as its own evidence level. With ``conditional`` a pair that cannot be proven
-    outright is tried under facts taken from the queries; the verdict is then ``"conditional"`` and
-    ``conditions`` lists the minimal facts it needs (never counted as ``proven``).
+    ``PipelineResult.bounded`` as its own evidence level. ``edited_copy`` says ``second`` is ``first`` with
+    its SQL edited, run on the same schedule with the same operations (the refactor check), so an
+    incremental or operations model may be compared with it; otherwise such a model equals only itself.
+    With ``conditional`` a pair that cannot be proven outright is tried under facts taken from the queries; the verdict is then
+    ``"conditional"`` and ``conditions`` lists the minimal facts it needs (never counted as ``proven``).
     """
 
     a, b = _resolve(pipeline, first), _resolve(pipeline, second)
@@ -125,6 +185,11 @@ def prove_models(
     for key in (a, b):
         if _opaque(pipeline.models[key]):
             return PipelineResult("unknown", f"{key} could not be read as a plain query")
+    if not edited_copy:
+        for key in (a, b):
+            why = stored_rows_differ(pipeline.models[key])
+            if why:
+                return PipelineResult("unknown", f"{key} {why}")
 
     # Upstream of both targets, in pipeline order (sources first).
     upstream = pipeline.upstream
@@ -152,11 +217,17 @@ def prove_models(
         return tree.sql(dialect="bigquery"), _tables(tree), used_l
 
     notes: list[str] = []
+    lemma_assumptions: list[str] = []
     for key in order:
-        if key in (a, b) or _opaque(pipeline.models[key]):
+        if key in (a, b) or _opaque(pipeline.models[key]) or stored_rows_differ(pipeline.models[key]):
             continue
         try:
             sql, reads, _ = substituted(key)
+            parsed = sqlglot.parse_one(sql, read="bigquery")
+            if run_dependent(parsed):
+                continue  # two separate runs of it differ, even when another model has the same SQL
+            # the same text is the same rows only when nothing depends on row order or ties; else ask the solver
+            shortcut = not nondeterministic(parsed)
         except sqlglot.errors.SqlglotError:
             continue
         names = _select_names(sql)
@@ -167,7 +238,13 @@ def prove_models(
                 other_names = _select_names(other_sql)
                 if not other_names or len(other_names) != len(names):
                     continue
-                if sql == other_sql or prove(sql, other_sql).proven:
+                matched = shortcut and sql == other_sql
+                if not matched:
+                    proof = prove(sql, other_sql)
+                    matched = proof.proven
+                    if matched:
+                        lemma_assumptions.extend(proof.assumptions)
+                if matched:
                     lemmas.append(_lemma_record(other, key, other_names, names))
                     notes.append(f"{key} ≡ {other}")
                     break
@@ -183,6 +260,8 @@ def prove_models(
 
     def finish(method: str, result) -> PipelineResult:
         extra = [DECLARED_FACTS_NOTE] if facts.notes else []
+        if method == "layers":
+            extra.extend(lemma_assumptions)
         if used_declared:
             extra.append("declared equivalences hold in the data: " + "; ".join(i.label for i in used_declared))
         return PipelineResult(
@@ -236,17 +315,18 @@ def _inlined(pipeline, key: str, declared, columns, limit: int = MAX_INLINE_CHAR
         if _opaque(model) or model_key in trail:
             return None
         tree = sqlglot.parse_one(model.sql, read="bigquery")
-        ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+        if trail and (stored_rows_differ(model) or run_dependent(tree)):
+            return None  # its stored rows are not what a fresh run of its query returns
         for table in list(tree.find_all(exp.Table)):
             parts = saved._parts(table)
-            if len(parts) < 2 or (len(parts) == 1 and parts[0] in ctes):
+            if len(parts) < 2:
                 continue
             name = ".".join(parts)
             target = next((k for k in pipeline.models if k.lower() == name), None)
             if target is None:
                 continue
             body = expand(target, trail + (model_key,))
-            if body is None:
+            if body is None or captured_names(body, table):
                 return None
             alias = table.alias or table.name
             table.replace(exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(alias))))

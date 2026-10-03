@@ -1,0 +1,18 @@
+config {
+  type: 'operations',
+  hasOutput: true,
+  tags: ["training"]
+}
+
+CREATE
+OR REPLACE MODEL ${self()} OPTIONS (
+  model_type = 'LOGISTIC_REG',
+  auto_class_weights = TRUE,
+  input_label_cols = ['income_bracket']
+) AS
+SELECT
+  *
+FROM
+  ${ref('census_input')}
+WHERE
+  dataframe = 'training'
