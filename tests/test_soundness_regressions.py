@@ -337,6 +337,34 @@ S006_WRONG_PROOFS = [
         {"t": [(1,)], "u": [(1, 9), (9, 1)]},
         id="order-by-output-alias-in-a-derived-limit-under-exists",
     ),
+    pytest.param(
+        "SELECT t.x FROM t WHERE t.x > ANY(SELECT y AS v FROM u ORDER BY v LIMIT 1)",
+        "SELECT t.x FROM t WHERE EXISTS(SELECT 1 FROM (SELECT y AS kumosql_v FROM u ORDER BY v LIMIT 1) AS kumosql_q0 WHERE t.x > kumosql_q0.kumosql_v)",
+        {"t": ["x"], "u": ["y", "v"]},
+        {"t": [(5,)], "u": [(1, 9), (9, 1)]},
+        id="s005-003-order-by-output-alias-under-any",
+    ),
+    pytest.param(
+        "SELECT x FROM t EXCEPT DISTINCT SELECT y FROM u LIMIT 0",
+        "SELECT DISTINCT s.x AS x FROM (SELECT x FROM t) AS s WHERE NOT EXISTS(SELECT 1 FROM (SELECT y FROM u) AS r WHERE s.x IS NOT DISTINCT FROM r.y)",
+        {"t": ["x"], "u": ["y"]},
+        {"t": [(1,)], "u": [(2,)]},
+        id="s006-except-limit-is-kept",
+    ),
+    pytest.param(
+        "SELECT x FROM p1.d.t INTERSECT DISTINCT SELECT x FROM p2.d.t",
+        "SELECT DISTINCT x FROM p1.d.t",
+        {"p1.d.t": ["x"], "p2.d.t": ["x"]},
+        {"p1.d.t": [(1,)], "p2.d.t": [(2,)]},
+        id="s006-intersect-of-two-projects",
+    ),
+    pytest.param(
+        "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY CUBE(k)",
+        "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY k UNION ALL SELECT NULL AS k, (SELECT COUNT(*)) AS c FROM t",
+        {"t": ["k"]},
+        {"t": [(1,), (2,), (3,)]},
+        id="s007-002-cube-with-a-nested-count",
+    ),
 ]
 
 
@@ -451,3 +479,58 @@ def test_an_order_key_that_is_not_an_output_never_stands_in_for_an_output_column
             assert not prove(one, two, schema=schema, dialect=dialect, compare_names=False).proven
         same = "SELECT c.name FROM city AS c ORDER BY c.population DESC LIMIT 1"
         assert prove_equivalent_algebraic(one, same, schema=schema, dialect=dialect, compare_names=False).proven
+
+
+def test_in_over_union_split_keeps_a_union_level_limit():
+    # the sibling of S009-005: x IN (A UNION B LIMIT n) is not x IN (A) OR x IN (B)
+    from kumosql.set_split_rules import _split_in_over_union
+
+    for sub in (
+        "SELECT a FROM p UNION DISTINCT SELECT b FROM q LIMIT 1",
+        "(SELECT a FROM p UNION ALL SELECT b FROM q) ORDER BY 1 LIMIT 1 OFFSET 1",
+        "SELECT a FROM p UNION ALL SELECT b FROM q LIMIT 1",
+    ):
+        assert _split_in_over_union(sqlglot.parse_one(f"SELECT x FROM t WHERE x IN ({sub})", read="bigquery")) is None, sub
+    split = _split_in_over_union(sqlglot.parse_one("SELECT x FROM t WHERE x IN (SELECT a FROM p UNION ALL SELECT b FROM q)", read="bigquery"))
+    assert split is not None and "LIMIT" not in split.sql()
+
+
+DISTINCT_ON_SCHEMA = {"u": ["k"], "t": ["x", "y"]}
+DISTINCT_ON_WRONG_PROOFS = [
+    pytest.param(
+        "SELECT a.k FROM u a LEFT JOIN (SELECT DISTINCT ON (x) 1 AS one FROM t) d ON TRUE WHERE d.one IS NOT NULL",
+        "SELECT a.k FROM u a WHERE EXISTS (SELECT 1 FROM t)",
+        id="distinct-on-is-not-a-one-row-indicator",
+    ),
+    pytest.param(
+        "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC) d",
+        "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y) d",
+        id="distinct-on-keeps-its-derived-order",
+    ),
+    pytest.param(
+        "SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC",
+        "SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y",
+        id="distinct-on-keeps-its-result-order",
+    ),
+]
+
+
+@pytest.mark.parametrize("left,right", DISTINCT_ON_WRONG_PROOFS)
+def test_distinct_on_pairs_that_differ_are_never_proven(left, right):
+    duckdb = pytest.importorskip("duckdb")
+    from kumosql.duckdb_load import run_unoptimized
+
+    db = duckdb.connect()
+    db.execute("CREATE TABLE u (k BIGINT); CREATE TABLE t (x BIGINT, y BIGINT)")
+    db.execute("INSERT INTO u VALUES (1); INSERT INTO t VALUES (1, 1), (1, 2), (2, 1)")
+    found_left, found_right = run_unoptimized(db, left, right)
+    assert Counter(found_left) != Counter(found_right)
+    assert not prove_equivalent_algebraic(left, right, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
+
+
+def test_distinct_on_near_misses_stay_proven():
+    same = "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC) d"
+    aliased = "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC) AS d"
+    assert prove_equivalent_algebraic(same, aliased, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
+    indicator = "SELECT a.k FROM u a LEFT JOIN (SELECT DISTINCT 1 AS one FROM t) d ON TRUE WHERE d.one IS NOT NULL"
+    assert prove_equivalent_algebraic(indicator, "SELECT a.k FROM u a WHERE EXISTS (SELECT 1 FROM t)", schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
