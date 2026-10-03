@@ -6,7 +6,7 @@ KumoSQL helps you change BigQuery SQL and Dataform models with evidence instead 
 2. **Where is the same work being done repeatedly?** Duplicate and near-duplicate SELECT detection finds logic that could be shared.
 3. **Can a proposed change be shown to preserve behavior?** Rewrites are small, deterministic transformations, checked by static proof, SMT, synthetic-data comparison, and BigQuery dry runs. Tests decide what is trusted, not an LLM at runtime, and output that cannot be verified is flagged rather than reported as a success.
 
-New here? The [Getting Started guide](docs/getting-started.md) goes from install to a first verified rewrite, a pipeline impact report and the browser UI. Every docs page is listed in [docs/README.md](docs/README.md).
+New here? Start with the [plain-language guides](docs_simple/README.md), including a [simple getting-started example](docs_simple/getting-started.md). Every page in `docs/` has a companion in `docs_simple/`. The [full Getting Started guide](docs/getting-started.md) covers a first verified rewrite, a pipeline impact report and the browser UI. Every full docs page is listed in [docs/README.md](docs/README.md).
 
 ## Benchmark scoreboard
 

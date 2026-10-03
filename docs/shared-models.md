@@ -1,5 +1,7 @@
 # Shared models: move a repeated CTE into one model
 
+[Plain-language version](../docs_simple/shared-models.md)
+
 When the same CTE is copied into several Dataform models, KumoSQL can write the patch that moves it into one new model and points every copy at it, then check that patch with the prover. The patch is a reviewable `git apply` diff; nothing is written to the project or to BigQuery.
 
 ![Shared models page](images/shared-models.png)

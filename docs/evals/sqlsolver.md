@@ -1,5 +1,7 @@
 # Algebraic prover (SQLSolver's arithmetic) for BigQuery and Dataform SQL
 
+[Plain-language version](../../docs_simple/evals/sqlsolver.md)
+
 KumoSQL ports the core of [SQLSolver](https://github.com/SJTU-IPADS/SQLSolver) (SIGMOD 2024, Apache-2.0) to Python on top of `z3-solver`. What is taken is its *system of arithmetic*: a query is a function from tuples to multiplicities (natural numbers), so under bag semantics `UNION ALL` is addition, a join is multiplication, a filter or projection is linear, and equivalence becomes an arithmetic identity that an SMT solver can decide. Everything runs in pure Python from a user-level `pip install`, so it works on locked-down work computers: no Java, no native Z3 build, no admin rights.
 
 ## Plan

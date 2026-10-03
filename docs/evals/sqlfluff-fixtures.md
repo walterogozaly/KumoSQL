@@ -1,5 +1,7 @@
 # SQLFluff rule fixtures
 
+[Plain-language version](../../docs_simple/evals/sqlfluff-fixtures.md)
+
 [sqlfluff](https://github.com/sqlfluff/sqlfluff) tests each lint rule with a query it flags (`fail_str`) and the exact query its fixer returns (`fix_str`). Those 850 pairs are a labelled corpus of the refactors and reformatting that SQL teams already apply with sqlfluff, which makes two claims checkable with no model at run time:
 
 - **Semantic fixes** (alias, ambiguity, convention, reference and structure rules): is the fixed query equivalent to the flagged one? KumoSQL's prover tries to prove each pair, and the fixes that change meaning *by design* must never be proved.

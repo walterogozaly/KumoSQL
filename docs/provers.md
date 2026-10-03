@@ -1,5 +1,7 @@
 # Equivalence provers
 
+[Plain-language version](../docs_simple/provers.md)
+
 The equivalence checks behind every verified rewrite, from the structural prover to Z3, the algebraic prover and SQLSolver.
 
 ## Conservative SQL equivalence
