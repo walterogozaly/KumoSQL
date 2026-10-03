@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, replace
 from functools import lru_cache
 import re
+import threading
 from typing import Mapping
 
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
@@ -413,6 +414,24 @@ def subqueries(tree) -> int:
     return total
 
 
+_LINTERS = threading.local()
+
+
+def _parse_linter():
+    """A sqlfluff linter for parsing BigQuery, built once per thread.
+
+    Its configuration is sqlfluff's defaults plus the dialect (no config files are read), so every parse gets the
+    same tree a new linter would give; building the linter and its dialect took about a fifth of each parse.
+    """
+
+    linter = getattr(_LINTERS, "parse", None)
+    if linter is None:
+        from sqlfluff.core import FluffConfig, Linter
+
+        linter = _LINTERS.parse = Linter(config=FluffConfig(overrides={"dialect": DIALECT}))
+    return linter
+
+
 @lru_cache(maxsize=4096)
 def _table_score(sql: str) -> float:
     return complexity(sql).score
@@ -439,11 +458,9 @@ def complexity(sql: str) -> Complexity:
     <50 high, otherwise very high. Raises ``ValueError`` if it cannot parse.
     """
 
-    from sqlfluff.core import FluffConfig, Linter
-
     if looks_like_sqlx(sql):
         raise ValueError("complexity is not available for Dataform SQLX")
-    parsed = Linter(config=FluffConfig(overrides={"dialect": DIALECT})).parse_string(sql)
+    parsed = _parse_linter().parse_string(sql)
     tree = parsed.tree
     if tree is None or any(v.rule_code() == "PRS" for v in parsed.violations):
         raise ValueError("sqlfluff could not parse this SQL")

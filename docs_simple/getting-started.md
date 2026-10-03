@@ -49,6 +49,8 @@ The result removes `WHERE 1 = 1`: that condition is always true and filters out 
 
 The tool reads and checks the SQL without running it against your `orders` table. You do not need to create that table for this example.
 
+To see what any command does without running it, add `--help`: it only prints text. Most commands only read and print. A file is written only when you pass an option that names it (`-o`, `--output`, `--patch`), and `reduce-project --write` is the only option that edits a project folder. `consolidate-tables` is a read-only preview with no option to write. The [full guide](../docs/getting-started.md) lists the details.
+
 `proven` means the checker established equivalent results under its supported semantics. `unchanged` means no rewrite happened. Other labels need review; the rewrite command exits with status 3 for untrusted output. See [rewrite rules](rewrite-rules.md).
 
 ## 3. Open the browser app
@@ -78,4 +80,4 @@ python -m pip install ".[smt,execution]"
 
 `smt` adds the Z3 solver for more proofs. `execution` adds DuckDB for local result comparisons. For a GitHub install, use `"kumosql[smt,execution] @ git+https://github.com/walterogozaly/KumoSQL.git"` instead.
 
-BigQuery features have their own setup in [cost and change reports](cost-and-change-reports.md). Use `python -m kumosql COMMAND --help` to see options for any command.
+BigQuery features are off until you ask for them; looking up the columns of tables your project does not define needs an explicit opt-in (`--fetch-schema` on the pipeline report, the Settings checkbox, or `KUMOSQL_SCHEMA_FETCH=1`). BigQuery features have their own setup in [cost and change reports](cost-and-change-reports.md). Use `python -m kumosql COMMAND --help` to see options for any command.

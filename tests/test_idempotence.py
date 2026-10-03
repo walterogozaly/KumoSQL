@@ -55,7 +55,13 @@ def test_every_rule_is_idempotent(rule, case):
 
     assert twice.sql == once.sql
     assert twice.changes == 0
-    assert twice.verification.status is VerificationStatus.UNCHANGED
+    if once.rule_success:
+        assert twice.verification.status is VerificationStatus.UNCHANGED
+    else:
+        # A rule that cannot finish (lift_subqueries on a subquery directly in UPDATE ... FROM, which has
+        # no WITH slot in BigQuery) fails the same way again rather than changing anything.
+        assert not twice.rule_success
+        assert twice.verification.status is VerificationStatus.FAILED
 
 
 @pytest.mark.parametrize(
@@ -79,7 +85,7 @@ def test_format_sql_is_idempotent_with_non_default_preferences(prefs, case):
 
 
 def test_canonical_order_runs_every_rule_with_formatting_last():
-    assert set(CANONICAL_ORDER) == set(available_rules()) - {"lift_subqueries"}
+    assert set(CANONICAL_ORDER) == set(available_rules()) - {"lift_subqueries", "qualify_columns"}
     assert CANONICAL_ORDER[-1] == "format_sql"
 
 

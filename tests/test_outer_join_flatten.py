@@ -14,6 +14,7 @@ pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows
 from kumosql.outer_join_flatten import null_when_inputs_null
 
 SCHEMA = {"a": ["k", "x"], "b": ["k", "y"], "c": ["k", "z"]}
@@ -27,9 +28,7 @@ def _differ(left: str, right: str, trials: int = 150) -> bool:
     for _ in range(trials):
         for table, columns in SCHEMA.items():
             con.execute(f"DELETE FROM {table}")
-            for _ in range(rng.randint(0, 4)):
-                values = [rng.choice([None, 0, 1, 2, 12]) for _ in columns]
-                con.execute(f"INSERT INTO {table} VALUES ({', '.join('?' for _ in columns)})", values)
+            insert_rows(con, table, [[rng.choice([None, 0, 1, 2, 12]) for _ in columns] for _ in range(rng.randint(0, 4))])
         if Counter(con.execute(left).fetchall()) != Counter(con.execute(right).fetchall()):
             return True
     return False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -60,9 +61,9 @@ def prove_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--respect-row-order",
         action="store_true",
-        help="Require explicit and identical result ordering",
+        help="Also require the same ORDER BY on both queries (rows tied on its keys may still come back in either order)",
     )
-    parser.add_argument("--verifier-sql", type=Path, help="Write generated bag-verifier SQL")
+    parser.add_argument("--verifier-sql", type=Path, help="Write generated SQL that compares the result bags (not their order)")
     parser.add_argument(
         "--conditional",
         action="store_true",
@@ -302,6 +303,11 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         type=Path,
         help='JSON mapping of source tables to columns, e.g. {"p.d.t": {"id": "INT64"}}',
     )
+    parser.add_argument(
+        "--fetch-schema",
+        action="store_true",
+        help="Look up columns of tables the project does not define in BigQuery (off by default: nothing reaches the network otherwise)",
+    )
     parser.add_argument("--min-nodes", type=int, default=12, help="Smallest SELECT subtree to report as a duplicate")
     parser.add_argument(
         "--similarity",
@@ -357,6 +363,10 @@ def pipeline_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-o", "--output", type=Path, help="Write the JSON report here; stdout if omitted")
     args = parser.parse_args(argv)
+    if args.fetch_schema:
+        from . import schema_fetch
+
+        os.environ[schema_fetch.ENV] = "1"
     if args.assess and not args.target:
         parser.error("--assess needs --target")
     if bool(args.root) == bool(args.git):
@@ -629,11 +639,11 @@ def dry_run_main(argv: list[str] | None = None) -> int:
         check = check_rewrite(
             sql, rewritten_sql, args.project, location=args.location
         )
-        print("planner_check=passed" if check.planned_same_schema else "planner_check=failed")
+        print(f"planner_check={check.outcome}")
         print(check.reason)
         print(f"original_planned={check.original_planned}")
         print(f"rewritten_planned={check.rewritten_planned}")
-        print(f"schema_matches={check.schema_matches}")
+        print(f"schema_matches={'unknown' if check.schema_matches is None else check.schema_matches}")
         print("scope=planning and output-schema comparison only; results were not compared")
         for difference in check.schema_differences:
             print(f"schema: {difference}")
@@ -651,6 +661,8 @@ def dry_run_main(argv: list[str] | None = None) -> int:
     print("query_plan=passed")
     print("scope=planning only; query results were not compared")
     print(f"estimated_bytes={result.total_bytes_processed} (estimate)")
+    if not result.schema_observed:
+        print("schema=unknown: the dry run returned no output schema")
     for field in result.schema:
         print(field.describe())
     return 0
@@ -719,6 +731,9 @@ def compare_outputs_main(argv: list[str] | None = None) -> int:
             diffs = compare_snapshots(first, json.loads(args.after.read_text(encoding="utf-8")))
         else:
             diffs = summarize_comparison(first)
+        if not diffs:
+            print("error: the results hold no comparison rows, so nothing was compared", file=sys.stderr)
+            return 2
         for diff in diffs:
             print(f"{diff.model}: {diff.status}" + (f" ({diff.note})" if diff.note else ""))
         return 0 if all(diff.matches for diff in diffs) else 1

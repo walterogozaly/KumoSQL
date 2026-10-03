@@ -61,6 +61,10 @@ def call(base: str, path: str, payload: object = None, timeout: float = 120.0) -
     data = None if payload is None else json.dumps(payload).encode()
     request = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"} if data is not None else {})
     try:
+        if path == "/api" or path.startswith("/api/"):
+            with urllib.request.urlopen(base + "/", timeout=timeout) as page:
+                token = re.search(rb'name="kumosql-session-token" content="([^"]+)"', page.read())[1].decode("ascii")
+            request.add_header("X-KumoSQL-Session", token)
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read()
             status = response.status

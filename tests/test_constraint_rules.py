@@ -10,6 +10,7 @@ duckdb = pytest.importorskip("duckdb")
 import sqlglot
 
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows
 from kumosql.smt_equivalence import TableConstraints
 
 EMP = {"emp": ["empno", "ename", "job", "deptno", "sal"], "dept": ["deptno", "name"]}
@@ -29,16 +30,17 @@ def prove(left, right, schema, constraints):
     return prove_equivalent_algebraic(left, right, schema=schema, constraints=constraints, exact_arithmetic=True, compare_names=False).proven
 
 
-def random_database(schema, constraints, seed):
-    """Random rows that respect keys, NOT NULL and foreign keys (parents are filled first)."""
+def random_database(schema, constraints, seed, db=None):
+    """Random rows that respect keys, NOT NULL and foreign keys (parents are filled first), in new tables on ``db``
+    when given (a connection costs about 10 ms)."""
 
     rng = random.Random(seed)
-    db = duckdb.connect()
+    db = db or duckdb.connect()
     filled = {}
     order = sorted(schema, key=lambda t: bool(constraints[t].foreign_keys))
     for table in order:
         columns, declared = schema[table], constraints[table]
-        db.execute(f"CREATE TABLE {table} ({', '.join(c + ' INTEGER' for c in columns)})")
+        db.execute(f"CREATE OR REPLACE TABLE {table} ({', '.join(c + ' INTEGER' for c in columns)})")
         rows, seen = [], set()
         for _ in range(rng.randint(0, 7)):
             row = {c: (None if c not in declared.not_null and rng.random() < 0.25 else rng.randint(0, 3)) for c in columns}
@@ -57,16 +59,17 @@ def random_database(schema, constraints, seed):
             seen.update(enumerate(token))
             rows.append(list(row.values()))
         filled[table] = rows
-        for row in rows:
-            db.execute(f"INSERT INTO {table} VALUES ({', '.join('NULL' if v is None else str(v) for v in row)})")
+        insert_rows(db, table, rows)
     return db
 
 
 def same_results(left, right, schema, constraints, trials=60):
+    db = duckdb.connect()
+    left, right = (sqlglot.transpile(sql, read="mysql", write="duckdb")[0] for sql in (left, right))
     for seed in range(trials):
-        db = random_database(schema, constraints, seed)
-        a = sorted(map(repr, db.execute(sqlglot.transpile(left, read="mysql", write="duckdb")[0]).fetchall()))
-        b = sorted(map(repr, db.execute(sqlglot.transpile(right, read="mysql", write="duckdb")[0]).fetchall()))
+        random_database(schema, constraints, seed, db)
+        a = sorted(map(repr, db.execute(left).fetchall()))
+        b = sorted(map(repr, db.execute(right).fetchall()))
         if a != b:
             return False
     return True

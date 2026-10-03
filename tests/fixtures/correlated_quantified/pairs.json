@@ -1,0 +1,163 @@
+{
+ "source": "hand-written pairs from outside research on correlated ANY/ALL/IN, over O(x, k) and I(y, k); every label re-checked on random DuckDB databases",
+ "pairs": [
+  {
+   "id": "R006-016",
+   "left": "SELECT O.x, O.x > ANY (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN FALSE WHEN O.x IS NULL THEN NULL WHEN O.x > A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": true
+  },
+  {
+   "id": "R006-017",
+   "left": "SELECT O.x, O.x >= ANY (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN FALSE WHEN O.x IS NULL THEN NULL WHEN O.x >= A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": true
+  },
+  {
+   "id": "R006-018",
+   "left": "SELECT O.x, O.x < ANY (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN FALSE WHEN O.x IS NULL THEN NULL WHEN O.x < A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-019",
+   "left": "SELECT O.x, O.x <= ANY (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN FALSE WHEN O.x IS NULL THEN NULL WHEN O.x <= A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-020",
+   "left": "SELECT O.x, O.x <> ANY (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN FALSE WHEN O.x IS NULL THEN NULL WHEN O.x <> A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-021",
+   "left": "SELECT O.x, O.x > ALL (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN TRUE WHEN O.x IS NULL THEN NULL WHEN O.x > A.mx THEN FALSE WHEN A.nn<A.n THEN NULL ELSE TRUE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-022",
+   "left": "SELECT O.x, O.x >= ALL (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN TRUE WHEN O.x IS NULL THEN NULL WHEN O.x >= A.mx THEN FALSE WHEN A.nn<A.n THEN NULL ELSE TRUE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-023",
+   "left": "SELECT O.x, O.x < ALL (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN TRUE WHEN O.x IS NULL THEN NULL WHEN O.x < A.mx THEN FALSE WHEN A.nn<A.n THEN NULL ELSE TRUE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-024",
+   "left": "SELECT O.x, O.x <= ALL (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN TRUE WHEN O.x IS NULL THEN NULL WHEN O.x <= A.mx THEN FALSE WHEN A.nn<A.n THEN NULL ELSE TRUE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-025",
+   "left": "SELECT O.x, O.x <> ALL (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k, COUNT(I.present) AS n, COUNT(I.y) AS nn, MIN(I.y) AS mn, MAX(I.y) AS mx FROM D LEFT JOIN (SELECT y,k,1 AS present FROM I) I ON I.k = D.k GROUP BY D.k) SELECT O.x, CASE WHEN A.n=0 THEN TRUE WHEN O.x IS NULL THEN NULL WHEN O.x <> A.mx THEN FALSE WHEN A.nn<A.n THEN NULL ELSE TRUE END AS p FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false,
+   "note": "labelled equivalent by its author; DuckDB finds a difference (the reading compares with the wrong bound or inverts the result)"
+  },
+  {
+   "id": "R006-026",
+   "left": "SELECT O.x,O.k FROM O WHERE O.x > ANY (SELECT I.y FROM I WHERE I.k=O.k)",
+   "right": "SELECT O.x,O.k FROM O WHERE EXISTS (SELECT 1 FROM I WHERE I.k=O.k AND O.x>I.y)",
+   "equivalent": true
+  },
+  {
+   "id": "R006-027",
+   "left": "SELECT O.x,O.k FROM O WHERE O.x <= ALL (SELECT I.y FROM I WHERE I.k=O.k)",
+   "right": "SELECT O.x,O.k FROM O WHERE NOT EXISTS (SELECT 1 FROM I WHERE I.k=O.k AND (O.x<=I.y) IS NOT TRUE)",
+   "equivalent": true
+  },
+  {
+   "id": "R006-028",
+   "left": "SELECT O.x,O.k FROM O WHERE O.x IN (SELECT I.y FROM I WHERE I.k=O.k)",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), Q AS (SELECT D.k,I.y FROM D JOIN I ON I.k=D.k) SELECT O.x,O.k FROM O WHERE EXISTS (SELECT 1 FROM Q WHERE Q.k=O.k AND Q.y=O.x)",
+   "equivalent": true
+  },
+  {
+   "id": "R006-029",
+   "left": "SELECT O.x,O.k FROM O WHERE O.x NOT IN (SELECT I.y FROM I WHERE I.k=O.k)",
+   "right": "SELECT O.x,O.k FROM O WHERE CASE WHEN NOT EXISTS (SELECT 1 FROM I WHERE I.k=O.k) THEN TRUE WHEN O.x IS NULL THEN NULL WHEN EXISTS (SELECT 1 FROM I WHERE I.k=O.k AND I.y=O.x) THEN FALSE WHEN EXISTS (SELECT 1 FROM I WHERE I.k=O.k AND I.y IS NULL) THEN NULL ELSE TRUE END IS TRUE",
+   "equivalent": true
+  },
+  {
+   "id": "R006-030",
+   "left": "SELECT O.x, O.x = ANY (SELECT I.y FROM I WHERE I.k=O.k) AS p FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k,x FROM O), A AS (SELECT D.k,D.x,COUNT(I.present) n,COUNT(I.y) nn,MAX(CASE WHEN I.y=D.x THEN 1 ELSE 0 END) hit FROM D LEFT JOIN (SELECT y,k,1 present FROM I) I ON I.k=D.k GROUP BY D.k,D.x) SELECT O.x, CASE WHEN A.hit=1 THEN TRUE WHEN O.x IS NULL AND A.n=0 THEN FALSE WHEN A.n=0 THEN FALSE WHEN A.nn<A.n THEN NULL WHEN O.x IS NULL THEN NULL ELSE FALSE END FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k AND O.x IS NOT DISTINCT FROM A.x",
+   "equivalent": true
+  },
+  {
+   "id": "R006-031",
+   "left": "SELECT O.x, O.x > ANY (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "SELECT O.x, O.x > (SELECT MAX(I.y) FROM I WHERE I.k=O.k) FROM O",
+   "equivalent": false
+  },
+  {
+   "id": "R006-032",
+   "left": "SELECT O.x, O.x > ALL (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "SELECT O.x, O.x > (SELECT MIN(I.y) FROM I WHERE I.k=O.k) FROM O",
+   "equivalent": false
+  },
+  {
+   "id": "R006-033",
+   "left": "SELECT O.x FROM O WHERE O.x NOT IN (SELECT I.y FROM I WHERE I.k=O.k)",
+   "right": "SELECT O.x FROM O WHERE NOT EXISTS (SELECT 1 FROM I WHERE I.k=O.k AND I.y=O.x)",
+   "equivalent": false
+  },
+  {
+   "id": "R006-034",
+   "left": "SELECT O.x, O.x IN (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "SELECT O.x, EXISTS (SELECT 1 FROM I WHERE I.k IS NOT DISTINCT FROM O.k AND I.y=O.x) FROM O",
+   "equivalent": false
+  },
+  {
+   "id": "R006-035",
+   "left": "SELECT O.x, O.x > ANY (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT I.k, MIN(I.y) mn, COUNT(I.y) n, COUNT(I.y) nn FROM I GROUP BY I.k) SELECT O.x, CASE WHEN A.n=0 THEN FALSE WHEN O.x>A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END FROM O JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false
+  },
+  {
+   "id": "R006-036",
+   "left": "SELECT O.x,O.k FROM O WHERE O.x IN (SELECT I.y FROM I WHERE I.k=O.k)",
+   "right": "WITH D AS (SELECT k FROM O), Q AS (SELECT D.k,I.y FROM D JOIN I ON I.k=D.k) SELECT O.x,O.k FROM O JOIN Q ON O.k IS NOT DISTINCT FROM Q.k AND O.x=Q.y",
+   "equivalent": false
+  },
+  {
+   "id": "R006-037",
+   "left": "SELECT O.x, O.x IN (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k,x FROM O), A AS (SELECT D.k,D.x,COUNT(I.present) n,COUNT(I.present) nn,MAX(CASE WHEN I.y=D.x THEN 1 ELSE 0 END) hit FROM D LEFT JOIN (SELECT y,k,1 present FROM I) I ON I.k=D.k GROUP BY D.k,D.x) SELECT O.x,CASE WHEN A.hit=1 THEN TRUE WHEN A.n=0 THEN FALSE WHEN A.nn<A.n THEN NULL ELSE FALSE END FROM O LEFT JOIN A ON A.k IS NOT DISTINCT FROM O.k AND A.x IS NOT DISTINCT FROM O.x",
+   "equivalent": false
+  },
+  {
+   "id": "R006-038",
+   "left": "SELECT O.x, O.x IN (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k,x FROM O), A AS (SELECT D.k,D.x,COUNT(I.present) n,COUNT(I.y) nn,MAX(CASE WHEN I.y=D.x THEN 1 ELSE 0 END) hit FROM D LEFT JOIN (SELECT y,k,1 present FROM I) I ON I.k=D.k GROUP BY D.k,D.x) SELECT O.x,CASE WHEN A.n=0 THEN NULL WHEN A.hit=1 THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END FROM O LEFT JOIN A ON A.k IS NOT DISTINCT FROM O.k AND A.x IS NOT DISTINCT FROM O.x",
+   "equivalent": false
+  },
+  {
+   "id": "R006-039",
+   "left": "SELECT O.x, O.x > ALL (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k,MAX(I.y) mx,COUNT(*) n FROM D LEFT JOIN I ON I.k=D.k GROUP BY D.k) SELECT O.x,CASE WHEN A.n=0 THEN TRUE WHEN O.x>A.mx THEN TRUE ELSE FALSE END FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false
+  },
+  {
+   "id": "R006-040",
+   "left": "SELECT O.x, O.x > ANY (SELECT I.y FROM I WHERE I.k=O.k) FROM O",
+   "right": "WITH D AS (SELECT DISTINCT k FROM O), A AS (SELECT D.k,MIN(I.y) mn,COUNT(I.present) n,COUNT(I.present) nn FROM D LEFT JOIN (SELECT y,k,1 present FROM I) I ON I.k=D.k GROUP BY D.k) SELECT O.x,CASE WHEN A.n=0 THEN FALSE WHEN O.x>A.mn THEN TRUE WHEN A.nn<A.n THEN NULL ELSE FALSE END FROM O LEFT JOIN A ON O.k IS NOT DISTINCT FROM A.k",
+   "equivalent": false
+  }
+ ]
+}

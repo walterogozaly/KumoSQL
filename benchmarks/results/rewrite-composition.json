@@ -10,6 +10,7 @@
     "proven": 146,
     "unsupported": 4
   },
+  "coverage_of": "The 150 rewrite steps that changed the SQL (of 541 run over the 60 queries), by prover outcome; unchanged steps have no outcome.",
   "held_out": "none",
   "docs": "docs/evals/fuzzing.md#suites",
   "command": "python tools/unsafe_fuzz.py compose --count 60 --seed 21",
