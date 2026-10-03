@@ -17,9 +17,8 @@ equality, ordering, ``BETWEEN``, ``IN`` lists, simple ``CASE`` operands and ``NU
   is not empty on MySQL when ``a`` is an integer column, since ``'abc'`` reads as 0).
 
 The SMT prover reads a plain comparison of that kind as an opaque predicate of its two values, true or false whatever the
-engine's conversion rule is, so a pair that uses one the same way on both sides can still be proven (the prover declines the
-other forms and the same-column case). It does not fold the comparison, even where the engine's reading is exact (MySQL ``'2' = 2``): a decline is safe on every
-engine and the pair stays unproven.
+engine's conversion rule is, so a pair that uses one the same way on both sides can still be proven; :func:`problem` with
+``plain_ok`` reports only the other forms and the same-column case. Nothing is folded, even where the engine's reading is exact (MySQL ``'2' = 2``).
 Not covered: an undeclared column compared with a string literal on one side of a join and a number on the other,
 and values converted by ``COALESCE``, ``GREATEST`` or ``CASE`` branches.
 """
