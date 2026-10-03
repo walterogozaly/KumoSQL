@@ -424,7 +424,7 @@ def replay(case: dict, record: dict) -> bool | None:
     try:
         results = []
         for statement in statements:
-            sql = statement.sql(dialect="duckdb")
+            sql = cx.zoneless_timestamps(statement).sql(dialect="duckdb")
             if statement.key == "select":
                 results.append(cx._bag(db.execute(sql).fetchall()))
             else:

@@ -21,6 +21,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Load a Dataform git repository | [Dataform repositories](dataform-repositories.md) |
 | Clean up one query | [Rewrite rules](rewrite-rules.md) |
 | Understand whether two queries match | [Provers](provers.md) |
+| See when two queries match only if some facts hold | [Equivalent under conditions](conditional-equivalence.md) |
 | Find dependencies and repeated work | [Pipeline analysis](pipeline-analysis.md) |
 | Review cost or a proposed change | [Cost and change reports](cost-and-change-reports.md) |
 | Reduce the number of models | [Refactor](refactor.md) |
@@ -35,6 +36,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Analyze scripts or MERGE | [Scripts](scripts.md) |
 | Reuse an existing summary table | [Model reuse](model-reuse.md) |
 | Run tests and understand their history | [Test history](test-history.md) |
+| Continue a workstream someone else started | [Picking up a workstream](handoff.md) |
 | Understand the test suites and their scores | [Evals](evals/README.md) |
 | Record a benchmark result | [Benchmark results format](benchmarks/README.md) |
 | Understand local BigQuery-to-DuckDB execution | [BigQuery on DuckDB](bigquery-on-duckdb.md) |
