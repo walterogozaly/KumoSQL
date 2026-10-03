@@ -3,9 +3,18 @@
 Every proof must hold on random instances, and every counterexample must
 really separate the two queries. The generated subset (integers, NULLs,
 joins, filters, GROUP BY) has the same semantics in SQLite and BigQuery.
+
+The 250 pairs are generated up front from their own RNG and pinned by a
+sha256, so the prover's answers cannot change which pairs are asked; each
+pair's validation databases come from a separate RNG seeded by its index.
+A text rewrite often does not apply, leaving two identical queries; those
+identity pairs are a sanity check (all must be proven) and the proof floor
+counts only pairs whose text changed. Unresolved pairs have no truth label,
+so the counts are coverage floors, not accuracy.
 """
 
 from collections import Counter
+import hashlib
 import random
 import sqlite3
 
@@ -80,24 +89,60 @@ def _run(db, sql):
     return Counter(db.execute(sql).fetchall())
 
 
-def test_prover_agrees_with_sqlite():
-    rng = random.Random(20260929)
-    seen = Counter()
-    for _ in range(250):
+_SEED = 20260929
+_PAIRS = 250
+# sha256 of the generated pairs: a change to the generator (or to Python's
+# random module) shows up here before it silently moves the floors below.
+_PAIRS_SHA256 = "a28ae5bcb54ba73aca3a4c78d22fab872104a165551c15f4cbc29f828c043228"
+
+
+def _pairs():
+    """The frozen pair list: (left, right, family), generated before any proof."""
+    rng = random.Random(_SEED)
+    pairs = []
+    for _ in range(_PAIRS):
         left = _query(rng)
         if rng.random() < 0.7:
             old, new = rng.choice(_REWRITES)
-            right = left.replace(old, new, 1)
+            pairs.append((left, left.replace(old, new, 1), f"{old!r}->{new!r}"))
         else:
-            right = _query(rng)
+            pairs.append((left, _query(rng), "fresh"))
+    return pairs
+
+
+def _digest(pairs):
+    return hashlib.sha256("\n".join(f"{left}\t{right}" for left, right, _ in pairs).encode()).hexdigest()
+
+
+def test_prover_agrees_with_sqlite():
+    pairs = _pairs()
+    assert _digest(pairs) == _PAIRS_SHA256, "pair generator changed: re-measure the floors and update the digest"
+    seen = Counter()
+    by_family = Counter()
+    for index, (left, right, family) in enumerate(pairs):
+        kind = "identity" if left == right else "changed"
         result = prove_equivalent_smt(left, right)
-        seen[result.status] += 1
+        seen[result.status, kind] += 1
+        by_family[family, kind, result.status.name] += 1
         if result.status is SmtStatus.PROVEN_EQUIVALENT:
+            data_rng = random.Random(_SEED * 1000 + index)
             for _ in range(25):
-                db = _database(rng)
+                db = _database(data_rng)
                 assert _run(db, left) == _run(db, right), (left, right)
         elif result.status is SmtStatus.NOT_EQUIVALENT:
-            db = _database(rng, result.counterexample.tables)
+            db = _database(None, result.counterexample.tables)
             assert _run(db, left) != _run(db, right), (left, right, result.counterexample)
-    assert seen[SmtStatus.PROVEN_EQUIVALENT] > 50
-    assert seen[SmtStatus.NOT_EQUIVALENT] > 20
+        if kind == "identity":
+            assert result.status is SmtStatus.PROVEN_EQUIVALENT, (family, left, result.status)
+    summary = {f"{status.name}/{kind}": n for (status, kind), n in sorted(seen.items(), key=str)}
+    summary["by family"] = {"/".join(key): n for key, n in sorted(by_family.items())}
+    # Measured on the frozen pairs (2026-10-03): 108 identity pairs (all
+    # proven); of 142 changed pairs, 32 proven (23 of them the trivial
+    # `WHERE TRUE AND`), 79 refuted, 31 NOT_PROVEN. NOT_PROVEN pairs have no
+    # truth label: they are reported in the message, not scored. Floors are
+    # the measured counts minus a small margin.
+    changed_proofs = seen[SmtStatus.PROVEN_EQUIVALENT, "changed"]
+    trivial = by_family["'WHERE '->'WHERE TRUE AND '", "changed", "PROVEN_EQUIVALENT"]
+    assert changed_proofs >= 28, summary
+    assert changed_proofs - trivial >= 7, summary
+    assert seen[SmtStatus.NOT_EQUIVALENT, "changed"] >= 70, summary
