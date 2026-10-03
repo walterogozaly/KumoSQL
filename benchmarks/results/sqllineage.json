@@ -1,20 +1,20 @@
 {
   "suite": "SQLLineage test cases",
   "order": 200,
-  "size": 279,
-  "score": "257/279 exact, 0 wrong",
-  "metric": "Cases whose table and column lineage match SQLLineage's expected graph exactly. The rest are reported as unknown (22: a SELECT * with no known columns, UPDATE and procedures that are not traced) and none claims a wrong edge.",
+  "size": 278,
+  "score": "254/278 exact, 0 wrong",
+  "metric": "Cases whose table and column lineage match SQLLineage's expected graph exactly. The rest are reported as unknown (24: a SELECT * with no known columns, UPDATE and procedures that are not traced) and none claims a wrong edge.",
   "evidence": "executed",
   "correctness": "0 cases with an edge or table the expectation does not have (a SELECT * with unknown columns says unknown, not a guess)",
   "coverage": {
-    "proven": 257,
-    "unknown": 22
+    "proven": 254,
+    "unknown": 24
   },
   "held_out": "none",
   "docs": "docs/evals/lineage-bench.md#sqllineage-test-cases",
   "command": "python tools/sqllineage_bench.py --details",
-  "date": "2026-10-02",
-  "caveats": "Adapted from SQLLineage's tests (MIT); 253 of the 532 adapted cases are left out because they are not BigQuery SQL (other dialects, lateral column aliases, DROP/RENAME lifecycles). Bugs it found were fixed in the same change, so it is a floor, not a held-out score.",
-  "analysis": "Column edges: precision 0.993, recall 0.876 (recall counts edges KumoSQL reports as unknown)",
-  "performance": "279 cases in 6.6 s"
+  "date": "2026-10-03",
+  "caveats": "Adapted from SQLLineage's tests (MIT); 254 of the 532 adapted cases are left out because they are not BigQuery SQL (other dialects, lateral column aliases, DROP/RENAME lifecycles, a LEFT JOIN USING key counted from both sides). Where a case gives no schema for an INSERT target, the harness states SQLLineage's assumption that the target's columns are named like the SELECT's outputs; KumoSQL itself reports such outputs unknown, since BigQuery maps them by the target's column order. Bugs it found were fixed in the same change, so it is a floor, not a held-out score.",
+  "analysis": "Column edges: precision 0.993, recall 0.864 (recall counts edges KumoSQL reports as unknown)",
+  "performance": "278 cases in 6.5 s"
 }

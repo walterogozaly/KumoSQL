@@ -35,7 +35,10 @@ SAFE_TO_DELETE_NOTE = (
     "unparsed operations) are not visible, so an empty result is not evidence of safety."
 )
 
-_READER_REASONS = ("parse_error", "qualify_error", "no_query", "unexpanded_star", "unparsed_operation", "unresolved_template", "cycle")
+_READER_REASONS = (
+    "parse_error", "qualify_error", "no_query", "insert_target_columns", "unexpanded_star", "unparsed_operation",
+    "unresolved_template", "cycle",
+)
 _VIA_RANK = {"output_column": 0, "condition_only": 1, "model_dependency": 2}
 
 
@@ -228,6 +231,15 @@ def assess_change(
 
     affected: dict[str, AffectedModel] = {}
     unknown: dict[str, str] = {}
+    # Models whose rows (not only some columns' values) may change: everything downstream of them may change.
+    rows_changed: dict[str, int] = {}
+
+    def deciding(reader: str, refs: list) -> bool:
+        conditions = a.conditions.get(reader)
+        if conditions is None:
+            return True
+        keys = {(c.table, c.column.lower()) for c in conditions}
+        return any((r.table, r.column.lower()) in keys for r in refs)
 
     def note(model: str, effect: str, via: str, depth: int, cols: tuple[str, ...]) -> None:
         old = affected.get(model)
@@ -261,10 +273,14 @@ def assess_change(
                 continue
             refs = [r for r in a.consumed[reader] if r.table == name and r.column.lower() in wanted]
             if not refs:
+                if name in a.template_reads.get(reader, ()):
+                    unknown.setdefault(reader, "template_columns")  # a template expression may read it
                 continue
             feeds = {c for r in refs for c in children(name, r.column) if c.table == reader}
             if kind == "change_expression":
                 effect = "values_change" if feeds else "behavior_may_change"
+                if not feeds or deciding(reader, refs):
+                    rows_changed[reader] = min(depth, rows_changed.get(reader, depth))
             else:
                 effect = "breaks"
             note(reader, effect, "output_column" if feeds else "condition_only", depth,
@@ -272,11 +288,14 @@ def assess_change(
             reached.extend((c.table, c.column) for c in feeds)
         return reached
 
+    # A wildcard query (``FROM `d.events_*` ``) reads every table its pattern matches.
+    names = [table, *sorted(n for n in readers_index if "*" in n and table in pipeline.wildcard_members(n))]
     if kind == "drop_table":
-        visit(table, None, 1)
+        for name in names:
+            visit(name, None, 1)
     elif kind == "change_expression":
         seen: set[tuple[str, str]] = set()
-        queue = deque([(table, column, 1)])
+        queue = deque([(name, column, 1) for name in names])
         while queue:
             name, col, depth = queue.popleft()
             if (name, col.lower()) in seen:
@@ -284,8 +303,24 @@ def assess_change(
             seen.add((name, col.lower()))
             for next_table, next_column in visit(name, [col], depth):
                 queue.append((next_table, next_column, depth + 1))
+        # A model whose rows may change (the column filters, joins, groups or decides a subquery) can change
+        # everything downstream of it, whichever of its columns they read.
+        pending_rows = deque(sorted(rows_changed.items(), key=lambda item: (item[1], item[0])))
+        while pending_rows:
+            model, depth = pending_rows.popleft()
+            for reader in sorted(downstream.get(model, ())):
+                if reader in rows_changed or reader == model:
+                    continue
+                rows_changed[reader] = depth + 1
+                problem = reader_problem(reader)
+                if problem:
+                    unknown.setdefault(reader, problem)
+                    continue
+                note(reader, "behavior_may_change", "model_dependency", depth + 1, ())
+                pending_rows.append((reader, depth + 1))
     else:
-        visit(table, [column], 1)
+        for name in names:
+            visit(name, [column], 1)
 
     if kind != "change_expression":
         # Whatever reads a model that breaks is affected too.

@@ -1,0 +1,17 @@
+{
+ "fetched": "2026-10-03",
+ "projects": [
+  {"name": "snowplow-web", "repo": "https://github.com/snowplow-archive/dataform-data-models", "commit": "24258c5ded933254532e39854b44bdbb0f3dd2c3", "licence": "Apache-2.0", "root": "web/bigquery", "copy": ["definitions", "includes", "dataform.json"]},
+  {"name": "wintermi-imdb", "repo": "https://github.com/wintermi/imdb-dataform", "commit": "a690c99b7bae16ec5e0f4b3c616840a3dbc0a01e", "licence": "Apache-2.0", "root": "", "copy": ["definitions", "includes", "workflow_settings.yaml", "dataform.json"]},
+  {"name": "wintermi-bqe", "repo": "https://github.com/wintermi/bqe-dataform", "commit": "4ff96b3bc255fbf0291048f22770cb88525a0f8d", "licence": "Apache-2.0", "root": "", "copy": ["definitions", "includes", "workflow_settings.yaml", "dataform.json"]},
+  {"name": "wintermi-fashion", "repo": "https://github.com/wintermi/fashion-dataform", "commit": "3d2f4d6337d6e510fa4e14b15e1e3566d956694c", "licence": "Apache-2.0", "root": "", "copy": ["definitions", "includes", "workflow_settings.yaml", "dataform.json"]},
+  {"name": "wintermi-movielens", "repo": "https://github.com/wintermi/movielens-dataform", "commit": "2b94a9d46e6376d542c8764a3c9a518e0564fada", "licence": "Apache-2.0", "root": "", "copy": ["definitions", "includes", "workflow_settings.yaml", "dataform.json"]},
+  {"name": "dataform-bqml", "repo": "https://github.com/dataform-co/bigquery-ml-pipeline", "commit": "2726e8c883bf7f81626cb72b753081954ceb769f", "licence": "MIT", "root": "", "copy": ["definitions", "includes", "workflow_settings.yaml", "dataform.json"]},
+  {"name": "terashim-ga4", "repo": "https://github.com/terashim/dataform-google-analytics-4-example", "commit": "71492738606c8626035a4913bc7d53bd84a0d5c4", "licence": "MIT", "root": "", "copy": ["definitions", "includes", "workflow_settings.yaml", "dataform.json"]},
+  {"name": "basedosdados", "repo": "https://github.com/basedosdados/sdk", "commit": "df859a6e71e2fad8b9dc7c4d050985342f72e25c", "licence": "MIT", "root": "bases", "copy": ["*/*/publish.sql"], "sample": 40, "flatten": true}
+ ],
+ "left_out": {
+  "coding-is-for-losers/ga4-bigquery-starter, space-lumps/bigquery-dbt-user-dimension, Velir/dbt-ga4": "dbt projects: their SQL is Jinja, which KumoSQL does not render",
+  "block-bqml-k-means, google_cloud_focus, atomfashion_bq": "no licence that allows copying"
+ }
+}

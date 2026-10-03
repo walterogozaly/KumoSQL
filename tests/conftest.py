@@ -92,6 +92,7 @@ HEAVY_FILES = [
     "test_cosette_benchmarks.py",
     "test_rbot_benchmarks.py",
     "test_bq_behavior_eval.py",
+    "test_bq_corpus_bench.py",
     "test_incremental.py",
     "test_model_reuse_evals.py",
 ]
@@ -103,6 +104,7 @@ EVAL_FILES = {
     "test_cost_validity_bench.py",
     "test_engine_suites.py",
     "test_bq_behavior_eval.py",
+    "test_bq_corpus_bench.py",
     "test_calcite_mined_benchmarks.py",
     "test_constraint_dependence.py",
     "test_join_rewrite_bench.py",
@@ -117,6 +119,7 @@ EVAL_FILES = {
     "test_minimization_bench.py",
     "test_model_reuse_evals.py",
     "test_mv_workload_bench.py",
+    "test_optimizer_bugs_bench.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
