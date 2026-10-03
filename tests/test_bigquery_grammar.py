@@ -53,6 +53,36 @@ def test_pipe_set_inside_a_subquery_stops_at_its_parenthesis():
     assert "* EXCEPT (a)" in " ".join(_projections(tree)) and tree.find(exp.Where) is not None
 
 
+@needs_pipes
+def test_pipe_with_moves_to_the_front_of_its_query():
+    sql = "SELECT * FROM (FROM d.t |> WITH y AS (SELECT 2 AS z), w AS (SELECT * FROM y) |> CROSS JOIN w) |> WITH v AS (SELECT 1 AS q) |> CROSS JOIN v"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    assert {cte.alias for cte in tree.find_all(exp.CTE)} >= {"y", "w", "v"}
+    assert {table.name for table in tree.find_all(exp.Table)} >= {"t", "w", "v"}
+
+
+@needs_pipes
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "FROM y |> WITH y AS (SELECT 2 AS z) |> CROSS JOIN y",  # the name already means a table before the WITH
+        "FROM d.t |> WHERE `Y` > 1 |> WITH y AS (SELECT 2 AS z) |> CROSS JOIN y",
+        "FROM d.t |> WITH y AS (SELECT 1) |> CROSS JOIN y |> WITH y AS (SELECT 2) |> CROSS JOIN y",
+        "WITH a AS (SELECT 1 AS x) FROM a |> WITH y AS (SELECT 2 AS z) |> CROSS JOIN y",
+        "FROM d.t |> WITH RECURSIVE y AS (SELECT 1) |> CROSS JOIN y",
+    ],
+)
+def test_pipe_with_stays_unread_when_moving_it_could_change_a_name(sql):
+    with pytest.raises(sqlglot.errors.ParseError):
+        sqlglot.parse_one(sql, read="bigquery")
+
+
+def test_raw_bytes_read_as_the_same_bytes():
+    # BigQuery: br'a\d' = b'a\\d', the bytes a, backslash, d
+    tree = sqlglot.parse_one("SELECT br'a\\d' AS x, RB\"q'\" AS y", read="bigquery")
+    assert tree.sql("bigquery") == r"SELECT b'a\x5Cd' AS x, b'q\x27' AS y"
+
+
 def test_pipe_rename_is_not_guessed():
     # RENAME keeps the column in place, which no SELECT can say without the column list.
     with pytest.raises(sqlglot.errors.ParseError):

@@ -15,9 +15,11 @@ The scoreboard rows live in [benchmarks/results/](../../benchmarks/results) (`sq
 - `missed`: confident, but an expected edge is missing
 - `wrong`: confident, and an edge or table that is not expected is claimed
 
-Cases that are not about BigQuery lineage are left out and listed with the reason: other dialects (read as BigQuery, which is what the tool does with every project; reported apart so they never move the headline), lateral column alias references, SQL BigQuery does not accept (bare `UNION`, double-quoted identifiers, `::` casts), `INSERT` columns mapped by the target table's column order, and `DROP`/`RENAME` table lifecycles.
+Cases that are not about BigQuery lineage are left out and listed with the reason: other dialects (read as BigQuery, which is what the tool does with every project; reported apart so they never move the headline), lateral column alias references, SQL BigQuery does not accept (bare `UNION`, double-quoted identifiers, `::` casts), `INSERT` columns mapped by the target table's column order, a `LEFT JOIN ... USING` key counted from both sides, and `DROP`/`RENAME` table lifecycles.
 
-**Score: 257/279 exact, 0 wrong, 22 unknown, 0 missed** (table cases 101/108, column cases 156/171). Column edge precision 0.993 and recall 0.876 (recall counts what is reported unknown). The first run was 211/282 exact with 21 wrong; MERGE support (all of SQLLineage's MERGE cases, table and column) moved it from 235/279. The harness names a `MERGE` target as the case's destination, as it does for `INSERT` and `CREATE ... AS`.
+**Score: 254/278 exact, 0 wrong, 24 unknown, 0 missed** (table cases 101/108, column cases 153/170). Column edge precision 0.993 and recall 0.864 (recall counts what is reported unknown). The first run was 211/282 exact with 21 wrong; MERGE support (all of SQLLineage's MERGE cases, table and column) moved it from 235/279. The harness names a `MERGE` target as the case's destination, as it does for `INSERT` and `CREATE ... AS`.
+
+SQLLineage assumes that `INSERT INTO t SELECT ...` writes columns named like the SELECT's outputs. BigQuery maps them to `t`'s own columns by position, so without `t`'s schema KumoSQL reports the outputs unknown (`insert_target_columns`) rather than naming them. When a case gives no schema for `t`, the harness states SQLLineage's assumption as `t`'s schema (the SELECT's output names, in order); it does not when the `INSERT` reads `t` itself. Fixing the guess (2026-10-03) moved the score from 257/279: two cases are now unknown (an `INSERT` reading its own target, and one selecting the same column twice under names that differ only in case), and one case is left out because SQLLineage counts both sides of a `LEFT JOIN ... USING` key, while BigQuery takes the left input's value.
 
 This is a floor, not a held-out score: bugs it found were fixed in the same change. What it found:
 
@@ -26,7 +28,7 @@ This is a floor, not a held-out score: bugs it found were fixed in the same chan
 - An unaliased `CAST(a AS T)` was named `a`; BigQuery names it `f0_`, so it now gets a generated name that cannot be mistaken for the column.
 - Statements of a script other than the last were ignored: now the tables they read are dependencies, and DML or raw-text statements that might read tables are counted in the `skipped_statements` diagnostic instead of vanishing.
 
-Known gaps (reported as unknown, not guessed): `UPDATE`/procedures, views and temporary tables created earlier in the same script, `INSERT` without a column list into a table whose schema is known.
+Known gaps (reported as unknown, not guessed): `UPDATE`/procedures, views and temporary tables created earlier in the same script, `INSERT` without a column list into a table whose schema is not known.
 
 ## Lineage and change impact
 

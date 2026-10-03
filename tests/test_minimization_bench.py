@@ -36,6 +36,9 @@ FAMILIES = {"passthrough_chain", "duplicated_logic", "dead_tables", "unused_colu
 # Floors for the Refactor search on every other dev case of 6 to 8 tables (27 cases; see floor_cases).
 REFACTOR_IMPROVED_FLOOR = 22
 REFACTOR_PROVED_FLOOR = 27
+# Floors for the table minimizer on the same cases (measured 23 improved, 22 proved, 4 same, 1 agreed, quality 0.82).
+MINIMIZER_IMPROVED_FLOOR = 22
+MINIMIZER_PROVED_FLOOR = 21
 
 
 def floor_cases():
@@ -162,6 +165,14 @@ def test_refactor_search_floor():
     assert summary["correctness"]["wrong"] == 0, summary["wrong"]
     assert summary["coverage"]["improved"] >= REFACTOR_IMPROVED_FLOOR
     assert summary["correctness"]["proved"] >= REFACTOR_PROVED_FLOOR
+
+
+def test_table_minimizer_floor():
+    summary, results = bench.run(floor_cases(), "minimizer", databases=40)
+    assert summary["correctness"]["wrong"] == 0, summary["wrong"]
+    assert summary["correctness"]["error"] == 0, summary["errors"]
+    assert summary["coverage"]["improved"] >= MINIMIZER_IMPROVED_FLOOR
+    assert summary["correctness"]["proved"] >= MINIMIZER_PROVED_FLOOR
 
 
 def test_results_file_matches_the_case_set():
