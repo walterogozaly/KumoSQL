@@ -228,6 +228,12 @@ def test_intervals_are_not_read(db):
     assert one(db, "SELECT EXTRACT(HOUR FROM TIMESTAMP '2021-01-02 12:34:56')") == 12
 
 
+def test_week_starting_sunday_or_monday_from_a_timestamp(db):
+    # BigQuery returns 45 for both (its documentation page shows 44 for WEEK(MONDAY))
+    assert run(db, "SELECT EXTRACT(WEEK(SUNDAY) FROM TIMESTAMP('2017-11-06 00:00:00+00')), "
+                   "EXTRACT(WEEK(MONDAY) FROM TIMESTAMP('2017-11-06 00:00:00+00'))") == [(45, 45)]
+
+
 @pytest.mark.parametrize("sql", [
     "SELECT ARRAY_SLICE(['a', 'b', 'c', 'd'], 1, 2)",  # BigQuery ['b', 'c']; sqlglot keeps the 0-based bounds
     "SELECT JSON_VALUE(JSON '{\"a\": [1, 2]}', '$.a[0]')",
@@ -236,6 +242,7 @@ def test_intervals_are_not_read(db):
     "SELECT ARRAY(SELECT 1 UNION ALL SELECT 2)",  # the element order is BigQuery's to pick
     "SELECT ARRAY_AGG(x) FROM UNNEST([3, 1, 2]) x",
     "SELECT STRING_AGG(x) FROM UNNEST(['b', 'a']) x",
+    "SELECT CURRENT_DATE('-08')",  # sqlglot 26 drops the time zone
 ])
 def test_constructs_without_a_faithful_reading_are_refused(db, sql):
     assert fails(db, sql)

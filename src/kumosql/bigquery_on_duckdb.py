@@ -152,7 +152,7 @@ _REFUSED = _class(
     # sqlglot's ARRAY_SLICE keeps BigQuery's 0-based bounds; PERCENTILE_CONT ignores RESPECT NULLS
     "ArraySlice", "PercentileCont", "PercentileDisc", "ParseJSON",
 ) + tuple(getattr(exp, name) for name in dir(exp) if name.startswith("JSON") and isinstance(getattr(exp, name), type))
-_APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLATE$)", re.IGNORECASE)
+_APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLATE$|ARRAY_SLICE$)", re.IGNORECASE)
 _STRUCT_COMPARISONS = _class("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "NullSafeEQ", "NullSafeNEQ", "In", "Is")
 
 
@@ -178,6 +178,7 @@ def _capture_groups(pattern: str) -> int:
 
 
 _ORDERED_AGGREGATES = _class("ArrayAgg", "GroupConcat")
+_CURRENT = _class("CurrentDate", "CurrentDatetime", "CurrentTime", "CurrentTimestamp")
 
 
 def _ordered(node: exp.Expression) -> bool:
@@ -186,6 +187,8 @@ def _ordered(node: exp.Expression) -> bool:
     inner = node.this
     while isinstance(inner, exp.Limit):
         inner = inner.this
+    if isinstance(node.args.get("separator"), exp.Order):  # sqlglot 26 hangs STRING_AGG's ORDER BY on the separator
+        return True
     return isinstance(inner, exp.Order) or (isinstance(node.parent, exp.Window) and bool(node.parent.args.get("order")))
 
 
@@ -203,6 +206,8 @@ def refusal(tree: exp.Expression) -> str | None:
             return "BIGNUMERIC"
         if isinstance(node, exp.DataType) and node.this in (exp.DataType.Type.JSON, getattr(exp.DataType.Type, "JSONB", None)):
             return "JSON"
+        if isinstance(node, _CURRENT) and node.this is not None:
+            return f"{node.sql_name()} in a time zone"  # sqlglot 26 drops the zone
         if isinstance(node, exp.Cast) and node.args.get("format"):
             return "CAST .. FORMAT"  # sqlglot drops the format
         if isinstance(node, _ORDERED_AGGREGATES) and not _ordered(node):
