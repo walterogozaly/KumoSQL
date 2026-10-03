@@ -1,0 +1,19 @@
+{
+  "suite": "BigQuery Utils UDF tests",
+  "order": 64,
+  "size": 807,
+  "score": "300/300 supported cases agree, 0 wrong (of 807)",
+  "metric": "Each unit test of a SQL UDF in GoogleCloudPlatform/bigquery-utils (inputs and the output Google checked on BigQuery) becomes a BigQuery query calling the inlined UDF body; KumoSQL translates it to DuckDB, runs it and compares the value with the translated expected output.",
+  "evidence": "executed",
+  "correctness": "0 wrong values: every supported case returns the value BigQuery returned; a difference counts only when DuckDB with its optimizer off agrees",
+  "coverage": {
+    "proven": 300,
+    "unsupported": 507
+  },
+  "held_out": "49/49 supported cases agree, 0 wrong (143 cases by SHA-1 of the id, 94 unsupported; never printed while fixing)",
+  "docs": "docs/evals/bigquery-behavior-eval.md#bigquery-utils-udf-tests",
+  "command": "python tools/bq_utils_udf_eval.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "Source GoogleCloudPlatform/bigquery-utils @ d5bde4f (Apache-2.0), 210 tested UDFs (134 SQL), all cases original, none adapted. Baseline (sqlglot's translation alone): 277/337 agree, 60 wrong; the fixes are general translation fixes in kumosql/bigquery_duckdb.py, and the cases they were found on stay as regressions. Unsupported: js UDF 342; translation not executable in DuckDB 68; KumoSQL declines to translate 41; calls a js UDF 28; expected output not executable in DuckDB 22; element order not specified by GoogleSQL 2; python UDF 2; test case not a plain literal 2. Inputs are substituted for the parameters (the Dataform test passes them as columns of a one-row view, typed per test group); arrays or strings built in an order GoogleSQL leaves unspecified are not compared when they match as multisets. DuckDB is not BigQuery: a value is only as good as the translation's model of each function.",
+  "performance": "807 cases in 54 s"
+}

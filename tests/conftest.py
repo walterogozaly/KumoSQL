@@ -78,6 +78,7 @@ EVAL_FILES = {
     "test_cost_validity_bench.py",
     "test_engine_suites.py",
     "test_bq_behavior_eval.py",
+    "test_bq_utils_udf_eval.py",
     "test_bq_corpus_bench.py",
     "test_calcite_mined_benchmarks.py",
     "test_constraint_dependence.py",

@@ -1,0 +1,1633 @@
+{
+ "source": "https://github.com/GoogleCloudPlatform/bigquery-utils",
+ "commit": "d5bde4fb0d2dbfa0477f1f2a6d87edda65bb7907",
+ "license": "Apache-2.0 (LICENSE)",
+ "note": "SQL UDF files and test_cases.js copied unchanged; JavaScript, Python and remote UDFs are listed (name, language, sha256) but not copied.",
+ "files": {
+  "udfs/community/azimuth_to_geog_point.sqlx": "c52d8694917214d072171e926d4c0d346d9295f3e7774edd4fd907ef2e2cbee9",
+  "udfs/community/csv_to_struct.sqlx": "07a2e1a4ce8d5f536912dc09ecc5340e9e328093aa2d68c6d5daaa70a76b8b38",
+  "udfs/community/cw_array_compact.sqlx": "5399d75bb29fc7ccf7674ad81938d9da821bc58472dd1583c0f39eee0af73103",
+  "udfs/community/cw_array_distinct.sqlx": "5ed1590c38941fdf895809ce312b97b932f748368dafeff94c9ceb575a54faa5",
+  "udfs/community/cw_array_max.sqlx": "9dfa5ba7aa74950d802579c930782c1f8b09490a9f51f7b0a89b0171ec76b369",
+  "udfs/community/cw_array_median.sqlx": "1021f95b0e9d1b6456b12ac2470eadc98c6aa1d0b15e2c3013b3a7c209e6fdad",
+  "udfs/community/cw_array_min.sqlx": "5d19e5118d873c58f4e0f034a6ab844659ac15fba9a5e4d918b7a753ac4f8a49",
+  "udfs/community/cw_array_overlap.sqlx": "b9042202fc08d1463985d30b71fa124c8aa0fc98b0f5f56ef2fce8210f621936",
+  "udfs/community/cw_array_stable_distinct.sqlx": "e46cff4182408f1c73a43b4e1d3ffecd4e07d0c117b3d1c6053238e7a92c6594",
+  "udfs/community/cw_comparable_format_bigint.sqlx": "f59171298c0accac5974a298c259d696119cb87e22b10f3e96e660eb827ecfdb",
+  "udfs/community/cw_comparable_format_bigint_t.sqlx": "b1678bc7964cdaccd2372d2bdbb3ecf3a7bc84b62042413e2ca0147fc763cc6a",
+  "udfs/community/cw_comparable_format_varchar.sqlx": "af082cfc2dd9bc725a9874e60407cdbb7d9472d8b3ac81846ac743f55be9be64",
+  "udfs/community/cw_comparable_format_varchar_t.sqlx": "20428379757132c05448f8c7741a756853cad14225512676f216ecabd08a8579",
+  "udfs/community/cw_disjoint_all_partitions_by_regexp.sqlx": "0642cdd858830f199b91a8f26b42a9cc61a2714f03fed83ffec11e0bcb6e172d",
+  "udfs/community/cw_disjoint_partition_by_regexp.sqlx": "0dc56fdd657fe0c671715fb3f4c84d9f04bab869d18dcdc08281ad57b015bc7c",
+  "udfs/community/cw_find_in_list.sqlx": "e24c2c6b01e648729cc0354bc960d1ffab6856011a8b3a03551720df6a72bb45",
+  "udfs/community/cw_from_base.sqlx": "8e1b606188c51609261d30cb4ab98e62c880a8e8fb5138e34f7469dae73fb3e2",
+  "udfs/community/cw_getbit.sqlx": "e577e80566d1e6ae237e2307f578d3917e59af8713cc00854b97028fcbb93890",
+  "udfs/community/cw_getbit_binary.sqlx": "3e31e936ce891104224ed186986feb77e5742b500500a5b4de0d8df891f5bc87",
+  "udfs/community/cw_initcap.sqlx": "d9c6f7aa0d64daa61e1e090b1ebd2c88b9c9ff96c384287ba0c024d50a923d9e",
+  "udfs/community/cw_instr4.sqlx": "b51923b77a636eac6a02fe885b09b4262238c3261615407e60e264aa7c09d5e9",
+  "udfs/community/cw_lower_case_ascii_only.sqlx": "dae344559c786e442ed46d43de8fc7e10133850df09c132798f6b6f3ffc897a7",
+  "udfs/community/cw_map_create.sqlx": "babc58abbd8be65635acbaa83b52b0b38c0cf00550b4f765e7fba2a8a2017d56",
+  "udfs/community/cw_map_get.sqlx": "02d436ca5dcdbd35dd32123765ce090444a79c44f7551acdefb32d36134fe9e2",
+  "udfs/community/cw_map_parse.sqlx": "942aaf9bc555ed50abb8b8542357e499fc8a52aa92f97ee1c1ed666c7afbb0c7",
+  "udfs/community/cw_months_between.sqlx": "82fdd46bef0fb66afe45048e8b83d2fa821df4b410ed28d98e90b93fc808f6dc",
+  "udfs/community/cw_next_day.sqlx": "5b37cfa55939d49a269c4998be50b8244864b1d88e010d54d0016037cb1f64e1",
+  "udfs/community/cw_nvp2json1.sqlx": "bf0dc8cbe9066234e16e06398c6fe02efb9f28cc80020a478c71c45c1dbb6f1a",
+  "udfs/community/cw_nvp2json3.sqlx": "b8cda2dcd4da4dc83afec51ec5eff82e837cb83b12bb700b3b4fe8bc8343f2fc",
+  "udfs/community/cw_nvp2json4.sqlx": "20c1172e8bfc623822dddb302b618395effe56386339890593cbc1fcf83ed79c",
+  "udfs/community/cw_otranslate.sqlx": "9374e13749b944f4ee4dfa96ab844b85a0fb23c0f6263c9ba5057f481a0d49c5",
+  "udfs/community/cw_overlapping_partition_by_regexp.sqlx": "77125cc0946c9c0efbd0466240a186a612304dfb880f4ac6bbc0901bcd68e243",
+  "udfs/community/cw_period_intersection.sqlx": "e1f4cc9fd74689bf9b35c69c7e6be0383a8964a6ce560b46af9b89314be28091",
+  "udfs/community/cw_period_ldiff.sqlx": "4d775aa417028dc8539240b3e28a7f8c92b1a430d794f284dba39b177ad96f3b",
+  "udfs/community/cw_period_rdiff.sqlx": "e6f7fb5ddad699a25460075a39880f90776701b35e47783136db147bae0bc7bf",
+  "udfs/community/cw_range_date_ldiff.sqlx": "c9388af442bc988be14a255941ba78be3522c37dcaefc03e452d6402ec53a856",
+  "udfs/community/cw_range_date_rdiff.sqlx": "76139d7dca15572912337e30b5dc9f1cb58c9283dd3c0afb4cccac88a652d04a",
+  "udfs/community/cw_range_datetime_ldiff.sqlx": "3e76122e3a34c2f00efb135d9fa14d54917b2ccd2b413489eff017de85dbbf32",
+  "udfs/community/cw_range_datetime_rdiff.sqlx": "0582aafcafd36a192f3156f959019fef8b16595a28b0c26015597bd062a0e32e",
+  "udfs/community/cw_range_timestamp_ldiff.sqlx": "6457475bd993f871b598996b121c56fc295d3308051b46b1c53902ee7db407a2",
+  "udfs/community/cw_range_timestamp_rdiff.sqlx": "11430738bdd711af362d83e53674bfc249aae601405f26ac52623911d8b53280",
+  "udfs/community/cw_regexp_extract.sqlx": "f22bc2244d4ec6a5e93dc87905787be2e7c388a4dcb171e52dfb774df3308544",
+  "udfs/community/cw_regexp_instr_2.sqlx": "b968fc7e245912c4f25c7c4402982ca85faa24d0d295edc96b3c1724d5c79130",
+  "udfs/community/cw_regexp_instr_3.sqlx": "9d41f1c02b4e98db1e543d16f741c45ecc98caf8885c2a67163c927beb626616",
+  "udfs/community/cw_regexp_instr_5.sqlx": "19500b37237c68935f21875679a5a9a73123d40f3de82d18b9b28b95811f406b",
+  "udfs/community/cw_regexp_instr_6.sqlx": "1d8514e3b93360848251f823bc0ea76aa176c34442e45885f039de336d3abb1d",
+  "udfs/community/cw_regexp_replace_4.sqlx": "77f7d69d2a8e4be1b9ef119999b2a40e8bc4a95c921d53bb93e8275c2442138f",
+  "udfs/community/cw_regexp_replace_5.sqlx": "e9ac1ceacfdc6a7b038f85a3a6079bf76050f1c1235655e4e0cac51502fe5b2b",
+  "udfs/community/cw_regexp_replace_6.sqlx": "6b357b297eb86215a728df4f55c1e14494df85d633226db459b73f15d081076d",
+  "udfs/community/cw_regexp_substr_4.sqlx": "6c4109dcd362bbbef9d7b0623572e3ee1f36c83ac25de612a6098e6c8057d393",
+  "udfs/community/cw_regexp_substr_5.sqlx": "ab484592a0bf5a9ce62cc414c94e3ad96acef0fc600f2f6d0d3b60bce948741c",
+  "udfs/community/cw_regexp_substr_6.sqlx": "349cd7f06b11997b1bbfc77a89308c0406db8e56c56ca9c470b5fb0cb0ba684f",
+  "udfs/community/cw_round_half_even.sqlx": "78983d5a15bdf3d86299e394b949285e79db2326e960cc52370614e63624d822",
+  "udfs/community/cw_round_half_even_bignumeric.sqlx": "d58342f7c8e82d9646eee43a4c518158b17e091c2313d03b26587ae7c3d37b14",
+  "udfs/community/cw_runtime_parse_interval_seconds.sqlx": "80b56fd5641f7e322a5f728975d498551a2aeda1b44bdeb35fced401141cad93",
+  "udfs/community/cw_setbit.sqlx": "2606b9e440151eaa166d81d1901fbb42cb4cbd067be2311dd3eded792aff43c9",
+  "udfs/community/cw_signed_leftshift_128bit.sqlx": "eedfc017c07d75bc8ce16e21077bdf1d9bce6e518fd2e6ad6e5867c4692f4173",
+  "udfs/community/cw_signed_rightshift_128bit.sqlx": "6394dbd3042ebdd81c8cd5237ff4022c9efcfe24b0e0050179e910177149e107",
+  "udfs/community/cw_split_part_delimstr_idx.sqlx": "df8d355b4a6c3916904f0ded5391d01631e69da17e447c5989aa9b4a8750fc12",
+  "udfs/community/cw_stringify_interval.sqlx": "1344a0c572dd64c3766534353cd2c9694aded3dc5bda7a94c090b0db0cb58e96",
+  "udfs/community/cw_substrb.sqlx": "8aa42a0023a0e0e9ed42785d527a4046767c5d8fa95ef0e9507961ec5f69eb41",
+  "udfs/community/cw_td_nvp.sqlx": "1e9fb887bff26fb33f03b6d547fa095c315e8e6e5f977051a20aa9baff65b752",
+  "udfs/community/cw_threegrams.sqlx": "f506e234356568c1321b571f24092f8365fe919d430b8aeef9fac004a881b083",
+  "udfs/community/cw_to_base.sqlx": "a7524d663326aaa1623ac2b13dfdf4b9e4636062a1a0416285ae1cbefe798d05",
+  "udfs/community/cw_to_xml_string.sqlx": "2088b5caf1a144996236edafd4b849d245070237ddda4f444e95f2b9bfdf7411",
+  "udfs/community/cw_twograms.sqlx": "856f64a614290c60f29d492eb744fa9f1b9119ce0b1dba8e8993b796c308c8bf",
+  "udfs/community/cw_url_extract_authority.sqlx": "439d8e39f0f4bdc21d8cddfd4ff626ef70c5ad3f54328b6e1c2dcc432b52efb5",
+  "udfs/community/cw_url_extract_file.sqlx": "bc43b61dea8e18a305ca828af31ed4bbe6c89c1211e1d35bd6906073ac0605c3",
+  "udfs/community/cw_url_extract_fragment.sqlx": "0345ae80e829d2ceff079b05fdf04259e82a4c7ad89dc9480095580f8872e174",
+  "udfs/community/cw_url_extract_host.sqlx": "4c0a663d5148f75260b2f4d3860ed91190b6843b86fd5359a3c95cf3a58a512b",
+  "udfs/community/cw_url_extract_parameter.sqlx": "b4e701bb9f9e4fd30caf2995a17bf89c85197b062c15761dcdabcc0e6ab98502",
+  "udfs/community/cw_url_extract_protocol.sqlx": "fd0e3a3e283fd3588ae7dc701d693b9105d42681bde5cebca7c5a0f71d2d91e2",
+  "udfs/community/cw_url_extract_query.sqlx": "f7c0f23830a3777a1027b3f6eaf9b235185c71efb29f96f26a446b7aac56d21f",
+  "udfs/community/cw_width_bucket.sqlx": "9b984c373385bb73d62d61e8022f03b8496a705273f5514028fa22783369573b",
+  "udfs/community/cw_xml_element.sqlx": "4a705d54a68b9ccd7a7f485e792d0ff6fa0152640deed0d72da7c86e744c959b",
+  "udfs/community/cw_xml_element_with_attributes.sqlx": "d690b8886cb18f63690b8bbe7559dce9c0b645ed50a90a9665e958d110048f48",
+  "udfs/community/day_occurrence_of_month.sqlx": "cac041c2dd2e9fa08c1749d67e8bc2b2e6e8fd27bf508efe896fcf1ea2d26ef4",
+  "udfs/community/degrees.sqlx": "176081ac2b4d8414d49b5cc71cf880178f6b7eb21bd4845bc9a9bd573876a2ec",
+  "udfs/community/exif.sqlx": "b7d5bb2985907daa6095f1f42c21a6115aa1c715ffde251557e0bb1dcaf19612",
+  "udfs/community/find_in_set.sqlx": "daf472a4efff70bb3d00db1829ab3822ed6d455f5318e18aa22acfe0c623e583",
+  "udfs/community/freq_table.sqlx": "fe495bb1ec0f5fea79a803c8f925f05dbd33f36fa2fe5a34ee9f4be1d594dece",
+  "udfs/community/from_binary.sqlx": "ffbf5009f94a831b5727f3141a1d8fb954daa41f3503d299e9e5f17650379f11",
+  "udfs/community/from_hex.sqlx": "b24b7e846350736ec34e0374e3fb76b7d32175a6aac1ec4e8477b99395149269",
+  "udfs/community/get_array_value.sqlx": "a3772febec334f662683f00eeed34a0f157036770a1fde81dfba644c58fecdec",
+  "udfs/community/get_value.sqlx": "2adcee75c90f2d4389af37684d4350a2c2f509414c3fd4b488a509fa96bafcfe",
+  "udfs/community/getbit.sqlx": "03f659cb6ea436ebd5f88056343e356558299a1f8c066e8d2022276f6b131cfc",
+  "udfs/community/int.sqlx": "d3ff3a13801a09eb5dfff6ea59fc6788f5bd2d4111eb9ee13a66435ef7c6fbde",
+  "udfs/community/interval_micros.sqlx": "9dc70604f4c01ea673220e6eafbbde7ca73e542bb4f7f64932aa20428f61108d",
+  "udfs/community/interval_millis.sqlx": "08f760b6afd25979e083bad78d10656dc45ec226d2a4ff8ed0cc524f2ce16d45",
+  "udfs/community/interval_seconds.sqlx": "a518963e8b965015484aa333c86390445dad6ce9b508c98865556ba7671f36f1",
+  "udfs/community/job_url.sqlx": "088d36d48fdf24ff17e3ac826614d2cc00c14aa6d832fc15cb3cf5a33caa2508",
+  "udfs/community/json_typeof.sqlx": "e2f295006811b8081e613e1a032a45bdb285df044ffd64228cc3dc01a1054f83",
+  "udfs/community/knots_to_mph.sqlx": "85d0be9546d59d45087112b8b96cfda27bd78287cf3f3a076127590839d8b1ac",
+  "udfs/community/kruskal_wallis.sqlx": "97e3942436ccd73003c03a863c586f5cb0cbd1245c2b5f2da810eb64eb5f14dc",
+  "udfs/community/linear_interpolate.sqlx": "92c2aedc58d63fa0ebbdd12a0948d09de6138659f97576e248395ec41bcc564a",
+  "udfs/community/linear_regression.sqlx": "8da8b8d4c875c4b8a31f856ab8f558b7538f70920d4a87dea39e317c90461bdd",
+  "udfs/community/mannwhitneyu.sqlx": "b9364f3d5c37648c5a8bccd295301119cbe50e8765ee0fd64e95cdc30cb6ac60",
+  "udfs/community/median.sqlx": "98bce152b8b6e15832ac6d6d53f212bff9945c64255189d07bd8b037b59fa28e",
+  "udfs/community/meters_to_miles.sqlx": "1683f81ceed64202aa392786a50d2b945eca898196bd0c3f5bca70025842e5db",
+  "udfs/community/miles_to_meters.sqlx": "63c780c27a5b54808eee0fedc5fd1d844284a715b3ffddc38d7d76a69d729f1b",
+  "udfs/community/mph_to_knots.sqlx": "97588a2a9ff1da011f385d1906666d452065013c7ef5491bc985ecb1c6b80f3d",
+  "udfs/community/multiply_full_scale.sqlx": "b3de17c3b91349160392622e12fb8ce5d987fc84d97bf1b4c54f8e5c1195569a",
+  "udfs/community/nautical_miles_conversion.sqlx": "e93b0dfe583580e96516878b7e8125a418ca55463a524d87188a7d849c11b687",
+  "udfs/community/percentage_change.sqlx": "d51355a6cc767d3643f8fb9923972919244b8e404edbf25d3f344cef8d12ac27",
+  "udfs/community/percentage_difference.sqlx": "a511a30bf19c301ad3cf223938b7f99ebf5cf1b9a0901b13134d0b94ae540b19",
+  "udfs/community/pi.sqlx": "ec2774abd906c58e6db9efa343c46335f8d732b8513dd2a9e76bdec4dc01dff8",
+  "udfs/community/radians.sqlx": "4b39ec2bf78178aecc544724076ae174c6ff1de94422dd08c26f944b0e4ce334",
+  "udfs/community/random_int.sqlx": "39f5069f32b2c4b95e0f27e9e3f43438228b3198b23707f55a02ce85fbad071d",
+  "udfs/community/random_string.sqlx": "9bb59ca74d3fd1f050db6e7cbe82239dfedeed42833586d9cd45a6ebc3df6a05",
+  "udfs/community/random_value.sqlx": "5403eace62d2db7cf01c10a11a4682b6d7f026a629a5a81f8644d57eca3acb13",
+  "udfs/community/scaled_average.sqlx": "3983f2a021c99dc5e23ee35c51d1b3909759383f5d6717c0aeec6eef7d94784a",
+  "udfs/community/scaled_sum.sqlx": "b70b4dad5e041d0c1905b429f5fbada1687a54bcc813416c6fab3a2d907ef052",
+  "udfs/community/string_to_struct.sqlx": "22601d3509cad14038eed2f49451861595795af5a2af5ca103ea4fe5fdc55ebc",
+  "udfs/community/sure_cond.sqlx": "4082c6d411862d8a6c6adc5c4ab9fe95b132f2c94d39274adce61405d913979c",
+  "udfs/community/sure_like.sqlx": "4fc7a561a5fde61c5966544e76cc3ec53ceac96d5a4c8e0aeac2460bfc2ea74f",
+  "udfs/community/sure_nonnull.sqlx": "ea86ea2028ad822a5898d44bc5bfe2691b045b721166318f71d78e80e3c3347d",
+  "udfs/community/sure_range.sqlx": "8d5cf11d130ab408af1cb4964abb60b07c632ca31357b108fd9c743d012bede0",
+  "udfs/community/sure_values.sqlx": "dcfc0892a3534f1428b93de1cc4cc5879e90a8060e45417c99192aacee8f801f",
+  "udfs/community/t_test.sqlx": "7383d7724bbb487214632696592e98d2feddc2bcc4c20f55d0826325d15d0e7a",
+  "udfs/community/table_url.sqlx": "3d98e7d3eb712370fee0afeb1e0e1e493244f25472835e216c82439b32f4c315",
+  "udfs/community/to_binary.sqlx": "ec4cc6e7d25d227f0bfddbb6c5a8f04a498df6aa2a8382e9e08a9cf04d950f2e",
+  "udfs/community/to_hex.sqlx": "e75b726280b3e2bb4bd370342a374188f6631f73cc66c35541b3e3858d0e35fd",
+  "udfs/community/translate.sqlx": "cec8d67bb911c9e16f08c840cdc49bca9267a3418a9d41865806246199d98b78",
+  "udfs/community/ts_gen_keyed_timestamps.sqlx": "b45b2a4b584667c7d769bc54eafb95a12df6ceb848161dbdde223242ad8a5440",
+  "udfs/community/ts_linear_interpolate.sqlx": "9e9e10b7a7644ceaa8272af439c5c6a83e0ec0abff8600eed9eb7d6c4cccfc6a",
+  "udfs/community/ts_session_group.sqlx": "1054c3371387989d8b45f82209eb292e8decac5de526d278a8311fafe8844f95",
+  "udfs/community/ts_slide.sqlx": "552b4a19e8d4dfeb41dd10f49b0bad0057214b593be877d83a17e97491c33e81",
+  "udfs/community/ts_tumble.sqlx": "29a82b6a3f983893e35600f1efef61f1c47f69d33a8f88d8e5724e05247a2985",
+  "udfs/community/typeof.sqlx": "22ab20eb4b3ee78d024bf04baed769ec0e71743567bf9289d2ff98cca042495b",
+  "udfs/community/url_parse.sqlx": "3638d7fb64293c7615d4c00af9a0c3ed6dfa81b6f8066957e7abccdbb8d20ba9",
+  "udfs/community/url_trim_query.sqlx": "cfbe7cee1d2c70c2215efc1284cfb8467ab8726e21cfce19c8a24d0c2f6a647d",
+  "udfs/community/week_of_month.sqlx": "6bc92d1d0f2bb70cd2e41380b70f011c5b99373205820d871d0273e11e100256",
+  "udfs/community/y4md_to_date.sqlx": "55f2fbd022551bcd8bbfb1399a275357d4ccab6396c0e04b15d257141a0071c4",
+  "udfs/community/zeronorm.sqlx": "757012874c7bc814adca28fb95a5e82cb6eb4f388f4189e450a622431da88667",
+  "udfs/migration/oracle/round_datetime.sqlx": "83c45e24f434fa423651532cf941e8716eda26f92280fd5bbd93dd53cd16185f",
+  "udfs/migration/redshift/initcap.sqlx": "cb0802ea31ec288b516baa67ea5361fa721c986e0155e265d8bd635d07f17d9e",
+  "udfs/migration/redshift/interval_literal_to_seconds.sqlx": "41277ea163aaacf946153a341f7954d4d740e6e214b2d994fc67535e18ca850d",
+  "udfs/migration/redshift/split_part.sqlx": "587d7c75ca79d1d0a03c68205425de73087a3a2b82cbc73aa32cf5cdb96332a2",
+  "udfs/migration/redshift/translate.sqlx": "cec8d67bb911c9e16f08c840cdc49bca9267a3418a9d41865806246199d98b78",
+  "udfs/migration/snowflake/bitmap_bit_position.sqlx": "a562255a10ae9c1b48745624f9f55ddebbcfeddecec2e375a38ef6bd9e3f8f69",
+  "udfs/migration/snowflake/bitmap_bucket_number.sqlx": "73b27db7b686d6cc53339482880157e3f5446ac0d81d544b564bbf31dbef2f9b",
+  "udfs/migration/snowflake/factorial.sqlx": "b6d42c35cdfec4293a66a2cb84a4dbc9d66bd8d669d6bc9727b9d2b933e9a8a7",
+  "udfs/migration/sqlserver/convert_bytes_string.sqlx": "971049bb38169c4d88b73b70286e31ea904432c08cccbbd6bb582fde8fde4652",
+  "udfs/migration/sqlserver/convert_datetime_string.sqlx": "177aa7bd63e9819d66b69cc99bb9ffb1484b6e6892dc5a1b1522e09f1dc2c280",
+  "udfs/migration/sqlserver/convert_numeric_string.sqlx": "ea2a7dd2c6f2e9eadbc9b516f8435b143d32c1c1db69d87237d9f030d83e3513",
+  "udfs/migration/sqlserver/convert_string_bytes.sqlx": "9ab105a554746239c49a2dabd111cc8c226ce36c3bb21ded69754bfc1a82d873",
+  "udfs/migration/sqlserver/convert_timestamp_string.sqlx": "d8acd8057b61e01e546cbf9cdc320ba4f61f02d6828ac091711d829d62e894e3",
+  "udfs/migration/teradata/chr.sqlx": "3ca195436ae2cd80ea37e0bc732c5f765f56514ec642dc2f964a209716818e6e",
+  "udfs/migration/teradata/decode1.sqlx": "17d27296094acbd27d7095dfdfc2a085e607e2f6de20a7d44664270e2f09d703",
+  "udfs/migration/teradata/decode2.sqlx": "c3c210de1b63baa3339700f6f9d69c837b491eda4e67491fa3a8c18f659ce7b3",
+  "udfs/migration/teradata/decode3.sqlx": "dd22df4641870bdcea1c2f9cbc4be9aac6a4e75cadc89da20eaf2895f5959898",
+  "udfs/migration/teradata/index.sqlx": "24e19d9cb5ad07e0de6b351b102b30343112de4928e078a143c72316239615e5",
+  "udfs/migration/teradata/instr.sqlx": "a26c34a857b2816b10a698cca0d5a2d087a6f711e90552db22df6e6a6c695ec0",
+  "udfs/migration/teradata/left.sqlx": "14393c7a61d84533e542bc1a1ced67ffb20e29d74c8adf1ae938d8f5c50c975f",
+  "udfs/migration/teradata/months_between.sqlx": "96bca69662e76dc345e1a34f3e22dd45383ea9dff77efc4966a8017e87fd17d5",
+  "udfs/migration/teradata/nullifzero.sqlx": "c6f1779daff4ac8af2c9db9f791f763937781d1889c2b9cfae0ec9e7e8064939",
+  "udfs/migration/teradata/nvl.sqlx": "2d6d2286acfcffc1b60f1d4d521a04d490365eb94198adfce599b4a246c137b3",
+  "udfs/migration/teradata/nvl2.sqlx": "e5005c27d54cb3f43aba48270d0d18093eb56d422c48dbdb6434ec0c5ff65d31",
+  "udfs/migration/teradata/otranslate.sqlx": "cec8d67bb911c9e16f08c840cdc49bca9267a3418a9d41865806246199d98b78",
+  "udfs/migration/teradata/right.sqlx": "52094fd29f553ed4ce4917cd7aea6fa3f7a781fa793aaa558702f6e59d389984",
+  "udfs/migration/teradata/zeroifnull.sqlx": "20d41e113eed3dba800c4b57976a0db10c2ea7ab9266d095fff6e5f151566ce2",
+  "udfs/migration/vertica/lowerb.sqlx": "4ca65a8dbf75628a7f14ee15ccbbc956263e2c4fcd8b7989de0ea52f0ca48f8f",
+  "udfs/migration/vertica/substrb.sqlx": "3f2bc368f7af228aa0876f16e58aeeefdf4a14a389801b679abdbbfa244c2950",
+  "udfs/migration/vertica/upperb.sqlx": "5587db19764921dbf3c1b1806e06131cf098a70b8780339b7b39ad921d259dcf",
+  "udfs/community/test_cases.js": "bd12d2037df3c504a9532463c1a21589d2314902a8a0bcc7f209356876aaad2b",
+  "udfs/migration/oracle/test_cases.js": "e488f1b7b0071663a8eee4ad7b55d921232f8ba30e5fd64d518f5f41c85b333e",
+  "udfs/migration/redshift/test_cases.js": "ce16a2cc811b846f341cd445a8b851448e895ef7007c4f8fdc38ad209704e6c6",
+  "udfs/migration/snowflake/test_cases.js": "232e1298b40901ec4e01ed42135d15d37f69bee8f4d0bfca025778418931d4fd",
+  "udfs/migration/sqlserver/test_cases.js": "c0534bf0c4e83ee250ed3c6d7cf96debfed8244a04af949d9216ff3528ed10ad",
+  "udfs/migration/teradata/test_cases.js": "acf71187641192cee658008ce3344d9f48faf7e9c1c3650caa81667ee29b716c",
+  "udfs/migration/vertica/test_cases.js": "b796fbce244b150a2bf7cae0f5dd47fa9211898e4b7cc04b61845f04e0113201"
+ },
+ "udfs": [
+  {
+   "folder": "community",
+   "name": "azimuth_to_geog_point",
+   "language": "sql",
+   "sha256": "c52d8694917214d072171e926d4c0d346d9295f3e7774edd4fd907ef2e2cbee9"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_add",
+   "language": "js",
+   "sha256": "902494edd6472044cab42691c80f837ec3fcbc6304dfafc6e406c56527c10c1f"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_avg",
+   "language": "js",
+   "sha256": "80ff501471bf19515891b35c5046dba1976b95ff1fe74fb594efaeb8a59cd3b2"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_div",
+   "language": "js",
+   "sha256": "95b71d13f5f67f57309225a956a06f3bb62987a23e0b2c7b7737a4047ffa6353"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_eq",
+   "language": "js",
+   "sha256": "4f7f3597116a1a87d3a1d8bf4a79c4965bd2ef2db8161cf726d0ab002af01444"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_gt",
+   "language": "js",
+   "sha256": "c9acd598b2ebcc3f9d67e7d82ce70ea8c3bf8b889439949493c9959e24834c64"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_gte",
+   "language": "js",
+   "sha256": "526d6a1f053a42abc6568e108ce5b88a96a70d36889ebc023f084dd149282d41"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_lt",
+   "language": "js",
+   "sha256": "1becc03e2d4100695f476136188cb92f121e51cbe3db4a32ed45578c2052bcff"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_lte",
+   "language": "js",
+   "sha256": "c9ef9f4f9fd6dfbbb8291c28fa2cba11374ceae632d08c1407a55c26f7d7fc2d"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_mul",
+   "language": "js",
+   "sha256": "711bfe2d7edf0d80cc2081fbbd4d5b98e8a3845eadd798ff5d4d4442df93e407"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_sub",
+   "language": "js",
+   "sha256": "c1ad5f38071b1afa49a77760d129efc133f837813f6413bbcff9efca885ef7a6"
+  },
+  {
+   "folder": "community",
+   "name": "bignumber_sum",
+   "language": "js",
+   "sha256": "a83bd7a92028ae9b49d68c9ec09a95b5069b1eb4fc245b4c46afec90a42ab4d9"
+  },
+  {
+   "folder": "community",
+   "name": "chisquare_cdf",
+   "language": "js",
+   "sha256": "ae63a0a5678ef542f344cc2552bb3085b1c67dee7789b4e878d81b62acc32f15"
+  },
+  {
+   "folder": "community",
+   "name": "corr_pvalue",
+   "language": "js",
+   "sha256": "ea5f15e13d74274ff426bac2af3e75d9a974674143d4b539150d5e1f015ee2f7"
+  },
+  {
+   "folder": "community",
+   "name": "csv_to_struct",
+   "language": "sql",
+   "sha256": "07a2e1a4ce8d5f536912dc09ecc5340e9e328093aa2d68c6d5daaa70a76b8b38"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_compact",
+   "language": "sql",
+   "sha256": "5399d75bb29fc7ccf7674ad81938d9da821bc58472dd1583c0f39eee0af73103"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_distinct",
+   "language": "sql",
+   "sha256": "5ed1590c38941fdf895809ce312b97b932f748368dafeff94c9ceb575a54faa5"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_max",
+   "language": "sql",
+   "sha256": "9dfa5ba7aa74950d802579c930782c1f8b09490a9f51f7b0a89b0171ec76b369"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_median",
+   "language": "sql",
+   "sha256": "1021f95b0e9d1b6456b12ac2470eadc98c6aa1d0b15e2c3013b3a7c209e6fdad"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_min",
+   "language": "sql",
+   "sha256": "5d19e5118d873c58f4e0f034a6ab844659ac15fba9a5e4d918b7a753ac4f8a49"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_overlap",
+   "language": "sql",
+   "sha256": "b9042202fc08d1463985d30b71fa124c8aa0fc98b0f5f56ef2fce8210f621936"
+  },
+  {
+   "folder": "community",
+   "name": "cw_array_stable_distinct",
+   "language": "sql",
+   "sha256": "e46cff4182408f1c73a43b4e1d3ffecd4e07d0c117b3d1c6053238e7a92c6594"
+  },
+  {
+   "folder": "community",
+   "name": "cw_comparable_format_bigint",
+   "language": "sql",
+   "sha256": "f59171298c0accac5974a298c259d696119cb87e22b10f3e96e660eb827ecfdb"
+  },
+  {
+   "folder": "community",
+   "name": "cw_comparable_format_bigint_t",
+   "language": "sql",
+   "sha256": "b1678bc7964cdaccd2372d2bdbb3ecf3a7bc84b62042413e2ca0147fc763cc6a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_comparable_format_varchar",
+   "language": "sql",
+   "sha256": "af082cfc2dd9bc725a9874e60407cdbb7d9472d8b3ac81846ac743f55be9be64"
+  },
+  {
+   "folder": "community",
+   "name": "cw_comparable_format_varchar_t",
+   "language": "sql",
+   "sha256": "20428379757132c05448f8c7741a756853cad14225512676f216ecabd08a8579"
+  },
+  {
+   "folder": "community",
+   "name": "cw_convert_base",
+   "language": "js",
+   "sha256": "4f1e3f5024013537f15181c0256196582508bbc03d38df721e0ad5524bb22e51"
+  },
+  {
+   "folder": "community",
+   "name": "cw_csvld",
+   "language": "js",
+   "sha256": "53a07746a47db567e5e7370170421de881b93481acecff323fde59a93784999a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_disjoint_all_partitions_by_regexp",
+   "language": "sql",
+   "sha256": "0642cdd858830f199b91a8f26b42a9cc61a2714f03fed83ffec11e0bcb6e172d"
+  },
+  {
+   "folder": "community",
+   "name": "cw_disjoint_partition_by_regexp",
+   "language": "sql",
+   "sha256": "0dc56fdd657fe0c671715fb3f4c84d9f04bab869d18dcdc08281ad57b015bc7c"
+  },
+  {
+   "folder": "community",
+   "name": "cw_editdistance",
+   "language": "js",
+   "sha256": "721f242fb750a033259e7b3762bc4d81934a8e102726341456a8d781efaf4e26"
+  },
+  {
+   "folder": "community",
+   "name": "cw_error_number",
+   "language": "js",
+   "sha256": "8f64cbf4d50ad936cfc5cea741cc1f75a80ce4f5634536de0da4b58781f48780"
+  },
+  {
+   "folder": "community",
+   "name": "cw_error_severity",
+   "language": "js",
+   "sha256": "8f64cbf4d50ad936cfc5cea741cc1f75a80ce4f5634536de0da4b58781f48780"
+  },
+  {
+   "folder": "community",
+   "name": "cw_error_state",
+   "language": "js",
+   "sha256": "8f64cbf4d50ad936cfc5cea741cc1f75a80ce4f5634536de0da4b58781f48780"
+  },
+  {
+   "folder": "community",
+   "name": "cw_find_in_list",
+   "language": "sql",
+   "sha256": "e24c2c6b01e648729cc0354bc960d1ffab6856011a8b3a03551720df6a72bb45"
+  },
+  {
+   "folder": "community",
+   "name": "cw_from_base",
+   "language": "sql",
+   "sha256": "8e1b606188c51609261d30cb4ab98e62c880a8e8fb5138e34f7469dae73fb3e2"
+  },
+  {
+   "folder": "community",
+   "name": "cw_getbit",
+   "language": "sql",
+   "sha256": "e577e80566d1e6ae237e2307f578d3917e59af8713cc00854b97028fcbb93890"
+  },
+  {
+   "folder": "community",
+   "name": "cw_getbit_binary",
+   "language": "sql",
+   "sha256": "3e31e936ce891104224ed186986feb77e5742b500500a5b4de0d8df891f5bc87"
+  },
+  {
+   "folder": "community",
+   "name": "cw_initcap",
+   "language": "sql",
+   "sha256": "d9c6f7aa0d64daa61e1e090b1ebd2c88b9c9ff96c384287ba0c024d50a923d9e"
+  },
+  {
+   "folder": "community",
+   "name": "cw_instr4",
+   "language": "sql",
+   "sha256": "b51923b77a636eac6a02fe885b09b4262238c3261615407e60e264aa7c09d5e9"
+  },
+  {
+   "folder": "community",
+   "name": "cw_json_array_contains_bool",
+   "language": "js",
+   "sha256": "5c1470f6a3b3c5fd084758b577d8152e433172fd724c4a6ebf996ff429a37d0a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_json_array_contains_num",
+   "language": "js",
+   "sha256": "321bcf6bced86c4b3cf19869f67e82cc2b10adfdc3a8ab2f23cdd78af067a046"
+  },
+  {
+   "folder": "community",
+   "name": "cw_json_array_contains_str",
+   "language": "js",
+   "sha256": "891788ed2bf998c5936033d6ba04d40693ff1bdc26a9a223e50964f377a8daa8"
+  },
+  {
+   "folder": "community",
+   "name": "cw_json_array_get",
+   "language": "js",
+   "sha256": "5676715d8f13e41e208ff76934ba6024f056910197c7fddb94dd544b586bba05"
+  },
+  {
+   "folder": "community",
+   "name": "cw_json_array_length",
+   "language": "js",
+   "sha256": "a84297702b52d0552312473715b9ff716e563144622f7e4da1044cf33f0fcd97"
+  },
+  {
+   "folder": "community",
+   "name": "cw_json_enumerate_array",
+   "language": "js",
+   "sha256": "f0520c29a499b3e73f2d01166378cb78beab236f57e97e9689870ee734b2fb29"
+  },
+  {
+   "folder": "community",
+   "name": "cw_lower_case_ascii_only",
+   "language": "sql",
+   "sha256": "dae344559c786e442ed46d43de8fc7e10133850df09c132798f6b6f3ffc897a7"
+  },
+  {
+   "folder": "community",
+   "name": "cw_map_create",
+   "language": "sql",
+   "sha256": "babc58abbd8be65635acbaa83b52b0b38c0cf00550b4f765e7fba2a8a2017d56"
+  },
+  {
+   "folder": "community",
+   "name": "cw_map_get",
+   "language": "sql",
+   "sha256": "02d436ca5dcdbd35dd32123765ce090444a79c44f7551acdefb32d36134fe9e2"
+  },
+  {
+   "folder": "community",
+   "name": "cw_map_parse",
+   "language": "sql",
+   "sha256": "942aaf9bc555ed50abb8b8542357e499fc8a52aa92f97ee1c1ed666c7afbb0c7"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_boolean",
+   "language": "js",
+   "sha256": "db06d92e72764ad71ef803aa29afb5254c23da6f63cadd2bb4efbe19fefe32f3"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_bytes",
+   "language": "js",
+   "sha256": "7de56262f42e27895f1b27ae08dd04893db59063f6703c8538af9cc1f54dfd0a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_date",
+   "language": "js",
+   "sha256": "0075fc451c16724f555a0623c12590134658fbe863946559a70a8d53b236f6e4"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_float64",
+   "language": "js",
+   "sha256": "2163677e24cb180608e55b9a9fb7aeea48f9ff510335abc4cf34461c7b9a6f73"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_int64",
+   "language": "js",
+   "sha256": "70d8e1d5ac520e563f8ae57696f3254310b7b71a8c0e88e5fb4b1bdcd9d3a495"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_json",
+   "language": "js",
+   "sha256": "19ff439a6b805a14ca7a1da26b419c09fb571858059abab69034d4dae2fcdc73"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_numeric",
+   "language": "js",
+   "sha256": "a6f275d31e842e0915ab4f6d149e427bcf1d1170a4b6a229274f1997b792c824"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_string",
+   "language": "js",
+   "sha256": "69fc5947080a69ce0e97f2769aca9cc461087b5073f228b23efa71888a46ecb3"
+  },
+  {
+   "folder": "community",
+   "name": "cw_mode_timestamp",
+   "language": "js",
+   "sha256": "f2ba68baf1668beb0ac45498501970622cd81da536e42f232c1ac32e57a86cd3"
+  },
+  {
+   "folder": "community",
+   "name": "cw_months_between",
+   "language": "sql",
+   "sha256": "82fdd46bef0fb66afe45048e8b83d2fa821df4b410ed28d98e90b93fc808f6dc"
+  },
+  {
+   "folder": "community",
+   "name": "cw_next_day",
+   "language": "sql",
+   "sha256": "5b37cfa55939d49a269c4998be50b8244864b1d88e010d54d0016037cb1f64e1"
+  },
+  {
+   "folder": "community",
+   "name": "cw_nvp2json1",
+   "language": "sql",
+   "sha256": "bf0dc8cbe9066234e16e06398c6fe02efb9f28cc80020a478c71c45c1dbb6f1a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_nvp2json3",
+   "language": "sql",
+   "sha256": "b8cda2dcd4da4dc83afec51ec5eff82e837cb83b12bb700b3b4fe8bc8343f2fc"
+  },
+  {
+   "folder": "community",
+   "name": "cw_nvp2json4",
+   "language": "sql",
+   "sha256": "20c1172e8bfc623822dddb302b618395effe56386339890593cbc1fcf83ed79c"
+  },
+  {
+   "folder": "community",
+   "name": "cw_otranslate",
+   "language": "sql",
+   "sha256": "9374e13749b944f4ee4dfa96ab844b85a0fb23c0f6263c9ba5057f481a0d49c5"
+  },
+  {
+   "folder": "community",
+   "name": "cw_overlapping_partition_by_regexp",
+   "language": "sql",
+   "sha256": "77125cc0946c9c0efbd0466240a186a612304dfb880f4ac6bbc0901bcd68e243"
+  },
+  {
+   "folder": "community",
+   "name": "cw_parse_timestamp",
+   "language": "js",
+   "sha256": "f37befa89008f2082e41e9102abe25afe0ec9da1e7259ac8302d22791dc1eb06"
+  },
+  {
+   "folder": "community",
+   "name": "cw_period_intersection",
+   "language": "sql",
+   "sha256": "e1f4cc9fd74689bf9b35c69c7e6be0383a8964a6ce560b46af9b89314be28091"
+  },
+  {
+   "folder": "community",
+   "name": "cw_period_ldiff",
+   "language": "sql",
+   "sha256": "4d775aa417028dc8539240b3e28a7f8c92b1a430d794f284dba39b177ad96f3b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_period_rdiff",
+   "language": "sql",
+   "sha256": "e6f7fb5ddad699a25460075a39880f90776701b35e47783136db147bae0bc7bf"
+  },
+  {
+   "folder": "community",
+   "name": "cw_range_date_ldiff",
+   "language": "sql",
+   "sha256": "c9388af442bc988be14a255941ba78be3522c37dcaefc03e452d6402ec53a856"
+  },
+  {
+   "folder": "community",
+   "name": "cw_range_date_rdiff",
+   "language": "sql",
+   "sha256": "76139d7dca15572912337e30b5dc9f1cb58c9283dd3c0afb4cccac88a652d04a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_range_datetime_ldiff",
+   "language": "sql",
+   "sha256": "3e76122e3a34c2f00efb135d9fa14d54917b2ccd2b413489eff017de85dbbf32"
+  },
+  {
+   "folder": "community",
+   "name": "cw_range_datetime_rdiff",
+   "language": "sql",
+   "sha256": "0582aafcafd36a192f3156f959019fef8b16595a28b0c26015597bd062a0e32e"
+  },
+  {
+   "folder": "community",
+   "name": "cw_range_timestamp_ldiff",
+   "language": "sql",
+   "sha256": "6457475bd993f871b598996b121c56fc295d3308051b46b1c53902ee7db407a2"
+  },
+  {
+   "folder": "community",
+   "name": "cw_range_timestamp_rdiff",
+   "language": "sql",
+   "sha256": "11430738bdd711af362d83e53674bfc249aae601405f26ac52623911d8b53280"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regex_mode",
+   "language": "js",
+   "sha256": "8e306fb76e124c21446943cd1e4fa9e3e4dbf8c2fa8219fee7023fa630ae7de1"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_extract",
+   "language": "sql",
+   "sha256": "f22bc2244d4ec6a5e93dc87905787be2e7c388a4dcb171e52dfb774df3308544"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_extract_all",
+   "language": "js",
+   "sha256": "787110443bdb29df17d32bdfa4bceefe6c43540827077212b166ec853f93f2b6"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_extract_all_n",
+   "language": "js",
+   "sha256": "5f7ed93107f7983fa9b24eeef89e5e990a74756fcf69d73585ba961aeb0c5685"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_extract_all_start_pos",
+   "language": "js",
+   "sha256": "082cdd20c33fa4dc656f3841ac657276b099eb956987591ddcac2255cde2eb5f"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_extract_n",
+   "language": "js",
+   "sha256": "1d1246d53533e48e9a27f40002dcaf414c8b4135544dc340fde116f3e3e7c494"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_instr_2",
+   "language": "sql",
+   "sha256": "b968fc7e245912c4f25c7c4402982ca85faa24d0d295edc96b3c1724d5c79130"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_instr_3",
+   "language": "sql",
+   "sha256": "9d41f1c02b4e98db1e543d16f741c45ecc98caf8885c2a67163c927beb626616"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_instr_4",
+   "language": "js",
+   "sha256": "2ee43b07a15d9b0d133ac95bb4da6f86d44615f09b8be0a8e9602336a2bf2308"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_instr_5",
+   "language": "sql",
+   "sha256": "19500b37237c68935f21875679a5a9a73123d40f3de82d18b9b28b95811f406b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_instr_6",
+   "language": "sql",
+   "sha256": "1d8514e3b93360848251f823bc0ea76aa176c34442e45885f039de336d3abb1d"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_instr_generic",
+   "language": "js",
+   "sha256": "0306169c619f3ff3d977226d4d8ac29c706eba6b47045f64ee4b2b2eee53097c"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_replace_4",
+   "language": "sql",
+   "sha256": "77f7d69d2a8e4be1b9ef119999b2a40e8bc4a95c921d53bb93e8275c2442138f"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_replace_5",
+   "language": "sql",
+   "sha256": "e9ac1ceacfdc6a7b038f85a3a6079bf76050f1c1235655e4e0cac51502fe5b2b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_replace_6",
+   "language": "sql",
+   "sha256": "6b357b297eb86215a728df4f55c1e14494df85d633226db459b73f15d081076d"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_replace_generic",
+   "language": "js",
+   "sha256": "564090ff32e072649fc95a03efa391cc61a2d5b40b0b5e386ecead18d081eece"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_split",
+   "language": "js",
+   "sha256": "7d15190e34a08e57f52767f32ca9a88f8c1b98500e74189fb66990a28b703fb9"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_substr_4",
+   "language": "sql",
+   "sha256": "6c4109dcd362bbbef9d7b0623572e3ee1f36c83ac25de612a6098e6c8057d393"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_substr_5",
+   "language": "sql",
+   "sha256": "ab484592a0bf5a9ce62cc414c94e3ad96acef0fc600f2f6d0d3b60bce948741c"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_substr_6",
+   "language": "sql",
+   "sha256": "349cd7f06b11997b1bbfc77a89308c0406db8e56c56ca9c470b5fb0cb0ba684f"
+  },
+  {
+   "folder": "community",
+   "name": "cw_regexp_substr_generic",
+   "language": "js",
+   "sha256": "b146433da58ae30d9e1efaa3babdd3442ac9a82d8f4393a0c400dd89aa0c2100"
+  },
+  {
+   "folder": "community",
+   "name": "cw_round_half_even",
+   "language": "sql",
+   "sha256": "78983d5a15bdf3d86299e394b949285e79db2326e960cc52370614e63624d822"
+  },
+  {
+   "folder": "community",
+   "name": "cw_round_half_even_bignumeric",
+   "language": "sql",
+   "sha256": "d58342f7c8e82d9646eee43a4c518158b17e091c2313d03b26587ae7c3d37b14"
+  },
+  {
+   "folder": "community",
+   "name": "cw_runtime_parse_interval_seconds",
+   "language": "sql",
+   "sha256": "80b56fd5641f7e322a5f728975d498551a2aeda1b44bdeb35fced401141cad93"
+  },
+  {
+   "folder": "community",
+   "name": "cw_setbit",
+   "language": "sql",
+   "sha256": "2606b9e440151eaa166d81d1901fbb42cb4cbd067be2311dd3eded792aff43c9"
+  },
+  {
+   "folder": "community",
+   "name": "cw_signed_leftshift_128bit",
+   "language": "sql",
+   "sha256": "eedfc017c07d75bc8ce16e21077bdf1d9bce6e518fd2e6ad6e5867c4692f4173"
+  },
+  {
+   "folder": "community",
+   "name": "cw_signed_rightshift_128bit",
+   "language": "sql",
+   "sha256": "6394dbd3042ebdd81c8cd5237ff4022c9efcfe24b0e0050179e910177149e107"
+  },
+  {
+   "folder": "community",
+   "name": "cw_split_part_delimstr_idx",
+   "language": "sql",
+   "sha256": "df8d355b4a6c3916904f0ded5391d01631e69da17e447c5989aa9b4a8750fc12"
+  },
+  {
+   "folder": "community",
+   "name": "cw_stringify_interval",
+   "language": "sql",
+   "sha256": "1344a0c572dd64c3766534353cd2c9694aded3dc5bda7a94c090b0db0cb58e96"
+  },
+  {
+   "folder": "community",
+   "name": "cw_strtok",
+   "language": "js",
+   "sha256": "46df3d14baefd0eba95ffefdff26af9d459f249a944a750fffdce4bf899533f0"
+  },
+  {
+   "folder": "community",
+   "name": "cw_substrb",
+   "language": "sql",
+   "sha256": "8aa42a0023a0e0e9ed42785d527a4046767c5d8fa95ef0e9507961ec5f69eb41"
+  },
+  {
+   "folder": "community",
+   "name": "cw_substring_index",
+   "language": "js",
+   "sha256": "4b0a7a7c6aa8ec95d0f2c421bbb58ecebc7987804f707a63775cae3c5bcc1ecc"
+  },
+  {
+   "folder": "community",
+   "name": "cw_td_normalize_number",
+   "language": "js",
+   "sha256": "aa8923cb5ad975e157ecd4228496feb7ca6f1fd24b4321f92f687d5e29e18fb3"
+  },
+  {
+   "folder": "community",
+   "name": "cw_td_nvp",
+   "language": "sql",
+   "sha256": "1e9fb887bff26fb33f03b6d547fa095c315e8e6e5f977051a20aa9baff65b752"
+  },
+  {
+   "folder": "community",
+   "name": "cw_td_strtok",
+   "language": "js",
+   "sha256": "bee9c6453b494196baff063eb967be1ab23de01c09f4c3018c8a5ef8f0925a9e"
+  },
+  {
+   "folder": "community",
+   "name": "cw_threegrams",
+   "language": "sql",
+   "sha256": "f506e234356568c1321b571f24092f8365fe919d430b8aeef9fac004a881b083"
+  },
+  {
+   "folder": "community",
+   "name": "cw_to_base",
+   "language": "sql",
+   "sha256": "a7524d663326aaa1623ac2b13dfdf4b9e4636062a1a0416285ae1cbefe798d05"
+  },
+  {
+   "folder": "community",
+   "name": "cw_to_xml_string",
+   "language": "sql",
+   "sha256": "2088b5caf1a144996236edafd4b849d245070237ddda4f444e95f2b9bfdf7411"
+  },
+  {
+   "folder": "community",
+   "name": "cw_ts_overlap_buckets",
+   "language": "js",
+   "sha256": "fbbf75d48d6ef121517f33b62923ea06c7347228bdf21cb143b29bf2493235f3"
+  },
+  {
+   "folder": "community",
+   "name": "cw_ts_pattern_match",
+   "language": "js",
+   "sha256": "71c56c75e69e9b448a59d936ba32086ccc6da46a5a1118c075e2f139880f3dc1"
+  },
+  {
+   "folder": "community",
+   "name": "cw_twograms",
+   "language": "sql",
+   "sha256": "856f64a614290c60f29d492eb744fa9f1b9119ce0b1dba8e8993b796c308c8bf"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_decode",
+   "language": "js",
+   "sha256": "ef80691e963b8967de03f9d2df6ca04d1694d45fded7436acc59f1e1c26f1626"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_encode",
+   "language": "js",
+   "sha256": "e6ab02e4b8bfecc6057f07a40e14295c1cf567bdc5af0eac9d4a23ed3d416bbb"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_authority",
+   "language": "sql",
+   "sha256": "439d8e39f0f4bdc21d8cddfd4ff626ef70c5ad3f54328b6e1c2dcc432b52efb5"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_file",
+   "language": "sql",
+   "sha256": "bc43b61dea8e18a305ca828af31ed4bbe6c89c1211e1d35bd6906073ac0605c3"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_fragment",
+   "language": "sql",
+   "sha256": "0345ae80e829d2ceff079b05fdf04259e82a4c7ad89dc9480095580f8872e174"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_host",
+   "language": "sql",
+   "sha256": "4c0a663d5148f75260b2f4d3860ed91190b6843b86fd5359a3c95cf3a58a512b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_parameter",
+   "language": "sql",
+   "sha256": "b4e701bb9f9e4fd30caf2995a17bf89c85197b062c15761dcdabcc0e6ab98502"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_path",
+   "language": "js",
+   "sha256": "b41eb004ffa4e6a9846601d4384ad7aa5c535535f471c53e70a2364c9a44c28b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_port",
+   "language": "js",
+   "sha256": "ff63bcd00156521726739cf33ed42da2735a761a4fe14a22894a07387effd01a"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_protocol",
+   "language": "sql",
+   "sha256": "fd0e3a3e283fd3588ae7dc701d693b9105d42681bde5cebca7c5a0f71d2d91e2"
+  },
+  {
+   "folder": "community",
+   "name": "cw_url_extract_query",
+   "language": "sql",
+   "sha256": "f7c0f23830a3777a1027b3f6eaf9b235185c71efb29f96f26a446b7aac56d21f"
+  },
+  {
+   "folder": "community",
+   "name": "cw_width_bucket",
+   "language": "sql",
+   "sha256": "9b984c373385bb73d62d61e8022f03b8496a705273f5514028fa22783369573b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_xml_element",
+   "language": "sql",
+   "sha256": "4a705d54a68b9ccd7a7f485e792d0ff6fa0152640deed0d72da7c86e744c959b"
+  },
+  {
+   "folder": "community",
+   "name": "cw_xml_element_with_attributes",
+   "language": "sql",
+   "sha256": "d690b8886cb18f63690b8bbe7559dce9c0b645ed50a90a9665e958d110048f48"
+  },
+  {
+   "folder": "community",
+   "name": "cw_xml_extract",
+   "language": "python",
+   "sha256": "c9101ee5aa5164c06bfb92b5ba37437cd913a1ce9546a2f820d12f612cdd9a96"
+  },
+  {
+   "folder": "community",
+   "name": "day_occurrence_of_month",
+   "language": "sql",
+   "sha256": "cac041c2dd2e9fa08c1749d67e8bc2b2e6e8fd27bf508efe896fcf1ea2d26ef4"
+  },
+  {
+   "folder": "community",
+   "name": "degrees",
+   "language": "sql",
+   "sha256": "176081ac2b4d8414d49b5cc71cf880178f6b7eb21bd4845bc9a9bd573876a2ec"
+  },
+  {
+   "folder": "community",
+   "name": "exif",
+   "language": "sql",
+   "sha256": "b7d5bb2985907daa6095f1f42c21a6115aa1c715ffde251557e0bb1dcaf19612"
+  },
+  {
+   "folder": "community",
+   "name": "exif_udf",
+   "language": "python",
+   "sha256": "2496662fbf230003e07dd7a22b7b72dcf11cb9c0cd601967deac063e6b99efeb"
+  },
+  {
+   "folder": "community",
+   "name": "find_in_set",
+   "language": "sql",
+   "sha256": "daf472a4efff70bb3d00db1829ab3822ed6d455f5318e18aa22acfe0c623e583"
+  },
+  {
+   "folder": "community",
+   "name": "freq_table",
+   "language": "sql",
+   "sha256": "fe495bb1ec0f5fea79a803c8f925f05dbd33f36fa2fe5a34ee9f4be1d594dece"
+  },
+  {
+   "folder": "community",
+   "name": "from_binary",
+   "language": "sql",
+   "sha256": "ffbf5009f94a831b5727f3141a1d8fb954daa41f3503d299e9e5f17650379f11"
+  },
+  {
+   "folder": "community",
+   "name": "from_hex",
+   "language": "sql",
+   "sha256": "b24b7e846350736ec34e0374e3fb76b7d32175a6aac1ec4e8477b99395149269"
+  },
+  {
+   "folder": "community",
+   "name": "get_array_value",
+   "language": "sql",
+   "sha256": "a3772febec334f662683f00eeed34a0f157036770a1fde81dfba644c58fecdec"
+  },
+  {
+   "folder": "community",
+   "name": "get_value",
+   "language": "sql",
+   "sha256": "2adcee75c90f2d4389af37684d4350a2c2f509414c3fd4b488a509fa96bafcfe"
+  },
+  {
+   "folder": "community",
+   "name": "getbit",
+   "language": "sql",
+   "sha256": "03f659cb6ea436ebd5f88056343e356558299a1f8c066e8d2022276f6b131cfc"
+  },
+  {
+   "folder": "community",
+   "name": "gunzip",
+   "language": "js",
+   "sha256": "904c534a637cede22cc3411e5b401076e7bfa139c45ec11570fdda23317f919f"
+  },
+  {
+   "folder": "community",
+   "name": "int",
+   "language": "sql",
+   "sha256": "d3ff3a13801a09eb5dfff6ea59fc6788f5bd2d4111eb9ee13a66435ef7c6fbde"
+  },
+  {
+   "folder": "community",
+   "name": "interval_micros",
+   "language": "sql",
+   "sha256": "9dc70604f4c01ea673220e6eafbbde7ca73e542bb4f7f64932aa20428f61108d"
+  },
+  {
+   "folder": "community",
+   "name": "interval_millis",
+   "language": "sql",
+   "sha256": "08f760b6afd25979e083bad78d10656dc45ec226d2a4ff8ed0cc524f2ce16d45"
+  },
+  {
+   "folder": "community",
+   "name": "interval_seconds",
+   "language": "sql",
+   "sha256": "a518963e8b965015484aa333c86390445dad6ce9b508c98865556ba7671f36f1"
+  },
+  {
+   "folder": "community",
+   "name": "jaccard",
+   "language": "js",
+   "sha256": "e71fbab4e5f21a51b9daa0106af0869d321e75e8901ba91340a3e2626107c8f9"
+  },
+  {
+   "folder": "community",
+   "name": "job_url",
+   "language": "sql",
+   "sha256": "088d36d48fdf24ff17e3ac826614d2cc00c14aa6d832fc15cb3cf5a33caa2508"
+  },
+  {
+   "folder": "community",
+   "name": "json_extract_key_value_pairs",
+   "language": "js",
+   "sha256": "ad3476eb2c6ac2f3e8b3c8006fdfb39fa0c853fc51675a0de461fd00765c5bd3"
+  },
+  {
+   "folder": "community",
+   "name": "json_extract_keys",
+   "language": "js",
+   "sha256": "d58f28df08ac259619e12eb4a54e6be5ce327d5603106ec9adf213b80b0bb3a5"
+  },
+  {
+   "folder": "community",
+   "name": "json_extract_values",
+   "language": "js",
+   "sha256": "b01665f4ff641dc11df8f25cf722eea4ded531062091cc5d77b58b248c068d6c"
+  },
+  {
+   "folder": "community",
+   "name": "json_typeof",
+   "language": "sql",
+   "sha256": "e2f295006811b8081e613e1a032a45bdb285df044ffd64228cc3dc01a1054f83"
+  },
+  {
+   "folder": "community",
+   "name": "knots_to_mph",
+   "language": "sql",
+   "sha256": "85d0be9546d59d45087112b8b96cfda27bd78287cf3f3a076127590839d8b1ac"
+  },
+  {
+   "folder": "community",
+   "name": "kruskal_wallis",
+   "language": "sql",
+   "sha256": "97e3942436ccd73003c03a863c586f5cb0cbd1245c2b5f2da810eb64eb5f14dc"
+  },
+  {
+   "folder": "community",
+   "name": "levenshtein",
+   "language": "js",
+   "sha256": "afa47e5e1e6ded43c878802c30d528d8d1e19d1e66442a2f607bbb1a7cc6d26d"
+  },
+  {
+   "folder": "community",
+   "name": "linear_interpolate",
+   "language": "sql",
+   "sha256": "92c2aedc58d63fa0ebbdd12a0948d09de6138659f97576e248395ec41bcc564a"
+  },
+  {
+   "folder": "community",
+   "name": "linear_regression",
+   "language": "sql",
+   "sha256": "8da8b8d4c875c4b8a31f856ab8f558b7538f70920d4a87dea39e317c90461bdd"
+  },
+  {
+   "folder": "community",
+   "name": "mannwhitneyu",
+   "language": "sql",
+   "sha256": "b9364f3d5c37648c5a8bccd295301119cbe50e8765ee0fd64e95cdc30cb6ac60"
+  },
+  {
+   "folder": "community",
+   "name": "median",
+   "language": "sql",
+   "sha256": "98bce152b8b6e15832ac6d6d53f212bff9945c64255189d07bd8b037b59fa28e"
+  },
+  {
+   "folder": "community",
+   "name": "meters_to_miles",
+   "language": "sql",
+   "sha256": "1683f81ceed64202aa392786a50d2b945eca898196bd0c3f5bca70025842e5db"
+  },
+  {
+   "folder": "community",
+   "name": "miles_to_meters",
+   "language": "sql",
+   "sha256": "63c780c27a5b54808eee0fedc5fd1d844284a715b3ffddc38d7d76a69d729f1b"
+  },
+  {
+   "folder": "community",
+   "name": "mph_to_knots",
+   "language": "sql",
+   "sha256": "97588a2a9ff1da011f385d1906666d452065013c7ef5491bc985ecb1c6b80f3d"
+  },
+  {
+   "folder": "community",
+   "name": "multiply_full_scale",
+   "language": "sql",
+   "sha256": "b3de17c3b91349160392622e12fb8ce5d987fc84d97bf1b4c54f8e5c1195569a"
+  },
+  {
+   "folder": "community",
+   "name": "nautical_miles_conversion",
+   "language": "sql",
+   "sha256": "e93b0dfe583580e96516878b7e8125a418ca55463a524d87188a7d849c11b687"
+  },
+  {
+   "folder": "community",
+   "name": "nlp_compromise_number",
+   "language": "js",
+   "sha256": "ece6969e688f54bf4d7daf45ee7a936a4c1f4c89a954a0b28f177facedd6f370"
+  },
+  {
+   "folder": "community",
+   "name": "nlp_compromise_people",
+   "language": "js",
+   "sha256": "41b68229c3a545f6dc7b0145ac94b9c99e2df6fa5a2b452278e74f905883b9f2"
+  },
+  {
+   "folder": "community",
+   "name": "normal_cdf",
+   "language": "js",
+   "sha256": "3481e379f6a4a646988047bb10d6915f16d31382a3784fcdf5baa0b42c73d20d"
+  },
+  {
+   "folder": "community",
+   "name": "p_fisherexact",
+   "language": "js",
+   "sha256": "416125f7b0d460805bc682282935391cef375c254bd7c872ff50a4ac537360bb"
+  },
+  {
+   "folder": "community",
+   "name": "percentage_change",
+   "language": "sql",
+   "sha256": "d51355a6cc767d3643f8fb9923972919244b8e404edbf25d3f344cef8d12ac27"
+  },
+  {
+   "folder": "community",
+   "name": "percentage_difference",
+   "language": "sql",
+   "sha256": "a511a30bf19c301ad3cf223938b7f99ebf5cf1b9a0901b13134d0b94ae540b19"
+  },
+  {
+   "folder": "community",
+   "name": "pi",
+   "language": "sql",
+   "sha256": "ec2774abd906c58e6db9efa343c46335f8d732b8513dd2a9e76bdec4dc01dff8"
+  },
+  {
+   "folder": "community",
+   "name": "radians",
+   "language": "sql",
+   "sha256": "4b39ec2bf78178aecc544724076ae174c6ff1de94422dd08c26f944b0e4ce334"
+  },
+  {
+   "folder": "community",
+   "name": "random_int",
+   "language": "sql",
+   "sha256": "39f5069f32b2c4b95e0f27e9e3f43438228b3198b23707f55a02ce85fbad071d"
+  },
+  {
+   "folder": "community",
+   "name": "random_string",
+   "language": "sql",
+   "sha256": "9bb59ca74d3fd1f050db6e7cbe82239dfedeed42833586d9cd45a6ebc3df6a05"
+  },
+  {
+   "folder": "community",
+   "name": "random_value",
+   "language": "sql",
+   "sha256": "5403eace62d2db7cf01c10a11a4682b6d7f026a629a5a81f8644d57eca3acb13"
+  },
+  {
+   "folder": "community",
+   "name": "scaled_average",
+   "language": "sql",
+   "sha256": "3983f2a021c99dc5e23ee35c51d1b3909759383f5d6717c0aeec6eef7d94784a"
+  },
+  {
+   "folder": "community",
+   "name": "scaled_sum",
+   "language": "sql",
+   "sha256": "b70b4dad5e041d0c1905b429f5fbada1687a54bcc813416c6fab3a2d907ef052"
+  },
+  {
+   "folder": "community",
+   "name": "string_to_struct",
+   "language": "sql",
+   "sha256": "22601d3509cad14038eed2f49451861595795af5a2af5ca103ea4fe5fdc55ebc"
+  },
+  {
+   "folder": "community",
+   "name": "studentt_cdf",
+   "language": "js",
+   "sha256": "e2d623dcbb48a105ee3f28ad77c7d3aab634e33ef6b76c66272e2ff9422ccb0b"
+  },
+  {
+   "folder": "community",
+   "name": "sure_cond",
+   "language": "sql",
+   "sha256": "4082c6d411862d8a6c6adc5c4ab9fe95b132f2c94d39274adce61405d913979c"
+  },
+  {
+   "folder": "community",
+   "name": "sure_like",
+   "language": "sql",
+   "sha256": "4fc7a561a5fde61c5966544e76cc3ec53ceac96d5a4c8e0aeac2460bfc2ea74f"
+  },
+  {
+   "folder": "community",
+   "name": "sure_nonnull",
+   "language": "sql",
+   "sha256": "ea86ea2028ad822a5898d44bc5bfe2691b045b721166318f71d78e80e3c3347d"
+  },
+  {
+   "folder": "community",
+   "name": "sure_range",
+   "language": "sql",
+   "sha256": "8d5cf11d130ab408af1cb4964abb60b07c632ca31357b108fd9c743d012bede0"
+  },
+  {
+   "folder": "community",
+   "name": "sure_values",
+   "language": "sql",
+   "sha256": "dcfc0892a3534f1428b93de1cc4cc5879e90a8060e45417c99192aacee8f801f"
+  },
+  {
+   "folder": "community",
+   "name": "t_test",
+   "language": "sql",
+   "sha256": "7383d7724bbb487214632696592e98d2feddc2bcc4c20f55d0826325d15d0e7a"
+  },
+  {
+   "folder": "community",
+   "name": "table_url",
+   "language": "sql",
+   "sha256": "3d98e7d3eb712370fee0afeb1e0e1e493244f25472835e216c82439b32f4c315"
+  },
+  {
+   "folder": "community",
+   "name": "to_binary",
+   "language": "sql",
+   "sha256": "ec4cc6e7d25d227f0bfddbb6c5a8f04a498df6aa2a8382e9e08a9cf04d950f2e"
+  },
+  {
+   "folder": "community",
+   "name": "to_hex",
+   "language": "sql",
+   "sha256": "e75b726280b3e2bb4bd370342a374188f6631f73cc66c35541b3e3858d0e35fd"
+  },
+  {
+   "folder": "community",
+   "name": "translate",
+   "language": "sql",
+   "sha256": "cec8d67bb911c9e16f08c840cdc49bca9267a3418a9d41865806246199d98b78"
+  },
+  {
+   "folder": "community",
+   "name": "ts_gen_keyed_timestamps",
+   "language": "sql",
+   "sha256": "b45b2a4b584667c7d769bc54eafb95a12df6ceb848161dbdde223242ad8a5440"
+  },
+  {
+   "folder": "community",
+   "name": "ts_linear_interpolate",
+   "language": "sql",
+   "sha256": "9e9e10b7a7644ceaa8272af439c5c6a83e0ec0abff8600eed9eb7d6c4cccfc6a"
+  },
+  {
+   "folder": "community",
+   "name": "ts_session_group",
+   "language": "sql",
+   "sha256": "1054c3371387989d8b45f82209eb292e8decac5de526d278a8311fafe8844f95"
+  },
+  {
+   "folder": "community",
+   "name": "ts_slide",
+   "language": "sql",
+   "sha256": "552b4a19e8d4dfeb41dd10f49b0bad0057214b593be877d83a17e97491c33e81"
+  },
+  {
+   "folder": "community",
+   "name": "ts_tumble",
+   "language": "sql",
+   "sha256": "29a82b6a3f983893e35600f1efef61f1c47f69d33a8f88d8e5724e05247a2985"
+  },
+  {
+   "folder": "community",
+   "name": "typeof",
+   "language": "sql",
+   "sha256": "22ab20eb4b3ee78d024bf04baed769ec0e71743567bf9289d2ff98cca042495b"
+  },
+  {
+   "folder": "community",
+   "name": "url_decode",
+   "language": "js",
+   "sha256": "b9b21ac0745dfef0ff786e512f86f9d15d7ba3dc20504fd5b72acbca08e51971"
+  },
+  {
+   "folder": "community",
+   "name": "url_encode",
+   "language": "js",
+   "sha256": "7ee6aece14fbd5dee3991e666c8d90cb06e1432fcc11f3422bbc6e719525c3b1"
+  },
+  {
+   "folder": "community",
+   "name": "url_keys",
+   "language": "js",
+   "sha256": "45b8c702de5babc42032522a1e305368e3a223eaf37925cf76bb173df04c9ce2"
+  },
+  {
+   "folder": "community",
+   "name": "url_param",
+   "language": "js",
+   "sha256": "add235e0664f752dc3e07edd514ffab41e65dd7a365fba0f5556fd37003c0880"
+  },
+  {
+   "folder": "community",
+   "name": "url_parse",
+   "language": "sql",
+   "sha256": "3638d7fb64293c7615d4c00af9a0c3ed6dfa81b6f8066957e7abccdbb8d20ba9"
+  },
+  {
+   "folder": "community",
+   "name": "url_trim_query",
+   "language": "sql",
+   "sha256": "cfbe7cee1d2c70c2215efc1284cfb8467ab8726e21cfce19c8a24d0c2f6a647d"
+  },
+  {
+   "folder": "community",
+   "name": "week_of_month",
+   "language": "sql",
+   "sha256": "6bc92d1d0f2bb70cd2e41380b70f011c5b99373205820d871d0273e11e100256"
+  },
+  {
+   "folder": "community",
+   "name": "xml_to_json",
+   "language": "js",
+   "sha256": "c7a756d54875d17711c5c56d259fa2b5f89a93cbaf5d9c392298125b26ead3a4"
+  },
+  {
+   "folder": "community",
+   "name": "xml_to_json_fpx",
+   "language": "js",
+   "sha256": "2fb806d10cc49656dc73187c4c8fc3fd855f3d02a117595bd7df442c614c202e"
+  },
+  {
+   "folder": "community",
+   "name": "y4md_to_date",
+   "language": "sql",
+   "sha256": "55f2fbd022551bcd8bbfb1399a275357d4ccab6396c0e04b15d257141a0071c4"
+  },
+  {
+   "folder": "community",
+   "name": "zeronorm",
+   "language": "sql",
+   "sha256": "757012874c7bc814adca28fb95a5e82cb6eb4f388f4189e450a622431da88667"
+  },
+  {
+   "folder": "migration/oracle",
+   "name": "round_datetime",
+   "language": "sql",
+   "sha256": "83c45e24f434fa423651532cf941e8716eda26f92280fd5bbd93dd53cd16185f"
+  },
+  {
+   "folder": "migration/redshift",
+   "name": "initcap",
+   "language": "sql",
+   "sha256": "cb0802ea31ec288b516baa67ea5361fa721c986e0155e265d8bd635d07f17d9e"
+  },
+  {
+   "folder": "migration/redshift",
+   "name": "interval_literal_to_seconds",
+   "language": "sql",
+   "sha256": "41277ea163aaacf946153a341f7954d4d740e6e214b2d994fc67535e18ca850d"
+  },
+  {
+   "folder": "migration/redshift",
+   "name": "split_part",
+   "language": "sql",
+   "sha256": "587d7c75ca79d1d0a03c68205425de73087a3a2b82cbc73aa32cf5cdb96332a2"
+  },
+  {
+   "folder": "migration/redshift",
+   "name": "translate",
+   "language": "sql",
+   "sha256": "cec8d67bb911c9e16f08c840cdc49bca9267a3418a9d41865806246199d98b78"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "array_equal",
+   "language": "js",
+   "sha256": "c051e0c5f75840e46d148ef4e09b57282b2efab6838eb7c51537fd4aac955c83"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "bitmap_bit_position",
+   "language": "sql",
+   "sha256": "a562255a10ae9c1b48745624f9f55ddebbcfeddecec2e375a38ef6bd9e3f8f69"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "bitmap_bucket_number",
+   "language": "sql",
+   "sha256": "73b27db7b686d6cc53339482880157e3f5446ac0d81d544b564bbf31dbef2f9b"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "factorial",
+   "language": "sql",
+   "sha256": "b6d42c35cdfec4293a66a2cb84a4dbc9d66bd8d669d6bc9727b9d2b933e9a8a7"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "flatten",
+   "language": "js",
+   "sha256": "4c391255fa2ee6df030e87666c326a56c454d22075abd4b465007a34c5d0451b"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "json_ilike",
+   "language": "js",
+   "sha256": "d6418aa84956cd321f0e8e7b07c0f443c4d2f6a0fee18ec321f8f3962ed72bdb"
+  },
+  {
+   "folder": "migration/snowflake",
+   "name": "object_agg",
+   "language": "js",
+   "sha256": "6011b02a04f430e45e907bf757a8df19c70b5d66a244f48fba59d082bcd0b557"
+  },
+  {
+   "folder": "migration/sqlserver",
+   "name": "convert_bytes_string",
+   "language": "sql",
+   "sha256": "971049bb38169c4d88b73b70286e31ea904432c08cccbbd6bb582fde8fde4652"
+  },
+  {
+   "folder": "migration/sqlserver",
+   "name": "convert_datetime_string",
+   "language": "sql",
+   "sha256": "177aa7bd63e9819d66b69cc99bb9ffb1484b6e6892dc5a1b1522e09f1dc2c280"
+  },
+  {
+   "folder": "migration/sqlserver",
+   "name": "convert_numeric_string",
+   "language": "sql",
+   "sha256": "ea2a7dd2c6f2e9eadbc9b516f8435b143d32c1c1db69d87237d9f030d83e3513"
+  },
+  {
+   "folder": "migration/sqlserver",
+   "name": "convert_string_bytes",
+   "language": "sql",
+   "sha256": "9ab105a554746239c49a2dabd111cc8c226ce36c3bb21ded69754bfc1a82d873"
+  },
+  {
+   "folder": "migration/sqlserver",
+   "name": "convert_timestamp_string",
+   "language": "sql",
+   "sha256": "d8acd8057b61e01e546cbf9cdc320ba4f61f02d6828ac091711d829d62e894e3"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "chr",
+   "language": "sql",
+   "sha256": "3ca195436ae2cd80ea37e0bc732c5f765f56514ec642dc2f964a209716818e6e"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "decode1",
+   "language": "sql",
+   "sha256": "17d27296094acbd27d7095dfdfc2a085e607e2f6de20a7d44664270e2f09d703"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "decode2",
+   "language": "sql",
+   "sha256": "c3c210de1b63baa3339700f6f9d69c837b491eda4e67491fa3a8c18f659ce7b3"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "decode3",
+   "language": "sql",
+   "sha256": "dd22df4641870bdcea1c2f9cbc4be9aac6a4e75cadc89da20eaf2895f5959898"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "index",
+   "language": "sql",
+   "sha256": "24e19d9cb5ad07e0de6b351b102b30343112de4928e078a143c72316239615e5"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "instr",
+   "language": "sql",
+   "sha256": "a26c34a857b2816b10a698cca0d5a2d087a6f711e90552db22df6e6a6c695ec0"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "left",
+   "language": "sql",
+   "sha256": "14393c7a61d84533e542bc1a1ced67ffb20e29d74c8adf1ae938d8f5c50c975f"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "months_between",
+   "language": "sql",
+   "sha256": "96bca69662e76dc345e1a34f3e22dd45383ea9dff77efc4966a8017e87fd17d5"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "nullifzero",
+   "language": "sql",
+   "sha256": "c6f1779daff4ac8af2c9db9f791f763937781d1889c2b9cfae0ec9e7e8064939"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "nvl",
+   "language": "sql",
+   "sha256": "2d6d2286acfcffc1b60f1d4d521a04d490365eb94198adfce599b4a246c137b3"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "nvl2",
+   "language": "sql",
+   "sha256": "e5005c27d54cb3f43aba48270d0d18093eb56d422c48dbdb6434ec0c5ff65d31"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "otranslate",
+   "language": "sql",
+   "sha256": "cec8d67bb911c9e16f08c840cdc49bca9267a3418a9d41865806246199d98b78"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "right",
+   "language": "sql",
+   "sha256": "52094fd29f553ed4ce4917cd7aea6fa3f7a781fa793aaa558702f6e59d389984"
+  },
+  {
+   "folder": "migration/teradata",
+   "name": "zeroifnull",
+   "language": "sql",
+   "sha256": "20d41e113eed3dba800c4b57976a0db10c2ea7ab9266d095fff6e5f151566ce2"
+  },
+  {
+   "folder": "migration/vertica",
+   "name": "lowerb",
+   "language": "sql",
+   "sha256": "4ca65a8dbf75628a7f14ee15ccbbc956263e2c4fcd8b7989de0ea52f0ca48f8f"
+  },
+  {
+   "folder": "migration/vertica",
+   "name": "substrb",
+   "language": "sql",
+   "sha256": "3f2bc368f7af228aa0876f16e58aeeefdf4a14a389801b679abdbbfa244c2950"
+  },
+  {
+   "folder": "migration/vertica",
+   "name": "upperb",
+   "language": "sql",
+   "sha256": "5587db19764921dbf3c1b1806e06131cf098a70b8780339b7b39ad921d259dcf"
+  }
+ ]
+}

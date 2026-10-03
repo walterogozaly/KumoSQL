@@ -31,6 +31,7 @@ import sqlglot
 from sqlglot import exp
 
 from kumosql import rewrite
+from kumosql.bigquery_duckdb import to_duckdb
 
 import logging
 
@@ -105,17 +106,20 @@ def _norm(value):
 
 
 def run_duckdb(sql: str, setup: list[str] | None = None):
-    """Execute BigQuery SQL in DuckDB; return ("ok", rows) or ("error", message)."""
+    """Execute BigQuery SQL in DuckDB; return ("ok", rows) or ("error", message).
+
+    The translation is :func:`kumosql.bigquery_duckdb.to_duckdb`; a query it declines is an error here.
+    """
 
     try:
-        statements = sqlglot.transpile(sql, read="bigquery", write="duckdb")
+        statement = to_duckdb(sql)
         con = duckdb.connect()
         # One thread: with several, DuckDB may build ARRAY(SELECT .. UNION ALL ..) in a different
         # order on each run, and the same query would look like it changed behaviour.
         con.execute("SET threads TO 1")
         for stmt in setup or []:
             con.execute(stmt)
-        rows = con.execute(statements[0]).fetchall()
+        rows = con.execute(statement).fetchall()
     except Exception as exc:  # noqa: BLE001
         return "error", f"{type(exc).__name__}: {str(exc)[:100]}"
     return "ok", rows

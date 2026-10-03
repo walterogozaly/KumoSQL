@@ -49,7 +49,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Engine test suites](engine-suites.md) | DuckDB, SQLite and SQLGlot test queries run through every rewrite and checked by execution | `engine-duckdb-slt-plain`, `engine-duckdb-slt-amplified`, `engine-sqlite-slt-plain`, `engine-sqlite-slt-amplified`, `engine-sqlglot-fixtures-plain`, `engine-sqlglot-fixtures-amplified` |
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage | `analytical-sql-coverage` |
 | [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct (a checked-in manifest, run by the test suite) | none |
-| [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases | `googlesql-behavior`, `bigquery-edge-cases` |
+| [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases; BigQuery Utils UDF tests run through the BigQuery to DuckDB translation | `googlesql-behavior`, `bigquery-edge-cases`, `bigquery-utils-udfs` |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | Lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them | `sqlfluff-semantic-fixes`, `sqlfluff-layout-fixes`, `sqlfluff-kumosql-formatter` |
 
 ## Lineage, impact and Dataform
