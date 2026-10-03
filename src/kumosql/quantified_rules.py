@@ -1177,6 +1177,21 @@ def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: 
             made = lateral_aggregates(select, not_null)
             if made:
                 rewrites.append((select, snapshot, made))
+    tree = _fold_all(tree, schema, not_null, keys)
+    restored = False
+    for select, snapshot, made in rewrites:
+        if any(_inside(lateral, tree) for lateral in made):
+            for key in list(select.args):
+                select.set(key, None)
+            for key, value in snapshot.args.items():
+                select.set(key, value)
+            restored = True
+    if restored:
+        tree = _fold_all(tree, schema, not_null, keys)
+    return tree
+
+
+def _fold_all(tree: exp.Expression, schema, not_null, keys) -> exp.Expression:
     if not any(
         isinstance(s.parent, (exp.Subquery, exp.Lateral))
         and (_global_aggregate(s) or _limit_one(s) or (s.args.get("group") and any(isinstance(e.unalias(), exp.Boolean) for e in s.expressions)))
@@ -1193,12 +1208,6 @@ def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: 
             continue
     if folded:
         tree = _drop_unread_joins(tree, schema, keys)
-    for select, snapshot, made in rewrites:
-        if any(_inside(lateral, tree) for lateral in made):
-            for key in list(select.args):
-                select.set(key, None)
-            for key, value in snapshot.args.items():
-                select.set(key, value)
     return tree
 
 
