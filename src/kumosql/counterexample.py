@@ -555,7 +555,11 @@ _TARGETED_TYPES = {"INT": "INT64", "VARCHAR": "STRING", "ENUM": "STRING", "TIME"
 
 
 class Searcher:
-    """Reusable search over one schema: parse once, then try many databases."""
+    """Reusable search over one schema: parse once, then try many databases.
+
+    It remembers what its tables hold and which databases it already ran both queries on, so write the
+    tables only through its own methods.
+    """
 
     def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql", predicates: dict[str, int] | None = None):
         """``predicates`` names uninterpreted boolean functions (name to arity) the queries call.
@@ -581,7 +585,8 @@ class Searcher:
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
             self.having = self.having or tree.find(exp.Having) is not None
-        self.db = duckdb.connect(":memory:")
+        # one thread: the tables hold a few rows, so more threads only add scheduling work (about half the CPU)
+        self.db = duckdb.connect(":memory:", config={"threads": 1})
         for name, arity in (predicates or {}).items():
             if not _PLAIN_NAME.match(name):
                 raise ValueError(f"predicate name {name!r}")
@@ -592,18 +597,40 @@ class Searcher:
             table = spec.tables[name]
             columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
             self.db.execute(f'CREATE TABLE "{name}" ({columns})')
+        # what each table holds, as the VALUES list ``_load`` inserted ("" when empty, None when unknown), and
+        # the databases on which both queries already ran and agreed: running them again would agree again
+        self._loaded: dict[str, str | None] = {name: "" for name in self.used}
+        self._agreed: set[tuple[str, ...]] = set()
+        self._agreed_targeted: set[str] = set()
+
+    def _values(self, data) -> dict[str, str]:
+        """Each used table's rows as the literal VALUES list ``_load`` inserts ("" for no rows)."""
+
+        return {name: ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in data[name]) for name in self.used}
+
+    def _key(self, values: dict[str, str]) -> tuple[str, ...]:
+        return tuple(values[name] for name in sorted(self.used))
 
     def _load(self, data, order=None) -> None:
         """Replace the contents of every used table (one literal INSERT per table: ``executemany`` is slow)."""
 
+        self._load_values(self._values(data))
+
+    def _load_values(self, values: dict[str, str]) -> None:
+        """A table already holding exactly these rows, inserted the same way, is left as it is."""
+
         statements = []
         for name in self.used:
-            statements.append(f'DELETE FROM "{name}";')
-            rows = data[name]
-            if rows:
-                values = ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in rows)
-                statements.append(f'INSERT INTO "{name}" VALUES {values};')
-        self.db.execute(" ".join(statements))
+            if self._loaded[name] == values[name]:
+                continue
+            if self._loaded[name] != "":
+                statements.append(f'DELETE FROM "{name}";')
+            if values[name]:
+                statements.append(f'INSERT INTO "{name}" VALUES {values[name]};')
+            self._loaded[name] = None  # unknown until the statements have run
+        if statements:
+            self.db.execute(" ".join(statements))
+            self._loaded.update(values)
 
     def runs(self) -> bool:
         """Whether DuckDB accepts both queries on an empty database."""
@@ -694,10 +721,16 @@ class Searcher:
                 data = dict(zip(tables, combo))
                 if not self._satisfies(data, generator):
                     continue
-                self._load(data)
+                values = self._values(data)
+                key = self._key(values)
+                if key in self._agreed:
+                    continue
+                self._load_values(values)
                 a = self.db.execute(self.left_sql).fetchall()
                 b = self.db.execute(self.right_sql).fetchall()
-                if _bag(a) != _bag(b) and self._stable(data, a, b, random.Random(1)):
+                if _bag(a) == _bag(b):
+                    self._agreed.add(key)
+                elif self._stable(data, a, b, random.Random(1)):
                     return "found", Counterexample(data, a, b)
         except duckdb.Error:
             return "too_large", None
@@ -735,13 +768,19 @@ class Searcher:
             data = generator.database(self.used, max_rows, empty)
             if data is None:
                 continue
+            values = self._values(data)
+            key = self._key(values)
+            if key in self._agreed:
+                continue
             try:
-                self._load(data)
+                self._load_values(values)
                 a = self.db.execute(self.left_sql).fetchall()
                 b = self.db.execute(self.right_sql).fetchall()
             except duckdb.Error:
                 continue  # a runtime error on this database (a failed cast, SINGLE_VALUE of two rows): try the next
-            if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+            if _bag(a) == _bag(b):
+                self._agreed.add(key)
+            elif self._stable(data, a, b, rng):
                 return Counterexample({n: data[n] for n in self.used}, a, b)
         return self._search_targeted(rng) if targeted and os.environ.get("KUMOSQL_TARGETED", "1") != "0" else None
 
@@ -778,9 +817,13 @@ class Searcher:
                 if key in seen or not self._conforms(generator, data):
                     continue
                 seen.add(key)
+                exact = repr(key)  # repr keeps 1, 1.0 and True apart
+                if exact in self._agreed_targeted:
+                    continue
                 try:
                     for name in self.used:
                         table = self.spec.tables[name]
+                        self._loaded[name] = None
                         self.db.execute(f'DELETE FROM "{name}"')
                         if data[name]:
                             self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', data[name])
@@ -788,7 +831,9 @@ class Searcher:
                     b = self.db.execute(self.right_sql).fetchall()
                 except duckdb.Error:
                     continue
-                if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+                if _bag(a) == _bag(b):
+                    self._agreed_targeted.add(exact)
+                elif self._stable(data, a, b, rng):
                     return Counterexample({n: data[n] for n in self.used}, a, b)
         return None
 
