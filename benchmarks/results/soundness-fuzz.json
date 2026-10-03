@@ -5,11 +5,11 @@
   "score": "1 false proof (1 open root cause, routed); 1058 correct proofs of 2005 pairs",
   "metric": "Seeded pairs from 27 rewrite templates, Sol's 24 S015 construct families and query mutants, over typed schemas with keys, NOT NULL columns and foreign keys, plus the 5 published S009 false proofs. Each pair runs on six legal DuckDB databases (random, NULL-heavy, duplicate-heavy, empty); a pair the prover proves while a database separates it is a false proof.",
   "evidence": "proof",
-  "correctness": "1 false proof, 0 generator label errors (seed 2, count 2000). Every difference is confirmed with DuckDB's optimizer off. The open one is _collapse_aggregate folding COUNT over a one-row-per-group aggregate into the inner COUNT, listed in tests/fixtures/soundness_fuzz/known_false_proofs.json with its owner. Ground truth is six finite databases per pair, so a difference they all miss can still hide a false proof.",
+  "correctness": "1 false proof, 0 generator label errors (seed 2, count 2000). Every difference is confirmed with DuckDB's optimizer off. The open one is a comparison of an INT64 column with a BOOL (`t.x = -1 IS NULL` parses as `t.x = (-1 IS NULL)`), which BigQuery rejects and DuckDB coerces; it is listed in tests/fixtures/soundness_fuzz/known_false_proofs.json with its owner. The earlier open case, _collapse_aggregate folding COUNT over a one-row-per-group aggregate into the inner COUNT, is fixed. Ground truth is six finite databases per pair, so a difference they all miss can still hide a false proof.",
   "coverage": {
     "proven": 1059,
-    "refuted": 222,
-    "unknown": 715,
+    "refuted": 221,
+    "unknown": 716,
     "unsupported": 8,
     "timeout": 1
   },

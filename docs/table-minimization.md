@@ -44,10 +44,21 @@ A table whose rows can change from one evaluation to the next is never folded, m
 
 Names are handled with care. A change whose SQL, written back with the names as given, has a `WITH` table named like a table it reads is rejected, because the `WITH` table would capture the reference. When inlining for a proof puts two `WITH` tables of one name in one query (dbt-style tables that all start `WITH source AS (...), renamed AS (...)`), each gets a name of its own, with its references, following `WITH` scopes; where the scopes are not plain (a recursive `WITH`, or one name defined twice in one `WITH`) the change is not trusted to the prover. Tables of one name in two datasets (`a.t`, `b.t`) are kept apart.
 
-A table that is not a single readable query (a script, `CALL`, DDL) is returned exactly as given, and every table it reads is kept and proved unchanged like a protected one.
+## Names and scripts
+
+Four rules keep a proof about the input's own tables (`kumosql.minimizer_identity`, regression tests in `tests/test_table_minimizer.py`; audit #538):
+
+- **A script is not a query.** Text with more than one statement, `CALL`, DDL or DML is returned exactly as given, never read as its first `SELECT`. Every table whose name it mentions is kept and proved unchanged like a protected one, so a later statement's reads and effects cannot be dropped. A protected script is reported as `unchanged` (in `verify_tables`: `missing`, `unchanged` or `unknown` when its text differs), never left out of the result.
+- **Identity keeps its case.** For `dialect="bigquery"` names are case-sensitive (the BigQuery default): `p.D.stage` and `p.d.stage` are two tables, and a read of one is never bound to the other. Names that differ only by case are *ambiguous*, because a dataset configured for case-insensitive table names would make them one: such a table, and every table that reads one, is kept exactly as written, and a proof that rests on tables of another name carries the assumption that names are case-sensitive. Other dialects keep folding unquoted names to lower case.
+- **Internal names cannot collide with real ones.** A bare or two-part name is searched under an internal catalog that occurs nowhere in the input, so a table the input names `kumo_min.tables.t` can never replace a bare `t`, and the original score counts every input table.
+- **A `WITH` table hides a read only inside its own query.** A one-part read of `stage` is a read of the `WITH` table only where that table is in scope (the query under the `WITH`, and the `WITH` tables listed after it). A nested `WITH stage AS (...)` in a subquery does not hide a physical read of `stage` elsewhere in the statement (`ast_utils.is_cte_reference`, used by `refactor._table_nodes`).
+
+Before an answer is returned it is checked once more against the input's own names: no table of it may read a table the answer removed or a name the input never used. If one does, the input is the answer.
 
 ## Limits
 
+- Dataset case policy: with a dataset configured for case-insensitive table names, names that differ only by case are one table. The minimizer then refuses to change them (above); it does not look the policy up.
+- `minimize_tables` reads SELECT bodies only. It cannot know a model is incremental, or about `uniqueKey`, `updatePartitionFilter` or schedules; apply it to a Dataform project only with incremental tables left out of the input (an open follow-up on #538).
 - Greedy search: it finds a good answer, not always the optimum. `max_seconds` and `max_steps` bound it; `.stopped` says which one stopped it.
 - Shared logic is moved into a new table only with `factor=True`, and only for queries repeated with the same canonical form; it does not rewrite protected tables beyond the simplifier's forms.
 - Proofs are as sound as KumoSQL's prover: "0 wrong" on the eval means no answer differed on the DuckDB check databases, and known false proofs that are still open in the prover apply here too.

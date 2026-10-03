@@ -838,6 +838,16 @@ def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set
     return names
 
 
+def is_cte_reference(table: exp.Table) -> bool:
+    """Whether ``table`` reads a WITH table that is in scope at that place (not a physical table of the same name).
+
+    A WITH table is visible only inside its own query: a one-part read elsewhere in the statement that
+    happens to share its name is still a read of the physical table.
+    """
+
+    return is_cte_reference_candidate(table) and bool(table.name) and table.name.lower() in visible_ctes(table)
+
+
 def free_reads(body: exp.Expression) -> set[str]:
     """One-part table names ``body`` reads that none of its own WITH tables binds: what an outer WITH could capture."""
 
