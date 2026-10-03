@@ -7,6 +7,8 @@ BigQuery scripts (several statements run together, with variables, temporary tab
 - job history: a script's parent job and its child jobs (about 25,000 jobs in a large project) become one set of edges with the temporary tables folded away;
 - observed usage (queries that are scripts are split before each statement is examined), the rewrite engine (rules apply inside blocks, one leaf statement at a time) and pasted SQL.
 
+Table comparisons (`prove-tables`), the refactor search and table consolidation do not read a script model as a query: its result is its last statement and its DML changes tables, so they answer unknown (or refuse to fold) rather than compare its first `SELECT`.
+
 ## Splitting
 
 KumoSQL has its own small lexer for this because sqlglot's BigQuery tokenizer treats `BEGIN` as a command and swallows the rest of the text. The lexer knows strings (single, double, triple-quoted, raw), comments (`--`, `#`, `/* */`), backticked names, and nested `BEGIN ... END`, `IF`, `CASE`, `LOOP`, `WHILE`, `REPEAT` and `FOR` blocks. A semicolon inside any of them never splits a statement. `split_script(text)` returns the statements with blocks opened; `parse_script(text)` keeps the nesting.
