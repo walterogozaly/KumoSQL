@@ -1,0 +1,2882 @@
+[
+ {
+  "id": "S001-001",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/conditional/ex1sigmod92.cos",
+  "schema": "CREATE TABLE itm (itemn INTEGER, type INTEGER); CREATE TABLE itp (itemn INTEGER, ponum INTEGER); CREATE TABLE pur (ponum INTEGER, odate INTEGER, vendn INTEGER);",
+  "left": "SELECT itm.itemn, itpv.vendn FROM itm itm, (SELECT DISTINCT itp.itemn, pur.vendn FROM itp itp, pur pur WHERE itp.ponum = pur.ponum AND pur.odate > 85) itpv WHERE itm.itemn = itpv.itemn AND itm.itemn > 1 and itm.itemn < 20",
+  "right": "SELECT DISTINCT itm.itemn, pur.vendn FROM itm itm, itp itp, pur pur WHERE itp.ponum = pur.ponum AND itm.itemn = itp.itemn AND pur.odate > 85 AND itm.itemn > 1 AND itm.itemn < 20",
+  "minimal_condition_sets": [
+   [
+    "UNIQUE itm(itemn) WHERE itemn > 1 AND itemn < 20"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "itm": [
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      1
+     ]
+    ],
+    "itp": [
+     [
+      2,
+      1
+     ]
+    ],
+    "pur": [
+     [
+      1,
+      86,
+      7
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     2,
+     7
+    ],
+    [
+     2,
+     7
+    ]
+   ],
+   "right_rows": [
+    [
+     2,
+     7
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "UNIQUE itm(itemn) WHERE itemn > 1 AND itemn < 20",
+    "conditions_remaining": [],
+    "tables": {
+     "itm": [
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       1
+      ]
+     ],
+     "itp": [
+      [
+       2,
+       1
+      ]
+     ],
+     "pur": [
+      [
+       1,
+       86,
+       7
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2,
+      7
+     ],
+     [
+      2,
+      7
+     ]
+    ],
+    "right_rows": [
+     [
+      2,
+      7
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "itm": [
+      [
+       2,
+       1
+      ]
+     ],
+     "itp": [
+      [
+       2,
+       1
+      ]
+     ],
+     "pur": [
+      [
+       1,
+       86,
+       7
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2,
+      7
+     ]
+    ],
+    "right_rows": [
+     [
+      2,
+      7
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-002",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/conditional/ex2sigmod83.cos",
+  "schema": "CREATE TABLE r1 (a INTEGER, b INTEGER); CREATE TABLE r2 (a INTEGER, b INTEGER);",
+  "left": "SELECT z.A, z.B FROM R1 x, R2 y, R2 z WHERE x.A = y.A AND y.A = z.A AND x.A = z.A AND y.B = z.B",
+  "right": "Select z.A, z.B FROM R1 x, R2 y, R2 z WHERE x.A = y.A AND y.A = z.A AND x.A = z.A",
+  "minimal_condition_sets": [
+   [
+    "FD NULL-EQUAL r2(a)->(b) WHERE a IS NOT NULL",
+    "NOT NULL r2(b) WHERE a IS NOT NULL"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "r1": [
+     [
+      1,
+      0
+     ]
+    ],
+    "r2": [
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "right_rows": [
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     2
+    ],
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "FD NULL-EQUAL r2(a)->(b) WHERE a IS NOT NULL",
+    "conditions_remaining": [
+     "NOT NULL r2(b) WHERE a IS NOT NULL"
+    ],
+    "tables": {
+     "r1": [
+      [
+       1,
+       0
+      ]
+     ],
+     "r2": [
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      1
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL r2(b) WHERE a IS NOT NULL",
+    "conditions_remaining": [
+     "FD NULL-EQUAL r2(a)->(b) WHERE a IS NOT NULL"
+    ],
+    "tables": {
+     "r1": [
+      [
+       1,
+       0
+      ]
+     ],
+     "r2": [
+      [
+       1,
+       null
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      1,
+      null
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "r1": [
+      [
+       1,
+       0
+      ]
+     ],
+     "r2": [
+      [
+       1,
+       2
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-003",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/conditional/ex3sigmod92.cos",
+  "schema": "CREATE TABLE itp (itemn INTEGER, ponum INTEGER); CREATE TABLE itl (itemn INTEGER, wkcen INTEGER, locan INTEGER);",
+  "left": "SELECT * FROM itp itp WHERE EXISTS (SELECT * FROM itl itl WHERE itl.itemn = itp.itemn AND itl.wkcen = 468 AND itl.locan = 0)",
+  "right": "SELECT DISTINCT itp.* FROM itp itp, itl itl WHERE itp.itemn = itl.itemn AND itl.wkcen = 468 AND itl.locan = 0",
+  "minimal_condition_sets": [
+   [
+    "UNIQUE itp(itemn)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "itp": [
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ]
+    ],
+    "itl": [
+     [
+      1,
+      468,
+      0
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1,
+     2
+    ],
+    [
+     1,
+     2
+    ]
+   ],
+   "right_rows": [
+    [
+     1,
+     2
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "UNIQUE itp(itemn)",
+    "conditions_remaining": [],
+    "tables": {
+     "itp": [
+      [
+       1,
+       2
+      ],
+      [
+       1,
+       2
+      ]
+     ],
+     "itl": [
+      [
+       1,
+       468,
+       0
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "itp": [
+      [
+       1,
+       2
+      ]
+     ],
+     "itl": [
+      [
+       1,
+       468,
+       0
+      ],
+      [
+       1,
+       468,
+       0
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-004",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/conditional/index_sigmod82.cos",
+  "schema": "CREATE TABLE payroll (ssno INTEGER, deptno INTEGER); CREATE TABLE applicant (ssno INTEGER, jobtitile INTEGER, officeno INTEGER);",
+  "left": "SELECT y.* FROM payroll x, applicant y WHERE x.ssno = y.ssno AND x.deptno = 29",
+  "right": "SELECT c.* FROM payroll a, (select y.ssno, y.deptno from payroll y) b, applicant c WHERE a.ssno = b.ssno AND c.ssno = a.ssno AND b.deptno = 29",
+  "minimal_condition_sets": [
+   [
+    "UNIQUE payroll(ssno)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "payroll": [
+     [
+      1,
+      29
+     ],
+     [
+      1,
+      29
+     ]
+    ],
+    "applicant": [
+     [
+      1,
+      2,
+      3
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1,
+     2,
+     3
+    ],
+    [
+     1,
+     2,
+     3
+    ]
+   ],
+   "right_rows": [
+    [
+     1,
+     2,
+     3
+    ],
+    [
+     1,
+     2,
+     3
+    ],
+    [
+     1,
+     2,
+     3
+    ],
+    [
+     1,
+     2,
+     3
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "UNIQUE payroll(ssno)",
+    "conditions_remaining": [],
+    "tables": {
+     "payroll": [
+      [
+       1,
+       29
+      ],
+      [
+       1,
+       29
+      ]
+     ],
+     "applicant": [
+      [
+       1,
+       2,
+       3
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      1,
+      2,
+      3
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      1,
+      2,
+      3
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "payroll": [
+      [
+       1,
+       29
+      ]
+     ],
+     "applicant": [
+      [
+       1,
+       2,
+       3
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2,
+      3
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2,
+      3
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-005",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/conditional/inline-exists.cos",
+  "schema": "CREATE TABLE emp (name INTEGER, dept INTEGER, emp INTEGER); CREATE TABLE dept (dept INTEGER, loc INTEGER, mgr INTEGER);",
+  "left": "select x.name as xn from emp x where exists (select * from dept y where y.loc = 3 and x.emp = y.mgr and x.dept = y.dept)",
+  "right": "select x.name as xn from emp x, dept y where x.dept = y.dept and y.loc = 3 and x.emp = y.mgr",
+  "minimal_condition_sets": [
+   [
+    "UNIQUE dept(mgr, dept) WHERE loc = 3"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "emp": [
+     [
+      9,
+      1,
+      2
+     ]
+    ],
+    "dept": [
+     [
+      1,
+      3,
+      2
+     ],
+     [
+      1,
+      3,
+      2
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     9
+    ]
+   ],
+   "right_rows": [
+    [
+     9
+    ],
+    [
+     9
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "UNIQUE dept(mgr, dept) WHERE loc = 3",
+    "conditions_remaining": [],
+    "tables": {
+     "emp": [
+      [
+       9,
+       1,
+       2
+      ]
+     ],
+     "dept": [
+      [
+       1,
+       3,
+       2
+      ],
+      [
+       1,
+       3,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      9
+     ]
+    ],
+    "right_rows": [
+     [
+      9
+     ],
+     [
+      9
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "emp": [
+      [
+       9,
+       1,
+       2
+      ]
+     ],
+     "dept": [
+      [
+       1,
+       3,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      9
+     ]
+    ],
+    "right_rows": [
+     [
+      9
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-006",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/conditional/missing-pred.cos",
+  "schema": "CREATE TABLE r (a INTEGER, b INTEGER, c INTEGER);",
+  "left": "select x.b as xb from r x where x.a = 5 and x.c < 1",
+  "right": "select x.b as xb from r x where x.a < 10",
+  "minimal_condition_sets": [
+   [
+    "CHECK r(a >= 10 OR (a = 5 AND c < 1))",
+    "NOT NULL r(c) WHERE a < 10"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "r": [
+     [
+      1,
+      2,
+      0
+     ]
+    ]
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     2
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "CHECK r(a >= 10 OR (a = 5 AND c < 1))",
+    "conditions_remaining": [
+     "NOT NULL r(c) WHERE a < 10"
+    ],
+    "tables": {
+     "r": [
+      [
+       1,
+       2,
+       0
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL r(c) WHERE a < 10",
+    "conditions_remaining": [
+     "CHECK r(a >= 10 OR (a = 5 AND c < 1))"
+    ],
+    "tables": {
+     "r": [
+      [
+       5,
+       2,
+       null
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "r": [
+      [
+       5,
+       2,
+       0
+      ],
+      [
+       20,
+       3,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-007",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/countProject.cos",
+  "schema": "CREATE TABLE r (a INTEGER, b INTEGER);",
+  "left": "select count(*) as a from r x",
+  "right": "select count(y.b) from r y",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL r(b)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "r": [
+     [
+      1,
+      null
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1
+    ]
+   ],
+   "right_rows": [
+    [
+     0
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL r(b)",
+    "conditions_remaining": [],
+    "tables": {
+     "r": [
+      [
+       1,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "r": [
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict.",
+  "prove_left": "select count(*) as a from r x",
+  "prove_right": "select count(y.b) as a from r y",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-008",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/inlineCorrelatedSubqueries.cos",
+  "schema": "CREATE TABLE a (c INTEGER, d INTEGER);",
+  "left": "select * from a x where exists (select * from a y where x.c = y.c)",
+  "right": "select * from a x",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL a(c)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "a": [
+     [
+      null,
+      1
+     ]
+    ]
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     null,
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL a(c)",
+    "conditions_remaining": [],
+    "tables": {
+     "a": [
+      [
+       null,
+       1
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      null,
+      1
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "a": [
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-009",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/SelfJoin1.cos",
+  "schema": "CREATE TABLE r (a INTEGER, b INTEGER);",
+  "left": "select distinct y.a as a from r x, r y where x.a = y.a",
+  "right": "select distinct x.a as a from r x",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL r(a)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "r": [
+     [
+      null,
+      1
+     ]
+    ]
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     null
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL r(a)",
+    "conditions_remaining": [],
+    "tables": {
+     "r": [
+      [
+       null,
+       1
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      null
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "r": [
+      [
+       1,
+       2
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-010",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/SelfJoin2.cos",
+  "schema": "CREATE TABLE r (a1 INTEGER, a2 INTEGER, b INTEGER);",
+  "left": "select distinct y.a1 as a1, y.a2 as a2 from r x, r y where x.a1 = y.a1 and x.a2 = y.a2",
+  "right": "select distinct x.a1 as a1, x.a2 as a2 from r x",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL r(a1)",
+    "NOT NULL r(a2)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "r": [
+     [
+      null,
+      1,
+      2
+     ]
+    ]
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     null,
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL r(a1)",
+    "conditions_remaining": [
+     "NOT NULL r(a2)"
+    ],
+    "tables": {
+     "r": [
+      [
+       null,
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      null,
+      1
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL r(a2)",
+    "conditions_remaining": [
+     "NOT NULL r(a1)"
+    ],
+    "tables": {
+     "r": [
+      [
+       1,
+       null,
+       2
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      1,
+      null
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "r": [
+      [
+       1,
+       2,
+       3
+      ],
+      [
+       1,
+       2,
+       3
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-011",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/unionEmpty.cos",
+  "schema": "CREATE TABLE a (x INTEGER);",
+  "left": "select * from a x UNION ALL select * from a x where false",
+  "right": "select * from a x",
+  "minimal_condition_sets": [
+   []
+  ],
+  "counterexample_without_conditions": null,
+  "minimality_witnesses": [],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "a": [
+      [
+       1
+      ],
+      [
+       1
+      ],
+      [
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ],
+     [
+      1
+     ],
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ],
+     [
+      1
+     ],
+     [
+      null
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-012",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/CQExample1.cos",
+  "schema": "CREATE TABLE r (a1 INTEGER, a2 INTEGER, a3 INTEGER);",
+  "left": "select distinct * from r x where x.a1 = x.a2 and x.a2 = x.a3",
+  "right": "select distinct * from r x where x.a1 = x.a2 and x.a1 = x.a3",
+  "minimal_condition_sets": [
+   []
+  ],
+  "counterexample_without_conditions": null,
+  "minimality_witnesses": [],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "r": [
+      [
+       1,
+       1,
+       1
+      ],
+      [
+       null,
+       1,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      1,
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1,
+      1,
+      1
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-013",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/sqlrewrites/havingToWhere.cos",
+  "schema": "CREATE TABLE dept (deptno INTEGER, name INTEGER);",
+  "left": "SELECT DEPT.NAME AS DNAME, COUNT(*) AS C FROM DEPT AS DEPT GROUP BY DEPT.NAME HAVING DEPT.NAME = 10",
+  "right": "SELECT t2.DNAME, t2.CNT AS C FROM (SELECT DEPT0.NAME AS DNAME, COUNT(*) AS CNT FROM DEPT AS DEPT0 GROUP BY DEPT0.NAME) AS t2 WHERE t2.DNAME = 10",
+  "minimal_condition_sets": [
+   []
+  ],
+  "counterexample_without_conditions": null,
+  "minimality_witnesses": [],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "dept": [
+      [
+       1,
+       10
+      ],
+      [
+       2,
+       10
+      ],
+      [
+       3,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      10,
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      10,
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-014",
+  "source": "https://raw.githubusercontent.com/uwdb/Cosette/master/examples/calcite/testUnionToDistinctRule.cos",
+  "schema": "CREATE TABLE dept (deptno INTEGER, name INTEGER);",
+  "left": "SELECT * FROM DEPT AS DEPT UNION SELECT * FROM DEPT AS DEPT0",
+  "right": "SELECT t0.DEPTNO, t0.NAME FROM (SELECT * FROM DEPT AS DEPT1 UNION ALL SELECT * FROM DEPT AS DEPT2) AS t0 GROUP BY t0.DEPTNO, t0.NAME",
+  "minimal_condition_sets": [
+   []
+  ],
+  "counterexample_without_conditions": null,
+  "minimality_witnesses": [],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "dept": [
+      [
+       1,
+       2
+      ],
+      [
+       1,
+       2
+      ],
+      [
+       null,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1,
+      2
+     ],
+     [
+      null,
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      null,
+      null
+     ],
+     [
+      1,
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Published query pair retained; schema concretized without constraints. Conditions are re-derived for SQL NULL and bag semantics, not inherited from the source verdict."
+ },
+ {
+  "id": "S001-015",
+  "source": "https://docs.cloud.google.com/bigquery/docs/primary-foreign-keys#eliminate_outer_joins",
+  "schema": "CREATE TABLE store_sales (item VARCHAR, sales_customer VARCHAR, category VARCHAR); CREATE TABLE customer (customer_name VARCHAR);",
+  "left": "SELECT ss.* FROM store_sales ss LEFT JOIN customer c ON ss.category = c.customer_name",
+  "right": "SELECT ss.* FROM store_sales ss",
+  "minimal_condition_sets": [
+   [
+    "UNIQUE customer(customer_name)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "store_sales": [
+     [
+      "i",
+      "x",
+      "a"
+     ]
+    ],
+    "customer": [
+     [
+      "a"
+     ],
+     [
+      "a"
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     "i",
+     "x",
+     "a"
+    ],
+    [
+     "i",
+     "x",
+     "a"
+    ]
+   ],
+   "right_rows": [
+    [
+     "i",
+     "x",
+     "a"
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "UNIQUE customer(customer_name)",
+    "conditions_remaining": [],
+    "tables": {
+     "store_sales": [
+      [
+       "i",
+       "x",
+       "a"
+      ]
+     ],
+     "customer": [
+      [
+       "a"
+      ],
+      [
+       "a"
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      "i",
+      "x",
+      "a"
+     ],
+     [
+      "i",
+      "x",
+      "a"
+     ]
+    ],
+    "right_rows": [
+     [
+      "i",
+      "x",
+      "a"
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "store_sales": [
+      [
+       "i",
+       "x",
+       "a"
+      ]
+     ],
+     "customer": [
+      [
+       "a"
+      ],
+      [
+       null
+      ],
+      [
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      "i",
+      "x",
+      "a"
+     ]
+    ],
+    "right_rows": [
+     [
+      "i",
+      "x",
+      "a"
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Google published outer-join elimination example; dataset qualification removed, column names retained, unconstrained schema supplied."
+ },
+ {
+  "id": "S001-016",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (a INTEGER, b INTEGER);",
+  "left": "SELECT a + b FROM t",
+  "right": "SELECT a FROM t",
+  "minimal_condition_sets": [
+   [
+    "CHECK t(b = 0)",
+    "NOT NULL t(b)"
+   ],
+   [
+    "CHECK t(a IS NULL)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      1,
+      1
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     2
+    ]
+   ],
+   "right_rows": [
+    [
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "CHECK t(b = 0)",
+    "conditions_remaining": [
+     "NOT NULL t(b)"
+    ],
+    "tables": {
+     "t": [
+      [
+       1,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(b)",
+    "conditions_remaining": [
+     "CHECK t(b = 0)"
+    ],
+    "tables": {
+     "t": [
+      [
+       1,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "set_index": 1,
+    "dropped": "CHECK t(a IS NULL)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       1,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       1,
+       0
+      ],
+      [
+       null,
+       0
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ],
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   {
+    "tables": {
+     "t": [
+      [
+       null,
+       2
+      ],
+      [
+       null,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ],
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      null
+     ],
+     [
+      null
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT a + b AS v FROM t",
+  "prove_right": "SELECT a AS v FROM t",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-017",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (a INTEGER, b INTEGER);",
+  "left": "SELECT a * b FROM t",
+  "right": "SELECT a FROM t",
+  "minimal_condition_sets": [
+   [
+    "CHECK t(b = 1)",
+    "NOT NULL t(b)"
+   ],
+   [
+    "CHECK t(a IS NULL)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      2,
+      2
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     4
+    ]
+   ],
+   "right_rows": [
+    [
+     2
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "CHECK t(b = 1)",
+    "conditions_remaining": [
+     "NOT NULL t(b)"
+    ],
+    "tables": {
+     "t": [
+      [
+       2,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      4
+     ]
+    ],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(b)",
+    "conditions_remaining": [
+     "CHECK t(b = 1)"
+    ],
+    "tables": {
+     "t": [
+      [
+       2,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   },
+   {
+    "set_index": 1,
+    "dropped": "CHECK t(a IS NULL)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       2,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      4
+     ]
+    ],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       2,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   },
+   {
+    "tables": {
+     "t": [
+      [
+       null,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      null
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT a * b AS v FROM t",
+  "prove_right": "SELECT a AS v FROM t",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-018",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (a INTEGER, b INTEGER);",
+  "left": "SELECT COALESCE(a, b) FROM t",
+  "right": "SELECT a FROM t",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL t(a)"
+   ],
+   [
+    "CHECK t(b IS NULL)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      null,
+      1
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1
+    ]
+   ],
+   "right_rows": [
+    [
+     null
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(a)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       null,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      null
+     ]
+    ]
+   },
+   {
+    "set_index": 1,
+    "dropped": "CHECK t(b IS NULL)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       null,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      null
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       2,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      2
+     ]
+    ]
+   },
+   {
+    "tables": {
+     "t": [
+      [
+       null,
+       null
+      ],
+      [
+       2,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ],
+     [
+      2
+     ]
+    ],
+    "right_rows": [
+     [
+      null
+     ],
+     [
+      2
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT COALESCE(a, b) AS a FROM t",
+  "prove_right": "SELECT a FROM t",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-019",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (a INTEGER, b INTEGER);",
+  "left": "SELECT a FROM t WHERE a > 0",
+  "right": "SELECT a FROM t WHERE a > 0 AND b > 0",
+  "minimal_condition_sets": [
+   [
+    "CHECK t(b > 0)",
+    "NOT NULL t(b)"
+   ],
+   [
+    "CHECK t(a <= 0)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      1,
+      0
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1
+    ]
+   ],
+   "right_rows": []
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "CHECK t(b > 0)",
+    "conditions_remaining": [
+     "NOT NULL t(b)"
+    ],
+    "tables": {
+     "t": [
+      [
+       1,
+       0
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": []
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(b)",
+    "conditions_remaining": [
+     "CHECK t(b > 0)"
+    ],
+    "tables": {
+     "t": [
+      [
+       1,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": []
+   },
+   {
+    "set_index": 1,
+    "dropped": "CHECK t(a <= 0)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       1,
+       0
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": []
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "tables": {
+     "t": [
+      [
+       0,
+       null
+      ],
+      [
+       null,
+       -1
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": []
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ },
+ {
+  "id": "S001-020",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (a INTEGER, b INTEGER);",
+  "left": "SELECT COUNT(a) FROM t",
+  "right": "SELECT COUNT(b) FROM t",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL t(a)",
+    "NOT NULL t(b)"
+   ],
+   [
+    "CHECK t(a IS NULL)",
+    "CHECK t(b IS NULL)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      null,
+      1
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     0
+    ]
+   ],
+   "right_rows": [
+    [
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(a)",
+    "conditions_remaining": [
+     "NOT NULL t(b)"
+    ],
+    "tables": {
+     "t": [
+      [
+       null,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      0
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(b)",
+    "conditions_remaining": [
+     "NOT NULL t(a)"
+    ],
+    "tables": {
+     "t": [
+      [
+       1,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   },
+   {
+    "set_index": 1,
+    "dropped": "CHECK t(a IS NULL)",
+    "conditions_remaining": [
+     "CHECK t(b IS NULL)"
+    ],
+    "tables": {
+     "t": [
+      [
+       1,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   },
+   {
+    "set_index": 1,
+    "dropped": "CHECK t(b IS NULL)",
+    "conditions_remaining": [
+     "CHECK t(a IS NULL)"
+    ],
+    "tables": {
+     "t": [
+      [
+       null,
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      0
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "tables": {
+     "t": [
+      [
+       null,
+       null
+      ],
+      [
+       null,
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      0
+     ]
+    ],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT COUNT(a) AS n FROM t",
+  "prove_right": "SELECT COUNT(b) AS n FROM t",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-021",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (a INTEGER);",
+  "left": "SELECT SUM(a) FROM t",
+  "right": "SELECT SUM(COALESCE(a, 0)) FROM t",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL t(a)"
+   ],
+   [
+    "EXISTS t(a IS NOT NULL)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      null
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     null
+    ]
+   ],
+   "right_rows": [
+    [
+     0
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(a)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   },
+   {
+    "set_index": 1,
+    "dropped": "EXISTS t(a IS NOT NULL)",
+    "conditions_remaining": [],
+    "tables": {
+     "t": [
+      [
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      null
+     ]
+    ],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "tables": {
+     "t": [
+      [
+       1
+      ],
+      [
+       null
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT SUM(a) AS s FROM t",
+  "prove_right": "SELECT SUM(COALESCE(a, 0)) AS s FROM t",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-022",
+  "source": "hand-written",
+  "schema": "CREATE TABLE p (k INTEGER); CREATE TABLE d (k INTEGER);",
+  "left": "SELECT p.k FROM p JOIN d ON p.k = d.k",
+  "right": "SELECT k FROM p",
+  "minimal_condition_sets": [
+   [
+    "NOT NULL p(k)",
+    "UNIQUE d(k)",
+    "INCLUSION p(k)->d(k) MATCH SIMPLE"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "p": [
+     [
+      1
+     ]
+    ],
+    "d": []
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL p(k)",
+    "conditions_remaining": [
+     "UNIQUE d(k)",
+     "INCLUSION p(k)->d(k) MATCH SIMPLE"
+    ],
+    "tables": {
+     "p": [
+      [
+       null
+      ]
+     ],
+     "d": []
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      null
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "UNIQUE d(k)",
+    "conditions_remaining": [
+     "NOT NULL p(k)",
+     "INCLUSION p(k)->d(k) MATCH SIMPLE"
+    ],
+    "tables": {
+     "p": [
+      [
+       1
+      ]
+     ],
+     "d": [
+      [
+       1
+      ],
+      [
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ],
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "INCLUSION p(k)->d(k) MATCH SIMPLE",
+    "conditions_remaining": [
+     "NOT NULL p(k)",
+     "UNIQUE d(k)"
+    ],
+    "tables": {
+     "p": [
+      [
+       1
+      ]
+     ],
+     "d": []
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "p": [
+      [
+       1
+      ],
+      [
+       1
+      ]
+     ],
+     "d": [
+      [
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ],
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ],
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT p.k AS k FROM p JOIN d ON p.k = d.k",
+  "prove_right": "SELECT k FROM p",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-023",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (x INTEGER);",
+  "left": "SELECT x FROM t WHERE x > 0",
+  "right": "SELECT x FROM t",
+  "minimal_condition_sets": [
+   [
+    "CHECK t(x > 0)",
+    "NOT NULL t(x)"
+   ]
+  ],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      0
+     ]
+    ]
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     0
+    ]
+   ]
+  },
+  "minimality_witnesses": [
+   {
+    "set_index": 0,
+    "dropped": "CHECK t(x > 0)",
+    "conditions_remaining": [
+     "NOT NULL t(x)"
+    ],
+    "tables": {
+     "t": [
+      [
+       0
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      0
+     ]
+    ]
+   },
+   {
+    "set_index": 0,
+    "dropped": "NOT NULL t(x)",
+    "conditions_remaining": [
+     "CHECK t(x > 0)"
+    ],
+    "tables": {
+     "t": [
+      [
+       null
+      ]
+     ]
+    },
+    "left_rows": [],
+    "right_rows": [
+     [
+      null
+     ]
+    ]
+   }
+  ],
+  "sufficiency_examples": [
+   {
+    "tables": {
+     "t": [
+      [
+       1
+      ]
+     ]
+    },
+    "left_rows": [
+     [
+      1
+     ]
+    ],
+    "right_rows": [
+     [
+      1
+     ]
+    ]
+   }
+  ],
+  "provenance_note": "Original example; bag semantics with nullable columns.",
+  "prove_left": "SELECT x FROM t WHERE x > 0",
+  "prove_right": "SELECT x FROM t",
+  "adaptation": "Output columns aliased so the provers' column-name check passes; the rows are unchanged."
+ },
+ {
+  "id": "S001-024",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (k INTEGER);",
+  "left": "SELECT (SELECT COUNT(*) FROM t) AS n",
+  "right": "SELECT (SELECT COUNT(*) FROM t) + 1 AS n",
+  "minimal_condition_sets": [],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": []
+   },
+   "left_rows": [
+    [
+     0
+    ]
+   ],
+   "right_rows": [
+    [
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [],
+  "sufficiency_examples": [],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ },
+ {
+  "id": "S001-025",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (k INTEGER);",
+  "left": "SELECT k FROM t WHERE k = 7 UNION SELECT 7",
+  "right": "SELECT k FROM t WHERE k = 7 UNION ALL SELECT 7 UNION ALL SELECT 7",
+  "minimal_condition_sets": [],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      7
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     7
+    ]
+   ],
+   "right_rows": [
+    [
+     7
+    ],
+    [
+     7
+    ],
+    [
+     7
+    ]
+   ]
+  },
+  "minimality_witnesses": [],
+  "sufficiency_examples": [],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ },
+ {
+  "id": "S001-026",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (k INTEGER);",
+  "left": "SELECT 1 WHERE 1 NOT IN (SELECT k FROM t UNION ALL SELECT NULL)",
+  "right": "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM t WHERE k = 1) UNION ALL SELECT 1",
+  "minimal_condition_sets": [],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      1
+     ]
+    ]
+   },
+   "left_rows": [],
+   "right_rows": [
+    [
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [],
+  "sufficiency_examples": [],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ },
+ {
+  "id": "S001-027",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (k INTEGER);",
+  "left": "SELECT COUNT(*) FROM t WHERE k <> k",
+  "right": "SELECT COUNT(*) FROM t WHERE k <> k GROUP BY k",
+  "minimal_condition_sets": [],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      null
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     0
+    ]
+   ],
+   "right_rows": []
+  },
+  "minimality_witnesses": [],
+  "sufficiency_examples": [],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ },
+ {
+  "id": "S001-028",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (k INTEGER);",
+  "left": "SELECT ROW_NUMBER() OVER (ORDER BY n) FROM (SELECT COUNT(*) AS n FROM t UNION ALL SELECT COUNT(*) AS n FROM t) s",
+  "right": "SELECT RANK() OVER (ORDER BY n) FROM (SELECT COUNT(*) AS n FROM t UNION ALL SELECT COUNT(*) AS n FROM t) s",
+  "minimal_condition_sets": [],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [
+     [
+      1
+     ],
+     [
+      1
+     ]
+    ]
+   },
+   "left_rows": [
+    [
+     1
+    ],
+    [
+     2
+    ]
+   ],
+   "right_rows": [
+    [
+     1
+    ],
+    [
+     1
+    ]
+   ]
+  },
+  "minimality_witnesses": [],
+  "sufficiency_examples": [],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ },
+ {
+  "id": "S001-029",
+  "source": "hand-written",
+  "schema": "CREATE TABLE t (k INTEGER); CREATE TABLE d (k INTEGER);",
+  "left": "SELECT a.n, b.n FROM (SELECT COUNT(*) AS n FROM t) a FULL JOIN (SELECT COUNT(*) AS n FROM d) b ON FALSE",
+  "right": "SELECT a.n, b.n FROM (SELECT COUNT(*) AS n FROM t) a JOIN (SELECT COUNT(*) AS n FROM d) b ON FALSE",
+  "minimal_condition_sets": [],
+  "counterexample_without_conditions": {
+   "tables": {
+    "t": [],
+    "d": []
+   },
+   "left_rows": [
+    [
+     0,
+     null
+    ],
+    [
+     null,
+     0
+    ]
+   ],
+   "right_rows": []
+  },
+  "minimality_witnesses": [],
+  "sufficiency_examples": [],
+  "provenance_note": "Original example; bag semantics with nullable columns."
+ }
+]
