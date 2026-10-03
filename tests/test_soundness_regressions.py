@@ -337,6 +337,34 @@ S006_WRONG_PROOFS = [
         {"t": [(1,)], "u": [(1, 9), (9, 1)]},
         id="order-by-output-alias-in-a-derived-limit-under-exists",
     ),
+    pytest.param(
+        "SELECT t.x FROM t WHERE t.x > ANY(SELECT y AS v FROM u ORDER BY v LIMIT 1)",
+        "SELECT t.x FROM t WHERE EXISTS(SELECT 1 FROM (SELECT y AS kumosql_v FROM u ORDER BY v LIMIT 1) AS kumosql_q0 WHERE t.x > kumosql_q0.kumosql_v)",
+        {"t": ["x"], "u": ["y", "v"]},
+        {"t": [(5,)], "u": [(1, 9), (9, 1)]},
+        id="s005-003-order-by-output-alias-under-any",
+    ),
+    pytest.param(
+        "SELECT x FROM t EXCEPT DISTINCT SELECT y FROM u LIMIT 0",
+        "SELECT DISTINCT s.x AS x FROM (SELECT x FROM t) AS s WHERE NOT EXISTS(SELECT 1 FROM (SELECT y FROM u) AS r WHERE s.x IS NOT DISTINCT FROM r.y)",
+        {"t": ["x"], "u": ["y"]},
+        {"t": [(1,)], "u": [(2,)]},
+        id="s006-except-limit-is-kept",
+    ),
+    pytest.param(
+        "SELECT x FROM p1.d.t INTERSECT DISTINCT SELECT x FROM p2.d.t",
+        "SELECT DISTINCT x FROM p1.d.t",
+        {"p1.d.t": ["x"], "p2.d.t": ["x"]},
+        {"p1.d.t": [(1,)], "p2.d.t": [(2,)]},
+        id="s006-intersect-of-two-projects",
+    ),
+    pytest.param(
+        "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY CUBE(k)",
+        "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY k UNION ALL SELECT NULL AS k, (SELECT COUNT(*)) AS c FROM t",
+        {"t": ["k"]},
+        {"t": [(1,), (2,), (3,)]},
+        id="s007-002-cube-with-a-nested-count",
+    ),
 ]
 
 
