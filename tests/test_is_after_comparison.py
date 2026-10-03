@@ -24,7 +24,6 @@ def _read(sql: str) -> sqlglot.exp.Expression:
     [
         ("SELECT a = b IS TRUE FROM s", "SELECT (a = b) IS TRUE FROM s"),
         ("SELECT a < b IS NULL FROM s", "SELECT (a < b) IS NULL FROM s"),
-        ("SELECT a <=> b IS FALSE FROM s", "SELECT (a <=> b) IS FALSE FROM s"),
         ("SELECT a = b IS NULL IS TRUE FROM s", "SELECT (a = b) IS NULL IS TRUE FROM s"),
         ("SELECT a = b IS TRUE = c IS FALSE FROM s", "SELECT ((a = b) IS TRUE = c) IS FALSE FROM s"),
         ("SELECT NOT a = b IS TRUE FROM s", "SELECT NOT (a = b) IS TRUE FROM s"),
@@ -93,7 +92,7 @@ def test_near_misses_are_not_proved(prove, left, right):
     assert not prove(left, right, schema=SCHEMA, dialect="mysql").proven
 
 
-@pytest.mark.parametrize("sql", ["SELECT a = b IS NOT TRUE FROM s", "SELECT a = NOT b IS TRUE FROM s", "SELECT a = b IS NOT NULL IS TRUE FROM s"])
+@pytest.mark.parametrize("sql", ["SELECT a <=> b IS FALSE FROM s", "SELECT a = b IS NOT TRUE FROM s", "SELECT a = NOT b IS TRUE FROM s", "SELECT a = b IS NOT NULL IS TRUE FROM s"])
 def test_is_not_after_a_comparison_is_declined(sql):
     # a = b IS NOT TRUE and a = NOT b IS TRUE parse to one tree; DuckDB reads them differently.
     with pytest.raises(UnmodeledConstruct):
