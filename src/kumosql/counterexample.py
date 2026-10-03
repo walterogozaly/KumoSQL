@@ -855,8 +855,11 @@ class Searcher:
             self._load(data)
             if tuple(_bag(self._read(rows)) for rows in run_unoptimized(self.db, self.left_sql, self.right_sql)) != expected:
                 return False
-            for _ in range(3):
-                shuffled = {name: rng.sample(data[name], len(data[name])) for name in self.used}
+            # reversed and rotated first: three random shuffles of a two-row table keep its order 1 time in 8
+            orders = [{name: list(reversed(data[name])) for name in self.used}]
+            orders.append({name: list(data[name][1:]) + list(data[name][:1]) for name in self.used})
+            orders += [{name: rng.sample(data[name], len(data[name])) for name in self.used} for _ in range(3)]
+            for shuffled in orders:
                 self._load(shuffled)
                 if (_bag(self._rows(self.left_sql)), _bag(self._rows(self.right_sql))) != expected:
                     return False

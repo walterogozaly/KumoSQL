@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 import sqlglot
@@ -73,9 +73,15 @@ MACROS = (
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_div(a, b) AS CASE WHEN b = 0 THEN {_fail('division by zero')} "
     f"WHEN (typeof(a) = {_NUMERIC} AND (typeof(b) = {_NUMERIC} OR typeof(b) IN {_INTEGERS})) "
     f"OR (typeof(b) = {_NUMERIC} AND typeof(a) IN {_INTEGERS}) THEN {_fail('NUMERIC division rounds to 9 digits')} "
-    "ELSE a / b END",
+    f"WHEN isinf(CAST(a / b AS DOUBLE)) THEN {_fail('floating point overflow')} ELSE a / b END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_mul(a, b) AS CASE WHEN typeof(a) = {_NUMERIC} AND typeof(b) = {_NUMERIC} "
-    f"THEN {_fail('NUMERIC product rounds to 9 digits')} ELSE a * b END",
+    f"THEN {_fail('NUMERIC product rounds to 9 digits')} "
+    f"WHEN isinf(CAST(a * b AS DOUBLE)) THEN {_fail('floating point overflow')} ELSE a * b END",
+    # SAFE_DIVIDE is NULL where division fails: a zero divisor or an overflowing quotient.
+    "CREATE OR REPLACE TEMP MACRO kumo_bq_safe_div(a, b) AS CASE WHEN b = 0 THEN NULL "
+    f"WHEN (typeof(a) = {_NUMERIC} AND (typeof(b) = {_NUMERIC} OR typeof(b) IN {_INTEGERS})) "
+    f"OR (typeof(b) = {_NUMERIC} AND typeof(a) IN {_INTEGERS}) THEN {_fail('NUMERIC division rounds to 9 digits')} "
+    "WHEN isinf(CAST(a / b AS DOUBLE)) THEN NULL ELSE a / b END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_mod(a, b) AS CASE WHEN b = 0 THEN {_fail('division by zero')} ELSE a % b END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_intdiv(a, b) AS CASE WHEN b = 0 THEN {_fail('division by zero')} ELSE a // b END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_shr(a, b) AS CASE WHEN a < 0 THEN {_fail('>> of a negative number is a logical shift')} "
@@ -90,6 +96,15 @@ MACROS = (
     "THEN rtrim(rtrim(CAST(x AS VARCHAR), '0'), '.') ELSE CAST(x AS VARCHAR) END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_read(x, form) AS CASE WHEN typeof(x) = 'VARCHAR' "
     f"AND NOT regexp_full_match(CAST(x AS VARCHAR), form) THEN {_fail('string read differently by BigQuery')} ELSE x END",
+    # a[OFFSET(i)] (base 0) and a[ORDINAL(i)] (base 1): an index outside the array fails, the SAFE_ forms give NULL;
+    # DuckDB reads a negative index from the end
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_at(a, i, base) AS CASE WHEN i - base < 0 OR i - base >= len(a) "
+    f"THEN {_fail('array index out of range')} ELSE a[i - base + 1] END",
+    "CREATE OR REPLACE TEMP MACRO kumo_bq_safe_at(a, i, base) AS CASE WHEN i - base < 0 OR i - base >= len(a) "
+    "THEN NULL ELSE a[i - base + 1] END",
+    # BigQuery keeps an interval's hours apart from its days (36 hours, not 1 day 12 hours)
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_not_interval(x) AS CASE WHEN typeof(x) = 'INTERVAL' "
+    f"THEN {_fail('intervals are split into parts differently')} ELSE x END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_substr(s, p) AS substring(s, CASE WHEN p = 0 OR p < -length(s) THEN 1 ELSE p END)",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_substr3(s, p, n) AS CASE WHEN n < 0 THEN {_fail('negative SUBSTR length')} "
     "ELSE substring(s, CASE WHEN p = 0 OR p < -length(s) THEN 1 ELSE p END, n) END",
@@ -134,7 +149,9 @@ def _class(*names: str) -> tuple[type, ...]:
 _REFUSED = _class(
     "Format", "Collate", "ApproxDistinct", "ApproxQuantile", "ApproxQuantiles", "ApproxTopK", "ApproxTopSum",
     "HllCountMerge", "HllCountExtract", "IeeeDivide",
-)
+    # sqlglot's ARRAY_SLICE keeps BigQuery's 0-based bounds; PERCENTILE_CONT ignores RESPECT NULLS
+    "ArraySlice", "PercentileCont", "PercentileDisc", "ParseJSON",
+) + tuple(getattr(exp, name) for name in dir(exp) if name.startswith("JSON") and isinstance(getattr(exp, name), type))
 _APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLATE$)", re.IGNORECASE)
 _STRUCT_COMPARISONS = _class("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "NullSafeEQ", "NullSafeNEQ", "In", "Is")
 
@@ -160,6 +177,18 @@ def _capture_groups(pattern: str) -> int:
     return len(re.findall(r"(?<!\\)\((?!\?)", pattern))
 
 
+_ORDERED_AGGREGATES = _class("ArrayAgg", "GroupConcat")
+
+
+def _ordered(node: exp.Expression) -> bool:
+    """An ``ARRAY_AGG``/``STRING_AGG`` with an ``ORDER BY`` of its own or of its window."""
+
+    inner = node.this
+    while isinstance(inner, exp.Limit):
+        inner = inner.this
+    return isinstance(inner, exp.Order) or (isinstance(node.parent, exp.Window) and bool(node.parent.args.get("order")))
+
+
 def refusal(tree: exp.Expression) -> str | None:
     """Why ``tree`` has no faithful DuckDB reading, or ``None``."""
 
@@ -172,6 +201,14 @@ def refusal(tree: exp.Expression) -> str | None:
             return "UNNEST WITH OFFSET"  # sqlglot writes WITH ORDINALITY, which counts from 1
         if isinstance(node, exp.DataType) and node.this == exp.DataType.Type.BIGDECIMAL:
             return "BIGNUMERIC"
+        if isinstance(node, exp.DataType) and node.this in (exp.DataType.Type.JSON, getattr(exp.DataType.Type, "JSONB", None)):
+            return "JSON"
+        if isinstance(node, exp.Cast) and node.args.get("format"):
+            return "CAST .. FORMAT"  # sqlglot drops the format
+        if isinstance(node, _ORDERED_AGGREGATES) and not _ordered(node):
+            return f"{node.sql_name()} without ORDER BY"  # the order of the elements is BigQuery's to pick
+        if isinstance(node, exp.Array) and any(isinstance(e, exp.Query) and not e.args.get("order") for e in node.expressions):
+            return "ARRAY(subquery) without ORDER BY"
         if isinstance(node, exp.Literal) and not node.is_string:
             try:
                 if abs(float(node.this)) >= 1e150:
@@ -292,6 +329,8 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         return exp.DataType.build("DECIMAL(38, 9)", dialect="duckdb")
     if isinstance(node, exp.Div) and not node.args.get("safe"):
         return _call("kumo_bq_div", node.this, node.expression)
+    if isinstance(node, exp.SafeDivide):
+        return _call("kumo_bq_safe_div", node.this, node.expression)
     if isinstance(node, exp.Mul):
         return _call("kumo_bq_mul", node.this, node.expression)
     if isinstance(node, exp.Mod):
@@ -306,7 +345,13 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         isinstance(node, exp.Sum) and isinstance(node.parent, exp.Filter)
     ):
         return _call("kumo_bq_int64", node)
+    if isinstance(node, exp.Bracket) and len(node.expressions) == 1 and not (
+        isinstance(node.expressions[0], exp.Literal) and node.expressions[0].is_string
+    ):
+        base = exp.Literal.number(1 if node.args.get("offset") == 1 else 0)
+        return _call("kumo_bq_safe_at" if node.args.get("safe") else "kumo_bq_at", node.this, node.expressions[0], base)
     if isinstance(node, exp.Extract):
+        node.set("expression", _call("kumo_bq_not_interval", node.expression))
         return _extract(node)
     if isinstance(node, _TRUNCS):
         start = _week_start(_unit(node.args.get("unit")))
@@ -395,6 +440,8 @@ def _value(value: Any) -> Any:
         return tuple(_value(v) for v in value) or None
     if isinstance(value, dict):
         return tuple(_value(v) for v in value.values())
+    if isinstance(value, timedelta):
+        raise UnfaithfulOutput(f"{MARKER}: BigQuery splits an interval into parts differently")
     if isinstance(value, datetime) and value.tzinfo is None and value.time() == datetime.min.time():
         return value.date()
     return value

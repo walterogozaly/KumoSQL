@@ -827,6 +827,26 @@ def check_result_equivalence(
             float_digits=float_digits,
         )
         if not equal:
+            from .refute import order_dependence
+
+            try:
+                free = order_dependence(left_sql) or order_dependence(right_sql)
+            except sqlglot.errors.SqlglotError:
+                free = None
+            if free:
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.INCONCLUSIVE,
+                    f"the results differ, but a query may pick rows freely ({free}), so the "
+                    "difference may be a different choice rather than a different answer",
+                    tuple(checked),
+                    seed,
+                    left_output,
+                    right_output,
+                    only_left,
+                    only_right,
+                    tuple(left_sql_out),
+                    tuple(right_sql_out),
+                )
             return ResultEquivalence(
                 ResultEquivalenceStatus.DIFFERENT,
                 reason,

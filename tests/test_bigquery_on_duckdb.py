@@ -197,6 +197,56 @@ def test_row28_numeric_division_and_product_fail(db):
     assert one(db, "SELECT x / 2 FROM UNNEST([3]) x") == 1.5
 
 
+def test_float_overflow_fails_and_safe_divide_overflow_is_null(db):
+    # BigQuery: 1e300 / 1e-10 is "double overflow"; SAFE_DIVIDE returns NULL for it and for a zero divisor
+    assert fails(db, "SELECT x / 1e-140 / 1e-140 FROM UNNEST([1e140]) x")
+    assert fails(db, "SELECT x * x * x FROM UNNEST([1e140]) x")
+    assert one(db, "SELECT SAFE_DIVIDE(1e100, 1e-100 * 1e-100 * 1e-100)") is None
+    assert one(db, "SELECT SAFE_DIVIDE(4, 0)") is None
+    assert one(db, "SELECT SAFE_DIVIDE(4, 2)") == 2.0
+    # BigQuery gives 0.333333333; DuckDB divides NUMERIC in floating point
+    assert fails(db, "SELECT SAFE_DIVIDE(NUMERIC '1', 3)")
+
+
+def test_array_subscripts(db):
+    # BigQuery: OFFSET counts from 0, ORDINAL from 1, a bare index is an OFFSET; outside the array OFFSET fails
+    # and SAFE_OFFSET is NULL (DuckDB reads a negative index from the end)
+    assert one(db, "SELECT ['a', 'b', 'c'][OFFSET(1)]") == "b"
+    assert one(db, "SELECT ['a', 'b', 'c'][ORDINAL(1)]") == "a"
+    assert one(db, "SELECT ['a', 'b', 'c'][1]") == "b"
+    assert fails(db, "SELECT ['a', 'b', 'c'][OFFSET(5)]")
+    assert one(db, "SELECT ['a', 'b', 'c'][SAFE_OFFSET(5)]") is None
+    assert one(db, "SELECT ['a', 'b', 'c'][SAFE_OFFSET(-2)]") is None
+    assert one(db, "SELECT ['a', 'b', 'c'][SAFE_ORDINAL(0)]") is None
+    assert one(db, "SELECT ['a', 'b', 'c'][OFFSET(NULL)]") is None
+
+
+def test_intervals_are_not_read(db):
+    # BigQuery: EXTRACT(HOUR FROM TIMESTAMP '2021-01-02 12:34:56' - TIMESTAMP '2021-01-01') is 36, DuckDB's 12
+    assert fails(db, "SELECT EXTRACT(HOUR FROM TIMESTAMP '2021-01-02 12:34:56' - TIMESTAMP '2021-01-01 00:00:00')")
+    assert fails(db, "SELECT TIMESTAMP '2021-01-02 12:34:56' - TIMESTAMP '2021-01-01 00:00:00'")
+    assert one(db, "SELECT EXTRACT(HOUR FROM TIMESTAMP '2021-01-02 12:34:56')") == 12
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT ARRAY_SLICE(['a', 'b', 'c', 'd'], 1, 2)",  # BigQuery ['b', 'c']; sqlglot keeps the 0-based bounds
+    "SELECT JSON_VALUE(JSON '{\"a\": [1, 2]}', '$.a[0]')",
+    "SELECT PERCENTILE_CONT(x, 0.5 RESPECT NULLS) OVER () FROM UNNEST([0, 3, NULL]) x",
+    "SELECT CAST(DATE '2024-01-01' AS STRING FORMAT 'DAY')",  # sqlglot drops the format
+    "SELECT ARRAY(SELECT 1 UNION ALL SELECT 2)",  # the element order is BigQuery's to pick
+    "SELECT ARRAY_AGG(x) FROM UNNEST([3, 1, 2]) x",
+    "SELECT STRING_AGG(x) FROM UNNEST(['b', 'a']) x",
+])
+def test_constructs_without_a_faithful_reading_are_refused(db, sql):
+    assert fails(db, sql)
+
+
+def test_ordered_array_aggregates_still_run(db):
+    assert one(db, "SELECT ARRAY_AGG(x ORDER BY x) FROM UNNEST([3, 1, 2]) x") == (1, 2, 3)
+    assert one(db, "SELECT STRING_AGG(s, '-' ORDER BY s) FROM UNNEST(['b', 'a']) s") == "a-b"
+    assert one(db, "SELECT ARRAY(SELECT x FROM UNNEST([2, 1]) x ORDER BY x)") == (1, 2)
+
+
 def test_row29_bignumeric_is_refused(db):
     assert fails(db, "SELECT CAST(x AS BIGNUMERIC) FROM UNNEST([1]) x")
 
