@@ -208,3 +208,67 @@ def test_self_witnessed_exists_needs_the_same_table_and_column():
     assert self_witnessed_exists(sqlglot.parse_one("SELECT 1 FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno = x.deptno)"), {"emp": frozenset({"empno", "deptno"})}) is None
     assert self_witnessed_exists(sqlglot.parse_one("SELECT 1 FROM emp AS x WHERE EXISTS (SELECT 1 FROM dept AS y WHERE y.deptno = x.deptno)"), {"emp": frozenset({"deptno"}), "dept": frozenset({"deptno"})}) is None
     assert self_witnessed_exists(sqlglot.parse_one("SELECT 1 FROM emp AS x WHERE EXISTS (SELECT 1 FROM emp AS y WHERE y.empno = x.empno AND y.sal > 1)"), {"emp": frozenset({"empno"})}) is None
+
+
+# False proofs found by an outside audit: each pair differs on the given rows and must not be proved.
+AUDITED = [
+    # a constant output of a one-row aggregate is not a one-row scalar subquery on its own
+    (
+        "SELECT t.x, d.c FROM t LEFT JOIN (SELECT COUNT(*) AS n, 7 AS c FROM u) AS d ON TRUE",
+        "SELECT t.x, (SELECT 7 FROM u) AS c FROM t",
+        {"t": ["x"], "u": ["y"]},
+        ["INSERT INTO t VALUES (1)"],
+    ),
+    (
+        "SELECT t.x, d.c FROM t LEFT JOIN LATERAL (SELECT COUNT(*) AS n, 7 AS c FROM u) AS d ON TRUE",
+        "SELECT t.x, (SELECT 7 FROM u) AS c FROM t",
+        {"t": ["x"], "u": ["y"]},
+        ["INSERT INTO t VALUES (1)"],
+    ),
+    # an alias declared in a deeper subquery does not bind a column of the middle one
+    (
+        "SELECT a.x FROM o AS a WHERE a.x IN (SELECT a.x FROM t AS a WHERE a.x IN (SELECT u.x FROM u AS u WHERE u.z = a.z AND EXISTS (SELECT 1 FROM v AS a)))",
+        "SELECT a.x FROM o AS a WHERE a.x IN (SELECT a.x FROM t AS a) AND a.x IN (SELECT u.x FROM u AS u WHERE u.z = a.z AND EXISTS (SELECT 1 FROM v AS a))",
+        {"o": ["x", "z"], "t": ["x", "z"], "u": ["x", "z"], "v": ["w"]},
+        ["INSERT INTO o VALUES (1, 10)", "INSERT INTO t VALUES (1, 20)", "INSERT INTO u VALUES (1, 20)", "INSERT INTO v VALUES (1)"],
+    ),
+    # ON FALSE pads a LEFT lateral join with NULLs and empties an inner one
+    (
+        "SELECT t.x, d.n FROM t LEFT JOIN LATERAL (SELECT COUNT(*) AS n FROM u) AS d ON FALSE",
+        "SELECT t.x, (SELECT COUNT(*) FROM u) AS n FROM t",
+        {"t": ["x"], "u": ["y"]},
+        ["INSERT INTO t VALUES (1)", "INSERT INTO u VALUES (1)"],
+    ),
+    (
+        "SELECT t.x, d.y FROM t INNER JOIN LATERAL (SELECT u.y FROM u WHERE u.y = t.x) AS d ON FALSE",
+        "SELECT t.x, u.y FROM t INNER JOIN u ON u.y = t.x",
+        {"t": ["x"], "u": ["y"]},
+        ["INSERT INTO t VALUES (1)", "INSERT INTO u VALUES (1)"],
+    ),
+]
+
+
+@pytest.mark.parametrize("left,right,schema,rows", AUDITED)
+def test_audited_false_proofs_differ_and_are_not_proved(left, right, schema, rows):
+    import duckdb
+
+    from kumosql.duckdb_load import run_unoptimized
+
+    db = duckdb.connect()
+    for table, columns in schema.items():
+        db.execute(f"CREATE TABLE {table} ({', '.join(c + ' INTEGER' for c in columns)})")
+    for row in rows:
+        db.execute(row)
+    a, b = run_unoptimized(db, left, right)
+    assert sorted(a, key=repr) != sorted(b, key=repr)
+    for dialect in ("bigquery", "postgres", "duckdb"):
+        assert not prove_equivalent_algebraic(left, right, schema=schema, dialect=dialect, compare_names=False).proven, dialect
+
+
+def test_one_row_join_still_reads_an_aggregate_output():
+    schema = {"t": ["x"], "u": ["y"]}
+    left = "SELECT t.x, d.n FROM t LEFT JOIN (SELECT COUNT(*) AS n, 7 AS c FROM u) AS d ON TRUE"
+    right = "SELECT t.x, (SELECT COUNT(*) FROM u) AS n FROM t"
+    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="postgres", compare_names=False).proven
+    lateral = "SELECT t.x, d.n FROM t LEFT JOIN LATERAL (SELECT COUNT(*) AS n, 7 AS c FROM u) AS d ON TRUE"
+    assert prove_equivalent_algebraic(lateral, right, schema=schema, dialect="postgres", compare_names=False).proven

@@ -42,19 +42,39 @@ def _and_all(parts: list[exp.Expression]) -> exp.Expression | None:
     return out
 
 
-def _declared(node: exp.Expression) -> set[str]:
-    """Every relation alias declared anywhere under ``node``."""
+def _bound_by(select: exp.Select) -> set[str]:
+    """The relation aliases ``select`` itself declares in its FROM and joins (not those of nested selects)."""
 
+    clauses = [select.args.get("from_") or select.args.get("from")] + list(select.args.get("joins") or [])
     return {
         (n.alias_or_name or "").lower()
-        for n in node.walk()
-        if isinstance(n, (exp.Table, exp.Subquery, exp.Lateral, exp.Unnest)) and n.alias_or_name
+        for clause in clauses
+        if clause is not None
+        for n in clause.walk()
+        if isinstance(n, (exp.Table, exp.Subquery, exp.Lateral, exp.Unnest)) and n.alias_or_name and n.find_ancestor(exp.Select) is select
     }
 
 
+def _bound_within(column: exp.Column, root: exp.Expression) -> bool:
+    """Whether ``column``'s qualifier names a relation of a select that encloses it inside ``root``.
+
+    Each select only sees its own relations and those of the selects around it, so an alias declared
+    in a sibling or deeper subquery does not bind the column.
+    """
+
+    name = column.table.lower()
+    node = column
+    while node is not None:
+        if isinstance(node, exp.Select) and name in _bound_by(node):
+            return True
+        if node is root:
+            return False
+        node = node.parent
+    return False
+
+
 def _free_qualifiers(node: exp.Expression) -> set[str]:
-    declared = _declared(node)
-    return {c.table.lower() for c in node.find_all(exp.Column) if c.table and c.table.lower() not in declared}
+    return {c.table.lower() for c in node.find_all(exp.Column) if c.table and not _bound_within(c, node)}
 
 
 def _plain_body(inner: exp.Select) -> bool:
@@ -495,10 +515,16 @@ def one_row_joins(select: exp.Select) -> exp.Expression | None:
         holder = join.parent
         if holder is None or join.arg_key != "joins":
             continue
-        for column in uses:
+        probes = {}
+        for name, value in values.items():
             probe = body.copy()
-            probe.set("expressions", [values[column.name.lower()].copy()])
-            value = exp.Subquery(this=probe)
+            probe.set("expressions", [value.copy()])
+            probes[name] = probe
+        # the body's one row comes from its aggregates: (SELECT 7 FROM u) alone has a row per row of u
+        if not all(_one_row_body(probes[c.name.lower()]) for c in uses):
+            continue
+        for column in uses:
+            value = exp.Subquery(this=probes[column.name.lower()].copy())
             column.replace(_named(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
         holder.set("joins", [j for j in holder.args["joins"] if j is not join] or None)
         wrapper = holder.parent
@@ -606,14 +632,13 @@ def _closed(node: exp.Expression, schema: dict[str, list[str]] | None) -> bool:
     """Whether every column under ``node`` is bound inside it (qualified by an alias it declares, or a
     bare name of the one table it reads, by ``schema``)."""
 
-    declared = _declared(node)
     for select in node.find_all(exp.Select):
         tables = [s for s in _sources(select)]
         for column in select.find_all(exp.Column):
             if column.find_ancestor(exp.Select) is not select:
                 continue
             if column.table:
-                if column.table.lower() not in declared:
+                if not _bound_within(column, node):
                     return False
                 continue
             if len(tables) != 1 or not isinstance(tables[0], exp.Table):
