@@ -25,6 +25,11 @@ Replace the target with your table and column. A direct reader can be marked `br
 
 **Lineage** follows where data came from. Table lineage says that `monthly_sales` reads `daily_sales`; column lineage says which input columns contribute to `monthly_sales.total`. A column used only in a filter or join has no value descendants but still changes which rows come out, so use the change assessment for the blast radius. If models depend on each other in a loop, no order exists: the report marks the order as incomplete and lists those models.
 
+Statements that change tables also retain their inputs and outputs. A script that inserts into `first` and then `second`
+lists both written tables, and a rename connects the old name to the new one. These table connections do not guarantee
+that every assigned column can be traced. Nested fields of a stored STRUCT still trace to the containing column.
+A partition name such as `events$__UNPARTITIONED__` uses the schema of `events` when it is available.
+
 ## Find work already done elsewhere
 
 A table profile describes its sources, attributes, and grain. Grain means what one row represents: one sale, one customer, or one customer per day.

@@ -25,7 +25,7 @@ two repositories at those commits (the commands are in its docstring). Nothing a
 Original and adapted cases are kept apart: the fixtures hold the upstream SQL and expectation unchanged. The adaptation is
 only in how a case is run and compared:
 
-- one case is one single-model KumoSQL pipeline named after the `INSERT`/`CREATE ... AS` target, or `__select__`;
+- one case is one single-model KumoSQL pipeline; table inputs and outputs come from its parsed statements, so multiple written targets are checked;
 - DataHub schemas are handed over under the table spelling the query uses (DataHub keys them by full name and resolves
   unqualified names against `default_db`/`default_schema`);
 - DataHub names a date shard or wildcard `table_yyyymmdd` and drops a partition decorator (`$...`): applied to both sides;
@@ -48,10 +48,16 @@ that parses as BigQuery and is not skipped upstream. Cases that are not BigQuery
 First run, before any adapter fix: DataHub 7/18 exact with 3 wrong, OpenLineage 70/96 exact with 7 wrong, no product change
 yet. Every one traced to the harness, not to KumoSQL: schemas keyed under two spellings made sqlglot report an ambiguous
 table (DataHub), the DataHub shard and partition naming, OpenLineage's `_0` naming, two cases that are not BigQuery, and four
-tests that treat an unused CTE as reading nothing. After those the in-scope numbers are in the README scoreboard rows. On 2026-10-03: OpenLineage 85/94 matched, 4 disputed, 5 unknown, 0 wrong; DataHub 17/18 matched (3 only to a struct's root column), 1 unknown, 0 wrong.
+tests that treat an unused CTE as reading nothing. After those the in-scope numbers are in the README scoreboard rows.
 
 The four `disputed` cases: `WITH unused AS (SELECT * FROM users) SELECT ... FROM other`. OpenLineage reports data flow, so
 `users` is not an input. KumoSQL lists every table the statement names, because dropping `users` still breaks the query.
+
+Recorded on 2026-10-03 with sqlglot 30.21.0: **OpenLineage 90/94 exact, 4 disputed, 0 unknown, 0 missed, 0 wrong**;
+**DataHub 15/18 exact plus 3 coarse, 0 unknown, 0 missed, 0 wrong** (18/18 matched).
+The same-version baseline was OpenLineage 85/94 exact with 5 unknown, and DataHub 14/18 exact plus 3 coarse with
+1 unknown. The recovered cases cover table rename, a DELETE without FROM, multi-table DROP, scripts with multiple
+INSERT targets, and partition schema resolution. The fixtures and their expected answers are unchanged.
 
 ## Held out and limits
 
@@ -59,9 +65,11 @@ The other-dialect cases (109: Snowflake, MySQL, T-SQL and so on, read as BigQuer
 shape the adapter, so they are an unseen generalisation check; their wrong and missed counts are dialect differences and stay out of
 the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.
 
-Table reads (not columns) are traced for `DELETE ... USING`, `UPDATE ... FROM`, `INSERT ... VALUES` with a subquery and
-`CREATE TABLE ... LIKE/CLONE`; the table such a statement writes is not a read, and ALTER/DROP/TRUNCATE are scored by the
-table they write. These models stay column-blind (`unknown_reads`). Still `unknown`, never guessed: `MERGE` and multi-statement
-scripts (other work), the no-`FROM` BigQuery `DELETE` form, the second table of a multi-table `DROP`, and a partition-decorated
-table name. Struct
-sub-field lineage is coarse (the root column).
+Table inputs and explicit outputs are checked for DELETE, UPDATE, MERGE (including a UNION source), ALTER, DROP,
+TRUNCATE, CREATE LIKE/CLONE, and INSERT VALUES containing a scalar subquery. Every script write target is checked,
+instead of inferring outputs from the final model name. A rename reads the old name and writes the new name; a DML
+target alone is not counted as a table input. Partition-decorated names use the base table's schema.
+These table matches do not establish complete column lineage for DML, copy statements or every script statement.
+Physical STRUCT sub-fields remain coarse at the root column; STRUCTs built inside a query can retain precise field lineage.
+Unsupported column shapes continue to report unknown. On the older supported parser versions, syntax that cannot be
+parsed stays outside the in-scope denominator, so the recorded score is tied to the stated parser version.

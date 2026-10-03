@@ -1,0 +1,19 @@
+[
+  {"sql": "DELETE FROM p.d.target WHERE id IN (SELECT id FROM p.d.source)", "reads": ["p.d.source"], "writes": ["p.d.target"]},
+  {"sql": "DELETE `p.d.target` WHERE TRUE", "reads": [], "writes": ["p.d.target"]},
+  {"sql": "UPDATE p.d.target SET value = s.value FROM p.d.source s WHERE target.id = s.id", "reads": ["p.d.source"], "writes": ["p.d.target"]},
+  {"sql": "MERGE p.d.target t USING (SELECT id, value FROM p.d.one UNION ALL SELECT id, value FROM p.d.two) s ON t.id = s.id WHEN MATCHED THEN UPDATE SET value = s.value", "reads": ["p.d.one", "p.d.two"], "writes": ["p.d.target"]},
+  {"sql": "MERGE p.d.target t USING p.d.source s ON t.id IN (SELECT id FROM p.d.lookup) WHEN MATCHED THEN DELETE", "reads": ["p.d.source", "p.d.lookup"], "writes": ["p.d.target"]},
+  {"sql": "ALTER TABLE p.d.target ADD COLUMN value INT64", "reads": [], "writes": ["p.d.target"]},
+  {"sql": "ALTER TABLE p.d.old RENAME TO renamed", "reads": ["p.d.old"], "writes": ["p.d.renamed"]},
+  {"sql": "DROP TABLE IF EXISTS p.d.target", "reads": [], "writes": ["p.d.target"]},
+  {"sql": "TRUNCATE TABLE p.d.target", "reads": [], "writes": ["p.d.target"]},
+  {"sql": "CREATE TABLE p.d.target LIKE p.d.source", "reads": ["p.d.source"], "writes": ["p.d.target"]},
+  {"sql": "CREATE TABLE p.d.target CLONE p.d.source", "reads": ["p.d.source"], "writes": ["p.d.target"]},
+  {"sql": "INSERT INTO p.d.target (value) VALUES ((SELECT MAX(value) FROM p.d.source))", "reads": ["p.d.source"], "writes": ["p.d.target"]},
+  {"sql": "WITH c AS (SELECT id FROM p.d.source) INSERT INTO p.d.target (id) SELECT id FROM c", "reads": ["p.d.source"], "writes": ["p.d.target"]},
+  {"sql": "INSERT INTO p.d.first (id) SELECT id FROM p.d.source; INSERT INTO p.d.second (id) SELECT id FROM p.d.first", "reads": ["p.d.source", "p.d.first"], "writes": ["p.d.first", "p.d.second"]},
+  {"sql": "INSERT INTO p.d.target (id) SELECT id FROM p.d.target", "reads": ["p.d.target"], "writes": ["p.d.target"]},
+  {"sql": "DROP SCHEMA p.d", "reads": [], "writes": []},
+  {"sql": "CREATE TEMP TABLE tmp AS SELECT id FROM p.d.source; DROP TABLE tmp; SELECT 1 AS id", "reads": ["p.d.source"], "writes": []}
+]

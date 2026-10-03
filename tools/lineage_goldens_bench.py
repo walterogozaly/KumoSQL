@@ -24,7 +24,6 @@ as BigQuery and reported apart; they never move the headline. Cases whose expect
 from __future__ import annotations
 
 from collections import Counter
-import datetime
 import importlib.util
 import json
 import re
@@ -147,7 +146,8 @@ def _adapt(case: dict) -> dict:
             ),
             full,
         )
-        schemas[key] = columns
+        # Partition decorators select rows of the base table, whose schema is unchanged.
+        schemas[re.sub(r"\$[^.]*$", "", key)] = columns
     return {**case, "schemas": schemas or None}
 
 
@@ -205,7 +205,7 @@ def _classify(case: dict) -> dict:
     want_sources = case.get("sources")
     want_targets = case.get("targets")
     have_sources = {_norm(t) for t in got["reads"]}
-    have_targets = {_norm(got["key"])} if got["key"] != "__select__" else set()
+    have_targets = {_norm(t) for t in got["writes"]}
     if want_sources is not None:
         extra += [t for t in have_sources if not any(_same_table(w, t, lenient) for w in want_sources)]
         missing += [w for w in want_sources if not any(_same_table(w, t, lenient) for t in have_sources)]
@@ -315,13 +315,13 @@ def write_results(result: dict, seconds: float) -> None:
     )
     common = {
         "evidence": "executed",
-        "date": datetime.date.today().isoformat(),
+        "date": "2026-10-03",
         "held_out": (
             "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to "
-            f"shape the adapter, so they are an unseen generalisation check; this run: {held}. Their wrong/missed counts are dialect differences "
+            f"shape the adapter, so they are a generalisation check; current run: {held}. Their wrong/missed counts are dialect differences "
             "and are not in the headline. The in-scope cases are not held out: each mismatch was read while building the adapter."
         ),
-        "performance": f"{result['datahub']['in']['total'] + result['openlineage']['in']['total']} in-scope cases in {seconds:.1f} s",
+        "performance": f"{result['datahub']['in']['total'] + result['openlineage']['in']['total']} in-scope cases in {seconds:.1f} s (sqlglot {base.sqlglot.__version__})",
     }
     oracle = {
         "openlineage": (
@@ -359,8 +359,9 @@ def write_results(result: dict, seconds: float) -> None:
             "command": "python tools/lineage_goldens_bench.py --write-results",
             "caveats": (
                 f"Cases left out: {sum(result[name]['left_out'].values())} (other dialects, upstream-skipped tests, USE state, not BigQuery); "
-                f"{result['unharvested'][name]} upstream tests could not be harvested. Statements other than queries and CREATE ... AS "
-                "(DELETE, UPDATE, MERGE, ALTER, DROP, TRUNCATE) are not traced and are reported unknown."
+                f"{result['unharvested'][name]} upstream tests could not be harvested. Table reads and explicit writes include DML, "
+                "table DDL, LIKE/CLONE and all script targets; this does not establish complete column lineage for those statements. "
+                "Physical STRUCT sub-fields remain coarse at the root column."
             ),
             "analysis": f"{edges(name)} (column cases only; recall counts edges reported unknown)",
             **common,

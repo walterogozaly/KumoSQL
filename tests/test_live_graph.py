@@ -1,15 +1,15 @@
 """The graph page serves the loaded project, or an empty state when nothing is loaded (issues #24, #26, #28)."""
 
 import json
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
 from kumosql import github_repo, live_graph
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 FILES = {
     "dataform.json": '{"defaultDataset": "stg", "defaultProject": "proj"}',
@@ -29,7 +29,7 @@ def _reset():
 
 @pytest.fixture
 def server():
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    httpd = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
