@@ -1,5 +1,7 @@
 # Rewrite rules
 
+[Plain-language version](../docs_simple/rewrite-rules.md)
+
 The rewrite rule registry and the subquery lifter.
 
 ## Rewrite rules

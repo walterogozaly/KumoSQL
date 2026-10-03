@@ -1,5 +1,7 @@
 # Table minimization: the simplest SQL that keeps the protected tables
 
+[Plain-language version](../docs_simple/table-minimization.md)
+
 Give KumoSQL any number of table definitions (say tables 1 through 20, each one `SELECT`) and say which of them are **protected**. It returns the set of tables with the lowest total complexity it can find in which every protected table still exists under the same name, with the same output columns in the same order, and is **proved** to return the same rows as before. Unprotected tables may be dropped, folded into their readers, merged into an equal table, pruned of columns nobody reads, or rewritten.
 
 Agreement on test data never counts: every step is kept only when KumoSQL's pipeline prover proves each protected table equal to the original. A step it cannot prove is rejected, so the worst answer is the input unchanged.

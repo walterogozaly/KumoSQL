@@ -1,5 +1,7 @@
 # UI for the roadmap
 
+[Plain-language version](../docs_simple/ui-roadmap.md)
+
 The browser UI already has the pages the roadmap needs. The graph, cost and change report views are built from the loaded project, its job history and a branch comparison, and show an empty state naming what to load when they have none. This note says which issue owns each area, and what data it expects, so that each issue ends with a working screen.
 
 ## How the views get their data

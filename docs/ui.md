@@ -1,5 +1,7 @@
 # Local browser UI
 
+[Plain-language version](../docs_simple/ui.md)
+
 How the local browser UI works: starting it, its pages, saved state, scopes, data sources and tags.
 
 ## Local browser UI
