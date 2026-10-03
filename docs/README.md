@@ -30,6 +30,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
 | [Public SQL evaluation sources](public-sql-evaluation-sources.md) | The research list of public suites, databases and projects; what KumoSQL already scores from it is in the [inventory](evals/public-sources.md) |
 | [Additional public SQL sources](additional-public-sql-sources.md) | A second research list: engine paired tests, repair corpora, more sample databases and GoogleSQL projects; see the [inventory](evals/public-sources.md#additional-sources) |
+| [Proof re-check](proof-recheck.md) | The heavy executed search that hunts for wrong proofs among the pairs the evals count as proven: the engine, its adapters, how to triage a difference and what the first runs found |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
 | [Picking up a workstream](handoff.md) | How an outside contributor or agent continues a `workstream` issue: a fresh clone of master, targeted tests only, the rules that never relax, and handing the work back as a pull request |
 
