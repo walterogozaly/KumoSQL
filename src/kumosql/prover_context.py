@@ -10,6 +10,8 @@ limit per solver check live in the ``prover`` section of the saved settings.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import threading
 
 from . import state
@@ -66,8 +68,30 @@ def save_settings(enabled: object = None, timeout_ms: object = None, bounded_row
     return current
 
 
+_COLUMNS: ContextVar[dict[str, list[str]] | None] = ContextVar("kumosql_prover_columns", default=None)
+
+
+@contextmanager
+def use_columns(columns: dict[str, list[str]]):
+    """Make ``current_schema()`` report exactly these columns (table name to column names) inside the block.
+
+    For callers that hold their own table definitions, and tests: the rule that qualifies columns and the
+    proof that checks it then read the same tables.
+    """
+
+    token = _COLUMNS.set({k.lower(): [c.lower() for c in v] for k, v in columns.items()})
+    try:
+        yield
+    finally:
+        _COLUMNS.reset(token)
+
+
 def current_schema() -> ProverSchema:
     """Facts from the loaded project and the saved BigQuery catalog (nothing is fetched)."""
+
+    override = _COLUMNS.get()
+    if override is not None:
+        return ProverSchema(columns=dict(override), table_count=len(override), sources={"given"})
 
     from . import bigquery_catalog, live_graph
 

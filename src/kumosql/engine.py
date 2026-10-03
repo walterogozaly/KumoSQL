@@ -325,6 +325,9 @@ class RewriteRule:
     #: sees only a placeholder name there, but the expression can compile to a looser-binding predicate, a whole
     #: clause or a query that reads a CTE, so dropping parentheses, predicates or CTEs around it can break it.
     keep_sqlx_expressions: ClassVar[bool] = False
+    #: Left out of ``canonical_rule_order()`` and of the benchmark and fuzz sweeps over every rule: a style
+    #: choice, or a rule that needs facts (table columns) those inputs do not declare. Run it by name.
+    opt_in: ClassVar[bool] = False
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int

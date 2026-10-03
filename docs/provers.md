@@ -4,6 +4,8 @@
 
 The equivalence checks behind every verified rewrite, from the structural prover to Z3, the algebraic prover and SQLSolver.
 
+**Network.** None of these checks reaches the network. Calling a prover, a rewrite or a pipeline analysis from Python makes no request: the one optional library lookup, the columns of tables a project does not define (`SELECT *` over them), is off by default and needs an explicit opt-in (`KUMOSQL_SCHEMA_FETCH=1`, `--fetch-schema` on `python -m kumosql pipeline-report`, or the Settings checkbox in the local UI); see [whole-pipeline analysis](pipeline-analysis.md). BigQuery dry runs and planner checks are likewise opt-in calls.
+
 The [singleton aggregation and set identity bridges](singleton-and-set-identity.md)
 cover key-fixed zero-or-one-row joins and deterministic set trees differing in
 scoped relation aliases. String singleton joins report an explicit collation
