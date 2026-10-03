@@ -1,0 +1,19 @@
+{
+  "suite": "Jaffle Shop dbt project (rewrites, lineage, graph)",
+  "order": 115,
+  "size": 45,
+  "score": "45/45 model rewrites keep every output, 0 wrong; graph 8/8 edges; lineage 27/27 columns; 20/20 dbt tests",
+  "metric": "A real dbt project (3 seeds, 5 models in Jinja, 20 YAML tests) rendered, built in DuckDB and loaded into KumoSQL as a Dataform project. Every rewrite rule and the whole cleanup are applied to each model and the pipeline rebuilt; a rewrite counts as kept when every model's output is unchanged on the seeds and on 10 random databases.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing rewrites (10 rewrites changed the SQL tree, 10 of them proven by the rule's own check); the loader's SQL rebuilt in DuckDB returns the dbt build's rows for all 5 models on 11 databases (0 differences); the output-comparison API agrees on 30/30 checks of the unchanged pipeline.",
+  "coverage": {
+    "proven": 45,
+    "error": 0
+  },
+  "analysis": "Graph: 8/8 dbt ref edges, 0 extra. Lineage: 27/27 output columns match the hand-written sources, transform and seed sources. Rewrites: 10 changed the tree, 5 layout only, 30 declined.",
+  "held_out": "rewrites 8/8, lineage 5/5 (a fifth by SHA-1 of the case id; nothing was tuned on this project)",
+  "docs": "docs/evals/pipeline-equivalence.md#jaffle-shop-a-real-dbt-project",
+  "command": "python tools/jaffle_shop_bench.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "Source dbt-labs/jaffle_shop_duckdb@20cc90437081 (duckdb branch, Apache-2.0). Adapted: the Jinja is rendered by a small renderer checked against jinja2, and the models are written as SQLX with ${ref()} for the loader; dbt itself is not run. The lineage expectation is written for this eval. One small project: 5 models, 27 output columns. Floats compared to 6 decimals."
+}

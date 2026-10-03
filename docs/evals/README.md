@@ -28,7 +28,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [DB-GPT rewrite examples](dbgpt-rules.md) | DB-GPT's 36 PostgreSQL before/after rewrites, labelled by hand and checked on DuckDB | `dbgpt-rules` |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Query pairs from public optimizer bug reports (Calcite, Spark, CockroachDB, DuckDB, MySQL, ClickHouse): none may be proved | `optimizer-bugs` |
 | [Join rewrites to LEFT JOIN](join-rewrites.md) | Hand-checked rewrites between CROSS, INNER, RIGHT, FULL, semi and anti joins and LEFT JOIN, proved or refuted | `join-rewrites` |
-| [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output | `pipeline-equivalence`, `pipeline-refutation` |
+| [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output; the Jaffle Shop dbt project built, loaded, rewritten and refactored | `pipeline-equivalence`, `pipeline-refutation`, `jaffle-shop`, `jaffle-shop-refactors`, `jaffle-shop-refutation` |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking and counterexample minimization | `targeted-test-data`, `multi-database-semantic`, `counterexample-minimization`, `unsafe-rewrite-variants` |
 | [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC fuzzing, unsafe-rewrite detection, rewrite composition and the typed soundness fuzzer | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition`, `soundness-fuzz` |
 
