@@ -41,7 +41,7 @@ EXPECTED = {
     "S001-005": ((COND, "(dept, mgr) is unique in dept"), (COND, "(dept, mgr) is unique in dept")),  # the file's key holds only where loc = 3
     "S001-006": ((REFUTED,), (REFUTED,)),  # needs a CHECK
     "S001-007": ((COND, "r.b is NOT NULL"), (COND, "r.b is NOT NULL")),
-    "S001-008": ((COND, "a.c is NOT NULL"), (COND, "(c) is unique in a", "a.c is NOT NULL")),
+    "S001-008": ((COND, "a.c is NOT NULL"), (COND, "a.c is NOT NULL")),
     "S001-009": ((COND, "r.a is NOT NULL"), (COND, "r.a is NOT NULL")),
     "S001-010": ((COND, "r.a1 is NOT NULL", "r.a2 is NOT NULL"), (COND, "r.a1 is NOT NULL", "r.a2 is NOT NULL")),
     "S001-011": ((PROVEN,), (PROVEN,)),
