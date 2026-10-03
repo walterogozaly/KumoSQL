@@ -1,5 +1,7 @@
 # Real BigQuery projects
 
+[Plain-language version](../../docs_simple/evals/bq-real-corpora.md)
+
 Every other syntax eval runs SQL written for it. This one runs code people wrote for their own projects: open-source Dataform projects and BigQuery SQL, copied at pinned commits with their licences into `tests/fixtures/bq_corpora/`. No language model runs at evaluation time.
 
 `python tools/bq_corpus_bench.py [--json out.json] [--write-results]`. The floors are in `tests/test_bq_corpus_bench.py`, and the scoreboard row is `benchmarks/results/bq-real-corpora.json`. To refresh the copies, run `python tools/fetch_bq_corpora.py`; it reads `tests/fixtures/bq_corpora/sources.json`.

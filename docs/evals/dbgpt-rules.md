@@ -1,5 +1,7 @@
 # DB-GPT rewrite examples
 
+[Plain-language version](../../docs_simple/evals/dbgpt-rules.md)
+
 [DB-GPT](https://github.com/TsinghuaDatabaseGroup/DB-GPT) (Apache-2.0) ships 36 before/after PostgreSQL rewrites as demonstrations for its LLM query rewriter. They come without labels or schemas, so each one was given a schema and a label by hand, and the test suite checks every label on DuckDB. Data, labels and adaptations: [tests/fixtures/dbgpt_rules](../../tests/fixtures/dbgpt_rules/README.md). Results file: `dbgpt-rules`.
 
 ```

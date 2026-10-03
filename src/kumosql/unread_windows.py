@@ -9,7 +9,8 @@ would not match the window-free one on the other.
 Kept as is when anything could read the column: a star (other than ``COUNT(*)``) or the table read as a
 value anywhere in the enclosing select, a ``USING`` or ``NATURAL`` join, ``DISTINCT`` or a star in the derived
 table, or any column of that name anywhere in the enclosing select (including the derived table's own
-``QUALIFY`` and ``ORDER BY``). At least one column always stays.
+``QUALIFY`` and ``ORDER BY``), or a derived table that aggregates without a GROUP BY. At least one column always
+stays.
 """
 
 from __future__ import annotations
@@ -25,6 +26,15 @@ def _own_window(item: exp.Expression, select: exp.Select) -> bool:
     return any(w.find_ancestor(exp.Select) is select for w in item.find_all(exp.Window))
 
 
+def _global_aggregate(select: exp.Select) -> bool:
+    """``select`` aggregates without a GROUP BY (``SUM(COUNT(*)) OVER ()`` counts): it returns one row even over
+    no input, and dropping the column holding its only aggregate would leave a row per input row."""
+
+    return not select.args.get("group") and any(
+        a.find_ancestor(exp.Select) is select and not isinstance(a.parent, exp.Window) for a in select.find_all(exp.AggFunc)
+    )
+
+
 def drop_unread_windows(tree: exp.Expression) -> exp.Expression:
     """Remove unread window columns from every derived table of ``tree`` (module doc). Rewrites in place."""
 
@@ -38,6 +48,8 @@ def drop_unread_windows(tree: exp.Expression) -> exp.Expression:
         if inner.args.get("distinct") or any(_is_star(e) for e in inner.expressions):
             continue
         if not any(_own_window(e, inner) for e in inner.expressions):
+            continue
+        if _global_aggregate(inner):
             continue
         if any(isinstance(s, exp.Star) and not isinstance(s.parent, exp.Count) for s in outer.find_all(exp.Star)):
             continue

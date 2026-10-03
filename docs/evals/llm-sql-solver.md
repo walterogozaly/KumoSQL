@@ -1,5 +1,7 @@
 # LLM-SQL-Solver
 
+[Plain-language version](../../docs_simple/evals/llm-sql-solver.md)
+
 [LLM-SQL-Solver](https://github.com/ZhaoFuheng/LLM-SQL-Solver) (MIT; Zhao et al., arXiv 2312.10321) pairs Spider's gold queries with queries written by DAIL-SQL. KumoSQL uses two of its files, pinned in `tests/fixtures/llm_sql_solver` ([source, licence and overlap](../../tests/fixtures/llm_sql_solver/README.md)):
 
 | Set | Pairs | Label | Results file |
