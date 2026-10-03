@@ -163,6 +163,37 @@ def table_function_reads_cte(tree: exp.Expression) -> bool:
     return False
 
 
+# sqlglot parses IS [NOT] DISTINCT FROM (NullSafeEQ, NullSafeNEQ) beside LIKE, IN and BETWEEN: tighter than ``=`` and ``<``,
+# left to right, and prints the tree back without parentheses. PostgreSQL and DuckDB read it below all of those
+# (``a = b IS NOT DISTINCT FROM c`` is ``(a = b) IS NOT DISTINCT FROM c``, ``a IS DISTINCT FROM b IN (c)`` is
+# ``a IS DISTINCT FROM (b IN (c))``) and refuse to chain it with another IS; MySQL puts ``<=>``, ``=``, LIKE and IN on
+# one level, left to right. GoogleSQL's grouping was not confirmed; declining holds under any of them.
+_COMPARISON_LEVEL = (
+    exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ, exp.Is, exp.Like,
+    exp.ILike, exp.SimilarTo, exp.Glob, exp.RegexpLike, exp.RegexpILike, exp.In, exp.Between,
+)
+
+
+def _comparison_operator(node: exp.Expression | None) -> bool:
+    if isinstance(node, exp.Not):
+        node = node.this
+    return isinstance(node, _COMPARISON_LEVEL)
+
+
+def check_distinct_from_grouping(tree: exp.Expression) -> None:
+    """Decline IS [NOT] DISTINCT FROM next to another comparison without parentheses between them.
+
+    Engines group such text differently from sqlglot's tree, so it is not proved under either reading.
+    An IN list item is in parentheses already.
+    """
+
+    for node in tree.find_all(exp.NullSafeEQ, exp.NullSafeNEQ):
+        parent = node.parent
+        nested = isinstance(parent, _COMPARISON_LEVEL) and not (isinstance(parent, exp.In) and node.arg_key != "this")
+        if nested or _comparison_operator(node.this) or _comparison_operator(node.expression):
+            raise UnmodeledConstruct("IS DISTINCT FROM next to another comparison without parentheses reads differently across engines")
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
@@ -171,6 +202,7 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     anything carried on the node is refused whichever version produced it.
     """
 
+    check_distinct_from_grouping(tree)
     for node in tree.walk():
         for kind, arg in _UNMODELED_ARGS:
             if isinstance(node, kind) and node.args.get(arg):
