@@ -39,6 +39,7 @@ import sqlglot
 from sqlglot import exp
 
 from .algebraic_equivalence import prove_equivalent_algebraic
+from .ast_utils import star_modified
 from .smt_equivalence import (
     SmtEquivalenceResult,
     SmtStatus,
@@ -203,8 +204,8 @@ def translate_query(sql: str, schema: Schema) -> str:
             raise TranslationError(f"nondeterministic function {type(node).__name__}")
         if isinstance(node, exp.Anonymous) and node.name.upper() in _NONDETERMINISTIC_NAMES:
             raise TranslationError(f"nondeterministic function {node.name.upper()}")
-        if isinstance(node, exp.Star) and any(isinstance(arg, list) for arg in node.args.values()):
-            raise TranslationError("SELECT * EXCEPT/REPLACE is not supported")
+        if isinstance(node, exp.Star) and star_modified(node):
+            raise TranslationError("SELECT * EXCEPT/REPLACE/RENAME/ILIKE is not supported")
         if isinstance(node, exp.Table) and isinstance(node.this, exp.Identifier):
             if not node.args.get("db") and node.name.lower() in cte_names:
                 continue

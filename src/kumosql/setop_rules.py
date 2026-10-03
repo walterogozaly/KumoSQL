@@ -28,7 +28,7 @@ import itertools
 
 from sqlglot import exp
 
-from .ast_utils import distinct_on
+from .ast_utils import distinct_on, star_modified
 from .canonical import canonical_copy
 from .empty_rules import is_empty
 
@@ -113,14 +113,11 @@ def _star_of(select: exp.Select, alias: str) -> bool:
     if len(select.expressions) != 1:
         return False
     item = select.expressions[0]
+    if star_modified(item):
+        return False
     if isinstance(item, exp.Star):
-        return not any(item.args.get(k) for k in ("except", "replace", "rename"))
-    return (
-        isinstance(item, exp.Column)
-        and isinstance(item.this, exp.Star)
-        and not any(item.this.args.get(k) for k in ("except", "replace", "rename"))
-        and item.table.lower() == alias
-    )
+        return True
+    return isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias
 
 
 def distinct_rows(node: exp.Expression) -> bool:

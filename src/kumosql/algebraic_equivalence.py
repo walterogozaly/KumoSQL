@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .string_literals import canonical_literals, invalid_literal
@@ -2924,6 +2924,8 @@ def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
         alias = source.alias_or_name.lower()
         if not (isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias and alias)):
             return tree
+        if star_modified(item):
+            return tree  # ``* EXCEPT / REPLACE ..`` lists other columns than ``q``
         tree = source.this.copy()
     return tree
 
@@ -3026,7 +3028,7 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
         if from_ is None or any(k is None for k in known) or "" in aliases or len(set(aliases)) != len(aliases):
             continue
         stars = [i for i in select.expressions if isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star))]
-        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or stars[0].args.get("except_") or stars[0].args.get("replace") or stars[0].args.get("rename")):
+        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or star_modified(stars[0])):
             continue
         # The columns of the running result, as (name, expression) pairs, to expand a bare star.
         running = [(c, exp.column(c, table=exp.to_identifier(aliases[0]))) for c in known[0]]
