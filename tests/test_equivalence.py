@@ -255,3 +255,11 @@ def test_canonical_cte_names_do_not_capture_a_table():
     right = "WITH b AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM b AS a CROSS JOIN b AS z"
 
     assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_canonical_cte_name_does_not_match_a_physical_table():
+    # With t = {1, 1} and a physical __canonical_cte_001 = {9}, these return [1, 1] and [9].
+    left = "WITH x AS (SELECT a FROM t) SELECT a FROM x AS z"
+    right = "WITH x AS (SELECT a FROM t) SELECT a FROM __canonical_cte_001 AS z"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT

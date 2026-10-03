@@ -184,3 +184,15 @@ def test_lifted_cte_names_skip_tables_in_any_case():
     statement = sqlglot.parse_one(lift_subqueries(sql).sql, read="bigquery")
 
     assert {cte.alias_or_name.lower() for cte in statement.find_all(exp.CTE)} == {"__lifted_subquery_002"}
+
+
+def test_verified_lift_keeps_reading_a_table_named_like_a_lifted_cte():
+    # With the physical table = {9} the original returns (1, 9); a CTE reusing its name returned (1, 1).
+    from kumosql import apply_rule
+
+    result = apply_rule(
+        "lift_subqueries", "SELECT x.a, y.a AS b FROM (SELECT 1 AS a) AS x CROSS JOIN __lifted_subquery_001 AS y"
+    )
+
+    statement = sqlglot.parse_one(result.sql, read="bigquery")
+    assert "__lifted_subquery_001" not in {cte.alias_or_name.lower() for cte in statement.find_all(exp.CTE)}
