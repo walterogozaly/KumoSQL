@@ -433,8 +433,8 @@ def pipeline_complexity(tables: Mapping[str, str]) -> dict:
 def complexity(sql: str) -> Complexity:
     """Score a query's structural complexity from its sqlfluff parse tree.
 
-    The score is a weighted sum of joins, CTEs, subqueries, set operations,
-    CASE expressions, window functions, boolean predicates and maximum SELECT
+    The score is a weighted sum of joins (comma joins included), CTEs, subqueries,
+    set operations, CASE expressions (IF included), window functions, boolean predicates and maximum SELECT
     nesting depth (weights in ``_WEIGHTS``). Bands: <10 low, <25 moderate,
     <50 high, otherwise very high. Raises ``ValueError`` if it cannot parse.
     """
@@ -457,12 +457,20 @@ def complexity(sql: str) -> Complexity:
 
     selects = count("select_statement")
     metrics = {
-        "joins": count("join_clause"),
+        # A comma join (FROM a, b) is a join too: each FROM item after the first counts like JOIN ... ON.
+        "joins": count("join_clause") + sum(
+            max(0, len([s for s in clause.segments if s.is_type("from_expression")]) - 1)
+            for clause in tree.recursive_crawl("from_clause")
+        ),
         "ctes": count("common_table_expression"),
         # Every SELECT beyond the top-level ones (CTE bodies aside) is nested.
         "subqueries": subqueries(tree),
         "set_operations": count("set_operator"),
-        "case_expressions": count("case_expression"),
+        # IF(c, a, b) is a CASE expression written as a function.
+        "case_expressions": count("case_expression") + len([
+            f for f in tree.recursive_crawl("function")
+            if any(s.is_type("function_name") and s.raw.strip().upper() == "IF" for s in f.segments)
+        ]),
         "window_functions": count("over_clause"),
         "predicates": len([
             op for op in tree.recursive_crawl("binary_operator") if op.raw.upper() in ("AND", "OR")

@@ -191,7 +191,7 @@ def test_sourced_cases_keep_their_split_licence_and_source_apart():
     licences = {p.stem for p in (mc.CASES_DIR / "licenses").glob("*.LICENSE")}
     for case in SOURCED:
         assert case["split"] == mc.held_out_split(case["id"]), case["id"]
-        assert case["reference_kind"] in ("external", "mechanical"), case["id"]
+        assert case["reference_kind"] in ("external", "mechanical", "hand"), case["id"]
         repo = case["source"].split("@")[0].split("/")[-1]
         assert repo in licences, case["id"]
     for case in SOURCED:

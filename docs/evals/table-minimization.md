@@ -36,7 +36,7 @@ One case per line in `benchmarks/table_minimization/*.jsonl`; the harness reads 
 | `protected` | Tables that must exist in the output with identical output. |
 | `original.complexity` | `{"score", "structural", "tables"}` of `tables`. |
 | `reference.tables`, `reference.complexity` | A known simpler pipeline, verified equal on every protected table. A target, not necessarily the optimum. For a case with nothing to remove it equals `tables`. |
-| `reference_kind` | Optional: `generated` (default), `external` (the source's own simpler version) or `mechanical`. Quality is reported per kind. |
+| `reference_kind` | Optional: `generated` (default), `external` (the source's own simpler version), `mechanical` (unread and pass-through tables removed) or `hand` (simplified by hand offline, then checked like any reference). Quality is reported per kind. |
 | `traps` | Tempting simplifications that change a protected output: `note`, full pipeline `tables`, the protected tables it `changes`, and a `witness` (source rows on which it differs). |
 | `data` | Optional real rows, loaded as one more check database. |
 | `verification` | How the reference was checked: DuckDB (optimizer off) on `databases` databases from `seed`, and per protected table whether KumoSQL proved it (`proved`). |
