@@ -46,6 +46,8 @@ from .ast_utils import quiet_parser, set_with_clause, with_clause
 
 MAX_PROCEDURE_DEPTH = 8
 MAX_NESTED_SQL_DEPTH = 3
+MAX_LOOP_PASSES = 12  # trial runs of a loop body before its variables are called unsettled
+MAX_LOOP_NESTING = 4
 KEPT, IGNORED, UNKNOWN = "kept", "ignored", "unknown"
 
 # ----------------------------------------------------------------------------- lexer
@@ -181,6 +183,7 @@ class Node:
     name: str = ""  # a procedure's name, a FOR loop's variable
     query: str = ""  # a FOR loop's query
     params: str = ""  # a procedure's parameter list
+    conditions: list[str] = field(default_factory=list)  # every condition that picks a path: IF/ELSEIF, CASE and WHEN, WHILE, UNTIL
 
 
 _CONTROL_STARTS = {"IF", "WHILE", "LOOP", "FOR", "REPEAT", "CASE"}
@@ -323,12 +326,13 @@ class _Splitter:
         self.i += 1
         a, b = self.scan_until({"THEN"})
         node = Node("if", begin, begin, header=self.text_of(a, b))
+        node.conditions.append(node.header)
         self.i += 1  # THEN
         node.branches.append(self.block({"ELSEIF", "ELSE", "END"}))
         while self.word() in {"ELSEIF", "ELSE"}:
             if self.word() == "ELSEIF":
                 self.i += 1
-                self.scan_until({"THEN"})
+                node.conditions.append(self.text_of(*self.scan_until({"THEN"})))
             self.i += 1
             node.branches.append(self.block({"ELSEIF", "ELSE", "END"}))
         self.end_statement("if")
@@ -341,6 +345,7 @@ class _Splitter:
         if header_stop:
             a, b = self.scan_until(header_stop)
             node.header = self.text_of(a, b)
+            node.conditions.append(node.header)
             self.i += 1
         node.branches.append(self.block({"END"}))
         self.end_statement(kind)
@@ -355,6 +360,7 @@ class _Splitter:
             self.i += 1
             a, b = self.scan_until({"END"})
             node.header = self.text_of(a, b)
+            node.conditions.append(node.header)
         self.end_statement("repeat")
         node.end = self.toks[self.i - 1].end
         return node
@@ -375,12 +381,13 @@ class _Splitter:
 
     def case_block(self, begin: int) -> Node:
         self.i += 1
-        self.scan_until({"WHEN"})
-        node = Node("case", begin, begin)
+        node = Node("case", begin, begin, header=self.text_of(*self.scan_until({"WHEN"})))
+        if node.header.strip():
+            node.conditions.append(node.header)  # ``CASE expr WHEN ...``: the value every WHEN is compared with
         while self.word() in {"WHEN", "ELSE"}:
             if self.word() == "WHEN":
                 self.i += 1
-                self.scan_until({"THEN"})
+                node.conditions.append(self.text_of(*self.scan_until({"THEN"})))
             self.i += 1
             node.branches.append(self.block({"WHEN", "ELSE", "END"}))
         self.end_statement("case")
@@ -467,6 +474,28 @@ class _Splitter:
 
 def parse_script(text: str) -> list[Node]:
     return _Splitter(text).parse()
+
+
+def column_words(text: str) -> frozenset[str] | None:
+    """Every name the text could use as a column (lower-cased), or ``None`` when it selects ``*`` (any column)."""
+
+    words: set[str] = set()
+    toks = lex(text)
+    for i, tok in enumerate(toks):
+        if tok.kind == "w":
+            words.add(tok.text.casefold())
+        elif tok.kind == "q":
+            words.update(part.casefold() for part in tok.text.strip("`").split(".") if part)
+        elif tok.kind == "p" and tok.text == "*":
+            before = toks[i - 1] if i else None
+            after = toks[i + 1] if i + 1 < len(toks) else None
+            if (
+                before is not None
+                and (before.up in {"SELECT", "DISTINCT", "ALL", "STRUCT", "VALUE"} or before.text in {",", "."})
+                or after is not None and after.up in {"EXCEPT", "REPLACE", "FROM"}
+            ):
+                return None
+    return frozenset(words)
 
 
 # ------------------------------------------------------------------------- flat splitting
@@ -985,6 +1014,7 @@ class Statement:
     complete: bool = False  # writes no column (DELETE, a delete-only MERGE): nothing is left to trace
     degraded: bool = False  # could not be parsed; its table reads and writes come from its tokens, its columns are unknown
     error: str = ""  # where sqlglot stopped (line and column, no SQL text)
+    reads: dict = field(default_factory=dict, repr=False, compare=False)  # real tables it reads directly
 
     def to_json(self) -> dict:
         row = {"line": self.line, "kind": self.kind, "disposition": self.disposition}
@@ -1039,6 +1069,7 @@ class Procedure:
     params: tuple[str, ...]
     body: list[Node]
     text: str  # the script text the body's offsets point into
+    modes: tuple[str, ...] = ()  # IN, OUT or INOUT per parameter
 
 
 @dataclass
@@ -1063,6 +1094,9 @@ class ScriptAnalysis:
         self.reads: dict[str, exp.Table] = {}
         self.variable_reads: dict[str, exp.Table] = {}
         self.definition_reads: dict[str, exp.Table] = {}  # tables the bodies of routine definitions read
+        # Tables read outside the traced output query (by other statements, conditions, variables and routine bodies):
+        # column lineage does not see which of their columns are read.
+        self.side_reads: dict[str, exp.Table] = {}
         self.procedures: dict[str, Procedure] = {}
         self.procedure_reports: list[dict] = []
         self.opaque_temps: dict[str, str] = {}
@@ -1151,11 +1185,14 @@ class ScriptAnalysis:
             if s.nested:
                 continue
             by_kind[s.disposition][s.kind] = by_kind[s.disposition].get(s.kind, 0) + 1
+        for s in self.unknown:
+            if s.nested:  # unknown inside a CALL or EXECUTE IMMEDIATE still counts as unknown
+                by_kind[UNKNOWN][s.kind] = by_kind[UNKNOWN].get(s.kind, 0) + 1
         out = {
             "statements": sum(self.counts().values()),
             "kept": self.counts()[KEPT],
             "ignored": self.counts()[IGNORED],
-            "unknown": self.counts()[UNKNOWN],
+            "unknown": len(self.unknown),
             "by_kind": {k: dict(sorted(v.items())) for k, v in by_kind.items() if v},
             "conditional": sum(1 for s in self.statements if s.conditional and s.disposition == KEPT),
             "expanded": sum(1 for s in self.statements if s.nested),
@@ -1177,16 +1214,17 @@ class ScriptAnalysis:
         c = self.counts()
         kinds = self.report()["by_kind"]
         parts = [f"{c[KEPT]} kept", f"{c[IGNORED]} ignored"]
-        if c[UNKNOWN]:
+        if self.unknown:
             detail = ", ".join(f"{kind} x{count}" for kind, count in kinds.get(UNKNOWN, {}).items())
-            parts.append(f"{c[UNKNOWN]} unknown ({detail})")
+            nested = sum(1 for s in self.unknown if s.nested)
+            parts.append(f"{len(self.unknown)} unknown ({detail}{f'; {nested} nested' if nested else ''})")
         else:
             parts.append("0 unknown")
         extra = []
         if self.temp_names:
             extra.append(f"{len(self.temp_names)} temporary table(s) followed")
         if self.variable_reads:
-            extra.append(f"{len(self.variable_reads)} table(s) reached through variables")
+            extra.append(f"{len(self.variable_reads)} table(s) read through variables or conditions")
         if any(s.conditional and s.disposition == KEPT for s in self.statements):
             extra.append("statements in branches count as possible edges")
         text = f"script of {sum(c.values())} statements: " + ", ".join(parts)
@@ -1392,9 +1430,9 @@ def collect_procedures(texts: Iterable[str]) -> dict[str, Procedure]:
             continue
         for node in _walk_nodes(nodes):
             if node.kind == "procedure" and node.name:
-                params = tuple(_parameter_names(node.params))
+                params = _parameters(node.params)
                 body = node.branches[0] if node.branches else []
-                proc = Procedure(node.name, params, body, text)
+                proc = Procedure(node.name, tuple(n for n, _m in params), body, text, tuple(m for _n, m in params))
                 found[_norm(node.name)] = proc
                 bare.setdefault(_norm(node.name).split(".")[-1], []).append(proc)
     for name, procs in bare.items():
@@ -1410,13 +1448,16 @@ def _walk_nodes(nodes: list[Node]) -> Iterator[Node]:
             yield from _walk_nodes(branch)
 
 
-def _parameter_names(params: str) -> list[str]:
+def _parameters(params: str) -> list[tuple[str, str]]:
+    """``(name, mode)`` of each parameter of a procedure: the mode is ``IN`` (the default), ``OUT`` or ``INOUT``."""
+
     inner = params.strip()
     if inner.startswith("("):
         inner = inner[1:]
-    names = []
+    found = []
     depth = 0
     expecting = True
+    mode = "IN"
     for tok in lex(inner):
         if tok.kind == "p" and tok.text == "(":
             depth += 1
@@ -1426,12 +1467,18 @@ def _parameter_names(params: str) -> list[str]:
             depth -= 1
         elif tok.kind == "p" and tok.text == "," and depth == 0:
             expecting = True
-        elif expecting and depth == 0 and tok.kind == "w":
-            if tok.up in {"IN", "OUT", "INOUT"}:
+            mode = "IN"
+        elif expecting and depth == 0 and tok.kind in {"w", "q"}:
+            if tok.kind == "w" and tok.up in {"IN", "OUT", "INOUT"}:
+                mode = tok.up
                 continue
-            names.append(tok.text)
+            found.append((tok.text.strip("`"), mode))
             expecting = False
-    return names
+    return found
+
+
+def _parameter_names(params: str) -> list[str]:
+    return [name for name, _mode in _parameters(params)]
 
 
 def analyse_script(
@@ -1463,6 +1510,13 @@ class _Run:
         self.nested = ""
         self.anchor_line = 0  # the line of the CALL or EXECUTE IMMEDIATE that statements read from inside it are reported at
         self._depth = 0
+        self.control: list[dict[str, exp.Table]] = []  # tables the conditions around the current statement read
+        self.scopes: list[dict[str, _Variable | None]] = [{}]  # per open block: each name it declared -> the binding it hid
+        self.transactions: list[tuple[dict[str, _Temp], dict[int, tuple[dict, list]]]] = []  # temporary tables at each BEGIN TRANSACTION
+        self.parameters: dict[str, dict[str, exp.Table]] | None = None  # EXECUTE IMMEDIATE ... USING: what each @name or ? holds
+        self.default_dataset = ""  # SET @@dataset_id
+        self.default_project = ""  # SET @@dataset_project_id
+        self._loops = 0
 
     # -- driving
     def run(self, text: str) -> None:
@@ -1502,12 +1556,120 @@ class _Run:
             self.describe_procedure(node, text)
             return
         looping = node.kind in {"while", "loop", "for", "repeat"}
-        self.record(Statement(len(self.a.statements), line, node.kind if node.kind != "begin" else "block", IGNORED, "control flow", conditional))
+        statement = self.record(Statement(len(self.a.statements), line, node.kind if node.kind != "begin" else "block", IGNORED, "control flow", conditional))
+        if looping:
+            self.settle_loop(node, text, top_level, statement)
+        self.control_flow(node, text, conditional=conditional, top_level=top_level, statement=statement)
+
+    def control_flow(self, node: Node, text: str, *, conditional: bool, top_level: bool, statement: Statement | None) -> None:
+        """Run the branches of a block once: the tables its conditions read feed everything inside it, and names it declares end with it."""
+
+        looping = node.kind in {"while", "loop", "for", "repeat"}
+        line = self.line_of(text, node.start)
+        guard: dict[str, exp.Table] = {}
+        for condition in node.conditions:
+            sources, ok = self.value_sources(condition)
+            if not ok and statement is not None:
+                statement.disposition, statement.reason = UNKNOWN, "condition could not be read"
+            guard.update(sources)
+        hidden: dict[str, _Variable | None] = {}
         if node.kind == "for":
-            self.bind_loop_variable(node, line)
-        for index, branch in enumerate(node.branches):
-            gated = conditional or node.kind in {"if", "case"} or looping or index > 0
-            self.nodes(branch, text, conditional=gated, top_level=top_level)
+            hidden[node.name.casefold()] = self.variables.get(node.name.casefold())
+            guard.update(self.bind_loop_variable(node, line))
+        self.note_reads(guard)
+        self.control.append(guard)
+        self.scopes.append(hidden)
+        try:
+            for index, branch in enumerate(node.branches):
+                gated = conditional or node.kind in {"if", "case"} or looping or index > 0
+                self.nodes(branch, text, conditional=gated, top_level=top_level)
+        finally:
+            self.control.pop()
+            self.close_scope(self.scopes.pop())
+
+    def close_scope(self, hidden: dict[str, "_Variable | None"]) -> None:
+        for name, previous in hidden.items():
+            if previous is None:
+                self.variables.pop(name, None)
+            else:
+                self.variables[name] = previous
+
+    def note_reads(self, sources: dict[str, exp.Table]) -> None:
+        """Tables read to decide something (a condition, a variable's value): direct reads, or reads through a variable."""
+
+        for key, table in sources.items():
+            if key not in self.a.reads:
+                self.a.variable_reads.setdefault(key, table)
+            self.a.side_reads.setdefault(key, table)
+
+    def guarded(self) -> dict[str, exp.Table]:
+        """The tables the conditions around the current statement read: whether it runs depends on them."""
+
+        found: dict[str, exp.Table] = {}
+        for guard in self.control:
+            found.update(guard)
+        return found
+
+    # -- loops
+    def settle_loop(self, node: Node, text: str, top_level: bool, statement: Statement) -> None:
+        """Bring the variables to what any iteration can start with, by running the body until they stop changing.
+
+        A value set late in one iteration is read early in the next. Each trial run is thrown away; only the variables
+        are kept, so the real run below sees every source a variable can hold at any point of the loop."""
+
+        if self._loops >= MAX_LOOP_NESTING:
+            statement.disposition, statement.reason = UNKNOWN, "loops nested too deeply to follow"
+            return
+        for _ in range(MAX_LOOP_PASSES):
+            before = self.variable_state()
+            saved = self.save_state()
+            self._loops += 1
+            try:
+                self.control_flow(node, text, conditional=True, top_level=False, statement=None)
+            finally:
+                self._loops -= 1
+                self.restore_state(saved)
+            if self.variable_state() == before:
+                return
+        statement.disposition, statement.reason = UNKNOWN, "loop variables did not settle"
+
+    def variable_state(self) -> dict[str, frozenset[str]]:
+        return {name: frozenset(var.sources) for name, var in self.variables.items()}
+
+    def save_state(self) -> tuple:
+        """Everything a trial run of a loop body changes, except the variables."""
+
+        analysis = self.a
+        scratch = ScriptAnalysis(analysis.text)
+        scratch.procedures = analysis.procedures
+        self.a = scratch
+        return (
+            analysis,
+            self.temp_snapshot(),
+            dict(self.versions),
+            self.sequence,
+            dict(self.function_reads),
+            list(self.transactions),
+            (self.default_dataset, self.default_project),
+        )
+
+    def restore_state(self, saved: tuple) -> None:
+        self.a, temps, versions, self.sequence, self.function_reads, self.transactions, defaults = saved
+        self.restore_temps(temps)
+        self.versions = versions
+        self.default_dataset, self.default_project = defaults
+
+    def temp_snapshot(self) -> tuple[dict[str, _Temp], dict[int, tuple[dict, list]]]:
+        """The current version of each temporary table, and what can still change inside each version (a DELETE adds to it)."""
+
+        return dict(self.temps), {id(t): (dict(t.sources), list(t.statements)) for t in self.temps.values()}
+
+    def restore_temps(self, snapshot: tuple[dict[str, _Temp], dict[int, tuple[dict, list]]]) -> None:
+        temps, inside = snapshot
+        for temp in temps.values():
+            sources, statements = inside[id(temp)]
+            temp.sources, temp.statements = dict(sources), list(statements)
+        self.temps = dict(temps)
 
     def record(self, statement: Statement, *, nested: bool | None = None) -> Statement:
         if self.nested:
@@ -1550,11 +1712,22 @@ class _Run:
         return None
 
     # -- variables
-    def bind_loop_variable(self, node: Node, line: int) -> None:
-        sources, ok = self.sources_of_text(node.query)
+    def bind_loop_variable(self, node: Node, line: int) -> dict[str, exp.Table]:
+        """The FOR loop's row variable holds what its query reads; the same tables decide how often the body runs."""
+
+        sources, ok = self.value_sources(node.query)
         self.variables[node.name.casefold()] = _Variable(dict(sources))
         if not ok:
             self.record(Statement(len(self.a.statements), line, "for_query", UNKNOWN, "loop query could not be read"))
+        return sources
+
+    def value_sources(self, expression: str) -> tuple[dict[str, exp.Table], bool]:
+        """Tables an expression's value comes from: what it reads, directly or through the variables it names."""
+
+        sources, ok = self.sources_of_text(expression)
+        for key, table in self.variable_sources_of_text(expression):
+            sources.setdefault(key, table)
+        return sources, ok
 
     def sources_of_text(self, expression: str) -> tuple[dict[str, exp.Table], bool]:
         """Real tables read by an expression or query text, through temporary tables and variables. ``ok`` is False if it did not parse."""
@@ -1567,13 +1740,34 @@ class _Run:
         return found, True
 
     def declare_variables(self, names: list[str], sources: dict[str, exp.Table]) -> None:
+        scope = self.scopes[-1]
         for name in names:
-            self.variables[name.casefold()] = _Variable(dict(sources))
+            key = name.casefold()
+            if key not in scope:
+                scope[key] = self.variables.get(key)
+            self.variables[key] = _Variable({**sources, **self.guarded()})
+
+    def assign(self, name: str, sources: dict[str, exp.Table], conditional: bool) -> None:
+        """A variable takes a new value; on a path that may not run, it may also keep its old one."""
+
+        key = name.casefold()
+        sources = {**sources, **self.guarded()}
+        existing = self.variables.get(key)
+        if existing is not None and conditional:
+            self.variables[key] = _Variable({**existing.sources, **sources})
+        else:
+            self.variables[key] = _Variable(dict(sources))
 
     def variable_sources(self, tree: exp.Expression) -> dict[str, exp.Table]:
-        if not self.variables:
-            return {}
         found: dict[str, exp.Table] = {}
+        if self.parameters is not None:
+            for parameter in tree.find_all(exp.Parameter, exp.Placeholder):
+                name = parameter.name.casefold() if isinstance(parameter, exp.Parameter) else ""
+                if name.startswith("@"):
+                    continue  # a system variable
+                found.update(self.parameters.get(name) or self.parameters.get("", {}))
+        if not self.variables:
+            return found
         for column in tree.find_all(exp.Column):
             name = (column.table or column.name).casefold() if column.table else column.name.casefold()
             var = self.variables.get(name)
@@ -1637,8 +1831,8 @@ class _Run:
         if first == "TRUNCATE":
             return done("truncate", IGNORED, "removes rows only")
         if first in _DDL:
-            if first == "DROP":
-                self.drop_temp(text_)
+            if first == "DROP" and not conditional:
+                self.drop_temp(text_)  # a DROP that may not run leaves the temporary table in place
             return done(first.lower(), IGNORED, "definition change, no data flow")
         if first == "DECLARE":
             return self.declare_statement(text_, line, conditional)
@@ -1651,6 +1845,7 @@ class _Run:
         if first == "EXPORT":
             return self.export_statement(text_, line, conditional)
         if first in _TRANSACTION or (first == "BEGIN" and len(words) > 1):
+            self.transaction(first, conditional)
             return done("transaction", IGNORED, "transaction control")
         if first in _FLOW:
             return done("flow", IGNORED, "control flow")
@@ -1659,6 +1854,24 @@ class _Run:
         if first == "EXECUTE":
             return self.execute_statement(text_, line, conditional, top_level)
         return self.degrade(done("other", UNKNOWN, "statement not recognised"), text_)
+
+    def transaction(self, first: str, conditional: bool) -> None:
+        """BEGIN keeps the temporary tables as they are; ROLLBACK brings them back, dropping what the transaction changed."""
+
+        if first in {"BEGIN", "START"}:
+            self.transactions.append(self.temp_snapshot())
+            return
+        if not self.transactions:
+            return
+        snapshot = self.transactions.pop()
+        if first != "ROLLBACK" or conditional:
+            return  # committed, or rolled back on a path that may not run: the changes may stay
+        kept = {id(s) for temp in snapshot[0].values() for s in snapshot[1][id(temp)][1]}
+        for temp in self.temps.values():
+            for statement in temp.statements:
+                if id(statement) not in kept:
+                    statement.complete = True  # undone: nothing it wrote is left to trace
+        self.restore_temps(snapshot)
 
     def drop_temp(self, text_: str) -> None:
         tree = self.parse(text_)
@@ -1673,7 +1886,28 @@ class _Run:
         """The statement as a tree, with every call of a table function this project defines replaced by its query."""
 
         tree = _parse_one(text_)
+        if tree is not None and (self.default_dataset or self.default_project):
+            self.qualify_defaults(tree, text_)
         return self.expand_functions(tree) if tree is not None and self.functions else tree
+
+    def qualify_defaults(self, tree: exp.Expression, text_: str) -> None:
+        """After ``SET @@dataset_id``, an unqualified name means a table of that dataset (not a temporary table or CTE)."""
+
+        ctes = {cte.alias_or_name.casefold() for cte in tree.find_all(exp.CTE)}
+        temp_target = None
+        if isinstance(tree, exp.Create) and re.match(r"\s*CREATE\s+(OR\s+REPLACE\s+)?TEMP(ORARY)?\b", text_, re.I):
+            temp_target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+        for table in tree.find_all(exp.Table):
+            if table is temp_target or not table.name or not isinstance(table.this, exp.Identifier) or table.catalog:
+                continue
+            if not table.db:
+                if table.name.casefold() in ctes or table.name.casefold() in self.temps or not self.default_dataset:
+                    continue
+                table.set("db", exp.to_identifier(self.default_dataset))
+            elif table.db.casefold() == "_session":
+                continue
+            if self.default_project:
+                table.set("catalog", exp.to_identifier(self.default_project))
 
     def expand_functions(self, tree: exp.Expression) -> exp.Expression:
         for table in list(tree.find_all(exp.Table)):
@@ -1708,9 +1942,9 @@ class _Run:
             if not table.db and not table.catalog and table.name.casefold() in ctes:
                 continue
             version = by_name.get(table.name.casefold()) if _is_temp_name(table) else None
-            if version is not None and version.alias != table.name:
+            if version is not None and (version.alias != table.name or table.db):
                 table.set("this", exp.to_identifier(version.alias))
-                table.set("db", None)
+                table.set("db", None)  # ``_SESSION.t`` is the temporary table ``t``
         return copy
 
     def degrade(self, statement: Statement, text_: str) -> Statement:
@@ -1730,10 +1964,11 @@ class _Run:
             sources[key] = _clean(table)
         for key, table in sources.items():
             self.a.reads.setdefault(key, table)
+        statement.reads.update(sources)
         for table in writes:
             if _is_temp_name(table):
                 continue
-            self.a.writes.append(ScriptWrite(_clean(table), tuple(v for k, v in sources.items() if k != _norm(_table_ref(table))), "opaque", statement.conditional))
+            self.write(table, {k: v for k, v in sources.items() if k != _norm(_table_ref(table))}, "opaque", statement.conditional)
         return statement
 
     def query_statement(self, text_: str, line: int, conditional: bool, top_level: bool, *, kind: str) -> Statement:
@@ -1759,9 +1994,11 @@ class _Run:
         via = self.variable_sources(tree)
         for key, table in sources.items():
             self.a.reads.setdefault(key, table)
+        statement.reads.update(sources)
         for key, table in via.items():
             if key not in sources:
                 self.a.variable_reads.setdefault(key, table)
+            self.a.side_reads.setdefault(key, table)
         merged = {**sources, **via}
         node = self.rewritten(tree, temps)
         out_query = _query_of(node)
@@ -1792,6 +2029,7 @@ class _Run:
             for key, table in found.items():
                 self.a.reads.setdefault(key, table)
                 self.a.definition_reads.setdefault(key, table)
+                self.a.side_reads.setdefault(key, table)
             routine = _routine_name(text_)
             if routine and found:
                 self.function_reads[routine] = found
@@ -1811,7 +2049,7 @@ class _Run:
         temp = bool(words_set & {"TEMP", "TEMPORARY"}) or (
             bool(properties) and any(isinstance(p, exp.TemporaryProperty) for p in properties.expressions)
         )
-        temp = temp and not target.db
+        temp = temp and _is_temp_name(target)  # ``CREATE TEMP TABLE _SESSION.t`` is temporary too
         kind = "create_view" if "VIEW" in words_set else "create_model" if "MODEL" in words_set else "create_table"
         columns = None
         if isinstance(tree.this, exp.Schema):
@@ -1845,7 +2083,15 @@ class _Run:
             return
         for key, table in sources.items():
             self.a.reads.setdefault(key, table)
-        self.a.writes.append(ScriptWrite(_clean(target), tuple(sources.values()), kind, conditional))
+        if output is None:
+            statement.reads.update(sources)
+        self.write(target, sources, kind, conditional)
+
+    def write(self, target: exp.Table, sources: dict[str, exp.Table], kind: str, conditional: bool) -> None:
+        """A real table is written: from its sources, and from whatever decides whether the statement runs at all."""
+
+        merged = {**sources, **{k: t for k, t in self.guarded().items() if k != _norm(_table_ref(target))}}
+        self.a.writes.append(ScriptWrite(_clean(target), tuple(merged.values()), kind, conditional))
 
     # -- temporary tables
     def define_temp(
@@ -1864,7 +2110,7 @@ class _Run:
         version = self.versions.get(key, 0) + 1
         self.versions[key] = version
         alias = name if version == 1 and key not in self.used_elsewhere() else f"{name}__v{version}"
-        temp = _Temp(name, alias, dict(sources), sequence=self.sequence, statements=list(statements))
+        temp = _Temp(name, alias, {**sources, **self.guarded()}, sequence=self.sequence, statements=list(statements))
         previous = self.temps.get(key)
         if output is not None:
             query = output.query
@@ -1906,6 +2152,7 @@ class _Run:
 
         key = target.name.casefold()
         previous = self.temps[key]
+        sources = {**sources, **self.guarded()}
         if kind == "delete":  # removes rows: the columns still come from the same query
             previous.sources.update({k: t for k, t in sources.items() if k not in previous.sources})
             previous.statements.append(statement)
@@ -1963,9 +2210,11 @@ class _Run:
             via = self.variable_sources(tree)
             for key, table in sources.items():
                 self.a.reads.setdefault(key, table)
+            statement.reads.update(sources)
             for key, table in via.items():
                 if key not in sources:
                     self.a.variable_reads.setdefault(key, table)
+                self.a.side_reads.setdefault(key, table)
             sources = {**sources, **via}
             if kind in ("merge", "insert") and not into_temp:
                 node = self.rewritten(tree, temps)
@@ -1982,7 +2231,7 @@ class _Run:
             self.temp_dml(target, kind, output, insert_columns, sources, statement)
             return statement
         sources.pop(_norm(_table_ref(target)), None)
-        self.a.writes.append(ScriptWrite(_clean(target), tuple(sources.values()), kind, conditional))
+        self.write(target, sources, kind, conditional)
         return statement
 
     # -- variables
@@ -2003,7 +2252,7 @@ class _Run:
         statement = self.record(Statement(len(self.a.statements), line, "declare", IGNORED, "scalar variable", conditional))
         if default is not None:
             expression = text_[toks[default + 1].start :] if default + 1 < len(toks) else ""
-            sources, ok = self.sources_of_text(expression)
+            sources, ok = self.value_sources(expression)  # a default can name a variable declared before it
             self.mark_unreadable(statement, ok)
             self.declare_variables(names, sources)
         else:
@@ -2021,23 +2270,33 @@ class _Run:
             return statement
         target, expression = match.group(1), match.group(2)
         names = [n.strip().strip("()") for n in target.split(",")] if target.startswith("(") else [target]
-        sources, ok = self.sources_of_text(expression)
+        sources, ok = self.value_sources(expression)
         self.mark_unreadable(statement, ok)
-        for variable in self.variable_sources_of_text(expression):
-            sources.setdefault(*variable)
         for name in names:
             name = name.split(".")[0].strip().casefold()
             if name.startswith("@@"):
+                self.set_system_variable(statement, name, expression, conditional)
                 continue
-            existing = self.variables.get(name)
-            if existing is not None and conditional:
-                existing.sources.update(sources)
-            else:
-                self.variables[name] = _Variable(dict(sources))
+            self.assign(name, sources, conditional)
         return statement
 
+    def set_system_variable(self, statement: Statement, name: str, expression: str, conditional: bool) -> None:
+        """``SET @@dataset_id`` and ``@@dataset_project_id`` move where later unqualified table names point."""
+
+        if name not in {"@@dataset_id", "@@dataset_project_id"}:
+            return
+        toks = lex(expression)
+        value = string_value(toks[0].text) if len(toks) == 1 and toks[0].kind == "s" else None
+        if value is None or conditional or self.nested or not re.fullmatch(r"[\w\-]+", value):
+            statement.disposition, statement.reason = UNKNOWN, "changes the default dataset to a value that is not known here"
+            return
+        if name == "@@dataset_id":
+            self.default_dataset = value
+        else:
+            self.default_project = value
+
     def variable_sources_of_text(self, expression: str) -> list[tuple[str, exp.Table]]:
-        tree = _parse_one("SELECT " + expression)
+        tree = _parse_one(expression) if re.match(r"\s*(SELECT|WITH)\b", expression, re.I) else _parse_one("SELECT " + expression)
         if tree is None:
             return []
         return list(self.variable_sources(tree).items())
@@ -2054,6 +2313,7 @@ class _Run:
         sources, _temps, _late = self.reads_of(tree)
         for key, table in sources.items():
             self.a.reads.setdefault(key, table)
+        statement.reads.update(sources)
         return statement
 
     def call_statement(self, text_: str, line: int, conditional: bool, top_level: bool) -> Statement:
@@ -2069,29 +2329,40 @@ class _Run:
             return self.record(Statement(index, line, "call", UNKNOWN, "recursive or too deeply nested", conditional))
         statement = self.record(Statement(index, line, "call", KEPT, "expanded from its definition", conditional))
         arguments = _split_arguments(match.group(2))
-        saved = dict(self.variables)
+        modes = procedure.modes or ("IN",) * len(procedure.params)
+        # The body runs in its own scope: parameters hide the caller's names, and nothing it sets leaks back except
+        # through OUT and INOUT parameters.
+        caller, caller_scopes = self.variables, self.scopes
+        self.variables = {name: _Variable(dict(var.sources)) for name, var in caller.items()}
+        self.scopes = [{}]
+        for position, param in enumerate(procedure.params):
+            sources: dict[str, exp.Table] = {}
+            if position < len(arguments) and modes[position] != "OUT":
+                sources, _ok = self.value_sources(arguments[position])
+            self.variables[param.casefold()] = _Variable({**sources, **self.guarded()})
         self.call_stack.append(_norm(procedure.name))
         previous_nested, self.nested = self.nested, self.nested or "procedure"
         previous_anchor, self.anchor_line = self.anchor_line, self.anchor_line or line
+        returned: dict[str, dict[str, exp.Table]] = {}
         try:
-            for position, param in enumerate(procedure.params):
-                sources: dict[str, exp.Table] = {}
-                if position < len(arguments):
-                    sources, _ok = self.sources_of_text(arguments[position])
-                    for key, table in self.variable_sources_of_text(arguments[position]):
-                        sources.setdefault(key, table)
-                self.variables[param.casefold()] = _Variable(dict(sources))
             before_unknown = len(self.a.unknown)
             self.nodes_in_text(procedure.body, procedure.text, conditional=conditional)
             if len(self.a.unknown) > before_unknown:
                 statement.reason = "expanded from its definition; some of it could not be read"
+            for position, param in enumerate(procedure.params):
+                if modes[position] in {"OUT", "INOUT"} and position < len(arguments):
+                    var = self.variables.get(param.casefold())
+                    returned[arguments[position]] = dict(var.sources) if var is not None else {}
         finally:
             self.nested, self.anchor_line = previous_nested, previous_anchor
             self.call_stack.pop()
-            for key in [k for k in self.variables if k not in saved]:
-                del self.variables[key]
-            for key, value in saved.items():
-                self.variables.setdefault(key, value)
+            self.variables, self.scopes = caller, caller_scopes
+        for argument, sources in returned.items():
+            name = argument.strip().strip("`")
+            if re.fullmatch(r"\w+", name):
+                self.assign(name, sources, conditional)
+            else:
+                statement.disposition, statement.reason = UNKNOWN, "an OUT argument is not a variable"
         return statement
 
     def nodes_in_text(self, nodes: list[Node], text: str, *, conditional: bool) -> None:
@@ -2108,28 +2379,75 @@ class _Run:
         if len(toks) < 3 or toks[1].up != "IMMEDIATE":
             return self.record(Statement(index, line, "execute", UNKNOWN, "statement not recognised", conditional))
         body: list[Tok] = []
+        starts: list[tuple[str, int, int]] = []  # INTO / USING: where the keyword ends and the clause starts
+        depth = 0
         for t in toks[2:]:
-            if t.kind == "w" and t.up in {"INTO", "USING"}:
-                break
-            body.append(t)
+            if t.kind == "p" and t.text in "([":
+                depth += 1
+            elif t.kind == "p" and t.text in ")]":
+                depth -= 1
+            if depth == 0 and t.kind == "w" and t.up in {"INTO", "USING"}:
+                starts.append((t.up, t.start, t.end))
+            elif not starts:
+                body.append(t)
+        clauses = {
+            word: text_[end : starts[i + 1][1] if i + 1 < len(starts) else len(text_)].strip()
+            for i, (word, _start, end) in enumerate(starts)
+        }
         inner = _literal_text(body)
         if inner is None:
+            for variable in _split_arguments(clauses.get("INTO", "")):
+                if variable:
+                    self.assign(variable.strip("`"), {}, conditional=True)  # what dynamic text puts in it is unknown
             return self.record(Statement(index, line, "execute_immediate", UNKNOWN, "dynamic SQL text", conditional))
         if self._depth >= MAX_NESTED_SQL_DEPTH:
             return self.record(Statement(index, line, "execute_immediate", UNKNOWN, "nested too deeply to read", conditional))
         statement = self.record(Statement(index, line, "execute_immediate", KEPT, "literal text, read as a script", conditional))
+        # USING binds values to the text's @name and ? parameters; the text cannot see script variables otherwise.
+        parameters: dict[str, dict[str, exp.Table]] = {"": {}}
+        for argument in _split_arguments(clauses.get("USING", "")):
+            if not argument:
+                continue
+            named = re.match(r"(.*?)\s+AS\s+`?(\w+)`?\s*$", argument, re.I | re.S)
+            value, name = (named.group(1), named.group(2)) if named else (argument, "")
+            sources, ok = self.value_sources(value)
+            if not ok:
+                statement.disposition, statement.reason = UNKNOWN, "a USING value could not be read"
+            key = (name or (value.strip() if re.fullmatch(r"\w+", value.strip()) else "")).casefold()
+            if key:
+                parameters[key] = {**parameters.get(key, {}), **sources}
+            parameters[""].update(sources)
         self._depth += 1
         previous_nested, self.nested = self.nested, self.nested or "execute_immediate"
         previous_anchor, self.anchor_line = self.anchor_line, self.anchor_line or line
+        previous_parameters, self.parameters = self.parameters, parameters
+        into: dict[str, exp.Table] = {}
         try:
             self.nodes_in_text(parse_script(inner), inner, conditional=conditional)
+            if clauses.get("INTO"):
+                into, ok = self.value_sources(inner)
+                if not ok:
+                    statement.disposition, statement.reason = UNKNOWN, "the query read INTO variables could not be read"
         finally:
             self.nested, self.anchor_line = previous_nested, previous_anchor
+            self.parameters = previous_parameters
             self._depth -= 1
+        for variable in _split_arguments(clauses.get("INTO", "")):
+            if variable:
+                self.assign(variable.strip("`"), into, conditional)
         return statement
 
     # -- output
     def choose_final(self) -> None:
+        try:
+            self.pick_final()
+        finally:
+            for statement in self.a.statements:
+                if not statement.traced:
+                    for key, table in statement.reads.items():
+                        self.a.side_reads.setdefault(key, table)
+
+    def pick_final(self) -> None:
         outputs = [o for o in self.a._outputs if o.top_level and o.statement.disposition == KEPT]
         unconditional = [o for o in outputs if not o.conditional]
         final = (unconditional or outputs or [None])[-1]

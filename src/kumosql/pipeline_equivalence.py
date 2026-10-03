@@ -397,11 +397,17 @@ def prove_queries(left: object, right: object) -> dict:
         from .refute import counterexample_from_search
 
         facts = prover_context.current_schema()
+        # a declared key's columns are NOT NULL (TableConstraints), and every foreign key holds
         rules = {
-            name: DataRules(not_null=frozenset(c.not_null), keys=tuple(c.keys))
+            name: DataRules(not_null=frozenset(c.not_null).union(*map(frozenset, c.keys)), keys=tuple(c.keys))
             for name, c in facts.constraints.items()
         }
-        found = counterexample_from_search(left, right, facts.columns, rules, facts.types)
+        foreign_keys = [
+            (name.lower(), tuple(map(str.lower, columns)), parent.lower().split(".")[-1], tuple(map(str.lower, parent_columns)))
+            for name, c in facts.constraints.items()
+            for columns, parent, parent_columns in c.foreign_keys
+        ]
+        found = counterexample_from_search(left, right, facts.columns, rules, facts.types, foreign_keys=foreign_keys)
         size = lambda c: sum(len(r) for r in c["tables"].values())
         if found is not None and ("counterexample" not in data or size(found) < size(data["counterexample"])):
             data["status"] = "not_equivalent"

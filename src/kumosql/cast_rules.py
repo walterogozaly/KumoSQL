@@ -16,10 +16,13 @@
   non-strict one with the literal moved by one: ``COUNT(x) > 1`` is
   ``COUNT(x) >= 2``. (Other integers keep their comparisons: the SMT reads
   them as reals, where ``x > 50`` and ``x <= 50`` stay complementary.)
-* An ``INT`` (or narrower) expression cast to ``DOUBLE``, ``FLOAT`` or a wide
-  enough ``DECIMAL`` keeps its order and its ties (the cast is exact and
+* An ``INT`` (or narrower) expression cast to ``DOUBLE``, a wide enough
+  ``DECIMAL``, or ``FLOAT`` (32-bit, so only for integers of at most 7 digits:
+  16777217 is not a ``FLOAT``) keeps its order and its ties (the cast is exact and
   one-to-one there), so as an ``ORDER BY`` key it is the expression itself; and
-  such a cast is NULL exactly when its input is.
+  such a cast is NULL exactly when its input is. Here the operands' width is not
+  enough: ``i * i`` of two ``INT`` values can need 19 digits, and a ``SUM`` any
+  number, so arithmetic is bounded by its operands' sizes and ``SUM`` keeps its cast.
 * ``ROUND(x)`` is ``ROUND(x, 0)``.
 * ``1 * x`` is ``x`` where ``x`` is already a number (an aggregate or arithmetic)
   or is read as one (inside arithmetic or ``SUM``/``AVG``), in dialects whose
@@ -29,8 +32,10 @@
   branch whose condition is FALSE is dropped, and one whose condition is TRUE
   becomes the ``ELSE`` (later branches can never be reached).
 
-Types come from the declared column types and are followed through derived
-tables. An expression whose type is not known keeps its cast.
+Types come from the declared column types, read in the query's dialect (every
+BigQuery integer type is ``INT64``, every Snowflake one ``NUMBER(38, 0)``), and
+are followed through derived tables. An expression whose type is not known
+keeps its cast.
 """
 
 from __future__ import annotations
@@ -40,6 +45,9 @@ import re
 from sqlglot import exp
 
 _INTEGER_DIGITS = {"TINYINT": 3, "SMALLINT": 5, "MEDIUMINT": 8, "INT": 10, "INTEGER": 10, "BIGINT": 19, "INT64": 19}
+# Dialects whose integer names all mean one type: BigQuery's INT, SMALLINT, TINYINT, BYTEINT, ...
+# are INT64, and Snowflake's are NUMBER(38, 0).
+_ONE_INTEGER_TYPE = {"bigquery": 19, "snowflake": 38}
 _LONG_LIMIT = 2**63
 
 
@@ -48,20 +56,22 @@ def _type_name(datatype: exp.DataType) -> str:
     return (this.name if isinstance(this, exp.DataType.Type) else str(this)).upper()
 
 
-def _declared(type_sql: str) -> tuple[str, int] | None:
+def _declared(type_sql: str, dialect: str) -> tuple[str, int] | None:
     """``(kind, digits)`` of a declared column type: ``int``, ``date`` or ``bool``."""
 
     try:
-        parsed = exp.DataType.build(type_sql, dialect="mysql")
+        parsed = exp.DataType.build(type_sql, dialect=dialect)
     except Exception:  # noqa: BLE001 - an unreadable type is an unknown type
         return None
-    return _target(parsed)
+    if re.match(r"\s*int8\b", type_sql, re.I) and _type_name(parsed) != "BIGINT":
+        return None  # sqlglot reads ClickHouse's 8-bit Int8 here, but MySQL's INT8 is a BIGINT
+    return _target(parsed, dialect)
 
 
-def _target(datatype: exp.DataType) -> tuple[str, int] | None:
+def _target(datatype: exp.DataType, dialect: str) -> tuple[str, int] | None:
     name = _type_name(datatype)
     if name in _INTEGER_DIGITS:
-        return "int", _INTEGER_DIGITS[name]
+        return "int", _ONE_INTEGER_TYPE.get(dialect, _INTEGER_DIGITS[name])
     if name == "DATE":
         return "date", 0
     if name == "BOOLEAN":
@@ -77,7 +87,7 @@ def _sources(select: exp.Select) -> list[exp.Expression]:
     return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
 
-def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int) -> tuple[str, int] | None:
+def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int, dialect: str, bound: bool) -> tuple[str, int] | None:
     name = column.name.lower()
     found = []
     for source in _sources(select):
@@ -89,7 +99,7 @@ def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int
             if declared is None:
                 return None  # an unknown table may hold the column
             if name in declared:
-                found.append(_declared(declared[name]))
+                found.append(_declared(declared[name], dialect))
         elif isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select):
             inner = source.this
             items = [i for i in inner.expressions if i.alias_or_name.lower() == name]
@@ -98,54 +108,63 @@ def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int
             if len(items) > 1:
                 return None
             if items:
-                found.append(expression_type(items[0].unalias(), inner, types, depth + 1))
+                found.append(expression_type(items[0].unalias(), inner, types, depth + 1, dialect, bound))
         else:
             return None  # VALUES, UNNEST, set operations: not followed
     return found[0] if len(found) == 1 else None
 
 
-def expression_type(node: exp.Expression, select: exp.Select, types: dict, depth: int = 0) -> tuple[str, int] | None:
-    """``(kind, digits)`` of ``node`` read in ``select``'s scope, or ``None`` when unknown."""
+def expression_type(node: exp.Expression, select: exp.Select, types: dict, depth: int = 0, dialect: str = "bigquery", bound: bool = False) -> tuple[str, int] | None:
+    """``(kind, digits)`` of ``node`` read in ``select``'s scope, or ``None`` when unknown.
+
+    An integer's ``digits`` is the width of its operands for ``SUM`` and arithmetic (overflow is
+    excluded), which says nothing about its size: ``2000000000 * 2000000000`` has 19 digits. With
+    ``bound`` it is a true bound instead, every value being below ``10 ** digits`` in magnitude.
+    """
 
     if depth > 8 or node is None:
         return None
     if isinstance(node, exp.Paren):
-        return expression_type(node.this, select, types, depth + 1)
+        return expression_type(node.this, select, types, depth + 1, dialect, bound)
     if isinstance(node, exp.Literal):
         if not node.is_string and re.fullmatch(r"\d+", node.name or "") and int(node.name) < _LONG_LIMIT:
             return "int", len(node.name.lstrip("0") or "0")
         return None
     if isinstance(node, exp.Neg):
-        inner = expression_type(node.this, select, types, depth + 1)
+        inner = expression_type(node.this, select, types, depth + 1, dialect, bound)
         return inner if inner and inner[0] == "int" else None
     if isinstance(node, exp.Boolean) or isinstance(node, _PREDICATES):
         return "bool", 0
     if isinstance(node, exp.Column):
         if not isinstance(node.this, exp.Identifier):
             return None
-        return _column_type(select, node, types, depth)
+        return _column_type(select, node, types, depth, dialect, bound)
     if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast) and isinstance(node.args.get("to"), exp.DataType):
-        target = _target(node.args["to"])
+        target = _target(node.args["to"], dialect)
         if target is None:
             return None
-        if target[0] == "bool" and expression_type(node.this, select, types, depth + 1) != ("bool", 0):
+        if target[0] == "bool" and expression_type(node.this, select, types, depth + 1, dialect, bound) != ("bool", 0):
             return None  # what an integer casts to differs between engines
         return target
     if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.IntDiv)):
-        a = expression_type(node.this, select, types, depth + 1)
-        b = expression_type(node.expression, select, types, depth + 1)
-        if a and b and a[0] == b[0] == "int":
-            return "int", max(a[1], b[1])
-        return None
+        a = expression_type(node.this, select, types, depth + 1, dialect, bound)
+        b = expression_type(node.expression, select, types, depth + 1, dialect, bound)
+        if not (a and b and a[0] == b[0] == "int"):
+            return None
+        if bound and isinstance(node, exp.Mul):
+            return "int", a[1] + b[1]
+        if bound and isinstance(node, (exp.Add, exp.Sub)):
+            return "int", max(a[1], b[1]) + 1
+        return "int", max(a[1], b[1])  # a true bound for DIV too: |a DIV b| <= |a|
     if isinstance(node, (exp.Sum, exp.Min, exp.Max)):
         argument = node.this
         if isinstance(argument, exp.Distinct):
             if len(argument.expressions) != 1:
                 return None
             argument = argument.expressions[0]
-        inner = expression_type(argument, select, types, depth + 1)
+        inner = expression_type(argument, select, types, depth + 1, dialect, bound)
         if isinstance(node, exp.Sum):
-            return inner if inner and inner[0] == "int" else None
+            return inner if inner and inner[0] == "int" and not bound else None  # a sum of many rows has no bound
         return inner
     if isinstance(node, exp.Count):
         return "int", 19
@@ -156,7 +175,7 @@ def expression_type(node: exp.Expression, select: exp.Select, types: dict, depth
             values = [branch.args.get("true") for branch in node.args.get("ifs") or []] + [node.args.get("default")]
         else:
             values = [node.this] + list(node.expressions)
-        kinds = [expression_type(v, select, types, depth + 1) for v in values if v is not None and not isinstance(v, exp.Null)]
+        kinds = [expression_type(v, select, types, depth + 1, dialect, bound) for v in values if v is not None and not isinstance(v, exp.Null)]
         if not kinds or any(k is None for k in kinds) or len({k[0] for k in kinds}) != 1:
             return None
         return kinds[0][0], max(k[1] for k in kinds)
@@ -184,7 +203,7 @@ def _fits(value: int, datatype: exp.DataType) -> bool:
     return value < _INTEGER_MAX.get(_type_name(datatype), 0)
 
 
-def _literal_cast(cast: exp.Cast) -> exp.Expression | None:
+def _literal_cast(cast: exp.Cast, dialect: str) -> exp.Expression | None:
     """A literal cast to a type it fits exactly, as a literal of that type."""
 
     value, to = cast.this, cast.args["to"]
@@ -193,7 +212,7 @@ def _literal_cast(cast: exp.Cast) -> exp.Expression | None:
         value = value.this
     if not isinstance(value, exp.Literal):
         return None
-    target = _target(to)
+    target = _target(to, dialect)
     if value.is_string:
         match = re.fullmatch(r"(-?)(\d+)", value.this or "")
         if negative or target is None or target[0] != "int" or match is None:
@@ -219,37 +238,45 @@ def _literal_cast(cast: exp.Cast) -> exp.Expression | None:
     return exp.Neg(this=number) if negative else number
 
 
-def _exact_numeric_cast(cast: exp.Expression, select: exp.Select, types: dict) -> exp.Expression | None:
+# Integers a floating type holds exactly, as digits: a DOUBLE (binary64) every one up to 2**53, so
+# any of 15 digits, and a FLOAT (binary32 in DuckDB, MySQL, Spark, Postgres' REAL) every one up to
+# 2**24, so any of 7 digits (16777217 is not one). A precision argument is not read: Postgres's
+# FLOAT(24), parsed as DOUBLE, is a REAL.
+_FLOAT_DIGITS = {"DOUBLE": 15, "FLOAT": 7}
+
+
+def _exact_numeric_cast(cast: exp.Expression, select: exp.Select, types: dict, dialect: str) -> exp.Expression | None:
     """The input of a cast from an INT-or-narrower expression to an exact-on-it numeric type, else ``None``."""
 
     if not isinstance(cast, exp.Cast) or isinstance(cast, exp.TryCast) or not isinstance(cast.args.get("to"), exp.DataType):
         return None
-    have = expression_type(cast.this, select, types)
+    have = expression_type(cast.this, select, types, dialect=dialect, bound=True)
     if have is None or have[0] != "int" or have[1] > _INTEGER_DIGITS["INT"]:
         return None
     name = _type_name(cast.args["to"])
     params = _decimal_params(cast.args["to"])
-    if name in ("DOUBLE", "FLOAT", "DOUBLE PRECISION") or name in _INTEGER_DIGITS and _INTEGER_DIGITS[name] >= have[1] or (params and params[0] - params[1] >= have[1]):
+    floating = name in _FLOAT_DIGITS and not cast.args["to"].expressions and _FLOAT_DIGITS[name] >= have[1]
+    if floating or name in _INTEGER_DIGITS and _INTEGER_DIGITS[name] >= have[1] or (params and params[0] - params[1] >= have[1]):
         return cast.this
     return None
 
 
-def _fold_cast(cast: exp.Cast, select: exp.Select, types: dict) -> exp.Expression | None:
+def _fold_cast(cast: exp.Cast, select: exp.Select, types: dict, dialect: str) -> exp.Expression | None:
     if isinstance(cast, exp.TryCast) or not isinstance(cast.args.get("to"), exp.DataType):
         return None
     to = cast.args["to"]
     inner = cast.this.unnest() if isinstance(cast.this, exp.Paren) else cast.this
     if isinstance(inner, exp.Cast) and not isinstance(inner, exp.TryCast) and isinstance(inner.args.get("to"), exp.DataType) and inner.args["to"].sql() == to.sql():
         return inner.copy()
-    literal = _literal_cast(cast)
+    literal = _literal_cast(cast, dialect)
     if literal is not None:
         return literal
     if isinstance(inner, exp.Literal) or isinstance(inner, exp.Neg) and isinstance(inner.this, exp.Literal):
         return None  # a literal folds only when it fits the type exactly (above)
-    target = _target(to)
+    target = _target(to, dialect)
     if target is None:
         return None
-    have = expression_type(inner, select, types)
+    have = expression_type(inner, select, types, dialect=dialect)
     if have is None or have[0] != target[0]:
         return None
     if target[0] == "int" and have[1] > target[1] and target[1] < _INTEGER_DIGITS["INT"]:
@@ -380,13 +407,13 @@ def fold_casts_and_constant_cases(select: exp.Select, types: dict, dialect: str 
     order = select.args.get("order")
     for ordered in order.expressions if order is not None else []:
         key = ordered.this.unnest() if isinstance(ordered.this, exp.Paren) else ordered.this
-        inner = _exact_numeric_cast(key, select, types)
+        inner = _exact_numeric_cast(key, select, types, dialect)
         if inner is not None:
             ordered.set("this", inner.copy())
             changed = True
     for node in list(select.find_all(exp.Is)):
         if own(node) and isinstance(node.expression, exp.Null):
-            inner = _exact_numeric_cast(node.this.unnest() if isinstance(node.this, exp.Paren) else node.this, select, types)
+            inner = _exact_numeric_cast(node.this.unnest() if isinstance(node.this, exp.Paren) else node.this, select, types, dialect)
             if inner is not None:
                 node.set("this", inner.copy())
                 changed = True
@@ -415,7 +442,7 @@ def fold_casts_and_constant_cases(select: exp.Select, types: dict, dialect: str 
     for cast in [c for c in select.find_all(exp.Cast) if own(c)][::-1]:
         if cast.parent is None:
             continue
-        folded = _fold_cast(cast, select, types)
+        folded = _fold_cast(cast, select, types, dialect)
         if folded is not None:
             cast.replace(folded)
             changed = True

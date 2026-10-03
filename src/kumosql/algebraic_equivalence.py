@@ -33,10 +33,10 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
-from .string_literals import canonical_literals
+from .string_literals import canonical_literals, invalid_literal
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -52,7 +52,7 @@ from .intersection_rules import collapse_counted_intersection, collapse_named_co
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
-from .limit_rules import limit_rule as _limit_rule
+from .limit_rules import drops_global_aggregate, limit_rule as _limit_rule, rebinds_grouping_names
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .int_div_rules import fold_literal_int_div
@@ -78,6 +78,7 @@ from .join_rewrites import join_rewrites
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .union_filter_rules import push_filter_into_set_operation
+from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types, unchecked_types
 from .constant_correlation import propagate_constant_correlations
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
@@ -1288,8 +1289,10 @@ def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
     conditions = []
     if inner.args.get("having") is not None:
         conditions.append(inner.args["having"].this.copy())
-    if select.args.get("where") is not None:
-        conditions.append(substitute(select.args["where"].this))
+    moved = [substitute(select.args["where"].this)] if select.args.get("where") is not None else []
+    if rebinds_grouping_names(inner, outputs, moved):
+        return None
+    conditions += moved
     if conditions:
         result.set("having", exp.Having(this=_and_all([c for cond in conditions for c in _conjuncts(cond)])))
     if _global_aggregate(inner) and not _global_aggregate(result):
@@ -2076,7 +2079,8 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
     A grouped or plain derived table keeps its rows when an output is removed,
     so ``SELECT 1 FROM (SELECT k, COUNT(*) FROM t GROUP BY k) AS d`` is the same
     as ``SELECT 1 FROM (SELECT k FROM t GROUP BY k) AS d``. Not applied under
-    ``DISTINCT`` (removing a column changes which rows collapse) or with a star.
+    ``DISTINCT`` (removing a column changes which rows collapse) or with a star,
+    nor where it would remove the last aggregate of a select without GROUP BY.
     """
 
     if any(
@@ -3171,8 +3175,12 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
     aliased = {n for n, item in by_name.items() if isinstance(item, exp.Alias)}
     if any(c.name.lower() in aliased and not c.table and c.name.lower() not in kept for c in inner.args["order"].find_all(exp.Column)):
         return None
+    if rebinds_grouping_names(inner, items, clauses=("group", "having", "order")):
+        return None
     result = inner.copy()
     result.set("expressions", items)
+    if drops_global_aggregate(inner, result):
+        return None
     return result
 
 
@@ -3231,7 +3239,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
         inner = _flatten_projections(inner.copy()) or inner  # read through projection-only derived tables
     if not alias or not isinstance(inner, exp.Select) or inner.args.get("joins") or not isinstance(inner.args.get("from_") or inner.args.get("from"), exp.From):
         return False
-    constant_distinct = bool(inner.args.get("distinct")) and all(isinstance(e.this if isinstance(e, exp.Alias) else e, (exp.Literal, exp.Boolean)) for e in inner.expressions)
+    constant_distinct = plain_distinct(inner) and all(isinstance(e.this if isinstance(e, exp.Alias) else e, (exp.Literal, exp.Boolean)) for e in inner.expressions)
     if any(inner.args.get(k) for k in ("having", "limit", "offset", "qualify", "order", "with_", "with")) or (inner.args.get("distinct") and not constant_distinct) or any(inner.find_all(exp.Window, exp.Subquery, exp.AggFunc)):
         return False
     table = (inner.args.get("from_") or inner.args.get("from")).this
@@ -3248,7 +3256,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     group = inner.args.get("group")
     group_columns = set() if constant_distinct and group is None else None
     if group is not None:
-        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if extended_grouping(group):
             return False
         group_columns = set()
         for e in group.expressions:
@@ -3259,7 +3267,9 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     elif group_columns is None and any(not isinstance(e, (exp.Column, exp.Literal, exp.Boolean)) for e in outputs.values()):
         return False
     alias = alias.lower()
-    equated: dict[str, exp.Expression] = {}
+    if any((later.args.get("side") or "").upper() in ("RIGHT", "FULL") for later in select.args["joins"][select.args["joins"].index(join) + 1 :]):
+        return False  # a later outer join NULL-pads the joined relation, and its indicator with it, but not an EXISTS test
+    equated: dict[str, list[exp.Expression]] = {}
     for part in ([] if isinstance(join.args["on"], exp.Boolean) and join.args["on"].this else _conjuncts(join.args["on"])):
         if not isinstance(part, exp.EQ):
             return False
@@ -3273,7 +3283,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
         column = outputs.get(mine[0].name.lower())
         if not isinstance(column, exp.Column) or column.table.lower() not in ("", inner_alias):
             return False
-        equated.setdefault(column.name.lower(), other)
+        equated.setdefault(column.name.lower(), []).append(other)  # every equality is a condition of the match
     if group_columns is not None:
         if not group_columns <= set(equated):
             return False
@@ -3311,8 +3321,8 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
             if column.table.lower() in ("", inner_alias):
                 column.set("table", exp.to_identifier(fresh))
         conditions.append(own)
-    for name, other in equated.items():
-        conditions.append(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()))
+    for name, others in equated.items():
+        conditions.extend(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()) for other in others)
     where = _and_all(conditions)
     if where is not None:
         probe.set("where", exp.Where(this=where))
@@ -3755,11 +3765,11 @@ def _probe_and_nth_value(tree: exp.Expression) -> exp.Expression:
     return tree.transform(probe)
 
 
-def _except_of_same_table_filters(tree: exp.Expression, schema: dict[str, list[str]] | None) -> exp.Expression:
+def _except_of_same_table_filters(tree: exp.Expression, schema: dict[str, list[str]] | None, dialect: str = "bigquery") -> exp.Expression:
     """``SELECT * FROM t WHERE a EXCEPT SELECT * FROM t WHERE b`` is ``SELECT DISTINCT * FROM t WHERE a AND NOT COALESCE(b, FALSE)``.
 
     Both sides list every column of the same table, so a row is in the second side exactly when ``b`` holds
-    for it (equal rows agree on any condition over their columns).
+    for it (equal rows agree on any condition over their columns). Same in every qualifier: ``s1.t`` is not ``s2.t``.
     """
 
     if not schema:
@@ -3789,7 +3799,7 @@ def _except_of_same_table_filters(tree: exp.Expression, schema: dict[str, list[s
         if type(node) is not exp.Except or not node.args.get("distinct", True):
             return node
         left, right = single(node.this), single(node.expression)
-        if left is None or right is None or left[0].name.lower() != right[0].name.lower():
+        if left is None or right is None or not same_table(left[0], right[0], dialect):
             return node
         (a_table, a_where), (b_table, b_where) = left, right
         a_alias, b_alias = (a_table.alias_or_name or "").lower(), (b_table.alias_or_name or "").lower()
@@ -4266,11 +4276,12 @@ def _drop_empty_null_extended_side(select: exp.Select) -> exp.Expression | None:
     return copy
 
 
-def _drop_exists_witnessed_by_join(select: exp.Select) -> exp.Expression | None:
+def _drop_exists_witnessed_by_join(select: exp.Select, dialect: str = "bigquery") -> exp.Expression | None:
     """``WHERE EXISTS (SELECT 1 FROM d WHERE d.k = o.x)`` is implied by a joined ``d AS s`` with ``s.k = o.x``.
 
     The row of ``s`` is a witness for every row the select returns, so the test is TRUE and can go. Only
     inner joins (nothing is null-extended), and only a test that is a plain conjunction of such equalities.
+    The joined table must be the probed one in every qualifier: ``s1.d`` is no witness for ``s2.d``.
     """
 
     joins = select.args.get("joins") or []
@@ -4326,7 +4337,7 @@ def _drop_exists_witnessed_by_join(select: exp.Select) -> exp.Expression | None:
         witnessed = False
         if pairs:
             for src in sources:
-                if isinstance(src, exp.Table) and src.name.lower() == table.name.lower() and src.alias_or_name:
+                if isinstance(src, exp.Table) and same_table(src, table, dialect) and src.alias_or_name:
                     alias = src.alias_or_name.lower()
                     if all((alias, col, o_table, o_col) in equalities for col, o_table, o_col in pairs):
                         witnessed = True
@@ -4528,7 +4539,7 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
         name = item.alias_or_name
         items.append(exp.alias_(value.copy(), name) if name else value.copy())
     # An ORDER BY of the inner select would read output aliases that may be gone; groups have none here.
-    if inner.args.get("order"):
+    if inner.args.get("order") or rebinds_grouping_names(inner, items):
         return None
     result = inner.copy()
     result.set("expressions", items)
@@ -4800,7 +4811,7 @@ def normalize(
     tree = _name_derived_columns(tree)
     if schema:
         tree = _using_to_on(_expand_stars(tree, schema), schema)  # USING over a derived table read once its stars are known
-    tree = _except_of_same_table_filters(tree, schema)
+    tree = _except_of_same_table_filters(tree, schema, dialect)
     tree = _probe_and_nth_value(tree)
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
@@ -4838,7 +4849,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map)):
+            for rule in (distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, lambda sel: _drop_exists_witnessed_by_join(sel, dialect), _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
@@ -4875,8 +4886,20 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     With ``conditional=True`` a pair that is not proven is retried under facts taken from the queries
     (NOT NULL columns, unique keys, foreign keys); a proof that needs some of them comes back as
     ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (:mod:`kumosql.conditional_equivalence`).
+    A proof over a set operation whose branch types are not all known carries
+    ``set_operation_types.ASSUMPTION``; one whose branches have different known types is declined.
     """
 
+    dialect = kwargs.get("dialect", "bigquery")
+    if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+    result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
+    if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
+        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    return result
+
+
+def _prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     search = kwargs.pop("search_counterexample", False)
     conditional = kwargs.pop("conditional", False)
     wall = kwargs.pop("conditional_seconds", None)
@@ -4904,6 +4927,11 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
+    mixed = mixed_types(left_sql, kwargs.get("types"), kwargs.get("dialect", "bigquery")) or mixed_types(
+        right_sql, kwargs.get("types"), kwargs.get("dialect", "bigquery")
+    )
+    if mixed:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {mixed} (the rules do not model the conversion)")
     result = _prove_algebraic(left_sql, right_sql, 0, **kwargs)
     for level in (1, 2):
         if result.proven or (level == 1 and not (kwargs.get("constraints") or {})):

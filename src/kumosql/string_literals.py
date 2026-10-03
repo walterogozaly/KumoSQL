@@ -12,6 +12,8 @@ escapes stay unproven rather than being called different by a wrong reading.
 Bytes literals (``b'..'``, and raw ``rb'..'``) are decoded and written back with printable ASCII as is and every other
 byte as ``\\xHH``. sqlglot reads ``\\\\`` in a bytes literal as one backslash but keeps ``\\x41`` undecoded, so
 ``b'\\\\x41'`` (four bytes) and ``b'\\x41'`` (the one byte ``A``) used to read the same.
+
+A single-quoted literal holding a line break is not valid GoogleSQL and is left as written.
 """
 
 from __future__ import annotations
@@ -92,6 +94,49 @@ def _string_end(sql: str, start: int) -> tuple[int, str, str]:
     return j + len(quote), quote, sql[start + len(quote) : j]
 
 
+def _invalid(quote: str, body: str | None) -> bool:
+    """Whether the literal is unterminated, or holds a line break GoogleSQL only allows inside triple quotes.
+
+    Such a literal is copied as written: rewriting ``b'a<newline>b'`` as ``b'a\\x0Ab'`` would turn a query
+    BigQuery rejects into one it runs.
+    """
+
+    return body is None or (len(quote) == 1 and ("\n" in body or "\r" in body))
+
+
+def invalid_literal(sql: str) -> bool:
+    """Whether ``sql`` has a single-quoted string or bytes literal holding a line break.
+
+    GoogleSQL rejects such a query, while sqlglot reads the literal, so the provers decline it rather than prove
+    it equal to a valid query with the escaped spelling.
+    """
+
+    if "\n" not in sql and "\r" not in sql:
+        return False
+    i, size = 0, len(sql)
+    while i < size:
+        char = sql[i]
+        if sql.startswith("--", i) or char == "#":
+            end = sql.find("\n", i)
+            i = size if end < 0 else end
+        elif sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = size if end < 0 else end + 2
+        elif char == "`":
+            j = i + 1
+            while j < size and sql[j] != "`":
+                j += 2 if sql[j] == "\\" else 1
+            i = j + 1
+        elif char in "'\"":
+            end, quote, body = _string_end(sql, i)
+            if body is not None and _invalid(quote, body):
+                return True
+            i = end
+        else:
+            i += 1
+    return False
+
+
 def canonical_literals(sql: str) -> str:
     """``sql`` with BigQuery string literals and adjacent quoted names spelled one way (see the module docstring)."""
 
@@ -126,16 +171,16 @@ def canonical_literals(sql: str) -> str:
                 j += 1
             word = sql[i:j]
             if word.lower() in ("r", "b", "rb", "br") and j < size and sql[j] in "'\"":
-                end, _, body = _string_end(sql, j)
-                value = None if body is None or word.lower() == "r" else _decode_bytes(body, raw=len(word) == 2)
+                end, quote, body = _string_end(sql, j)
+                value = None if _invalid(quote, body) or word.lower() == "r" else _decode_bytes(body, raw=len(word) == 2)
                 out.append(sql[i:end] if value is None else _bytes_literal(value))  # a raw string: copied as written
                 i = end
             else:
                 out.append(word)
                 i = j
         elif char in "'\"":
-            end, _, body = _string_end(sql, i)
-            value = None if body is None else _decode(body)
+            end, quote, body = _string_end(sql, i)
+            value = None if _invalid(quote, body) else _decode(body)
             out.append(sql[i:end] if value is None else "'" + "".join(_OUT.get(c, c) for c in value) + "'")
             i = end
         else:

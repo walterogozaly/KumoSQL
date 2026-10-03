@@ -19,7 +19,7 @@ import time
 _LOCK = threading.Lock()
 _RECENT: deque = deque(maxlen=200)
 _LOCAL = threading.local()
-_PROGRESS: dict[str, dict] = {}
+_PROGRESS: dict[int, dict] = {}  # per open loop (two analyses can run a loop of the same name at once)
 
 
 def _quiet() -> bool:
@@ -73,7 +73,7 @@ class Progress:
         self._context = console.task(name, quiet=_quiet(), warn_after=None, heartbeat_after=every, items=total)
         self._task = self._context.__enter__()
         self._task.progress(0, total)
-        _PROGRESS[name] = {"done": 0, "total": total}
+        _PROGRESS[id(self)] = {"name": name, "done": 0, "total": total}
         _open_loops().append(self)
 
     def step(self, label: str = "") -> None:
@@ -90,7 +90,8 @@ class Progress:
         self._open = None
         took = time.perf_counter() - begin
         self.done += 1
-        _PROGRESS[self.name]["done"] = self.done
+        if id(self) in _PROGRESS:
+            _PROGRESS[id(self)]["done"] = self.done
         self._task.progress(self.done, self.total)
         self.slowest = sorted([*self.slowest, (took, label)], reverse=True)[:5]
         if took >= self.slow:
@@ -100,7 +101,7 @@ class Progress:
         loops = _open_loops()
         if self in loops:
             loops.remove(self)
-        _PROGRESS.pop(self.name, None)
+        _PROGRESS.pop(id(self), None)
         try:
             if error is None:
                 self._context.__exit__(None, None, None)
@@ -126,7 +127,7 @@ class Progress:
 def current_progress() -> list[dict]:
     """Loops running now, as ``{"name", "done", "total"}``."""
 
-    return [{"name": name, **value} for name, value in list(_PROGRESS.items())]
+    return [dict(value) for value in list(_PROGRESS.values())]
 
 
 def record(name: str, seconds: float, **detail: object) -> None:
