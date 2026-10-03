@@ -134,6 +134,9 @@ class Pipeline:
 
     def __setstate__(self, state: dict) -> None:
         self.__dict__.update(state)
+        analysis = self.__dict__.get("_analysis")
+        if analysis is not None and not all(hasattr(analysis, key) for key in ("statement_reads", "statement_writes")):
+            self._analysis = None  # older saved projects need the statement tables recomputed
         self._memo = {}
         self._memo_locks = {}
         self._memo_guard = threading.Lock()
@@ -259,13 +262,20 @@ class Pipeline:
         return result
 
     def table_reads(self) -> dict[str, frozenset[str]]:
-        """Every table each query model reads: pipeline models and declared sources by key, others as spelled."""
+        """Every table each model's statements read, including explicit reads of its own target."""
 
         analysis = self._analyse()
         reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed or parents}
         for key, tables in analysis.external_reads.items():
             reads.setdefault(key, set()).update(tables)
+        for key, tables in analysis.statement_reads.items():
+            reads.setdefault(key, set()).update(tables)
         return {key: frozenset(tables) for key, tables in reads.items()}
+
+    def table_writes(self) -> dict[str, frozenset[str]]:
+        """Explicit table targets of SQL statements, including operations and pre/post operations."""
+
+        return dict(self._analyse().statement_writes)
 
     def topological_order(self) -> list[str]:
         return self._analyse().order
@@ -715,6 +725,8 @@ class Pipeline:
             },
             "graph": graph,
             "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
+            "table_reads": {k: v for k, v in report["table_reads"].items() if k in keep},
+            "table_writes": {k: v for k, v in report["table_writes"].items() if k in keep},
             "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
             "duplicates": [
                 group for group in report["duplicates"] if any(in_scope(o) for o in group["occurrences"])
@@ -784,6 +796,8 @@ class Pipeline:
         order = section("order", [], self.topological_order)
         dead = section("dead_columns", {}, lambda: {k: list(v) for k, v in self.dead_columns().items()})
         lineage_rows = section("column_lineage", [], self.lineage_report)
+        table_reads = section("table_reads", {}, lambda: {k: sorted(v) for k, v in self.table_reads().items()})
+        table_writes = section("table_writes", {}, lambda: {k: sorted(v) for k, v in self.table_writes().items()})
         duplicates = section(
             "duplicates",
             [],
@@ -822,6 +836,8 @@ class Pipeline:
             },
             "order": order,
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
+            "table_reads": table_reads,
+            "table_writes": table_writes,
             "dead_columns": dead,
             "column_lineage": lineage_rows,
             "duplicates": duplicates,
@@ -1151,6 +1167,9 @@ class _Analysis:
     schema_lookup: dict[str, int] = field(default_factory=dict)
     # Per model: tables it reads that no model or declared source matches, as spelled.
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    # SQL statement reads/writes retain self-reads and every target of a script.
+    statement_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    statement_writes: dict[str, frozenset[str]] = field(default_factory=dict)
     # Per model: tables only its other statements read (a script's earlier queries, operations, pre/post operations).
     script_tables: dict[str, tuple[exp.Table, ...]] = field(default_factory=dict)
     # Tables other models' scripts write, with the models and sources those scripts read.
@@ -1196,6 +1215,12 @@ class _Analysis:
         blind_models: list[str] = []
         statements_total = statements_matched = 0
         statements_by_model: dict[str, tuple[int, int]] = {}
+        statement_reads: dict[str, set[str]] = defaultdict(set)
+        statement_writes: dict[str, set[str]] = defaultdict(set)
+
+        def note_statement_tables(key: str, analysis: ScriptAnalysis) -> None:
+            statement_reads[key].update(pipeline.resolve(t) or _table_name_for_schema(t) for t in analysis.all_reads())
+            statement_writes[key].update(pipeline.resolve(w.table) or _table_name_for_schema(w.table) for w in analysis.writes)
 
         # Other spellings under which a model is read (a project-qualified name
         # for a model keyed by its bare name): its columns must be known there
@@ -1268,6 +1293,7 @@ class _Analysis:
                         if _is_positional_insert(analysis.final):
                             positional.add((key, written_key))
             if analysis is not None:
+                note_statement_tables(key, analysis)
                 considered = max(analysis.considered, 1) if model.is_query else analysis.considered
                 matched = min(analysis.traced, considered) if query is not None else 0
                 if model.is_query:
@@ -1339,6 +1365,7 @@ class _Analysis:
                 _note_writes(pipeline, key, analysis, written)
             for operation in model.operations_sql:
                 extra = analyse_script(operation, procedures=procedures, functions=functions)
+                note_statement_tables(key, extra)
                 if extra.all_reads():
                     script_extras[key] = (*script_extras.get(key, ()), *extra.all_reads())
                     _note_side_reads(pipeline, key, extra.all_reads(), column_words(operation), script_reads)
@@ -1402,6 +1429,15 @@ class _Analysis:
         template_reads: dict[str, set[str]] = {}
         opaque_readers_of: set[str] = set(operation_readers)
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
+        # A source read through a partition or snapshot decorator (``p.d.t$20261003``) shares the base table's
+        # columns. Other spellings (``t`` for ``p.d.t``) stay out of the flat schema: mixing name depths in one
+        # nested mapping makes qualify() report an ambiguous table.
+        for base, aliases in spellings.items():
+            if base in schema:
+                for alias in aliases:
+                    identity = normalize_table_reference(alias)
+                    if identity is not None and identity.decorator:
+                        schema[alias] = schema[base]
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
@@ -1410,12 +1446,23 @@ class _Analysis:
         from . import schema_fetch
 
         outside = {name for names in unresolved_tables.values() for name in names if name not in schema}
+        decorated: dict[str, str] = {}
+        for name in outside:
+            identity = normalize_table_reference(name)
+            if identity is not None and identity.decorator:
+                decorated[name] = ".".join(identity.parts)
+        outside = {decorated.get(name, name) for name in outside if decorated.get(name, name) not in schema}
         # An INSERT with no column list names its outputs by the target table's own columns: look those up too.
         outside |= {key for _, key in positional if key not in schema}
         found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
         for name, columns in found.items():
             schema[name] = columns
             _add_table(sqlglot_schema, name, columns)
+        # Qualification sees the spelling used in SQL; decorated partitions/snapshots share the base schema.
+        for name, base in decorated.items():
+            if base in schema:
+                schema[name] = schema[base]
+                _add_table(sqlglot_schema, name, schema[base])
 
         tracing = Progress("trace columns", len(order))
         # Column tracing copies a model's whole query once per output column, so wide models with
@@ -1764,6 +1811,8 @@ class _Analysis:
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
+            statement_reads={key: frozenset(tables) for key, tables in statement_reads.items()},
+            statement_writes={key: frozenset(tables) for key, tables in statement_writes.items()},
             script_tables=script_extras,
             written_into={target: frozenset(sources - {target}) for target, sources in written.items() if sources - {target}},
             schema_lookup=schema_lookup,
