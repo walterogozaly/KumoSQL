@@ -25,6 +25,8 @@ import itertools
 import z3
 from sqlglot import exp
 
+from .solver_lock import serialized
+
 _OPS = {exp.GT: ">", exp.GTE: ">=", exp.LT: "<", exp.LTE: "<=", exp.EQ: "=", exp.NEQ: "<>"}
 _CLASS = {op: cls for cls, op in _OPS.items()}
 _NEGATE = {">": "<=", ">=": "<", "<": ">=", "<=": ">", "=": "<>", "<>": "="}
@@ -32,6 +34,7 @@ _FLIP = {">": "<", ">=": "<=", "<": ">", "<=": ">=", "=": "=", "<>": "<>"}
 _VALUE_NAME = "kumosql_v"
 
 
+@serialized
 def rewrite_quantified(tree: exp.Expression, schema: dict | None = None, not_null: dict | None = None, keys: dict | None = None) -> exp.Expression:
     """Fold Calcite's expansions back to quantified tests, then write every quantified test with EXISTS."""
 
@@ -109,6 +112,7 @@ def _plain_group(group: exp.Expression | None) -> bool:
     return not any(isinstance(e, extensions) for e in group.expressions)
 
 
+@serialized
 def lower_quantified(tree: exp.Expression) -> exp.Expression:
     """Write each ``x op ANY/ALL (SELECT y ...)`` with EXISTS (see the module docstring)."""
 
@@ -1115,6 +1119,7 @@ def _same(encoder: _Encoder, condition, semantics, mode: str, extra: list) -> bo
     return solver.check() == z3.unsat
 
 
+@serialized
 def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: dict | None = None, keys: dict | None = None) -> exp.Expression:
     """Read Calcite's aggregate/indicator expansions as ``x op ANY/ALL (q)`` or ``x IN (q)`` (see the module docstring)."""
 

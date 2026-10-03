@@ -66,6 +66,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
+from .solver_lock import serialized
 from .string_literals import canonical_literals
 
 try:  # pragma: no cover - exercised by the import itself
@@ -3866,6 +3867,7 @@ def _split_limit(sql: str, dialect: str):
     return faithful_sql(core, dialect), spec
 
 
+@serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 

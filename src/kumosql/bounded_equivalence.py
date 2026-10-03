@@ -44,6 +44,7 @@ from sqlglot import exp
 
 from .ast_utils import UnmodeledConstruct, expand_group_by_all
 from .set_operations import positional_sql_pair
+from .solver_lock import serialized
 
 try:  # pragma: no cover - exercised through the tests
     import z3
@@ -2146,6 +2147,7 @@ def _check_bounded(
         return BoundedResult(BoundedStatus.UNKNOWN, "query too deeply nested", 0, None, time.time() - began)
 
 
+@serialized
 def evaluate(sql: str, schema: BoundedSchema, data: dict[str, list[tuple]], dialect: str = "bigquery", nulls_first: bool | None = None):
     """The rows the *encoding* gives ``sql`` on a concrete database (for testing it against DuckDB)."""
 
@@ -2203,6 +2205,7 @@ def _cell(value, kind: str):
     return z3.IntVal(value)
 
 
+@serialized
 def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs) -> BoundedResult:
     """See :func:`_check_bounded`. For SQLite only a counterexample is offered: the encoding's LIKE (case-sensitive)
     and ``/`` (exact) differ from SQLite's, so "no counterexample" would not carry over."""
