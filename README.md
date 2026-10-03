@@ -838,7 +838,7 @@ Every command prints `--help`.
 | `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries; `--conditional` as above |
 | `python -m kumosql prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
 | `python -m kumosql refactor DIR [--protect M] [--editable M]` | Find simpler pipelines that keep the protected tables proved equivalent |
-| `python -m kumosql consolidate-tables DIR TARGET TABLE...` | Fold intermediate tables into the table that ends the chain and prove the rewritten table equivalent |
+| `python -m kumosql consolidate-tables DIR TARGET TABLE...` | Read-only preview: fold intermediate tables into the table that ends the chain, prove the rewritten table equivalent and print it (changes none of your files) |
 | `python -m kumosql minimize-tables CASE.json` | Return the simplest set of tables (sqlfluff complexity) that keeps every protected table proved unchanged |
 | `python -m kumosql reduce-project DIR --keep NAME` | Return the smallest Dataform project that keeps the named outputs proved unchanged, as a patch (`--patch -`, `--write`) |
 | `python -m kumosql shared-model DIR [ID]` | List CTEs repeated across Dataform models, or write the patch that moves one into a shared model, checked by the prover |
