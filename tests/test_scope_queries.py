@@ -79,13 +79,13 @@ def test_results_are_cached_until_the_timer_ends_and_refresh_runs_again(_fresh):
     assert len(_fresh) == 3 and _fresh[-1][3] == 50_000_000
 
 
-def test_default_timer_is_48_hours_and_survives_a_restart(_fresh, monkeypatch):
+def test_default_timer_is_48_hours_and_restart_reloads_values(_fresh, monkeypatch):
     assert scope_queries.cache_seconds() == 48 * 3600
     result = scope_queries.result_for(SQL)
     assert result.expires_at - result.fetched_at == 48 * 3600
     monkeypatch.setattr(scope_queries, "_memory", {})
     monkeypatch.setattr(scope_queries, "_disk_loaded", False)
-    assert scope_queries.result_for(SQL).values == result.values and len(_fresh) == 1
+    assert scope_queries.result_for(SQL).values == result.values and len(_fresh) == 2
 
 
 def test_a_failed_rerun_keeps_the_older_copy_and_says_so(monkeypatch):
