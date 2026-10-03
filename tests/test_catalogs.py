@@ -1,10 +1,10 @@
 """Catalogs: rule-defined sets of what a team owns, beyond the loaded Dataform repository."""
 
 import json
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
@@ -137,9 +137,9 @@ def test_preview_counts_what_a_rule_would_own():
 
 @pytest.fixture
 def server():
-    from kumosql.ui import UIHandler
+    from kumosql.ui import UIHandler, UIServer
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    httpd = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:

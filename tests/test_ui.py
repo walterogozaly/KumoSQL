@@ -1,10 +1,10 @@
 """Exercise the installed UI's HTTP contract with real rewrite rules."""
 
 import json
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 from sqlglot import exp
@@ -18,12 +18,12 @@ from kumosql import (
     VerificationStatus,
     engine,
 )
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 
 @pytest.fixture
 def ui_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    server = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

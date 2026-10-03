@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 import re
+import secrets
 import sys
 import threading
 import webbrowser
@@ -25,6 +26,7 @@ MAX_REQUEST_BYTES = 5 * 1024 * 1024
 MAX_GITHUB_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
 MAX_JOBS_REQUEST_BYTES = 64 * 1024 * 1024
+SESSION_HEADER = "X-KumoSQL-Session"
 # Insight views. Each returns a JSON payload built from what the server has
 # loaded (project, job history, change comparison); with nothing loaded the
 # payload is an empty state that says what to load (see docs/ui-roadmap.md).
@@ -60,6 +62,7 @@ ASSETS = {
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
     "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
+    "/assets/session.js": ("session.js", "text/javascript; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/assets/evidence.js": ("evidence.js", "text/javascript; charset=utf-8"),
@@ -135,6 +138,8 @@ class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, *args, **kwargs) -> None:
+        # Kept only in memory, and replaced whenever the UI server starts.
+        self.session_token = secrets.token_urlsafe(32)
         # Analysis is CPU-bound Python. With the default 5 ms switch interval it can hold the
         # interpreter long enough that a trivial request (Settings, the BigQuery tab) waits
         # seconds; a shorter interval keeps them under ~50 ms at a cost of about 5% build time.
@@ -150,6 +155,31 @@ class UIServer(ThreadingHTTPServer):
 
 class UIHandler(BaseHTTPRequestHandler):
     """Serve bundled assets and a small same-origin JSON API."""
+
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        # Check before dispatch, including assets and unsupported HTTP methods.
+        port = self.server.server_port
+        authorities = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+        hosts = self.headers.get_all("Host", [])
+        if len(hosts) != 1 or hosts[0].lower() not in authorities:
+            self._json(403, {"error": "use the local UI server address"})
+            return False
+        origins = self.headers.get_all("Origin", [])
+        if self.command in {"PUT", "POST", "DELETE"} and origins:
+            if len(origins) != 1 or origins[0].lower() != f"http://{hosts[0].lower()}":
+                self._json(403, {"error": "request origin must match the local UI server"})
+                return False
+        route = self.path.split("?", 1)[0]
+        if route == "/api" or route.startswith("/api/"):
+            tokens = self.headers.get_all(SESSION_HEADER, [])
+            if len(tokens) != 1 or not secrets.compare_digest(
+                tokens[0].encode("utf-8"), self.server.session_token.encode("ascii")
+            ):
+                self._json(403, {"error": "reload the UI page for the current session"})
+                return False
+        return True
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature set by the base class
         # Query values can hold names (a project, a table); only their keys are logged.
@@ -334,6 +364,8 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         filename, content_type = asset
         body = files("kumosql").joinpath("static", filename).read_bytes()
+        if content_type.startswith("text/html"):
+            body = body.replace(b"__KUMOSQL_SESSION_TOKEN__", self.server.session_token.encode("ascii"))
         self._send(200, body, content_type)
 
     @staticmethod
@@ -802,7 +834,8 @@ def main(argv: list[str] | None = None) -> int:
         from .git_repo import GitRepoError, load_into_graph
 
         try:
-            console.say(f"Loaded {load_into_graph(args.git, args.branch, args.refresh)['label']}")
+            result = load_into_graph(args.git, args.branch, args.refresh)
+            console.say(f"Loaded repository ({result['files']} files)")
         except GitRepoError as exc:
             parser.error(console.scrub(str(exc)))
     if args.project:

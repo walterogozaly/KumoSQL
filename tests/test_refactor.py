@@ -1,17 +1,17 @@
 """Refactor module: saved PROTECTED/EDITABLE classes and the proved-safe Pareto search."""
 
 import json
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
 pytest.importorskip("z3")
 
 from kumosql import load_sqlx_project, refactor, scopes
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 
 def write(root, relative, text):
@@ -104,7 +104,7 @@ def test_unproved_moves_are_rejected_not_accepted(project):
 
 @pytest.fixture
 def ui_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    server = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
