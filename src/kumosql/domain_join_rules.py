@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .decorrelation_rules import _conjuncts, _real_sources, _same_table, _sources
+from .ast_utils import same_table
+from .decorrelation_rules import _conjuncts, _real_sources, _sources
 
 _PROJECTION_ONLY = ("where", "group", "having", "qualify", "distinct", "limit", "offset", "order", "windows", "laterals", "joins")
 _GROUPED_EXTRAS = ("having", "qualify", "distinct", "limit", "offset", "order", "windows", "laterals")
@@ -201,7 +202,7 @@ def _bottom_values(bottom: exp.Select, key_name: str, outer: exp.Column, not_nul
         return None
     listed = _domain(domain)
     read = _real_column(select, outer)
-    if listed is None or read is None or not _same_table(listed[0], read[0]) or listed[1] != read[1]:
+    if listed is None or read is None or not same_table(listed[0], read[0]) or listed[1] != read[1]:
         return None
     if listed[1] not in not_null.get(listed[0].name.lower(), set()):
         return None
