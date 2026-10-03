@@ -534,3 +534,15 @@ def test_distinct_on_near_misses_stay_proven():
     assert prove_equivalent_algebraic(same, aliased, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
     indicator = "SELECT a.k FROM u a LEFT JOIN (SELECT DISTINCT 1 AS one FROM t) d ON TRUE WHERE d.one IS NOT NULL"
     assert prove_equivalent_algebraic(indicator, "SELECT a.k FROM u a WHERE EXISTS (SELECT 1 FROM t)", schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
+
+
+def test_distinct_on_operands_are_not_one_filtered_table():
+    # t = {(1, 5), (1, 6)}: the filtered branch keeps 6, the other keeps one row for x = 1, so the union can hold
+    # both values; reading both branches as filters of t would make it SELECT DISTINCT y FROM t (an unordered
+    # DISTINCT ON picks an arbitrary row, so this is checked on the rule and the prover, not on DuckDB)
+    from kumosql.setop_rules import merge_same_source
+
+    left = "SELECT DISTINCT ON (x) y FROM t WHERE 6 = y UNION SELECT DISTINCT ON (x) y FROM t"
+    assert merge_same_source(sqlglot.parse_one(left, read="duckdb")) is None
+    right = "SELECT DISTINCT ON (x) y FROM t UNION SELECT DISTINCT ON (x) y FROM t"
+    assert not prove_equivalent_algebraic(left, right, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
