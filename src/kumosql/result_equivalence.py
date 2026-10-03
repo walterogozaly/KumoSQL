@@ -101,6 +101,29 @@ class QueryTimeout(ExecutionError):
     """A query ran past its time limit and was interrupted."""
 
 
+class BigQueryWouldFail(ExecutionError):
+    """BigQuery fails on this database (see :mod:`kumosql.bigquery_on_duckdb`): try the next one."""
+
+
+def _execution_error(message: str, exc: BaseException) -> ExecutionError:
+    from .bigquery_on_duckdb import is_bigquery_failure
+
+    return (BigQueryWouldFail if is_bigquery_failure(exc) else ExecutionError)(f"{message}: {exc}")
+
+
+def _bigquery_rows(rows, dialect: str) -> tuple:
+    """BigQuery-dialect results read as BigQuery returns them (:func:`kumosql.bigquery_on_duckdb.bigquery_rows`)."""
+
+    if dialect != "bigquery":
+        return rows
+    from .bigquery_on_duckdb import UnfaithfulOutput, bigquery_rows
+
+    try:
+        return tuple(bigquery_rows(rows))
+    except UnfaithfulOutput as exc:
+        raise BigQueryWouldFail(str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data
 # ---------------------------------------------------------------------------
@@ -463,6 +486,10 @@ def prepare_statements(
             target.set("db", None)
             target.set("this", exp.to_identifier(target_local))
         try:
+            if dialect == "bigquery":
+                from .bigquery_on_duckdb import faithful
+
+                statement = faithful(statement)
             duckdb_sql.append(statement.sql(dialect="duckdb"))
         except sqlglot.errors.SqlglotError as exc:
             raise ExecutionError(f"cannot translate statement {index + 1} to DuckDB: {exc}") from exc
@@ -474,14 +501,19 @@ def prepare_statements(
 # ---------------------------------------------------------------------------
 
 
-def _connect():
+def _connect(dialect: str = "bigquery"):
     try:
         import duckdb
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise ExecutionError(
             "duckdb is required for result equivalence; install kumosql[execution]"
         ) from exc
-    return duckdb.connect(database=":memory:")
+    connection = duckdb.connect(database=":memory:")
+    if dialect == "bigquery":
+        from .bigquery_on_duckdb import configure
+
+        configure(connection)
+    return connection
 
 
 def _sql_literal(value: Any) -> str:
@@ -533,7 +565,7 @@ def execute_on_dataset(
             try:
                 cursor = connection.execute(statement)
             except Exception as exc:
-                raise ExecutionError(f"DuckDB failed on {statement!r}: {exc}") from exc
+                raise _execution_error(f"DuckDB failed on {statement!r}", exc) from exc
         if last_target is not None:
             cursor = connection.execute(f'SELECT * FROM "{last_target}"')
         if cursor is None or cursor.description is None:
@@ -542,9 +574,10 @@ def execute_on_dataset(
             columns = tuple(column[0] for column in cursor.description)
             rows = tuple(tuple(row) for row in cursor.fetchall())
         except Exception as exc:
-            raise ExecutionError(f"DuckDB failed while fetching results: {exc}") from exc
+            raise _execution_error("DuckDB failed while fetching results", exc) from exc
     finally:
         connection.close()
+    rows = _bigquery_rows(rows, "bigquery")
     return QueryOutput(columns=columns, rows=rows), statements
 
 
@@ -560,7 +593,7 @@ class DatasetRunner:
     def __init__(self, schema: Schema, dialect: str = "bigquery", settings: Iterable[str] = ()):
         self.schema = schema
         self.dialect = dialect
-        self._connection = _connect()
+        self._connection = _connect(dialect)
         for statement in settings:
             self._connection.execute(statement)
         self._loaded: SyntheticDataset | None = None
@@ -617,11 +650,11 @@ class DatasetRunner:
         except Exception as exc:
             if timer is not None and not timer.is_alive():
                 raise QueryTimeout(f"query ran longer than {timeout} s") from exc
-            raise ExecutionError(f"DuckDB failed on {text!r}: {exc}") from exc
+            raise _execution_error(f"DuckDB failed on {text!r}", exc) from exc
         finally:
             if timer is not None:
                 timer.cancel()
-        return QueryOutput(columns=columns, rows=rows)
+        return QueryOutput(columns=columns, rows=_bigquery_rows(rows, self.dialect))
 
 
 def _normalize_value(value: Any, float_digits: int) -> Any:
@@ -726,11 +759,15 @@ def check_result_equivalence(
             for labeled in suite:
                 yield labeled.dataset.seed, labeled.dataset
 
+    skipped = 0
     for seed, dataset in _datasets():
         try:
             left_output, left_sql_out = execute_on_dataset(
                 left_sql, schema, dataset, run_tag=f"left_{seed}"
             )
+        except BigQueryWouldFail:
+            skipped += 1  # BigQuery fails on this database: it shows nothing either way
+            continue
         except ExecutionError as exc:
             return ResultEquivalence(
                 ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed
@@ -739,6 +776,9 @@ def check_result_equivalence(
             right_output, right_sql_out = execute_on_dataset(
                 right_sql, schema, dataset, run_tag=f"right_{seed}"
             )
+        except BigQueryWouldFail:
+            skipped += 1
+            continue
         except ExecutionError as exc:
             return ResultEquivalence(
                 ResultEquivalenceStatus.ERROR,
@@ -792,6 +832,26 @@ def check_result_equivalence(
             float_digits=float_digits,
         )
         if not equal:
+            from .refute import order_dependence
+
+            try:
+                free = order_dependence(left_sql) or order_dependence(right_sql)
+            except sqlglot.errors.SqlglotError:
+                free = None
+            if free:
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.INCONCLUSIVE,
+                    f"the results differ, but a query may pick rows freely ({free}), so the "
+                    "difference may be a different choice rather than a different answer",
+                    tuple(checked),
+                    seed,
+                    left_output,
+                    right_output,
+                    only_left,
+                    only_right,
+                    tuple(left_sql_out),
+                    tuple(right_sql_out),
+                )
             return ResultEquivalence(
                 ResultEquivalenceStatus.DIFFERENT,
                 reason,
@@ -804,6 +864,10 @@ def check_result_equivalence(
                 tuple(left_sql_out),
                 tuple(right_sql_out),
             )
+    if not checked and skipped:
+        return ResultEquivalence(
+            ResultEquivalenceStatus.ERROR, "BigQuery fails on every synthetic dataset", (), None
+        )
     if not checked:
         raise ValueError("at least one seed is required")
     return ResultEquivalence(
