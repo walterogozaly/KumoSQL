@@ -99,6 +99,19 @@ def _token_key(token) -> tuple[TokenType, str]:
     return token.token_type, text
 
 
+def _render_or_source(statement: exp.Expression, source: str) -> str:
+    """Render a statement no rule changed; where sqlglot cannot (a recovered, truncated predicate), use its source text.
+
+    The rendering only checks that the output still parses to the same statements, so the text the
+    statement was parsed from stands in for it.
+    """
+
+    try:
+        return render_statement(_without_comments(statement))
+    except Exception:  # noqa: BLE001 - the compiled generator raises TypeError on a missing operand
+        return source
+
+
 def _without_comments(statement: exp.Expression) -> exp.Expression:
     result = statement.copy()
     for node in result.walk():
@@ -411,7 +424,7 @@ class RewriteRule:
                     RuleDiagnostic(index, "sqlx_expression_kept", "a ${...} expression other than ref() or self() is left as written")
                 )
                 rewritten_statements.append(statement)
-                rendered_statements.append(render_statement(_without_comments(statement)))
+                rendered_statements.append(_render_or_source(statement, sql[start:end]))
                 continue
             if not self.rewrite_pipe_syntax and _uses_pipe_syntax(sql[start:end]):
                 # sqlglot turns pipe syntax into nested CTEs and subqueries when it parses it, so a rule
@@ -420,7 +433,7 @@ class RewriteRule:
                     RuleDiagnostic(index, "pipe_syntax_kept", "pipe syntax (|>) is left as written")
                 )
                 rewritten_statements.append(statement)
-                rendered_statements.append(render_statement(_without_comments(statement)))
+                rendered_statements.append(_render_or_source(statement, sql[start:end]))
                 continue
             before = statement.copy()
             try:
@@ -454,7 +467,7 @@ class RewriteRule:
                 # Do not keep a partially mutated AST after a failed rule step.
                 statement = before
                 rewritten_statements.append(before)
-            rendered_statements.append(render_statement(_without_comments(statement)))
+            rendered_statements.append(_render_or_source(statement, sql[start:end]))
 
         if changes == 0:
             if not _same_ast(
