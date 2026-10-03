@@ -123,6 +123,21 @@ WRONG_PROOFS = [
         SAME_Y,
         id="distinct-on-derived-table-is-not-a-set",
     ),
+    # sum_of_counts: a repeated grouping set (or a key-less one) counts every row twice, not once
+    pytest.param(
+        f"SELECT SUM(s.c) AS n FROM (SELECT x, COUNT(*) AS c FROM t GROUP BY GROUPING SETS ((x), (x))) AS s",
+        "SELECT CASE WHEN COUNT(*) = 0 THEN NULL ELSE COUNT(*) END AS n FROM t",
+        None,
+        TWO_ROWS,
+        id="sum-of-counts-repeated-grouping-set",
+    ),
+    pytest.param(
+        f"SELECT SUM(s.c) AS n FROM (SELECT x, COUNT(*) AS c FROM t GROUP BY x, GROUPING SETS ((), ())) AS s",
+        "SELECT CASE WHEN COUNT(*) = 0 THEN NULL ELSE COUNT(*) END AS n FROM t",
+        None,
+        TWO_ROWS,
+        id="sum-of-counts-repeated-empty-set",
+    ),
 ]
 
 
@@ -169,6 +184,12 @@ STILL_PROVEN = [
         "SELECT x, COUNT(*) AS n FROM t GROUP BY x UNION ALL SELECT NULL AS x, COUNT(*) AS n FROM t",
         None,
         id="rollup-spelled-out",
+    ),
+    pytest.param(
+        "SELECT SUM(s.c) AS n FROM (SELECT x, COUNT(*) AS c FROM t GROUP BY x) AS s",
+        "SELECT CASE WHEN COUNT(*) = 0 THEN NULL ELSE COUNT(*) END AS n FROM t",
+        None,
+        id="sum-of-counts-plain-grouping",
     ),
 ]
 

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def _count_outputs(inner: exp.Select) -> dict[str, exp.Count]:
     """The inner select's output names whose value is a plain ``COUNT(*)`` or ``COUNT(x)``."""
@@ -44,7 +46,7 @@ def _count_outputs(inner: exp.Select) -> dict[str, exp.Count]:
 
 def _plain_grouped(inner: exp.Select) -> bool:
     group = inner.args.get("group")
-    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or not group.expressions or extended_grouping(group):
         return False
     if any(inner.args.get(k) for k in ("having", "distinct", "limit", "offset", "fetch", "qualify", "with", "windows", "laterals", "pivots")):
         return False
