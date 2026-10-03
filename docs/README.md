@@ -25,4 +25,4 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 
 ## Evals
 
-The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur and SQL-IQ equivalence suites, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).
+The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).

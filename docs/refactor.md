@@ -42,6 +42,8 @@ A fold is refused, with the offending model named, when a folded table is still 
 
 `python tools/make_refactor_project.py OUT --reports N` generates a project with duplicated filtered views, leftovers and N reports (protected), the rest editable. Measured on one core: 32 models (20 reports) 9 s, 7 front points from 32 to 26 models; 136 models (100 reports) 95 s, 7 front points from 136 to 100 models, every one proved. Cost grows with the number of proved moves times the protected tables each one touches; `--max-seconds` bounds it.
 
+The [table minimization eval](evals/table-minimization.md) scores this search on 334 pipelines of 3 to 20 tables: 0 wrong, 164 of 270 dev cases simplified, 39% of the reference reduction on average.
+
 ## Limits
 
 - Evidence is proof only. A move that is not proved is listed with the prover's reason (`rejected_moves`); there is no counterexample for it yet.
