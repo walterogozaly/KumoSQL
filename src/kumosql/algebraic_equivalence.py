@@ -3247,7 +3247,9 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     elif group_columns is None and any(not isinstance(e, (exp.Column, exp.Literal, exp.Boolean)) for e in outputs.values()):
         return False
     alias = alias.lower()
-    equated: dict[str, exp.Expression] = {}
+    if any((later.args.get("side") or "").upper() in ("RIGHT", "FULL") for later in select.args["joins"][select.args["joins"].index(join) + 1 :]):
+        return False  # a later outer join NULL-pads the joined relation, and its indicator with it, but not an EXISTS test
+    equated: dict[str, list[exp.Expression]] = {}
     for part in ([] if isinstance(join.args["on"], exp.Boolean) and join.args["on"].this else _conjuncts(join.args["on"])):
         if not isinstance(part, exp.EQ):
             return False
@@ -3261,7 +3263,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
         column = outputs.get(mine[0].name.lower())
         if not isinstance(column, exp.Column) or column.table.lower() not in ("", inner_alias):
             return False
-        equated.setdefault(column.name.lower(), other)
+        equated.setdefault(column.name.lower(), []).append(other)  # every equality is a condition of the match
     if group_columns is not None:
         if not group_columns <= set(equated):
             return False
@@ -3299,8 +3301,8 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
             if column.table.lower() in ("", inner_alias):
                 column.set("table", exp.to_identifier(fresh))
         conditions.append(own)
-    for name, other in equated.items():
-        conditions.append(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()))
+    for name, others in equated.items():
+        conditions.extend(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()) for other in others)
     where = _and_all(conditions)
     if where is not None:
         probe.set("where", exp.Where(this=where))
