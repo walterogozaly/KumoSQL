@@ -21,7 +21,10 @@ Proof methods, each reducing containment to an equivalence the prover can discha
 * equal: ``q1`` and ``q2`` are equivalent as bags, which implies both containments;
 * pre-filter: the filters of ``q1`` that ``q2`` lacks are added to ``q2`` (only on columns that
   survive any grouping) and the result is proven equivalent to ``q1``; a filtered copy of ``q2`` is
-  contained in ``q2`` in every semantics, so equality with it proves ``q1`` is contained;
+  contained in ``q2`` in every semantics, so equality with it proves ``q1`` is contained. Not when
+  ``q2`` is a global aggregate or has ``ROLLUP``/``CUBE``/``GROUPING SETS``/``GROUP BY ()`` (its
+  grand-total row exists, with other values, even when the filter drops every row) or ``DISTINCT ON``
+  (the filter changes which row of a key is kept);
 * post-filter: ``q1`` is rewritten as a filter over the rows of ``q2`` (the model-reuse rewriter
   restricted to an identity projection);
 * distinct collapse: ``DISTINCT`` in ``q1`` only removes duplicates, so for bags it is dropped when
@@ -41,6 +44,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import model_reuse as mr
+from .ast_utils import distinct_on, extended_grouping
 from .random_check import CheckError, Schema, Witness, find_difference
 from .smt_equivalence import SmtStatus, TableConstraints
 
@@ -83,6 +87,9 @@ def _prefilter(q1: mr._Block, q2: mr._Block, tree2: exp.Expression, schema: Mapp
 
     if len(q1.tables) != len(q2.tables):
         return
+    group = tree2.args.get("group") if isinstance(tree2, exp.Select) else None
+    if distinct_on(tree2) or (q2.is_aggregate and (not q2.group or extended_grouping(group))):
+        return  # a filter before these is not a filter of their rows (see the module docstring)
     for mapping in mr._mappings(q2.tables, q1.tables):  # q1 alias -> q2 alias
         if len(mapping) != len(q1.tables):
             continue

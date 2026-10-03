@@ -2,7 +2,8 @@
 
 * A select whose FROM source, an inner or cross joined source, or the left
   side of a LEFT JOIN can never hold a row returns no rows (unless it is a
-  global aggregate, which always returns one row): its WHERE becomes FALSE.
+  global aggregate, which always returns one row, or groups by ROLLUP, CUBE,
+  GROUPING SETS or ``()``, whose grand total can): its WHERE becomes FALSE.
 * A LEFT JOIN whose right side can never hold a row pads every left row with
   NULLs: the join is dropped and the right side's columns read as NULL.
 * ``EXISTS`` over such a relation is FALSE, ``x IN (...)`` over it is FALSE.
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import distinct_on
+from .ast_utils import distinct_on, extended_grouping
 
 
 def _false(node: exp.Expression | None) -> bool:
@@ -54,6 +55,8 @@ def is_empty(node: exp.Expression | None) -> bool:
         return is_empty(node.left)
     if not isinstance(node, exp.Select) or _global_aggregate(node):
         return False
+    if extended_grouping(node.args.get("group")):
+        return False  # ROLLUP, CUBE, GROUPING SETS or GROUP BY (): a grand-total row even over no input rows
     if node.args.get("having") is not None and _false(node.args["having"].this):
         return True
     where = node.args.get("where")
