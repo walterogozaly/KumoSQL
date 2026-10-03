@@ -6,14 +6,15 @@ kept in a BigQuery table and the scope follows it.
 
 Running a query costs money, so it is guarded and cached:
 
+* a local parser requires exactly one read-only query before credentials or a cache hit;
 * the query is dry-run first and refused when its estimate is over the byte cap;
 * the real run carries ``maximumBytesBilled`` (BigQuery refuses it past the cap) and a label;
 * it runs in the billing project chosen in Settings, never one guessed from the query;
-* the result (one column of values) is kept for the query cache lifetime (Settings → BigQuery
-  projects, default 48 hours), in memory and
-  in ``scope-query-cache.json`` in the KumoSQL data directory, and is reused until it
-  expires. An expired result is re-run when next used; if the re-run fails the older copy
-  is used and flagged stale. ``refresh`` bypasses the timer.
+* values are kept in memory for the query cache lifetime (default 48 hours),
+  bound to project, location and credential context. Disk summaries in
+  ``scope-query-cache.json`` contain counts and timing, without SQL or values.
+  Expired entries are deleted on access/load; a restart obtains values again.
+  A failed ``refresh`` can reuse an unexpired same-context copy, flagged stale.
 
 The billing project and the cache lifetime are the BigQuery settings (``bigquery_catalog``);
 the byte cap is this module's own setting, in the ``scope_queries`` section of ``state.json``.
@@ -34,7 +35,8 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote, urlencode
 
-from . import state
+from . import query_context, state
+from .sql_validation import validate_readonly_query
 
 SECTION = "scope_queries"
 #: BigQuery bills at least 10 MB per query, so a smaller cap could never run anything.
@@ -49,6 +51,13 @@ _POLL_SECONDS = 120
 
 class QueryError(ValueError):
     """A scope query could not be checked or run; the message says what to change."""
+
+
+def validate_query(sql: str) -> None:
+    try:
+        validate_readonly_query(sql)
+    except ValueError as exc:
+        raise QueryError(str(exc)) from None
 
 
 @dataclass(frozen=True)
@@ -170,9 +179,11 @@ def dry_run(sql: str, column: str | None = None, *, project: str | None = None, 
 
     from . import dryrun
 
+    validate_query(sql)
     project = _need_project(project)
     cap = max_bytes if max_bytes is not None else get_settings().max_bytes_billed
-    result = dryrun.dry_run(sql, project)
+    location = query_context.execution_location()
+    result = dryrun.dry_run(sql, project, **({"location": location} if location else {}))
     if not result.ok:
         raise QueryError(f"BigQuery rejected the query: {result.error_message}")
     names = [item.name for item in result.schema]
@@ -191,6 +202,7 @@ def _bq_runner(sql: str, column: str | None, project: str, max_bytes: int) -> Qu
 
     from .dryrun import access_token
 
+    validate_query(sql)
     plan = dry_run(sql, column, project=project, max_bytes=max_bytes)
     headers = {"Authorization": f"Bearer {access_token()}", "Content-Type": "application/json"}
     body = {
@@ -202,6 +214,8 @@ def _bq_runner(sql: str, column: str | None, project: str, max_bytes: int) -> Qu
         "timeoutMs": 30000,
         "labels": {"kumosql": "scope_query"},
     }
+    if location := query_context.execution_location():
+        body["location"] = location
     base = f"{_API}/projects/{quote(project, safe='')}"
     status, payload = _post(f"{base}/queries", headers, json.dumps(body).encode("utf-8"))
     if status >= 400 or "error" in payload:
@@ -281,10 +295,12 @@ class Result:
 _lock = threading.Lock()
 _memory: dict[str, dict] = {}
 _disk_loaded = False
+_context: str | None = None
 
 
-def cache_key(sql: str, column: str | None) -> str:
-    return hashlib.sha256(f"{sql.strip()}\x1f{(column or '').strip().casefold()}".encode("utf-8")).hexdigest()[:24]
+def cache_key(sql: str, column: str | None, *, context: str | None = None) -> str:
+    context = context or query_context.execution_context(billing_project())
+    return hashlib.sha256(f"{context}\x1f{sql.strip()}\x1f{(column or '').strip().casefold()}".encode("utf-8")).hexdigest()
 
 
 def _cache_path() -> Path:
@@ -293,40 +309,70 @@ def _cache_path() -> Path:
 
 def _load_disk() -> None:
     global _disk_loaded
-    if _disk_loaded:
-        return
     _disk_loaded = True
     try:
         stored = json.loads(_cache_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
+    # Disk entries are summaries only. Delete legacy rows and expired/context-
+    # mismatched summaries; membership values must be obtained again after restart.
     if isinstance(stored, dict):
-        for key, entry in stored.items():
-            if isinstance(entry, dict) and isinstance(entry.get("values"), list) and "at" in entry:
-                _memory.setdefault(key, entry)
+        now, ttl = time.time(), cache_seconds()
+        kept = {key: entry for key, entry in stored.items() if isinstance(entry, dict)
+                and entry.get("context") == _context and "values" not in entry and "sql" not in entry
+                and isinstance(entry.get("at"), (int, float)) and now < entry["at"] + ttl}
+        if kept != stored:
+            _write_disk(kept)
 
 
 def _save_disk() -> None:
+    summaries = {key: {name: value for name, value in entry.items() if name != "values"}
+                 for key, entry in _memory.items()}
+    _write_disk(summaries)
+
+
+def _write_disk(entries: dict) -> None:
     path = _cache_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         handle, temp = tempfile.mkstemp(dir=path.parent, prefix=".scope-query-", suffix=".tmp")
         with os.fdopen(handle, "w", encoding="utf-8") as out:
-            json.dump(_memory, out)
+            json.dump(entries, out)
         os.replace(temp, path)
     except OSError:
         pass  # the cache is an optimization; a failed save never fails a request
 
 
 def clear_cache() -> None:
-    global _disk_loaded
+    global _disk_loaded, _context
     with _lock:
         _memory.clear()
         _disk_loaded = True
+        _context = None
         try:
             _cache_path().unlink()
         except OSError:
             pass
+
+
+def _prepare_cache(context: str) -> None:
+    """Called under the cache lock; forget other contexts and expired values."""
+    global _context, _disk_loaded
+    if _context is not None and _context != context:
+        _memory.clear()
+        try:
+            _cache_path().unlink()
+        except OSError:
+            pass
+        _disk_loaded = True
+    _context = context
+    _load_disk()
+    now, ttl = time.time(), cache_seconds()
+    expired = [key for key, entry in _memory.items() if now >= entry["at"] + ttl]
+    for key in expired:
+        del _memory[key]
+    if expired:
+        _save_disk()
 
 
 def _result(entry: dict, now: float, ttl: float, stale: bool = False, error: str | None = None) -> Result:
@@ -338,12 +384,21 @@ def _result(entry: dict, now: float, ttl: float, stale: bool = False, error: str
     )
 
 
-def peek(sql: str, column: str | None = None) -> Result | None:
-    """The saved result for a query, fresh or not, without running anything."""
-
+def _can_fallback(entry: dict | None, context: str, ttl: float) -> bool:
+    current = query_context.execution_context(billing_project())
     with _lock:
-        _load_disk()
-        entry = _memory.get(cache_key(sql, column))
+        _prepare_cache(current)
+    return bool(entry and current == context and time.time() < entry["at"] + ttl)
+
+
+def peek(sql: str, column: str | None = None) -> Result | None:
+    """The unexpired in-memory result, without running anything."""
+
+    validate_query(sql)
+    context = query_context.execution_context(billing_project())
+    with _lock:
+        _prepare_cache(context)
+        entry = _memory.get(cache_key(sql, column, context=context))
     if not entry:
         return None
     now = time.time()
@@ -354,39 +409,44 @@ def peek(sql: str, column: str | None = None) -> Result | None:
 def result_for(sql: str, column: str | None = None, *, refresh: bool = False) -> Result:
     """The values ``sql`` returns, from the cache while it is fresh, else by running it.
 
-    ``refresh`` re-runs it now. When a re-run fails and an older copy exists, that copy is
-    returned with ``stale`` set and the failure in ``error``.
+    ``refresh`` re-runs it now. A failed refresh can use an unexpired copy from
+    the same execution context, flagged stale. Expired values are deleted.
     """
 
-    if not isinstance(sql, str) or not sql.strip():
-        raise QueryError("the query is empty")
-    key = cache_key(sql, column)
+    validate_query(sql)
+    project = _need_project(None)
+    context = query_context.execution_context(project)
+    key = cache_key(sql, column, context=context)
     settings = get_settings()
     ttl = cache_seconds()
     with _lock:
-        _load_disk()
+        _prepare_cache(context)
         entry = _memory.get(key)
     now = time.time()
     if entry and not refresh and now - entry["at"] < ttl:
         return _result(entry, now, ttl)
     try:
-        run = RUNNER(sql, column or None, _need_project(None), settings.max_bytes_billed)
+        run = RUNNER(sql, column or None, project, settings.max_bytes_billed)
     except QueryError as exc:
-        if entry:
+        if _can_fallback(entry, context, ttl):
             return _result(entry, now, ttl, stale=True, error=str(exc))
         raise
     except Exception as exc:  # noqa: BLE001 - credentials, network and library errors read the same to the user
         message = f"could not run the query: {exc}"
-        if entry:
+        if _can_fallback(entry, context, ttl):
             return _result(entry, now, ttl, stale=True, error=message)
         raise QueryError(message) from exc
     fresh = {
         "at": time.time(), "values": sorted(set(run.values)), "column": run.column,
-        "estimated": run.estimated_bytes, "billed": run.bytes_billed, "sql": sql.strip()[:200],
+        "estimated": run.estimated_bytes, "billed": run.bytes_billed,
+        "context": context, "count": len(set(run.values)),
     }
     with _lock:
-        _memory[key] = fresh
-        _save_disk()
+        if query_context.execution_context(billing_project()) == context:
+            _prepare_cache(context)
+            if ttl > 0:
+                _memory[key] = fresh
+                _save_disk()
     return _result(fresh, now, ttl)
 
 
@@ -403,9 +463,9 @@ def cached_queries() -> list[dict]:
     ttl = cache_seconds()
     now = time.time()
     with _lock:
-        _load_disk()
+        _prepare_cache(query_context.execution_context(billing_project()))
         items = [
-            {"key": key, "sql": entry.get("sql", ""), "column": entry.get("column", ""), "count": len(entry["values"]),
+            {"key": key, "column": entry.get("column", ""), "count": entry["count"],
              "fetched_at": entry["at"], "expires_at": entry["at"] + ttl, "expired": now - entry["at"] >= ttl,
              "bytes_billed": entry.get("billed")}
             for key, entry in _memory.items()

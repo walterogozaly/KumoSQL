@@ -2,10 +2,11 @@
 
 A data source is a name, a type (today only ``bigquery_sql``), the SQL, and an optional cache
 lifetime in hours (the global BigQuery query cache lifetime when unset). Populating it runs the
-query in the billing project chosen in Settings under the byte cap of :mod:`kumosql.scope_queries`
+single read-only query in the billing project chosen in Settings under the byte cap of :mod:`kumosql.scope_queries`
 (dry run first, ``maximumBytesBilled`` on the real run) and keeps the rows in the data folder
 (``data-sources/<id>.json``) until the lifetime is over. An expired or edited source is re-run the next time
-it is populated; when a re-run fails the older rows stay and are reported as stale.
+it is populated. Expired or other-context rows are deleted on access/load;
+a failed refresh can use unexpired same-query, same-context rows, flagged stale.
 
 Each saved source is an "applies to" domain of scopes (``source:<id>``, see
 :func:`kumosql.scopes.all_domains`), and its result columns are rule fields, like ``user_email``
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
-from . import scope_queries, state
+from . import query_context, scope_queries, state
 
 SECTION = "data_sources"
 PREFIX = "source:"
@@ -81,6 +82,7 @@ def parse_source(data: object) -> Source:
         raise ValueError(f"data source {name.strip()!r} needs a query")
     if len(query) > scope_queries.MAX_QUERY_CHARS:
         raise ValueError(f"the query can have at most {scope_queries.MAX_QUERY_CHARS:,} characters")
+    scope_queries.validate_query(query)
     hours = data.get("cache_hours")
     if hours is not None:
         if isinstance(hours, bool) or not isinstance(hours, (int, float)) or not 0 <= hours <= MAX_CACHE_HOURS:
@@ -186,20 +188,51 @@ def _delete_rows(ident: str) -> None:
 
 
 def _query_hash(source: Source) -> str:
-    return hashlib.sha256(f"{source.type}\x1f{source.query}".encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(f"{source.type}\x1f{source.query}".encode("utf-8")).hexdigest()
 
 
 def cache_seconds(source: Source) -> float:
     return source.cache_hours * 3600 if source.cache_hours is not None else scope_queries.cache_seconds()
 
 
-def _stored(source: Source) -> dict | None:
+def _prune_rows(context: str) -> None:
+    """Remove legacy, expired and other-context rows, including inactive sources."""
+    now = time.time()
+    sources = {source.id: source for source in list_sources()}
+    for path in (state.data_dir() / "data-sources").glob("*.json"):
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+            source = sources.get(path.stem)
+            valid = (isinstance(entry, dict) and entry.get("context") == context
+                     and isinstance(entry.get("at"), (int, float))
+                     and isinstance(entry.get("expires_at"), (int, float))
+                     and now < entry["expires_at"]
+                     and (source is None or (entry.get("query") == _query_hash(source)
+                          and now < entry["at"] + cache_seconds(source))))
+            if not valid:
+                path.unlink()
+        except (OSError, ValueError, TypeError):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _stored(source: Source, context: str | None = None) -> dict | None:
+    scope_queries.validate_query(source.query)
+    context = context or query_context.execution_context(scope_queries.billing_project())
+    _prune_rows(context)
     try:
         entry = json.loads(_rows_path(source.id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     ok = isinstance(entry, dict) and isinstance(entry.get("columns"), list) and isinstance(entry.get("rows"), list)
-    return entry if ok and "at" in entry else None
+    if (ok and isinstance(entry.get("at"), (int, float)) and entry.get("context") == context
+            and entry.get("query") == _query_hash(source)
+            and time.time() < entry["at"] + cache_seconds(source)):
+        return entry
+    _delete_rows(source.id)
+    return None
 
 
 def _table(source: Source, entry: dict, *, stale: bool = False, error: str | None = None) -> Table:
@@ -211,7 +244,7 @@ def _table(source: Source, entry: dict, *, stale: bool = False, error: str | Non
 
 
 def peek(source: Source) -> Table | None:
-    """The saved rows of ``source`` (fresh or not), without running anything."""
+    """The unexpired rows of the current source and context, without running anything."""
 
     entry = _stored(source)
     if entry is None:
@@ -248,12 +281,15 @@ def _bq_runner(source: Source, project: str, max_bytes: int) -> Run:
 
     from .dryrun import access_token
 
+    scope_queries.validate_query(source.query)
     plan = scope_queries.dry_run(source.query, None, project=project, max_bytes=max_bytes)
     headers = {"Authorization": f"Bearer {access_token()}", "Content-Type": "application/json"}
     body = {
         "query": source.query, "useLegacySql": False, "useQueryCache": True, "maximumBytesBilled": str(max_bytes),
         "maxResults": 10000, "timeoutMs": 30000, "labels": {"kumosql": "data_source"},
     }
+    if location := query_context.execution_location():
+        body["location"] = location
     base = f"{scope_queries._API}/projects/{quote(project, safe='')}"
     status, payload = scope_queries._post(f"{base}/queries", headers, json.dumps(body).encode("utf-8"))
     if status >= 400 or "error" in payload:
@@ -296,18 +332,24 @@ RUNNERS: dict[str, Callable[[Source, str, int], Run]] = {"bigquery_sql": _bq_run
 def populate(source: Source, *, refresh: bool = False) -> Table:
     """The rows of ``source``: the saved ones while fresh, else the query is run now.
 
-    ``refresh`` runs it regardless of the timer. When a run fails and older rows exist they are
-    returned with ``stale`` set and the failure in ``error``; otherwise :class:`DataSourceError`.
+    ``refresh`` runs it regardless of the timer. A failed refresh can return
+    unexpired rows for the same query/context, flagged stale; expired rows are deleted.
     """
 
+    scope_queries.validate_query(source.query)
+    try:
+        project = scope_queries._need_project(None)
+    except scope_queries.QueryError as exc:
+        raise DataSourceError(str(exc)) from None
+    context = query_context.execution_context(project)
     with _lock:
-        entry = _stored(source)
+        entry = _stored(source, context)
         now = time.time()
         current = entry is not None and entry.get("query") == _query_hash(source)
         if entry is not None and current and not refresh and now - entry["at"] < cache_seconds(source):
             return _table(source, entry)
         try:
-            run = RUNNERS[source.type](source, scope_queries._need_project(None), scope_queries.get_settings().max_bytes_billed)
+            run = RUNNERS[source.type](source, project, scope_queries.get_settings().max_bytes_billed)
         except scope_queries.QueryError as exc:
             message = str(exc)
         except DataSourceError as exc:
@@ -320,13 +362,18 @@ def populate(source: Source, *, refresh: bool = False) -> Table:
             fresh = {
                 "at": time.time(), "query": _query_hash(source), "columns": run.columns, "rows": run.rows,
                 "estimated": run.estimated_bytes, "billed": run.bytes_billed,
+                "context": context, "expires_at": time.time() + cache_seconds(source),
             }
             try:
-                _save_rows(source, fresh)
+                if (cache_seconds(source) > 0
+                        and query_context.execution_context(scope_queries.billing_project()) == context):
+                    _save_rows(source, fresh)
             except OSError as exc:
                 raise DataSourceError(f"could not save the rows to the data folder: {exc}") from exc
             return _table(source, fresh)
-        if entry is not None:
+        current_context = query_context.execution_context(scope_queries.billing_project())
+        _prune_rows(current_context)
+        if entry is not None and current_context == context and time.time() < entry["at"] + cache_seconds(source):
             return _table(source, entry, stale=True, error=message)
         raise DataSourceError(message)
 

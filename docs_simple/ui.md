@@ -36,4 +36,8 @@ To show a project in the graph, start with `--project path/to/project`, or conne
 
 The app remembers these choices on your computer. Its server listens on the local loopback address. Ordinary Workspace rewrites run locally; explicitly requested BigQuery, git, and Dataform features contact those services.
 
+Scope queries and data sources accept one read-only SQL query, including a `WITH` query or a union. The app refuses scripts and statements that change data before contacting BigQuery. Queries still use the billing project and byte cap chosen in Settings.
+
+Cached results belong to the billing project, location and credential identity that produced them. Changing that context discards old results. Expired entries are deleted when caches are opened or used; the default lifetime is 48 hours. Scope values stay only in memory, so they are fetched again after restarting the app; disk summaries contain counts and timings, without query previews or values. Data sources keep the rows needed by scopes and joins in the local data folder until expiry. A failed manual refresh can show an unexpired copy marked stale, but expired rows are never used. Credentials themselves are never stored in these caches.
+
 If something fails, use **Settings → Diagnostics → Copy diagnostics**. Diagnostics redact names and secrets, but skim any log before sharing it. The [repository guide](dataform-repositories.md) explains authentication and cache problems.
