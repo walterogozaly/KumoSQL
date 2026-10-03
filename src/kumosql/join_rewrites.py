@@ -15,6 +15,11 @@ Three rewrites, each tried by :func:`join_rewrites`:
   ``c LEFT JOIN (SELECT a.x AS a__x, ... FROM a JOIN b ON p) AS g ON q'``, the only form of a
   mirrored three-way RIGHT JOIN, which the SMT encoding reads. Needs the members' columns.
 
+* **Equalities through the join.** ``a LEFT JOIN b ON a.k = b.k WHERE a.k = 2`` also tests
+  ``b.k = 2`` in the ON (CockroachDB's MapEqualityIntoJoinLeftAndRight): a row of ``a`` that the
+  WHERE keeps has ``a.k = 2``, so its matches have ``b.k = 2``, and the rows it drops are dropped
+  either way. Only a comparison, ``BETWEEN`` or ``IN`` list of one such column with literals is copied.
+
 A LEFT JOIN that a WHERE filter makes inner is :mod:`kumosql.null_rejecting_joins`.
 """
 
@@ -262,6 +267,61 @@ def _strip_joins(table: exp.Table) -> exp.Table:
     return copy
 
 
+def _literal_test(part: exp.Expression) -> exp.Column | None:
+    """The one column ``part`` compares with literals (``c = 2``, ``c BETWEEN 1 AND 3``, ``c IN (1, 2)``), or None."""
+
+    if isinstance(part, (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)):
+        operands = [part.this, part.expression]
+    elif isinstance(part, exp.Between):
+        operands = [part.this, part.args.get("low"), part.args.get("high")]
+    elif isinstance(part, exp.In) and part.expressions and not part.args.get("query") and not part.args.get("unnest"):
+        operands = [part.this, *part.expressions]
+    else:
+        return None
+    columns = [o for o in operands if isinstance(o, exp.Column)]
+    if len(columns) != 1 or not columns[0].table or not all(isinstance(o, (exp.Column, exp.Literal)) for o in operands):
+        return None
+    return columns[0]
+
+
+def _map_equalities_into_left_join(select: exp.Select) -> exp.Expression | None:
+    where = select.args.get("where")
+    sources = _sources(select) if where is not None else None
+    if not sources:
+        return None
+    tests = [(part, column) for part in conjuncts(where.this) if (column := _literal_test(part)) is not None]
+    if not tests:
+        return None
+    for index, (source, join) in enumerate(sources):
+        if join is None or _side(join) != "LEFT":
+            continue
+        far = (source.alias_or_name or "").lower()
+        before = {(s.alias_or_name or "").lower() for s, _ in sources[:index]}
+        mapped: dict[tuple[str, str], exp.Column] = {}
+        for part in conjuncts(join.args["on"]):
+            if isinstance(part, exp.EQ) and all(isinstance(x, exp.Column) and x.table for x in (part.this, part.expression)):
+                for near, other in ((part.this, part.expression), (part.expression, part.this)):
+                    if near.table.lower() in before and other.table.lower() == far:
+                        mapped.setdefault((near.table.lower(), near.name.lower()), other)
+        present = {p.sql() for p in conjuncts(join.args["on"])}
+        added = []
+        for part, column in tests:
+            target = mapped.get((column.table.lower(), column.name.lower()))
+            if target is None:
+                continue
+            copy = part.copy()
+            next(c for c in copy.find_all(exp.Column)).replace(target.copy())
+            if copy.sql() not in present:
+                present.add(copy.sql())
+                added.append(copy)
+        if added:
+            result = select.copy()
+            result_join = result.args["joins"][index - 1]
+            result_join.set("on", exp.and_(result_join.args["on"], *added, copy=False))
+            return result
+    return None
+
+
 def join_rewrites(select: exp.Select, schema, not_null, foreign_keys) -> exp.Expression | None:
     """``select`` with one LEFT JOIN read as inner, or a nested join group made a derived table; or None."""
 
@@ -269,4 +329,5 @@ def join_rewrites(select: exp.Select, schema, not_null, foreign_keys) -> exp.Exp
         _fk_left_join_to_inner(select, not_null, foreign_keys)
         or _having_left_join_to_inner(select)
         or _nested_join_to_derived(select, schema)
+        or _map_equalities_into_left_join(select)
     )
