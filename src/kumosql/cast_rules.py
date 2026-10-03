@@ -16,8 +16,9 @@
   non-strict one with the literal moved by one: ``COUNT(x) > 1`` is
   ``COUNT(x) >= 2``. (Other integers keep their comparisons: the SMT reads
   them as reals, where ``x > 50`` and ``x <= 50`` stay complementary.)
-* An ``INT`` (or narrower) expression cast to ``DOUBLE``, ``FLOAT`` or a wide
-  enough ``DECIMAL`` keeps its order and its ties (the cast is exact and
+* An ``INT`` (or narrower) expression cast to ``DOUBLE``, a wide enough
+  ``DECIMAL``, or ``FLOAT`` (32-bit, so only for integers of at most 7 digits:
+  16777217 is not a ``FLOAT``) keeps its order and its ties (the cast is exact and
   one-to-one there), so as an ``ORDER BY`` key it is the expression itself; and
   such a cast is NULL exactly when its input is. Here the operands' width is not
   enough: ``i * i`` of two ``INT`` values can need 19 digits, and a ``SUM`` any
@@ -237,6 +238,13 @@ def _literal_cast(cast: exp.Cast, dialect: str) -> exp.Expression | None:
     return exp.Neg(this=number) if negative else number
 
 
+# Integers a floating type holds exactly, as digits: a DOUBLE (binary64) every one up to 2**53, so
+# any of 15 digits, and a FLOAT (binary32 in DuckDB, MySQL, Spark, Postgres' REAL) every one up to
+# 2**24, so any of 7 digits (16777217 is not one). A precision argument is not read: Postgres's
+# FLOAT(24), parsed as DOUBLE, is a REAL.
+_FLOAT_DIGITS = {"DOUBLE": 15, "FLOAT": 7}
+
+
 def _exact_numeric_cast(cast: exp.Expression, select: exp.Select, types: dict, dialect: str) -> exp.Expression | None:
     """The input of a cast from an INT-or-narrower expression to an exact-on-it numeric type, else ``None``."""
 
@@ -247,7 +255,8 @@ def _exact_numeric_cast(cast: exp.Expression, select: exp.Select, types: dict, d
         return None
     name = _type_name(cast.args["to"])
     params = _decimal_params(cast.args["to"])
-    if name in ("DOUBLE", "FLOAT", "DOUBLE PRECISION") or name in _INTEGER_DIGITS and _INTEGER_DIGITS[name] >= have[1] or (params and params[0] - params[1] >= have[1]):
+    floating = name in _FLOAT_DIGITS and not cast.args["to"].expressions and _FLOAT_DIGITS[name] >= have[1]
+    if floating or name in _INTEGER_DIGITS and _INTEGER_DIGITS[name] >= have[1] or (params and params[0] - params[1] >= have[1]):
         return cast.this
     return None
 

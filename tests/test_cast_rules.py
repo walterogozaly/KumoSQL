@@ -145,6 +145,19 @@ TIES_MADE_BY_A_CAST = [
         id="s007-004-int-column-arithmetic-outgrows-a-double",
     ),
     pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS FLOAT), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "duckdb", "INT", "CREATE TABLE t (x INTEGER)", [(2**24,), (2**24 + 1,)], None,
+        id="s007-005-duckdb-float-is-32-bit",
+    ),
+    pytest.param(
+        "SELECT x FROM t ORDER BY CAST(x AS FLOAT(24)), x DESC LIMIT 1",
+        "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
+        "postgres", "int4", "CREATE TABLE t (x INTEGER)", [(2**24,), (2**24 + 1,)],
+        ("SELECT x FROM t ORDER BY CAST(x AS REAL), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x, x DESC LIMIT 1"),
+        id="s007-005-postgres-float-24-is-real",
+    ),
+    pytest.param(
         "SELECT x FROM t ORDER BY CAST(x AS FLOAT64), x DESC LIMIT 1",
         "SELECT x FROM t ORDER BY x, x DESC LIMIT 1",
         "bigquery", "INT", "CREATE TABLE t (x BIGINT)", [(2**53,), (2**53 + 1,)], None,
@@ -186,6 +199,7 @@ EXACT_CASTS = [
     pytest.param("SELECT x FROM t ORDER BY CAST(x AS DOUBLE), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x LIMIT 1", "duckdb", "INTEGER", id="duckdb-integer-in-a-double"),
     pytest.param("SELECT CAST(x AS INT64) AS c FROM t", "SELECT x AS c FROM t", "bigquery", "INT", id="bigquery-int-is-already-int64"),
     pytest.param("SELECT x FROM t ORDER BY CAST(x * x AS DOUBLE), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x * x, x DESC LIMIT 1", "mysql", "SMALLINT", id="smallint-product-in-a-double"),
+    pytest.param("SELECT x FROM t ORDER BY CAST(x AS FLOAT), x DESC LIMIT 1", "SELECT x FROM t ORDER BY x LIMIT 1", "duckdb", "SMALLINT", id="duckdb-smallint-in-a-float"),
 ]
 
 
