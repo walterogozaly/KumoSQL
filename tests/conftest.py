@@ -184,6 +184,7 @@ EVAL_FILES = {
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
     "test_querybooster_bench.py",
+    "test_quite_bench.py",
     "test_rbot_benchmarks.py",
     "test_rbot_normalise.py",
     "test_reduction_bench.py",
