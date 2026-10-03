@@ -2760,7 +2760,9 @@ def _prune(prover: "_Prover", union: _Union) -> None:
     kept = []
     for block in union.branches:
         if block.occs and any(o.opaque for o in block.occs):
-            kept.append(block)
+            # A literal WHERE FALSE needs no model of the opaque source (a global aggregate still returns its one row).
+            if (isinstance(block, _Agg) and block.is_global) or not z3.is_false(z3.simplify(block.cond.t)):
+                kept.append(block)
             continue
         if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
             kept.append(block)
