@@ -677,3 +677,79 @@ def captured_names(body: exp.Expression, at: exp.Expression) -> set[str]:
     replaced ``at``."""
 
     return free_reads(body) & visible_ctes(at)
+
+
+_DML = (exp.Update, exp.Delete, exp.Merge)
+
+
+def relation_names(query: exp.Expression) -> set[str]:
+    """Lower-case names a SELECT's FROM and JOIN items bind (or an UPDATE, DELETE or MERGE target and source).
+
+    ``UNNEST(arr) AS x`` names its element ``x``; a relation without a name counts as ``""``, since a column
+    with no qualifier can still read it.
+    """
+
+    if isinstance(query, exp.Select):
+        items = select_sources(query)
+    elif isinstance(query, _DML):
+        from_ = query.args.get("from_") or query.args.get("from")
+        items = [query.this, query.args.get("using"), from_.this if from_ is not None else None]
+    else:
+        return set()
+    names: set[str] = set()
+    for item in items:
+        if not isinstance(item, exp.Expression):
+            continue
+        names.add(item.alias_or_name.lower())
+        alias = item.args.get("alias")
+        if isinstance(alias, exp.TableAlias):
+            names.update(column.name.lower() for column in alias.columns)
+    return names
+
+
+def scope_relations(node: exp.Expression, top: exp.Expression | None = None) -> set[str]:
+    """Names of the relations whose columns ``node`` can read, looking out to ``top`` (included; default: the root).
+
+    A query's relations are visible from its expressions and from subqueries in them (correlation), but not
+    from its own FROM and JOIN items or its WITH tables, which are read as if the query were not there. A
+    joined ``UNNEST`` or ``LATERAL`` item is the exception: it reads the relations before it (``t, UNNEST(t.arr)``).
+    """
+
+    names: set[str] = set()
+    join_item = False  # whether the walk just left a JOIN's relation rather than its ON or USING condition
+    child = node
+    while child is not top and child.parent is not None:
+        parent = child.parent
+        key = child.arg_key
+        if isinstance(parent, exp.Select):
+            if key not in ("from", "from_", "with", "with_") and not (key == "joins" and join_item):
+                names |= relation_names(parent)
+        elif isinstance(parent, _DML) and key not in ("this", "using", "from", "from_", "with", "with_"):
+            names |= relation_names(parent)
+        join_item = isinstance(parent, exp.Join) and key == "this" and not isinstance(child, (exp.Unnest, exp.Lateral))
+        child = parent
+    return names
+
+
+def unbound_names(tree: exp.Expression) -> set[str]:
+    """What ``tree`` reads from outside itself: one-part tables no WITH in scope defines (real tables), and
+    column qualifiers no relation in scope names (struct fields, or a reference that binds to nothing).
+
+    Moving a query body away from the WITH table or the relation it read adds a name here, so a rewrite that
+    keeps the meaning adds none.
+    """
+
+    names = {f"table {name}" for name in free_reads(tree)}
+    names.update(
+        f"column qualifier {qualifier}"
+        for column in tree.find_all(exp.Column)
+        if (qualifier := leading_qualifier(column)) and qualifier not in scope_relations(column, tree)
+    )
+    return names
+
+
+def leading_qualifier(node: exp.Column | exp.Table) -> str:
+    """The lower-case first part of a qualified column or table name (``o`` in ``o.rec.f``), or ``""``."""
+
+    parts = node.parts
+    return parts[0].name.lower() if len(parts) > 1 else ""

@@ -22,7 +22,7 @@ from urllib.error import URLError
 
 from sqlglot import exp
 
-from .ast_utils import parse_statements, top_level_query
+from .ast_utils import parse_statements, top_level_query, unbound_names
 from .scripts import block_statements, script_skeleton
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
@@ -225,6 +225,14 @@ def _verify_sql(
         old_sql = old_query.sql(dialect="bigquery")
         new_sql = new_query.sql(dialect="bigquery")
         if old_sql == new_sql:
+            continue
+        # Checked apart from the provers, which normalize both sides through the same lifting and
+        # inlining: a table or qualifier the input binds in scope must not lose that binding.
+        escaped = unbound_names(new_query) - unbound_names(old_query)
+        if escaped:
+            problems.append(
+                f"statement {index}: the output reads {', '.join(sorted(escaped))} outside the scope that binds it in the input"
+            )
             continue
         # The prover compares result bags; a rewrite must also keep ordering.
         if _order_sql(old_query) != _order_sql(new_query):
