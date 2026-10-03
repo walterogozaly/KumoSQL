@@ -29,8 +29,8 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
-from functools import lru_cache
+from dataclasses import dataclass, replace
+from functools import lru_cache, wraps
 import re
 
 import sqlglot
@@ -2191,7 +2191,41 @@ def guarded(left_sql: str, right_sql: str, dialect: str = "bigquery") -> str | N
     """The reason to refuse a proof of ``left_sql`` against ``right_sql``, or ``None``."""
 
     for sql in (left_sql, right_sql):
-        reason = disagreement(sql, dialect)
+        try:
+            reason = disagreement(sql, dialect)
+        except (RecursionError, Exception):  # a failing check must never turn into a failing prover
+            continue
         if reason:
             return f"parser disagreement: {reason}"
     return None
+
+
+def refuse_misread_proofs(prover):
+    """Decorate a public prover entry point so a proof of text sqlglot misreads becomes ``not_proven``.
+
+    The decorated function takes the two query texts first and returns a result with a ``status`` whose enum
+    has ``NOT_PROVEN`` (``EquivalenceResult``, ``SmtEquivalenceResult``). A proven or conditionally proven
+    result is checked with :func:`guarded` under the call's ``dialect`` (``bigquery`` when it has none); a
+    disagreement replaces it with ``not_proven`` and the reason. Only the outermost call checks, so the texts
+    the provers write for their own stages are not read again, and a result that is not a proof passes
+    through untouched: the check can only remove a proof.
+    """
+
+    @wraps(prover)
+    def checked(*args, **kwargs):
+        with outermost() as top:
+            result = prover(*args, **kwargs)
+            if not top or not (result.proven or getattr(result, "conditionally_proven", False)):
+                return result
+            left_sql = args[0] if args else kwargs["left_sql"]
+            right_sql = args[1] if len(args) > 1 else kwargs["right_sql"]
+            reason = guarded(left_sql, right_sql, kwargs.get("dialect") or "bigquery")
+            if reason is None:
+                return result
+            changes = {"status": type(result.status)["NOT_PROVEN"], "reason": reason}
+            for name in ("conditions", "assumptions"):
+                if hasattr(result, name):
+                    changes[name] = ()
+            return replace(result, **changes)
+
+    return checked

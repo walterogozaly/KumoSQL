@@ -65,6 +65,7 @@ import sys
 import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
+from .parse_check import refuse_misread_proofs
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
 from .string_literals import canonical_literals
@@ -4036,6 +4037,7 @@ def _check_options(kwargs: dict) -> None:
             kwargs[name] = drop_case_conflicts(kwargs[name])
 
 
+@refuse_misread_proofs
 @serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
