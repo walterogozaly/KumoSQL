@@ -1917,6 +1917,11 @@ class DuckDBReplay:
         self.duckdb = duckdb
         self.db = duckdb.connect(":memory:")
         self.cx = cx
+        self.bigquery = dialect == "bigquery"
+        if self.bigquery:
+            from .bigquery_on_duckdb import configure
+
+            configure(self.db)
         self.names = {}
         for name, table in schema.tables.items():
             columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
@@ -1936,6 +1941,10 @@ class DuckDBReplay:
                 table.set("catalog", None)
                 table.set("db", None)
                 table.set("this", exp.to_identifier(found.name))
+        if dialect == "bigquery":
+            from .bigquery_on_duckdb import faithful
+
+            tree = faithful(tree)
         return tree.sql(dialect="duckdb")
 
     def _run(self, data: dict[str, list[tuple]]):
@@ -1945,7 +1954,15 @@ class DuckDBReplay:
             if rows:
                 marks = ", ".join("?" * len(table.columns))
                 self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', rows)
-        return self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+        left, right = self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+        if self.bigquery:
+            from .bigquery_on_duckdb import UnfaithfulOutput, bigquery_rows
+
+            try:
+                return bigquery_rows(left), bigquery_rows(right)
+            except UnfaithfulOutput as error:
+                raise self.duckdb.InvalidInputException(str(error)) from error
+        return left, right
 
     def differ(self, data: dict[str, list[tuple]]) -> bool | None:
         """``True``: the bags differ on every shuffle; ``False``: they agree; ``None``: could not run."""
@@ -2046,6 +2063,10 @@ class BoundedResult:
         return f"bounded, {self.bound} {'row' if self.bound == 1 else 'rows'}" if self.bounded_equivalent else self.status.value
 
 
+def _no_replay(data) -> None:
+    return None
+
+
 def _check_bounded(
     left_sql: str,
     right_sql: str,
@@ -2079,7 +2100,12 @@ def _check_bounded(
     restrictions: list[str] = []
     try:
         if replay is None:
-            replay = DuckDBReplay(schema, left_sql, right_sql, dialect, translate=translate)
+            from .bigquery_on_duckdb import Unfaithful
+
+            try:
+                replay = DuckDBReplay(schema, left_sql, right_sql, dialect, translate=translate)
+            except Unfaithful:
+                replay = _no_replay  # DuckDB cannot run these as BigQuery does: no counterexample is confirmed
         for bound in range(start, rows + 1):
             outcome = None
             for attempt in range(3):
