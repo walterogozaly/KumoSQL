@@ -23,6 +23,17 @@ The result is a `Pipeline` that qualifies every model in dependency order, so ea
 
 Source table columns come from `source_schema={"project.dataset.table": {"col": "TYPE"}}`. `fetch_table_schemas()` fills it from BigQuery with free dry runs.
 
+`table_reads()` and `table_writes()` describe SQL statements separately from the model graph. For example,
+`INSERT INTO first SELECT id FROM source; INSERT INTO second SELECT id FROM first` reads `source` and `first`
+and writes both `first` and `second`. An explicit query of a model's own target remains a table read without making a
+self-cycle in the graph. A DML target alone is not counted as an input. Writes include `DELETE`, `UPDATE`, `MERGE`,
+`ALTER`, `DROP`, `TRUNCATE`, `CREATE ... LIKE/CLONE`, and pre/post operations; a rename reads the old table and writes
+the new name. Temporary tables remain folded into their real sources. These table connections do not imply complete
+column lineage: unsupported assignments and physical STRUCT sub-fields retain their existing unknown or root-column limits.
+Partition and snapshot decorators use the base table's schema, so `SELECT * FROM events$__UNPARTITIONED__` can expand
+when the schema for `events` is known.
+`report()` exposes the same `table_reads` and `table_writes` lists per model, filtered by model in a scoped report.
+
 ```shell
 python -m kumosql pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
@@ -50,9 +61,9 @@ Column tracing uses sqlglot; `kumosql.lineage_soundness` corrects the shapes whe
 - The lookup writes the catalog file once at the end (it is rewritten whole, so writing after every table made large projects quadratic), runs under a `schema lookup` timing line, and stops asking after 60 seconds (`schema_fetch.MAX_SECONDS`); tables not answered by then stay unknown.
 - The log carries counts only (`schema lookup: 188 of 201 tables not in the project have known columns (12 from the saved catalog; 4.2s, 1 access token refreshes)`), never table or column names.
 
-It is on by default; **Settings → Analysis** has a checkbox, `GET`/`PUT /api/schema-fetch` (`{"enabled": false}`) does the same, and `KUMOSQL_SCHEMA_FETCH=0` overrides it (tests set this, so they never touch BigQuery). A saved analysis is reused only under the same setting. `Pipeline` analysis reports the counts as `schema_lookup` (`asked`, `found`, `from_catalog`, `unknown`).
+It is **off by default**, so a library call or a plain `Pipeline` analysis never reaches the network; unknown tables whose columns are not in the saved catalog simply stay unknown. Opt in with `KUMOSQL_SCHEMA_FETCH=1`, the `--fetch-schema` flag of `python -m kumosql pipeline-report`, or the **Settings → Analysis** checkbox (`GET`/`PUT /api/schema-fetch`, `{"enabled": true}`; the saved choice applies to the local UI and to later runs on that computer). `KUMOSQL_SCHEMA_FETCH=0` overrides a saved opt-in (tests set this, so they never touch BigQuery). When a lookup runs it logs only that it ran and how many tables were answered, never names. The explicit `schema_fetch.resolve(names, fetch=True)` also opts in for one call. A saved analysis is reused only under the same setting. `Pipeline` analysis reports the counts as `schema_lookup` (`asked`, `found`, `from_catalog`, `unknown`).
 
-On a generated job-log-shaped corpus (`tests/test_schema_fetch.py`: 1,200 statements of `SELECT *` / `SELECT * EXCEPT (...)` over 300 outside tables, 10% of them unreadable) the lookup made one metadata call per distinct readable table, and every statement over a readable table was expanded; the only remaining `unexpanded_star` statements were those over unreadable tables. Without the lookup all 1,200 failed.
+On a generated job-log-shaped corpus (`tests/test_schema_fetch.py`: 1,200 statements of `SELECT *` / `SELECT * EXCEPT (...)` over 300 outside tables, 10% of them unreadable) the lookup made one metadata call per distinct readable table, and every statement over a readable table was expanded; the only remaining `unexpanded_star` statements were those over unreadable tables. Without the lookup (the default) all 1,200 failed.
 
 ## Table profiles: what each table is
 
