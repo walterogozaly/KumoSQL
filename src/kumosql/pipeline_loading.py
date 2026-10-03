@@ -599,8 +599,12 @@ def load_sqlx_project(
             dependencies.append(ref)
             return ref.sql()
 
+        def own_table(match: re.Match[str]) -> str:
+            # Returned from a function so a backslash in a configured name is not read as replacement syntax.
+            return target.sql()
+
         body = _REF_RE.sub(substitute, body)
-        body = _SELF_RE.sub(target.sql(), body)
+        body = _SELF_RE.sub(own_table, body)
         if kind == "operations":
             # Dataform separates the statements of an operations file by a line of ``---`` as well as by semicolons.
             body = re.sub(r"(?m)^[ \t]*---[ \t]*$", ";", body)
@@ -634,7 +638,7 @@ def load_sqlx_project(
         for kind_, section in sections:
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section) and "{" in section and "}" in section:
                 inner = section[section.index("{") + 1 : section.rindex("}")]
-                inner = _SELF_RE.sub(target.sql(), _RESOLVE_RE.sub(plain_ref, _REF_RE.sub(plain_ref, inner)))
+                inner = _SELF_RE.sub(own_table, _RESOLVE_RE.sub(plain_ref, _REF_RE.sub(plain_ref, inner)))
                 if "${" in inner:
                     inner, _restorations = _mask_sqlx_interpolations(inner)
                 if inner.strip():

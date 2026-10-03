@@ -196,7 +196,9 @@ def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, .
 
     restored = sql
     for item in restorations:
-        restored = item.pattern.sub(item.original, restored)
+        # A function replacement is inserted as is; a string one would read
+        # the backslashes in ``r'\d'`` or ``\1`` as replacement syntax.
+        restored = item.pattern.sub(lambda _match, original=item.original: original, restored)
         # sqlglot can quote an identifier sentinel when it occurs inside a
         # quoted table reference. Restore that spelling too.
         restored = restored.replace(f"`{item.token}`", item.original)
