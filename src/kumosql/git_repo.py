@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, ProjectError
 from . import console, redact, state
 from .state import data_dir
-from .resilience import decode_text
+from .resilience import decode_text, unsafe_checkout_path
 
 # One git load at a time: the UI can start several (a double click, the startup
 # reload plus a manual one), and they must not clone into or delete the same cache.
@@ -365,8 +365,8 @@ def _tree_blobs(checkout: Path) -> dict[str, str]:
         parts = meta.split()
         if len(parts) != 3 or parts[1] != "blob" or parts[0] == "120000":
             continue
-        if "node_modules/" in f"/{path}":
-            continue
+        if "node_modules/" in f"/{path}" or unsafe_checkout_path(path):
+            continue  # a name that cannot be written safely (``:``, device names) is skipped, not a failed load
         if path.lower().endswith(_SUFFIXES) or path in _CONFIG_FILES:
             blobs[path] = parts[2]
     return blobs
