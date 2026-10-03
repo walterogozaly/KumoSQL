@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Iterable, Literal, Mapping
 
 from sqlglot import exp
 
-from .ast_utils import is_function_table
+from .ast_utils import binding_cte, is_function_table
 from .identity import IdentityResolution, NodeIdentity, normalize_table_reference
 from .scopes import job_record
 
@@ -354,12 +354,11 @@ def build_query_graph(
         extra_tables = analysis.script_tables.get(downstream_key, ())
         if query is None and not extra_tables:
             continue
-        cte_names = {cte.alias_or_name.casefold() for cte in query.find_all(exp.CTE)} if query is not None else set()
         for table in (*(query.find_all(exp.Table) if query is not None else ()), *extra_tables):
             if is_function_table(table):
                 continue  # a table function call is not a table; the tables it is given are their own nodes
-            if not table.db and table.name.casefold() in cte_names:
-                continue
+            if binding_cte(table) is not None:
+                continue  # a WITH table in scope at this reference, not a node
             if _TEMPLATE_TOKEN.fullmatch(table.name):
                 continue  # a ${...} that could not be resolved: the model carries an unresolved_template gap, not a node
             upstream, kind, resolved = resolve_static(table)

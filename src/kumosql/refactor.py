@@ -29,7 +29,7 @@ from sqlglot import exp
 
 from . import scopes as scope_store
 from . import state
-from .ast_utils import captured_names
+from .ast_utils import binding_cte, captured_names
 from .pipeline_equivalence import prove_models
 from .prover_schema import ProverSchema, _select_names
 
@@ -147,11 +147,11 @@ def _parse(sql: str) -> exp.Expression:
 
 
 def _table_nodes(tree: exp.Expression):
-    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    """Table reads of ``tree``: a one-part name is a WITH table only where a WITH in scope at it defines the name."""
+
     for table in tree.find_all(exp.Table):
-        if not table.db and table.name.lower() in ctes:
-            continue
-        yield table
+        if binding_cte(table) is None:
+            yield table
 
 
 class _Reads:
