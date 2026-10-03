@@ -1,0 +1,18 @@
+{
+  "suite": "Jaffle Shop authored refactors (proof)",
+  "order": 116,
+  "size": 8,
+  "score": "4/8 proved, 0 wrong",
+  "metric": "Equivalent refactors of the Jaffle Shop project written for this eval (staging inlined, a model extracted, a measure taken from another mart, CASE forms, an outer join that changes nothing) whose every model output is proved equal by prove_models.",
+  "evidence": "proof",
+  "correctness": "0 false proofs: none of the 7 breaking refactors is proved. Every label is checked by running both pipelines on the seeds and 30 random databases.",
+  "coverage": {
+    "proven": 4,
+    "unknown": 4
+  },
+  "held_out": "none: no equivalent refactor falls in the held-out fifth (by SHA-1 of the case id)",
+  "docs": "docs/evals/pipeline-equivalence.md#jaffle-shop-a-real-dbt-project",
+  "command": "python tools/jaffle_shop_bench.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "Authored cases on an upstream project (dbt-labs/jaffle_shop_duckdb@20cc90437081 (duckdb branch, Apache-2.0)), not upstream cases. Only 8 cases."
+}

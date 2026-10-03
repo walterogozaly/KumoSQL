@@ -17,5 +17,6 @@ data/
 *.csv
 !tests/fixtures/
 !tests/fixtures/*.csv
+!tests/fixtures/jaffle_shop/seeds/*.csv
 *.parquet
 benchmarks/targeted_data/detail-*.json
