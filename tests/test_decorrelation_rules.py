@@ -95,6 +95,20 @@ EQUIVALENT = [
 ]
 
 DIFFERENT = [
+    # ROLLUP and CUBE add a subtotal row (NULL key), which a null-safe join also matches
+    (
+        "SELECT e.empno, d.k FROM emp AS e JOIN (SELECT y.deptno AS k FROM emp AS y GROUP BY ROLLUP(y.deptno)) AS d ON d.k IS NOT DISTINCT FROM e.deptno",
+        "SELECT e.empno, e.deptno AS k FROM emp AS e",
+    ),
+    (
+        "SELECT e.empno, d.k FROM emp AS e JOIN (SELECT y.deptno AS k FROM emp AS y GROUP BY CUBE(y.deptno)) AS d ON d.k IS NOT DISTINCT FROM e.deptno",
+        "SELECT e.empno, e.deptno AS k FROM emp AS e",
+    ),
+    # ROLLUP(TRUE) has its grand-total row even over no input, so it is not an existence test
+    (
+        "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ROLLUP(TRUE)) AS d",
+        "SELECT e.empno FROM emp AS e WHERE EXISTS (SELECT 1 FROM dept AS x WHERE x.deptno = e.deptno)",
+    ),
     # the lateral body keeps duplicates without GROUP BY, so the join repeats outer rows
     (
         "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT x.sal AS s FROM emp AS x WHERE x.deptno = e.deptno) AS d WHERE e.sal = d.s",
