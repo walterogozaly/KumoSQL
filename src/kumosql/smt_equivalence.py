@@ -66,7 +66,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
 from .set_operations import positional_sql_pair
-from .solver_lock import bounded_solver, serialized
+from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 
 try:  # pragma: no cover - exercised by the import itself
@@ -2244,8 +2244,7 @@ class _Prover:
         """
 
         base = solver.model()
-        isolated = solver.translate(z3.Context())
-        isolated.set("timeout", self.timeout_ms)  # translate() drops the solver's parameters
+        isolated = bound(solver.translate(z3.Context()), self.timeout_ms)  # translate() drops the solver's limits
         if isolated.check() != z3.sat:
             return base  # A timeout in the extra search must not lose a satisfiable model.
         base = isolated.model()
