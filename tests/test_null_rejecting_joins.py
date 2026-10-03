@@ -32,7 +32,11 @@ def _proved(left, right):
         ("p.name <=> 'a'", set()),
         ("COALESCE(p.name, 'a') = 'a'", set()),
         ("NOT p.name IN (SELECT name FROM q)", set()),
-        ("p.name IN (SELECT name FROM q)", set()),
+        ("p.name IN (SELECT name FROM q)", {"p"}),  # NULL IN a set is NULL or FALSE
+        ("EXISTS (SELECT 1 FROM q WHERE q.name = p.name)", {"p"}),
+        ("EXISTS (SELECT 1 FROM p WHERE p.name = s.id)", {"s"}),  # the inner p shadows the outer one
+        ("EXISTS (SELECT COUNT(*) FROM q WHERE q.name = p.name)", set()),  # always one row
+        ("NOT EXISTS (SELECT 1 FROM q WHERE q.name = p.name)", set()),
         ("NOT p.name = 'a'", set()),
     ],
 )
