@@ -1,6 +1,10 @@
+from collections import Counter
+
+import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import run_unoptimized
 from kumosql.limit_rules import limit_rule
 
 SCHEMA = {"t": ["a", "b"], "u": ["a", "b"], "dept": ["deptno", "name"]}
@@ -112,3 +116,198 @@ def test_a_cut_to_no_rows_over_a_union_of_empty_cuts_is_an_empty_query():
     count = "SELECT COUNT(*) AS n FROM (SELECT a FROM t ORDER BY a LIMIT 1) AS d WHERE FALSE"
     assert not _proven(count, "SELECT a FROM t LIMIT 0")
     assert _proven(count, "SELECT 0 AS n")
+
+
+def _differ(left, right, rows):
+    """The two BigQuery queries return different bags on DuckDB over ``t(a, b)`` holding ``rows``."""
+
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (a BIGINT, b BIGINT)")
+    for row in rows:
+        db.execute("INSERT INTO t VALUES (?, ?)", row)
+    queries = [sqlglot.transpile(sql, read="bigquery", write="duckdb")[0] for sql in (left, right)]
+    first, second = run_unoptimized(db, *queries)
+    return Counter(first) != Counter(second)
+
+
+def _proven_bigquery(left, right):
+    return prove_equivalent_algebraic(left, right, schema=SCHEMA, dialect="bigquery").proven
+
+
+# A select that aggregates without GROUP BY gives one row, even over an empty table; without its
+# aggregate it gives a row per input row. (left, right, rows of t on which they differ)
+LOST_GLOBAL_AGGREGATE = [
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d",
+        "SELECT 7 AS c FROM t",
+        [(1, 1), (2, 1), (3, 1)],
+        id="s007-001-cut-over-a-global-aggregate",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d",
+        "SELECT 7 AS c FROM t",
+        [],
+        id="s007-001-cut-over-a-global-aggregate-of-nothing",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d",
+        "SELECT 7 AS c FROM t ORDER BY TRUE LIMIT 2",
+        [(1, 1), (2, 1), (3, 1)],
+        id="s007-001-lifted-cut",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT 7 AS c, COUNT(*) AS n FROM t) d",
+        "SELECT 7 AS c FROM t",
+        [(1, 1), (2, 1)],
+        id="s007-001-pruned-derived-aggregate",
+    ),
+    pytest.param(
+        "SELECT 1 AS one FROM (SELECT MAX(a) AS n FROM t) d",
+        "SELECT 1 AS one FROM t",
+        [],
+        id="s007-001-folded-derived-aggregate",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 'a' AS c FROM t) d",
+        "SELECT 'a' AS c FROM t",
+        [(1, 1), (2, 1)],
+        id="s007-001-unwrapped-derived-aggregate",
+    ),
+    pytest.param(
+        "SELECT d.c FROM (SELECT COUNT(*) AS n, 'a' AS c FROM t ORDER BY 1 LIMIT 2) d",
+        "SELECT 'a' AS c FROM t",
+        [],
+        id="s007-001-unwrapped-cut-aggregate",
+    ),
+]
+
+
+@pytest.mark.parametrize("left, right, rows", LOST_GLOBAL_AGGREGATE)
+def test_a_global_aggregate_keeps_its_one_row(left, right, rows):
+    assert _differ(left, right, rows)
+    assert not _proven_bigquery(left, right)
+
+
+def test_s007_001_cut_does_not_lift_off_the_last_aggregate():
+    assert _rule("SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) AS d") is None
+    # The aggregate read through the cut still lifts, and a grouped select keeps its groups without one.
+    assert _rule("SELECT d.n FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) AS d") == "SELECT COUNT(*) AS n FROM t ORDER BY TRUE LIMIT 2"
+    assert _rule("SELECT d.a FROM (SELECT a, COUNT(*) AS n FROM t GROUP BY a ORDER BY a LIMIT 2) AS d") == "SELECT a FROM t GROUP BY a ORDER BY a LIMIT 2"
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        pytest.param(
+            "SELECT d.n FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d", "SELECT COUNT(*) AS n FROM t", id="s007-001-near-miss-aggregate-read"
+        ),
+        pytest.param("SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t ORDER BY TRUE LIMIT 2) d", "SELECT 7 AS c", id="s007-001-near-miss-one-row"),
+        pytest.param(
+            "SELECT d.a FROM (SELECT a, COUNT(*) AS n FROM t GROUP BY a ORDER BY a LIMIT 2) d",
+            "SELECT a FROM t GROUP BY a ORDER BY a LIMIT 2",
+            id="s007-001-near-miss-grouped",
+        ),
+    ],
+)
+def test_a_global_aggregate_near_misses_stay_proven(left, right):
+    assert not _differ(left, right, [(1, 1), (2, 1), (3, 2)])
+    assert not _differ(left, right, [])
+    assert _proven_bigquery(left, right)
+
+
+# GROUP BY and HAVING may name an output alias, and a name an alias shares with a column may be read as
+# the alias: a rewrite that gives the grouped select a new list must not change what those names read.
+# (left, right, rows of t on which they differ)
+REBOUND_GROUPING_NAMES = [
+    pytest.param(
+        "SELECT d.b + 0 AS bb FROM (SELECT a AS bb, b FROM t GROUP BY bb, b) d",
+        "SELECT b + 0 AS bb FROM t GROUP BY b",
+        [(1, 1), (2, 1)],
+        id="s007-001-folded-alias-group-key",
+    ),
+    pytest.param(
+        "SELECT d.b, d.b + 0 AS bb FROM (SELECT a AS bb, b FROM t GROUP BY bb, b ORDER BY b LIMIT 3) d",
+        "SELECT b, b + 0 AS bb FROM t GROUP BY b ORDER BY b LIMIT 3",
+        [(1, 1), (2, 1)],
+        id="s007-001-lifted-alias-group-key",
+    ),
+    pytest.param(
+        "SELECT d.b AS bb FROM (SELECT a AS bb, b FROM t GROUP BY bb, b ORDER BY b LIMIT 5) d",
+        "SELECT b AS bb FROM t GROUP BY b ORDER BY b LIMIT 5",
+        [(1, 1), (2, 1)],
+        id="s007-001-root-lifted-alias-group-key",
+    ),
+    pytest.param(
+        "SELECT d.b AS a FROM (SELECT b, COUNT(*) AS n FROM t GROUP BY b HAVING MAX(a) > 1) d",
+        "SELECT b AS a FROM t GROUP BY b HAVING MAX(b) > 1",
+        [(1, 1), (2, 1), (1, 2)],
+        id="s007-001-unwrapped-alias-captures-having",
+    ),
+    pytest.param(
+        "SELECT d.b AS a FROM (SELECT b, MAX(a) AS m FROM t GROUP BY b) d WHERE d.m > 1",
+        "SELECT b AS a FROM t GROUP BY b HAVING MAX(b) > 1",
+        [(1, 1), (2, 1), (1, 2)],
+        id="s007-001-folded-alias-captures-filter",
+    ),
+]
+
+
+@pytest.mark.parametrize("left, right, rows", REBOUND_GROUPING_NAMES)
+def test_a_new_select_list_keeps_what_group_by_and_having_read(left, right, rows):
+    assert _differ(left, right, rows)
+    assert not _proven_bigquery(left, right)
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        pytest.param("SELECT d.bb FROM (SELECT b AS bb, COUNT(*) AS n FROM t GROUP BY bb) d", "SELECT b AS bb FROM t GROUP BY b", id="s007-001-near-miss-kept-alias"),
+        pytest.param(
+            "SELECT d.s FROM (SELECT b, SUM(a) AS s FROM t GROUP BY b) d WHERE d.s > 1",
+            "SELECT SUM(a) AS s FROM t GROUP BY b HAVING SUM(a) > 1",
+            id="s007-001-near-miss-filter-into-having",
+        ),
+    ],
+)
+def test_grouping_name_near_misses_stay_proven(left, right):
+    assert not _differ(left, right, [(1, 1), (2, 1), (3, 2)])
+    assert _proven_bigquery(left, right)
+
+
+# ``ORDER BY CAST(x AS DOUBLE)`` keeps the order of a 32-bit integer, not of a 64-bit one: two integers
+# above 2^53 can cast to one double and tie. Whether ``INT`` is 32 bits depends on the dialect.
+UNCAST_LEFT = "SELECT x FROM t ORDER BY CAST(x AS DOUBLE), x DESC LIMIT 1"
+UNCAST_RIGHT = "SELECT x FROM t ORDER BY x, x DESC LIMIT 1"
+
+
+def _uncast(dialect, declared):
+    tree = sqlglot.parse_one("SELECT x FROM t ORDER BY CAST(x AS DOUBLE) LIMIT 1", read=dialect)
+    out = limit_rule(tree, {"t": {"x": declared}}, dialect)
+    return out.sql(dialect=dialect) if out is not None else None
+
+
+def _uncast_proven(dialect):
+    return prove_equivalent_algebraic(UNCAST_LEFT, UNCAST_RIGHT, schema={"t": ["x"]}, types={"t": {"x": "int"}}, dialect=dialect).proven
+
+
+@pytest.mark.parametrize("dialect", [pytest.param("snowflake", id="s007-001-uncast-snowflake-int"), pytest.param("sqlite", id="s007-001-uncast-sqlite-int")])
+def test_order_by_uncast_needs_a_documented_32_bit_int(dialect):
+    # Snowflake's INT is NUMBER(38, 0) and SQLite's is 64 bits: values a double cannot tell apart.
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (x BIGINT)")
+    db.execute("INSERT INTO t VALUES (9007199254740992), (9007199254740993)")
+    first, second = run_unoptimized(db, *(sqlglot.transpile(sql, read=dialect, write="duckdb")[0] for sql in (UNCAST_LEFT, UNCAST_RIGHT)))
+    assert Counter(first) != Counter(second)
+    assert _uncast(dialect, "int") is None
+
+
+def test_s007_001_uncast_snowflake_int_is_not_proven():
+    assert not _uncast_proven("snowflake")
+
+
+def test_s007_001_uncast_near_miss_postgres_int_stays_proven():
+    assert _uncast("postgres", "int") == "SELECT x FROM t ORDER BY x LIMIT 1"
+    assert _uncast("postgres", "bigint") is None
+    assert _uncast_proven("postgres")
