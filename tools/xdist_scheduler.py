@@ -7,11 +7,13 @@ tests (``xdist_group``) ahead of the order ``tests/conftest.py`` chose.
 
 ``DurationScheduling`` is ``loadgroup`` with two changes:
 
-* it hands out work in the order the workers collected it, which ``tests/conftest.py`` sorted (tests that failed
-  before, then the fast tests, then the slow tests longest-first, from ``tests/order.json``);
-* a worker takes more work only while everything it holds is fast: a worker running a slow test (one that
-  ``tests/order.json`` times at 3 seconds or more) gets its next test when that one finishes, so the slow tests go
-  to whichever worker is free first.
+* it hands out work in the order the workers collected it, which ``tests/conftest.py`` sorted (the longest tests of
+  the run, then tests that failed before, then the fast tests, then the slow tests longest-first, from
+  ``tests/order.json``);
+* a worker takes more work only while everything it holds is fast. A worker starts a test only once it also holds
+  the test it will run next (pytest-xdist needs that to tear fixtures down), so a worker holding a slow test (one
+  that ``tests/order.json`` times at 3 seconds or more) gets the shortest work left as its next test, never the
+  next slow test in line; the slow tests go to whichever worker is free first.
 
 Which tests run, and where each group of tests runs together, is unchanged.
 """
@@ -35,6 +37,17 @@ class DurationScheduling(LoadGroupScheduling):
     def _held(self, node) -> list[str]:
         return [nodeid for unit in self.assigned_work[node].values() for nodeid, done in unit.items() if not done]
 
+    def _seconds(self, unit) -> float:
+        return sum(self.slow.get(nodeid, 0.0) for nodeid in unit)
+
+    def _shortest(self) -> str:
+        """The first unit of work with no slow test in it, else the quickest one left."""
+
+        for scope, unit in self.workqueue.items():
+            if not any(nodeid in self.slow for nodeid in unit):
+                return scope
+        return min(self.workqueue, key=lambda scope: self._seconds(self.workqueue[scope]))
+
     def _reschedule(self, node) -> None:
         if node.shutting_down:
             return
@@ -42,6 +55,10 @@ class DurationScheduling(LoadGroupScheduling):
             node.shutdown()
             return
         held = self._held(node)
-        if len(held) > PREFETCH or any(nodeid in self.slow for nodeid in held):
+        holds_slow = any(nodeid in self.slow for nodeid in held)
+        if len(held) >= 2 and (holds_slow or len(held) > PREFETCH):
             return
+        if holds_slow:
+            # the worker is waiting for its next test before it starts the slow one: give it something short
+            self.workqueue.move_to_end(self._shortest(), last=False)
         self._assign_work_unit(node)

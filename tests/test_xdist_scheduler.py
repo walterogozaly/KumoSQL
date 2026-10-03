@@ -32,6 +32,12 @@ class Config:
         return getattr(self.option, name)
 
 
+def ready(node):
+    """A pytest-xdist worker starts a test only once it holds the one after it too, or has been told to stop."""
+
+    return len(node.queue) >= 2 or (len(node.queue) == 1 and node.shutting_down)
+
+
 def run(collection, slow, workers=2, pick=lambda nodes: nodes[0], stock=False):
     """Drive the scheduler like pytest-xdist does: each step, one busy worker finishes the test it is running."""
 
@@ -48,7 +54,9 @@ def run(collection, slow, workers=2, pick=lambda nodes: nodes[0], stock=False):
     held_at_once = 0
     while any(node.queue for node in nodes):
         held_at_once = max([held_at_once] + [sum(collection[i] in slow for i in node.queue) for node in nodes])
-        node = pick([n for n in nodes if n.queue])
+        busy = [n for n in nodes if ready(n)]
+        assert busy, "every worker is waiting for work the scheduler holds back"
+        node = pick(busy)
         index = node.queue.pop(0)
         ran[node.gateway.id].append(collection[index])
         scheduler.mark_test_complete(node, index)
@@ -74,3 +82,13 @@ def test_the_order_tests_conftest_chose_is_kept_and_groups_stay_together():
     ran, _ = run(collection, {}, workers=2, pick=lambda nodes: nodes[-1])
     together = [worker for worker, tests in ran.items() if "t.py::b@g" in tests]
     assert all(test in ran[together[0]] for test in ("t.py::b@g", "t.py::c@g", "t.py::e@g"))
+
+
+def test_a_worker_starting_a_slow_test_gets_short_work_next_not_the_next_slow_test():
+    collection = ["t.py::slow_a", "t.py::slow_b", "t.py::slow_c", "t.py::fast1", "t.py::fast2", "t.py::fast3"]
+    slow = {"t.py::slow_a": 100.0, "t.py::slow_b": 90.0, "t.py::slow_c": 80.0}
+    ran, held = run(collection, slow)
+    assert held == 1
+    assert ran["gw0"][:2] == ["t.py::slow_a", "t.py::fast1"]
+    assert ran["gw1"][:2] == ["t.py::slow_b", "t.py::fast2"]
+    assert sorted(sum(ran.values(), [])) == sorted(collection)
