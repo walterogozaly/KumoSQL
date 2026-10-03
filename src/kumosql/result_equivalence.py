@@ -8,9 +8,11 @@ disagreement is a concrete counterexample.
 
 Each run is isolated: every side of every seed gets its own in-memory DuckDB
 connection, physical source tables are loaded fresh from the synthetic
-dataset, and tables written by a script (``CREATE TABLE``/``INSERT``) are
-renamed to run-unique local names so two runs can never observe each other's
-output.
+dataset, and tables written by a script (``CREATE TABLE``, ``INSERT``,
+``UPDATE``, ``DELETE``, ``TRUNCATE``) are renamed to run-unique local names so
+two runs can never observe each other's output. A script that ends by
+modifying a table is compared by that table's rows, never by its
+affected-row count.
 """
 
 from __future__ import annotations
@@ -383,16 +385,56 @@ def _cte_names(statement: exp.Expression) -> set[str]:
     return names
 
 
+_MODIFYING = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.TruncateTable)
+_MODIFYING_COMMANDS = {"INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE"}
+
+
+def _modifies_table(statement: exp.Expression) -> bool:
+    """Whether ``statement`` changes the rows of a table that may already exist.
+
+    DuckDB answers such a statement with its affected-row count, which says
+    nothing about the rows written, so the written table is compared instead.
+    """
+
+    if isinstance(statement, exp.Command):
+        return str(statement.this).upper() in _MODIFYING_COMMANDS
+    return isinstance(statement, _MODIFYING)
+
+
 def _write_target(statement: exp.Expression) -> exp.Table | None:
-    if isinstance(statement, exp.Create):
-        target = statement.this
-    elif isinstance(statement, exp.Insert):
+    if isinstance(statement, exp.Delete) and not isinstance(statement.this, exp.Table):
+        # BigQuery's ``DELETE t WHERE ...`` (FROM is optional) parses with the
+        # table under ``tables``; move it to ``this`` so DuckDB gets DELETE FROM.
+        tables = statement.args.get("tables") or []
+        if len(tables) == 1 and isinstance(tables[0], exp.Table):
+            statement.set("tables", None)
+            statement.set("this", tables[0])
+    if isinstance(statement, exp.TruncateTable):
+        target = statement.expressions[0] if len(statement.expressions) == 1 else None
+    elif isinstance(statement, (exp.Create, *_MODIFYING)):
         target = statement.this
     else:
         return None
     if isinstance(target, exp.Schema):
         target = target.this
     return target if isinstance(target, exp.Table) else None
+
+
+def _unsupported_write(statement: exp.Expression, target: exp.Table | None, dialect: str) -> str | None:
+    """Why a table-modifying statement cannot be compared by its written table, or ``None``."""
+
+    if target is None:
+        return "cannot tell which table it modifies"
+    if isinstance(statement, exp.Merge) or (
+        isinstance(statement, exp.Update) and (statement.args.get("from_") or statement.args.get("from"))
+    ):
+        return (
+            "MERGE and UPDATE ... FROM: BigQuery fails when a target row matches several "
+            "source rows, DuckDB silently uses one of them"
+        )
+    if dialect == "bigquery" and isinstance(statement, (exp.Update, exp.Delete)) and not statement.args.get("where"):
+        return "BigQuery requires a WHERE clause on UPDATE and DELETE"
+    return None
 
 
 def _schema_lookup(schema: Schema) -> dict[str, str]:
@@ -433,18 +475,24 @@ def prepare_statements(
     for index, statement in enumerate(statements):
         ctes = _cte_names(statement)
         target = _write_target(statement)
+        modifies = _modifies_table(statement)
+        if modifies:
+            unsupported = _unsupported_write(statement, target, dialect)
+            if unsupported:
+                raise ExecutionError(f"statement {index + 1} is not supported: {unsupported}")
         target_local: str | None = None
         if target is not None:
             target_key = _table_key(target).lower()
             target_local = targets.get(target_key)
             if target_local is None:
                 target_local = f"__eqv_{run_tag}_target_{len(targets) + 1:03d}"
-                if isinstance(statement, exp.Insert):
-                    # INSERT appends to existing rows, so the renamed target
-                    # starts as a copy of the source table it stands in for.
+                if modifies:
+                    # INSERT, UPDATE, DELETE and TRUNCATE change existing rows,
+                    # so the renamed target starts as a copy of the source table
+                    # it stands in for, and is what the script returns.
                     if target_key not in lookup:
                         raise ExecutionError(
-                            f"statement {index + 1} inserts into {_table_key(target)!r}, "
+                            f"statement {index + 1} writes to {_table_key(target)!r}, "
                             "which is neither created by the script nor in the synthetic schema"
                         )
                     duckdb_sql.append(
@@ -481,6 +529,9 @@ def prepare_statements(
             # ``CREATE TABLE t AS SELECT ... FROM t`` reads the source table.
             targets[target_key] = target_local
             last_target = target_local
+            if isinstance(statement, (exp.Update, exp.Delete)) and not target.alias:
+                # Columns may be qualified by the written table's name (``t.a``).
+                target.set("alias", exp.TableAlias(this=exp.to_identifier(target.name)))
             target.set("catalog", None)
             target.set("db", None)
             target.set("this", exp.to_identifier(target_local))
