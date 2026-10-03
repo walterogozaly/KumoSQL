@@ -105,6 +105,15 @@ The prover compares result bags, so an `ORDER BY` matters only where a `LIMIT` o
 
 Pushing a `LIMIT` through a `LEFT JOIN` ordered by a non-key column (`testSortJoinTranspose1`) holds only up to ties and stays unknown, as does `LIMIT` without `ORDER BY`. `tests/test_limit_rules.py` holds the proofs and the near misses (a branch cut shorter than `n + m`, a branch `OFFSET`, the opposite direction, an ordering that leaves an output column tied). Measured against master just before they were added, these rules proved 3 more SQLSolver Calcite pairs, 1 more Spark, 4 more QED, 6 more Calcite-mined, 3 more SPES-only and 5 more VeriEQL Calcite-397 pairs, all with 0 wrong.
 
+## Pairs that must stay unproven
+
+A suite's score counts the pairs a prover should prove. Two kinds of pair do not belong in that count, and they stay in the suites as guards: a proof of either one fails its test.
+
+- Pairs a counterexample shows different: 2 of QED's, 2 of R-Bot's, 1 of Cosette's (labelled equivalent, but a DuckDB database separates the converted queries) and 1 of the mined Calcite pairs. They are listed as refuted in the results files, and the suites' `scored` count (pairs minus these) is the denominator of their scores.
+- Pairs that hold only if `LIMIT` without `ORDER BY` is read as a fixed tie-break: three Spark pairs (indices 50, 60 and 61 in `spark_pairs.txt`), with the reason for each in `tests/fixtures/sqlsolver/not_provable.json`. The rows a bare `LIMIT` returns are up to the engine, so proving them equal would be unsound. `tests/test_sqlsolver_benchmarks.py` fails if the prover ever proves one.
+
+Reclassifying them took them out of the denominators; measured on master fa78ff9 the scores are QED 357/373, R-Bot 36/43, Cosette 56/59, Spark 124/124 and mined Calcite 438/501.
+
 ## R-Bot's Calcite pairs
 
 `python tools/rbot_bench.py` scores the 45 (query, Calcite-rewrite) pairs shipped with [R-Bot](https://github.com/curtis-sun/LLM4Rewrite) (Apache-2.0, copied with its LICENSE to `tests/fixtures/rbot/`). Each pair is reported as `proved`, `different` (the prover failed and a random DuckDB database shows the queries disagree), `unknown`, or `wrong` (proved, yet a counterexample exists; must stay 0). R-Bot's TPC-H and DSB folders hold only template instances (same query, different constants), not rewrites, so they have nothing to score. `tests/test_rbot_benchmarks.py` holds the floor.
@@ -115,8 +124,8 @@ Pushing a `LIMIT` through a `LEFT JOIN` ordered by a non-key column (`testSortJo
 
 | Suite | Proved | Different | Unknown | Wrong |
 |---|---|---|---|---|
-| QED Calcite (375 converted) | 355 | 2 | 18 | 0 |
-| R-Bot Calcite (45) | 36 | 2 | 7 | 0 |
+| QED Calcite (375 converted, 373 scored) | 357 | 2 | 16 | 0 |
+| R-Bot Calcite (45, 43 scored) | 36 | 2 | 7 | 0 |
 
 Rules added for these suites live in `src/kumosql/keyed_rules.py`. A `GROUP BY` over one table that includes a NOT NULL key (grouped, or fixed by `WHERE k = constant`) reads each row's own value, so `SUM(x)` is `x`, `COUNT(*)` is 1 and `GROUPING(c)` is 0. A `DISTINCT` that outputs such a key is dropped in a second attempt when the first finds no proof, since dropping it on one side only can hide a match. `EXISTS` over a select made only of aggregates, with no `GROUP BY`, is TRUE. A relation that can never hold a row (`WHERE FALSE`, an empty source under an inner join or on the kept side of an outer join) makes its select empty, `EXISTS`/`IN` over it is FALSE, and a `LEFT JOIN` to it pads with NULLs (`empty_rules.py`); `ORDER BY` without `LIMIT` in a derived table is dropped. An outer join whose far side is never read is dropped under `DISTINCT` or a `GROUP BY` whose aggregates ignore duplicates (`dedup_join_rules.py`). `EXTRACT(YEAR FROM d) = 2014` (with `EXTRACT(MONTH ..)`) is the matching date range (`date_ranges.py`). QED went from 221 to 241 with these. A filter above a derived outer join that rejects NULLs from the padded side makes the join inner (`outer_filters.py`); a constant group key inlined from a derived table is dropped rather than left as a literal that would read as a column ordinal; MySQL's `CAST(x AS CHAR)` of a `VARCHAR` column is `x`; and, as a third attempt, a derived table that only removes duplicates is read without its `DISTINCT`/`GROUP BY` under a duplicate-blind select (`dedup_join_rules.strip_distinct_sources`). QED reached 266 and Spark 121 with these.
 
