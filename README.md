@@ -115,7 +115,7 @@ How KumoSQL scores on public query-equivalence and SQL evals. No language model 
 | Eval | Proven | Refuted | Unknown | Unsupported | Timeout | Error |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | [SQLSolver Calcite](docs/evals/sqlsolver.md#benchmark-coverage) | 224 | – | 8 | – | – | – |
-| [SQLSolver Spark SQL](docs/evals/sqlsolver.md#benchmark-coverage) | 123 | – | 0 | – | – | – |
+| [SQLSolver Spark SQL](docs/evals/sqlsolver.md#benchmark-coverage) | 123 | – | 4 | – | – | – |
 | [SQLSolver TPC-H](docs/evals/sqlsolver.md#benchmark-coverage) | 22 | – | 0 | – | – | – |
 | [SQLSolver TPC-C](docs/evals/sqlsolver.md#benchmark-coverage) | 19 | – | 0 | – | – | – |
 | [SQLSolver Calcite (bounded)](docs/evals/bounded-verification.md#results) | 212 | – | 1 | 18 | 1 | – |

@@ -16,5 +16,6 @@
     "unknown": 15,
     "unsupported": 69
   },
+  "coverage_of": "All 444 QED Calcite cases: the 375 scored pairs (proven, refuted, unknown) plus the 69 the conversion cannot reproduce exactly (unsupported).",
   "held_out": "none"
 }
