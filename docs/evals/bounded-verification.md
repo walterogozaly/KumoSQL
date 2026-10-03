@@ -18,13 +18,13 @@ Each table has N slots. A slot has a presence flag and, per column, a symbolic v
 - `WHERE`, `ON`, `HAVING`: conjoin the row's presence with the condition (three-valued logic: NULL does not pass).
 - Joins (inner, left, right, full, cross, `USING`, `NATURAL`): every pair of rows, with an outer row for each unmatched side.
 - `GROUP BY`: slot *i* is a group representative when it is present and no earlier present slot has the same key (NULLs equal each other); aggregates run over the members. Without `GROUP BY`, an aggregate query always returns one row. A column that is neither grouped nor aggregated is an *arbitrary pick* from the group: a fresh choice constrained to a member, so two queries are equivalent only if they agree whatever the pick.
-- `DISTINCT`, `UNION [ALL]`, `INTERSECT [ALL]`, `EXCEPT [ALL]`, `IN`, `NOT IN`, `EXISTS`, correlated and scalar subqueries, CTEs, `CASE`, `COALESCE`, `NULLIF`, `LIKE` (literal patterns), arithmetic, `ROUND`, date arithmetic in days, `ORDER BY ... LIMIT ... OFFSET`, window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, aggregates over the default frame).
+- `DISTINCT`, `UNION [ALL]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` (branches matched by position; `BY NAME` and `CORRESPONDING` are first rewritten to the positional form by `kumosql.set_operations`, and the answer is unknown when a branch's columns are not known), `IN`, `NOT IN`, `EXISTS`, correlated and scalar subqueries, CTEs, `CASE`, `COALESCE`, `NULLIF`, `LIKE` (literal patterns), arithmetic, `ROUND`, date arithmetic in days, `ORDER BY ... LIMIT ... OFFSET`, window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, aggregates over the default frame).
 - Uninterpreted predicates such as `B(X)` (VeriEQL's symbolic predicates) become z3 functions, so equivalence has to hold for every meaning of `B`.
 - Constraints: NOT NULL, keys, foreign keys, enum values, consecutive-id columns and cross-row predicates become assertions.
 
 Two relations are compared as bags: a difference exists when some row's multiplicity differs. `sat` gives a model; `unsat` is "equivalent within the bound".
 
-Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
+Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
 
 ## Replay, assumptions, and what a result means
 
