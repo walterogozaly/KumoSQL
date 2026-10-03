@@ -273,3 +273,42 @@ def test_a_new_select_list_keeps_what_group_by_and_having_read(left, right, rows
 def test_grouping_name_near_misses_stay_proven(left, right):
     assert not _differ(left, right, [(1, 1), (2, 1), (3, 2)])
     assert _proven_bigquery(left, right)
+
+
+# ``ORDER BY CAST(x AS DOUBLE)`` keeps the order of a 32-bit integer, not of a 64-bit one: two integers
+# above 2^53 can cast to one double and tie. Whether ``INT`` is 32 bits depends on the dialect.
+UNCAST_LEFT = "SELECT x FROM t ORDER BY CAST(x AS DOUBLE), x DESC LIMIT 1"
+UNCAST_RIGHT = "SELECT x FROM t ORDER BY x, x DESC LIMIT 1"
+
+
+def _uncast(dialect, declared):
+    tree = sqlglot.parse_one("SELECT x FROM t ORDER BY CAST(x AS DOUBLE) LIMIT 1", read=dialect)
+    out = limit_rule(tree, {"t": {"x": declared}}, dialect)
+    return out.sql(dialect=dialect) if out is not None else None
+
+
+def _uncast_proven(dialect):
+    return prove_equivalent_algebraic(UNCAST_LEFT, UNCAST_RIGHT, schema={"t": ["x"]}, types={"t": {"x": "int"}}, dialect=dialect).proven
+
+
+@pytest.mark.parametrize("dialect", [pytest.param("snowflake", id="s007-001-uncast-snowflake-int"), pytest.param("sqlite", id="s007-001-uncast-sqlite-int")])
+def test_order_by_uncast_needs_a_documented_32_bit_int(dialect):
+    # Snowflake's INT is NUMBER(38, 0) and SQLite's is 64 bits: values a double cannot tell apart.
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (x BIGINT)")
+    db.execute("INSERT INTO t VALUES (9007199254740992), (9007199254740993)")
+    first, second = run_unoptimized(db, *(sqlglot.transpile(sql, read=dialect, write="duckdb")[0] for sql in (UNCAST_LEFT, UNCAST_RIGHT)))
+    assert Counter(first) != Counter(second)
+    assert _uncast(dialect, "int") is None
+
+
+@pytest.mark.xfail(strict=True, reason="cast_rules._declared still reads every declared type as MySQL (S007-003)")
+def test_s007_001_uncast_snowflake_int_is_not_proven():
+    assert not _uncast_proven("snowflake")
+
+
+def test_s007_001_uncast_near_miss_postgres_int_stays_proven():
+    assert _uncast("postgres", "int") == "SELECT x FROM t ORDER BY x LIMIT 1"
+    assert _uncast("postgres", "bigint") is None
+    assert _uncast_proven("postgres")

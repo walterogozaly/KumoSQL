@@ -39,7 +39,7 @@ def limit_rule(select: exp.Select, types: dict[str, dict[str, str]] | None = Non
         if rewritten is not None:
             return rewritten
     if types and dialect != "bigquery":
-        return _order_by_uncast(select, types)
+        return _order_by_uncast(select, types, dialect)
     return None
 
 
@@ -395,21 +395,30 @@ def _dedupe_order_keys(select: exp.Select) -> exp.Expression | None:
 
 
 # A 32-bit integer column cast to one of these keeps distinct values distinct and in order.
-_SMALL_INT = re.compile(r"^\s*(tinyint|smallint|mediumint|int|integer|int2|int4)\b", re.I)
+# Integer type names of at most 32 bits, per dialect, as each documents them. Elsewhere a name such as
+# ``INT`` may be wider (Snowflake's is NUMBER(38, 0), SQLite's 64 bits), so the cast stays.
+_SMALL_INTS = {
+    "mysql": "tinyint|smallint|mediumint|int|integer",
+    "postgres": "smallint|int|integer|int2|int4",
+    "redshift": "smallint|int|integer|int2|int4",
+    "duckdb": "tinyint|smallint|int|integer|int1|int2|int4",
+    "tsql": "tinyint|smallint|int",
+}
 _WIDE = (exp.DataType.Type.DOUBLE, exp.DataType.Type.BIGINT)
 
 
-def _order_by_uncast(select: exp.Select, types: dict[str, dict[str, str]]) -> exp.Expression | None:
+def _order_by_uncast(select: exp.Select, types: dict[str, dict[str, str]], dialect: str) -> exp.Expression | None:
     """``ORDER BY CAST(i AS DOUBLE)`` is ``ORDER BY i`` for a 32-bit integer column ``i``: the cast is
     strictly increasing, so it neither reorders rows nor makes or breaks ties (NULL stays NULL).
 
-    Only for dialects whose ``INT`` is 32 bits (BigQuery's is 64, and a DOUBLE cannot hold every
-    64-bit integer, so it could tie two values)."""
+    Only for type names ``dialect`` documents as at most 32 bits (BigQuery's ``INT`` is 64, and a DOUBLE
+    cannot hold every 64-bit integer, so it could tie two values)."""
 
     from .algebraic_equivalence import _origin_type
 
     order = select.args.get("order")
-    if order is None:
+    small = _SMALL_INTS.get(str(dialect).lower())
+    if order is None or small is None:
         return None
     outputs: dict[str, list[exp.Expression]] = {}
     for e in select.expressions:
@@ -427,7 +436,7 @@ def _order_by_uncast(select: exp.Select, types: dict[str, dict[str, str]]) -> ex
         if not column.table and any(not (isinstance(v, exp.Column) and v.name.lower() == column.name.lower()) for v in named):
             continue  # the name may mean an output alias
         declared = _origin_type(select, column, types)
-        if declared and _SMALL_INT.match(declared):
+        if declared and re.match(rf"^\s*({small})\b", declared, re.I):
             item.set("this", column.copy())
             changed = True
     return select if changed else None
