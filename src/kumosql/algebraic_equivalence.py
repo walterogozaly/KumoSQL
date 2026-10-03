@@ -5057,6 +5057,10 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
             retry = _prove_algebraic(semi[0] or left_sql, semi[1] or right_sql, False, **kwargs)
             if retry.proven:
                 return retry
+    if search and result.status is SmtStatus.NOT_EQUIVALENT:
+        from .refutation_synthesis import check_solver_counterexample
+
+        result = check_solver_counterexample(*original, result, **kwargs)
     if search and result.status is SmtStatus.NOT_PROVEN:
         from . import executed_refutation
 
@@ -5074,6 +5078,9 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
                 counterexample=counterexample,
                 assumptions=(executed_refutation.ASSUMPTION,),
             )
+        from .refutation_synthesis import refute_unproven
+
+        result = refute_unproven(*original, result, **kwargs)
     return result
 
 

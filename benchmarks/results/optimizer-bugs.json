@@ -2,17 +2,17 @@
   "suite": "Optimizer wrong-result bugs",
   "order": 38,
   "size": 24,
-  "score": "5/24 refuted, 0 proved, 0 wrong",
-  "metric": "Query pairs from public optimizer wrong-result bug reports (a query and the rewrite an optimizer made of it), which return different rows on the report's data: none may be proved; refuted means the prover itself found a difference.",
+  "score": "21/24 refuted, 0 proved, 0 wrong",
+  "metric": "Query pairs from public optimizer wrong-result bug reports (a query and the rewrite an optimizer made of it), which return different rows on the report's data: none may be proved; refuted means the prover, with its counterexample search on, found a difference, and any database it attached replays to one.",
   "evidence": "executed",
-  "correctness": "Every pair is checked to differ on its own data (DuckDB with the optimizer off, or SQLite), so any proof counts as wrong.",
+  "correctness": "Every pair is checked to differ on its own data (DuckDB with the optimizer off, or SQLite), so any proof counts as wrong, and so does a refutation whose database does not replay to a difference.",
   "coverage": {
-    "refuted": 5,
-    "unknown": 19
+    "refuted": 21,
+    "unknown": 3
   },
-  "held_out": "2/5 refuted, 0 proved",
+  "held_out": "4/5 refuted, 0 proved",
   "docs": "docs/evals/optimizer-bugs.md",
   "command": "python tools/optimizer_bugs_bench.py --write-results",
   "date": "2026-10-03",
-  "caveats": "The pairs were collected by an outside research assistant and re-checked here; one was dropped (it ran a single query under two optimizer settings). Most rewrites are spelled out from the reports' plans, so they are SQL readings of a plan, not SQL the reporters wrote. Every case, held-out ones included, was seen while building the harness; no prover change was made for this eval."
+  "caveats": "The pairs were collected by an outside research assistant and re-checked here; one was dropped (it ran a single query under two optimizer settings). Most rewrites are spelled out from the reports' plans, so they are SQL readings of a plan, not SQL the reporters wrote. Every case, held-out ones included, was seen while building the harness. The counterexample search (kumosql.refutation_synthesis) was built with these pairs in the refutation-strength eval; held-out bug-001 prompted the replay of solver counterexamples (tuned on test). bug-005 runs only on SQLite and bug-025 differs only through an arbitrary DISTINCT ON pick, so neither can be refuted on DuckDB."
 }
