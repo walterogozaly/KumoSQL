@@ -125,6 +125,7 @@ class RemoveTrivialPredicatesRule(RewriteRule):
 
     name = "remove_trivial_predicates"
     summary = "Remove always-true filters such as WHERE 1 = 1 and AND TRUE"
+    keep_sqlx_expressions = True
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -262,6 +263,7 @@ class RemoveRedundantParenthesesRule(RewriteRule):
 
     name = "remove_redundant_parentheses"
     summary = "Remove parentheses that do not change how an expression parses"
+    keep_sqlx_expressions = True
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -364,6 +366,7 @@ class DeduplicateCtesRule(RewriteRule):
 
     name = "deduplicate_ctes"
     summary = "Merge root CTEs whose bodies are identical"
+    keep_sqlx_expressions = True
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -411,6 +414,7 @@ class RemoveUnusedCtesRule(RewriteRule):
 
     name = "remove_unused_ctes"
     summary = "Remove root CTEs that are never referenced"
+    keep_sqlx_expressions = True
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int

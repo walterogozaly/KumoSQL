@@ -1,5 +1,7 @@
 # Rewrite rules
 
+[Plain-language version](../docs_simple/rewrite-rules.md)
+
 The rewrite rule registry and the subquery lifter.
 
 ## Rewrite rules
@@ -15,17 +17,20 @@ Each transformation is a rule in a registry. A rule only says how to rewrite one
 | `deduplicate_ctes` | Points references to a root CTE at an earlier CTE with an identical body, then drops the duplicate |
 | `remove_unused_ctes` | Removes root CTEs that nothing references |
 | `remove_redundant_distinct` | Removes `DISTINCT` over a plain `GROUP BY` whose keys are all projected unchanged (see *Cost rules*) |
+| `qualify_columns` | Puts the source name in front of a bare column when exactly one source of a select that reads two or more sources owns it (opt in; see *Qualifying columns*) |
 | `format_sql` | Formats with sqlfluff using your saved formatting preferences (SQL only, not SQLX) |
+
+In SQLX, `inline_single_use_ctes`, `remove_trivial_predicates`, `remove_redundant_parentheses`, `deduplicate_ctes` and `remove_unused_ctes` leave a statement as written (diagnostic `sqlx_expression_kept`) when it holds a `${...}` expression other than `${ref(...)}`, `${resolve(...)}` or `${self()}`. Such an expression compiles to arbitrary SQL text, which the rule sees only as a placeholder name: `z AND (${"x OR y"})` would lose the parentheses its OR needs, `WHERE TRUE ${when(incremental(), "AND b > 1")}` would lose the `TRUE` its `AND` continues, and a CTE read only inside an expression would look unused.
 
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
 
-- `unchanged`: the output matches the input.
+- `unchanged`: the output text is identical to the input. This says nothing about whether the input parses or whether a rule skipped it; a skipped rule says why in its step's `diagnostics` (for example `unsupported_sqlx`).
 - `proven`: the equivalence prover established equivalence. A planner check, when available, is reported separately.
 - `planner_checked`: a planner accepted the candidate, but equivalence was not proven. This is not trusted for automatic acceptance.
 - `unproven`: equivalence was not established and there is no successful planner-only result. A failed planner check is reported here as a failed check.
 - `failed`: a fatal rewrite error occurred, such as a parse, transform, or output validation failure.
 
-Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
+Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. Trusted means the text was left alone or a proof covers the change; it does not check that the input itself is valid SQL. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
 
 ```python
 from kumosql import apply_rules
@@ -40,7 +45,7 @@ print(result.sql)
 
 When the structural prover cannot canonicalize a change that touches only WHERE, HAVING, QUALIFY or JOIN ON conditions (for example a redundant or subsumed conjunct), `verify_rewrite` tries the SMT prover described below. A proof is reported as `proven` with an `smt_proof` check listing its assumptions (no NaN, runtime errors not modeled, result column types not compared). A counterexample, an unsupported construct such as an outer join, or a missing `z3-solver` install leaves the result `unproven` and the reason appears in `verification.details`. Other changes never reach SMT unless the equivalence solver below is on. Pass `smt_timeout_ms` to `verify_rewrite` to change the 5000 ms solver limit.
 
-Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text.
+Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text; a changed statement holding a `${...}` other than `ref()`, `resolve()` or `self()`, including one inside a string literal, is unproven until the SQLX is compiled. Every change `remove_trivial_predicates` makes must also pass an independent checker, and a pipeline with a refused step is unproven ([proof safeguards](proof-safeguards.md)).
 
 A change to layout only is proven for any statement, including ones sqlglot cannot parse (`LOAD DATA`, `REPEAT ... UNTIL`) or keeps as an opaque command (`ALTER SCHEMA`, `CALL`, `CREATE ROW ACCESS POLICY`). Both texts are tokenized completely and must have the same tokens and comments in the same order; strings, quoted names and numbers must match exactly, and only reserved keywords and calls to built-in functions may change case. Unreserved keywords such as `DATE` can be table names and user-defined function names are case sensitive, so their case must match (`layout_equivalence.py`); a function the script creates keeps its case even when its name is quoted or a comment precedes it (a script may create both `abs` and `ABS`), and the statement-by-statement check also refuses a change to the case of such a call. Adjacent string or bytes literals must be separated in both texts or in neither (`'a' 'b'` is one literal; `'a''b'` is not valid GoogleSQL). For the same reason `format_sql` puts back the original case of every call to a function that is not built in (`myUdf(x)` stays `myUdf(x)`). When sqlfluff cannot parse a file as a whole (a `GRANT` or `EXPORT MODEL` among queries), `format_sql` formats each statement it can parse and leaves the others as written (`statements_not_formatted`); a file with no statement it can parse still reports `parse_error`. KumoSQL needs sqlfluff 4.3 or later (`pyproject.toml`): older releases cannot parse some BigQuery statements the syntax-coverage eval formats (pipe syntax with a CTE, `CREATE AGGREGATE FUNCTION`, some comparison operators), so `pip install -e .` upgrades an older copy.
 
@@ -48,13 +53,27 @@ A change to layout only is proven for any statement, including ones sqlglot cann
 
 **Templated SQL.** sqlglot reads a Jinja tag such as `{{ ref('x') }}` as a nested struct literal and would print it back as `STRUCT(STRUCT(ref('x')))`, so every rule except `format_sql` leaves SQL with a `{{`, `{%` or `{#` tag outside strings and comments exactly as written (`templated_sql_kept`).
 
+**Qualifying columns.** `qualify_columns` rewrites `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` to `SELECT o.id, c.name ...`. It is opt in (`opt_in = True` on the rule): the canonical pipeline leaves it out because it makes SQL longer, which is a style choice (`qualify_columns.py`), and the benchmark and fuzz sweeps over every rule skip rules marked `opt_in` because their inputs declare no table columns. A select qualifies only when it reads two or more sources and the columns of every source are known: from a CTE or derived table that names its output columns, from an `UNNEST` with an alias, or from a table whose columns the loaded project or the saved BigQuery catalog declares (the same facts the prover uses, `prover_context.current_schema()`). A bare column is qualified only when exactly one source has it. It stays as written when:
+
+- the select has a `NATURAL` join, a source whose columns are unknown (an undeclared table, a table function, `PIVOT`, an unaliased `UNNEST`, a recursive CTE), or two sources with the same name;
+- it is a `USING` column: after `JOIN b USING (k)` the bare `k` is the merged value (the other columns of that select are still qualified);
+- two sources have it (ambiguous as written), none has it (a reference to an outer query, `_PARTITIONTIME`), or it names a source or an `UNNEST` value or offset;
+- it names a SELECT alias in `GROUP BY`, `HAVING`, `QUALIFY` or `ORDER BY`;
+- it sits inside a star's `EXCEPT`, `REPLACE` or `RENAME`, or in the `ORDER BY` of a set operation;
+- it is in the statement's final `ORDER BY`: verification only accepts a rewrite that leaves the ordering text unchanged, so qualifying it would make the result `unproven`. An `ORDER BY` inside a subquery is qualified.
+
+UPDATE, DELETE and MERGE are left alone. Output column names do not change (`o.total` is still named `total`). Each select is judged on its own sources, so a correlated reference to an outer query is not claimed by an inner select. The command line has no loaded project, so there plain tables are unknown and only CTE, derived-table and `UNNEST` sources qualify; the app (Pipeline strip) uses the loaded project's columns. Without a declared schema the prover cannot read the bare columns of the original query, so a CTE-only rewrite can come back `unproven` there. Tests: `tests/test_qualify_columns.py` (cases above, idempotence, identical results on generated DuckDB data).
+
+`inline_single_use_ctes` skips recursive WITH clauses, queries with nested WITH scopes, CTEs with column aliases, references that differ from the CTE name only in case, and references with anything beyond an alias (such as `FOR SYSTEM_TIME`).
+
+
 `inline_single_use_ctes` skips recursive WITH clauses, queries with nested WITH scopes, CTEs with column aliases, references that differ from the CTE name only in case, and references with anything beyond an alias (such as `FOR SYSTEM_TIME`). It, `remove_unused_ctes` and `deduplicate_ctes` also leave a WITH clause alone when a CTE body is not a query (a PostgreSQL data-modifying CTE runs even when nothing reads it).
 
 The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remove_trivial_predicates` drops `TRUE` from `AND` and `FALSE` from `OR` inside WHERE, HAVING, QUALIFY and JOIN conditions, but never applies `x AND FALSE` or `x OR TRUE`, which would discard `x` and any error it raises. It leaves UPDATE, DELETE and MERGE statements unchanged because DML rewrites cannot currently be proven. It keeps `ON TRUE`, keeps `HAVING TRUE` without a GROUP BY, and folds numeric comparisons only between INT64 literals or identical literals. `remove_redundant_parentheses` keeps parentheses around an unaliased projection (BigQuery names the column after it), around a field access like `(a).b`, and around `AND` inside `OR`. `deduplicate_ctes` skips nondeterministic bodies, bodies with LIMIT, and merges that would repeat a relation name in one FROM clause.
 
-**Idempotence.** Running a rule on its own output makes no further change; `tests/test_idempotence.py` checks every registered rule (and `format_sql` with non-default preferences) against the fixture corpus and hand-written edge cases, so a newly registered rule is covered automatically. `canonical_rule_order()` returns the pipeline that is also a fixed point: every rule except `lift_subqueries`, with `format_sql` last. `lift_subqueries` and `inline_single_use_ctes` are inverses, so a pipeline containing both rewrites its own output on every run; run the lifter separately. To check any rule list at run time, call `check_idempotence(names, sql)` or pass `--check-idempotence` to `python -m kumosql rewrite-sql`: it re-runs the rules on their own output, compares the exact text, and names the rules that changed it again (the CLI exits 4 on a violation). It doubles the work, so it is opt in. Formatting last matters because the other rules re-render a statement and discard its layout.
+**Idempotence.** Running a rule on its own output makes no further change; `tests/test_idempotence.py` checks every registered rule (and `format_sql` with non-default preferences) against the fixture corpus and hand-written edge cases, so a newly registered rule is covered automatically. `canonical_rule_order()` returns the pipeline that is also a fixed point: every rule except `lift_subqueries` and `qualify_columns`, with `format_sql` last. `lift_subqueries` and `inline_single_use_ctes` are inverses, so a pipeline containing both rewrites its own output on every run; run the lifter separately. To check any rule list at run time, call `check_idempotence(names, sql)` or pass `--check-idempotence` to `python -m kumosql rewrite-sql`: it re-runs the rules on their own output, compares the exact text, and names the rules that changed it again (the CLI exits 4 on a violation). It doubles the work, so it is opt in. Formatting last matters because the other rules re-render a statement and discard its layout.
 
-The structural proof no longer refuses a query just because it contains `RAND()`, `GENERATE_UUID()`, `CURRENT_*` or `SESSION_USER()`. Such a call is accepted when the rewrite leaves it identical and in the same number and place (checked before and after normalization); any added, removed, duplicated, merged or modified call stays `not_proven`. Windows, tie-sensitive or order-sensitive aggregates, sampling and `LIMIT`/`OFFSET` still block the proof. A proof that relied on unchanged calls reports how many in its diagnostics.
+The structural proof no longer refuses a query just because it contains `RAND()`, `GENERATE_UUID()`, `CURRENT_*` or `SESSION_USER()`. Such a call, or a call that may be a user-defined function (its definition is unknown), is accepted when the rewrite leaves it identical and in the same number and place (checked before and after normalization); any added, removed, duplicated, merged or modified call stays `not_proven`. Windows, tie-sensitive, order-sensitive or approximate aggregates, sampling and `LIMIT`/`OFFSET` still block the proof. A proof that relied on unchanged calls reports how many in its diagnostics.
 
 To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewrite_statement(statement, index)` to edit the statement in place and return `(change_count, diagnostics)`, and decorate the class with `@register_rule`.
 
@@ -68,13 +87,13 @@ python -m kumosql rewrite-sql input.sqlx --rule inline_single_use_ctes --output 
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
-Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. So is a FROM or JOIN subquery that a top-level CTE could not express: one with a qualified column, in any branch of a set operation or nested predicate, that names a relation of an enclosing query (a correlated or lateral derived table), and one that reads a name defined by a WITH clause nested around it (`correlated_subquery_kept`, not an error; unqualified columns cannot be resolved without a schema and are not checked). The prover's own normalization (`lift_subqueries(..., rewrite_pipe_syntax=True)`) still lifts these. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
+Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. So is a FROM or JOIN subquery that a top-level CTE could not express: one with a qualified column, in any branch of a set operation or nested predicate, that names a relation of an enclosing query (a correlated or lateral derived table), and one that reads a name defined by a WITH clause nested around it (`correlated_subquery_kept`, not an error; unqualified columns cannot be resolved without a schema and are not checked). The prover's own normalization (`lift_subqueries(..., rewrite_pipe_syntax=True)`) still lifts these. BigQuery does not allow `WITH` in front of `UPDATE`, `DELETE` or `MERGE`, so in those statements subqueries are lifted only inside a nested query (for example `DELETE ... WHERE id IN (WITH ... SELECT ...)`); a subquery directly in `UPDATE ... FROM` stays inline and is reported as remaining, so the result is not a success. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
-Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
+Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. Generated names (`__lifted_subquery_001`, ...) skip every table and CTE name the statement already uses, in any case, so a lifted CTE never hides a table the query reads; the structural prover also declines a query that reads a real table with one of its generated CTE names (`__lifted_subquery_*`, `__canonical_cte_*`). If there is nothing to lift, the input is returned byte-for-byte unchanged.
 
 Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
-For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
+For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers. Recovery also accepts broken input (`SELECT 1 FROM t WHERE 1 =`, or trailing text after the last clause) and `success` stays true for it, so check `result.recovered` as well when broken SQL must not count as success.
 
 ```python
 from kumosql import lift_subqueries
@@ -93,3 +112,30 @@ SELECT *
 FROM (SELECT id FROM ${ref("customers")}) AS c''')
 assert result.success
 ```
+
+### Authored fixture gate
+
+`tests/test_workbook_fixture.py` scores the 32 hand-written samples in `tests/fixtures/sql_subquery_samples.json` (nested relations, joins, CTE placement, DML, DDL and Dataform SQLX; each entry is only an `id` and `sql_text`). It runs in the default suite, `tools/run_tests.py` and CI (`python -m pytest tests/test_workbook_fixture.py -s` prints the outcome table). Each sample is labelled in `tests/fixtures/sql_subquery_samples.expected.json`, which pins the fixture by sha256 (CRLF read as LF) and case count and gives every id an expected outcome:
+
+| Outcome | How it is observed |
+| --- | --- |
+| `strict_parse` | the lifter parsed the input without `sqlglot` recovery mode (`LiftResult.recovered` is false) |
+| `valid_input` | DuckDB binds and runs the input, transpiled from BigQuery, on empty tables of the manifest's `duckdb_schema` (SQLX: blocks skipped, `ref("x")` read as `demo.dataform.x`, `when(incremental(), a, b)` as `b`). This can refute an input; it does not show BigQuery accepts it |
+| `expect_change`, `lifted`, `remaining` | `lift_subqueries` returns different SQL, how many subqueries it reports lifting, and how many are left (a label that expects one left needs a reason) |
+| structural | `LiftResult.success`: no FROM/JOIN subquery left and no fatal diagnostic |
+| `verification` | `apply_rule("lift_subqueries", sql).verification.status`; `verification_before_sqlglot` gives the status expected on older `sqlglot` releases |
+
+Every row stays in the denominator. A row is credited only when it parses strictly, is a valid input, changes, leaves no relational subquery and is proven; the test fails when any row differs from its label or reports a fatal diagnostic other than a labelled leftover subquery, when a valid input's lifted output no longer runs in DuckDB, or when the labels do not match the fixture. On the current fixture:
+
+| Outcome | Count |
+| --- | --- |
+| Strict parse / recovered | 32 / 0 |
+| Valid input / invalid | 30 / 2: `q09` selects `customer_id` from a CTE that only outputs `region`; `q21` has `HAVING` on an outer query with no grouping or aggregate |
+| Changed / unchanged | 30 / 2: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are); `q17`'s subquery sits directly in `UPDATE ... FROM`, and BigQuery rejects `WITH` before `UPDATE` |
+| No relational subquery left | 31 (40 subqueries lifted); `q17` leaves 1 and is reported as a failure |
+| Proven / unproven / unchanged / failed | 29 / 1 (`q28`: `WHERE ${when(incremental(), ...)}` can expand to any SQL, so the lift needs compiled SQL) / 1 (`q16`) / 1 (`q17`) |
+| Credited | 27 of 32 (26 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
+
+`q09` and `q21` are still lifted and proven (the rewrite preserves whatever the query means) but are counted as invalid inputs, not credited.
+
+Set `KUMOSQL_TEST_FIXTURE` to score another CSV or JSON fixture. A requested path that does not exist fails the test instead of skipping it, and the fixture must be a non-empty list of rows with unique non-empty ids (`id`, or `record_id` in a CSV) and non-empty `sql_text` strings. Labels for it come from `KUMOSQL_TEST_FIXTURE_EXPECTED` or a sibling `<name>.expected.json` in the same format; without labels every row must still parse strictly and leave no relational subquery, and the other outcomes are only reported. `tests/test_generic_fixture.py` separately checks the sample file's shape.

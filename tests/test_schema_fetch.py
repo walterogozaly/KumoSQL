@@ -111,7 +111,8 @@ def test_log_holds_counts_not_names(monkeypatch):
 
 def test_settings_round_trip(monkeypatch):
     monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH")
-    assert schema_fetch.settings() == {"enabled": True}
+    assert schema_fetch.settings() == {"enabled": False}
+    assert schema_fetch.save_settings(True) == {"enabled": True}
     assert schema_fetch.save_settings(False) == {"enabled": False}
     with pytest.raises(ValueError):
         schema_fetch.save_settings("yes")
@@ -216,3 +217,60 @@ def test_lookup_stops_waiting_after_its_time_budget(monkeypatch):
     monkeypatch.setattr(schema_fetch, "MAX_SECONDS", -1.0)
     answers, stats = schema_fetch.resolve([f"p.ext.t{i}" for i in range(10)])
     assert answers == {} and stats["unknown"] == 10
+
+
+def forbid_network(monkeypatch):
+    """Any BigQuery client call, token request or socket connection fails the test."""
+
+    import socket
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the network was reached without an opt-in")
+
+    monkeypatch.setattr(bigquery_catalog, "_token_cached", boom)
+    monkeypatch.setattr(bigquery_catalog, "get_table", boom)
+    monkeypatch.setattr(bigquery_catalog, "list_tables", boom)
+    monkeypatch.setattr(socket.socket, "connect", boom)
+
+
+def test_nothing_reaches_the_network_without_an_opt_in(monkeypatch):
+    monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH")
+    forbid_network(monkeypatch)
+    assert schema_fetch.enabled() is False
+    pipeline = project(s="SELECT * FROM `p.ext.raw`", t="SELECT id FROM `p.m.s`")
+    assert ("p.m.s", "unexpanded_star") in codes(pipeline)
+    schema, stats = schema_fetch.resolve(["p.ext.raw", "p.ext.events_*"])
+    assert schema == {} and stats["unknown"] == 2
+
+
+def test_environment_switch_wins_over_a_saved_opt_in(monkeypatch):
+    monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH")
+    schema_fetch.save_settings(True)
+    assert schema_fetch.enabled() is True
+    monkeypatch.setenv("KUMOSQL_SCHEMA_FETCH", "0")
+    assert schema_fetch.enabled() is False
+    forbid_network(monkeypatch)
+    assert schema_fetch.resolve(["p.ext.raw"])[0] == {}
+
+
+def test_opt_in_by_environment_still_fetches(monkeypatch):
+    calls = fake_bigquery(monkeypatch, {"p.ext.raw": ["id"]})
+    monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH", raising=False)
+    assert schema_fetch.resolve(["p.ext.raw"])[0] == {}  # still off: nothing asked for it
+    monkeypatch.setenv("KUMOSQL_SCHEMA_FETCH", "1")
+    assert schema_fetch.resolve(["p.ext.raw"])[0] == {"p.ext.raw": {"id": "INT64"}}
+    assert calls == ["p.ext.raw"]
+
+
+def test_cli_flag_is_the_opt_in(monkeypatch, tmp_path):
+    from kumosql.cli import pipeline_main
+
+    monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH")
+    (tmp_path / "a.sql").write_text("SELECT id FROM `p.raw.people`", encoding="utf-8")
+    forbid_network(monkeypatch)
+    assert pipeline_main([str(tmp_path), "-o", str(tmp_path / "r.json")]) == 0
+    assert schema_fetch.enabled() is False
+    calls = fake_bigquery(monkeypatch, {"p.raw.people": ["id"]})
+    monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH")
+    assert pipeline_main([str(tmp_path), "--fetch-schema", "-o", str(tmp_path / "r.json")]) == 0
+    assert schema_fetch.enabled() is True

@@ -1,0 +1,8 @@
+[
+ {
+  "left": "SELECT t.id, (t.x = -1) OR (t.x = -1 IS NULL) AS b FROM t",
+  "right": "SELECT t.id, t.x = -1 AS b FROM t",
+  "cause": "'t.x = -1 IS NULL' parses as t.x = (-1 IS NULL), an INT64 compared with a BOOL, which BigQuery rejects but DuckDB coerces (FALSE to 0); the predicate_value generator probably meant (t.x = -1) IS NULL, so this is a generator typing bug and/or a mixed-type comparison the prover treats as never equal (same family as #542). Unrelated to COUNT over COUNT; first seen in the seed-2 run after that fix",
+  "owner": "Core and SMT soundness fixes"
+ }
+]

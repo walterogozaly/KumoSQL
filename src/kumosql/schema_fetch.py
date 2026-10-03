@@ -2,8 +2,10 @@
 
 ``SELECT *`` over a table the project does not declare cannot be expanded, and every column
 read through it is lost. Before a project is analysed, the tables it reads that no model or
-declared source accounts for are looked up: first in the saved BigQuery catalog, then (when
-the setting is on) from BigQuery table metadata, which is free. Each table is fetched once per
+declared source accounts for are looked up: first in the saved BigQuery catalog, then (only when
+the caller has opted in) from BigQuery table metadata, which is free. The lookup is off by default,
+so a library call never reaches the network on its own; ``KUMOSQL_SCHEMA_FETCH=1``, the Settings
+checkbox or ``python -m kumosql pipeline-report --fetch-schema`` turn it on. Each table is fetched once per
 analysis and kept in the catalog cache. A table the user cannot read, or one that is gone,
 stays unknown: nothing is guessed. A wildcard table (``prefix_*``) takes the union of the
 columns of the tables it matches, or stays unknown when too many match.
@@ -42,14 +44,14 @@ _TYPES = {
 
 
 def enabled() -> bool:
-    """Whether unknown tables are looked up in BigQuery: the environment, then Settings (on by default)."""
+    """Whether unknown tables are looked up in BigQuery: the environment, then Settings. Off unless someone opted in."""
 
     raw = os.environ.get(ENV)
     if raw is not None:
         return raw.strip().lower() not in ("0", "false", "no", "off", "")
     saved = state.get_section("schema_fetch", {}) or {}
     value = saved.get("enabled") if isinstance(saved, dict) else None
-    return value if isinstance(value, bool) else True
+    return value if isinstance(value, bool) else False
 
 
 def settings() -> dict:

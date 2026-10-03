@@ -60,7 +60,10 @@ def test_unreadable_file_and_directory(tmp_path):
 
 def test_broken_symlink_is_a_diagnostic(tmp_path):
     defs = _project(tmp_path)
-    (defs / "dangling.sqlx").symlink_to(tmp_path / "nowhere")
+    try:
+        (defs / "dangling.sqlx").symlink_to(tmp_path / "nowhere")
+    except OSError as exc:
+        pytest.skip(f"host cannot create symlinks: {type(exc).__name__}")
     report = load_sqlx_project(tmp_path).report()
     assert _assets(report)["definitions/dangling.sqlx"]["code"] == "read_error"
     assert "p.d.good" in report["order"]

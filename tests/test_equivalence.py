@@ -234,3 +234,144 @@ def test_parameterized_cast_types_are_not_proven():
         )
         assert result.status is EquivalenceStatus.NOT_PROVEN
         assert "parameterized types in CAST" in result.diagnostics[0]
+
+
+def test_lifting_does_not_prove_a_rewrite_that_shadows_a_table():
+    # Eval-integrity audit 2026-10-02: with one table row x = 7 the original returns
+    # (1, 7), and a lift that reuses the table's name as its CTE name returns (1, 1).
+    original = "SELECT a.x AS ax, b.x AS bx FROM (SELECT 1 AS x) a JOIN __lifted_subquery_001 b ON TRUE"
+    shadowed = (
+        "WITH __lifted_subquery_001 AS (SELECT 1 AS x) "
+        "SELECT a.x AS ax, b.x AS bx FROM __lifted_subquery_001 AS a JOIN __lifted_subquery_001 AS b ON TRUE"
+    )
+
+    assert prove_equivalent(original, shadowed).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_canonical_cte_names_do_not_capture_a_table():
+    # Renaming CTE `a` to __canonical_cte_001 made it indistinguishable from the table
+    # of that name, so a CTE self-join was "proved" equal to a join with the table.
+    left = "WITH a AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM a CROSS JOIN __canonical_cte_001 AS z"
+    right = "WITH b AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM b AS a CROSS JOIN b AS z"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_canonical_cte_name_does_not_match_a_physical_table():
+    # With t = {1, 1} and a physical __canonical_cte_001 = {9}, these return [1, 1] and [9].
+    left = "WITH x AS (SELECT a FROM t) SELECT a FROM x AS z"
+    right = "WITH x AS (SELECT a FROM t) SELECT a FROM __canonical_cte_001 AS z"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_cte_references_resolve_case_insensitively():
+    # BigQuery reads CTE `a` for `FROM A` (confirmed on BigQuery): the left query returns 1, the right 2.
+    left = "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS x) SELECT x FROM A"
+    right = "WITH b AS (SELECT 1 AS x), a AS (SELECT 2 AS x) SELECT x FROM A"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_physical_table_named_like_the_cte_being_defined_is_not_renamed():
+    # A non-recursive CTE is not visible inside its own body, so `FROM A` there reads the
+    # physical table A (an outside review reproduced this with A = [7, 7, NULL] and
+    # B = [9, 9, NULL]: the two queries return different bags). Renaming it to the CTE
+    # made both bodies self-references and the queries compared equal.
+    pairs = [
+        ("SELECT s.x FROM A s", "SELECT s.x FROM B s", "SELECT q.x"),
+        ("SELECT s.x FROM `A` s", "SELECT s.x FROM `B` s", "SELECT q.x"),
+        (
+            "SELECT s.x FROM A s WHERE s.x IS NOT NULL",
+            "SELECT s.x FROM B s WHERE s.x IS NOT NULL",
+            "SELECT q.x",
+        ),
+        ("SELECT DISTINCT s.x FROM A s", "SELECT DISTINCT s.x FROM B s", "SELECT q.x"),
+        ("SELECT s.x FROM A s", "SELECT s.x FROM B s", "SELECT SUM(q.x) AS t"),
+    ]
+    for left_body, right_body, projection in pairs:
+        left = f"WITH a AS ({left_body}) {projection} FROM a q"
+        right = f"WITH b AS ({right_body}) {projection} FROM b q"
+        assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT, left
+
+
+def test_physical_table_named_like_a_later_cte_is_not_renamed():
+    # CTE `b` is defined after `a`, so `FROM B` inside `a` reads the physical table B.
+    # Renaming both made them the same self-describing query although B and b differ.
+    left = "WITH a AS (SELECT s.x FROM B s), b AS (SELECT 1 AS x) SELECT q.x FROM a q"
+    right = "WITH a AS (SELECT s.x FROM b s), b AS (SELECT 1 AS x) SELECT q.x FROM a q"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_mixed_case_cte_alpha_renaming_is_still_proven():
+    # Control: a visible CTE read with different case, and a CTE renamed, is the same query.
+    left = "WITH a AS (SELECT 1 AS x) SELECT q.x FROM A q"
+    right = "WITH b AS (SELECT 1 AS x) SELECT q.x FROM b q"
+
+    assert prove_equivalent(left, right).status is EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_user_defined_function_names_keep_their_case():
+    # BigQuery reads UDF names case-sensitively; built-in names in any case.
+    for left, right in (
+        ("SELECT Foo(id) AS x FROM t", "SELECT foo(id) AS x FROM t"),
+        ("SELECT `p.d.Foo`(id) AS x FROM t", "SELECT `p.d.foo`(id) AS x FROM t"),
+        ("SELECT x FROM t WHERE Foo(id) > 0", "SELECT x FROM t WHERE foo(id) > 0"),
+    ):
+        assert not prove_equivalent(left, right).proven, left
+    assert prove_equivalent("SELECT sum(a) AS x FROM t", "SELECT SUM(a) AS x FROM t").proven
+    same = prove_equivalent("SELECT Foo(id) AS x FROM t WHERE TRUE", "SELECT Foo(id) AS x FROM t")
+    assert same.proven
+    assert same.normalized_left == "SELECT Foo(id) AS x FROM t"
+
+
+def test_user_defined_calls_must_stay_in_place():
+    # A UDF may be nondeterministic, so duplicating its call is like duplicating RAND().
+    one = "WITH c AS (SELECT Foo(1) AS v) SELECT a.v, b.v FROM c AS a CROSS JOIN c AS b"
+    two = "SELECT a.v, b.v FROM (SELECT Foo(1) AS v) AS a CROSS JOIN (SELECT Foo(1) AS v) AS b"
+    assert not prove_equivalent(one, two).proven
+
+
+def test_routine_placeholder_in_the_query_is_refused():
+    result = prove_equivalent("SELECT Foo(x), KUMOSQL_ROUTINE_0_ FROM t", "SELECT Foo(x), Foo FROM t")
+    assert not result.proven
+
+
+def test_typed_volatile_and_approximate_calls_are_guarded():
+    for call in ("CURRENT_DATETIME()", "SESSION_USER()"):
+        base = f"SELECT {call} AS v"
+        assert prove_equivalent(base, base).proven, call
+        assert not prove_equivalent(base, f"SELECT {call} AS v, {call} AS w").proven, call
+    for sql in (
+        "SELECT APPROX_TOP_COUNT(id, 2) AS x FROM t",
+        "SELECT APPROX_TOP_SUM(id, n, 2) AS x FROM t",
+        "SELECT APPROX_QUANTILES(id, 4) AS x FROM t",
+    ):
+        assert not prove_equivalent(sql, sql).proven, sql
+
+
+def test_order_by_that_may_raise_is_not_dropped():
+    for key in ("ERROR('boom')", "a / b", "CAST(s AS INT64)"):
+        result = prove_equivalent(f"SELECT a FROM t ORDER BY {key}", "SELECT a FROM t")
+        assert not result.proven, key
+    # A LIMIT that cannot cut rows is stripped, but the sort that may raise stays.
+    for key in ("ERROR('boom')", "CAST('x' AS INT64)", "CAST(id AS INT64) + 9223372036854775807", "LN(-1)", "SQRT(-1)"):
+        result = prove_equivalent(f"SELECT COUNT(*) AS n FROM t ORDER BY {key} LIMIT 10", "SELECT COUNT(*) AS n FROM t")
+        assert not result.proven, key
+    assert prove_equivalent("SELECT COUNT(*) AS n FROM t ORDER BY id LIMIT 10", "SELECT COUNT(*) AS n FROM t").proven
+    for left in (
+        "SELECT a FROM t ORDER BY a DESC",
+        "SELECT a / b AS r FROM t ORDER BY r",
+        "SELECT a / b AS r FROM t ORDER BY a / b",
+        "SELECT a FROM t ORDER BY RAND()",
+    ):
+        assert prove_equivalent(left, left.split(" ORDER BY")[0]).proven, left
+
+
+def test_respected_row_order_reports_that_ties_are_unchecked():
+    ordered = "SELECT id, payload FROM t ORDER BY id"
+    result = prove_equivalent(ordered, ordered, ignore_row_order=False)
+    assert result.proven
+    assert "tied" in result.reason
+    assert "tie order unchecked" in result.diagnostics

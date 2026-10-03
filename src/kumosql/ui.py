@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 import re
+import secrets
 import sys
 import threading
 import webbrowser
@@ -25,6 +26,7 @@ MAX_REQUEST_BYTES = 5 * 1024 * 1024
 MAX_GITHUB_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_UI_STATE_BYTES = 64 * 1024
 MAX_JOBS_REQUEST_BYTES = 64 * 1024 * 1024
+SESSION_HEADER = "X-KumoSQL-Session"
 # Insight views. Each returns a JSON payload built from what the server has
 # loaded (project, job history, change comparison); with nothing loaded the
 # payload is an empty state that says what to load (see docs/ui-roadmap.md).
@@ -47,6 +49,9 @@ ASSETS = {
     "/browse": ("browse.html", "text/html; charset=utf-8"),
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/refactor": ("refactor.html", "text/html; charset=utf-8"),
+    "/shared-models": ("shared-models.html", "text/html; charset=utf-8"),
+    "/assets/shared-models.js": ("shared-models.js", "text/javascript; charset=utf-8"),
+    "/assets/shared-models.css": ("shared-models.css", "text/css; charset=utf-8"),
     "/assets/refactor.js": ("refactor.js", "text/javascript; charset=utf-8"),
     "/assets/refactor.css": ("refactor.css", "text/css; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
@@ -57,6 +62,7 @@ ASSETS = {
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
     "/assets/shell.css": ("shell.css", "text/css; charset=utf-8"),
     "/assets/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
+    "/assets/session.js": ("session.js", "text/javascript; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/assets/evidence.js": ("evidence.js", "text/javascript; charset=utf-8"),
@@ -132,6 +138,8 @@ class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, *args, **kwargs) -> None:
+        # Kept only in memory, and replaced whenever the UI server starts.
+        self.session_token = secrets.token_urlsafe(32)
         # Analysis is CPU-bound Python. With the default 5 ms switch interval it can hold the
         # interpreter long enough that a trivial request (Settings, the BigQuery tab) waits
         # seconds; a shorter interval keeps them under ~50 ms at a cost of about 5% build time.
@@ -148,6 +156,32 @@ class UIServer(ThreadingHTTPServer):
 class UIHandler(BaseHTTPRequestHandler):
     """Serve bundled assets and a small same-origin JSON API."""
 
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        # Check before dispatch, including assets and unsupported HTTP methods.
+        port = self.server.server_port
+        authorities = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+        hosts = self.headers.get_all("Host", [])
+        if len(hosts) != 1 or hosts[0].lower() not in authorities:
+            self._json(403, {"error": "use the local UI server address"})
+            return False
+        origins = self.headers.get_all("Origin", [])
+        if self.command in {"PUT", "POST", "DELETE"} and origins:
+            if len(origins) != 1 or origins[0].lower() != f"http://{hosts[0].lower()}":
+                self._json(403, {"error": "request origin must match the local UI server"})
+                return False
+        route = self.path.split("?", 1)[0]
+        if route == "/api" or route.startswith("/api/"):
+            tokens = self.headers.get_all(SESSION_HEADER, [])
+            expected = getattr(self.server, "session_token", None)  # a plain server has none: fail closed
+            if expected is None or len(tokens) != 1 or not secrets.compare_digest(
+                tokens[0].encode("utf-8"), expected.encode("ascii")
+            ):
+                self._json(403, {"error": "reload the UI page for the current session"})
+                return False
+        return True
+
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature set by the base class
         # Query values can hold names (a project, a table); only their keys are logged.
         text = re.sub(r"\?\S*", lambda m: "?" + ",".join(part.split("=")[0] for part in m.group(0)[1:].split("&")), format % args)
@@ -162,8 +196,9 @@ class UIHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-            "img-src 'self'; base-uri 'none'; form-action 'none'",
+            "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         )
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -209,6 +244,11 @@ class UIHandler(BaseHTTPRequestHandler):
             from . import refactor
 
             self._json(200, refactor.classes_view())
+            return
+        if self.path == "/api/shared-models":
+            from . import shared_models
+
+            self._json(200, shared_models.repeated_payload())
             return
         if self.path == "/api/equivalences":
             from . import equivalences
@@ -326,6 +366,8 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         filename, content_type = asset
         body = files("kumosql").joinpath("static", filename).read_bytes()
+        if content_type.startswith("text/html"):
+            body = body.replace(b"__KUMOSQL_SESSION_TOKEN__", self.server.session_token.encode("ascii"))
         self._send(200, body, content_type)
 
     @staticmethod
@@ -602,7 +644,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries", "/api/consolidate-tables",
-            "/api/refactor/run", "/api/refactor/cancel",
+            "/api/refactor/run", "/api/refactor/cancel", "/api/shared-models/patch",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -649,6 +691,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import refactor
 
                 result = refactor.cancel_job()
+            elif self.path == "/api/shared-models/patch":
+                from . import shared_models
+
+                result = shared_models.patch_payload(payload)
             elif self.path == "/api/consolidate-tables":
                 from . import consolidate
 
@@ -790,14 +836,19 @@ def main(argv: list[str] | None = None) -> int:
         from .git_repo import GitRepoError, load_into_graph
 
         try:
-            console.say(f"Loaded {load_into_graph(args.git, args.branch, args.refresh)['label']}")
+            result = load_into_graph(args.git, args.branch, args.refresh)
+            console.say(f"Loaded repository ({result['files']} files)")
         except GitRepoError as exc:
             parser.error(console.scrub(str(exc)))
     if args.project:
         from .pipeline import load_sqlx_project
 
         try:
-            live_graph.set_project(load_sqlx_project(args.project), args.project)
+            from .shared_models import read_project_files
+
+            pipeline = load_sqlx_project(args.project)
+            pipeline.source_files = read_project_files(args.project)
+            live_graph.set_project(pipeline, args.project)
         except Exception as exc:
             parser.error(f"could not load project: {exc}")
     defer_autoload = False

@@ -11,6 +11,7 @@
     "timeout": 0,
     "error": 0
   },
+  "coverage_of": "Queries that did not pass every stage: of the 475, 121 were declined honestly (unsupported), 0 timed out and 0 errored; the 354 that passed have no outcome column.",
   "held_out": "53/70 (75.7%) on the hash-held-out fifth of this sample, 0 wrong (seen during development; see caveats)",
   "docs": "docs/evals/analytical-sql-coverage.md#results",
   "command": "python tools/benchmark_corpora.py fetch sqlstorm dsb && python tools/analytical_coverage.py --split all --limit 60",

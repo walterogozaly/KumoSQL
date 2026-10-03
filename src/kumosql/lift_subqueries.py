@@ -59,6 +59,17 @@ class LiftResult:
             and self.remaining_inline_subqueries == 0
         )
 
+    @property
+    def recovered(self) -> bool:
+        """Whether strict parsing failed and sqlglot's recovery mode supplied the statements.
+
+        ``success`` does not look at this: recovery is kept for valid BigQuery that sqlglot cannot
+        parse strictly. Recovery also accepts truncated or trailing-garbage input (``WHERE 1 =``),
+        so a gate that must not credit broken SQL checks this as well as ``success``.
+        """
+
+        return any(diagnostic.code == "recovered_parse" for diagnostic in self.diagnostics)
+
 
 def _is_relation_subquery(node: exp.Expression) -> bool:
     return isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join))
@@ -178,15 +189,21 @@ def count_inline_subqueries(sql: str) -> int:
     return sum(len(_liftable_subqueries(statement)) for statement in parse_statements(sql))
 
 
-def _used_cte_names(query: exp.Expression) -> set[str]:
-    clause = with_clause(query)
-    if not clause:
-        return set()
-    return {
-        alias
-        for cte in clause.expressions
+def _used_relation_names(query: exp.Expression) -> set[str]:
+    """Every relation name visible anywhere in the statement, lower-cased.
+
+    A lifted CTE named like a table the query already reads would shadow that table
+    (a WITH name hides a same-named unqualified table, and BigQuery matches CTE names
+    case-insensitively), silently changing the result, so tables count as well as CTEs.
+    """
+
+    names = {
+        alias.lower()
+        for cte in query.root().find_all(exp.CTE)
         if (alias := identifier_name(cte.args.get("alias")))
     }
+    names.update(table.name.lower() for table in query.root().find_all(exp.Table) if table.name)
+    return names
 
 
 def _next_name(used: set[str], counter: list[int]) -> str:
@@ -237,7 +254,7 @@ def _tree_depth(node: exp.Expression) -> int:
 def _lift_query(query: exp.Expression, counter: list[int] | None = None, check_scope: bool = True) -> int:
     """Lift relation subqueries from a SELECT/UNION query, recursively."""
 
-    used = _used_cte_names(query)
+    used = _used_relation_names(query)
     counter = counter if counter is not None else [0]
     lifted = 0
     current = with_clause(query)
@@ -288,15 +305,22 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None, check_s
     return lifted
 
 
+# BigQuery has no statement-level WITH for these: ``WITH s AS (...) UPDATE ...`` is a syntax error
+# ("Unexpected keyword UPDATE"), and likewise for DELETE and MERGE.
+_NO_STATEMENT_WITH = (exp.Update, exp.Delete, exp.Merge)
+
+
 def _transform_statement(statement: exp.Expression, check_scope: bool = True) -> int:
-    query = top_level_query(statement)
+    query = None if isinstance(statement, _NO_STATEMENT_WITH) else top_level_query(statement)
     if query is not None:
         return _lift_query(query, check_scope=check_scope)
 
     # BigQuery scripting statements such as SET can contain a query inside a
-    # scalar expression. There is no statement-level WITH slot for those, so
-    # lift within the innermost query scope instead (for example, SET x =
-    # (WITH ... SELECT ...)).
+    # scalar expression, and UPDATE, DELETE and MERGE cannot start with WITH.
+    # There is no statement-level WITH slot for those, so lift within the
+    # innermost query scope instead (for example, SET x = (WITH ... SELECT ...)
+    # or DELETE ... WHERE id IN (WITH ... SELECT ...)). A subquery directly in
+    # UPDATE ... FROM has no such scope and is reported as remaining.
     lifted = 0
     query_nodes = [
         node

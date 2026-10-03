@@ -13,6 +13,7 @@
   "coverage": {
     "error": 0
   },
+  "coverage_of": "Failures only: 0 errors over the 71,384 sub-join estimates; equivalence outcomes do not apply.",
   "held_out": "Families 17-33 (54 queries): Q-error p50 5.0, p90 815; plan cost geomean 1.49x (Postgres 2.80x)",
   "performance": "Pure Python; 1.5 ms per sub-join estimate"
 }

@@ -16,6 +16,7 @@
     "unsupported": 994,
     "error": 0
   },
+  "coverage_of": "The 7,260 of the 7,870 queries with a coverage outcome; the other 610 are not executable in DuckDB, so they get no verdict.",
   "held_out": "none",
   "performance": "7,870 queries in 306 s (lifting pipeline), 145 s without"
 }
