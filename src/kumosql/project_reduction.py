@@ -149,12 +149,40 @@ class ProjectReduction:
 
         _apply(Path(root), self.files)
 
+    def check_list(self) -> list[dict]:
+        """One result per kept output and per surviving table with assertions, in the Shared models shape:
+        ``{model, role, label, reason, assumptions}`` with ``role`` ``kept`` or ``checked``."""
+
+        out = []
+        for role, results in (("kept", self.proofs), ("checked", self.checks)):
+            for model, proof in results.items():
+                status, assumptions = proof.get("status"), list(proof.get("assumptions") or [])
+                label = ("unchanged" if status == "unchanged" else "unknown" if status != "proved"
+                         else "proven_with_assumptions" if assumptions else "proven")
+                out.append({"model": model, "role": role, "label": label, "reason": proof.get("reason", ""),
+                            "assumptions": assumptions})
+        return out
+
+    def verdict(self) -> str:
+        """The weakest result (``proven``, ``proven_with_assumptions`` or ``unknown``), as Shared models words it."""
+
+        labels = {c["label"] for c in self.check_list()}
+        if not self.verified or not labels or "unknown" in labels:
+            return "unknown"
+        return "proven_with_assumptions" if "proven_with_assumptions" in labels else "proven"
+
     def to_json(self) -> dict:
+        checks = self.check_list()
+        assumptions: list[str] = []
+        for check in checks:
+            assumptions.extend(a for a in check["assumptions"] if a not in assumptions)
         return {
             "keep": self.keep,
             "verified": self.verified,
-            "proofs": self.proofs,
-            "checks": self.checks,
+            "verdict": self.verdict(),
+            "checks": checks,
+            "assumptions": assumptions,
+            "diagnostics": [] if self.verified else list(self.notes),
             "score": {"before": self.score_before, "after": self.score_after},
             "actions": {"before": self.actions_before, "after": self.actions_after},
             "removed": self.removed,
@@ -167,7 +195,8 @@ class ProjectReduction:
             "tried": self.tried,
             "rejected": self.rejected,
             "files": [{"path": f.path, "action": f.action} for f in self.files],
-            "patch": self.patch(),
+            "changed_files": [f.path for f in self.files],
+            "diff": self.patch(),
             "stopped": self.stopped,
             "seconds": round(self.seconds, 2),
             "notes": self.notes,
@@ -1115,7 +1144,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.patch:
             Path(args.patch).write_text(result.patch(), encoding="utf-8")
         payload = result.to_json()
-        payload.pop("patch")
+        payload.pop("diff")
         json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
     if args.write:

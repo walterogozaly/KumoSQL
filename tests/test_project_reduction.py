@@ -103,7 +103,11 @@ def test_one_output_kept_folds_its_chain_and_deletes_the_rest(tmp_path):
 
     data = result.to_json()
     json.dumps(data)
-    assert data["verified"] and data["patch"] == patch and data["evidence"].startswith("proof")
+    assert data["verified"] and data["diff"] == patch and data["evidence"].startswith("proof")
+    # the Shared models page's patch shape
+    assert data["verdict"] == "proven_with_assumptions" and data["assumptions"] and data["diagnostics"] == []
+    assert data["checks"][0]["model"] == "shop.an.rpt_revenue" and data["checks"][0]["role"] == "kept"
+    assert "definitions/staging/paid_orders.sqlx" in data["changed_files"]
 
 
 def test_kept_outputs_by_name_path_or_dataset_and_bad_names(tmp_path):
@@ -243,7 +247,7 @@ def test_cli(tmp_path, capsys):
     patch_file = tmp_path / "reduce.diff"
     assert main([str(root), "--keep", "rpt_revenue", "--patch", str(patch_file)]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["verified"] and "patch" not in data and patch_file.read_text(encoding="utf-8").startswith("diff --git")
+    assert data["verified"] and "diff" not in data and patch_file.read_text(encoding="utf-8").startswith("diff --git")
     assert main([str(root), "--keep", "rpt_revenue", "--write"]) == 0
     assert not (root / "definitions/staging/paid_orders.sqlx").exists()
     assert "paid_orders" not in (root / "definitions/reports/rpt_revenue.sqlx").read_text(encoding="utf-8")
