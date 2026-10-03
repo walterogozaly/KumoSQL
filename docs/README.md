@@ -10,10 +10,12 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Connecting Dataform repositories](dataform-repositories.md) | Private repositories through local `git`, the data folder, logging and diagnostics, production schedules |
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
+| [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
 | [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
 | [Cost, change reports and the BigQuery dry run](cost-and-change-reports.md) | Dry-run checks, cost attribution, change reports and refactoring proposals |
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |
+| [Shared models](shared-models.md) | Moving a CTE repeated across Dataform models into one shared model, as a patch checked by the prover |
 | [Table minimization](table-minimization.md) | The lowest-complexity set of tables that keeps every protected table proved unchanged |
 | [Output properties](output-properties.md) | Never-NULL columns, unique keys and row bounds, inferred without running a query |
 | [Constraint-dependent rewrites](constraint-rewrites.md) | Rewrites that hold only under declared NOT NULL columns, keys and foreign keys |
@@ -29,4 +31,4 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 
 ## Evals
 
-The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, DLBench's cross-dialect translations, pairs from optimizer wrong-result bugs, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).
+The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, DLBench's cross-dialect translations, pairs from optimizer wrong-result bugs, DB-GPT's rewrite examples, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).
