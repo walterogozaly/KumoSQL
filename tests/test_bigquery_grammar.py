@@ -124,3 +124,18 @@ def test_ml_functions_sqlglot_reads_itself_are_unchanged():
     tree = sqlglot.parse_one(sql, read="bigquery")
     assert tree.sql("bigquery") == sql
     assert type(tree.find(exp.Predict)).__name__ == "Predict"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT 'a\nb' AS v", 'SELECT "a\r\nb"', "SELECT b'x\ny'", "SELECT r'p\nq'", "SELECT rb'm\nn'", "SELECT `c\nd` FROM t"],
+)
+def test_a_one_line_literal_with_a_line_break_is_rejected_like_bigquery_does(sql):
+    # BigQuery: "Syntax error: Unclosed string literal" (and bytes, identifier); only triple-quoted literals span lines.
+    with pytest.raises(sqlglot.errors.ParseError, match="Unclosed literal"):
+        sqlglot.parse(sql, read="bigquery")
+
+
+def test_triple_quoted_literals_and_escaped_line_breaks_still_read():
+    tree = sqlglot.parse_one("SELECT '''a\nb''' AS x, \"\"\"c\nd\"\"\" AS y, 'e\\nf' AS z\nFROM t", read="bigquery")
+    assert [e.this.this for e in tree.expressions] == ["a\nb", "c\nd", "e\nf"]

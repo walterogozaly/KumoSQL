@@ -395,6 +395,32 @@ def _resolve_table_arguments(trees):
         yield tree
 
 
+class UnclosedLiteral(ParseError):
+    """A string, bytes literal or quoted name that is not triple-quoted runs onto another line, which BigQuery rejects."""
+
+
+_ONE_LINE = tuple(
+    kind for kind in (getattr(TokenType, name, None) for name in ("STRING", "BYTE_STRING", "RAW_STRING", "NATIONAL_STRING", "IDENTIFIER"))
+    if kind is not None
+)
+
+
+def _check_literals(sql: str, tokens: list) -> None:
+    """Raise ``UnclosedLiteral`` for a quoted token that is not triple-quoted and holds a line break.
+
+    sqlglot reads ``'a<line break>b'`` as the string ``a\\nb``; BigQuery stops with "Unclosed string literal". Reading it
+    would let a prover equate an invalid query with a valid one.
+    """
+
+    if "\n" not in sql and "\r" not in sql:
+        return
+    for token in tokens:
+        if token.token_type in _ONE_LINE:
+            text = sql[token.start : token.end + 1]
+            if ("\n" in text or "\r" in text) and not text.lstrip("rRbB").startswith(("'''", '"""')):
+                raise UnclosedLiteral(f"Unclosed literal: a quoted string or name that is not triple-quoted runs past the end of line {token.line}")
+
+
 def install() -> None:
     global _installed
     if _installed:
@@ -403,14 +429,15 @@ def install() -> None:
     # The parser is not touched: a compiled sqlglot (sqlglotc) dispatches parser methods through a table built when the class
     # is defined, ignores a method assigned afterwards and refuses a subclass. SQL it rejects is parsed again with the
     # tokens rewritten, and the marker call is turned into a table argument after, which works the same on every build.
-    parse = BigQuery.parse
-
     def parse_with_table_arguments(self, sql, **opts):
         # Whatever sqlglot reads on its own is left alone; only SQL it rejects is retried with the table arguments marked.
+        tokens = self.tokenize(sql)
         try:
-            return parse(self, sql, **opts)
+            _check_literals(sql, tokens)
+            return self.parser(**opts).parse(tokens, sql)  # what the dialect's own parse does
+        except UnclosedLiteral:
+            raise
         except ParseError as error:
-            tokens = self.tokenize(sql)
             rewritten = sql
             for rewrite in (
                 _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with
