@@ -1,5 +1,7 @@
 # Metamorphic fuzzing and unsafe-rewrite detection
 
+[Plain-language version](../../docs_simple/evals/fuzzing.md)
+
 Three seeded suites check KumoSQL's rewrites and its equivalence prover without any LLM at run time (a fourth, the [typed soundness fuzzer](#typed-soundness-fuzzer), hunts false proofs on typed schemas with integrity constraints). They share one oracle (random small DuckDB databases with NULLs, duplicates and empty tables) and one report format. Every case id names its seed, so a failure is reproduced by rerunning the same command.
 
 ```

@@ -1,5 +1,7 @@
 # VeriEQL benchmarks (no LLM at evaluation time)
 
+[Plain-language version](../../docs_simple/evals/verieql.md)
+
 `tools/verieql_bench.py` scores KumoSQL on the three suites of [VeriEQL](https://github.com/VeriEQL/VeriEQL) ("VeriEQL: Bounded Equivalence Verification for Complex SQL Queries with Integrity Constraints", OOPSLA 2024): **LeetCode** (about 24,000 pairs of real solutions to LeetCode SQL problems), **Literature** (64 hard pairs from earlier equivalence research) and **Calcite-397** (optimizer rewrites with schemas and integrity constraints). Each case is two queries plus a schema with constraints (primary and foreign keys, NOT NULL, `CHECK`-style predicates, consecutive ids, cross-table implications). Unlike SQLSolver's suites, the pairs include inequivalent ones, and the files carry no labels.
 
 Everything is deterministic Python: `kumosql.counterexample` (a constraint-respecting database generator that runs both queries on DuckDB) and the algebraic z3 prover (`kumosql.algebraic_equivalence`, see [sqlsolver.md](sqlsolver.md)). No model is called and no gold label is read.

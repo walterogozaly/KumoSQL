@@ -1,5 +1,7 @@
 # Constraint-dependent rewrites
 
+[Plain-language version](../docs_simple/constraint-rewrites.md)
+
 Some rewrites are only valid when the data satisfies a declared guarantee. KumoSQL's prover takes declared NOT NULL columns, unique keys and foreign keys (from the BigQuery catalog's table constraints and Dataform assertions, see `src/kumosql/prover_schema.py`), and a proof that rests on them says so in its assumptions. This page covers the three pieces added for them.
 
 ## Foreign-key join elimination

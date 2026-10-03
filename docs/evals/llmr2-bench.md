@@ -1,5 +1,7 @@
 # LLM-R2 query sets: a scale test of the rewrites
 
+[Plain-language version](../../docs_simple/evals/llmr2-bench.md)
+
 `tools/llmr2_bench.py` runs KumoSQL's rewrites on every query of the [LLM-R2](https://github.com/DAMO-NLP-SG/LLM-R2) query sets (Li et al., VLDB 2025). Each changed query is executed against its original in DuckDB on the benchmark's real data. It repeats the [transformation benchmark](transformation-bench.md) at roughly fifty times the volume, and keeps LLM-R2's own train/test split.
 
 LLM-R2 built these pools to learn which Calcite rewrite rules make a query faster in PostgreSQL. The latency labels need PostgreSQL and are not used here. Only the queries are used.

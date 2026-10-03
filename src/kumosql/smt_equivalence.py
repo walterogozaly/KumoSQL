@@ -80,6 +80,8 @@ class SmtStatus(str, Enum):
     PROVEN_EQUIVALENT = "proven_equivalent"
     NOT_EQUIVALENT = "not_equivalent"
     NOT_PROVEN = "not_proven"
+    # Equivalent on every database that meets ``SmtEquivalenceResult.conditions``; never counted as proven.
+    PROVEN_CONDITIONALLY = "proven_conditionally"
 
 
 @dataclass(frozen=True)
@@ -97,10 +99,16 @@ class SmtEquivalenceResult:
     reason: str
     counterexample: Counterexample | None = None
     assumptions: tuple[str, ...] = ()
+    # ``kumosql.conditional_equivalence.Condition`` items of a PROVEN_CONDITIONALLY result.
+    conditions: tuple = ()
 
     @property
     def proven(self) -> bool:
         return self.status is SmtStatus.PROVEN_EQUIVALENT
+
+    @property
+    def conditionally_proven(self) -> bool:
+        return self.status is SmtStatus.PROVEN_CONDITIONALLY
 
 
 @dataclass(frozen=True)
@@ -3782,6 +3790,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--schema", help="JSON file mapping table names to column lists")
     parser.add_argument("--exact-arithmetic", action="store_true", help="model + - * exactly (INT64/NUMERIC)")
     parser.add_argument("--timeout-ms", type=int, default=5000)
+    parser.add_argument(
+        "--conditional",
+        action="store_true",
+        help="when the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
+    )
     args = parser.parse_args(argv)
     with open(args.left, encoding="utf-8") as handle:
         left = handle.read()
@@ -3794,13 +3807,16 @@ def main(argv: list[str] | None = None) -> int:
     from .statement_proof import prove_statements_smt
 
     result = prove_statements_smt(
-        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms
+        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms,
+        conditional=args.conditional,
     )
     payload = {
         "status": result.status.value,
         "reason": result.reason,
         "assumptions": list(result.assumptions),
     }
+    if result.conditions:
+        payload["conditions"] = [c.to_json() for c in result.conditions]
     if result.counterexample is not None:
         payload["counterexample"] = {
             "tables": result.counterexample.tables,
@@ -3809,6 +3825,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
+    if result.conditionally_proven:
+        return 3
     return 0 if result.proven else 1
 
 
@@ -3901,6 +3919,34 @@ def _split_limit(sql: str, dialect: str):
 
 
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    With ``conditional=True`` a pair that is not proven is retried under facts taken from the
+    queries (NOT NULL columns, unique keys, foreign keys); a proof that needs some of them comes back
+    as ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (see ``kumosql.conditional_equivalence``).
+    See ``_prove_with_limit`` for the rest.
+    """
+
+    conditional = kwargs.pop("conditional", False)
+    wall = kwargs.pop("conditional_seconds", None)
+    result = _prove_with_limit(left_sql, right_sql, **kwargs)
+    if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
+        return result
+    from . import conditional_equivalence
+
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return _prove_with_limit(*pair, **{**kwargs, "constraints": constraints, "compare_names": False})
+        return _prove_with_limit(left_sql, right_sql, **{**kwargs, "constraints": constraints})
+
+    options = {} if wall is None else {"wall_seconds": wall}
+    return conditional_equivalence.add_conditions(
+        left_sql, right_sql, result, prove,
+        schema=kwargs.get("schema"), constraints=kwargs.get("constraints"), types=kwargs.get("types"), dialect=kwargs.get("dialect", "bigquery"), **options,
+    )
+
+
+def _prove_with_limit(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
     A query ending in ``ORDER BY .. LIMIT n [OFFSET m]`` is handled when both sides

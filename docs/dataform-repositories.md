@@ -1,5 +1,7 @@
 # Connecting Dataform repositories
 
+[Plain-language version](../docs_simple/dataform-repositories.md)
+
 Connecting private Dataform repositories, the local data folder, logging and diagnostics, and production schedules.
 
 ## Connecting a private Dataform repository
