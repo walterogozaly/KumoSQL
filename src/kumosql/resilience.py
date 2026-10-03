@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import stat
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
 
@@ -133,6 +134,9 @@ def read_text_or_reason(path: Path) -> tuple[str | None, str | None]:
     """Return ``(text, None)`` or ``(None, reason)``; never raises for I/O errors."""
 
     try:
+        # Refuse even in-root file links, including settings files read outside find_assets.
+        if path.is_symlink():
+            return None, "symbolic links are not read"
         return decode_text(path.read_bytes()), None
     except (OSError, UnicodeError) as exc:
         return None, describe_os_error(exc)
@@ -148,13 +152,52 @@ def find_assets(
 
     wanted = tuple(suffixes)
     found: list[Path] = []
+    try:
+        linked = _linked_directory(root)
+    except OSError as exc:
+        on_error(root, describe_os_error(exc))
+        return found
+    if linked:
+        on_error(root, "linked directories are not read")
+        return found
 
     def walk_error(exc: OSError) -> None:
         on_error(Path(exc.filename) if exc.filename else root, describe_os_error(exc))
 
-    for directory, _dirs, files in os.walk(root, onerror=walk_error):
-        found.extend(Path(directory) / name for name in files if name.endswith(wanted))
+    resolved_root = root.resolve()
+    for directory, dirs, files in os.walk(root, onerror=walk_error):
+        # Explicitly prune junctions and other directory links as well as symlinks.
+        for name in list(dirs):
+            path = Path(directory) / name
+            try:
+                if _linked_directory(path) or not path.resolve().is_relative_to(resolved_root):
+                    dirs.remove(name)
+                    on_error(path, "linked directories are not read")
+            except OSError as exc:
+                dirs.remove(name)
+                on_error(path, describe_os_error(exc))
+        for name in files:
+            if not name.endswith(wanted):
+                continue
+            path = Path(directory) / name
+            try:
+                if path.is_symlink() or not path.resolve().is_relative_to(resolved_root):
+                    on_error(path, "symbolic links are not read")
+                    continue
+            except OSError as exc:
+                on_error(path, describe_os_error(exc))
+                continue
+            found.append(path)
     return sorted(found)
+
+
+def _linked_directory(path: Path) -> bool:
+    """Recognize Windows junctions even on Python 3.11, before Path.is_junction existed."""
+
+    if path.is_symlink():
+        return True
+    tag = getattr(path.stat(follow_symlinks=False), "st_reparse_tag", 0)
+    return tag == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", -1)
 
 
 def parse_json_or_raise(path: Path, what: str) -> object:
