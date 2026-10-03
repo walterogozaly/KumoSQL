@@ -416,13 +416,13 @@ python -m kumosql rewrite-sql input.sqlx --rule inline_single_use_ctes --output 
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
-Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
+Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. BigQuery does not allow `WITH` in front of `UPDATE`, `DELETE` or `MERGE`, so in those statements subqueries are lifted only inside a nested query (for example `DELETE ... WHERE id IN (WITH ... SELECT ...)`); a subquery directly in `UPDATE ... FROM` stays inline and is reported as remaining, so the result is not a success. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
 Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
 
 Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
-For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
+For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers. Recovery also accepts broken input (`SELECT 1 FROM t WHERE 1 =`, or trailing text after the last clause) and `success` stays true for it, so check `result.recovered` as well when broken SQL must not count as success.
 
 ```python
 from kumosql import lift_subqueries
@@ -444,15 +444,13 @@ assert result.success
 
 ## Test the authored SQL fixture
 
-The repository includes 32 hand-written sample queries at `tests/fixtures/sql_subquery_samples.json`. Each entry contains only an `id` and `sql_text`. The samples cover nested relations, joins, CTE placement, DML, DDL, and Dataform SQLX. The full fixture test uses:
+The repository includes 32 hand-written sample queries at `tests/fixtures/sql_subquery_samples.json` (only an `id` and `sql_text` each), covering nested relations, joins, CTE placement, DML, DDL, and Dataform SQLX. `tests/test_workbook_fixture.py` runs in the default suite and CI and checks every sample against its label in `tests/fixtures/sql_subquery_samples.expected.json`: strict or recovered parse, valid input (DuckDB on a declared schema), changed or not, subqueries left, and the verified status from `apply_rule`. All 32 stay in the denominator; 28 are credited, and the two invalid inputs, the unlifted MERGE and the UPDATE whose `FROM` subquery cannot be lifted (BigQuery has no `WITH` before `UPDATE`) are reported, not counted. `KUMOSQL_TEST_FIXTURE` scores another CSV or JSON fixture (a missing path fails). Details and the outcome table: [docs/rewrite-rules.md](docs/rewrite-rules.md#authored-fixture-gate).
 
 ```shell
-pytest -m slow tests/test_workbook_fixture.py
+python -m pytest tests/test_workbook_fixture.py -s
 ```
 
-Override its path with `KUMOSQL_TEST_FIXTURE` to test another CSV or JSON fixture. The test fails unless every sample has zero remaining relational subqueries and no fatal diagnostics. A separate unit test verifies the small fixture shape.
-
-The normal unit suite (it skips the `slow` marker and needs `pip install -e ".[dev]"`) runs in parallel with one command:
+The normal unit suite (it skips tests marked `slow`, the long benchmark runs, and needs `pip install -e ".[dev]"`) runs in parallel with one command:
 
 ```shell
 python tools/run_tests.py             # the whole fast suite on every CPU (pytest-xdist)
