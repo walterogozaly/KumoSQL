@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from kumosql import VerificationStatus, apply_rule, apply_rules, canonical_rule_order
+from kumosql import VerificationStatus, apply_rule, apply_rules, canonical_rule_order, get_rule
 from kumosql.prover_context import use_columns
 
 TABLES = {
@@ -167,6 +167,7 @@ def test_rule_is_idempotent_and_opt_in():
 
     assert again.changes == 0 and again.sql == once.sql
     assert "qualify_columns" not in canonical_rule_order()
+    assert get_rule("qualify_columns").opt_in
 
 
 def test_no_known_tables_means_no_change_for_plain_tables():

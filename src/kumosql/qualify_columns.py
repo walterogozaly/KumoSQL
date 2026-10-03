@@ -226,6 +226,7 @@ class QualifyColumnsRule(RewriteRule):
 
     name = "qualify_columns"
     summary = "Qualify bare columns with their source in selects that read two or more sources"
+    opt_in = True
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int

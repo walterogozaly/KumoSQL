@@ -818,7 +818,7 @@ def canonical_rule_order() -> tuple[str, ...]:
     ``format_sql`` produced, so ``format_sql`` goes last.
     """
 
-    names = [n for n in available_rules() if n not in ("lift_subqueries", "format_sql", "qualify_columns")]
+    names = [n for n, rule in available_rules().items() if n not in ("lift_subqueries", "format_sql") and not rule.opt_in]
     # Removing unused and duplicate CTEs can leave another CTE with a single
     # reader, so inlining has to come after both or one pass is not enough.
     if "inline_single_use_ctes" in names:
