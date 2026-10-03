@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, parenthesize_is_operands, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .string_literals import canonical_literals
 
@@ -50,7 +50,7 @@ from .intersection_rules import collapse_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
-from .limit_rules import limit_rule
+from .limit_rules import limit_rule as _limit_rule
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .date_ranges import extract_to_ranges
@@ -2539,8 +2539,9 @@ def _fold_null_guards(tree: exp.Expression, not_null: dict[str, frozenset[str]] 
         }
         declared = _declared_not_null(holder, not_null) if not_null else set()
         kept = [part for part in parts if not _guard_of(part, rejected | declared)]
-        if isinstance(holder, exp.Having) and holder.parent is not None and holder.parent.args.get("group"):
-            # A group is never empty, so MIN/MAX/SUM/AVG of a NOT NULL column is never NULL.
+        if isinstance(holder, exp.Having) and holder.parent is not None and holder.parent.args.get("group") and not extended_grouping(holder.parent.args["group"]):
+            # A group is never empty, so MIN/MAX/SUM/AVG of a NOT NULL column is never NULL (the empty
+            # grouping set of a ROLLUP is one group even over no input, so not there).
             kept = [part for part in kept if not _aggregate_guard(part, declared)]
         if not kept and isinstance(holder, (exp.Where, exp.Having)) and len(parts) > 0 and holder.parent is not None:
             holder.pop()
@@ -2598,7 +2599,7 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
         if any(inner.args.get(k) for k in ("distinct", "limit", "offset", "qualify", "order", "with_", "with")) or any(inner.find_all(exp.Window)):
             continue
         group = inner.args["group"]
-        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if extended_grouping(group):
             continue
         keys = [k.sql() for k in group.expressions]
         outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in inner.expressions]
@@ -3245,7 +3246,7 @@ def _drop_unused_left_join(select: exp.Select, keys: dict[str, list[tuple[str, .
         if isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select):
             inner = source.this
             group = inner.args.get("group")
-            if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")) or inner.args.get("having") is not None or inner.args.get("limit") is not None:
+            if group is None or extended_grouping(group) or inner.args.get("having") is not None or inner.args.get("limit") is not None:
                 continue
             outputs = {e.alias_or_name.lower(): (e.this if isinstance(e, exp.Alias) else e) for e in inner.expressions}
             mapped = {outputs[name].sql() for name in equated if name in outputs and isinstance(outputs[name], exp.Column)}
@@ -3279,10 +3280,11 @@ def _derived_key_outputs(inner: exp.Select) -> dict[str, exp.Expression] | None:
     if any(isinstance(e, exp.Star) for e in inner.expressions):
         return None
     group = inner.args.get("group")
-    distinct = inner.args.get("distinct")
-    if (group is not None) == bool(distinct):  # exactly one of DISTINCT, GROUP BY
+    if distinct_on(inner):
+        return None  # one row per ON key, which a filter on another output would pick differently
+    if (group is not None) == plain_distinct(inner):  # exactly one of DISTINCT, GROUP BY
         return None
-    if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if extended_grouping(group):
         return None
     keys = {e.sql() for e in group.expressions} if group is not None else None
     outputs: dict[str, exp.Expression] = {}
@@ -3402,7 +3404,7 @@ def _drop_redundant_distinct_source(select: exp.Select) -> exp.Expression | None
         return None
     # An outer DISTINCT without aggregates or grouping ignores repeated rows of the source too.
     distinct = select.args.get("distinct")
-    if distinct is not None and (distinct.args.get("on") or select.args.get("group")):
+    if distinct is not None and (distinct_on(select) or select.args.get("group")):
         return None
     source = from_.this
     if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select):
@@ -3410,10 +3412,12 @@ def _drop_redundant_distinct_source(select: exp.Select) -> exp.Expression | None
     inner = source.this
     if any(inner.args.get(k) for k in ("having", "limit", "offset", "qualify", "order", "with_", "with")) or any(inner.find_all(exp.Window)):
         return None
+    if distinct_on(inner):
+        return None  # DISTINCT ON keeps one row per key, not every distinct row: it removes values, not only repeats
     group = inner.args.get("group")
-    if (group is None) == (not inner.args.get("distinct")):
+    if (group is None) == (not plain_distinct(inner)):
         return None
-    if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if extended_grouping(group):
         return None
     if any(isinstance(e, exp.Star) for e in inner.expressions) or any(c.find_ancestor(exp.Select) is inner for c in inner.find_all(exp.AggFunc)):
         return None
@@ -3667,7 +3671,7 @@ def _push_distinct_into_sources(select: exp.Select, schema: dict[str, list[str]]
     distinct = select.args.get("distinct")
     if (group is None) == (not distinct) or not select.args.get("joins"):
         return None
-    if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if distinct_on(select) or extended_grouping(group):
         return None
     if any(select.args.get(k) for k in ("having", "limit", "offset", "qualify", "windows", "with_", "with", "order")):
         return None
@@ -4025,8 +4029,8 @@ def _drop_group_in_membership_tests(tree: exp.Expression) -> exp.Expression:
         if not isinstance(inner, exp.Select):
             continue
         group = inner.args.get("group")
-        if group is None or inner.args.get("having") is not None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
-            continue
+        if group is None or inner.args.get("having") is not None or extended_grouping(group):
+            continue  # (the empty grouping set gives a row even over no input)
         if any(inner.args.get(k) for k in ("limit", "offset", "qualify", "windows", "distinct", "with_", "with")) or any(inner.find_all(exp.AggFunc, exp.Window)):
             continue
         outputs = {(e.this if isinstance(e, exp.Alias) else e).sql() for e in inner.expressions}
@@ -4214,7 +4218,7 @@ def _single_row_source(select: exp.Select) -> exp.Expression | None:
             call.set("this", call.this.expressions[0].copy())
             changed = True
     group = copy.args.get("group")
-    if group is not None and not any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")) and copy.args.get("having") is None:
+    if group is not None and not extended_grouping(group) and copy.args.get("having") is None:
         has_aggregate = any(c.find_ancestor(exp.Select) is copy for c in copy.find_all(exp.AggFunc))
         keys = {g.sql() for g in group.expressions}
         outputs = {(e.this if isinstance(e, exp.Alias) else e).sql() for e in copy.expressions}
@@ -4232,7 +4236,7 @@ def _group_by_to_distinct(select: exp.Select) -> exp.Expression | None:
         select.args.get(k) for k in ("qualify", "windows", "with_", "with", "limit", "offset", "order")
     ):
         return None
-    if group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube") or group.args.get("totals"):
+    if extended_grouping(group):
         return None
     if any(c.find_ancestor(exp.Select) is select for c in select.find_all(exp.AggFunc)) or any(select.find_all(exp.Window)):
         return None
@@ -4538,8 +4542,8 @@ def _drop_constant_groupings(tree: exp.Expression) -> exp.Expression:
 
     for select in list(tree.find_all(exp.Select)):
         group = select.args.get("group")
-        if not group or group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube"):
-            continue
+        if not group or extended_grouping(group):
+            continue  # ROLLUP (4) is two grouping sets, one of them empty
         items = group.expressions
 
         def constant(node: exp.Expression) -> bool:
@@ -4575,6 +4579,16 @@ def _keeps_names(before: list[str], after: list[str] | None) -> bool:
     if after is None:
         return True  # a star lists the same sources' columns
     return len(before) == len(after) and all(not old or old == new for old, new in zip(before, after))
+
+
+def limit_rule(select: exp.Select, types: dict[str, dict[str, str]] | None = None, dialect: str = "bigquery") -> exp.Expression | None:
+    """:func:`kumosql.limit_rules.limit_rule`, except on a ``DISTINCT ON`` select.
+
+    Those rules drop an ORDER BY whose order no reader sees, but under DISTINCT ON the ORDER BY picks the
+    row kept for each key, so it changes the rows themselves.
+    """
+
+    return None if distinct_on(select) else _limit_rule(select, types, dialect)
 
 
 def normalize(
