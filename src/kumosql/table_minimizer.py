@@ -576,7 +576,11 @@ def _shared(setup: _Setup, state: Mapping[str, str]) -> set[str]:
 
 
 def _expanded(setup: _Setup, sqls: Mapping[str, str], key: str, stop: set[str], trail: tuple = ()) -> exp.Expression:
-    """``key``'s query with every table it reads inlined as a derived table, down to sources and ``stop``."""
+    """``key``'s query with every table it reads inlined as a derived table, down to sources and ``stop``.
+
+    When two WITH tables then share a name, each gets a name of its own (``_unique_ctes``), so that tables
+    that use the same WITH names (``source``, ``renamed``) can sit in one query.
+    """
 
     tree = sqlglot.parse_one(sqls[key], read="bigquery")
     for table in list(_table_nodes(tree)):
@@ -585,7 +589,54 @@ def _expanded(setup: _Setup, sqls: Mapping[str, str], key: str, stop: set[str], 
             continue
         body = _expanded(setup, sqls, found, stop, (*trail, key))
         table.replace(exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name))))
+    if not trail and _repeated_ctes(tree):
+        counter = [0]
+        for clause in reversed(list(tree.find_all(exp.With))):  # the innermost first
+            if clause.parent is not None:
+                _unique_ctes(clause.parent, counter)
     return tree
+
+
+def _unique_ctes(query: exp.Expression, counter: list[int]) -> None:
+    """Rename ``query``'s WITH tables ``<name>__kumo<n>``, references included, in place.
+
+    Only the plain case is renamed: not recursive, each name once, and no WITH inside that defines one of
+    the names again. A WITH table is seen by the WITH tables after it and by the main query (with their
+    subqueries); in its own body and the ones before it, the name is a table of the pipeline. Anything else
+    is left as it is, and the repeated-name check still refuses it.
+    """
+
+    clause = with_clause(query)
+    if clause is None or clause.args.get("recursive"):
+        return
+    ctes = list(clause.expressions)
+    names = [c.alias_or_name.lower() for c in ctes]
+    if len(names) != len(set(names)):
+        return
+    for inner in query.find_all(exp.With):
+        if inner is not clause and {c.alias_or_name.lower() for c in inner.expressions} & set(names):
+            return
+    renamed: dict[str, str] = {}
+    for name in names:
+        counter[0] += 1
+        renamed[name] = f"{name}__kumo{counter[0]}"
+
+    def visible(node: exp.Expression, seen: Mapping[str, str]) -> None:
+        for table in list(node.find_all(exp.Table)):
+            name = table.name.lower()
+            if table.db or table.catalog or name not in seen:
+                continue
+            if not table.alias:  # columns qualified by the WITH name keep naming it
+                table.set("alias", exp.TableAlias(this=exp.to_identifier(table.name)))
+            table.set("this", exp.to_identifier(seen[name]))
+
+    for index, cte in enumerate(ctes):
+        visible(cte.this, {n: renamed[n] for n in names[:index]})
+    set_with_clause(query, None)
+    visible(query, renamed)
+    for index, cte in enumerate(ctes):
+        cte.set("alias", exp.TableAlias(this=exp.to_identifier(renamed[names[index]])))
+    set_with_clause(query, clause)
 
 
 def _prove_frontier(setup: _Setup, state: Mapping[str, str], key: str, before,
@@ -1295,8 +1346,9 @@ def verify_tables(
     returns the same rows, with the same output columns), ``missing`` or ``unknown`` (not proved; the reason
     says why). ``candidate`` may add tables of its own. Raises :class:`MinimizationError` on unusable input.
 
-    ``fixed`` tables (as in :func:`minimize_tables`) must be in the candidate exactly as given. Each
-    ``checked`` table the candidate still has gets a result too: proved equal on the columns it keeps.
+    ``fixed`` tables (as in :func:`minimize_tables`) must be in the candidate exactly as given, and every
+    table one of them (or an unreadable table) reads gets a result too, since it is read as given. Each
+    ``checked`` table the candidate still has gets a result: proved equal on the columns it keeps.
     """
 
     protected = list(protected)
@@ -1334,7 +1386,8 @@ def verify_tables(
         except sqlglot.errors.SqlglotError:
             state[key] = sql  # unreadable: nothing that depends on it can be proved
     results: dict[str, ProtectedProof] = {}
-    for key in [*setup.protected, *sorted(k for k in setup.checked if k in state)]:
+    keys = [*setup.protected, *sorted(setup.pinned - set(setup.protected)), *sorted(k for k in setup.checked if k in state)]
+    for key in keys:
         user = _user_name(key, back, names)
         if key not in state:
             results[user] = ProtectedProof(user, "missing", "the table is not in the candidate")

@@ -429,6 +429,98 @@ def run_real(case: Mapping, max_seconds: float = 120.0) -> CaseResult:
     return result
 
 
+# ------------------------------------------------------------------ Jaffle Shop: a real project with real data
+
+
+JAFFLE_KEEPS = (("customers",), ("orders",), ("customers", "orders"), ("stg_orders",), ("stg_payments",),
+                ("stg_customers",))
+
+
+def jaffle_cases() -> list[dict]:
+    """``{id, keep, split}`` for dbt Labs' Jaffle Shop (``tests/fixtures/jaffle_shop``), written as Dataform."""
+
+    out = []
+    for keep in JAFFLE_KEEPS:
+        case_id = "jaffle-" + "+".join(keep)
+        out.append({"id": case_id, "keep": list(keep), "split": mc.held_out_split(case_id)})
+    return out
+
+
+def jaffle_project(root: Path) -> dict:
+    """Write the Jaffle Shop project as ``tools/jaffle_shop_bench.py`` loads it; return its seed tables' columns."""
+
+    import jaffle_shop_bench as js
+
+    files = {"workflow_settings.yaml": f"defaultProject: {js.PROJECT}\ndefaultDataset: {js.DATASET}\n"}
+    for name, text in js.sqlx_models(js.dbt_models()).items():
+        files[f"definitions/{name}.sqlx"] = text
+    write_files(root, files)
+    return {table: {"columns": dict(columns)} for table, columns in js.SEEDS.items()}
+
+
+def jaffle_databases(count: int, seed: int = 11) -> list[dict]:
+    import jaffle_shop_bench as js
+
+    return [db for _label, db in js.databases(count, seed)]  # the seeds first, then random databases
+
+
+def run_jaffle(case: Mapping, databases: int = DATABASES, max_seconds: float = 120.0) -> CaseResult:
+    from kumosql.project_reduction import reduce_project
+
+    result = CaseResult(case["id"], "jaffle", case["split"], ["dbt"])
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "project"
+        seeds = jaffle_project(root)
+        columns = {f"jaffle.main.{t}": spec for t, spec in seeds.items()}
+        started = time.time()
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                reduction = reduce_project(root, case["keep"], source_columns=columns, max_seconds=max_seconds)
+        except Exception as error:
+            result.seconds = time.time() - started
+            result.reason = f"reducer failed: {type(error).__name__}: {error}"[:300]
+            return result
+        result.seconds = time.time() - started
+        checked = time.time()
+        _fill(result, reduction)
+        problem = _git_apply_check(root, reduction.patch())
+        reduced = Path(tmp) / "reduced"
+        shutil.copytree(root, reduced)
+        reduction.apply(reduced)
+        original_tables = compile_project(root)
+        try:
+            reduced_tables = compile_project(reduced)
+        except Exception as error:  # noqa: BLE001
+            reduced_tables, problem = {}, problem or f"the patched project does not compile: {error}"
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                result.graph_only_actions, result.graph_only_score = _graph_only(root, case["keep"], columns)
+        except Exception:  # noqa: BLE001
+            result.graph_only_actions, result.graph_only_score = result.actions_before, result.score_before
+    status, reason = "agreed", ""
+    if problem:
+        status, reason = "wrong", problem
+    else:
+        engine = mc.Engine(seeds, {"o": original_tables, "n": reduced_tables})
+        try:
+            if "o" in engine.errors:
+                raise RuntimeError(f"the Jaffle Shop project does not run: {engine.errors['o']}")
+            found = mc.compare(engine, jaffle_databases(databases), "o", ["n"], case["keep"],
+                               stable_only=mc.order_sensitive(original_tables))["n"]
+        finally:
+            engine.close()
+        if found:
+            status, reason = "wrong", f"{found['table']}: {found['reason']}"
+    result.check_seconds = time.time() - checked
+    result.executed = status
+    if status == "wrong":
+        result.status, result.reason = "wrong", reason[:300]
+        return result
+    result.status = "unverified" if not reduction.verified else "reduced" if reduction.files else "unchanged"
+    result.reason = "; ".join(reduction.notes)[:300]
+    return result
+
+
 # ------------------------------------------------------------------ summary
 
 
@@ -438,7 +530,7 @@ def _share(before: float, after: float) -> float | None:
 
 def summarise(results: list[CaseResult]) -> dict:
     out = {}
-    for family in ("converted", "real", "all"):
+    for family in ("converted", "real", "jaffle", "all"):
         rows = [r for r in results if family == "all" or r.family == family]
         if not rows:
             continue
@@ -482,7 +574,9 @@ def _run_one(args) -> CaseResult:
     kind, case, databases, max_seconds = args
     if kind == "converted":
         return run_converted(case, databases, max_seconds)
-    return run_real(case, max_seconds)
+    if kind == "jaffle":
+        return run_jaffle(case, databases, max(max_seconds, 120.0))
+    return run_real(case, max(max_seconds, 120.0))
 
 
 def run(cases: list[tuple[str, dict]], databases: int = DATABASES, max_seconds: float = 60.0, jobs: int = 1,
@@ -511,7 +605,7 @@ def run(cases: list[tuple[str, dict]], databases: int = DATABASES, max_seconds: 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--family", default="all", choices=["converted", "real", "all"])
+    parser.add_argument("--family", default="all", choices=["converted", "real", "jaffle", "all"])
     parser.add_argument("--split", default="dev", choices=["dev", "held_out", "all"])
     parser.add_argument("--only", help="run case ids containing this text")
     parser.add_argument("--limit", type=int)
@@ -525,6 +619,8 @@ def main(argv: list[str] | None = None) -> int:
         cases += [("converted", c) for c in mc.load_cases(split=None if args.split == "all" else args.split)]
     if args.family in ("real", "all"):
         cases += [("real", c) for c in real_cases() if args.split == "all" or c["split"] == args.split]
+    if args.family in ("jaffle", "all"):
+        cases += [("jaffle", c) for c in jaffle_cases() if args.split == "all" or c["split"] == args.split]
     if args.only:
         cases = [(k, c) for k, c in cases if args.only in c["id"]]
     cases = cases[: args.limit] if args.limit else cases

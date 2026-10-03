@@ -186,39 +186,31 @@ def test_a_query_repeated_in_three_reports_becomes_one_shared_table(tmp_path):
     assert plain.added == [] and plain.score_after > result.score_after
 
 
-def test_project_variables_are_written_back_and_never_taken_for_their_value(tmp_path):
-    case = "CASE WHEN amount > 10 THEN 'big' WHEN amount > 0 THEN 'small' ELSE 'none' END AS size"
+def test_project_variables_as_names_are_moved_and_as_values_kept_as_written(tmp_path):
     files = {
-        "workflow_settings.yaml": SETTINGS,
+        "workflow_settings.yaml": SETTINGS + "  raw_schema: raw\n",
         "definitions/sources/orders.sqlx": _declare("orders"),
-        # two copies with the project variable, one with its current value
+        # a variable as a value: the prover would read it as one more string, different from 'paid'
         "definitions/stg_var.sqlx": _sqlx(
-            '  type: "view"', f'SELECT order_id, {case}\nFROM ${{ref("orders")}}\nWHERE status = "${{dataform.projectConfig.vars.paid}}"'),
-        "definitions/stg_var_copy.sqlx": _sqlx(
-            '  type: "view"', f'SELECT order_id, {case}\nFROM ${{ref("orders")}}\nWHERE status = "${{dataform.projectConfig.vars.paid}}"'),
-        "definitions/stg_literal.sqlx": _sqlx(
-            '  type: "view"', f"SELECT order_id, {case}\nFROM ${{ref(\"orders\")}}\nWHERE status = 'paid'"),
+            '  type: "view"', 'SELECT order_id, amount\nFROM ${ref("orders")}\nWHERE status = "${dataform.projectConfig.vars.paid}"'),
+        "definitions/rpt_var.sqlx": _sqlx(
+            '  type: "table"', "SELECT SUM(amount) AS total\nFROM ${ref(\"stg_var\")}\nWHERE status = 'paid' AND amount > 0"),
+        # a variable in a table name: the same expression is the same table wherever it is written
+        "definitions/stg_name.sqlx": _sqlx(
+            '  type: "view"', "SELECT order_id, amount\nFROM ${dataform.projectConfig.vars.raw_schema}.orders\nWHERE amount > 0"),
+        "definitions/rpt_name.sqlx": _sqlx('  type: "table"', 'SELECT SUM(amount) AS total\nFROM ${ref("stg_name")}'),
     }
-    readers = {"stg_var": ("a", "b"), "stg_var_copy": ("c", "d"), "stg_literal": ("e", "f")}
-    for table, (one, two) in readers.items():
-        files[f"definitions/rpt_{one}.sqlx"] = _sqlx('  type: "table"', f'SELECT size, COUNT(*) AS n\nFROM ${{ref("{table}")}}\nGROUP BY size')
-        files[f"definitions/rpt_{two}.sqlx"] = _sqlx('  type: "table"', f'SELECT order_id\nFROM ${{ref("{table}")}}\nWHERE size = \'big\'')
-    files["definitions/stg_single.sqlx"] = _sqlx(
-        '  type: "view"', 'SELECT order_id, amount\nFROM ${ref("orders")}\nWHERE status = "${dataform.projectConfig.vars.paid}"')
-    files["definitions/rpt_g.sqlx"] = _sqlx('  type: "table"', 'SELECT SUM(amount) AS total\nFROM ${ref("stg_single")}')
     root = _write(tmp_path / "vars", files)
-    keep = [f"rpt_{name}" for name in "abcdefg"]
-    result = reduce_project(root, keep, factor=False)
+    result = reduce_project(root, ["rpt_var", "rpt_name"], factor=False)
     assert result.verified
-    assert any(move.startswith("merge shop.an.stg_var_copy into shop.an.stg_var") or
-               move.startswith("merge shop.an.stg_var into shop.an.stg_var_copy") for move in result.moves)
-    assert not any("stg_literal into" in move or "into shop.an.stg_literal" in move
-                   for move in result.moves if move.startswith("merge"))
+    assert {"model": "shop.an.stg_var", "why": "uses a project variable or constant as a value, which the prover cannot read"} in result.fixed
+    assert result.moves == ["fold shop.an.stg_name into shop.an.rpt_name"]
     patched = _patched(tmp_path, root, result)
-    folded = (patched / "definitions/rpt_g.sqlx").read_text(encoding="utf-8")
-    assert "status = '${dataform.projectConfig.vars.paid}'" in folded and "stg_single" not in folded  # still a string
-    texts = "".join(p.read_text(encoding="utf-8") for p in (patched / "definitions").glob("*.sqlx"))
-    assert "__kumo_x_" not in texts and "__sqlx_token" not in texts
+    assert (patched / "definitions/stg_var.sqlx").read_text(encoding="utf-8") == files["definitions/stg_var.sqlx"]
+    folded = (patched / "definitions/rpt_name.sqlx").read_text(encoding="utf-8")
+    assert "`${dataform.projectConfig.vars.raw_schema}.orders`" in folded and "stg_name" not in folded
+    assert "__kumo_x_" not in folded and "__sqlx_token" not in folded
+    _git_apply(root, result.patch())
 
 
 def test_config_assertions_are_listed_when_their_table_goes_and_kept_when_awaited(tmp_path):

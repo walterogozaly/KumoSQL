@@ -355,6 +355,21 @@ def _parses(sql: str) -> bool:
         return False
 
 
+def _value_tokens(sql: str) -> bool:
+    """Whether a ``${...}`` expression stands for a value (in a string) rather than a name.
+
+    The prover would read the token as one more string constant, different from every other: then
+    ``status = "${vars.paid}" AND status = 'paid'`` looks contradictory, although it is not when the
+    variable is ``paid``. As a table name a token is sound: two names are proved for any two tables.
+    """
+
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return bool(_GLOBAL.search(sql))
+    return any(isinstance(node, exp.Literal) and _GLOBAL.search(str(node.this)) for node in tree.walk())
+
+
 def _fixed_reason(project: _Project, key: str) -> str:
     model = project.pipeline.models[key]
     if model.kind == "incremental":
@@ -369,6 +384,8 @@ def _fixed_reason(project: _Project, key: str) -> str:
         return "uses Dataform expressions that depend on the file they are written in"
     if not _parses(project.sql[key]):
         return "not a single query"
+    if _value_tokens(project.sql[key]):
+        return "uses a project variable or constant as a value, which the prover cannot read"
     return ""
 
 
@@ -1044,6 +1061,10 @@ def _verify(project: _Project, result: ProjectReduction, tables, protected, fixe
                 result.notes.append(f"{name} has assertions and did not re-prove")
             else:
                 result.checks[name] = verdict.to_json()
+    for name, verdict in verdicts.items():  # tables that actions kept as written read
+        if name not in result.keep and name not in checked and verdict.status not in ("unchanged", "proved"):
+            ok = False
+            result.notes.append(f"{name}, which an action kept as written reads, did not re-prove: {verdict.reason}"[:300])
     result.verified = ok
 
 

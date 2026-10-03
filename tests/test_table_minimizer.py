@@ -463,3 +463,27 @@ def test_lower_score_only_skips_rewrites_that_do_not_lower_the_score():
     tables = {"report": "SELECT customer_id AS c, SUM(amount) AS total FROM orders GROUP BY customer_id"}
     result = minimize_tables(tables, ["report"], sources=SOURCES, lower_score_only=True)
     assert result.tables == tables and result.moves == []
+
+
+def test_tables_that_reuse_with_names_can_be_folded_together():
+    # the dbt style: every staging table is WITH source AS (...), renamed AS (...) SELECT * FROM renamed
+    tables = {
+        "stg_orders": "WITH source AS (SELECT * FROM orders), renamed AS (SELECT id AS order_id, customer_id, amount "
+        "FROM source WHERE amount > 0) SELECT * FROM renamed",
+        "stg_customers": "WITH source AS (SELECT * FROM customers), renamed AS (SELECT id AS customer_id, region FROM source) "
+        "SELECT * FROM renamed",
+        "report": "SELECT c.region, SUM(o.amount) AS total FROM stg_orders AS o JOIN stg_customers AS c "
+        "ON o.customer_id = c.customer_id GROUP BY c.region",
+    }
+    result = minimize_tables(tables, ["report"], sources=SOURCES)
+    assert set(result.tables) == {"report"} and result.proofs["report"].status == "proved"
+    _assert_same(tables, result.tables, ["report"])
+    # the renaming for the proof follows scopes: a WITH name read in its own body is the pipeline's table
+    sql = "WITH orders AS (SELECT * FROM orders), b AS (SELECT * FROM orders) SELECT * FROM b JOIN (WITH b AS (SELECT 1 AS x) SELECT * FROM b) AS q ON TRUE"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    counter = [0]
+    for clause in reversed(list(tree.find_all(sqlglot.exp.With))):
+        table_minimizer._unique_ctes(clause.parent, counter)
+    assert tree.sql(dialect="bigquery") == (
+        "WITH orders__kumo2 AS (SELECT * FROM orders), b__kumo3 AS (SELECT * FROM orders__kumo2 AS orders) "
+        "SELECT * FROM b__kumo3 AS b JOIN (WITH b__kumo1 AS (SELECT 1 AS x) SELECT * FROM b__kumo1 AS b) AS q ON TRUE")
