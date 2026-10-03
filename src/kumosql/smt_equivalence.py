@@ -663,6 +663,7 @@ class _Compiler:
         self._blind = False
         self.used_setsrc = False
         self.limit_opaque = False
+        self.numeric_differences = False  # ABS(x - y) was read with x and y numbers
         self.window_opaque = False
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
@@ -1529,6 +1530,13 @@ class _Compiler:
             if isinstance(e, exp.Div):
                 nulls = z3.Or(nulls, null_fn(*args))  # SAFE_DIVIDE-like shapes stay possible
             return _Val(nulls, val_fn(*args))
+        if isinstance(e, exp.Abs) and self.exact:
+            a = self._val(e.this, env, agg, aliases)
+            self._numeric(a)
+            x = V.num(a.val)
+            return _Val(a.null, V.Num(z3.If(x < 0, -x, x)))
+        if isinstance(e, exp.Abs) and isinstance(e.this.unnest() if isinstance(e.this, exp.Paren) else e.this, exp.Sub):
+            return self._abs_difference(e, env, agg, aliases)
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
             inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
@@ -1556,6 +1564,41 @@ class _Compiler:
             self.uses_uf = True
             return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
+
+    def _abs_difference(self, e, env, agg, aliases) -> _Val:
+        """``ABS(x - y)`` with ``-`` and ``ABS`` left uninterpreted, plus what holds for every
+        number type (IEEE subtraction rounds ``x - y`` to exactly ``-(y - x)``, and is zero only
+        when ``x = y``): it is ``ABS(y - x)``, it is ``x - y`` when ``y < x`` and ``y - x`` when
+        ``x < y``, it is 0 when ``x = y`` and positive otherwise. ``x`` and ``y`` are taken to be
+        numbers (MySQL also subtracts strings, which sort differently), which the proof's
+        assumptions record."""
+
+        V = _value_sort()
+        diff = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+        a, b = self._val(diff.this, env, agg, aliases), self._val(diff.expression, env, agg, aliases)
+        self._numeric(a)
+        self._numeric(b)
+        self.numeric_differences = True
+        swapped = exp.Sub(this=diff.expression.copy(), expression=diff.this.copy())
+        result = self._generic(e, env, agg, aliases)
+        mirror = self._generic(exp.Abs(this=swapped), env, agg, aliases)
+        forward, backward = self._val(diff, env, agg, aliases), self._val(swapped, env, agg, aliases)
+        value = result.val
+        self.facts.append(
+            z3.Implies(
+                z3.And(z3.Not(a.null), z3.Not(b.null)),
+                z3.And(
+                    z3.Not(result.null),
+                    z3.Not(mirror.null),
+                    value == mirror.val,
+                    z3.Implies(_lt(b.val, a.val), value == forward.val),
+                    z3.Implies(_lt(a.val, b.val), value == backward.val),
+                    z3.Implies(a.val == b.val, value == V.Num(0)),
+                    z3.Implies(a.val != b.val, z3.And(V.is_Num(value), V.num(value) > 0)),
+                ),
+            )
+        )
+        return result
 
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
@@ -2788,14 +2831,22 @@ class _Prover:
             if z3.is_and(term):
                 stack.extend(term.children())
             elif z3.is_or(term) and 2 <= term.num_args() <= 4:
-                disjunctions.append(term)
+                disjunctions.append(term.children())
+            elif z3.is_distinct(term) and term.num_args() == 2 and term.arg(0).sort() == _value_sort():
+                # x <> y is x < y OR y < x where the order is total on the two values.
+                x, y = term.children()
+                parts = [_lt(x, y), _lt(y, x)]
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(block.cond.t, z3.Or(*parts)), block.occs, block.facts):
+                    disjunctions.append(parts)
+                del self.candidates[saved:]
         # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
         return [
             [
                 self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
-                for part in disjunction.children()
+                for part in parts
             ]
-            for disjunction in disjunctions
+            for parts in disjunctions
         ]
 
     def groups_unique(self, block) -> bool:
@@ -3343,7 +3394,7 @@ def _prove_core(
         )
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
-        )
+        ) + ((NUMERIC_DIFFERENCE_ASSUMPTION,) if compiler.numeric_differences else ())
         if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
             # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)
@@ -3440,6 +3491,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 WINDOW_SOURCE_ASSUMPTION = "window functions over the same input with the same text give the same values (ties in ORDER BY resolve alike)"
+NUMERIC_DIFFERENCE_ASSUMPTION = "x and y in ABS(x - y) are numbers"
 LIMIT_SOURCE_ASSUMPTION = "a LIMIT subquery with the same text returns the same rows each time"
 TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for equal inputs"
 
