@@ -193,6 +193,43 @@ def test_command_line(tmp_path, capsys):
     assert refused["status"] == "refused" and refused["readers"] == {"proj.an.a": ["proj.an.b", "proj.an.c"]}
 
 
+def _snapshot(root):
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def test_command_line_never_changes_the_project_or_writes_anything(tmp_path, monkeypatch, capsys):
+    """A bare run, a refused run and --help leave the project byte-identical and create no file in the working folder.
+
+    The only thing written anywhere is KumoSQL's own diagnostic log in its data folder (timing lines)."""
+
+    project, cwd, home = tmp_path / "project", tmp_path / "cwd", tmp_path / "home"
+    cwd.mkdir(), home.mkdir()
+    build(project)
+    before = _snapshot(project)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("KUMOSQL_HOME", str(home))
+    assert consolidate.main([str(project), "d", "a", "b", "c"]) == 0
+    assert consolidate.main([str(project), "d", "a"]) == 2
+    with pytest.raises(SystemExit) as stop:
+        consolidate.main(["--help"])
+    assert stop.value.code == 0
+    capsys.readouterr()
+    assert _snapshot(project) == before
+    assert list(cwd.iterdir()) == []
+    assert {p.name for p in home.iterdir()} <= {"ui.log", "redaction-map.json"}
+
+
+def test_help_says_the_command_is_a_read_only_preview_and_has_no_write_option(capsys):
+    with pytest.raises(SystemExit):
+        consolidate.main(["--help"])
+    text = capsys.readouterr().out
+    assert "READ-ONLY PREVIEW" in text and "changes none of your files" in text
+    assert "never writes, moves, renames or deletes any of your files" in text
+    assert "python -m kumosql consolidate-tables path/to/project D A B C" in text
+    for option in ("--write", "--apply", "--force", "--output", "--in-place", "--delete"):
+        assert option not in text
+
+
 def test_the_command_is_registered():
     from kumosql import __main__
 

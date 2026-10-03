@@ -294,6 +294,22 @@ def test_ui_formats_with_request_preferences_and_reports_complexity(ui_server):
     assert any(rule["name"] == "format_sql" for rule in json.load(urlopen(ui_server + "/api/rules")))
 
 
+def test_ui_reports_parsed_cte_counts_and_why_sql_was_left_alone(ui_server):
+    # The workspace shows these: CTE counts from the parse, and the step diagnostic behind
+    # an unchanged result, so a skipped rule never reads as "nothing to change".
+    sql = "WITH a AS (SELECT 1 AS x), b AS (SELECT x FROM a) SELECT x FROM b"
+    result = post_json(ui_server, {"sql": sql, "rules": ["format_sql"]})
+    assert result["complexity"]["before"]["metrics"]["ctes"] == 2
+
+    sqlx = 'config { type: "table" }\nselect 1 as x'
+    skipped = post_json(ui_server, {"sql": sqlx, "rules": ["format_sql"]})
+    assert skipped["verification"]["status"] == "unchanged"
+    assert [d["code"] for d in skipped["steps"][0]["diagnostics"]] == ["unsupported_sqlx"]
+    with urlopen(ui_server + "/assets/app.js") as response:
+        script = response.read()
+    assert b"No changes needed" not in script and b"metrics?.ctes" in script
+
+
 def get_json(base_url, path):
     with urlopen(base_url + path) as response:
         return json.load(response)
