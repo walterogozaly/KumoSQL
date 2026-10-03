@@ -2,10 +2,10 @@
 
 import json
 import time
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
@@ -13,7 +13,7 @@ from kumosql import dryrun, scope_queries, state
 from kumosql.cli import scopes_main
 from kumosql.scopes import describe_rule, parse_scope
 from kumosql.scope_queries import QueryError, QueryRun
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 SQL = "SELECT user_email FROM `p.d.my_team`"
 
@@ -186,7 +186,7 @@ def test_runner_reads_every_page(monkeypatch):
 
 @pytest.fixture
 def server():
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    httpd = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
