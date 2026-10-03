@@ -697,16 +697,28 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
 
 
 def _null_extended(select: exp.Select, source: exp.Expression) -> bool:
-    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join."""
+    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join.
+
+    Its own LEFT or FULL join pads it, and so does every later RIGHT or FULL join, which pads all
+    that was joined before it (``t JOIN d ON .. RIGHT JOIN b ON FALSE`` gives rows where ``d`` is
+    NULL). A source that is not one of the select's own items, or that carries joins of its own
+    (a parenthesized join), counts as padded.
+    """
 
     joins = select.args.get("joins") or []
     sides = [(j.args.get("side") or "").upper() for j in joins]
     kinds = [(j.args.get("kind") or "").upper() for j in joins]
-    for join, side, kind in zip(joins, sides, kinds):
-        if join.this is source:
-            return side in ("LEFT", "FULL") or kind in ("LEFT", "FULL")
-    # the FROM item, or anything joined before a RIGHT or FULL join, is padded by that join
-    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides, kinds))
+    if source.args.get("joins"):
+        return True
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is not None and from_.this is source:
+        later = 0
+    else:
+        position = next((i for i, j in enumerate(joins) if j.this is source), None)
+        if position is None or sides[position] in ("LEFT", "FULL") or kinds[position] in ("LEFT", "FULL"):
+            return True
+        later = position + 1
+    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides[later:], kinds[later:]))
 
 
 _STRICT = (exp.Paren, exp.Neg, exp.Cast, exp.Add, exp.Sub, exp.Mul, exp.Div, exp.IntDiv, exp.Mod, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
