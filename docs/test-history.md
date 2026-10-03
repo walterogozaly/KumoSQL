@@ -12,7 +12,7 @@ A record holds:
 - the **targets**: the tests the run was aiming at. They come from `--target PATH` (repeatable; `$KUMOSQL_TEST_TARGETS` for plain pytest), else the test files given on the command line, else the test files the branch added or changed against the master it branched from. A run with none of these has no targets and cannot be attributed;
 - the tests that failed, each marked as inside or outside the targets, with the first line of the message;
 - the run mode (`full`, `evals`, `no-evals` or `partial`), counts, library versions (sqlglot, sqlfluff, z3, DuckDB) and how many tests ran per file;
-- the times: the run's wall time (`seconds`) and CPU time across every worker (`cpu_seconds`, start-up and collection included), each file's wall and CPU seconds (`file_seconds`, setup to teardown, summed over its tests), their totals (`test_seconds`, `test_cpu_seconds`), and, for every test whose call took 3 seconds or more, that duration (`slow`) and its CPU seconds from setup to teardown (`slow_cpu`);
+- the times: the run's wall time (`seconds`) and CPU time across every worker (`cpu_seconds`, start-up and collection included), each file's wall and CPU seconds (`file_seconds`, setup to teardown, summed over its tests), their totals (`test_seconds`, `test_cpu_seconds`), and, for every test that took 3 seconds or more from setup to teardown, that duration (`slow`) and its CPU seconds (`slow_cpu`), and every setup of 3 seconds or more (`slow_setup`: a shared fixture built for that test). Records before version 3 timed the slow tests' call only;
 - the machine: cores, processor, memory, operating system and whether sqlglot ran compiled or pure (no host or user names).
 
 CPU time counts every thread of a worker (DuckDB's too) and the child processes a test waited for, such as a benchmark's process pool. On Windows only the worker's own time is counted. Wall time depends on how busy the machine was; CPU time is the steadier measure of the work a test does, and the one to compare when a change is meant to make a test cheaper.
@@ -48,18 +48,18 @@ targets (changed-tests): tests/test_quantified_rules.py
 
 ## Running failures first
 
-`python tools/test_history.py order --write` writes `tests/order.json` from the history: the tests that took 3 seconds or more with their median durations, and the tests that failed most. Under pytest-xdist `tests/conftest.py` then runs, in this order:
+`python tools/test_history.py order --write` writes `tests/order.json` from the history: the tests that took 3 seconds or more with their median durations, the files with a slow shared fixture (`together`, with the whole file's median seconds), the tests that failed most, and every test file the history has run (`files`). Under pytest-xdist `tests/conftest.py` then runs, in this order:
 
 1. any test that alone takes more than half of one worker's share of the run (started after the fast tests, it would end the run late);
 2. tests that failed before;
 3. the fast tests, so a broken one shows up in minutes;
 4. the slow tests, longest first, so one long benchmark never runs alone at the end.
 
-The workers take tests in exactly that order. `tools/xdist_scheduler.py` replaces pytest-xdist's `loadgroup` scheduler, which kept up to three tests queued on each worker and moved test groups to the front: a worker now takes more work only while everything it holds is fast. A pytest-xdist worker starts a test only once it holds the one it runs next as well, so a worker starting a slow test gets the first fast test left (or the quickest one) as its next test, never the next slow one, and two long benchmarks never wait in one worker's queue while another worker is idle. Groups (`xdist_group`) still run on one worker. In a full run on 4 workers the workers were busy 98% of the run's wall time with this scheduler, against 76% with `loadgroup`, whose last three workers sat idle for the last 13 minutes while one worker finished the MV workload eval and the tests queued behind it.
+The workers take tests in exactly that order. `tools/xdist_scheduler.py` replaces pytest-xdist's `loadgroup` scheduler, which kept up to three tests queued on each worker and moved test groups to the front: a worker now takes more work only while everything it holds is fast. A pytest-xdist worker starts a test only once it holds the one it runs next as well, so a worker starting a slow test gets the first fast test left (or the quickest one) as its next test, never the next slow one, and two long benchmarks never wait in one worker's queue while another worker is idle. Groups (`xdist_group`) still run on one worker, and so do the tests of a `together` file: the scheduler hands the file out as one unit, so its fixture is built once instead of once per worker, and its test ids stay as they are (an `xdist_group` mark would change them). In a full run on 4 workers the workers were busy 98% of the run's wall time with this scheduler, against 76% with `loadgroup`, whose last three workers sat idle for the last 13 minutes while one worker finished the MV workload eval and the tests queued behind it.
 
 Without `tests/order.json` data it falls back to starting the files in `HEAVY_FILES` first. `python tools/run_tests.py --quick` skips the slow tier (about 6,300 of 6,440 tests, a few minutes). `python tools/run_tests.py -x` stops at the first failure.
 
-Regenerate `tests/order.json` now and then, in a small PR of its own, once the history has more runs; a test missing from it counts as fast.
+Regenerate `tests/order.json` now and then, in a small PR of its own, once the history has more runs (the test speed thread does it daily). A test missing from it counts as fast, except in an eval file (`EVAL_FILES`) that the history has never run: those count as slow (60 seconds) until a recorded run times them, so a new benchmark neither lands in `--quick` nor starts late.
 
 ## DuckDB on one thread
 

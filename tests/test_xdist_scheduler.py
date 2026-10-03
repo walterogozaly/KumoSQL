@@ -38,12 +38,12 @@ def ready(node):
     return len(node.queue) >= 2 or (len(node.queue) == 1 and node.shutting_down)
 
 
-def run(collection, slow, workers=2, pick=lambda nodes: nodes[0], stock=False):
+def run(collection, slow, workers=2, pick=lambda nodes: nodes[0], stock=False, together=None):
     """Drive the scheduler like pytest-xdist does: each step, one busy worker finishes the test it is running."""
 
     from xdist.scheduler import LoadGroupScheduling
 
-    scheduler = LoadGroupScheduling(Config(workers)) if stock else xdist_scheduler.DurationScheduling(Config(workers), slow=slow)
+    scheduler = LoadGroupScheduling(Config(workers)) if stock else xdist_scheduler.DurationScheduling(Config(workers), slow=slow, together=together)
     nodes = [Node(f"gw{i}") for i in range(workers)]
     for node in nodes:
         scheduler.add_node(node)
@@ -92,3 +92,29 @@ def test_a_worker_starting_a_slow_test_gets_short_work_next_not_the_next_slow_te
     assert ran["gw0"][:2] == ["t.py::slow_a", "t.py::fast1"]
     assert ran["gw1"][:2] == ["t.py::slow_b", "t.py::fast2"]
     assert sorted(sum(ran.values(), [])) == sorted(collection)
+
+
+def test_a_file_with_a_slow_shared_fixture_runs_on_one_worker_with_its_test_ids_unchanged():
+    collection = ["s.py::slow", "f.py::a", "f.py::b", "f.py::c", "t.py::fast1", "t.py::fast2", "t.py::fast3", "t.py::fast4"]
+    for pick in (lambda nodes: nodes[0], lambda nodes: nodes[-1]):
+        ran, _ = run(collection, {"s.py::slow": 50.0}, workers=3, pick=pick, together={"f.py": 30.0})
+        (worker,) = [w for w, tests in ran.items() if "f.py::a" in tests]
+        assert [t for t in ran[worker] if t.startswith("f.py")] == ["f.py::a", "f.py::b", "f.py::c"]
+        assert sorted(sum(ran.values(), [])) == sorted(collection)
+
+
+def test_conftest_times_shared_fixture_files_whole_and_new_eval_files_as_slow():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("timing_conftest", Path(__file__).resolve().parent / "conftest.py")
+    conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conftest)
+    order = {"slow": {"tests/test_a.py::big": 9.0}, "together": {"tests/test_b.py": 40.0}, "files": ["tests/test_a.py", "tests/test_b.py", "tests/test_qed_benchmarks.py"]}
+    seconds, together = conftest._timing(order)
+    assert together == {"tests/test_b.py": 40.0}
+    assert seconds("tests/test_a.py::big") == 9.0 and seconds("tests/test_a.py::small") is None
+    assert seconds("tests/test_b.py::anything") == 40.0
+    assert seconds("tests/test_qed_benchmarks.py::new_case") is None  # a known eval file: its fast tests stay fast
+    assert seconds("tests/test_verieql_benchmarks.py::t") == conftest.NEW_EVAL_SECONDS  # an eval file never timed
+    assert seconds("tests/test_brand_new.py::t") is None  # not an eval file
+    assert conftest._timing({"slow": {}})[0]("tests/test_verieql_benchmarks.py::t") is None  # no history, no guess
