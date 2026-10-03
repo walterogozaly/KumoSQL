@@ -206,6 +206,24 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
+    """A bare column in ``select``'s ORDER BY, GROUP BY, HAVING or QUALIFY that may name one of its output
+    aliases rather than a source column (``SELECT y AS v FROM u ORDER BY v`` sorts by ``y``)."""
+
+    node = column
+    while node.parent is not None and node.parent is not select:
+        node = node.parent
+    if node.parent is not select or node.arg_key not in ("order", "group", "having", "qualify"):
+        return False
+    name = column.name.lower()
+    for item in select.expressions:
+        if isinstance(item, exp.Alias) and item.alias.lower() == name:
+            value = item.this
+            if not (isinstance(value, exp.Column) and value.name.lower() == name and not value.table):
+                return True
+    return False
+
+
 def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
@@ -241,7 +259,7 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
         if not qualifier and schema:
             scope = column.find_ancestor(exp.Select)
             sources = declared(scope) if scope is not None else []
-            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star):
+            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star) and not _names_output_alias(column, scope):
                 key = ".".join(p.name for p in sources[0].parts).lower()
                 known = schema.get(key)
                 if known is not None and column.name.lower() in [c.lower() for c in known]:
