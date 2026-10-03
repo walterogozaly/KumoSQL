@@ -75,6 +75,10 @@ WRONG_PROOFS = [
         WITNESS,
         id="where-in-over-empty-input-count",
     ),
+    # an outer select with no aggregate folded into a global aggregate (R019, a real optimizer bug pair)
+    pytest.param("SELECT 'US' AS c FROM t", "SELECT 'US' AS c FROM (SELECT COUNT(*) AS seed FROM t) g", WITNESS, id="R019-constant-over-count"),
+    pytest.param("SELECT 'US' AS c FROM t", "SELECT 'US' AS c FROM (SELECT COUNT(*) AS seed FROM t) g", EMPTY, id="R019-empty-input"),
+    pytest.param("SELECT 1 AS a FROM (SELECT MAX(x) AS m FROM t) g", "SELECT 1 AS a FROM t", WITNESS, id="R019-constant-over-max"),
 ]
 
 
