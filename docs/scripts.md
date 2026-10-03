@@ -46,10 +46,13 @@ A statement that writes no column (a `DELETE`, a delete-only `MERGE`) and a func
 
 - **Temporary tables.** `CREATE TEMP TABLE t AS SELECT ...` remembers what it was built from. A later table written from `t` traces to the real sources, and the temporary table is spliced into the final query as a common table expression, so column lineage reaches real columns. Redefinitions (`CREATE OR REPLACE TEMP TABLE t AS SELECT ... FROM t`) are versioned, and `INSERT` into a schema-only temporary table adds its sources by column.
 - **`UPDATE` or `MERGE` on a temporary table** makes it opaque: tables it was fed from remain dependencies at table level, but its columns are reported unknown with reason `temporary_table`.
-- **Script variables.** `DECLARE x DEFAULT (SELECT ... FROM t)` and `SET x = (SELECT ...)` carry their source tables to the statements that use `x` (edges are marked `via_variable`). A variable that no statement reads adds no edge.
-- **Branches and loops.** A statement inside `IF`, `CASE`, a loop or an exception handler is a possible edge, so every arm counts. Loop bodies are followed once.
-- **Procedures.** `CALL` expands the body with parameters as variables; recursion is cut at depth 8. A procedure that is defined but never called adds nothing.
-- **`EXECUTE IMMEDIATE`.** Literal text is read as the statement it holds; anything computed at run time is unknown.
+- **Script variables.** `DECLARE x DEFAULT (SELECT ... FROM t)` and `SET x = (SELECT ...)` carry their source tables to the statements that use `x` (edges are marked `via_variable`), including a `DEFAULT` that names an earlier variable. A variable that no statement reads adds no edge. A variable declared in `BEGIN ... END` ends with the block, and a `FOR` row variable with its loop, so a later table alias of the same name is not the variable.
+- **Branches and loops.** A statement inside `IF`, `CASE`, a loop or an exception handler is a possible edge, so every arm counts. The tables a condition reads (`IF`, `ELSEIF`, `CASE` and `WHEN`, `WHILE`, `UNTIL`, a `FOR` query) are reads of the script and sources of every table written, temporary table built and variable set inside it, since whether those happen depends on them. A loop body is run until its variables stop changing, so a value set late in one iteration reaches a statement early in the next; a loop that does not settle is unknown.
+- **Procedures.** `CALL` expands the body in its own scope: parameters hide the caller's variables of the same name and the caller's variables are unchanged afterwards, except that an `OUT` or `INOUT` parameter's final value is assigned to the variable passed for it. Recursion is cut at depth 8. A procedure that is defined but never called adds nothing.
+- **`EXECUTE IMMEDIATE`.** Literal text is read as the statement it holds; anything computed at run time is unknown. `USING` values feed the text's `@name` and `?` parameters, and `INTO` gives the listed variables what the query reads (unknown text leaves them unknown too).
+- **Transactions.** `ROLLBACK` brings the temporary tables back to what they were at `BEGIN TRANSACTION`, so values a rolled-back statement inserted are not in column lineage; the tables it read stay reads of the script. A `ROLLBACK` that may not run (inside a branch or handler) keeps the changes as possible.
+- **Names.** `_SESSION.t` is the temporary table `t`. A `DROP` of a temporary table that may not run leaves it in place. After `SET @@dataset_id = 'x'` (and `@@dataset_project_id`), unqualified names are tables of that dataset; a value that is not a constant string is an unknown statement.
+- **Columns other statements read.** Column lineage follows the traced output query. When another statement, a condition or a variable reads a table, `assess_change` on a column of it whose name the script mentions (or any column, after a `SELECT *`) lists the model as unknown with reason `script_columns`, and no column of that table is called dead. The same holds for pre and post operations.
 - **Job history.** A `MERGE`, `INSERT`, `UPDATE` or `DELETE` job that carries its query text but no destination table gets its destination and sources from the statement, so a MERGE-built table (every Dataform incremental run) has its upstream edge in job-history analysis. `expand_script_jobs` joins child jobs to their parent script and replaces anonymous temporary datasets (leading underscore) with the real tables they were built from, ordered by creation time.
 
 ## MERGE
@@ -72,9 +75,9 @@ Nothing in the UI explains scripts. Each script gets an informational `script_su
 
 ## Limits
 
-- Columns of a temporary table that `UPDATE`, `MERGE` or `DELETE` changed are unknown; only tables are traced.
+- Columns of a temporary table that `UPDATE` or `MERGE` changed are unknown; only tables are traced. `DELETE` and `TRUNCATE` remove rows only, so the columns keep their sources (the spliced query is a column-lineage view, not the table's rows).
 - A variable edge can be false if a column of the same name shadows the variable.
-- Loop bodies are followed once; a loop whose body depends on the iteration reads the same tables each time anyway, but dynamic table names inside it are unknown.
+- Dynamic table names inside a loop are unknown. Statements after `RETURN`, `LEAVE` or an error are still followed, as possible edges.
 - Pre/post operations that stay as unresolved Dataform templates are reported at info level, not guessed.
 - `EXPORT DATA` is kept for its reads only; the destination is not an edge.
 - Scalar SQL functions are not inlined: a call is a transform over its arguments, and the tables its body reads are reads of every statement that calls it from the same script (not of calls to functions defined elsewhere). A call that reads a table without a column (`COUNT(*)` of a lookup) is a constant in column lineage, with the table as a dependency.
