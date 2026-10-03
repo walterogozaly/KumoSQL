@@ -44,6 +44,8 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import star_modified
+
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
 _DIALECT = "bigquery"
@@ -597,7 +599,7 @@ def _star_body(body: exp.Expression, allow_where: bool) -> exp.Table | None:
         return None
     if isinstance(star, exp.Column) and isinstance(star.this, exp.Star) and star.table.lower() == source.alias_or_name.lower():
         star = star.this
-    if not isinstance(star, exp.Star) or star.args.get("except") or star.args.get("replace") or star.args.get("rename"):
+    if not isinstance(star, exp.Star) or star_modified(star):
         return None
     alias = source.args.get("alias")
     if alias is not None and alias.args.get("columns"):
