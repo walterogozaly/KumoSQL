@@ -40,6 +40,13 @@ def test_accepted_paths_are_relative_in_both_interpretations(tmp_path):
     assert (tmp_path / name).read_text() == "select 1"
 
 
+@pytest.mark.parametrize("name", ["NUL.sql", "CON.sql", "COM1.sql", "definitions/LPT1/model.sql", ".. /outside.sql", "defs./model.sql"])
+def test_windows_device_names_and_normalized_directory_aliases_are_refused(tmp_path, name):
+    with pytest.raises(live_graph.ProjectError):
+        live_graph._write_files({name: "select 1"}, str(tmp_path))
+    assert list(tmp_path.iterdir()) == []
+
+
 def _link(link, target, directory=False):
     try:
         link.symlink_to(target, target_is_directory=directory)

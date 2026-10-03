@@ -543,7 +543,10 @@ def _safe_path(path: object) -> PurePosixPath:
         raise ProjectError("invalid file path")
     posix = PurePosixPath(path)
     windows = PureWindowsPath(path)
-    if posix.is_absolute() or windows.drive or windows.root or any(p in ("", ".", "..") for p in path.split("/")):
+    if posix.is_absolute() or windows.drive or windows.root or any(
+        p in ("", ".", "..") or p.endswith((".", " ")) or PureWindowsPath(p).is_reserved()
+        for p in path.split("/")
+    ):
         raise ProjectError("invalid file path")
     name = posix.name.lower()
     if not (name.endswith(_ALLOWED_SUFFIXES) or name in _CONFIG_FILES):
