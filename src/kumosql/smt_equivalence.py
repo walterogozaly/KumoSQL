@@ -2908,6 +2908,18 @@ def _duplicate_blind(select: exp.Select) -> bool:
     return not any(n.find_ancestor(exp.Select) is select for n in select.find_all(exp.AggFunc, exp.Window))
 
 
+def _repeat_blind(block) -> bool:
+    """Repeating a row of the block's input leaves its distinct rows alone: no aggregate counts it.
+
+    DISTINCT dedups a block's output rows, not what its aggregates read: ``SELECT DISTINCT COUNT(*)``
+    still sees every repeat.
+    """
+
+    if not isinstance(block, _Agg):
+        return True
+    return all(c.distinct or c.func in _DUPLICATE_INSENSITIVE for c in block.aggs)
+
+
 def _is_set(u: _Union) -> bool:
     return u.distinct or (len(u.branches) == 1 and u.branches[0].distinct)
 
@@ -2927,7 +2939,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             b = prover.merge_equivalent_subs(b)
             b = prover.sub_consequences(b)
             b = prover.self_witness_facts(b)
-            if union.distinct or b.distinct:
+            if (union.distinct or b.distinct) and _repeat_blind(b):
                 b = prover.inline_unique_subs(b, require_unique=False)
             branches.append(prover.merge_key_occurrences(b))
         union.branches = branches

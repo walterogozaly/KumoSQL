@@ -27,6 +27,7 @@ Every rule only fires on shapes whose meaning it fully knows, so an unknown shap
 from __future__ import annotations
 
 import itertools
+from decimal import Decimal
 
 from sqlglot import exp
 
@@ -379,9 +380,10 @@ def _fold_case_comparisons(select: exp.Select) -> None:
         node = _unparen(node)
         if isinstance(node, exp.Literal) and not node.is_string:
             try:
-                return float(node.this)
-            except ValueError:
+                value = Decimal(node.this)
+            except ArithmeticError:
                 return None
+            return value if value.is_finite() else None
         return None
 
     def step(node: exp.Expression) -> exp.Expression:
@@ -394,7 +396,10 @@ def _fold_case_comparisons(select: exp.Select) -> None:
         outcomes = [number(i.args.get("true")) for i in left.args.get("ifs") or []] + [number(left.args.get("default"))]
         if any(o is None for o in outcomes):
             return node
-        verdicts = {op(o, number(right)) for o in outcomes}
+        # Exact comparison, and the same verdicts again as FLOAT64: a dialect may compare
+        # these literals either way, so fold only when both agree (2**53 + 1 vs 2**53 does not).
+        target = number(right)
+        verdicts = {op(o, target) for o in outcomes} | {op(float(o), float(target)) for o in outcomes}
         return exp.Boolean(this=verdicts.pop()) if len(verdicts) == 1 else node
 
     having = select.args.get("having")
@@ -796,6 +801,10 @@ def _split_compound_aggregates(select: exp.Select) -> exp.Expression | None:
         outer_items.append(exp.alias_(value, alias) if alias else value)
     if not novel:
         return None  # plain aggregates are _split_aggregates' rewrite
+    projected = {i.this.sql() for i in partial_items if not isinstance(i.this, exp.AggFunc)}
+    for n, key in enumerate(k for k in keys if k.sql() not in projected):
+        # a grouping key the select does not show still splits groups: carry it hidden
+        partial_items.append(exp.alias_(key.copy(), f"kumosql_g{n}"))
 
     partials: list[exp.Select] = []
     for branch in branches:
@@ -869,8 +878,8 @@ def _having_existence_to_where(select: exp.Select) -> exp.Expression | None:
     if any(not _key_determined(_value(i), keys) for i in select.expressions) or any(isinstance(i, exp.Star) for i in select.expressions):
         return None
     order = select.args.get("order")
-    if order is not None and _own(order):
-        return None
+    if order is not None and any(n.find_ancestor(exp.Select) is select for n in order.find_all(exp.AggFunc)):
+        return None  # ``ORDER BY COUNT(*)`` would count only the rows the filter keeps
     parts = _conjuncts(having.this)
     tests = [(p, _existence_test(p, select)) for p in parts]
     found = [(p, t) for p, t in tests if t is not None]
@@ -941,6 +950,15 @@ def _merge_joined_aggregates(select: exp.Select) -> exp.Expression | None:
             return None
         names = [i.alias_or_name.lower() for i in inner.expressions]
         if "" in names or len(set(names)) != len(names) or any(isinstance(i, exp.Star) for i in inner.expressions):
+            return None
+        # the outputs are renamed below, so a HAVING or GROUP BY that reads one by its alias would lose it
+        aliases = {i.alias.lower() for i in inner.expressions if isinstance(i, exp.Alias) and not (isinstance(i.this, exp.Column) and i.this.name.lower() == i.alias.lower())}
+        if any(
+            not c.table and c.name.lower() in aliases
+            for clause in (inner.args.get("having"), inner.args.get("group"))
+            if clause is not None
+            for c in clause.find_all(exp.Column)
+        ):
             return None
         derived.append((source.alias.lower(), inner, body))
     if len({d[2][0] for d in derived}) != 1 or len({d[0] for d in derived}) != len(derived):

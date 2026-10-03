@@ -238,6 +238,10 @@ def _split_aggregates(select: exp.Select) -> exp.Expression | None:
             return None
     if not any(_is_agg(i.this if isinstance(i, exp.Alias) else i) for i in select.expressions):
         return None
+    projected = {i.this.sql() for i in partial_items if not _is_agg(i.this)}
+    for n, key in enumerate(k for k in keys if k.sql() not in projected):
+        # a grouping key the select does not show still splits groups: carry it hidden
+        partial_items.append(exp.alias_(key.copy(), f"kumosql_g{n}"))
 
     partials: list[exp.Select] = []
     for branch in branches:

@@ -279,14 +279,18 @@ def _reads_as_set(select: exp.Select, depth: int = 0) -> bool:
     if depth > 16 or any(select.args.get(k) for k in ("limit", "offset", "qualify", "windows")) or _own(select, exp.Window):
         return False
     distinct = select.args.get("distinct")
-    if distinct is not None:
-        return not distinct.args.get("on")
+    if distinct is not None and distinct.args.get("on"):
+        return False
     aggregates = _own(select, exp.AggFunc)
     group = select.args.get("group")
     if group is not None and any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
         return False
+    # DISTINCT dedups the select's output rows, not the input its aggregates read:
+    # ``SELECT DISTINCT COUNT(*)`` still counts repeats, so aggregates are checked first.
     if group is not None or aggregates:
         return all(_insensitive(a) for a in aggregates)
+    if distinct is not None:
+        return True
     if _membership_query(select):
         return True
     reader = _reader(select)

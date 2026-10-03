@@ -16,10 +16,12 @@ _BLIND = (exp.Min, exp.Max)
 
 
 def _duplicate_blind(select: exp.Select) -> bool:
-    if select.args.get("distinct") is not None and not select.args["distinct"].args.get("on"):
-        return not any(w.find_ancestor(exp.Select) is select for w in select.find_all(exp.Window))
-    if not select.args.get("group"):
+    distinct = select.args.get("distinct")
+    if distinct is not None and distinct.args.get("on"):
         return False
+    if distinct is None and not select.args.get("group"):
+        return False
+    # DISTINCT dedups output rows, not what its aggregates read: ``SELECT DISTINCT COUNT(*)`` sees repeats
     for node in select.find_all(exp.AggFunc):
         if node.find_ancestor(exp.Select) is not select:
             continue
