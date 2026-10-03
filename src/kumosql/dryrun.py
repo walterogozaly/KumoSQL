@@ -78,6 +78,9 @@ class DryRunResult:
     error_reason: str | None = None
     error_message: str | None = None
     error_location: str | None = None
+    # False when a planned response carried no output schema: then ``schema`` is empty because
+    # nothing was observed, not because the query has no columns.
+    schema_observed: bool = True
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,8 @@ class RewriteCheck:
     def schema_matches(self) -> bool | None:
         if self.original_planned is not True or self.rewritten_planned is not True:
             return None
+        if self.original is None or self.rewritten is None or not (self.original.schema_observed and self.rewritten.schema_observed):
+            return None  # never "matches" unless both schemas were actually observed
         return not self.schema_differences
 
     @property
@@ -227,7 +232,10 @@ def dry_run(
 
     statistics = payload.get("statistics", {})
     query_stats = statistics.get("query", {})
-    schema = query_stats.get("schema", {}).get("fields", [])
+    schema_object = query_stats.get("schema")
+    # Observed means the response carried a fields list; `{}` or `{"schema": {}}` observed nothing.
+    observed = isinstance(schema_object, dict) and isinstance(schema_object.get("fields"), list)
+    schema = schema_object["fields"] if observed else []
     tables = tuple(
         ".".join(filter(None, (t.get("projectId"), t.get("datasetId"), t.get("tableId"))))
         for t in query_stats.get("referencedTables", [])
@@ -238,6 +246,7 @@ def dry_run(
         schema=tuple(Field.from_api(item) for item in schema),
         total_bytes_processed=int(processed) if processed is not None else None,
         referenced_tables=tables,
+        schema_observed=observed,
     )
 
 
@@ -320,6 +329,15 @@ def check_rewrite(
             original,
             rewritten,
         )
+    unobserved = [name for name, result in (("original", original), ("rewritten", rewritten)) if not result.schema_observed]
+    if unobserved:
+        return RewriteCheck(
+            None,
+            f"both SQL statements planned, but the dry run returned no output schema for the {' and '.join(unobserved)} SQL;"
+            " schemas were not compared",
+            original,
+            rewritten,
+        )
     differences = schema_differences(original.schema, rewritten.schema)
     if differences:
         return RewriteCheck(
@@ -364,8 +382,10 @@ def fetch_table_schemas(
             token=token,
             transport=transport,
         )
-        if result.ok:
+        if result.ok and result.schema_observed:
             schemas[table] = {field.name: field.type for field in result.schema}
+        elif result.ok:
+            errors[table] = "the dry run returned no schema"
         else:
             errors[table] = result.error_message or "dry run failed"
     return schemas, errors

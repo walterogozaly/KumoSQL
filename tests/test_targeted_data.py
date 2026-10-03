@@ -90,6 +90,19 @@ def test_runner_matches_single_run_execution_and_reports_errors():
             runner.run("SELECT 1; SELECT 2", dataset)
 
 
+def test_runner_answers_as_a_fresh_database_when_it_keeps_unchanged_tables():
+    """Datasets of a suite share tables, and the runner leaves a table alone when it already holds the next
+    dataset's rows; every answer must still be the bag of rows a fresh database gives. (Row order is not
+    compared: on a reused connection DuckDB's plan, and so the order, depends on the rows loaded before.)"""
+
+    query = "SELECT e.name, d.title FROM emp e LEFT JOIN dept d ON e.dept = d.id"
+    labeled = database_suite(query, SCHEMA, RULES) + random_datasets(SCHEMA, RULES, range(10))
+    with DatasetRunner(SCHEMA) as runner:
+        for item in labeled + labeled[::-1]:
+            direct, _ = execute_on_dataset(query, SCHEMA, item.dataset)
+            assert compare_outputs(runner.run(query, item.dataset), direct)[0], item.label
+
+
 def test_runner_times_out_a_runaway_query():
     dataset = generate_synthetic_dataset(SCHEMA, seed=2, rules=RULES)
     slow = "SELECT COUNT(*) FROM range(1000000000) a, range(1000000000) b"

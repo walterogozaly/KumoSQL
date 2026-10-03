@@ -10,6 +10,8 @@ python -m kumosql ui
 
 It opens at `http://127.0.0.1:8765/`. Keep the terminal running; Ctrl+C stops the app. `--no-browser` starts the server without opening a browser, and `--port 8766` chooses another port.
 
+The server accepts only its own local addresses and gives each running session a fresh secret that the browser sends with API requests. If you restart the server while a page is open, reload that page before using it again. Other websites cannot use a foreign address or origin to change the app's settings. Programs running on your computer can still read the local page, so this does not replace your computer's account security. If you call the API from a script, see the [local request boundary](../docs/ui.md) for the required session header.
+
 ## Pick the page for your task
 
 | Page | Use it for |
@@ -28,7 +30,7 @@ To show a project in the graph, start with `--project path/to/project`, or conne
 
 ## Settings in everyday terms
 
-- **Formatting** controls how SQL looks, including indentation and keyword case.
+- **Formatting** controls how SQL looks, including indentation and keyword case. SQL the formatter cannot read, such as Dataform SQLX, shows *Output unchanged* with the reason.
 - **Scopes** choose which models, tables, or job records an analysis includes.
 - **Tags** attach your own local labels to objects. They do not update BigQuery labels.
 - **Catalogs** describe the objects your team owns, including objects outside Dataform.

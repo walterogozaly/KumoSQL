@@ -545,8 +545,15 @@ def single_value_scalar(select: exp.Select) -> exp.Expression | None:
 
     changed = False
     for node in list(select.find_all(exp.Subquery)):
-        # ((SELECT ..)) is (SELECT ..)
-        if isinstance(node.this, exp.Subquery) and not node.alias and not node.this.alias and node.find_ancestor(exp.Select) is select:
+        # ((SELECT ..)) is (SELECT ..), unless a layer carries a tail: ((a UNION b) LIMIT 1) printed as one layer
+        # reads as (a UNION b) LIMIT 1, which no longer sits inside the surrounding IN or scalar parentheses.
+        if (
+            isinstance(node.this, exp.Subquery)
+            and not node.alias
+            and not node.this.alias
+            and not any(layer.args.get(k) for layer in (node, node.this) for k in ("order", "limit", "offset", "with", "with_"))
+            and node.find_ancestor(exp.Select) is select
+        ):
             node.replace(node.this)
             changed = True
     for node in list(select.find_all(exp.Subquery)):

@@ -10,7 +10,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 - **Evidence level.** A score says how strong its positive answers are: an unbounded proof, bounded verification (no difference on any database up to a row limit) or agreement on executed datasets. A suite that mixes levels has one results file per level.
 - **Zero wrong.** An eval reports `X/Y, 0 wrong`. A false proof, an incorrect counterexample or a behaviour-changing rewrite is a bug; an unknown is allowed.
 - **Held-out cases.** Where a held-out split exists, the page and the results file say so. Cases a rule was developed against are marked `tuned on test`.
-- **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout.
+- **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout. It masks timing before comparing (JSON timing keys, numbers with a unit, `HH:MM:SS`, and the bare elapsed-seconds column that ends a SQLSolver summary row), so only answers and counts count as a difference.
 
 ## Source inventory
 
