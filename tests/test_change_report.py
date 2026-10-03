@@ -219,3 +219,63 @@ def test_cli_takes_a_source_schema_per_snapshot(tmp_path):
     sb.write_text("[1]")
     with pytest.raises(SystemExit):
         change_report_main(args + ["--head-source-schema", str(sb)])
+
+
+# Compiled graphs carry operations, kind, dependencies and constraints as fields next to the query text.
+def compiled(post=(), pre=(), kind="table", deps=(), non_null=()):
+    def target(name):
+        return {"database": "p", "schema": "d", "name": name}
+
+    entry = {
+        "target": target("model"), "type": kind, "query": "SELECT x FROM p.d.src",
+        "preOps": list(pre), "postOps": list(post), "dependencyTargets": [target(n) for n in deps],
+    }
+    if non_null:
+        entry["assertions"] = {"nonNull": list(non_null)}
+    return {"tables": [entry], "declarations": [target("src"), target("other")]}
+
+
+def compiled_report(base, head):
+    from kumosql.pipeline import load_compiled_graph
+
+    return build_change_report(load_compiled_graph(base), load_compiled_graph(head), overlaps=False, generated_at="t")
+
+
+@pytest.mark.parametrize(
+    "head, part",
+    [
+        (compiled(post=["DELETE FROM `p.d.model` WHERE x = 1"]), "post_operations"),
+        (compiled(pre=["DELETE FROM `p.d.model` WHERE x = 1"]), "pre_operations"),
+        (compiled(kind="view"), "kind"),
+        (compiled(deps=["other"]), "dependencies"),
+        (compiled(non_null=["x"]), "constraints"),
+    ],
+)
+def test_compiled_graph_change_beyond_the_query_is_reported_unproven(head, part):
+    from kumosql.ci_check import conclude
+
+    r = compiled_report(compiled(), head)
+    assert [c["model"] for c in r["changes"]] == ["d.model"]
+    ver = r["changes"][0]["verification"]
+    assert ver["label"] == "unproven" and part in ver["reason"]
+    assert conclude({"changes": r["changes"], "diagnostics": r["diagnostics"]}) != "success"
+
+
+def test_moving_an_operation_from_before_to_after_the_query_is_a_change():
+    op = "DELETE FROM `p.d.model` WHERE x = 1"
+    r = compiled_report(compiled(pre=[op]), compiled(post=[op]))
+    reason = r["changes"][0]["verification"]["reason"]
+    assert "pre_operations" in reason and "post_operations" in reason
+
+
+def test_identical_compiled_graphs_have_no_changes():
+    op = "DELETE FROM `p.d.model` WHERE x = 1"
+    r = compiled_report(compiled(post=[op], deps=["src", "other"]), compiled(post=[f" {op} "], deps=["other", "src"]))
+    assert r["changes"] == []
+
+
+def test_proven_query_rewrite_with_a_new_operation_is_not_proven():
+    base, head = compiled(), compiled(post=["DELETE FROM `p.d.model` WHERE x = 1"])
+    head["tables"][0]["query"] = "SELECT x FROM p.d.src WHERE TRUE"
+    ver = compiled_report(base, head)["changes"][0]["verification"]
+    assert ver["label"] == "unproven" and "post_operations" in ver["reason"]

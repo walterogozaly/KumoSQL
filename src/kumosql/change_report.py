@@ -50,6 +50,39 @@ def _raw_text(root: Path | None, model: Model) -> str:
     return model.sql
 
 
+def _definition_changes(old: Model, new: Model) -> list[str]:
+    """Parts of a model other than its query whose change can alter what it materializes.
+
+    A compiled graph carries the operations around the query, the table kind,
+    the declared dependencies and the assertions as fields, not as text the
+    query comparison sees, so two models with identical queries can still differ.
+    """
+
+    changed = []
+    if old.kind != new.kind:
+        changed.append("kind")
+    pre = lambda m: tuple(t.strip() for t in m.operations_sql[: m.pre_operations])  # noqa: E731
+    post = lambda m: tuple(t.strip() for t in m.operations_sql[m.pre_operations :])  # noqa: E731
+    if pre(old) != pre(new):
+        changed.append("pre_operations")
+    if post(old) != post(new):
+        changed.append("post_operations")
+    if {d.key for d in old.declared_dependencies} != {d.key for d in new.declared_dependencies}:
+        changed.append("dependencies")
+    if (set(old.non_null), set(old.unique_keys)) != (set(new.non_null), set(new.unique_keys)):
+        changed.append("constraints")
+    return changed
+
+
+def _unchanged_text_reason(delta, definition: list[str]) -> str:
+    parts = []
+    if delta:
+        parts.append("its resolved output changed: " + _delta_reason(delta))
+    if definition:
+        parts.append(f"{', '.join(definition)} changed; the effect is not verified")
+    return "model text is unchanged but " + "; ".join(parts)
+
+
 def normalize_cost(entry: Mapping[str, object] | None) -> dict[str, object]:
     """Validate one caller-supplied cost entry; absent input reads as unknown."""
 
@@ -228,12 +261,13 @@ def build_change_report(
                 # Identical text is not identical output: a changed source schema reshapes a SELECT *, and
                 # so its lineage, with no change to any file. Compare what each snapshot resolves the model to.
                 delta = contract_delta(contract("base", base, key), contract("head", head, key))
-                if before == after and not delta:
+                definition = _definition_changes(old, new)
+                if before == after and not delta and not definition:
                     continue
                 if before == after:
                     verification = {
                         "label": "unproven",
-                        "reason": "model text is unchanged but its resolved output changed: " + _delta_reason(delta),
+                        "reason": _unchanged_text_reason(delta, definition),
                         "checks": [],
                     }
                 elif old.is_query and new.is_query:
@@ -243,6 +277,11 @@ def build_change_report(
                         "reason": v.reason,
                         "checks": [c.to_json() for c in v.checks],
                     }
+                    if definition and v.status.value == "proven":
+                        verification["label"] = "unproven"
+                        verification["reason"] = (
+                            f"query rewrite proven, but {', '.join(definition)} changed; the effect is not verified"
+                        )
                 else:
                     verification = {"label": "unproven", "reason": "not analyzed: not a query model", "checks": []}
                 if delta and before != after and verification["label"] in ("proven", "planner_checked"):
