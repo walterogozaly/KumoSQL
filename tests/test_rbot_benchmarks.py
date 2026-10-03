@@ -23,3 +23,4 @@ def test_rbot_calcite_pairs():
     assert result["total"] == 45
     assert result["wrong"] == [], f"wrong proofs: {result['wrong']}"
     assert result["proved"] >= FLOOR, f"proved {result['proved']}, floor {FLOOR}"
+    assert result["scored"] == result["total"] - len(result["different"])
