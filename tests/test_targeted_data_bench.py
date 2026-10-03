@@ -16,21 +16,31 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["targeted_data_bench"] = bench
 _spec.loader.exec_module(bench)
 
-from kumosql.result_equivalence import DatasetRunner, compare_outputs  # noqa: E402
+from kumosql.result_equivalence import BigQueryWouldFail, DatasetRunner, compare_outputs  # noqa: E402
 from kumosql.targeted_data import database_suite  # noqa: E402
 
 CASES = json.loads((ROOT / "tests" / "fixtures" / "targeted_data" / "cases.json").read_text(encoding="utf-8"))
 ITEMS, SUITES = bench.build_corpus("dev")
 
 
+# Told apart only on databases with a zero divisor, where BigQuery fails (``10 / comm``), so no
+# longer caught: such a database is no BigQuery witness (kumosql.bigquery_on_duckdb).
+_ZERO_DIVISOR_ONLY = {("calcite", 204, " / EMP.COMM"), ("calcite", 205, " / t1.COMM")}
+
+
 def test_every_regression_case_is_still_caught_by_the_suite():
     missed = []
     for case in CASES:
+        if any((case["suite"], case["index"]) == key[:2] and key[2] in case["mutant"] for key in _ZERO_DIVISOR_ONLY):
+            continue
         suite = SUITES[case["suite"]]
         with DatasetRunner(suite["schema"]) as runner:
             for labeled in database_suite(case["original"], suite["schema"], suite["rules"]):
-                a = runner.run(case["original"], labeled.dataset)
-                b = runner.run(case["mutant"], labeled.dataset)
+                try:
+                    a = runner.run(case["original"], labeled.dataset)
+                    b = runner.run(case["mutant"], labeled.dataset)
+                except BigQueryWouldFail:
+                    continue  # BigQuery fails on this database, so it catches nothing
                 if not compare_outputs(a, b, check_column_names=False)[0]:
                     break
             else:

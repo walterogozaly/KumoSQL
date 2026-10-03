@@ -331,3 +331,58 @@ def test_a_saved_or_layer_equivalence_is_not_applied_where_a_with_table_captures
     plain = sqlglot.parse_one("SELECT x FROM m", read="bigquery")
     _, used = equivalences.rewrite_tree(plain, [item])
     assert used == [item]
+
+
+# ------------------------------------------------- S017: equal code is not one shareable table
+
+
+def shared(tmp_path, files):
+    from kumosql.shared_logic import propose_shared_logic
+
+    declared = {
+        "t": 'config { type: "declaration", name: "t" }\n',
+        "u": 'config { type: "declaration", name: "u" }\n',
+    }
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "workflow_settings.yaml").write_text("defaultProject: p\ndefaultDataset: d\n", encoding="utf-8")
+    for name, text in {**declared, **files}.items():
+        path = tmp_path / "definitions" / f"{name}.sqlx"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return propose_shared_logic(load_sqlx_project(tmp_path))
+
+
+@pytest.mark.parametrize("value", ["RAND()", "CURRENT_TIMESTAMP()"])
+def test_a_run_dependent_select_is_not_ready_to_share(tmp_path, value):
+    body = TABLE + f"SELECT x, {value} AS v FROM ${{ref('t')}} WHERE id >= 0\n"
+    proposals = shared(tmp_path, {"a": body, "b": body, "r": TABLE + "SELECT * FROM ${ref('a')}\n"})
+    assert proposals and not any(p.ready for p in proposals)
+    assert all(label != "proven" for p in proposals for label in (p.verification or {}).values())
+
+
+def test_a_correlated_select_is_not_ready_to_share(tmp_path):
+    inner = "(SELECT COUNT(*) AS n FROM ${ref('u')} AS b WHERE b.x = a.x AND b.id > 0 AND b.s IS NULL)"
+    proposals = shared(tmp_path, {
+        "a": TABLE + f"SELECT a.x, {inner} AS n FROM ${{ref('t')}} AS a\n",
+        "b": TABLE + f"SELECT a.id, {inner} AS n FROM ${{ref('u')}} AS a\n",
+    })
+    assert not any(p.ready for p in proposals)
+
+
+def test_different_dataform_variables_are_not_one_duplicate(tmp_path):
+    proposals = shared(tmp_path, {
+        "a": TABLE + "SELECT id, x, s FROM ${ref('t')} WHERE s = '${dataform.projectConfig.vars.flag_a}'\n",
+        "b": TABLE + "SELECT id, x, s FROM ${ref('t')} WHERE s = '${dataform.projectConfig.vars.flag_b}'\n",
+    })
+    assert not any(p.origin == "exact_duplicate" for p in proposals)
+    same = shared(tmp_path / "same", {
+        "a": TABLE + "SELECT id, x, s FROM ${ref('t')} WHERE s = '${dataform.projectConfig.vars.flag_a}'\n",
+        "b": TABLE + "SELECT id, x, s FROM ${ref('t')} WHERE s = '${dataform.projectConfig.vars.flag_a}'\n",
+    })
+    assert not any(p.ready for p in same)  # the shared SELECT would hold an unresolved placeholder
+
+
+def test_an_ordinary_duplicate_is_still_ready(tmp_path):
+    body = TABLE + "SELECT x, id * 2 AS v FROM ${ref('t')} WHERE id >= 0 AND x IS NOT NULL\n"
+    proposals = shared(tmp_path, {"a": body, "b": body})
+    assert any(p.ready for p in proposals)

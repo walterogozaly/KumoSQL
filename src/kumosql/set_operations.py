@@ -90,12 +90,17 @@ def _rewrite(node: exp.SetOperation, counter: list[int]) -> str | None:
 
 def _project(branch: exp.Expression, names: list[str], output: list[str], counter: list[int]) -> exp.Expression:
     inner = branch.this if isinstance(branch, exp.Subquery) and isinstance(branch.this, exp.Select) else branch
-    if isinstance(inner, exp.Select) and all(not isinstance(e, exp.Star) for e in inner.expressions):
+    if (
+        isinstance(inner, exp.Select)
+        and all(not isinstance(e, exp.Star) for e in inner.expressions)
+        and not _ordinal_keys(inner)
+    ):
         by_name = {name: e for name, e in zip(names, inner.expressions)}
         if names == output:
             return branch
         # Same SELECT, reordered; a column the branch lacks is a constant NULL.
-        # Window/aggregate/ORDER BY/LIMIT stay valid because only the select list changes.
+        # Window/aggregate/ORDER BY/LIMIT stay valid because only the select list changes
+        # (an ``ORDER BY 1`` or ``GROUP BY 1`` would not: such a branch is wrapped below).
         projections = []
         for name in output:
             item = by_name.get(name)
@@ -105,7 +110,7 @@ def _project(branch: exp.Expression, names: list[str], output: list[str], counte
                 projections.append(item)
         inner.set("expressions", projections)
         return branch
-    # A set-operation (or starred) branch: select from it by name.
+    # A set-operation, starred or ordinal-keyed branch: select from it by name.
     counter[0] += 1
     alias = f"_by_name_{counter[0]}"
     wrapped = exp.Subquery(this=branch, alias=exp.TableAlias(this=exp.to_identifier(alias)))
@@ -116,6 +121,18 @@ def _project(branch: exp.Expression, names: list[str], output: list[str], counte
         else:
             projections.append(exp.alias_(exp.Null(), name, quoted=False))
     return exp.Subquery(this=exp.select(*projections).from_(wrapped))
+
+
+def _ordinal_keys(select: exp.Select) -> bool:
+    """Whether the SELECT's ORDER BY or GROUP BY names an output column by its position."""
+
+    keys = []
+    order, group = select.args.get("order"), select.args.get("group")
+    if order is not None:
+        keys += [o.this if isinstance(o, exp.Ordered) else o for o in order.expressions]
+    if group is not None:
+        keys += list(group.expressions)
+    return any(isinstance(k, exp.Literal) and not k.is_string for k in keys)
 
 
 def positional_sql_pair(left_sql: str, right_sql: str, dialect: str = "bigquery") -> tuple[str, str, str | None]:
