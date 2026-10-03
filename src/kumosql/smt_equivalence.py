@@ -214,6 +214,23 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+def _lost_null_ordering(body: exp.Expression, text: str) -> str:
+    """A suffix naming every NULLS FIRST/LAST of ``body`` when its BigQuery ``text`` lost one, else "".
+
+    sqlglot drops a NULLS placement BigQuery cannot spell there, such as ``ASC NULLS LAST`` in an aggregate's
+    window, so ``SUM(v) OVER (ORDER BY t NULLS FIRST)`` and ``.. NULLS LAST`` would print alike.
+    """
+
+    before = [bool(o.args.get("nulls_first")) for o in body.find_all(exp.Ordered)]
+    if not before:
+        return ""
+    try:
+        after = [bool(o.args.get("nulls_first")) for o in sqlglot.parse_one(text, read="bigquery").find_all(exp.Ordered)]
+    except sqlglot.errors.ParseError:
+        after = None
+    return "" if before == after else " NULLS[" + "".join("F" if b else "L" for b in before) + "]"
+
+
 def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
     """A bare column in ``select``'s ORDER BY, GROUP BY, HAVING or QUALIFY that may name one of its output
     aliases rather than a source column (``SELECT y AS v FROM u ORDER BY v`` sorts by ``y``)."""
@@ -1404,10 +1421,13 @@ class _Compiler:
                     order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
                 position = {old: new for new, old in enumerate(order)}
                 root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
-        key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
+        text = canonical.sql(dialect="bigquery", normalize_functions="upper")
+        lost = _lost_null_ordering(canonical, text)
+        key = "(" + text + ")" + lost
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
-        self.opaque_bodies[key] = (key[1:-1], len(names))
+        if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
+            self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
         return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
@@ -1943,6 +1963,15 @@ class _Compiler:
         V = _value_sort()
         target = e.this
         distinct = False
+        # COUNT(a, b, ..) counts the rows where no argument is NULL, and COUNT(DISTINCT a, b, ..) the
+        # distinct tuples among them: the argument is the tuple, NULL when any component is, and its
+        # value an uninterpreted function of the components (a claim valid for every such function
+        # holds for the injective one that a tuple is).
+        arguments = None
+        if func == "COUNT" and isinstance(target, exp.Distinct) and len(target.expressions) > 1:
+            arguments, distinct, target = list(target.expressions), True, None
+        elif func == "COUNT" and e.args.get("expressions") and not isinstance(target, exp.Distinct):
+            arguments, target = [target, *e.args["expressions"]], None
         if isinstance(target, exp.Distinct):
             if len(target.expressions) != 1:
                 raise Unsupported("multi-argument DISTINCT aggregate")
@@ -1955,7 +1984,12 @@ class _Compiler:
                 raise Unsupported(f"aggregate modifier {key}")
         if func in _DUPLICATE_INSENSITIVE:
             distinct = False
-        if func == "COUNT" and (target is None or isinstance(target, exp.Star)):
+        if arguments is not None:
+            if any(isinstance(a, exp.Star) for a in arguments):
+                raise Unsupported("* among several COUNT arguments")
+            vals = [self._val(a, env, None, None) for a in arguments]
+            arg = _Val(z3.Or(*[v.null for v in vals]), self._function("Tuple", len(vals))[1](*self._uf_args(vals)))
+        elif func == "COUNT" and (target is None or isinstance(target, exp.Star)):
             arg = None
         elif func in ("COUNTIF", "LOGICAL_AND", "LOGICAL_OR"):
             arg = _box(self._pred(target, env, None, None))
