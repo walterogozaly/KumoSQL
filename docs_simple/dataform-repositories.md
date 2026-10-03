@@ -33,6 +33,20 @@ Dataform's `${ref("name")}` resolves to the action or declaration with that name
 
 When Google credentials are available, KumoSQL also reads Dataform workflow configurations. A model gets a production-schedule marker when an active configuration selects it, directly or through dependencies. Here, active production means a scheduled, enabled configuration using the release named `production`.
 
+## What KumoSQL will not guess
+
+KumoSQL reads your `.sqlx` files without running Dataform's JavaScript. When a value would need that JavaScript, it says it does not know instead of guessing.
+
+For example, say one action has `type: dataform.projectConfig.vars.kind` and another has `type: "table"`, and both select `1 AS id`. If the variable is `incremental`, the first one keeps its old rows between runs, so the two are not the same table. KumoSQL marks the first one as an unknown type and will not call the pair equivalent. It still reads the first query for lineage.
+
+Three more things it handles the way Dataform does:
+
+- A `${ref("base")}` written inside a SQL comment is only text. It is not a dependency.
+- Built-in assertions such as `rowConditions: ["status > 0"]`, and a table's `partitionBy` and `clusterBy`, use that table's columns. A column named there is never reported as unused, even when no query reads it. If the setting is computed by JavaScript and cannot be read, KumoSQL reports no unused columns for that table.
+- A table with such settings and nothing reading it is still treated as a final output.
+
+Limits: these checks come from small synthetic projects compared with Dataform's compiler, not from a benchmark. Computed table names, schema prefixes and projects the compiler would reject are not handled yet. The [full guide](../docs/dataform-repositories.md#what-the-static-reader-does-not-guess) lists them.
+
 ## If loading fails
 
 Run:

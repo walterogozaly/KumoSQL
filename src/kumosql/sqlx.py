@@ -123,6 +123,58 @@ def _find_interpolation_end(text: str, opening: int) -> int:
     raise ValueError("unterminated SQLX interpolation")
 
 
+def sql_comment_spans(sql: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of every SQL comment (``--``, ``#`` and ``/* */``) in ``sql``.
+
+    Dataform leaves a ``${...}`` inside a comment as literal text: it is neither evaluated nor a dependency.
+    Quotes inside a comment do not open a string, and comment markers inside a string or a ``${...}``
+    expression do not open a comment. An unterminated block comment runs to the end of the text.
+    """
+
+    spans: list[tuple[int, int]] = []
+    index, size = 0, len(sql)
+    while index < size:
+        char = sql[index]
+        if sql.startswith("${", index):
+            try:
+                index = _find_interpolation_end(sql, index) + 1
+            except ValueError:
+                return spans
+        elif char == "#" or sql.startswith("--", index):
+            end = index
+            while end < size and sql[end] not in "\r\n":
+                end += 1
+            spans.append((index, end))
+            index = end
+        elif sql.startswith("/*", index):
+            end = sql.find("*/", index + 2)
+            end = size if end < 0 else end + 2
+            spans.append((index, end))
+            index = end
+        elif char in "'\"`":
+            quote = sql[index : index + 3] if sql[index : index + 3] in ("'''", '"""') else char
+            index += len(quote)
+            while index < size and not sql.startswith(quote, index):
+                if sql.startswith("${", index):
+                    try:
+                        index = _find_interpolation_end(sql, index) + 1
+                    except ValueError:
+                        return spans
+                    continue
+                index += 2 if sql[index] == "\\" else 1
+            index += len(quote)
+        else:
+            index += 1
+    return spans
+
+
+def outside_sql_comments(sql: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
+    """The matches of ``pattern`` in ``sql`` that do not start inside a SQL comment."""
+
+    spans = sql_comment_spans(sql)
+    return [m for m in pattern.finditer(sql) if not any(start <= m.start() < end for start, end in spans)]
+
+
 @dataclass(frozen=True)
 class SqlxRestoration:
     token: str
