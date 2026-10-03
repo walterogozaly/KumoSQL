@@ -427,22 +427,6 @@ def distinct_on(select: exp.Expression) -> bool:
     return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
 
 
-def extended_grouping(group: exp.Expression | None) -> bool:
-    """Whether a ``GROUP BY`` uses ROLLUP, CUBE, GROUPING SETS or WITH TOTALS.
-
-    Such a GROUP BY outputs a row per grouping set, so a key is not one row per value (a repeated set
-    repeats its groups, and the empty set gives a row even over no input). sqlglot keeps ``ROLLUP (..)``
-    and the others as items of ``group.expressions``; older releases (and MySQL's ``WITH ROLLUP``) use
-    the group's own args, so both are checked.
-    """
-
-    if group is None:
-        return False
-    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
-        return True
-    return any(isinstance(e, (exp.Rollup, exp.Cube, exp.GroupingSets)) for e in group.expressions)
-
-
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 
