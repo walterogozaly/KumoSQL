@@ -32,6 +32,12 @@ WRONG_PROOFS = [
     pytest.param(
         "SELECT 1 + COUNT(x) AS n FROM t", "SELECT 1 + COUNT(g.n) AS n FROM (SELECT COUNT(x) AS n FROM t) AS g", id="count-of-count-in-arithmetic"
     ),
+    pytest.param(
+        "SELECT COUNT(d.c) AS n FROM (SELECT x AS c FROM t UNION ALL SELECT y AS c FROM t) AS d",
+        "SELECT COUNT(g.n) AS n FROM (SELECT COUNT(e.c) AS n FROM (SELECT x AS c FROM t) AS e"
+        " UNION ALL SELECT COUNT(e.c) AS n FROM (SELECT y AS c FROM t) AS e) AS g",
+        id="count-over-union-all-of-global-counts",
+    ),
 ]
 
 

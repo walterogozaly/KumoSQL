@@ -302,8 +302,8 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
     ``SELECT k, SUM(p) AS n FROM (SELECT k, COUNT(*) AS p FROM t GROUP BY k)
     GROUP BY k`` is the inner query: every group of the outer select holds one
     inner row, so SUM, MIN or MAX of its one value returns that value (SUM of a
-    COUNT included). COUNT of it is not: it counts that one row (1, or 0 for NULL). A global inner aggregate has exactly one row, so the same
-    holds with no keys at all.
+    COUNT included). COUNT of it is not: it counts that one row (1, or 0 for NULL). A global inner
+    aggregate has exactly one row, so the same holds with no keys at all.
     """
 
     if not _no_extras(select, allow_group=True) or select.args.get("having"):
