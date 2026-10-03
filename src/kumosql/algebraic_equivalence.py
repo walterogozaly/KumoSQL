@@ -74,6 +74,7 @@ from .sum_of_counts import sum_of_grouped_counts
 from .lone_source import lift_derived_expressions
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
+from .keyed_set_join import lift_keyed_set_join
 from .aggregate_rules import rewrite_aggregates
 from .null_rejecting_joins import left_join_to_inner
 from .outer_on_rejection import strengthen_under_outer_on
@@ -4846,7 +4847,7 @@ def normalize(
             # them would silently redirect those reads (to another column of the same name, say)
             names = _derived_output_names(node) if isinstance(node.parent, (exp.Subquery, exp.CTE)) else None
             snapshot = node.copy() if names is not None else None  # rules rewrite in place
-            constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
+            constrained = lift_keyed_set_join(node, keys, not_null, types_map) or normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
                 if names is None or _keeps_names(names, _derived_output_names(constrained)):
                     return constrained
