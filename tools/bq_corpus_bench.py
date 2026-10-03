@@ -9,12 +9,15 @@ would load it, and scored on:
 * coverage: statements read, columns traced, files the cleanup rules and formatter could act on, and the gaps the
   loader reports, by kind.
 
+A fifth of the files (by SHA-1 of ``project/path``) is also scored apart as a held-out split.
+
     python tools/bq_corpus_bench.py [--json out.json] [--write-results]
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -34,12 +37,18 @@ CORPORA = ROOT / "tests" / "fixtures" / "bq_corpora"
 RESULTS = ROOT / "benchmarks" / "results" / "bq-real-corpora.json"
 
 
+def held_out(project: str, relative: str) -> bool:
+    """A fifth of the files, by SHA-1 of ``project/path``, scored apart: fixes are not tuned on them."""
+
+    return int(hashlib.sha1(f"{project}/{relative}".encode()).hexdigest(), 16) % 5 == 0
+
+
 def _error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {str(exc).splitlines()[0][:160] if str(exc) else ''}"
 
 
-def run_project(root: Path) -> dict:
-    """The scores of one project folder."""
+def run_project(root: Path, *, stages: bool = True) -> dict:
+    """The scores of one project folder. ``stages=False`` loads and traces it but runs no cleanup or format."""
 
     files = sorted(p for p in root.rglob("*") if p.suffix in (".sql", ".sqlx"))
     out: dict = {"files": len(files), "failures": [], "gaps": {}, "stages": {}}
@@ -60,8 +69,10 @@ def run_project(root: Path) -> dict:
     deps = {"expected": 0, "found": 0}
     stages: dict[str, Counter] = {"cleanup": Counter(), "format": Counter()}
     handled: Counter = Counter()  # True: read with no gap, cleaned up and formatted with no gap either
+    held = Counter()
     for path in files:
         relative = path.relative_to(root).as_posix()
+        failures_before = len(out["failures"])
         text = path.read_text(encoding="utf-8", errors="replace")
         model = by_path.get(relative)
         if model is not None and path.suffix == ".sqlx":
@@ -72,22 +83,27 @@ def run_project(root: Path) -> dict:
             deps["found"] += len(expected & upstream)
             out["failures"] += [f"{relative}: ref({name!r}) is not an edge" for name in sorted(expected - upstream)]
         clean = model is None or model.key not in gapped
-        for stage, run in (("cleanup", stage_cleanup), ("format", stage_format)):
+        for stage, run in (("cleanup", stage_cleanup), ("format", stage_format)) if stages else ():
             status, detail = run(text, PASS)
             stages[stage][status] += 1
             clean = clean and status == PASS
             if status == FAIL:
                 out["failures"].append(f"{relative}: {stage}: {detail}")
         handled[clean] += 1
+        if held_out(root.name, relative):
+            held["files"] += 1
+            held["handled"] += clean
+            held["failures"] += len(out["failures"]) > failures_before
+    out["held_out"] = {key: held[key] for key in ("files", "handled", "failures")}
     out["dependencies"] = deps
     out["stages"] = {stage: dict(counts) for stage, counts in stages.items()}
     out["handled"] = handled[True]
     return out
 
 
-def run_all() -> dict[str, dict]:
+def run_all(skip: frozenset[str] | set[str] = frozenset()) -> dict[str, dict]:
     sources = json.loads((CORPORA / "sources.json").read_text())
-    return {project["name"]: run_project(CORPORA / project["name"]) for project in sources["projects"]}
+    return {project["name"]: run_project(CORPORA / project["name"]) for project in sources["projects"] if project["name"] not in skip}
 
 
 def totals(results: dict[str, dict]) -> dict:
@@ -95,6 +111,7 @@ def totals(results: dict[str, dict]) -> dict:
     out = {key: sum(r.get(key) or 0 for r in results.values()) for key in keys}
     out["failures"] = sum(len(r["failures"]) for r in results.values())
     out["handled"] = sum(r.get("handled", 0) for r in results.values())
+    out["held_out"] = {key: sum(r.get("held_out", {}).get(key, 0) for r in results.values()) for key in ("files", "handled", "failures")}
     out["dependencies_expected"] = sum(r.get("dependencies", {}).get("expected", 0) for r in results.values())
     out["dependencies_found"] = sum(r.get("dependencies", {}).get("found", 0) for r in results.values())
     for stage in ("cleanup", "format"):
@@ -129,6 +146,9 @@ def write_results(results: dict[str, dict], seconds: float) -> None:
         "command": "python tools/bq_corpus_bench.py --write-results",
         "date": date.today().isoformat(),
         "performance": f"{seconds:.1f} s for every project and stage",
+        "held_out": (f"A fifth of the files, chosen by SHA-1 of project/path, scored apart: {t['held_out']['handled']}/"
+                     f"{t['held_out']['files']} handled, {t['held_out']['failures']} with a failure. Tuned on test: bugs "
+                     "were fixed with every file's failures in view, held-out files included."),
     })
     record.setdefault("caveats", "")
     RESULTS.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")

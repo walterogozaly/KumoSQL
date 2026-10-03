@@ -74,8 +74,10 @@ def _is_asset_reference(reference: object) -> bool:
     return "/" in normalized or normalized.lower().endswith((".sql", ".sqlx"))
 
 
-_REF_RE = re.compile(r"\$\{\s*(?:ctx\.)?ref\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
-_RESOLVE_RE = re.compile(r"\$\{\s*(?:ctx\.)?resolve\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
+# The arguments may hold one level of calls: ``ref({schema: functions.baseSchema("ga4"), name: "event"})``.
+_REF_ARGS = r"(?P<args>(?:[^()]|\([^()]*\))*?)"
+_REF_RE = re.compile(r"\$\{\s*(?:ctx\.)?ref\(\s*" + _REF_ARGS + r"\s*\)\s*\}")
+_RESOLVE_RE = re.compile(r"\$\{\s*(?:ctx\.)?resolve\(\s*" + _REF_ARGS + r"\s*\)\s*\}")
 _SELF_RE = re.compile(r"\$\{\s*(?:ctx\.)?self\(\s*\)\s*\}")
 _CONFIG_DEPENDENCIES_RE = re.compile(r"\bdependencies\s*:\s*(?:\[(?P<list>[^\]]*)\]|(?P<one>\{[^}]*\}|['\"`][^'\"`]*['\"`]))")
 _DEPENDENCY_ITEM_RE = re.compile(r"\{[^}]*\}|['\"`][^'\"`]*['\"`]")
@@ -124,6 +126,96 @@ def _top_level(config: str) -> str:
 def _config_value(config: str, key: str) -> str | None:
     match = re.search(rf"\b{key}\s*:\s*(['\"`])((?:\\.|(?!\1).)*)\1", _top_level(config))
     return match.group(2) if match else None
+
+
+_JS_WORD_STRING = r"""(?:"[\w\- ]*"|'[\w\- ]*'|\d+)"""
+# ``dataform.projectConfig.vars.x``, ``constants.SCHEMA``, ``functions.baseSchema("ga4")``: a global, maybe called with literals.
+_JS_GLOBAL_EXPRESSION = re.compile(
+    rf"(?P<root>[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)+(?:\((?:{_JS_WORD_STRING}(?:,{_JS_WORD_STRING})*)?\))?"
+)
+
+
+def _config_expression(config: str, key: str) -> str | None:
+    """The expression a config object sets ``key`` to, without whitespace, when it is not a string literal; else None."""
+
+    offset = max(config.find("{"), 0)
+    match = re.search(rf"\b{key}\s*:\s*", _top_level(config))
+    if not match:
+        return None
+    start = index = offset + match.end()
+    depth = 0
+    while index < len(config):
+        char = config[index]
+        if char in "'\"`":
+            closing = config.find(char, index + 1)
+            index = len(config) if closing < 0 else closing
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}" or (char == "," and depth == 0):
+            if depth == 0:
+                break
+            depth -= 1
+        index += 1
+    expression = config[start:index].strip()
+    if not expression or expression[0] in "'\"`":
+        return None
+    return _compact_expression(expression)
+
+
+def _compact_expression(expression: str) -> str:
+    """``expression`` without whitespace outside its strings."""
+
+    return re.sub(r"\s+(?=[^\"']*(?:[\"'][^\"']*[\"'][^\"']*)*$)", "", expression.strip())
+
+
+def _is_placeholder(part: str) -> bool:
+    """Whether a table part is a :func:`computed_config_value` placeholder rather than a value."""
+
+    return part.startswith("{") and part.endswith("}")
+
+
+def computed_config_value(expression: str, project_vars: Mapping[str, object], modules: Iterable[str]) -> str | None:
+    """What a computed config ``schema`` or ``database`` stands for: its value or a placeholder; None when unknowable.
+
+    ``dataform.projectConfig.vars.x`` is the variable's value in the project settings. Any other expression of a
+    global (``dataform`` or an ``includes/`` module), called with literal arguments at most, is the same table part
+    wherever it is written, so it becomes a placeholder spelling it (``{functions:baseSchema("ga4")}``, dots made
+    colons so the name stays one part): two actions whose schemas come from different expressions stay apart, and a
+    ``ref()`` written with the same expression finds its action. An expression of anything else (a local variable,
+    a computed argument) is None.
+    """
+
+    found = _JS_GLOBAL_EXPRESSION.fullmatch(expression)
+    if not found or found.group("root") not in {"dataform", *modules}:
+        return None
+    variable = re.fullmatch(r"dataform\.projectConfig\.vars\.([A-Za-z_$][\w$]*)", expression)
+    if variable:
+        value = project_vars.get(variable.group(1))
+        if isinstance(value, str) and value and not re.search(r"[.`]", value):
+            return value
+    return "{" + expression.replace("'", '"').replace(".", ":") + "}"
+
+
+def _project_vars(root: Path) -> dict[str, object]:
+    """The ``vars`` of the project settings (``workflow_settings.yaml`` or ``dataform.json``); empty when unreadable."""
+
+    try:
+        settings = root / "workflow_settings.yaml"
+        if settings.is_file():
+            block = re.search(r"(?m)^vars\s*:\s*\n((?:[ \t]+.*\n?|\s*\n)*)", settings.read_text(encoding="utf-8-sig"))
+            found: dict[str, object] = {}
+            for line in (block.group(1) if block else "").splitlines():
+                pair = re.match(r"""\s+([\w$]+)\s*:\s*(?:"([^"]*)"|'([^']*)'|([^#'"\s][^#]*?))\s*(?:#.*)?$""", line)
+                if pair:
+                    found[pair.group(1)] = next(v for v in pair.group(2, 3, 4) if v is not None)
+            return found
+        legacy = root / "dataform.json"
+        if legacy.is_file():
+            data = json.loads(legacy.read_text(encoding="utf-8-sig"))
+            return dict(data.get("vars") or {}) if isinstance(data.get("vars"), dict) else {}
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        pass
+    return {}
 
 
 def _config_tags(config: str) -> tuple[str, ...]:
@@ -455,6 +547,7 @@ def _parse_ref_args(
     *,
     names_may_be_missing: bool = False,
     schema_settles: bool = False,
+    computed: Callable[[str], str | None] | None = None,
 ) -> Target:
     """The target a ``ref()`` names.
 
@@ -463,6 +556,9 @@ def _parse_ref_args(
     once resolves to that target; otherwise the project defaults apply. A name that
     several targets hold, or one that no action names while ``names_may_be_missing``
     (JavaScript declarations that could not be read), is not guessed: it raises.
+    ``computed(expression)`` gives what a computed dataset or project stands for (see
+    :func:`computed_config_value`). A dataset only known as a placeholder that no action of that name shares is
+    not guessed either when actions of that name exist elsewhere: the expression may evaluate to their dataset.
     """
 
     def unresolved(name: str, schema: str | None = None) -> None:
@@ -481,17 +577,46 @@ def _parse_ref_args(
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def placed(expression: str | None) -> str | None:
+        return computed(expression) if computed is not None and expression else None
+
+    def check_placeholder(name: str, schema: str | None) -> None:
+        if schema is not None and _is_placeholder(schema) and by_name(name, schema) is None and (known or {}).get(name):
+            raise ValueError("ref() names its dataset by an expression that may be another table's dataset; it was left unresolved")
+
     if args.lstrip().startswith("{"):
         name = _config_value(args, "name") or ""
         schema = _config_value(args, "schema")
         database = _config_value(args, "database")
+        if "(" in args and not name:
+            raise ValueError("ref() names its table by an expression; it was left unresolved")
+        if schema is None:
+            schema = placed(_config_expression(args, "schema"))
+            check_placeholder(name, schema)
+        if database is None and (project := placed(_config_expression(args, "database"))) is not None:
+            same = [t for t in (known or {}).get(name, []) if t.database == project and schema in (None, t.schema)]
+            if len(same) == 1:
+                return same[0]
         if not database:
             found = by_name(name, schema)
             if found is not None:
                 return found
             unresolved(name, schema)
         return Target(database or default.database, schema or default.schema, name)
-    parts = [match.group(2) for match in _STRING_RE.finditer(args)]
+    if "(" in args:
+        # An argument is a call: ``ref(functions.baseSchema("ga4"), "event")``. Only the name must be a literal.
+        items = _split_top_level(args)
+        values = [_js_string(item) for item in items]
+        if not items or len(items) > 3 or values[-1] is None:
+            raise ValueError("unsupported ref() arguments")
+        values = [value if value is not None else placed(_compact_expression(item)) for value, item in zip(values, items)]
+        if any(value is None for value in values):
+            raise ValueError("ref() names its dataset by an expression that cannot be read; it was left unresolved")
+        if len(items) == 2:
+            check_placeholder(values[1], values[0])
+        parts = values
+    else:
+        parts = [match.group(2) for match in _STRING_RE.finditer(args)]
     if len(parts) == 1:
         found = by_name(parts[0])
         if found is None:
@@ -530,6 +655,20 @@ def load_sqlx_project(
     search_root = root / "definitions" if (root / "definitions").is_dir() else root
     models: dict[str, Model] = {}
     sources: dict[str, Target] = {}
+    project_vars = _project_vars(root)
+    try:
+        include_modules = {path.stem for path in (root / "includes").glob("*.js")}
+    except OSError:
+        include_modules = set()
+
+    def computed(expression: str | None) -> str | None:
+        """What a computed dataset or project stands for, or None (see :func:`computed_config_value`)."""
+
+        if expression is None:
+            return None
+        defaults = {"dataform.projectConfig.defaultSchema": dataset, "dataform.projectConfig.defaultDataset": dataset,
+                    "dataform.projectConfig.defaultDatabase": database, "dataform.projectConfig.defaultProject": database}
+        return defaults.get(expression) or computed_config_value(expression, project_vars, include_modules)
 
     def unlistable(directory: Path, reason: str) -> None:
         try:
@@ -575,8 +714,9 @@ def load_sqlx_project(
         )
         kind = _config_value(config, "type") or "table"
         target = Target(
-            _config_value(config, "database") or database,
-            _config_value(config, "schema") or (assertion_dataset if kind == "assertion" else dataset),
+            _config_value(config, "database") or computed(_config_expression(config, "database")) or database,
+            _config_value(config, "schema") or computed(_config_expression(config, "schema"))
+            or (assertion_dataset if kind == "assertion" else dataset),
             _config_value(config, "name") or path.stem,
         )
         known.setdefault(target.name, []).append(target)
@@ -626,7 +766,7 @@ def load_sqlx_project(
 
         def plain_ref(match: re.Match[str]) -> str:
             try:
-                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js).sql()
+                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js, computed=computed).sql()
             except ValueError:
                 return match.group(0)
 
@@ -671,7 +811,7 @@ def load_sqlx_project(
     js_sets_database = False
 
     def unknown_names() -> dict:
-        return {"names_may_be_missing": incomplete_js, "schema_settles": not js_sets_database}
+        return {"names_may_be_missing": incomplete_js, "schema_settles": not js_sets_database, "computed": computed}
 
     js_files: dict[str, str] = {}
     for path in find_assets(root, (".js",), unlistable):

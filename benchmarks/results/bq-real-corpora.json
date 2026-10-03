@@ -1,20 +1,20 @@
 {
   "suite": "BigQuery real-code corpora",
   "order": 225,
-  "size": 202,
-  "score": "202 files in 8 projects: 0 failures; statements read 120/121; columns traced 1358/1371",
+  "size": 385,
+  "score": "385 files in 13 projects: 3 failures; statements read 287/289; columns traced 2481/2596",
   "metric": "Open-source Dataform projects and BigQuery SQL, copied at pinned commits. Each project is loaded whole; every file goes through the cleanup rules and the formatter. A failure is a crash, a change accepted without a proof, a changed backticked name, or a literal ref() that is not a graph edge.",
   "evidence": "executed",
-  "correctness": "0 failures; dependencies 217/217 literal ref() and config dependencies found",
+  "correctness": "3 failures; dependencies 402/405 literal ref() and config dependencies found",
   "coverage": {
-    "proven": 131,
-    "unsupported": 71
+    "proven": 247,
+    "unsupported": 138
   },
   "docs": "docs/evals/bq-real-corpora.md",
   "command": "python tools/bq_corpus_bench.py --write-results",
   "date": "2026-10-03",
-  "performance": "87.9 s for every project and stage",
-  "caveats": "Eight projects only, chosen for licence and feature spread, not at random. dbt projects (Jinja) are left out because KumoSQL does not render Jinja. basedosdados is a 40-file sample of 536 near-identical view definitions, renamed after their folders because every file is called publish.sql. Statement and column counts cover query models; operations and generated SQL that only running JavaScript can produce are counted as gaps, not failures. No results are compared against BigQuery.",
-  "held_out": "First run: two bugs found and fixed on this corpus (a long header comment hid a statement's kind, so all 40 basedosdados views were unread; a wrong count in the unparsed-operations message). The corpus is not held out.",
-  "analysis": "Files read with no blocking gap, cleaned up and formatted: 131/202. Cleanup: 197 pass, 5 unsupported; format: 202 pass. Gaps the loader reports: 59 unresolved_template, 41 external_tables, 7 parse_error, 7 unexpanded_star, 5 unparsed_operation, 1 no_query, 1 unknown_reads."
+  "performance": "892.0 s for every project and stage",
+  "caveats": "Thirteen projects only, chosen for licence and feature spread, not at random. dbt projects (Jinja) are left out because KumoSQL does not render Jinja. basedosdados is a 40-file sample of 536 near-identical view definitions, renamed after their folders because every file is called publish.sql. Statement and column counts cover query models; operations and generated SQL that only running JavaScript can produce are counted as gaps, not failures. The 3 failures are refs to tables that JavaScript publishes, which KumoSQL does not run. Baseline of the five projects added second, before fixes: 35 failures, dependencies 150/185, statements 146/164, columns 924/1006; three loader bugs fixed (refs with computed datasets, a when() ending with its connective, FROM inside EXTRACT read as a table). Two bugs were found and fixed on the first eight projects' first run. No results are compared against BigQuery.",
+  "held_out": "A fifth of the files, chosen by SHA-1 of project/path, scored apart: 37/58 handled, 1 with a failure (the five added projects: 17/28 handled, 1 with a failure; 13/28 and 6 before the fixes). Tuned on test: the bugs were fixed with every file's failures in view, held-out files included.",
+  "analysis": "Files read with no blocking gap, cleaned up and formatted: 247/385. Cleanup: 365 pass, 20 unsupported; format: 385 pass. Gaps the loader reports: 69 unresolved_template, 48 external_tables, 27 template_columns, 22 unexpanded_star, 11 cycle, 7 parse_error, 5 unparsed_operation, 2 no_query, 2 unsupported_ref, 1 unknown_reads."
 }
