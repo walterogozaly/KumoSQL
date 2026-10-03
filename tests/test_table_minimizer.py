@@ -212,3 +212,148 @@ def test_twenty_tables_with_five_protected():
     assert set(protected) <= set(result.tables) and len(result.tables) <= 9
     assert all(result.proofs[name].status in ("proved", "unchanged") for name in protected)
     _assert_same(TWENTY, result.tables, protected, databases=40)
+
+
+# The six worked examples of an outside review of pipeline minimization: each pairs a pipeline with a
+# tempting rewrite that changes a protected table. The rewrite must not be proved, DuckDB must show it
+# differs on the witness, and the minimizer's own answer must agree with the original.
+
+_DUCK_TYPES = {"INT64": "BIGINT", "STRING": "VARCHAR", "BOOL": "BOOLEAN", "NUMERIC": "DECIMAL(38, 9)"}
+_DOMAINS = {"INT64": [-1, 0, 1, 2, 10, 100, None], "STRING": ["W", "E", None], "BOOL": [True, False, None],
+            "NUMERIC": [0, 10, 2.5, None]}
+
+
+def _run(tables, protected, sources, data, dialect="bigquery"):
+    con = duckdb.connect()
+    for name, columns in sources.items():
+        con.execute(f"CREATE TABLE {name} ({', '.join(f'{c} {_DUCK_TYPES[t]}' for c, t in columns.items())})")
+        if data.get(name):
+            con.executemany(f"INSERT INTO {name} VALUES ({', '.join('?' for _ in columns)})", data[name])
+    pending = dict(tables)
+    while pending:
+        for name, sql in list(pending.items()):
+            try:
+                con.execute(f"CREATE VIEW {name} AS {sqlglot.transpile(sql, read=dialect, write='duckdb')[0]}")
+                del pending[name]
+            except duckdb.CatalogException:
+                continue
+    out = {}
+    for name in protected:
+        result = con.execute(f"SELECT * FROM {name}")
+        out[name] = ([d[0].lower() for d in result.description], Counter(result.fetchall()))
+    return out
+
+
+def _random_data(sources, seed):
+    rng = random.Random(seed)
+    return {name: [tuple(rng.choice(_DOMAINS[t]) for t in columns.values()) for _ in range(rng.randint(0, 6))]
+            for name, columns in sources.items()}
+
+
+EXAMPLES = {
+    "protected stage keeps its rows": dict(
+        sources={"raw_orders": {"id": "INT64", "amount": "INT64"}},
+        tables={"stage_a": "SELECT id, amount FROM raw_orders", "stage_b": "SELECT id, amount FROM stage_a",
+                "final_orders": "SELECT id, amount FROM stage_b WHERE amount > 0"},
+        protected=["stage_a", "final_orders"],
+        trap={"stage_a": "SELECT id, amount FROM raw_orders WHERE amount > 0",
+              "final_orders": "SELECT id, amount FROM stage_a"},
+        witness={"raw_orders": [(1, -1)]},
+    ),
+    "shared siblings by UNION ALL": dict(
+        sources={"raw_sales": {"id": "INT64", "region": "STRING", "amount": "INT64"}},
+        tables={"west": "SELECT id, region, amount FROM raw_sales WHERE region = 'W'",
+                "large": "SELECT id, region, amount FROM raw_sales WHERE amount >= 100",
+                "combined": "SELECT id, region, amount FROM west UNION ALL SELECT id, region, amount FROM large",
+                "final_sales": "SELECT id, COUNT(*) AS n FROM combined GROUP BY id"},
+        protected=["west", "final_sales"],
+        trap={"west": "SELECT id, region, amount FROM raw_sales WHERE region = 'W'",
+              "common_sales": "SELECT id, region, amount FROM raw_sales WHERE region = 'W' "
+                              "UNION ALL SELECT id, region, amount FROM raw_sales WHERE amount >= 100",
+              "final_sales": "SELECT id, COUNT(*) AS n FROM (SELECT id, region, amount FROM common_sales WHERE region = 'W' "
+                             "UNION ALL SELECT id, region, amount FROM common_sales WHERE amount >= 100) AS c GROUP BY id"},
+        witness={"raw_sales": [(1, "W", 100)]},
+    ),
+    "LEFT JOIN ON predicate is not demand": dict(
+        sources={"raw_events": {"id": "INT64", "value": "INT64"}, "d": {"id": "INT64"}},
+        tables={"all_events": "SELECT id, value FROM raw_events",
+                "joined": "SELECT e.id FROM all_events AS e LEFT JOIN d ON e.value > 0 AND e.id = d.id"},
+        protected=["joined"],
+        trap={"all_events": "SELECT id, value FROM raw_events WHERE value > 0",
+              "joined": "SELECT e.id FROM all_events AS e LEFT JOIN d ON e.value > 0 AND e.id = d.id"},
+        witness={"raw_events": [(1, None)], "d": []},
+    ),
+    "DISTINCT on a superset": dict(
+        sources={"raw_items": {"id": "INT64", "active": "BOOL", "price": "INT64"}},
+        tables={"items": "SELECT id, active, price FROM raw_items",
+                "active_items": "SELECT id, active, price FROM items WHERE active IS TRUE",
+                "expensive_active": "SELECT id, price FROM active_items WHERE price > 10",
+                "final_items": "SELECT id, price FROM expensive_active"},
+        protected=["items", "expensive_active", "final_items"],
+        trap={"items": "SELECT DISTINCT id, active, price FROM raw_items",
+              "expensive_active": "SELECT id, price FROM items WHERE active IS TRUE AND price > 10",
+              "final_items": "SELECT id, price FROM expensive_active"},
+        witness={"raw_items": [(1, True, 20), (1, True, 20)]},
+    ),
+    "AVG is not SUM over COUNT(*)": dict(
+        sources={"raw_metrics": {"k": "INT64", "x": "NUMERIC"}},
+        tables={"sums": "SELECT k, SUM(x) AS total FROM raw_metrics GROUP BY k",
+                "averages": "SELECT k, AVG(x) AS mean FROM raw_metrics GROUP BY k",
+                "report": "SELECT s.k, s.total, a.mean FROM sums AS s JOIN averages AS a ON s.k = a.k",
+                "final_metrics": "SELECT k, total, mean FROM report"},
+        protected=["sums", "final_metrics"],
+        trap={"stats": "SELECT k, SUM(x) AS total, COUNT(*) AS n FROM raw_metrics GROUP BY k",
+              "sums": "SELECT k, total FROM stats",
+              "final_metrics": "SELECT k, total, SAFE_DIVIDE(total, n) AS mean FROM stats WHERE k IS NOT NULL"},
+        witness={"raw_metrics": [(1, 10), (1, None)]},
+    ),
+    "AVG keeps the join's dropped NULL key": dict(
+        sources={"raw_metrics": {"k": "INT64", "x": "NUMERIC"}},
+        tables={"sums": "SELECT k, SUM(x) AS total FROM raw_metrics GROUP BY k",
+                "averages": "SELECT k, AVG(x) AS mean FROM raw_metrics GROUP BY k",
+                "report": "SELECT s.k, s.total, a.mean FROM sums AS s JOIN averages AS a ON s.k = a.k",
+                "final_metrics": "SELECT k, total, mean FROM report"},
+        protected=["sums", "final_metrics"],
+        trap={"sums": "SELECT k, SUM(x) AS total FROM raw_metrics GROUP BY k",
+              "final_metrics": "SELECT k, SUM(x) AS total, AVG(x) AS mean FROM raw_metrics GROUP BY k"},
+        witness={"raw_metrics": [(None, 10)]},
+    ),
+    "a global COUNT(*) keeps its empty-input row": dict(
+        sources={"raw_logs": {"k": "INT64"}},
+        tables={"logs": "SELECT k FROM raw_logs", "metrics": "SELECT COUNT(*) AS n FROM logs",
+                "final_counts": "SELECT n FROM metrics"},
+        protected=["metrics", "final_counts"],
+        trap={"metrics": "SELECT COUNT(*) AS n FROM raw_logs GROUP BY k", "final_counts": "SELECT n FROM metrics"},
+        witness={"raw_logs": []},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(EXAMPLES))
+def test_review_examples_traps_are_refused_and_answers_agree(name):
+    case = EXAMPLES[name]
+    sources = {k: {"columns": v} for k, v in case["sources"].items()}
+    tables, protected = case["tables"], case["protected"]
+    # the trap really is wrong, on the witness
+    assert _run(tables, protected, case["sources"], case["witness"]) != _run(case["trap"], protected, case["sources"], case["witness"])
+    verdicts = table_minimizer.verify_tables(tables, case["trap"], protected, sources=sources)
+    assert any(v.status in ("unknown", "missing") for v in verdicts.values()), verdicts
+    result = minimize_tables(tables, protected, sources=sources)
+    assert set(protected) <= set(result.tables)
+    for data in [case["witness"], *(_random_data(case["sources"], seed) for seed in range(30))]:
+        assert _run(tables, protected, case["sources"], data) == _run(result.tables, protected, case["sources"], data)
+    # the minimizer's answer passes the same check
+    assert all(v.status in ("proved", "unchanged") for v in
+               table_minimizer.verify_tables(tables, result.tables, protected, sources=sources).values())
+
+
+def test_non_deterministic_tables_are_never_folded_or_rewritten():
+    tables = {
+        "sample": "SELECT id, amount FROM orders WHERE RAND() < 0.5",
+        "a": "SELECT id FROM sample",
+        "b": "SELECT amount FROM sample",
+        "firsts": "SELECT id FROM orders ORDER BY id LIMIT 3",
+        "c": "SELECT id FROM firsts",
+    }
+    result = minimize_tables(tables, ["a", "b", "c"], sources=SOURCES)
+    assert result.tables["sample"] == tables["sample"] and result.tables["firsts"] == tables["firsts"]

@@ -7,6 +7,7 @@ Agreement on test data never counts: every step is kept only when KumoSQL's pipe
 ## Use it
 
 - **Python:** `kumosql.table_minimizer.minimize_tables(tables, protected, sources=None, dialect="bigquery", timeout_ms=5000, max_seconds=120)` returns a `TableMinimization`: `.tables` (name to SQL, in the input dialect), `.proofs` (per protected table: `unchanged` or `proved`, with the prover's assumptions), `.score` and `.original_score`, `.moves`, `.removed`, `.changed`, `.rejected_moves`, `.stopped` and `.to_json()`. Bad input raises `MinimizationError` (an unknown protected table, a cycle, a name used for both a source and a table).
+- **Checking a proposal:** `verify_tables(original, candidate, protected, sources=None, dialect="bigquery")` returns, per protected table, `unchanged`, `proved` (with assumptions), `missing` or `unknown` (with the reason). The candidate may add tables of its own. The eval harness can use it to tell a proved answer from one that only agrees on data.
 - **Eval harness:** `kumosql.table_minimizer:minimize_case` takes a case in the shared table-minimization case format (`{id, dialect, sources, tables, protected}`) and returns `{name: SQL}`.
 - **CLI:** `python -m kumosql minimize-tables CASE.json` (`-` reads stdin; `--max-seconds`, `--timeout-ms`). The file holds `tables`, `protected` and optionally `sources` and `dialect`. Output is the JSON of `to_json()`; progress goes to stderr.
 
@@ -31,6 +32,10 @@ Moves, each scored on the whole set of tables:
 The search is greedy: at each step every move is scored, the cheapest are proved first, and the first one proved is taken. A second start folds every unprotected table into its readers at once and then continues greedily; the cheaper proved result wins. A shared intermediate that would be copied into several readers stays when copying costs more.
 
 Every state is checked against the **original** tables (never against the previous step), so proofs do not chain. The check is the Refactor page's: `refactor.check_observable`, built on `pipeline_equivalence.prove_models` (layer lemmas, then everything inlined), with the output column names compared as well, since the prover compares columns by position. Saved equivalences from the app are not used. Proofs are cached per protected table and the SQL it depends on.
+
+A table whose rows can change from one evaluation to the next is never folded, merged, pruned or rewritten, and readers of it are not rewritten either: random and time functions (`RAND`, `GENERATE_UUID`, `CURRENT_*`), `ANY_VALUE`, `ARRAY_AGG`/`STRING_AGG`, `LIMIT`, sampling, `_TABLE_SUFFIX` and `FOR SYSTEM_TIME AS OF`. Copying such a table into two readers would evaluate it twice. It can still be dropped when nothing reads it.
+
+`tests/test_table_minimizer.py` carries seven tempting rewrites that each change a protected table (a filter pushed into a protected stage, shared siblings built with `UNION ALL`, a `LEFT JOIN` ON predicate taken as a filter, `DISTINCT` on a superset, `AVG` as a sum over `COUNT(*)`, a `NULL` join key kept, a global `COUNT(*)` turned into a grouped one). For each, DuckDB shows the difference on a witness database, `verify_tables` refuses it, and the minimizer's own answer agrees with the original on the witness and on random databases.
 
 A table that is not a single readable query (a script, `CALL`, DDL) is returned exactly as given, and every table it reads is kept and proved unchanged like a protected one.
 

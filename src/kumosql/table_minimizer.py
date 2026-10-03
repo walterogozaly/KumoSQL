@@ -197,6 +197,7 @@ class _Setup:
     protected: list[str]
     opaque: frozenset[str]  # tables that could not be read: never rewritten or folded
     pinned: frozenset[str]  # tables an unreadable table reads: kept and proved like protected ones
+    fixed: frozenset[str]  # unreadable or non-deterministic tables: never folded, merged, pruned or rewritten
     reads: _Reads
     source_columns: dict[str, list[str]]
     builder_facts: list[tuple]  # (key, columns, not_null, keys, types) for sources
@@ -331,9 +332,34 @@ def _prepare(tables, protected, sources, dialect, timeout_ms):
     mentioned = {key for key in original if key.split(".")[-1] in words}
     pinned = frozenset(r for r in mentioned | {r for key in opaque for r in upstream.get(key, ())}
                        if r in original and r not in protected_keys)
-    setup = _Setup(pipeline, original, protected_keys, frozenset(opaque), pinned, _Reads(pipeline), source_columns,
+    fixed = frozenset(opaque) | {key for key, sql in original.items() if _volatile(sql)}
+    setup = _Setup(pipeline, original, protected_keys, frozenset(opaque), pinned, fixed, _Reads(pipeline), source_columns,
                    facts, timeout_ms)
     return setup, names, mapping, back
+
+
+_VOLATILE_NODES = tuple(
+    getattr(exp, name) for name in (
+        "Rand", "Randn", "Uuid", "CurrentTimestamp", "CurrentDate", "CurrentDatetime", "CurrentTime", "CurrentUser",
+        "AnyValue", "ArrayAgg", "GroupConcat", "Limit", "TableSample",
+    ) if hasattr(exp, name)
+)
+_VOLATILE_WORDS = re.compile(
+    r"\b(GENERATE_UUID|SESSION_USER|_TABLE_SUFFIX|SYSTEM_TIME|ANY_VALUE|ARRAY_AGG|STRING_AGG|LIMIT|RAND|CURRENT_\w+)\b",
+    re.IGNORECASE,
+)
+
+
+def _volatile(sql: str) -> bool:
+    """Whether a query can return different rows when evaluated twice or in another place: random and
+    time functions, a representative or unordered aggregate, LIMIT, sampling, wildcard suffixes or time travel."""
+
+    if _VOLATILE_WORDS.search(sql):
+        return True
+    try:
+        return any(True for _ in sqlglot.parse_one(sql, read="bigquery").find_all(*_VOLATILE_NODES))
+    except sqlglot.errors.SqlglotError:
+        return True
 
 
 # ------------------------------------------------------------------ columns and proofs
@@ -633,7 +659,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
         if not users:
             yield f"drop {key}", {k: v for k, v in state.items() if k != key}
             continue
-        if key in setup.opaque or any(u in setup.opaque for u in users):
+        if key in setup.fixed or any(u in setup.fixed for u in users):
             continue
         try:
             raw = {u: _inline_into(state[u], key, state[key], resolve) for u in users}
@@ -651,7 +677,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
     groups: dict[tuple, list[str]] = {}
     for key in sorted(state):
         names = tuple(columns.get(key, ()))
-        if names and key not in setup.opaque:
+        if names and key not in setup.fixed:
             groups.setdefault((names, setup.reads(state[key])), []).append(key)
     for members in groups.values():
         for key in members:
@@ -662,7 +688,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
                 if other == key or _depends_on(setup, state, other, key):
                     continue
                 users = readers[key]
-                if any(u in setup.opaque for u in users):
+                if any(u in setup.fixed for u in users):
                     break
                 try:
                     changed = {u: _redirect(state[u], key, other, resolve) for u in users}
@@ -674,7 +700,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
     # columns no reader uses
     for key in editable:
         users = readers[key]
-        if not users or key in setup.opaque:
+        if not users or key in setup.fixed:
             continue
         used: set[str] = set()
         for user in users:
@@ -692,7 +718,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
 
     # simpler SQL for one table
     for key in sorted(state):
-        if key in setup.opaque:
+        if key in setup.fixed:
             continue
         for form in _simplified(setup, state[key], columns)[:2]:
             yield f"simplify {key}", {**state, key: form}
@@ -718,10 +744,10 @@ def _fold_all(setup: _Setup, state: Mapping[str, str]) -> tuple[str, dict[str, s
     current = dict(state)
     order = [k for k in setup.pipeline.topological_order() if k in current]
     for key in order:
-        if key in protected or key in setup.opaque:
+        if key in protected or key in setup.fixed:
             continue
         users = _readers(setup, current)[key]
-        if any(u in setup.opaque for u in users):
+        if any(u in setup.fixed for u in users):
             continue
         try:
             for user in users:
@@ -731,7 +757,7 @@ def _fold_all(setup: _Setup, state: Mapping[str, str]) -> tuple[str, dict[str, s
         del current[key]
     columns = _state_columns(setup, current)
     for key in list(current):
-        if key not in setup.opaque:
+        if key not in setup.fixed:
             current[key] = _best(setup, current[key], columns)[0]
     return ("fold every unprotected table into its readers", current) if current != dict(state) else None
 
@@ -892,6 +918,61 @@ def _render(setup: _Setup, state, start, tables, names, back, dialect) -> dict[s
         user = names[back[tuple(key.split("."))]]
         out.setdefault(user, tables[user])
     return {name: out[name] for name in tables if name in out}
+
+
+def verify_tables(
+    original: Mapping[str, str],
+    candidate: Mapping[str, str],
+    protected: Iterable[str],
+    *,
+    sources: Mapping[str, object] | None = None,
+    dialect: str = "bigquery",
+    timeout_ms: int = 5000,
+) -> dict[str, ProtectedProof]:
+    """Check a proposed set of tables against the original: one result per protected table.
+
+    Status ``unchanged`` (its SQL and everything it reads are as given), ``proved`` (the prover proved it
+    returns the same rows, with the same output columns), ``missing`` or ``unknown`` (not proved; the reason
+    says why). ``candidate`` may add tables of its own. Raises :class:`MinimizationError` on unusable input.
+    """
+
+    protected = list(protected)
+    added = {name: sql for name, sql in candidate.items() if _parts(str(name)) not in {_parts(str(n)) for n in original}}
+    setup, names, mapping, back = _prepare({**original, **added}, protected, sources, dialect, timeout_ms)
+    by_parts = {_parts(str(name)): sql for name, sql in candidate.items()}
+    state: dict[str, str] = {}
+    for parts, user in names.items():
+        if parts not in by_parts:
+            continue
+        key = ".".join(mapping[parts])
+        sql = by_parts[parts]
+        if user in original and sql == original[user] and key in setup.original:
+            state[key] = setup.original[key]
+            continue
+        try:
+            tree = sqlglot.parse_one(sql, read=dialect)
+            if dialect != "bigquery":
+                tree = sqlglot.parse_one(tree.sql(dialect="bigquery"), read="bigquery")
+            for table in tree.find_all(exp.Table):
+                ref = _table_parts(table)
+                if ref and ref not in mapping:
+                    mapping[ref] = _internal(ref)
+            state[key] = _rename_tables(tree, mapping).sql(dialect="bigquery")
+        except sqlglot.errors.SqlglotError:
+            state[key] = sql  # unreadable: nothing that depends on it can be proved
+    results: dict[str, ProtectedProof] = {}
+    for key in setup.protected:
+        user = _user_name(key, back, names)
+        if key not in state:
+            results[user] = ProtectedProof(user, "missing", "the table is not in the candidate")
+            continue
+        if state[key] == setup.original[key] and _closure(setup, state, key) == _closure(setup, setup.original, key):
+            results[user] = ProtectedProof(user, "unchanged", "its SQL and every table it reads are as given")
+            continue
+        ok, assumptions, why = _check(setup, state, [key])
+        results[user] = (ProtectedProof(user, "proved", "proved equal to the original", assumptions) if ok
+                         else ProtectedProof(user, "unknown", _label(why, back, names)))
+    return results
 
 
 def minimize_case(case: Mapping) -> dict[str, str]:
