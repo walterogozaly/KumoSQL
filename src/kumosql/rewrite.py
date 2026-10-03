@@ -38,6 +38,7 @@ from . import cost_rules as _cost_rules  # noqa: F401
 from . import formatting as _formatting  # noqa: F401
 from . import inline_ctes as _inline_ctes  # noqa: F401
 from . import lift_subqueries as _lift_subqueries  # noqa: F401
+from . import qualify_columns as _qualify_columns  # noqa: F401
 
 
 class VerificationStatus(str, Enum):
@@ -812,11 +813,12 @@ def canonical_rule_order() -> tuple[str, ...]:
     ``lift_subqueries`` and ``inline_single_use_ctes`` are inverses, so a
     pipeline holding both undoes and redoes its own work on every run; the
     canonical order keeps ``inline_single_use_ctes`` and leaves the lifter to
-    be run on its own. Rules that re-render a statement discard the layout
+    be run on its own, and so does ``qualify_columns``, which makes SQL longer
+    and is a style choice. Rules that re-render a statement discard the layout
     ``format_sql`` produced, so ``format_sql`` goes last.
     """
 
-    names = [n for n in available_rules() if n not in ("lift_subqueries", "format_sql")]
+    names = [n for n in available_rules() if n not in ("lift_subqueries", "format_sql", "qualify_columns")]
     # Removing unused and duplicate CTEs can leave another CTE with a single
     # reader, so inlining has to come after both or one pass is not enough.
     if "inline_single_use_ctes" in names:
