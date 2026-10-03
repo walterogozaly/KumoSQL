@@ -1102,17 +1102,45 @@ def _in_semantics(encoder: _Encoder, x):
     return hit, false
 
 
-def _same(encoder: _Encoder, condition, semantics, mode: str, extra: list) -> bool:
+def _same(encoder: _Encoder, condition, semantics, mode: str, extra: list, witnesses: list | None = None) -> bool:
+    """Whether ``condition`` and ``semantics`` agree in every state ``extra`` allows.
+
+    ``witnesses`` keeps the models of earlier checks that came out different (the variables are named the same
+    in every encoding): most candidate readings of a condition are told apart by a state an earlier check found,
+    and evaluating that state is much cheaper than a solver call. A model that satisfies every assertion proves
+    them satisfiable, so the answer is the one the solver would give.
+    """
+
+    assertions = [*encoder.facts, *extra]
+    if mode == "pos":
+        assertions.append(condition[0] != semantics[0])
+    elif mode == "neg":
+        assertions.append(condition[1] != semantics[1])
+    else:
+        assertions.append(z3.Or(condition[0] != semantics[0], condition[1] != semantics[1]))
+    if witnesses and _witnessed(z3.And(*assertions), witnesses):
+        return False
     solver = z3.Solver()
     solver.set("timeout", 2000)
-    solver.add(*encoder.facts, *extra)
-    if mode == "pos":
-        solver.add(condition[0] != semantics[0])
-    elif mode == "neg":
-        solver.add(condition[1] != semantics[1])
-    else:
-        solver.add(z3.Or(condition[0] != semantics[0], condition[1] != semantics[1]))
-    return solver.check() == z3.unsat
+    solver.add(*assertions)
+    verdict = solver.check()
+    if verdict == z3.sat and witnesses is not None:
+        witnesses.insert(0, solver.model())
+        del witnesses[_WITNESSES:]
+    return verdict == z3.unsat
+
+
+_WITNESSES = 8  # models _same keeps per folded query
+
+
+def _witnessed(goal, witnesses: list) -> bool:
+    for model in witnesses:
+        try:
+            if z3.is_true(model.eval(goal, model_completion=True)):
+                return True
+        except z3.Z3Exception:
+            continue
+    return False
 
 
 def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: dict | None = None, keys: dict | None = None) -> exp.Expression:
@@ -1126,11 +1154,12 @@ def fold_expansions(tree: exp.Expression, schema: dict | None = None, not_null: 
         return tree
     not_null = {k.lower(): {c.lower() for c in v} for k, v in (not_null or {}).items()}
     folded = False
+    witnesses: list = []
     for select in list(tree.find_all(exp.Select)):
         if not _inside(select, tree):
             continue
         try:
-            folded = _fold_select(select, schema, not_null, keys) or folded
+            folded = _fold_select(select, schema, not_null, keys, witnesses) or folded
         except (_Unsupported, z3.Z3Exception, RecursionError):
             continue
     return _drop_unread_joins(tree, schema, keys) if folded else tree
@@ -1285,7 +1314,7 @@ def _drop_unread_joins(tree: exp.Expression, schema, keys) -> exp.Expression:
     return tree
 
 
-def _fold_select(select: exp.Select, schema, not_null, keys) -> bool:
+def _fold_select(select: exp.Select, schema, not_null, keys, witnesses: list | None = None) -> bool:
     groups: dict = {}
     refs: dict[int, tuple] = {}
     for column in _scope_columns(select):
@@ -1308,14 +1337,14 @@ def _fold_select(select: exp.Select, schema, not_null, keys) -> bool:
     for node in candidates:  # an enclosing condition comes before the ones inside it
         if any(_inside(node, d) for d in done):
             continue
-        replacement = _fold_condition(node, select, refs, schema, not_null, keys)
+        replacement = _fold_condition(node, select, refs, schema, not_null, keys, witnesses)
         if replacement is not None:
             node.replace(replacement)
             done.append(node)
     return bool(done)
 
 
-def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema, not_null, keys) -> exp.Expression | None:
+def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema, not_null, keys, witnesses: list | None = None) -> exp.Expression | None:
     columns = [c for c in node.find_all(exp.Column) if id(c) in refs]
     groups = {id(refs[id(c)][0]): refs[id(c)][0] for c in columns if refs[id(c)][0] is not None}
     aggregates = [g for g in groups.values() if g.kind == "agg"]
@@ -1344,7 +1373,7 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
         x = probes[0].x
         encoder, condition = encoder_for(x)
         x_value = encoder.val(x)
-        if _same(encoder, condition, _in_semantics(encoder, x_value), mode, _state_facts(encoder, y_never_null, y_unique)):
+        if _same(encoder, condition, _in_semantics(encoder, x_value), mode, _state_facts(encoder, y_never_null, y_unique), witnesses):
             return exp.In(this=_operand(x), query=exp.Subquery(this=rows_group.rows.copy()))
         return None
     if indicators:
@@ -1352,7 +1381,7 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
         encoder, condition = encoder_for(x)
         x_value = encoder.val(x)
         facts = _state_facts(encoder, y_never_null, y_unique) + [z3.Implies(encoder.agg("i"), z3.Not(x_value[0]))]
-        if _same(encoder, condition, _in_semantics(encoder, x_value), mode, facts):
+        if _same(encoder, condition, _in_semantics(encoder, x_value), mode, facts, witnesses):
             return exp.In(this=_operand(x), query=exp.Subquery(this=rows_group.rows.copy()))
         return None
     # x op ANY/ALL: x is what the subquery's MIN or MAX is compared with.
@@ -1374,7 +1403,7 @@ def _fold_condition(node: exp.Expression, select: exp.Select, refs: dict, schema
                 encoder, condition = encoder_for(x)
                 x_value = encoder.val(x)
                 semantics = _quantified_semantics(encoder, x_value, op, quantifier_all)
-                if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique)):
+                if _same(encoder, condition, semantics, mode, _state_facts(encoder, y_never_null, y_unique), witnesses):
                     quantifier = exp.All if quantifier_all else exp.Any
                     return _compare(op, _operand(x), quantifier(this=exp.Subquery(this=rows_group.rows.copy())))
     return None
