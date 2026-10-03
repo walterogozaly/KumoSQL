@@ -104,6 +104,11 @@ DIFFERENT = [
         "SELECT e.empno, d.k FROM emp AS e JOIN (SELECT y.deptno AS k FROM emp AS y GROUP BY CUBE(y.deptno)) AS d ON d.k IS NOT DISTINCT FROM e.deptno",
         "SELECT e.empno, e.deptno AS k FROM emp AS e",
     ),
+    # GROUP BY () is a global aggregate: one row even over no input
+    (
+        "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ()) AS d",
+        "SELECT e.empno FROM emp AS e WHERE EXISTS (SELECT 1 FROM dept AS x WHERE x.deptno = e.deptno)",
+    ),
     # ROLLUP(TRUE) has its grand-total row even over no input, so it is not an existence test
     (
         "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ROLLUP(TRUE)) AS d",
@@ -286,3 +291,14 @@ def test_one_row_join_still_reads_an_aggregate_output():
     assert prove_equivalent_algebraic(left, right, schema=schema, dialect="postgres", compare_names=False).proven
     lateral = "SELECT t.x, d.n FROM t LEFT JOIN LATERAL (SELECT COUNT(*) AS n, 7 AS c FROM u) AS d ON TRUE"
     assert prove_equivalent_algebraic(lateral, right, schema=schema, dialect="postgres", compare_names=False).proven
+
+
+def test_existence_join_refuses_groupings_with_a_total_row():
+    for sql, dialect in [
+        ("SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY TRUE WITH TOTALS) AS d", "clickhouse"),
+        ("SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ROLLUP (TRUE)) AS d", "postgres"),
+        ("SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY ()) AS d", "postgres"),
+    ]:
+        assert existence_joins(sqlglot.parse_one(sql, read=dialect)) is None, sql
+    plain = "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY TRUE) AS d"
+    assert existence_joins(sqlglot.parse_one(plain, read="postgres")) is not None

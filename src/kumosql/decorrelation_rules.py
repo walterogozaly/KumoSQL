@@ -15,6 +15,8 @@ import itertools
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 _counter = itertools.count()
 _CLAUSES = ("distinct", "group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with", "laterals", "into", "locks", "sample", "prewhere", "connect", "match")
 
@@ -40,14 +42,6 @@ def _and_all(parts: list[exp.Expression]) -> exp.Expression | None:
         part = exp.Paren(this=part) if isinstance(part, exp.Or) else part
         out = part if out is None else exp.And(this=out, expression=part)
     return out
-
-
-def _extended_grouping(group: exp.Group) -> bool:
-    """ROLLUP, CUBE or GROUPING SETS, which add subtotal rows (sqlglot keeps them among the keys, MySQL's WITH ROLLUP as an arg)."""
-
-    return bool(group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets")) or any(
-        isinstance(e, (exp.Rollup, exp.Cube, exp.GroupingSets)) for e in group.expressions
-    )
 
 
 def _bound_by(select: exp.Select) -> set[str]:
@@ -239,7 +233,7 @@ def _existence_body(body: exp.Select) -> bool:
     """``SELECT TRUE AS c FROM .. WHERE p GROUP BY TRUE``: one constant row when ``FROM .. WHERE p`` has a row, else none."""
 
     group = body.args.get("group")
-    if group is None or _extended_grouping(group):
+    if group is None or extended_grouping(group):
         return False
     if not group.expressions or not all(_constant(e) for e in group.expressions):
         return False
@@ -441,7 +435,7 @@ def distinct_lateral_to_in(select: exp.Select) -> exp.Expression | None:
         group = body.args.get("group")
         if group is None or len(body.expressions) != 1 or len(group.expressions) != 1:
             continue
-        if any(body.args.get(k) for k in ("distinct", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with")) or _extended_grouping(group):
+        if any(body.args.get(k) for k in ("distinct", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with")) or extended_grouping(group):
             continue
         value = body.expressions[0].unalias()
         if value != group.expressions[0] or any(isinstance(n, (exp.AggFunc, exp.Window)) for n in value.walk()):
@@ -843,7 +837,7 @@ def _base_column(select: exp.Select, column: exp.Column, depth: int = 0) -> tupl
         return None
     inner = source.this
     group = inner.args.get("group")
-    if group is not None and (_extended_grouping(group)):
+    if group is not None and extended_grouping(group):
         return None
     for item in inner.expressions:
         if item.alias_or_name.lower() == column.name.lower():
@@ -896,7 +890,7 @@ def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | N
                     keys = None
                     break
                 keys.append(k.name.lower())
-            if keys is None or set(keys) != set(outputs.values()) or _extended_grouping(group):
+            if keys is None or set(keys) != set(outputs.values()) or extended_grouping(group):
                 continue
         elif not (isinstance(distinct, exp.Distinct) and not distinct.args.get("on")):
             continue
