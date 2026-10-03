@@ -24,6 +24,8 @@ MySQL lets a grouped query read ungrouped columns; DuckDB refuses. Such columns 
 
 A table that a foreign key points at gets rows even when neither query reads it, so a query over a child table alone (EMP, whose DEPTNO references DEPT) is searched with a non-empty child. A database on which a query raises an error (a failed cast, `SINGLE_VALUE` over two rows) is skipped, and the search goes on with the next one.
 
+Most of a run is DuckDB executing these small databases, so the search keeps that cheap without changing what it tries: its connection uses one thread (with a few rows per table, more threads only add scheduling work), a load rewrites only the tables whose rows changed, and a database on which both queries already ran and agreed is not run again, since it would agree again. Together these took the three samples in `tests/test_verieql_benchmarks.py` from 800 s to about 300 s of CPU with the same verdict on every case.
+
 Every difference is run a second time with DuckDB's optimizer turned off (`kumosql.duckdb_load.run_unoptimized`) and counts only when both runs return the same rows. DuckDB 1.5's optimizer returns wrong rows for some correlated subqueries (for example `EXISTS (SELECT 1 FROM u WHERE u.d <> t.a AND t.b > u.c)` when the tables hold NULLs), which would otherwise refute an equivalent pair or fail a correct proof. The same recheck guards `sqlsolver_bench.differ` (SQLSolver, QED, R-Bot, Calcite-mined, Cosette, SPES), the Singh & Bedathur search and `kumosql.random_check`.
 
 ## Harness translation
