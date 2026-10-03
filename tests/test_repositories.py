@@ -2,15 +2,15 @@
 
 import json
 import subprocess
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
 from kumosql import live_graph, repositories
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 from test_git_repo import FILES, commit, run
 
@@ -36,7 +36,7 @@ def bare(tmp_path):
 
 @pytest.fixture
 def server():
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
+    httpd = UIServer(("127.0.0.1", 0), UIHandler)
     thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:

@@ -1,6 +1,6 @@
 import json
 import threading
-import urllib.request
+from ui_http import urlopen
 
 import pytest
 
@@ -138,7 +138,7 @@ def test_diagnostics_endpoint(tmp_path, monkeypatch):
     server = ui.UIServer(("127.0.0.1", 0), ui.UIHandler)
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
-        body = urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/diagnostics").read()
+        body = urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/diagnostics").read()
     finally:
         server.shutdown()
         server.server_close()
@@ -151,7 +151,7 @@ def test_request_log_drops_query_values(tmp_path, monkeypatch):
     server = ui.UIServer(("127.0.0.1", 0), ui.UIHandler)
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/catalog/table?project=acme-prod&table=orders").read()
+        urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/catalog/table?project=acme-prod&table=orders").read()
     except Exception:
         pass
     finally:
