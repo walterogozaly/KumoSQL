@@ -15,6 +15,16 @@ def test_timings_are_masked_but_answers_are_not():
     assert a != c
 
 
+def test_bare_elapsed_column_is_masked_but_counts_are_not():
+    header = "suite     pairs  scored  proved  unknown  wrong  unchecked    sec\n"
+    a = eval_diff.normalize(header + "calcite     232     232     224        8      0          7 1245.0")
+    b = eval_diff.normalize(header + "calcite     232     232     224        8      0          7   98.4  \n")
+    c = eval_diff.normalize(header + "calcite     232     232     225        7      0          7   98.4")
+    d = eval_diff.normalize(header + "calcite     232     232     224        8      1          7   98.4")
+    assert a == b
+    assert a != c and a != d and c != d
+
+
 def test_commands_come_from_results_files(tmp_path):
     results = tmp_path / "benchmarks" / "results"
     results.mkdir(parents=True)

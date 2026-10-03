@@ -32,6 +32,9 @@ _TIMING = [
     (re.compile(r'"(seconds|elapsed|time|wall|runtime|peak_mb)[a-z_]*": ?[0-9.]+'), r'"\1": T'),
     (re.compile(r"\b[0-9]+(\.[0-9]+)? ?(s|ms|seconds|MB)\b"), "T"),
     (re.compile(r"\b[0-9]{2}:[0-9]{2}:[0-9]{2}\b"), "HH:MM:SS"),
+    # A summary row that ends in a bare elapsed-seconds column (``calcite 232 232 224 8 0 7 1245.0``): a name,
+    # integer counts, then a decimal. Only that last column is masked; the counts stay in the comparison.
+    (re.compile(r"(?m)^([A-Za-z][\w-]*(?: +[0-9]+){3,}) +[0-9]+\.[0-9]+[ \t]*$"), r"\1 T"),
 ]
 
 
