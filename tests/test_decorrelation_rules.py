@@ -4,6 +4,7 @@ import sqlglot
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.decorrelation_rules import (
     distinct_lateral_to_in,
+    drop_implied_membership,
     existence_joins,
     extreme_of_top_rows,
     merge_correlated_derived,
@@ -302,3 +303,15 @@ def test_existence_join_refuses_groupings_with_a_total_row():
         assert existence_joins(sqlglot.parse_one(sql, read=dialect)) is None, sql
     plain = "SELECT e.empno FROM emp AS e CROSS JOIN LATERAL (SELECT TRUE AS t FROM dept AS x WHERE x.deptno = e.deptno GROUP BY TRUE) AS d"
     assert existence_joins(sqlglot.parse_one(plain, read="postgres")) is not None
+
+
+def test_same_table_follows_the_dialects_name_case():
+    sql = "SELECT 1 FROM ds.T AS x WHERE EXISTS (SELECT 1 FROM ds.t AS y WHERE y.c = x.c)"
+    not_null = {"T": frozenset({"c"}), "t": frozenset({"c"})}
+    # BigQuery table names are case-sensitive: ds.T and ds.t are two tables
+    assert self_witnessed_exists(sqlglot.parse_one(sql, read="bigquery"), not_null, "bigquery") is None
+    # Postgres folds unquoted names, so they are one table
+    assert self_witnessed_exists(sqlglot.parse_one(sql, read="postgres"), not_null, "postgres") is not None
+    implied = "SELECT 1 FROM o WHERE o.c IN (SELECT t.c FROM ds.T AS t) AND o.c IN (SELECT t.c FROM ds.t AS t WHERE t.c > 1)"
+    assert drop_implied_membership(sqlglot.parse_one(implied, read="bigquery"), "bigquery") is None
+    assert drop_implied_membership(sqlglot.parse_one(implied, read="postgres"), "postgres") is not None

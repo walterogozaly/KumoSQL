@@ -15,7 +15,7 @@ import itertools
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping
+from .ast_utils import extended_grouping, same_table
 
 _counter = itertools.count()
 _CLAUSES = ("distinct", "group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with", "laterals", "into", "locks", "sample", "prewhere", "connect", "match")
@@ -300,10 +300,10 @@ def existence_joins(select: exp.Select) -> exp.Expression | None:
     return None
 
 
-def decorrelation_step(select: exp.Select, not_null: dict[str, frozenset[str]] | None = None, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
+def decorrelation_step(select: exp.Select, not_null: dict[str, frozenset[str]] | None = None, schema: dict[str, list[str]] | None = None, dialect: str | None = None) -> exp.Expression | None:
     """The rules above, in order, for ``algebraic_equivalence.normalize``."""
 
-    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null), lambda sel: self_domain_join(sel, not_null), lambda sel: lift_membership_tests(sel, schema), drop_implied_membership, extreme_of_top_rows):
+    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null, dialect), lambda sel: self_domain_join(sel, not_null, dialect), lambda sel: lift_membership_tests(sel, schema), lambda sel: drop_implied_membership(sel, dialect), extreme_of_top_rows):
         rewritten = rule(select)
         if rewritten is not None:
             return rewritten
@@ -565,7 +565,7 @@ def single_value_scalar(select: exp.Select) -> exp.Expression | None:
     return select if changed else None
 
 
-def self_witnessed_exists(select: exp.Select, not_null: dict[str, frozenset[str]] | None) -> exp.Expression | None:
+def self_witnessed_exists(select: exp.Select, not_null: dict[str, frozenset[str]] | None, dialect: str | None = None) -> exp.Expression | None:
     """``FROM t AS x WHERE EXISTS (SELECT .. FROM t AS y WHERE y.c = x.c ..)`` is TRUE: the row ``x`` itself is a witness.
 
     Every conjunct of the subquery's filter must equate a column of ``y`` with the same column of
@@ -621,7 +621,7 @@ def self_witnessed_exists(select: exp.Select, not_null: dict[str, frozenset[str]
                 ok = False
                 break
         source = real.get(outer or "")
-        if not ok or source is None or source.name.lower() != table.name.lower() or (source.db or "").lower() != (table.db or "").lower() or (source.catalog or "").lower() != (table.catalog or "").lower():
+        if not ok or source is None or not same_table(source, table, dialect):
             continue
         if alias in real and alias != outer:
             continue
@@ -723,7 +723,7 @@ def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | Non
     return None
 
 
-def _membership_source(part: exp.Expression) -> tuple[str, str, str, bool] | None:
+def _membership_source(part: exp.Expression) -> tuple[str, exp.Table, str, bool] | None:
     """``x IN (SELECT [DISTINCT] c FROM t [WHERE p])`` as (x, table, column, filtered)."""
 
     if not isinstance(part, exp.In) or not isinstance(part.args.get("query"), exp.Subquery):
@@ -742,12 +742,10 @@ def _membership_source(part: exp.Expression) -> tuple[str, str, str, bool] | Non
     alias = sources[0].alias_or_name.lower()
     if not isinstance(output, exp.Column) or (output.table and output.table.lower() != alias):
         return None
-    table = sources[0]
-    key = ".".join(p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None)
-    return part.this.sql(), key, output.name.lower(), body.args.get("where") is not None
+    return part.this.sql(), sources[0], output.name.lower(), body.args.get("where") is not None
 
 
-def drop_implied_membership(select: exp.Select) -> exp.Expression | None:
+def drop_implied_membership(select: exp.Select, dialect: str | None = None) -> exp.Expression | None:
     """``x IN (SELECT c FROM t) AND x IN (SELECT c FROM t WHERE p)``: the second test implies the first, which is dropped."""
 
     where = select.args.get("where")
@@ -755,9 +753,11 @@ def drop_implied_membership(select: exp.Select) -> exp.Expression | None:
         return None
     parts = _conjuncts(where.this)
     shapes = [_membership_source(p) for p in parts]
-    filtered = {shape[:3] for shape in shapes if shape is not None and shape[3]}
+    filtered = [shape for shape in shapes if shape is not None and shape[3]]
     for index, shape in enumerate(shapes):
-        if shape is not None and not shape[3] and shape[:3] in filtered:
+        if shape is not None and not shape[3] and any(
+            f[0] == shape[0] and f[2] == shape[2] and same_table(f[1], shape[1], dialect) for f in filtered
+        ):
             select.set("where", exp.Where(this=_and_all(parts[:index] + parts[index + 1:])))
             return select
     return None
@@ -846,7 +846,7 @@ def _base_column(select: exp.Select, column: exp.Column, depth: int = 0) -> tupl
     return None
 
 
-def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | None) -> exp.Expression | None:
+def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | None, dialect: str | None = None) -> exp.Expression | None:
     """``FROM t AS x JOIN (SELECT y.c AS k FROM t AS y GROUP BY y.c) AS d ON x.c = d.k`` is ``FROM t AS x``, reading ``d.k`` as ``x.c``.
 
     The derived table holds each value of ``t.c`` once, and the row ``x`` of ``t`` carries one of
@@ -908,7 +908,7 @@ def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | N
                 ok = False
                 break
             base = _base_column(select, other[0])
-            if base is None or base[1] != outputs[mine[0].name.lower()] or not _same_table(base[0], table):
+            if base is None or base[1] != outputs[mine[0].name.lower()] or not same_table(base[0], table, dialect):
                 ok = False
                 break
             outer = outer or other[0].table.lower()
@@ -933,7 +933,3 @@ def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | N
         select.set("joins", [j for j in joins if j is not join] or None)
         return select
     return None
-
-
-def _same_table(a: exp.Table, b: exp.Table) -> bool:
-    return all((x or "").lower() == (y or "").lower() for x, y in ((a.name, b.name), (a.db, b.db), (a.catalog, b.catalog)))
