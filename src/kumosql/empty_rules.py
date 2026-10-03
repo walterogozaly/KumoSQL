@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import distinct_on
+
 
 def _false(node: exp.Expression | None) -> bool:
     if node is None:
@@ -115,7 +117,8 @@ def propagate_empty(tree: exp.Expression) -> exp.Expression:
             return exp.false()
         if isinstance(node, exp.Subquery) and isinstance(node.this, exp.Select) and isinstance(node.parent, (exp.From, exp.Join)):
             inner = node.this
-            if inner.args.get("order") and not inner.args.get("limit") and not inner.args.get("offset") and not inner.args.get("fetch"):
+            # a derived table's rows are a bag, except that DISTINCT ON's order picks the row it keeps per key
+            if inner.args.get("order") and not inner.args.get("limit") and not inner.args.get("offset") and not inner.args.get("fetch") and not distinct_on(inner):
                 inner.set("order", None)
         if isinstance(node, exp.Select):
             dropped = _drop_empty_left_joins(node)

@@ -93,7 +93,15 @@ def refactor_search(case_input: Mapping, max_seconds: float = 60.0, max_states: 
     return best
 
 
-BUILT_IN = {"identity": identity, "refactor": refactor_search}
+def table_minimizer(case_input: Mapping) -> dict[str, str]:
+    """KumoSQL's table minimizer (``kumosql.table_minimizer.minimize_case``)."""
+
+    from kumosql.table_minimizer import minimize_case
+
+    return minimize_case(case_input)
+
+
+BUILT_IN = {"identity": identity, "refactor": refactor_search, "minimizer": table_minimizer}
 
 
 def load_minimizer(spec: str) -> tuple[str, Callable | None]:
@@ -105,7 +113,7 @@ def load_minimizer(spec: str) -> tuple[str, Callable | None]:
         return spec, BUILT_IN[spec]
     module, _, name = spec.partition(":")
     if not name:
-        raise SystemExit(f"--minimizer wants module:function, identity, refactor, reference or trap, not {spec!r}")
+        raise SystemExit(f"--minimizer wants module:function, minimizer, identity, refactor, reference or trap, not {spec!r}")
     return spec, getattr(importlib.import_module(module), name)
 
 
@@ -270,7 +278,7 @@ def _run_one(args) -> CaseResult:
     return run_case(case, minimize if minimize is not None else label, databases, prove, timeout_ms)
 
 
-def run(cases: list[dict], spec: str = "refactor", databases: int = DATABASES, prove: bool = True,
+def run(cases: list[dict], spec: str = "minimizer", databases: int = DATABASES, prove: bool = True,
         timeout_ms: int = 5000, jobs: int = 1) -> tuple[dict, list[CaseResult]]:
     work = [(case, spec, databases, prove, timeout_ms) for case in cases]
     if jobs > 1:
@@ -341,8 +349,9 @@ def verify_cases(cases: list[dict], databases: int = 200) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--minimizer", default="refactor",
-                        help="identity, refactor, reference, trap, or module:function (default: refactor)")
+    parser.add_argument("--minimizer", default="minimizer",
+                        help="minimizer (kumosql.table_minimizer), refactor, identity, reference, trap, or module:function "
+                             "(default: minimizer)")
     parser.add_argument("--split", default="dev", choices=["dev", "held_out", "all"])
     parser.add_argument("--file", type=Path, action="append", help="case files (default: every *.jsonl)")
     parser.add_argument("--only", help="run case ids containing this text")

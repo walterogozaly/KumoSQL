@@ -349,6 +349,8 @@ const UNKNOWN_REASONS = {
   unparsed_model: "Could not be analyzed", unknown_reads: "Reads tables that could not be determined",
   downstream_of_unknown_reader: "Downstream of a reader that could not be read",
   column_use_not_traced: "Column use could not be traced",
+  template_columns: "A template expression may read it", insert_target_columns: "INSERT into a table with unknown columns",
+  script_columns: "Another statement of the script may read it",
 };
 
 async function fetchOverlaps(node) {

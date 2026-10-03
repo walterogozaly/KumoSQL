@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
+import fnmatch
 import gc
 import inspect
 import re
@@ -37,7 +38,16 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
-from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions
+from .lineage_soundness import (
+    UNTRACED,
+    condition_columns,
+    in_select_list,
+    lineage_view,
+    mark_using_joins,
+    masked_sql_words,
+    pin_single_source_columns,
+)
+from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
@@ -192,6 +202,32 @@ class Pipeline:
             "external",
             normalized.decorator,
         )
+
+    def wildcard_members(self, reference: object) -> tuple[str, ...]:
+        """Keys of the known tables (models and declared sources) a wildcard table reference such as ``d.events_*`` matches.
+
+        A wildcard query reads every matching table, so a change to any of them reaches its readers.
+        Empty for a reference that is not a wildcard.
+        """
+
+        pattern = normalize_table_reference(
+            reference, default_project=self.default_project, default_dataset=self.default_dataset
+        )
+        if pattern is None or pattern.kind != "wildcard" or not pattern.parts or "*" in "".join(pattern.parts[:-1]):
+            return ()
+        prefix = pattern.parts[-1].split("*", 1)[0]
+        members = []
+        for known in self._known_table_nodes:
+            if known.kind != "table" or len(known.parts) < 1:
+                continue
+            short, long = sorted((pattern.parts[:-1], known.parts[:-1]), key=len)
+            if long[len(long) - len(short):] != short:
+                continue
+            if known.parts[-1].startswith(prefix) and fnmatch.fnmatchcase(known.parts[-1], pattern.parts[-1]):
+                key = self.resolve(".".join(known.parts))
+                if key:
+                    members.append(key)
+        return tuple(sorted(set(members)))
 
     def resolve_observed_references(self, references: Iterable[object]) -> tuple[IdentityResolution, ...]:
         """Resolve every observed job reference while retaining unmatched items."""
@@ -953,20 +989,37 @@ def _apply_target_columns(statement: exp.Expression, query: exp.Query) -> None:
         if not name:
             return
         names.append(name)
+    _name_by_position(query, names)
+
+
+def _is_positional_insert(statement: exp.Expression | None) -> bool:
+    """``INSERT INTO t SELECT ...`` with no column list: the target table's own column order names the outputs."""
+
+    return (
+        isinstance(statement, exp.Insert)
+        and not isinstance(statement.this, exp.Schema)
+        and isinstance(statement.args.get("expression"), exp.Query)
+    )
+
+
+def _name_by_position(query: exp.Query, names: list[str]) -> bool:
+    """Alias the first branch's projections with ``names``, by position. False when that cannot be done."""
+
     first = query
     while isinstance(first, exp.SetOperation):
         if is_by_name(first):
-            return  # the first branch need not carry the output columns
+            return False  # the first branch need not carry the output columns
         first = first.left
     first = first.unnest() if isinstance(first, exp.Subquery) else first
-    if not isinstance(first, exp.Select) or len(first.expressions) != len(names):
-        return
+    if not isinstance(first, exp.Select) or not names or len(first.expressions) != len(names):
+        return False
     if any(projection.is_star or isinstance(projection.unalias(), exp.Star) for projection in first.expressions):
-        return
+        return False
     first.set(
         "expressions",
         [exp.alias_(projection.unalias(), name, quoted=False) for projection, name in zip(first.expressions, names)],
     )
+    return True
 
 
 def _name_unaliased_casts(query: exp.Expression) -> None:
@@ -1099,6 +1152,13 @@ class _Analysis:
     script_tables: dict[str, tuple[exp.Table, ...]] = field(default_factory=dict)
     # Tables other models' scripts write, with the models and sources those scripts read.
     written_into: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Per model: the read columns that decide which rows it returns (filters, join keys, grouping, ...).
+    conditions: dict[str, frozenset[ColumnRef]] = field(default_factory=dict)
+    # Per model: tables a masked template expression may read columns of, though their columns are unknown.
+    template_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Per model: tables its other statements, conditions, variables or operations read, with the names those may
+    # use as columns (``None``: any column). Column lineage does not see these reads.
+    script_reads: dict[str, dict[str, frozenset[str] | None]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1156,8 +1216,11 @@ class _Analysis:
         script_opaque: dict[str, frozenset[str]] = {}
         partial_outputs: set[str] = set()
         script_extras: dict[str, tuple[exp.Table, ...]] = {}
+        script_reads: dict[str, dict[str, frozenset[str] | None]] = {}
         # Operations that MERGE or INSERT into a table that is not their own: target -> (writing model, its query).
         writes_into: dict[str, list[tuple[str, exp.Query]]] = {}
+        # (writer, written table) pairs whose INSERT has no column list: the table's own columns name the outputs.
+        positional: set[tuple[str, str]] = set()
         reading = Progress("read models", len(pipeline.models))
         for key, model in pipeline.models.items():
             reading.step(key)
@@ -1171,6 +1234,8 @@ class _Analysis:
             if model.is_query:
                 try:
                     query, analysis = _parse_script(model.sql, procedures, functions)
+                    if query is not None and _is_positional_insert(analysis.final):
+                        positional.add((key, key))
                 except Exception as exc:  # the analysis does not raise, but sqlglot has many error types
                     statements_total += 1
                     statements_by_model[key] = (1, 0)
@@ -1197,6 +1262,8 @@ class _Analysis:
                     written_query, _ = _parse_script(model.sql, procedures, functions)
                     if written_query is not None:
                         writes_into.setdefault(written_key, []).append((key, written_query))
+                        if _is_positional_insert(analysis.final):
+                            positional.add((key, written_key))
             if analysis is not None:
                 considered = max(analysis.considered, 1) if model.is_query else analysis.considered
                 matched = min(analysis.traced, considered) if query is not None else 0
@@ -1262,11 +1329,16 @@ class _Analysis:
                     elif resolved is None and table.name:
                         bucket = ambiguous_tables if pipeline._resolver.is_ambiguous(table) else unresolved_tables
                         bucket.setdefault(key, set()).add(_table_name_for_schema(table))
+                        # A wildcard reads every known table it matches; their columns are read under the pattern's name.
+                        members = {m for m in pipeline.wildcard_members(table) if m != key}
+                        parents.update(members)
+                        operation_readers.update(members)
                 _note_writes(pipeline, key, analysis, written)
             for operation in model.operations_sql:
                 extra = analyse_script(operation, procedures=procedures, functions=functions)
                 if extra.all_reads():
                     script_extras[key] = (*script_extras.get(key, ()), *extra.all_reads())
+                    _note_side_reads(pipeline, key, extra.all_reads(), column_words(operation), script_reads)
                 for table in extra.all_reads():
                     resolved = pipeline.resolve(table)
                     if resolved and resolved != key:
@@ -1290,6 +1362,10 @@ class _Analysis:
                     resolved = pipeline.resolve(table)
                     if resolved and resolved != key:
                         operation_readers.add(resolved)
+                if analysis.side_reads:
+                    operation_readers.update(
+                        _note_side_reads(pipeline, key, analysis.side_reads.values(), column_words(model.sql), script_reads)
+                    )
             columns_known = (
                 analysis is not None
                 and not analysis.unknown
@@ -1316,6 +1392,10 @@ class _Analysis:
         direct: dict[ColumnRef, frozenset[ColumnRef]] = {}
         records: dict[ColumnRef, ColumnLineage] = {}
         consumed: dict[str, frozenset[ColumnRef]] = {}
+        # Per model: the read columns that decide which rows it returns (see lineage_soundness.condition_columns).
+        conditions: dict[str, frozenset[ColumnRef]] = {}
+        # Per model: tables whose columns a masked template expression may name, but whose columns are unknown.
+        template_reads: dict[str, set[str]] = {}
         opaque_readers_of: set[str] = set(operation_readers)
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
         # One MappingSchema grown model by model: qualify() would otherwise
@@ -1326,6 +1406,8 @@ class _Analysis:
         from . import schema_fetch
 
         outside = {name for names in unresolved_tables.values() for name in names if name not in schema}
+        # An INSERT with no column list names its outputs by the target table's own columns: look those up too.
+        outside |= {key for _, key in positional if key not in schema}
         found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
         for name, columns in found.items():
             schema[name] = columns
@@ -1358,6 +1440,8 @@ class _Analysis:
                     for node in marked.find_all(exp.Column):
                         node.meta["named"] = True  # written in the SQL, as opposed to made by expanding a star
                     excepted = _excepted_columns(pipeline, marked)
+                    mark_using_joins(marked)
+                    pin_single_source_columns(marked, sqlglot_schema.column_names)
                     qualified = qualify(
                         marked,
                         schema=sqlglot_schema,
@@ -1378,6 +1462,11 @@ class _Analysis:
                     qualified, by_name_problems = positionalize(qualified)
                     for problem in by_name_problems:
                         diagnostics.append(PipelineDiagnostic(writer, "by_name_set_operation", problem))
+
+                # ``INSERT INTO t SELECT ...`` maps the SELECT's columns to t's columns by position.
+                unnamed_insert = (writer, key) in positional and not _name_by_position(
+                    qualified, list(schema.get(key) or ())
+                )
 
                 union_star = _star_in_set_operation(qualified)
                 function_calls = sum(1 for table in qualified.find_all(exp.Table) if is_function_table(table))
@@ -1409,20 +1498,39 @@ class _Analysis:
                 except Exception:
                     pruned = qualified
                 used: set[ColumnRef] = set()
-                words = {
-                    word.lower()
-                    for text in pipeline.models[writer].masked_expressions
-                    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text)
-                }
-                if words:
-                    for parent in upstream.get(writer, ()):
-                        for column in outputs.get(parent, ()):
-                            if column.lower() in words:
-                                used.add(ColumnRef(parent, column))
+                masked_used = _masked_reads(
+                    pipeline, writer, key, upstream.get(writer, ()), outputs, schema, qualified, template_reads
+                )
+                used.update(masked_used)
+
+                def unresolved(scope: Scope, column: exp.Column) -> None:
+                    # A bare column the qualifier could not place (a table with unknown columns, or the model's own
+                    # table in an incremental self-read): it is read from whichever table in reach might have it.
+                    if column.table or _TEMPLATE_TOKEN.fullmatch(column.name):
+                        return
+                    select = scope.expression
+                    if (
+                        isinstance(select, exp.Select)
+                        and not in_select_list(column, select)
+                        and any(p.alias_or_name.lower() == column.name.lower() for p in select.expressions)
+                    ):
+                        return  # a select-list alias named in ORDER BY, QUALIFY, ...
+                    current: Scope | None = scope
+                    while current is not None:
+                        for source in current.sources.values():
+                            if not isinstance(source, exp.Table) or is_function_table(source):
+                                continue
+                            owner = pipeline.resolve(source) or _table_name_for_schema(source)
+                            known = schema.get(owner)
+                            if known is None or column.name.lower() in {c.lower() for c in known}:
+                                used.add(ColumnRef(owner, column.name))
+                        current = current.parent
+
                 for scope in traverse_scope(pruned):
                     for column in scope.columns:
                         table = _source_table(scope, column)
                         if table is None:
+                            unresolved(scope, column)
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
                         used.add(ColumnRef(owner, column.name))
@@ -1436,6 +1544,7 @@ class _Analysis:
                                 continue
                             table = _source_table(scope, column)
                             if table is None:
+                                unresolved(scope, column)
                                 continue
                             owner = pipeline.resolve(table) or _table_name_for_schema(table)
                             used.add(ColumnRef(owner, column.name))
@@ -1449,8 +1558,27 @@ class _Analysis:
                                 used.add(ColumnRef(owner, column.name))
                 used.update(excepted)
                 consumed[key] = frozenset(used) | consumed.get(key, frozenset()) if unit else frozenset(used)
+                deciding = condition_columns(qualified, lambda table: pipeline.resolve(table) or _table_name_for_schema(table))
+                deciding = set(used) if deciding is None else deciding | masked_used  # unknown: any read may change rows
+                conditions[key] = frozenset(deciding) | conditions.get(key, frozenset()) if unit else frozenset(deciding)
 
                 names = tuple(qualified.named_selects)
+                if unnamed_insert:
+                    # The target's columns are not known, so the names the SELECT gives are not its columns.
+                    diagnostics.append(
+                        PipelineDiagnostic(
+                            key,
+                            "insert_target_columns",
+                            "INSERT without a column list into a table whose columns are not known (or do not match "
+                            "in number); its output columns are unknown",
+                        )
+                    )
+                    star = ColumnRef(key, "*")
+                    records[star] = ColumnLineage(star, frozenset(used), "unknown", "unknown", "insert_target_columns")
+                    direct[star] = frozenset(used)
+                    if writer == key:
+                        outputs[key] = ("*",)
+                    continue
                 if writer == key:
                     outputs[key] = names
                 if names and "*" not in names and not partial:
@@ -1461,7 +1589,11 @@ class _Analysis:
                 # ``qualified`` is already qualified: hand lineage() its scope so it
                 # neither copies nor re-qualifies the query once per output column.
                 try:
-                    lineage_scope = build_scope(qualified)
+                    traced = lineage_view(qualified) or qualified
+                except Exception:
+                    traced = qualified
+                try:
+                    lineage_scope = build_scope(traced)
                 except Exception:
                     lineage_scope = None
                 is_union = isinstance(qualified, getattr(exp, "SetOperation", exp.Union))
@@ -1497,7 +1629,7 @@ class _Analysis:
                     try:
                         node = _lineage(
                             name,
-                            qualified,
+                            traced,
                             dialect="bigquery",
                             scope=lineage_scope,
                             copy=lineage_scope is None,
@@ -1510,7 +1642,7 @@ class _Analysis:
                             # With no schema for a table, the pre-built scope keeps a
                             # bare column unresolved; re-qualifying resolves it when
                             # only one table is in scope and leaves real ambiguity.
-                            retry = _lineage(name, qualified, dialect="bigquery", copy=True)
+                            retry = _lineage(name, traced, dialect="bigquery", copy=True)
                             again = _scan_lineage(pipeline, schema, retry, name, is_union)
                             if again[1] != "unresolved_column":
                                 leaves, reason, transform = again
@@ -1591,6 +1723,17 @@ class _Analysis:
                 )
             )
 
+        for key, tables in sorted(template_reads.items()):
+            opaque_readers_of.update(tables)
+            diagnostics.append(
+                PipelineDiagnostic(
+                    key,
+                    "template_columns",
+                    f"a template expression may read columns of {len(tables)} table(s) whose columns are not known; "
+                    "those reads are unknown",
+                )
+            )
+
         for key in sorted(blind_models):
             diagnostics.append(
                 PipelineDiagnostic(
@@ -1620,7 +1763,72 @@ class _Analysis:
             script_tables=script_extras,
             written_into={target: frozenset(sources - {target}) for target, sources in written.items() if sources - {target}},
             schema_lookup=schema_lookup,
+            conditions=conditions,
+            template_reads={key: frozenset(tables) for key, tables in template_reads.items()},
+            script_reads=script_reads,
         )
+
+
+def _note_side_reads(
+    pipeline: "Pipeline",
+    key: str,
+    tables: Iterable[exp.Table],
+    words: frozenset[str] | None,
+    script_reads: dict[str, dict[str, frozenset[str] | None]],
+) -> set[str]:
+    """Record the known tables a script reads outside its traced query, with the names that may be their columns."""
+
+    found = set()
+    for table in tables:
+        resolved = pipeline.resolve(table)
+        if not resolved or resolved == key:
+            continue
+        found.add(resolved)
+        known = script_reads.setdefault(key, {})
+        if resolved in known and (known[resolved] is None or words is None):
+            known[resolved] = None
+        else:
+            known[resolved] = (known.get(resolved) or frozenset()) | words if words is not None else None
+    return found
+
+
+def _masked_reads(
+    pipeline: "Pipeline",
+    writer: str,
+    key: str,
+    parents: Iterable[str],
+    outputs: dict[str, tuple[str, ...]],
+    schema: dict[str, dict[str, str]],
+    qualified: exp.Expression,
+    template_reads: dict[str, set[str]],
+) -> set[ColumnRef]:
+    """Columns that masked Dataform expressions name, such as both branches of ``${when(incremental(), ...)}``.
+
+    A word of the expression counts as a read of every table in reach that has a column of that name:
+    the model's parents (pipeline models and sources with a known schema) and, through ``${self()}``, the
+    model's own table. When SQL text in the expression may name columns of a table whose columns are not
+    known, the table is recorded in ``template_reads`` so that its readers are unknown, not unaffected.
+    """
+
+    texts = pipeline.models[writer].masked_expressions
+    if not texts:
+        return set()
+    words = {word.lower() for text in texts for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text)}
+    sql_words = set().union(*(masked_sql_words(text) for text in texts))
+    tables: dict[str, tuple[str, ...]] = {}
+    for parent in parents:
+        tables[parent] = outputs.get(parent) or tuple(schema.get(parent) or ())
+    target = pipeline.models[writer].target
+    if any(target.sql() in text or f"`{target.key}`" in text for text in texts):
+        tables[writer] = tuple(qualified.named_selects) if writer == key else outputs.get(writer, ())
+    found: set[ColumnRef] = set()
+    for table, columns in tables.items():
+        if not columns or "*" in columns:
+            if sql_words:
+                template_reads.setdefault(key, set()).add(table)
+            continue
+        found.update(ColumnRef(table, column) for column in columns if column.lower() in words)
+    return found
 
 
 def _merge_records(before: ColumnLineage, after: ColumnLineage) -> ColumnLineage:
@@ -1669,7 +1877,9 @@ def _scan_lineage(
             if _TRANSFORM_RANK.get(kind, 0) > _TRANSFORM_RANK[transform]:
                 transform = kind
             continue
-        if isinstance(item.source, exp.Table) and isinstance(item.source.this, exp.Func):
+        if item.name.split(".")[-1].strip('"`') == UNTRACED:
+            reason = reason or "subquery_predicate"  # a subquery predicate too nested to trace
+        elif isinstance(item.source, exp.Table) and isinstance(item.source.this, exp.Func):
             # ``FROM dataset.fn(TABLE t, ...)``: the columns the function returns are not columns of a table named fn.
             reason = reason or "untraceable_source"
         elif isinstance(item.source, exp.Table):
