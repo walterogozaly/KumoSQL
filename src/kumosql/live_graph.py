@@ -29,7 +29,7 @@ from contextlib import contextmanager
 
 from . import console
 from .pipeline import Pipeline, load_sqlx_project
-from .resilience import extended_path
+from .resilience import extended_path, is_windows_device_name
 from .scripts import expand_script_jobs
 from .timing import stage
 
@@ -186,6 +186,8 @@ def _save_snapshot(pipeline: Pipeline, key: str) -> None:
         files = sorted(path.parent.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
         for old in files[_SNAPSHOT_KEEP:]:
             old.unlink(missing_ok=True)
+        for legacy in path.parent.glob("*.pkl"):  # executable-format caches from earlier versions are never read
+            legacy.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 - the snapshot is an optimisation; never fail a load over it
         pass
 
@@ -544,7 +546,7 @@ def _safe_path(path: object) -> PurePosixPath:
     posix = PurePosixPath(path)
     windows = PureWindowsPath(path)
     if posix.is_absolute() or windows.drive or windows.root or any(
-        p in ("", ".", "..") or p.endswith((".", " ")) or PureWindowsPath(p).is_reserved()
+        p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p)
         for p in path.split("/")
     ):
         raise ProjectError("invalid file path")

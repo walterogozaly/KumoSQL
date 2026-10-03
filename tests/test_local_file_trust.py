@@ -15,6 +15,7 @@ import pytest
 from kumosql import live_graph, resilience, storage
 from kumosql.joinorder.stats import Statistics, collect_statistics
 from kumosql.pipeline import load_sqlx_project
+from kumosql.resilience import find_assets, is_windows_device_name
 
 
 @pytest.mark.parametrize("name", [
@@ -222,3 +223,46 @@ def test_statistics_database_scalar_types_round_trip(tmp_path):
     path = tmp_path / "stats.json.gz"
     original.save(str(path))
     assert Statistics.load(str(path)) == original
+
+
+def test_a_linked_project_root_is_read_but_links_below_it_are_not(tmp_path):
+    real, outside = tmp_path / "real", tmp_path / "outside"
+    (real / "definitions").mkdir(parents=True)
+    outside.mkdir()
+    (real / "definitions" / "ok.sql").write_text("SELECT 1 AS x")
+    (outside / "private.sql").write_text("SELECT 1 AS private")
+    _link(real / "definitions" / "escape", outside, directory=True)
+    link = tmp_path / "link"
+    _link(link, real, directory=True)
+    errors = []
+    found = find_assets(link, (".sql",), lambda path, reason: errors.append(path))
+    assert [p.name for p in found] == ["ok.sql"]
+    assert [p.name for p in errors] == ["escape"]
+
+
+@pytest.mark.parametrize("name", ["CON", "nul.sqlx", "Com1", "LPT9.sql", "COM¹", "conin$", "aux .sql"])
+def test_windows_device_names_do_not_depend_on_the_deprecated_stdlib_check(name):
+    assert is_windows_device_name(name)
+
+
+@pytest.mark.parametrize("name", ["console", "common", "model", "com10", "auxiliary.sql", "nulls"])
+def test_ordinary_names_are_not_devices(name):
+    assert not is_windows_device_name(name)
+
+
+def test_git_listing_skips_paths_that_cannot_be_written_safely(tmp_path):
+    from kumosql import git_repo
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run = lambda *args: subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)  # noqa: E731
+    run("init", "-q")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    (repo / "definitions").mkdir()
+    (repo / "definitions" / "good.sqlx").write_text("select 1")
+    (repo / "definitions" / "aux.sqlx").write_text("select 2")
+    (repo / "definitions" / "notes:v2.sql").write_text("select 3")
+    run("add", "-A")
+    run("commit", "-q", "-m", "x")
+    assert set(git_repo._tree_blobs(repo)) == {"definitions/good.sqlx"}

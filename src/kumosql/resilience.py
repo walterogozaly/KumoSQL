@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
@@ -152,15 +153,7 @@ def find_assets(
 
     wanted = tuple(suffixes)
     found: list[Path] = []
-    try:
-        linked = _linked_directory(root)
-    except OSError as exc:
-        on_error(root, describe_os_error(exc))
-        return found
-    if linked:
-        on_error(root, "linked directories are not read")
-        return found
-
+    # The root itself may be a link the user chose (``--project ~/link``); only links below it are pruned.
     def walk_error(exc: OSError) -> None:
         on_error(Path(exc.filename) if exc.filename else root, describe_os_error(exc))
 
@@ -189,6 +182,24 @@ def find_assets(
                 continue
             found.append(path)
     return sorted(found)
+
+
+_WINDOWS_DEVICE = re.compile(r"(?i)(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[0-9\u00b9\u00b2\u00b3])")
+
+
+def is_windows_device_name(part: str) -> bool:
+    """A path component Windows treats as a device (``CON``, ``NUL.sqlx``, ``COM1``); ``is_reserved`` is deprecated."""
+
+    return bool(_WINDOWS_DEVICE.fullmatch(part.split(".", 1)[0].rstrip(" ")))
+
+
+def unsafe_checkout_path(path: str) -> bool:
+    """True for a repository path that cannot be written safely into a checkout on any supported system."""
+
+    return (
+        not path or ":" in path or "\\" in path or "\0" in path or path.startswith("/")
+        or any(p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p) for p in path.split("/"))
+    )
 
 
 def _linked_directory(path: Path) -> bool:
