@@ -1,6 +1,6 @@
 # Public SQL evaluation sources: inventory
 
-[Public SQL evaluation sources](../public-sql-evaluation-sources.md) (research dated 2026-10-02) lists 50 public suites, databases, rewrite corpora and BigQuery projects. This page records, for each one, whether KumoSQL already scores it, what it overlaps, its licence, whether it can be downloaded from here, and what is being added. It was checked on 2026-10-03 by cloning every repository at its current head; the commit is the pin for anything added.
+[Public SQL evaluation sources](../public-sql-evaluation-sources.md) (research dated 2026-10-02) lists 50 public suites, databases, rewrite corpora and BigQuery projects; [Additional public SQL sources](../additional-public-sql-sources.md) adds 60 more (see [Additional sources](#additional-sources)). This page records, for each one, whether KumoSQL already scores it, what it overlaps, its licence, whether it can be downloaded from here, and what is being added. It was checked on 2026-10-03 by cloning every repository at its current head; the commit is the pin for anything added.
 
 Downloads go through a proxy that blocks HuggingFace, Google Drive, Dropbox, Git LFS, Aliyun OSS, `yale-lily.github.io`, `downloads.mysql.com`, `postgrespro.ru`, `duckdb.org` and `docs.cloud.google.com`. GitHub clones, raw files and release assets work.
 
@@ -80,4 +80,71 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 Every source marked new is one pull request with its own harness, test in `EVAL_FILES`, results file and docs page or section. Each pins its source commit, keeps original and adapted cases apart, records a baseline before any fix, keeps failures as regressions and holds out a fifth of the cases by hash. A false proof found by a new eval is kept as a regression and reported to the prover's owner rather than fixed in the eval's pull request.
 
 - **Batch 1:** Chinook and Northwind; Jaffle Shop; the four BigQuery and Dataform projects; BigQuery Utils UDF tests; Logos TPC-H, DSB and TPC-DS pairs; QUITE; QueryBooster; Spider gold queries and the TestSuiteEval false negatives.
-- **Batch 2:** Pagila, Sakila, AdventureWorks and Employees in the sample-database eval; Cosette `SelfJoin0`; the feedback-driven optimization artifact.
+- **Batch 2:** Pagila, Sakila, AdventureWorks, Employees, Oracle HR/CO/SH and FIBEN in the sample-database eval; Cosette `SelfJoin0`; the feedback-driven optimization artifact; Arcwise corrections; SQLFluff refusal cases; Trino, Spark and engine-regression pairs; Mozilla `bigquery-etl` tests; GoogleSQL compliance expected rows; the demo pipeline, mimic-code and patents SQL in the real-projects corpus.
+
+## Additional sources
+
+From [Additional public SQL sources](../additional-public-sql-sources.md), checked on 2026-10-03. IDs are that document's; they restart at 1, so they are prefixed `A-`. `postgresql.org`, `sqlite.org`, `physionet.org`, `ldbcouncil.org`, `relational.fel.cvut.cz`, the Göttingen Mondial site and the GitHub issues API are also blocked here.
+
+### Evaluation artifacts
+
+| ID | Source | Licence | Download | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | **new** (batch 2): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time |
+| A-E02 | Dr.Spider | Apache-2.0, CC BY 4.0 | no: `data.tar.gz` is a Git LFS pointer | 17 perturbation suites | not added |
+| A-E03 | IBM text2sql eval toolkit results | CC BY-SA 4.0 | no: results are on HuggingFace | — | not added |
+| A-E04 | SQL-IQ | MIT | yes | — | covered: `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` ([page](sql-iq.md)) |
+| A-E05 | BIRD-CRITIC | CC BY-SA 4.0 | no: HuggingFace; solutions by email | 500 + 530 tasks | not added |
+| A-E06 | SQLStorm | MIT | yes | — | covered: `analytical-sql-coverage`, `transformation-workloads` |
+| A-E07 | LiveSQLBench | CC BY(-SA) 4.0 | no: HuggingFace; gold by email | — | not added |
+| A-E08 | BIRD-INTERACT | CC BY-SA 4.0 | no: as A-E07 | — | not added |
+| A-E09 | CEB IMDb and Stack workloads | MIT | no: the download scripts fetch from Dropbox | — | not added; STATS-CEB and JOB are covered ([page](../joinorder.md)) |
+| A-E10 | PolySQL | MIT | yes | — | not added: migration infrastructure, not a corpus |
+| A-E11 | BEAVER | MIT | no: contact-gated HuggingFace files | — | not added |
+
+### Before/after sources
+
+| ID | Source | Licence | Download | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| A-SQLFluff | ST01, ST02, ST04, ST05, ST06, ST09, CV12 fixes | MIT | yes | 119 fixes | covered: all 119 are in `sqlfluff-semantic-fixes` (sqlfluff 4.3.0). **new** (batch 2): the `pass_str` refusal cases (recursive CTEs, name clashes, correlated subqueries, templating, ST05's later-branch correlation from PR 8169, CV12's templated joins) run through KumoSQL's own lifter and CTE rules, which must decline or prove |
+| A-R01 | Trino `AbstractTestJoinQueries` two-query assertions | Apache-2.0 | yes (raw file) | 6 named, more in the file | **new** (batch 2, with A-R02): paired engine tests |
+| A-R02 | Spark `SubquerySuite` EXISTS/IN/NOT IN cases | Apache-2.0 | yes (raw file) | 5 | **new** (batch 2): two positive pairs and the NULL-sensitive NOT IN / NOT EXISTS negative |
+| A-R03 | EET bug bundles | GPL-3.0 | links only | — | not added: the index links to reports on blocked hosts |
+| A-R04 | PostgreSQL EET regressions | PostgreSQL | reports blocked; the PG17976 fix's `join.sql`/`join.out` are on GitHub | 3 | **new** (batch 2, with A-R01): the regression-file case, added to the [optimizer-bug pairs](../../tests/fixtures/optimizer_bugs/README.md) if it fits |
+| A-R05 | SQLite `OR FALSE` report | public domain | no: `sqlite.org` is blocked | 1 | not added |
+| A-R06 | JoinEquiv | no licence found | yes | — | not added as code; its projection boundary becomes an authored negative with A-R01 |
+| A-R07 | jOOQ documented transforms | documentation | no fixtures | 3 patterns | **new** (batch 2, with A-R01): authored pairs and guards, citing the pages |
+| A-R08 | DuckDB JoinEquiv issues 20483, 20486, 20608 | MIT | the MIT test file is on GitHub; the issues API is blocked | 3 | **new** (batch 2, with A-R01): from the engine test file where the pair is recoverable |
+
+### Databases
+
+| ID | Source | Licence | Download | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| A-D01–D03 | Oracle HR, Customer Orders, Sales History (`oracle-samples/db-sample-schemas`) | MIT | yes | 7 + 7 + 9 tables | **new** (batch 2): sample-database adapters |
+| A-D04 | Mondial | CC BY 3.0 | no: host blocked | — | not added |
+| A-D05 | IBM FIBEN | Apache-2.0 | yes (80 MB `data.zip`) | 152 tables, 237 distinct SQL targets | **new** (batch 2): sample-database adapter with its own query workload |
+| A-D06 | MIMIC-IV Demo | ODbL | no: `physionet.org` is blocked | — | not added; the GoogleSQL concepts (A-G03) are added without data |
+| A-D07–D13 | BenchBase SmallBank, TATP, Epinions, Twitter, SEATS, AuctionMark, Wikipedia | Apache-2.0 | yes | 3–17 tables | not added in this pass: the data comes from Java loaders that would have to be ported and frozen |
+| A-D14 | LDBC SNB SF0.003 | Apache-2.0 | no: `ldbcouncil.org` is blocked | — | not added |
+| A-D15 | Synthea | Apache-2.0 | generator only | — | not added: needs the Java generator |
+| A-D16 | OMOP CDM 5.4 | Apache-2.0 | yes | 39 tables | not added: population needs the separately licensed vocabulary |
+| A-D17 | MusicBrainz | GPL schema, CC0 data | dumps are multi-GB | — | not added |
+| A-D18 | Lahman | rights unclear | — | — | not added |
+| A-D19 | Jolpica F1 | CC BY-NC-SA 4.0 data | — | — | not added |
+| A-D20 | Star Schema Benchmark | TPC dbgen terms | C generator | 13 queries | not added |
+| A-D21 | CH-benCHmark | TPC ancestry | — | 3-table extension | not added |
+| A-C01–C03 | RelBench, The Join, CTU repository | various | no: HuggingFace and the CTU MySQL server are blocked | — | not added |
+
+### GoogleSQL and SQLX
+
+| ID | Source | Licence | Download | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| A-G01 | Mozilla `bigquery-etl` | MPL-2.0 | yes | 323 UDFs, 162 query tests with `expect` files | **new** (batch 2): UDF assertions and query tests with supplied inputs, as native expected results |
+| A-G02 | GCP data pipeline demo | MIT | yes | 4 SQLX, 6 sample rows | **new** (batch 2): real-projects corpus |
+| A-G03 | mimic-code concepts | MIT | yes | 65 GoogleSQL files | **new** (batch 2): real-projects corpus (no data) |
+| A-G04, G06, G07 | wintermi MovieLens, BQE, IMDb Dataform | Apache-2.0 | yes | — | covered: `wintermi-*` in `bq-real-corpora` ([page](bq-real-corpora.md)) |
+| A-G05 | `bq-bench` TPC-DS | Apache-2.0, TPC terms | yes | 99 queries | covered by the TPC-DS evals; needs a billed project to run natively |
+| A-G08 | Dataform deployment sample | no licence | — | — | not added |
+| A-G09 | Google patents public data examples | Apache-2.0 (archived) | yes | — | **new** (batch 2): real-projects corpus |
+| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **new** (batch 2): the typed expected rows become an oracle for KumoSQL's BigQuery-to-DuckDB execution |
+| — | BIRD-CRITIC BigQuery, SQLShare, Fashion Dataform, NHANES-GCP, SQLRight, DQETool, AMOEBA, SlabCity, CODDTest | — | — | — | not added: empty, unlicensed or not a released corpus (as the research says) |

@@ -25,11 +25,12 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification | `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` |
 | [LLM-SQL-Solver](llm-sql-solver.md) | 180 Spider pairs that must never be proved, 70 pairs with expert labels | `llm-sql-solver-negatives`, `llm-sql-solver-relaxed` |
 | [DLBench](dlbench.md) | Cross-dialect translations from SQLite, MySQL and PostgreSQL into six databases: parsed, and proved equal to the source | `dlbench` |
+| [DB-GPT rewrite examples](dbgpt-rules.md) | DB-GPT's 36 PostgreSQL before/after rewrites, labelled by hand and checked on DuckDB | `dbgpt-rules` |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Query pairs from public optimizer bug reports (Calcite, Spark, CockroachDB, DuckDB, MySQL, ClickHouse): none may be proved | `optimizer-bugs` |
 | [Join rewrites to LEFT JOIN](join-rewrites.md) | Hand-checked rewrites between CROSS, INNER, RIGHT, FULL, semi and anti joins and LEFT JOIN, proved or refuted | `join-rewrites` |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output | `pipeline-equivalence`, `pipeline-refutation` |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking and counterexample minimization | `targeted-test-data`, `multi-database-semantic`, `counterexample-minimization`, `unsafe-rewrite-variants` |
-| [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC fuzzing, unsafe-rewrite detection and rewrite composition | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition` |
+| [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC fuzzing, unsafe-rewrite detection, rewrite composition and the typed soundness fuzzer | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition`, `soundness-fuzz` |
 
 ## Rewriting and performance
 

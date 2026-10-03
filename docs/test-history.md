@@ -50,13 +50,20 @@ targets (changed-tests): tests/test_quantified_rules.py
 
 `python tools/test_history.py order --write` writes `tests/order.json` from the history: the tests that took 3 seconds or more with their median durations, and the tests that failed most. Under pytest-xdist `tests/conftest.py` then runs, in this order:
 
-1. tests that failed before;
-2. the fast tests, so a broken one shows up in minutes;
-3. the slow tests, longest first, so one long benchmark never runs alone at the end.
+1. any test that alone takes more than half of one worker's share of the run (started after the fast tests, it would end the run late);
+2. tests that failed before;
+3. the fast tests, so a broken one shows up in minutes;
+4. the slow tests, longest first, so one long benchmark never runs alone at the end.
+
+The workers take tests in exactly that order. `tools/xdist_scheduler.py` replaces pytest-xdist's `loadgroup` scheduler, which kept up to three tests queued on each worker and moved test groups to the front: a worker now takes more work only while everything it holds is fast. A pytest-xdist worker starts a test only once it holds the one it runs next as well, so a worker starting a slow test gets the first fast test left (or the quickest one) as its next test, never the next slow one, and two long benchmarks never wait in one worker's queue while another worker is idle. Groups (`xdist_group`) still run on one worker. In a full run on 4 workers the workers were busy 98% of the run's wall time with this scheduler, against 76% with `loadgroup`, whose last three workers sat idle for the last 13 minutes while one worker finished the MV workload eval and the tests queued behind it.
 
 Without `tests/order.json` data it falls back to starting the files in `HEAVY_FILES` first. `python tools/run_tests.py --quick` skips the slow tier (about 6,300 of 6,440 tests, a few minutes). `python tools/run_tests.py -x` stops at the first failure.
 
 Regenerate `tests/order.json` now and then, in a small PR of its own, once the history has more runs; a test missing from it counts as fast.
+
+## DuckDB on one thread
+
+Tests open thousands of tiny in-memory DuckDB databases (a few rows per table). `tests/conftest.py` wraps `duckdb.connect` for the whole test process, and the pool workers its tests fork, so a connection gets `threads=1` unless the caller passes `threads` itself; every other argument and config key goes through unchanged. By default DuckDB starts a thread per core for every database, and under pytest-xdist those threads only compete with the other workers for the same cores. When pandas is not installed the same hook also puts `None` under `pandas` in `sys.modules`: DuckDB otherwise tries `import pandas` for every bound parameter of `execute` and `executemany`, and each try searches all of `sys.path` before it fails. `import pandas` still fails and `importlib.util.find_spec("pandas")` still returns None; an installed pandas is left alone. `tests/test_duckdb_defaults.py` checks both. On nine DuckDB-heavy test files (the VeriEQL, Singh and Bedathur, targeted-data, behaviour, incremental and fuzzing floors, the quantified-rules and result-equivalence tests), run serially before and after on a shared 4-CPU machine, the two together cut CPU time by 22% (2,379 to 1,853 seconds; 3% to 35% per file) and every eval verdict stayed the same. A caller that passes `threads` keeps its own setting: a test or benchmark that needs more threads passes `threads` (or runs `SET threads`), and a helper that already opens its databases with `threads=1` works the same with or without this default.
 
 ## Seeding and reuse
 
