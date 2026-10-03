@@ -3447,8 +3447,9 @@ TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for eq
 def _split_limit(sql: str, dialect: str):
     """``(core_sql, spec)`` for a query ending in ORDER BY .. LIMIT, ``(sql, None)`` without a limit.
 
-    ``spec`` is ``(limit, offset, ordering, covers_all)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
-    ``(output position, descending, nulls first)``; ``None`` as the core means the
+    ``spec`` is ``(limit, offset, ordering, covers_all, visible)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
+    ``(output position, descending, nulls first)`` and ``visible`` counts the output columns (order keys that are
+    not outputs become extra columns of the core); ``None`` as the core means the
     shape is not handled (``spec`` then says why).
     """
 
@@ -3520,6 +3521,7 @@ def _split_limit(sql: str, dialect: str):
         int(offset.expression.this) if offset is not None else 0,
         tuple(ordering),
         covers,
+        len(outputs),
     )
     return faithful_sql(core, dialect), spec
 
@@ -3564,6 +3566,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
     if left_spec[:3] != right_spec[:3]:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")
+    if left_spec[4] != right_spec[4]:
+        # An order key that is not an output is an extra column of the core: it must not stand in for an output.
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"different column counts ({left_spec[4]} vs {right_spec[4]})")
     result = _prove_core(left_core, right_core, **kwargs)
     if result.status is SmtStatus.NOT_EQUIVALENT:
         # The rows before the cut differ, but the first rows may still agree.
