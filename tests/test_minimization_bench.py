@@ -1,6 +1,7 @@
 """Table-minimization eval: the committed cases hold, the harness catches wrong outputs, and the floor holds."""
 
 import importlib.util
+from collections import Counter
 import json
 import sys
 from pathlib import Path
@@ -29,11 +30,13 @@ gen = _load("make_minimization_cases")
 
 CASES = mc.load_cases()
 GENERATED = [c for c in CASES if c["source"] == "generated"]
-DEV = [c for c in CASES if c["split"] == "dev"]
+DEV = [c for c in CASES if c["split"] == "dev" and not mc.sourced(c)]
+SOURCED = [c for c in CASES if mc.sourced(c)]
 FAMILIES = {"passthrough_chain", "duplicated_logic", "dead_tables", "unused_columns_joins", "cte_repeats_table",
             "mergeable_tables", "redundant_filters", "irreducible"}
 
 # Floors for the Refactor search on every other dev case of 6 to 8 tables (27 cases; see floor_cases).
+# The second counts outputs whose protected tables are proved or untouched (19 + 8 on 2026-10-03).
 REFACTOR_IMPROVED_FLOOR = 22
 REFACTOR_PROVED_FLOOR = 27
 
@@ -65,8 +68,9 @@ def test_case_fields_splits_and_sizes():
     assert sum(len(c["traps"]) for c in GENERATED) >= len(GENERATED)
 
 
-def test_every_case_file_checks_out_on_duckdb():
-    problems = bench.verify_cases(CASES, databases=8)
+@pytest.mark.parametrize("path", sorted(mc.CASES_DIR.glob("*.jsonl")), ids=lambda p: p.stem)
+def test_every_case_file_checks_out_on_duckdb(path):
+    problems = bench.verify_cases(mc.load_cases([path]), databases=8)
     assert problems == [], "\n".join(problems[:20])
 
 
@@ -161,9 +165,51 @@ def test_refactor_search_floor():
     summary, results = bench.run(floor_cases(), "refactor", databases=40)
     assert summary["correctness"]["wrong"] == 0, summary["wrong"]
     assert summary["coverage"]["improved"] >= REFACTOR_IMPROVED_FLOOR
-    assert summary["correctness"]["proved"] >= REFACTOR_PROVED_FLOOR
+    assert summary["correctness"]["proved"] + summary["correctness"]["same"] >= REFACTOR_PROVED_FLOOR
 
 
 def test_results_file_matches_the_case_set():
     row = json.loads((ROOT / "benchmarks" / "results" / "table-minimization.json").read_text(encoding="utf-8"))
     assert row["size"] == len(DEV)
+    row = json.loads((ROOT / "benchmarks" / "results" / "table-minimization-sourced.json").read_text(encoding="utf-8"))
+    assert row["size"] == sum(c["split"] == "dev" for c in SOURCED)
+
+
+def test_sourced_cases_keep_their_split_licence_and_source_apart():
+    assert {c["id"].split("-")[0] for c in SOURCED} == {"sqlglot", "fivetran", "jaffle"}
+    licences = {p.stem for p in (mc.CASES_DIR / "licenses").glob("*.LICENSE")}
+    for case in SOURCED:
+        assert case["split"] == mc.held_out_split(case["id"]), case["id"]
+        assert case["reference_kind"] in ("external", "mechanical"), case["id"]
+        repo = case["source"].split("@")[0].split("/")[-1]
+        assert repo in licences, case["id"]
+    for case in SOURCED:
+        if case["reference_kind"] == "mechanical":
+            assert set(case["reference"]["tables"]) <= set(case["tables"]), case["id"]
+
+
+def test_a_database_the_original_rejects_is_skipped_for_real_data_cases():
+    sources = {"t": {"columns": {"payload": "STRING"}}}
+    original = {"p": "SELECT CAST(payload AS INT64) AS n FROM t"}
+    engine = mc.Engine(sources, {"o": original, "n": {"p": "SELECT SAFE_CAST(payload AS INT64) AS n FROM t"}})
+    try:
+        dbs = [{"t": [("x",)]}, {"t": [("1",)]}]
+        with pytest.raises(mc.WorldError):
+            mc.compare(engine, dbs, "o", ["n"], ["p"])
+        checked = Counter()
+        assert mc.compare(engine, dbs, "o", ["n"], ["p"], skip_errors=True, checked=checked)["n"] is None
+        assert checked["p"] == 1
+    finally:
+        engine.close()
+    assert mc.real_data({"data": {"t": [["1"]]}}) and not mc.real_data({"data": {}})
+
+
+def test_a_cte_named_like_the_table_it_reads_is_renamed():
+    import sqlglot
+
+    fivetran = _load("make_fivetran_minimization_cases")
+    tree = sqlglot.parse_one("WITH a AS (SELECT 1 AS x), r AS (SELECT * FROM r), b AS (SELECT * FROM r JOIN a ON TRUE) "
+                             "SELECT * FROM r, b", read="duckdb")
+    assert fivetran.unshadow_ctes(tree, {"r"})
+    assert tree.sql("duckdb") == ("WITH a AS (SELECT 1 AS x), r__cte AS (SELECT * FROM r), "
+                                  "b AS (SELECT * FROM r__cte AS r JOIN a ON TRUE) SELECT * FROM r__cte AS r, b")

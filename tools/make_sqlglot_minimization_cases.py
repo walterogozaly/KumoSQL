@@ -38,7 +38,7 @@ from sqlglot import exp
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from kumosql.formatting import complexity  # noqa: E402
+from kumosql.formatting import pipeline_complexity  # noqa: E402
 
 FIXTURES = ("merge_subqueries", "eliminate_ctes", "eliminate_joins")
 FAMILY = {
@@ -153,11 +153,6 @@ def _from_sources(query: exp.Expression):
         yield from_.this
     for join in query.args.get("joins") or []:
         yield join.this
-
-
-def score(tables: dict[str, str]) -> dict:
-    structural = sum(complexity(sql).score for sql in tables.values())
-    return {"score": round(structural + len(tables), 1), "structural": round(structural, 1), "tables": len(tables)}
 
 
 def _referenced(sql: str) -> set[str]:
@@ -354,7 +349,7 @@ def convert(sqlglot_dir: Path) -> tuple[list[dict], list[dict]]:
                 skip(problem)
                 continue
             try:
-                original_score, reference_score = score(pipeline), score(reference)
+                original_score, reference_score = pipeline_complexity(pipeline), pipeline_complexity(reference)
             except ValueError as error:
                 skip(f"sqlfluff cannot score it: {error}")
                 continue
@@ -366,7 +361,7 @@ def convert(sqlglot_dir: Path) -> tuple[list[dict], list[dict]]:
                 "id": case_id,
                 "source": f"sqlglot@{commit[:12]} tests/fixtures/optimizer/{fixture}.sql",
                 "families": FAMILY[fixture],
-                "split": "held_out" if int(hashlib.sha1(case_id.encode()).hexdigest(), 16) % 5 == 0 else "dev",
+                "split": "held_out" if int(hashlib.sha256(case_id.encode("utf-8")).hexdigest(), 16) % 5 == 0 else "dev",
                 "dialect": "bigquery",
                 "sources": {name: SOURCES[name] for name in sorted(sources)},
                 "tables": pipeline,

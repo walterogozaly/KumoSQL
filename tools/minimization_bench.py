@@ -21,6 +21,7 @@ cases where the reference is lower) and runtime. Complexity is
     python tools/minimization_bench.py --minimizer kumosql.table_minimizer:minimize_case
     python tools/minimization_bench.py --minimizer reference     # sanity: the stored references
     python tools/minimization_bench.py --split held_out          # once, at the end
+    python tools/minimization_bench.py --cases sourced           # cases adapted from public projects
     python tools/minimization_bench.py --verify benchmarks/table_minimization/generated.jsonl
 """
 
@@ -81,9 +82,13 @@ def refactor_search(case_input: Mapping, max_seconds: float = 60.0, max_states: 
                 table.set("db", None)
         return tree.sql(dialect="bigquery")
 
+    # A table the search left as it was keeps the case's own SQL: re-rendering it through sqlglot would
+    # change its score (a comma join comes back as CROSS JOIN, which sqlfluff counts as a join).
+    unchanged = result.baseline.sql_map
     best, best_key = dict(tables), None
     for entry in result.front:
-        candidate = {key[len(prefix):]: bare(sql) for key, sql in entry.sql_map.items() if key.startswith(prefix)}
+        candidate = {key[len(prefix):]: tables[key[len(prefix):]] if sql == unchanged.get(key) else bare(sql)
+                     for key, sql in entry.sql_map.items() if key.startswith(prefix)}
         try:
             key = (pipeline_complexity(candidate)["score"], sum(len(s) for s in candidate.values()))
         except ValueError:
@@ -193,7 +198,8 @@ def check_output(case: Mapping, out: object, databases: int = DATABASES, prove: 
         if "n" in engine.errors:
             return "wrong", f"the output does not run: {engine.errors['n']}", {}
         dbs = mc.check_databases(case, [original, out], databases)
-        found = mc.compare(engine, dbs, "o", ["n"], protected, stable_only=mc.order_sensitive(original))["n"]
+        found = mc.compare(engine, dbs, "o", ["n"], protected, stable_only=mc.order_sensitive(original),
+                           skip_errors=mc.real_data(case))["n"]
     finally:
         engine.close()
     if found:
@@ -323,10 +329,14 @@ def verify_cases(cases: list[dict], databases: int = 200) -> list[str]:
             if engine.errors:
                 problems.append(f"{cid}: does not run: {engine.errors}")
                 continue
+            checked = Counter()
             found = mc.compare(engine, mc.check_databases(case, worlds.values(), databases), "o", ["r"], case["protected"],
-                               stable_only=mc.order_sensitive(original))
+                               stable_only=mc.order_sensitive(original), skip_errors=mc.real_data(case), checked=checked)
             if found["r"]:
                 problems.append(f"{cid}: reference differs on {found['r']['table']} ({found['r']['reason']})")
+            unchecked = [p for p in case["protected"] if not checked[p]]
+            if unchecked:
+                problems.append(f"{cid}: no database checks {unchecked} (the original fails or depends on row order)")
             for i, trap in enumerate(case["traps"]):
                 witness = mc.witness_rows(case["sources"], trap["witness"])
                 if not mc.differs_on(engine, witness, "o", f"t{i}", case["protected"]):
@@ -345,6 +355,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="identity, refactor, reference, trap, or module:function (default: refactor)")
     parser.add_argument("--split", default="dev", choices=["dev", "held_out", "all"])
     parser.add_argument("--file", type=Path, action="append", help="case files (default: every *.jsonl)")
+    parser.add_argument("--cases", choices=["own", "sourced", "all"],
+                        help="own: generated and hand-written (the default without --file), sourced: adapted from "
+                             "public projects, all (the default with --file)")
     parser.add_argument("--only", help="run case ids containing this text")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--databases", type=int, default=DATABASES)
@@ -359,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(problems) or "every case checks out")
         return 1 if problems else 0
     cases = mc.load_cases(args.file, None if args.split == "all" else args.split)
+    kind = args.cases or ("all" if args.file else "own")
+    if kind != "all":
+        cases = [c for c in cases if mc.sourced(c) == (kind == "sourced")]
     if args.only:
         cases = [c for c in cases if args.only in c["id"]]
     cases = cases[: args.limit] if args.limit else cases

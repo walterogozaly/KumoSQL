@@ -307,6 +307,42 @@ def ordered_aggregates(tree: exp.Expression) -> tuple[exp.Expression, bool]:
     return tree, hit
 
 
+def unshadow_ctes(tree: exp.Expression, names: set[str]) -> bool:
+    """Rename a top-level CTE named like a table or source (``x AS (SELECT * FROM x)``) to ``x__cte``.
+
+    In BigQuery a CTE's own body still reads the table; DuckDB and simple scope readers take the
+    name as the CTE itself (a circular reference). Reads in later CTEs and the main query follow the
+    new name; reads in the CTE's own body and earlier CTEs keep naming the table."""
+
+    with_ = tree.args.get("with_") or tree.args.get("with")
+    if not isinstance(with_, exp.With):
+        return False
+    ctes = list(with_.expressions)
+    changed = False
+    for i, cte in enumerate(ctes):
+        old = cte.alias_or_name
+        if old.lower() not in names:
+            continue
+        new = f"{old}__cte"
+        cte.set("alias", exp.TableAlias(this=exp.to_identifier(new)))
+        for later in ctes[i + 1:]:
+            _rename_reads(later.this, old, new)
+        key = "with_" if "with_" in tree.args else "with"
+        tree.set(key, None)  # the main query without its WITH
+        _rename_reads(tree, old, new)
+        tree.set(key, with_)
+        changed = True
+    return changed
+
+
+def _rename_reads(node: exp.Expression, old: str, new: str) -> None:
+    for table in list(node.find_all(exp.Table)):
+        if not table.db and table.name.lower() == old.lower():
+            alias = table.alias or old
+            table.set("this", exp.to_identifier(new))
+            table.set("alias", exp.TableAlias(this=exp.to_identifier(alias)))
+
+
 def is_cte_ref(table: exp.Table) -> bool:
     """Whether a bare table name refers to a CTE in scope (a CTE's own body sees only earlier CTEs)."""
 
@@ -372,6 +408,20 @@ def pipeline_complexity(tables: dict[str, str]) -> dict:
     return {"score": round(structural + len(tables), 1), "structural": round(structural, 1), "tables": len(tables)}
 
 
+def string_values(columns: dict[str, str], rows: list[list], limit: int = 4) -> dict[str, list[str]]:
+    """The first few distinct seed values of each STRING column, as the case's ``values`` domains, so
+    random databases also draw values the SQL can parse (JSON, timestamps stored as text)."""
+
+    out = {}
+    for i, (column, kind) in enumerate(columns.items()):
+        if kind != "STRING":
+            continue
+        seen = list(dict.fromkeys(r[i] for r in rows if r[i] is not None))[:limit]
+        if seen:
+            out[column] = seen
+    return out
+
+
 class Package:
     def __init__(self, repo: str, it: Path, clone: Path, work: Path):
         self.repo = repo
@@ -402,6 +452,9 @@ class Package:
             f32 = [t == "FLOAT" for _, t in info]
             self.seed_rows[name.lower()] = [
                 [float(f"{v:.7g}") if (is32 and v is not None) else v for v, is32 in zip(r, f32)] for r in rows]
+            values = string_values(self.sources[name.lower()]["columns"], self.seed_rows[name.lower()])
+            if values:
+                self.sources[name.lower()]["values"] = values
         by_rel = {}
         for k, n in models.items():
             _, schema, ident = [p.strip('"') for p in n["relation_name"].split(".")]
@@ -411,6 +464,7 @@ class Package:
         self.native: dict[str, str] = {}
         self.uses_now: set[str] = set()
         self.ordered: set[str] = set()
+        self.unshadowed: set[str] = set()
         self.path = {n["name"]: n["path"] for n in models.values()}
         for k, n in models.items():
             name = n["name"]
@@ -432,6 +486,8 @@ class Package:
                 tree, hit = fixed_time(tree)
                 if hit:
                     self.uses_now.add(name)
+                if unshadow_ctes(tree, {by_rel[k] for k in by_rel} | set(seed_rel.values())):
+                    self.unshadowed.add(name)
                 tree, hit = ordered_aggregates(tree)
                 if hit:
                     self.ordered.add(name)
@@ -730,7 +786,8 @@ class Oracle:
 
 
 def split_of(case_id: str) -> str:
-    return "held_out" if int(hashlib.sha1(case_id.encode()).hexdigest(), 16) % 5 == 0 else "dev"
+    # the same rule as tools/minimization_cases.held_out_split
+    return "held_out" if int(hashlib.sha256(case_id.encode("utf-8")).hexdigest(), 16) % 5 == 0 else "dev"
 
 
 def make_case(pkg: "Package", oracle: Oracle, case_id: str, protected: list[str], stats: dict) -> dict | None:
@@ -776,6 +833,9 @@ def make_case(pkg: "Package", oracle: Oracle, case_id: str, protected: list[str]
     if pkg.uses_now:
         notes.append(f"now()/current_timestamp replaced by {FIXED_TS} and current_date by {FIXED_DATE} in: "
                      + ", ".join(sorted(pkg.uses_now)) + ".")
+    if pkg.unshadowed:
+        notes.append("CTEs named like a table they read (x AS (SELECT * FROM x)) renamed to x__cte in: "
+                     + ", ".join(sorted(pkg.unshadowed)) + ".")
     if pkg.ordered:
         notes.append("STRING_AGG/ARRAY_AGG without ORDER BY given ORDER BY its own argument (ASC NULLS FIRST) so "
                      "the output does not depend on row order (these tables, and tables reading them, are checked "
