@@ -41,6 +41,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [LLM-R2 query sets](llmr2-bench.md) | How do the rules behave across many queries? |
 | [Materialized-view rewriting](mv-benchmark.md) | Can shared joins supply other queries? |
 | [Table minimization](table-minimization.md) | Can the search remove models while protecting outputs? |
+| [Project reduction](project-reduction.md) | How small can a whole Dataform project get while its chosen outputs stay the same? |
 | [Duplicate detection](duplicate-detection.md) | Can it find copies without confusing similar queries? |
 
 ## Coverage, lineage, and Dataform

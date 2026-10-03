@@ -45,6 +45,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on 11,353 queries, test files held out | `llm-r2-scale` |
 | [MV-based rewriting](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS | `mv-benchmark` |
 | [Table minimization](table-minimization.md) | Simplest pipeline that keeps the protected tables identical, from 3 to 20 tables, with traps | `table-minimization` |
+| [Project reduction](project-reduction.md) | Smallest Dataform project that keeps the chosen outputs, as a patch: converted minimization cases checked on DuckDB, and open-source Dataform projects | `project-reduction` |
 | [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors | `duplicate-exact`, `duplicate-similar`, `shared-refactors-proof`, `shared-refactors-executed` |
 
 ## Coverage and engine behaviour
