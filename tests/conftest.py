@@ -159,6 +159,7 @@ EVAL_FILES = {
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
+    "test_querybooster_bench.py",
     "test_rbot_benchmarks.py",
     "test_soundness_fuzz.py",
     "test_safety_corpus.py",
