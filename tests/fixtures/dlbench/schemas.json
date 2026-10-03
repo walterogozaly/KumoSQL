@@ -1,0 +1,1843 @@
+{
+"BIRDTrans/authors/sqlite": [
+"Table: `Conference`\nColumns:\n(`Id`, integer, primary key)\n(`ShortName`, text)\n(`FullName`, text)\n(`HomePage`, text)\n"
+],
+"BIRDTrans/beer_factory/sqlite": [
+"Table: `customers`\nColumns:\n(`CustomerID`, integer, primary key)\n(`First`, text)\n(`Last`, text)\n(`StreetAddress`, text)\n(`City`, text)\n(`State`, text)\n(`ZipCode`, integer)\n(`Email`, text)\n(`PhoneNumber`, text)\n(`FirstPurchaseDate`, date)\n(`SubscribedToEmailList`, text)\n(`Gender`, text)\n",
+"Table: `transaction`\nColumns:\n(`TransactionID`, integer, primary key)\n(`CreditCardNumber`, integer)\n(`CustomerID`, integer)\n(`TransactionDate`, date)\n(`CreditCardType`, text)\n(`LocationID`, integer)\n(`RootBeerID`, integer)\n(`PurchasePrice`, real)\n"
+],
+"BIRDTrans/bike_share_1/sqlite": [
+"Table: `trip`\nColumns:\n(`id`, integer, primary key)\n(`duration`, integer)\n(`start_date`, text)\n(`start_station_name`, text)\n(`start_station_id`, integer)\n(`end_date`, text)\n(`end_station_name`, text)\n(`end_station_id`, integer)\n(`bike_id`, integer)\n(`subscription_type`, text)\n(`zip_code`, integer)\n",
+"Table: `weather`\nColumns:\n(`date`, text)\n(`max_temperature_f`, integer)\n(`mean_temperature_f`, integer)\n(`min_temperature_f`, integer)\n(`max_dew_point_f`, integer)\n(`mean_dew_point_f`, integer)\n(`min_dew_point_f`, integer)\n(`max_humidity`, integer)\n(`mean_humidity`, integer)\n(`min_humidity`, integer)\n(`max_sea_level_pressure_inches`, real)\n(`mean_sea_level_pressure_inches`, real)\n(`min_sea_level_pressure_inches`, real)\n(`max_visibility_miles`, integer)\n(`mean_visibility_miles`, integer)\n(`min_visibility_miles`, integer)\n(`max_wind_Speed_mph`, integer)\n(`mean_wind_speed_mph`, integer)\n(`max_gust_speed_mph`, integer)\n(`precipitation_inches`, text)\n(`cloud_cover`, integer)\n(`events`, text)\n(`wind_dir_degrees`, integer)\n(`zip_code`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `station`\nColumns:\n(`id`, integer, primary key)\n(`name`, text)\n(`lat`, real)\n(`long`, real)\n(`dock_count`, integer)\n(`city`, text)\n(`installation_date`, text)\n"
+],
+"BIRDTrans/book_publishing_company/sqlite": [
+"Table: `titles`\nColumns:\n(`title_id`, text, primary key)\n(`title`, text)\n(`type`, text)\n(`pub_id`, text)\n(`price`, real)\n(`advance`, real)\n(`royalty`, integer)\n(`ytd_sales`, integer)\n(`notes`, text)\n(`pubdate`, datetime)\n",
+"Table: `sales`\nColumns:\n(`stor_id`, text, primary key)\n(`ord_num`, text, primary key)\n(`ord_date`, datetime)\n(`qty`, integer)\n(`payterms`, text)\n(`title_id`, text, primary key)\n",
+"Table: `stores`\nColumns:\n(`stor_id`, text, primary key)\n(`stor_name`, text)\n(`stor_address`, text)\n(`city`, text)\n(`state`, text)\n(`zip`, text)\n",
+"Table: `publishers`\nColumns:\n(`pub_id`, text, primary key)\n(`pub_name`, text)\n(`city`, text)\n(`state`, text)\n(`country`, text)\n",
+"Table: `employee`\nColumns:\n(`emp_id`, text, primary key)\n(`fname`, text)\n(`minit`, text)\n(`lname`, text)\n(`job_id`, integer)\n(`job_lvl`, integer)\n(`pub_id`, text)\n(`hire_date`, datetime)\n"
+],
+"BIRDTrans/books/sqlite": [
+"Table: `order_status`\nColumns:\n(`status_id`, integer, primary key)\n(`status_value`, text)\n",
+"Table: `order_history`\nColumns:\n(`history_id`, integer, primary key)\n(`order_id`, integer)\n(`status_id`, integer)\n(`status_date`, datetime)\n",
+"Table: `book`\nColumns:\n(`book_id`, integer, primary key)\n(`title`, text)\n(`isbn13`, text)\n(`language_id`, integer)\n(`num_pages`, integer)\n(`publication_date`, date)\n(`publisher_id`, integer)\n",
+"Table: `cust_order`\nColumns:\n(`order_id`, integer, primary key)\n(`order_date`, datetime)\n(`customer_id`, integer)\n(`shipping_method_id`, integer)\n(`dest_address_id`, integer)\n",
+"Table: `customer`\nColumns:\n(`customer_id`, integer, primary key)\n(`first_name`, text)\n(`last_name`, text)\n(`email`, text)\n",
+"Table: `shipping_method`\nColumns:\n(`method_id`, integer, primary key)\n(`method_name`, text)\n(`cost`, real)\n",
+"Table: `publisher`\nColumns:\n(`publisher_id`, integer, primary key)\n(`publisher_name`, text)\n",
+"Table: `book_author`\nColumns:\n(`book_id`, integer, primary key)\n(`author_id`, integer, primary key)\n",
+"Table: `author`\nColumns:\n(`author_id`, integer, primary key)\n(`author_name`, text)\n"
+],
+"BIRDTrans/car_retails/sqlite": [
+"Table: `payments`\nColumns:\n(`customerNumber`, integer, primary key)\n(`checkNumber`, text, primary key)\n(`paymentDate`, date)\n(`amount`, real)\n",
+"Table: `customers`\nColumns:\n(`customerNumber`, integer, primary key)\n(`customerName`, text)\n(`contactLastName`, text)\n(`contactFirstName`, text)\n(`phone`, text)\n(`addressLine1`, text)\n(`addressLine2`, text)\n(`city`, text)\n(`state`, text)\n(`postalCode`, text)\n(`country`, text)\n(`salesRepEmployeeNumber`, integer)\n(`creditLimit`, real)\n",
+"Table: `orderdetails`\nColumns:\n(`orderNumber`, integer, primary key)\n(`productCode`, text, primary key)\n(`quantityOrdered`, integer)\n(`priceEach`, real)\n(`orderLineNumber`, integer)\n",
+"Table: `orders`\nColumns:\n(`orderNumber`, integer, primary key)\n(`orderDate`, date)\n(`requiredDate`, date)\n(`shippedDate`, date)\n(`status`, text)\n(`comments`, text)\n(`customerNumber`, integer)\n",
+"Table: `products`\nColumns:\n(`productCode`, text, primary key)\n(`productName`, text)\n(`productLine`, text)\n(`productScale`, text)\n(`productVendor`, text)\n(`productDescription`, text)\n(`quantityInStock`, integer)\n(`buyPrice`, real)\n(`MSRP`, real)\n",
+"Table: `employees`\nColumns:\n(`employeeNumber`, integer, primary key)\n(`lastName`, text)\n(`firstName`, text)\n(`extension`, text)\n(`email`, text)\n(`officeCode`, text)\n(`reportsTo`, integer)\n(`jobTitle`, text)\n",
+"Table: `offices`\nColumns:\n(`officeCode`, text, primary key)\n(`city`, text)\n(`phone`, text)\n(`addressLine1`, text)\n(`addressLine2`, text)\n(`state`, text)\n(`country`, text)\n(`postalCode`, text)\n(`territory`, text)\n"
+],
+"BIRDTrans/chicago_crime/sqlite": [
+"Table: `District`\nColumns:\n(`district_no`, integer, primary key)\n(`district_name`, text)\n(`address`, text)\n(`zip_code`, integer)\n(`commander`, text)\n(`email`, text)\n(`phone`, text)\n(`fax`, text)\n(`tty`, text)\n(`twitter`, text)\n",
+"Table: `Crime`\nColumns:\n(`report_no`, integer, primary key)\n(`case_number`, text)\n(`date`, text)\n(`block`, text)\n(`iucr_no`, text)\n(`location_description`, text)\n(`arrest`, text)\n(`domestic`, text)\n(`beat`, integer)\n(`district_no`, integer)\n(`ward_no`, integer)\n(`community_area_no`, integer)\n(`fbi_code_no`, text)\n(`latitude`, text)\n(`longitude`, text)\n",
+"Table: `Ward`\nColumns:\n(`ward_no`, integer, primary key)\n(`alderman_first_name`, text)\n(`alderman_last_name`, text)\n(`alderman_name_suffix`, text)\n(`ward_office_address`, text)\n(`ward_office_zip`, text)\n(`ward_email`, text)\n(`ward_office_phone`, text)\n(`ward_office_fax`, text)\n(`city_hall_office_room`, integer)\n(`city_hall_office_phone`, text)\n(`city_hall_office_fax`, text)\n(`Population`, integer)\n",
+"Table: `FBI_Code`\nColumns:\n(`fbi_code_no`, text, primary key)\n(`title`, text)\n(`description`, text)\n(`crime_against`, text)\n"
+],
+"BIRDTrans/codebase_comments/sqlite": [
+"Table: `Method`\nColumns:\n(`Id`, integer, primary key)\n(`Name`, text)\n(`FullComment`, text)\n(`Summary`, text)\n(`ApiCalls`, text)\n(`CommentIsXml`, integer)\n(`SampledAt`, integer)\n(`SolutionId`, integer)\n(`Lang`, text)\n(`NameTokenized`, text)\n"
+],
+"BIRDTrans/coinmarketcap/sqlite": [
+"Table: `coins`\nColumns:\n(`id`, integer, primary key)\n(`name`, text)\n(`slug`, text)\n(`symbol`, text)\n(`status`, text)\n(`category`, text)\n(`description`, text)\n(`subreddit`, text)\n(`notice`, text)\n(`tags`, text)\n(`tag_names`, text)\n(`website`, text)\n(`platform_id`, integer)\n(`date_added`, text)\n(`date_launched`, text)\n",
+"Table: `historical`\nColumns:\n(`date`, date)\n(`coin_id`, integer)\n(`cmc_rank`, integer)\n(`market_cap`, real)\n(`price`, real)\n(`open`, real)\n(`high`, real)\n(`low`, real)\n(`close`, real)\n(`time_high`, text)\n(`time_low`, text)\n(`volume_24h`, real)\n(`percent_change_1h`, real)\n(`percent_change_24h`, real)\n(`percent_change_7d`, real)\n(`circulating_supply`, real)\n(`total_supply`, real)\n(`max_supply`, real)\n(`num_market_pairs`, integer)\n(`rowid`, integer, primary key)\n"
+],
+"BIRDTrans/disney/sqlite": [
+"Table: `movies_total_gross`\nColumns:\n(`movie_title`, text, primary key)\n(`release_date`, text, primary key)\n(`genre`, text)\n(`MPAA_rating`, text)\n(`total_gross`, text)\n(`inflation_adjusted_gross`, text)\n",
+"Table: `characters`\nColumns:\n(`movie_title`, text, primary key)\n(`release_date`, text)\n(`hero`, text)\n(`villian`, text)\n(`song`, text)\n",
+"Table: `voice-actors`\nColumns:\n(`character`, text, primary key)\n(`voice-actor`, text)\n(`movie`, text)\n",
+"Table: `director`\nColumns:\n(`name`, text, primary key)\n(`director`, text)\n"
+],
+"BIRDTrans/food_inspection/sqlite": [
+"Table: `inspections`\nColumns:\n(`business_id`, integer)\n(`score`, integer)\n(`date`, date)\n(`type`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `violations`\nColumns:\n(`business_id`, integer)\n(`date`, date)\n(`violation_type_id`, text)\n(`risk_category`, text)\n(`description`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `businesses`\nColumns:\n(`business_id`, integer, primary key)\n(`name`, text)\n(`address`, text)\n(`city`, text)\n(`postal_code`, text)\n(`latitude`, real)\n(`longitude`, real)\n(`phone_number`, integer)\n(`tax_code`, text)\n(`business_certificate`, integer)\n(`application_date`, date)\n(`owner_name`, text)\n(`owner_address`, text)\n(`owner_city`, text)\n(`owner_state`, text)\n(`owner_zip`, text)\n"
+],
+"BIRDTrans/food_inspection_2/sqlite": [
+"Table: `inspection`\nColumns:\n(`inspection_id`, integer, primary key)\n(`inspection_date`, date)\n(`inspection_type`, text)\n(`results`, text)\n(`employee_id`, integer)\n(`license_no`, integer)\n(`followup_to`, integer)\n",
+"Table: `establishment`\nColumns:\n(`license_no`, integer, primary key)\n(`dba_name`, text)\n(`aka_name`, text)\n(`facility_type`, text)\n(`risk_level`, integer)\n(`address`, text)\n(`city`, text)\n(`state`, text)\n(`zip`, integer)\n(`latitude`, real)\n(`longitude`, real)\n(`ward`, integer)\n",
+"Table: `employee`\nColumns:\n(`employee_id`, integer, primary key)\n(`first_name`, text)\n(`last_name`, text)\n(`address`, text)\n(`city`, text)\n(`state`, text)\n(`zip`, integer)\n(`phone`, text)\n(`title`, text)\n(`salary`, integer)\n(`supervisor`, integer)\n",
+"Table: `violation`\nColumns:\n(`inspection_id`, integer, primary key)\n(`point_id`, integer, primary key)\n(`fine`, integer)\n(`inspector_comment`, text)\n"
+],
+"BIRDTrans/genes/sqlite": [
+"Table: `Genes`\nColumns:\n(`GeneID`, text)\n(`Essential`, text)\n(`Class`, text)\n(`Complex`, text)\n(`Phenotype`, text)\n(`Motif`, text)\n(`Chromosome`, integer)\n(`Function`, text)\n(`Localization`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `Interactions`\nColumns:\n(`GeneID1`, text, primary key)\n(`GeneID2`, text, primary key)\n(`Type`, text)\n(`Expression_Corr`, real)\n"
+],
+"BIRDTrans/hockey/sqlite": [
+"Table: `Master`\nColumns:\n(`playerID`, text)\n(`coachID`, text)\n(`hofID`, text)\n(`firstName`, text)\n(`lastName`, text)\n(`nameNote`, text)\n(`nameGiven`, text)\n(`nameNick`, text)\n(`height`, text)\n(`weight`, text)\n(`shootCatch`, text)\n(`legendsID`, text)\n(`ihdbID`, text)\n(`hrefID`, text)\n(`firstNHL`, text)\n(`lastNHL`, text)\n(`firstWHA`, text)\n(`lastWHA`, text)\n(`pos`, text)\n(`birthYear`, text)\n(`birthMon`, text)\n(`birthDay`, text)\n(`birthCountry`, text)\n(`birthState`, text)\n(`birthCity`, text)\n(`deathYear`, text)\n(`deathMon`, text)\n(`deathDay`, text)\n(`deathCountry`, text)\n(`deathState`, text)\n(`deathCity`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `Goalies`\nColumns:\n(`playerID`, text, primary key)\n(`year`, integer, primary key)\n(`stint`, integer, primary key)\n(`tmID`, text)\n(`lgID`, text)\n(`GP`, text)\n(`Min`, text)\n(`W`, text)\n(`L`, text)\n(`T/OL`, text)\n(`ENG`, text)\n(`SHO`, text)\n(`GA`, text)\n(`SA`, text)\n(`PostGP`, text)\n(`PostMin`, text)\n(`PostW`, text)\n(`PostL`, text)\n(`PostT`, text)\n(`PostENG`, text)\n(`PostSHO`, text)\n(`PostGA`, text)\n(`PostSA`, text)\n",
+"Table: `Scoring`\nColumns:\n(`playerID`, text)\n(`year`, integer)\n(`stint`, integer)\n(`tmID`, text)\n(`lgID`, text)\n(`pos`, text)\n(`GP`, integer)\n(`G`, integer)\n(`A`, integer)\n(`Pts`, integer)\n(`PIM`, integer)\n(`+/-`, text)\n(`PPG`, text)\n(`PPA`, text)\n(`SHG`, text)\n(`SHA`, text)\n(`GWG`, text)\n(`GTG`, text)\n(`SOG`, text)\n(`PostGP`, text)\n(`PostG`, text)\n(`PostA`, text)\n(`PostPts`, text)\n(`PostPIM`, text)\n(`Post+/-`, text)\n(`PostPPG`, text)\n(`PostPPA`, text)\n(`PostSHG`, text)\n(`PostSHA`, text)\n(`PostGWG`, text)\n(`PostSOG`, text)\n(`rowid`, integer, primary key)\n"
+],
+"BIRDTrans/human_resources/sqlite": [
+"Table: `employee`\nColumns:\n(`ssn`, text, primary key)\n(`lastname`, text)\n(`firstname`, text)\n(`hiredate`, text)\n(`salary`, text)\n(`gender`, text)\n(`performance`, text)\n(`positionID`, integer)\n(`locationID`, integer)\n",
+"Table: `position`\nColumns:\n(`positionID`, integer, primary key)\n(`positiontitle`, text)\n(`educationrequired`, text)\n(`minsalary`, text)\n(`maxsalary`, text)\n",
+"Table: `location`\nColumns:\n(`locationID`, integer, primary key)\n(`locationcity`, text)\n(`address`, text)\n(`state`, text)\n(`zipcode`, integer)\n(`officephone`, text)\n"
+],
+"BIRDTrans/ice_hockey_draft/sqlite": [
+"Table: `PlayerInfo`\nColumns:\n(`ELITEID`, integer, primary key)\n(`PlayerName`, text)\n(`birthdate`, text)\n(`birthyear`, text)\n(`birthmonth`, integer)\n(`birthday`, integer)\n(`birthplace`, text)\n(`nation`, text)\n(`height`, integer)\n(`weight`, integer)\n(`position_info`, text)\n(`shoots`, text)\n(`draftyear`, integer)\n(`draftround`, integer)\n(`overall`, integer)\n(`overallby`, text)\n(`CSS_rank`, integer)\n(`sum_7yr_GP`, integer)\n(`sum_7yr_TOI`, integer)\n(`GP_greater_than_0`, text)\n",
+"Table: `SeasonStatus`\nColumns:\n(`ELITEID`, integer)\n(`SEASON`, text)\n(`TEAM`, text)\n(`LEAGUE`, text)\n(`GAMETYPE`, text)\n(`GP`, integer)\n(`G`, integer)\n(`A`, integer)\n(`P`, integer)\n(`PIM`, integer)\n(`PLUSMINUS`, integer)\n(`rowid`, integer, primary key)\n"
+],
+"BIRDTrans/image_and_language/sqlite": [
+"Table: `IMG_OBJ`\nColumns:\n(`IMG_ID`, integer, primary key)\n(`OBJ_SAMPLE_ID`, integer, primary key)\n(`OBJ_CLASS_ID`, integer)\n(`X`, integer)\n(`Y`, integer)\n(`W`, integer)\n(`H`, integer)\n",
+"Table: `OBJ_CLASSES`\nColumns:\n(`OBJ_CLASS_ID`, integer, primary key)\n(`OBJ_CLASS`, text)\n"
+],
+"BIRDTrans/language_corpus/sqlite": [
+"Table: `pages`\nColumns:\n(`pid`, integer, primary key)\n(`lid`, integer)\n(`page`, integer)\n(`revision`, integer)\n(`title`, text)\n(`words`, integer)\n"
+],
+"BIRDTrans/law_episode/sqlite": [
+"Table: `Episode`\nColumns:\n(`episode_id`, text, primary key)\n(`series`, text)\n(`season`, integer)\n(`episode`, integer)\n(`number_in_series`, integer)\n(`title`, text)\n(`summary`, text)\n(`air_date`, date)\n(`episode_image`, text)\n(`rating`, real)\n(`votes`, integer)\n",
+"Table: `Award`\nColumns:\n(`award_id`, integer, primary key)\n(`organization`, text)\n(`year`, integer)\n(`award_category`, text)\n(`award`, text)\n(`series`, text)\n(`episode_id`, text)\n(`person_id`, text)\n(`role`, text)\n(`result`, text)\n",
+"Table: `Person`\nColumns:\n(`person_id`, text, primary key)\n(`name`, text)\n(`birthdate`, date)\n(`birth_name`, text)\n(`birth_place`, text)\n(`birth_region`, text)\n(`birth_country`, text)\n(`height_meters`, real)\n(`nickname`, text)\n"
+],
+"BIRDTrans/legislator/sqlite": [
+"Table: `current`\nColumns:\n(`ballotpedia_id`, text)\n(`bioguide_id`, text, primary key)\n(`birthday_bio`, date)\n(`cspan_id`, real, primary key)\n(`fec_id`, text)\n(`first_name`, text)\n(`gender_bio`, text)\n(`google_entity_id_id`, text)\n(`govtrack_id`, integer)\n(`house_history_id`, real)\n(`icpsr_id`, real)\n(`last_name`, text)\n(`lis_id`, text)\n(`maplight_id`, real)\n(`middle_name`, text)\n(`nickname_name`, text)\n(`official_full_name`, text)\n(`opensecrets_id`, text)\n(`religion_bio`, text)\n(`suffix_name`, text)\n(`thomas_id`, integer)\n(`votesmart_id`, real)\n(`wikidata_id`, text)\n(`wikipedia_id`, text)\n",
+"Table: `current-terms`\nColumns:\n(`address`, text)\n(`bioguide`, text, primary key)\n(`caucus`, text)\n(`chamber`, text)\n(`class`, real)\n(`contact_form`, text)\n(`district`, real)\n(`end`, text, primary key)\n(`fax`, text)\n(`last`, text)\n(`name`, text)\n(`office`, text)\n(`party`, text)\n(`party_affiliations`, text)\n(`phone`, text)\n(`relation`, text)\n(`rss_url`, text)\n(`start`, text)\n(`state`, text)\n(`state_rank`, text)\n(`title`, text)\n(`type`, text)\n(`url`, text)\n"
+],
+"BIRDTrans/menu/sqlite": [
+"Table: `Menu`\nColumns:\n(`id`, integer, primary key)\n(`name`, text)\n(`sponsor`, text)\n(`event`, text)\n(`venue`, text)\n(`place`, text)\n(`physical_description`, text)\n(`occasion`, text)\n(`notes`, text)\n(`call_number`, text)\n(`keywords`, text)\n(`language`, text)\n(`date`, date)\n(`location`, text)\n(`location_type`, text)\n(`currency`, text)\n(`currency_symbol`, text)\n(`status`, text)\n(`page_count`, integer)\n(`dish_count`, integer)\n"
+],
+"BIRDTrans/mondial_geo/sqlite": [
+"Table: `geo_river`\nColumns:\n(`River`, text, primary key)\n(`Country`, text, primary key)\n(`Province`, text, primary key)\n",
+"Table: `politics`\nColumns:\n(`Country`, text, primary key)\n(`Independence`, date)\n(`Dependent`, text)\n(`Government`, text)\n",
+"Table: `country`\nColumns:\n(`Name`, text)\n(`Code`, text, primary key)\n(`Capital`, text)\n(`Province`, text)\n(`Area`, real)\n(`Population`, integer)\n",
+"Table: `organization`\nColumns:\n(`Abbreviation`, text, primary key)\n(`Name`, text)\n(`City`, text)\n(`Country`, text)\n(`Province`, text)\n(`Established`, date)\n"
+],
+"BIRDTrans/movie_3/sqlite": [
+"Table: `country`\nColumns:\n(`country_id`, integer, primary key)\n(`country`, text)\n(`last_update`, datetime)\n",
+"Table: `city`\nColumns:\n(`city_id`, integer, primary key)\n(`city`, text)\n(`country_id`, integer)\n(`last_update`, datetime)\n",
+"Table: `payment`\nColumns:\n(`payment_id`, integer, primary key)\n(`customer_id`, integer)\n(`staff_id`, integer)\n(`rental_id`, integer)\n(`amount`, real)\n(`payment_date`, datetime)\n(`last_update`, datetime)\n",
+"Table: `film`\nColumns:\n(`film_id`, integer, primary key)\n(`title`, text)\n(`description`, text)\n(`release_year`, text)\n(`language_id`, integer)\n(`original_language_id`, integer)\n(`rental_duration`, integer)\n(`rental_rate`, real)\n(`length`, integer)\n(`replacement_cost`, real)\n(`rating`, text)\n(`special_features`, text)\n(`last_update`, datetime)\n",
+"Table: `customer`\nColumns:\n(`customer_id`, integer, primary key)\n(`store_id`, integer)\n(`first_name`, text)\n(`last_name`, text)\n(`email`, text)\n(`address_id`, integer)\n(`active`, integer)\n(`create_date`, datetime)\n(`last_update`, datetime)\n",
+"Table: `address`\nColumns:\n(`address_id`, integer, primary key)\n(`address`, text)\n(`address2`, text)\n(`district`, text)\n(`city_id`, integer)\n(`postal_code`, text)\n(`phone`, text)\n(`last_update`, datetime)\n",
+"Table: `rental`\nColumns:\n(`rental_id`, integer, primary key)\n(`rental_date`, datetime)\n(`inventory_id`, integer)\n(`customer_id`, integer)\n(`return_date`, datetime)\n(`staff_id`, integer)\n(`last_update`, datetime)\n",
+"Table: `inventory`\nColumns:\n(`inventory_id`, integer, primary key)\n(`film_id`, integer)\n(`store_id`, integer)\n(`last_update`, datetime)\n",
+"Table: `film_category`\nColumns:\n(`film_id`, integer, primary key)\n(`category_id`, integer, primary key)\n(`last_update`, datetime)\n",
+"Table: `category`\nColumns:\n(`category_id`, integer, primary key)\n(`name`, text)\n(`last_update`, datetime)\n",
+"Table: `actor`\nColumns:\n(`actor_id`, integer, primary key)\n(`first_name`, text)\n(`last_name`, text)\n(`last_update`, datetime)\n",
+"Table: `film_actor`\nColumns:\n(`actor_id`, integer, primary key)\n(`film_id`, integer, primary key)\n(`last_update`, datetime)\n"
+],
+"BIRDTrans/movie_platform/sqlite": [
+"Table: `lists`\nColumns:\n(`user_id`, integer)\n(`list_id`, integer, primary key)\n(`list_title`, text)\n(`list_movie_number`, integer)\n(`list_update_timestamp_utc`, text)\n(`list_creation_timestamp_utc`, text)\n(`list_followers`, integer)\n(`list_url`, text)\n(`list_comments`, integer)\n(`list_description`, text)\n(`list_cover_image_url`, text)\n(`list_first_image_url`, text)\n(`list_second_image_url`, text)\n(`list_third_image_url`, text)\n",
+"Table: `ratings`\nColumns:\n(`movie_id`, integer)\n(`rating_id`, integer)\n(`rating_url`, text)\n(`rating_score`, integer)\n(`rating_timestamp_utc`, text)\n(`critic`, text)\n(`critic_likes`, integer)\n(`critic_comments`, integer)\n(`user_id`, integer)\n(`user_trialist`, integer)\n(`user_subscriber`, integer)\n(`user_eligible_for_trial`, integer)\n(`user_has_payment_method`, integer)\n(`rowid`, integer, primary key)\n",
+"Table: `movies`\nColumns:\n(`movie_id`, integer, primary key)\n(`movie_title`, text)\n(`movie_release_year`, integer)\n(`movie_url`, text)\n(`movie_title_language`, text)\n(`movie_popularity`, integer)\n(`movie_image_url`, text)\n(`director_id`, text)\n(`director_name`, text)\n(`director_url`, text)\n"
+],
+"BIRDTrans/movielens/sqlite": [
+"Table: `u2base`\nColumns:\n(`userid`, integer, primary key)\n(`movieid`, integer, primary key)\n(`rating`, text)\n",
+"Table: `movies`\nColumns:\n(`movieid`, integer, primary key)\n(`year`, integer)\n(`isEnglish`, text)\n(`country`, text)\n(`runningtime`, integer)\n",
+"Table: `movies2actors`\nColumns:\n(`movieid`, integer, primary key)\n(`actorid`, integer, primary key)\n(`cast_num`, integer)\n",
+"Table: `actors`\nColumns:\n(`actorid`, integer, primary key)\n(`a_gender`, text)\n(`a_quality`, integer)\n",
+"Table: `movies2directors`\nColumns:\n(`movieid`, integer, primary key)\n(`directorid`, integer, primary key)\n(`genre`, text)\n",
+"Table: `users`\nColumns:\n(`userid`, integer, primary key)\n(`age`, text)\n(`u_gender`, text)\n(`occupation`, text)\n"
+],
+"BIRDTrans/movies_4/sqlite": [
+"Table: `movie`\nColumns:\n(`movie_id`, integer, primary key)\n(`title`, text)\n(`budget`, integer)\n(`homepage`, text)\n(`overview`, text)\n(`popularity`, real)\n(`release_date`, date)\n(`revenue`, integer)\n(`runtime`, integer)\n(`movie_status`, text)\n(`tagline`, text)\n(`vote_average`, real)\n(`vote_count`, integer)\n",
+"Table: `production_country`\nColumns:\n(`movie_id`, integer)\n(`country_id`, integer)\n(`rowid`, integer, primary key)\n",
+"Table: `country`\nColumns:\n(`country_id`, integer, primary key)\n(`country_iso_code`, text)\n(`country_name`, text)\n",
+"Table: `movie_cast`\nColumns:\n(`movie_id`, integer)\n(`person_id`, integer)\n(`character_name`, text)\n(`gender_id`, integer)\n(`cast_order`, integer)\n(`rowid`, integer, primary key)\n",
+"Table: `person`\nColumns:\n(`person_id`, integer, primary key)\n(`person_name`, text)\n",
+"Table: `movie_company`\nColumns:\n(`movie_id`, integer)\n(`company_id`, integer)\n(`rowid`, integer, primary key)\n",
+"Table: `movie_genres`\nColumns:\n(`movie_id`, integer)\n(`genre_id`, integer)\n(`rowid`, integer, primary key)\n",
+"Table: `genre`\nColumns:\n(`genre_id`, integer, primary key)\n(`genre_name`, text)\n",
+"Table: `production_company`\nColumns:\n(`company_id`, integer, primary key)\n(`company_name`, text)\n"
+],
+"BIRDTrans/professional_basketball/sqlite": [
+"Table: `teams`\nColumns:\n(`year`, integer, primary key)\n(`lgID`, text)\n(`tmID`, text, primary key)\n(`franchID`, text)\n(`confID`, text)\n(`divID`, text)\n(`rank`, integer)\n(`confRank`, integer)\n(`playoff`, text)\n(`name`, text)\n(`o_fgm`, integer)\n(`o_ftm`, integer)\n(`o_pts`, integer)\n(`d_pts`, integer)\n(`homeWon`, integer)\n(`homeLost`, integer)\n(`awayWon`, integer)\n(`awayLost`, integer)\n(`won`, integer)\n(`lost`, integer)\n(`games`, integer)\n(`arena`, text)\n",
+"Table: `players_teams`\nColumns:\n(`id`, integer, primary key)\n(`playerID`, text)\n(`year`, integer)\n(`stint`, integer)\n(`tmID`, text)\n(`lgID`, text)\n(`GP`, integer)\n(`GS`, integer)\n(`minutes`, integer)\n(`points`, integer)\n(`oRebounds`, integer)\n(`dRebounds`, integer)\n(`rebounds`, integer)\n(`assists`, integer)\n(`steals`, integer)\n(`blocks`, integer)\n(`turnovers`, integer)\n(`PF`, integer)\n(`fgAttempted`, integer)\n(`fgMade`, integer)\n(`ftAttempted`, integer)\n(`ftMade`, integer)\n(`threeAttempted`, integer)\n(`threeMade`, integer)\n(`PostGP`, integer)\n(`PostGS`, integer)\n(`PostMinutes`, integer)\n(`PostPoints`, integer)\n(`PostoRebounds`, integer)\n(`PostdRebounds`, integer)\n(`PostRebounds`, integer)\n(`PostAssists`, integer)\n(`PostSteals`, integer)\n(`PostBlocks`, integer)\n(`PostTurnovers`, integer)\n(`PostPF`, integer)\n(`PostfgAttempted`, integer)\n(`PostfgMade`, integer)\n(`PostftAttempted`, integer)\n(`PostftMade`, integer)\n(`PostthreeAttempted`, integer)\n(`PostthreeMade`, integer)\n(`note`, text)\n",
+"Table: `draft`\nColumns:\n(`id`, integer, primary key)\n(`draftYear`, integer)\n(`draftRound`, integer)\n(`draftSelection`, integer)\n(`draftOverall`, integer)\n(`tmID`, text)\n(`firstName`, text)\n(`lastName`, text)\n(`suffixName`, text)\n(`playerID`, text)\n(`draftFrom`, text)\n(`lgID`, text)\n",
+"Table: `players`\nColumns:\n(`playerID`, text, primary key)\n(`useFirst`, text)\n(`firstName`, text)\n(`middleName`, text)\n(`lastName`, text)\n(`nameGiven`, text)\n(`fullGivenName`, text)\n(`nameSuffix`, text)\n(`nameNick`, text)\n(`pos`, text)\n(`firstseason`, integer)\n(`lastseason`, integer)\n(`height`, real)\n(`weight`, integer)\n(`college`, text)\n(`collegeOther`, text)\n(`birthDate`, date)\n(`birthCity`, text)\n(`birthState`, text)\n(`birthCountry`, text)\n(`highSchool`, text)\n(`hsCity`, text)\n(`hsState`, text)\n(`hsCountry`, text)\n(`deathDate`, date)\n(`race`, text)\n"
+],
+"BIRDTrans/public_review_platform/sqlite": [
+"Table: `Users`\nColumns:\n(`user_id`, integer, primary key)\n(`user_yelping_since_year`, integer)\n(`user_average_stars`, text)\n(`user_votes_funny`, text)\n(`user_votes_useful`, text)\n(`user_votes_cool`, text)\n(`user_review_count`, text)\n(`user_fans`, text)\n",
+"Table: `Reviews`\nColumns:\n(`business_id`, integer, primary key)\n(`user_id`, integer, primary key)\n(`review_stars`, integer)\n(`review_votes_funny`, text)\n(`review_votes_useful`, text)\n(`review_votes_cool`, text)\n(`review_length`, text)\n",
+"Table: `Business_Hours`\nColumns:\n(`business_id`, integer, primary key)\n(`day_id`, integer, primary key)\n(`opening_time`, text)\n(`closing_time`, text)\n",
+"Table: `Days`\nColumns:\n(`day_id`, integer, primary key)\n(`day_of_week`, text)\n"
+],
+"BIRDTrans/regional_sales/sqlite": [
+"Table: `Customers`\nColumns:\n(`CustomerID`, integer, primary key)\n(`Customer Names`, text)\n",
+"Table: `Sales Orders`\nColumns:\n(`OrderNumber`, text, primary key)\n(`Sales Channel`, text)\n(`WarehouseCode`, text)\n(`ProcuredDate`, text)\n(`OrderDate`, text)\n(`ShipDate`, text)\n(`DeliveryDate`, text)\n(`CurrencyCode`, text)\n(`_SalesTeamID`, integer)\n(`_CustomerID`, integer)\n(`_StoreID`, integer)\n(`_ProductID`, integer)\n(`Order Quantity`, integer)\n(`Discount Applied`, real)\n(`Unit Price`, text)\n(`Unit Cost`, text)\n",
+"Table: `Products`\nColumns:\n(`ProductID`, integer, primary key)\n(`Product Name`, text)\n",
+"Table: `Regions`\nColumns:\n(`StateCode`, text, primary key)\n(`State`, text)\n(`Region`, text)\n"
+],
+"BIRDTrans/restaurant/sqlite": [
+"Table: `generalinfo`\nColumns:\n(`id_restaurant`, integer, primary key)\n(`label`, text)\n(`food_type`, text)\n(`city`, text)\n(`review`, real)\n",
+"Table: `geographic`\nColumns:\n(`city`, text, primary key)\n(`county`, text)\n(`region`, text)\n",
+"Table: `location`\nColumns:\n(`id_restaurant`, integer, primary key)\n(`street_num`, integer)\n(`street_name`, text)\n(`city`, text)\n"
+],
+"BIRDTrans/retail_complains/sqlite": [
+"Table: `client`\nColumns:\n(`client_id`, text, primary key)\n(`sex`, text)\n(`day`, integer)\n(`month`, integer)\n(`year`, integer)\n(`age`, integer)\n(`social`, text)\n(`first`, text)\n(`middle`, text)\n(`last`, text)\n(`phone`, text)\n(`email`, text)\n(`address_1`, text)\n(`address_2`, text)\n(`city`, text)\n(`state`, text)\n(`zipcode`, integer)\n(`district_id`, integer)\n",
+"Table: `events`\nColumns:\n(`Date received`, date)\n(`Product`, text)\n(`Sub-product`, text)\n(`Issue`, text)\n(`Sub-issue`, text)\n(`Consumer complaint narrative`, text)\n(`Tags`, text)\n(`Consumer consent provided?`, text)\n(`Submitted via`, text)\n(`Date sent to company`, text)\n(`Company response to consumer`, text)\n(`Timely response?`, text)\n(`Consumer disputed?`, text)\n(`Complaint ID`, text, primary key)\n(`Client_ID`, text, primary key)\n",
+"Table: `callcenterlogs`\nColumns:\n(`Date received`, date)\n(`Complaint ID`, text, primary key)\n(`rand client`, text)\n(`phonefinal`, text)\n(`vru+line`, text)\n(`call_id`, integer)\n(`priority`, integer)\n(`type`, text)\n(`outcome`, text)\n(`server`, text)\n(`ser_start`, text)\n(`ser_exit`, text)\n(`ser_time`, text)\n"
+],
+"BIRDTrans/retails/sqlite": [
+"Table: `partsupp`\nColumns:\n(`ps_partkey`, integer, primary key)\n(`ps_suppkey`, integer, primary key)\n(`ps_supplycost`, real)\n(`ps_availqty`, integer)\n(`ps_comment`, text)\n",
+"Table: `nation`\nColumns:\n(`n_nationkey`, integer, primary key)\n(`n_name`, text)\n(`n_regionkey`, integer)\n(`n_comment`, text)\n",
+"Table: `region`\nColumns:\n(`r_regionkey`, integer, primary key)\n(`r_name`, text)\n(`r_comment`, text)\n",
+"Table: `supplier`\nColumns:\n(`s_suppkey`, integer, primary key)\n(`s_nationkey`, integer)\n(`s_comment`, text)\n(`s_name`, text)\n(`s_address`, text)\n(`s_phone`, text)\n(`s_acctbal`, real)\n",
+"Table: `orders`\nColumns:\n(`o_orderdate`, date)\n(`o_orderkey`, integer, primary key)\n(`o_custkey`, integer)\n(`o_orderpriority`, text)\n(`o_shippriority`, integer)\n(`o_clerk`, text)\n(`o_orderstatus`, text)\n(`o_totalprice`, real)\n(`o_comment`, text)\n",
+"Table: `lineitem`\nColumns:\n(`l_shipdate`, date)\n(`l_orderkey`, integer, primary key)\n(`l_discount`, real)\n(`l_extendedprice`, real)\n(`l_suppkey`, integer)\n(`l_quantity`, integer)\n(`l_returnflag`, text)\n(`l_partkey`, integer)\n(`l_linestatus`, text)\n(`l_tax`, real)\n(`l_commitdate`, date)\n(`l_receiptdate`, date)\n(`l_shipmode`, text)\n(`l_linenumber`, integer, primary key)\n(`l_shipinstruct`, text)\n(`l_comment`, text)\n",
+"Table: `customer`\nColumns:\n(`c_custkey`, integer, primary key)\n(`c_mktsegment`, text)\n(`c_nationkey`, integer)\n(`c_name`, text)\n(`c_address`, text)\n(`c_phone`, text)\n(`c_acctbal`, real)\n(`c_comment`, text)\n"
+],
+"BIRDTrans/sales/sqlite": [
+"Table: `Products`\nColumns:\n(`ProductID`, integer, primary key)\n(`Name`, text)\n(`Price`, real)\n",
+"Table: `Sales`\nColumns:\n(`SalesID`, integer, primary key)\n(`SalesPersonID`, integer)\n(`CustomerID`, integer)\n(`ProductID`, integer)\n(`Quantity`, integer)\n",
+"Table: `Employees`\nColumns:\n(`EmployeeID`, integer, primary key)\n(`FirstName`, text)\n(`MiddleInitial`, text)\n(`LastName`, text)\n",
+"Table: `Customers`\nColumns:\n(`CustomerID`, integer, primary key)\n(`FirstName`, text)\n(`MiddleInitial`, text)\n(`LastName`, text)\n"
+],
+"BIRDTrans/sales_in_weather/sqlite": [
+"Table: `weather`\nColumns:\n(`station_nbr`, integer, primary key)\n(`date`, date, primary key)\n(`tmax`, integer)\n(`tmin`, integer)\n(`tavg`, integer)\n(`depart`, integer)\n(`dewpoint`, integer)\n(`wetbulb`, integer)\n(`heat`, integer)\n(`cool`, integer)\n(`sunrise`, text)\n(`sunset`, text)\n(`codesum`, text)\n(`snowfall`, real)\n(`preciptotal`, real)\n(`stnpressure`, real)\n(`sealevel`, real)\n(`resultspeed`, real)\n(`resultdir`, integer)\n(`avgspeed`, real)\n"
+],
+"BIRDTrans/shakespeare/sqlite": [
+"Table: `works`\nColumns:\n(`id`, integer, primary key)\n(`Title`, text)\n(`LongTitle`, text)\n(`Date`, integer)\n(`GenreType`, text)\n",
+"Table: `chapters`\nColumns:\n(`id`, integer, primary key)\n(`Act`, integer)\n(`Scene`, integer)\n(`Description`, text)\n(`work_id`, integer)\n",
+"Table: `paragraphs`\nColumns:\n(`id`, integer, primary key)\n(`ParagraphNum`, integer)\n(`PlainText`, text)\n(`character_id`, integer)\n(`chapter_id`, integer)\n",
+"Table: `characters`\nColumns:\n(`id`, integer, primary key)\n(`CharName`, text)\n(`Abbrev`, text)\n(`Description`, text)\n"
+],
+"BIRDTrans/shipping/sqlite": [
+"Table: `shipment`\nColumns:\n(`ship_id`, integer, primary key)\n(`cust_id`, integer)\n(`weight`, real)\n(`truck_id`, integer)\n(`driver_id`, integer)\n(`city_id`, integer)\n(`ship_date`, text)\n",
+"Table: `customer`\nColumns:\n(`cust_id`, integer, primary key)\n(`cust_name`, text)\n(`annual_revenue`, integer)\n(`cust_type`, text)\n(`address`, text)\n(`city`, text)\n(`state`, text)\n(`zip`, real)\n(`phone`, text)\n",
+"Table: `city`\nColumns:\n(`city_id`, integer, primary key)\n(`city_name`, text)\n(`state`, text)\n(`population`, integer)\n(`area`, real)\n",
+"Table: `driver`\nColumns:\n(`driver_id`, integer, primary key)\n(`first_name`, text)\n(`last_name`, text)\n(`address`, text)\n(`city`, text)\n(`state`, text)\n(`zip_code`, integer)\n(`phone`, text)\n",
+"Table: `truck`\nColumns:\n(`truck_id`, integer, primary key)\n(`make`, text)\n(`model_year`, integer)\n"
+],
+"BIRDTrans/shooting/sqlite": [
+"Table: `incidents`\nColumns:\n(`case_number`, text, primary key)\n(`date`, date)\n(`location`, text)\n(`subject_statuses`, text)\n(`subject_weapon`, text)\n(`subjects`, text)\n(`subject_count`, integer)\n(`officers`, text)\n",
+"Table: `officers`\nColumns:\n(`case_number`, text)\n(`race`, text)\n(`gender`, text)\n(`last_name`, text)\n(`first_name`, text)\n(`full_name`, text)\n(`rowid`, integer, primary key)\n"
+],
+"BIRDTrans/simpson_episodes/sqlite": [
+"Table: `Person`\nColumns:\n(`name`, text, primary key)\n(`birthdate`, text)\n(`birth_name`, text)\n(`birth_place`, text)\n(`birth_region`, text)\n(`birth_country`, text)\n(`height_meters`, real)\n(`nickname`, text)\n",
+"Table: `Award`\nColumns:\n(`award_id`, integer, primary key)\n(`organization`, text)\n(`year`, integer)\n(`award_category`, text)\n(`award`, text)\n(`person`, text)\n(`role`, text)\n(`episode_id`, text)\n(`season`, text)\n(`song`, text)\n(`result`, text)\n",
+"Table: `Episode`\nColumns:\n(`episode_id`, text, primary key)\n(`season`, integer)\n(`episode`, integer)\n(`number_in_series`, integer)\n(`title`, text)\n(`summary`, text)\n(`air_date`, text)\n(`episode_image`, text)\n(`rating`, real)\n(`votes`, integer)\n",
+"Table: `Vote`\nColumns:\n(`episode_id`, text)\n(`stars`, integer)\n(`votes`, integer)\n(`percent`, real)\n(`rowid`, integer, primary key)\n"
+],
+"BIRDTrans/soccer_2016/sqlite": [
+"Table: `Match`\nColumns:\n(`Match_Id`, integer, primary key)\n(`Team_1`, integer)\n(`Team_2`, integer)\n(`Match_Date`, date)\n(`Season_Id`, integer)\n(`Venue_Id`, integer)\n(`Toss_Winner`, integer)\n(`Toss_Decide`, integer)\n(`Win_Type`, integer)\n(`Win_Margin`, integer)\n(`Outcome_type`, integer)\n(`Match_Winner`, integer)\n(`Man_of_the_Match`, integer)\n",
+"Table: `Player_Match`\nColumns:\n(`Match_Id`, integer, primary key)\n(`Player_Id`, integer, primary key)\n(`Role_Id`, integer, primary key)\n(`Team_Id`, integer)\n",
+"Table: `Rolee`\nColumns:\n(`Role_Id`, integer, primary key)\n(`Role_Desc`, text)\n",
+"Table: `Player`\nColumns:\n(`Player_Id`, integer, primary key)\n(`Player_Name`, text)\n(`DOB`, date)\n(`Batting_hand`, integer)\n(`Bowling_skill`, integer)\n(`Country_Name`, integer)\n",
+"Table: `Bowling_Style`\nColumns:\n(`Bowling_Id`, integer, primary key)\n(`Bowling_skill`, text)\n",
+"Table: `Win_By`\nColumns:\n(`Win_Id`, integer, primary key)\n(`Win_Type`, text)\n",
+"Table: `Toss_Decision`\nColumns:\n(`Toss_Id`, integer, primary key)\n(`Toss_Name`, text)\n",
+"Table: `Venue`\nColumns:\n(`Venue_Id`, integer, primary key)\n(`Venue_Name`, text)\n(`City_Id`, integer)\n",
+"Table: `Country`\nColumns:\n(`Country_Id`, integer, primary key)\n(`Country_Name`, text)\n"
+],
+"BIRDTrans/student_loan/sqlite": [
+"Table: `longest_absense_from_school`\nColumns:\n(`name`, text, primary key)\n(`month`, integer)\n",
+"Table: `filed_for_bankrupcy`\nColumns:\n(`name`, text, primary key)\n",
+"Table: `male`\nColumns:\n(`name`, text, primary key)\n",
+"Table: `enrolled`\nColumns:\n(`name`, text, primary key)\n(`school`, text, primary key)\n(`month`, integer)\n",
+"Table: `disabled`\nColumns:\n(`name`, text, primary key)\n",
+"Table: `person`\nColumns:\n(`name`, text, primary key)\n",
+"Table: `enlist`\nColumns:\n(`name`, text)\n(`organ`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `unemployed`\nColumns:\n(`name`, text, primary key)\n",
+"Table: `no_payment_due`\nColumns:\n(`name`, text, primary key)\n(`bool`, text)\n"
+],
+"BIRDTrans/superstore/sqlite": [
+"Table: `people`\nColumns:\n(`Customer ID`, text, primary key)\n(`Customer Name`, text)\n(`Segment`, text)\n(`Country`, text)\n(`City`, text)\n(`State`, text)\n(`Postal Code`, integer)\n(`Region`, text, primary key)\n",
+"Table: `central_superstore`\nColumns:\n(`Row ID`, integer, primary key)\n(`Order ID`, text)\n(`Order Date`, date)\n(`Ship Date`, date)\n(`Ship Mode`, text)\n(`Customer ID`, text)\n(`Region`, text)\n(`Product ID`, text)\n(`Sales`, real)\n(`Quantity`, integer)\n(`Discount`, real)\n(`Profit`, real)\n",
+"Table: `product`\nColumns:\n(`Product ID`, text, primary key)\n(`Product Name`, text)\n(`Category`, text)\n(`Sub-Category`, text)\n(`Region`, text, primary key)\n"
+],
+"BIRDTrans/synthea/sqlite": [
+"Table: `patients`\nColumns:\n(`patient`, text, primary key)\n(`birthdate`, date)\n(`deathdate`, date)\n(`ssn`, text)\n(`drivers`, text)\n(`passport`, text)\n(`prefix`, text)\n(`first`, text)\n(`last`, text)\n(`suffix`, text)\n(`maiden`, text)\n(`marital`, text)\n(`race`, text)\n(`ethnicity`, text)\n(`gender`, text)\n(`birthplace`, text)\n(`address`, text)\n",
+"Table: `medications`\nColumns:\n(`START`, date, primary key)\n(`STOP`, date)\n(`PATIENT`, text, primary key)\n(`ENCOUNTER`, text, primary key)\n(`CODE`, integer, primary key)\n(`DESCRIPTION`, text)\n(`REASONCODE`, integer)\n(`REASONDESCRIPTION`, text)\n",
+"Table: `conditions`\nColumns:\n(`START`, date)\n(`STOP`, date)\n(`PATIENT`, text)\n(`ENCOUNTER`, text)\n(`CODE`, integer)\n(`DESCRIPTION`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `careplans`\nColumns:\n(`ID`, text)\n(`START`, date)\n(`STOP`, date)\n(`PATIENT`, text)\n(`ENCOUNTER`, text)\n(`CODE`, real)\n(`DESCRIPTION`, text)\n(`REASONCODE`, integer)\n(`REASONDESCRIPTION`, text)\n(`rowid`, integer, primary key)\n",
+"Table: `immunizations`\nColumns:\n(`DATE`, date, primary key)\n(`PATIENT`, text, primary key)\n(`ENCOUNTER`, text, primary key)\n(`CODE`, integer, primary key)\n(`DESCRIPTION`, text)\n",
+"Table: `encounters`\nColumns:\n(`ID`, text, primary key)\n(`DATE`, date)\n(`PATIENT`, text)\n(`CODE`, integer)\n(`DESCRIPTION`, text)\n(`REASONCODE`, integer)\n(`REASONDESCRIPTION`, text)\n",
+"Table: `procedures`\nColumns:\n(`DATE`, date)\n(`PATIENT`, text)\n(`ENCOUNTER`, text)\n(`CODE`, integer)\n(`DESCRIPTION`, text)\n(`REASONCODE`, integer)\n(`REASONDESCRIPTION`, text)\n(`rowid`, integer, primary key)\n"
+],
+"BIRDTrans/talkingdata/sqlite": [
+"Table: `phone_brand_device_model2`\nColumns:\n(`device_id`, integer, primary key)\n(`phone_brand`, text, primary key)\n(`device_model`, text, primary key)\n",
+"Table: `gender_age`\nColumns:\n(`device_id`, integer, primary key)\n(`gender`, text)\n(`age`, integer)\n(`group`, text)\n",
+"Table: `label_categories`\nColumns:\n(`label_id`, integer, primary key)\n(`category`, text)\n",
+"Table: `app_labels`\nColumns:\n(`app_id`, integer)\n(`label_id`, integer)\n(`rowid`, integer, primary key)\n",
+"Table: `events`\nColumns:\n(`event_id`, integer, primary key)\n(`device_id`, integer)\n(`timestamp`, datetime)\n(`longitude`, real)\n(`latitude`, real)\n",
+"Table: `app_events`\nColumns:\n(`event_id`, integer, primary key)\n(`app_id`, integer, primary key)\n(`is_installed`, integer)\n(`is_active`, integer)\n",
+"Table: `events_relevant`\nColumns:\n(`event_id`, integer, primary key)\n(`device_id`, integer)\n(`timestamp`, datetime)\n(`longitude`, real)\n(`latitude`, real)\n"
+],
+"BIRDTrans/video_games/sqlite": [
+"Table: `game`\nColumns:\n(`id`, integer, primary key)\n(`genre_id`, integer)\n(`game_name`, text)\n"
+],
+"BIRDTrans/works_cycles/sqlite": [
+"Table: `BillOfMaterials`\nColumns:\n(`BillOfMaterialsID`, integer, primary key)\n(`ProductAssemblyID`, integer)\n(`ComponentID`, integer)\n(`StartDate`, datetime)\n(`EndDate`, datetime)\n(`UnitMeasureCode`, text)\n(`BOMLevel`, integer)\n(`PerAssemblyQty`, real)\n(`ModifiedDate`, datetime)\n",
+"Table: `ShipMethod`\nColumns:\n(`ShipMethodID`, integer, primary key)\n(`Name`, text)\n(`ShipBase`, real)\n(`ShipRate`, real)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `PurchaseOrderHeader`\nColumns:\n(`PurchaseOrderID`, integer, primary key)\n(`RevisionNumber`, integer)\n(`Status`, integer)\n(`EmployeeID`, integer)\n(`VendorID`, integer)\n(`ShipMethodID`, integer)\n(`OrderDate`, datetime)\n(`ShipDate`, datetime)\n(`SubTotal`, real)\n(`TaxAmt`, real)\n(`Freight`, real)\n(`TotalDue`, real)\n(`ModifiedDate`, datetime)\n",
+"Table: `PurchaseOrderDetail`\nColumns:\n(`PurchaseOrderID`, integer)\n(`PurchaseOrderDetailID`, integer, primary key)\n(`DueDate`, datetime)\n(`OrderQty`, integer)\n(`ProductID`, integer)\n(`UnitPrice`, real)\n(`LineTotal`, real)\n(`ReceivedQty`, real)\n(`RejectedQty`, real)\n(`StockedQty`, real)\n(`ModifiedDate`, datetime)\n",
+"Table: `Person`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`PersonType`, text)\n(`NameStyle`, integer)\n(`Title`, text)\n(`FirstName`, text)\n(`MiddleName`, text)\n(`LastName`, text)\n(`Suffix`, text)\n(`EmailPromotion`, integer)\n(`AdditionalContactInfo`, text)\n(`Demographics`, text)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `Password`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`PasswordHash`, text)\n(`PasswordSalt`, text)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `SalesPerson`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`TerritoryID`, integer)\n(`SalesQuota`, real)\n(`Bonus`, real)\n(`CommissionPct`, real)\n(`SalesYTD`, real)\n(`SalesLastYear`, real)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `SalesPersonQuotaHistory`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`QuotaDate`, datetime, primary key)\n(`SalesQuota`, real)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `EmployeeDepartmentHistory`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`DepartmentID`, integer, primary key)\n(`ShiftID`, integer, primary key)\n(`StartDate`, date, primary key)\n(`EndDate`, date)\n(`ModifiedDate`, datetime)\n",
+"Table: `Department`\nColumns:\n(`DepartmentID`, integer, primary key)\n(`Name`, text)\n(`GroupName`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `Employee`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`NationalIDNumber`, text)\n(`LoginID`, text)\n(`OrganizationNode`, text)\n(`OrganizationLevel`, integer)\n(`JobTitle`, text)\n(`BirthDate`, date)\n(`MaritalStatus`, text)\n(`Gender`, text)\n(`HireDate`, date)\n(`SalariedFlag`, integer)\n(`VacationHours`, integer)\n(`SickLeaveHours`, integer)\n(`CurrentFlag`, integer)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `EmployeePayHistory`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`RateChangeDate`, datetime, primary key)\n(`Rate`, real)\n(`PayFrequency`, integer)\n(`ModifiedDate`, datetime)\n",
+"Table: `ProductVendor`\nColumns:\n(`ProductID`, integer, primary key)\n(`BusinessEntityID`, integer, primary key)\n(`AverageLeadTime`, integer)\n(`StandardPrice`, real)\n(`LastReceiptCost`, real)\n(`LastReceiptDate`, datetime)\n(`MinOrderQty`, integer)\n(`MaxOrderQty`, integer)\n(`OnOrderQty`, integer)\n(`UnitMeasureCode`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `Vendor`\nColumns:\n(`BusinessEntityID`, integer, primary key)\n(`AccountNumber`, text)\n(`Name`, text)\n(`CreditRating`, integer)\n(`PreferredVendorStatus`, integer)\n(`ActiveFlag`, integer)\n(`PurchasingWebServiceURL`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `Product`\nColumns:\n(`ProductID`, integer, primary key)\n(`Name`, text)\n(`ProductNumber`, text)\n(`MakeFlag`, integer)\n(`FinishedGoodsFlag`, integer)\n(`Color`, text)\n(`SafetyStockLevel`, integer)\n(`ReorderPoint`, integer)\n(`StandardCost`, real)\n(`ListPrice`, real)\n(`Size`, text)\n(`SizeUnitMeasureCode`, text)\n(`WeightUnitMeasureCode`, text)\n(`Weight`, real)\n(`DaysToManufacture`, integer)\n(`ProductLine`, text)\n(`Class`, text)\n(`Style`, text)\n(`ProductSubcategoryID`, integer)\n(`ProductModelID`, integer)\n(`SellStartDate`, datetime)\n(`SellEndDate`, datetime)\n(`DiscontinuedDate`, datetime)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n",
+"Table: `ProductListPriceHistory`\nColumns:\n(`ProductID`, integer, primary key)\n(`StartDate`, datetime, primary key)\n(`EndDate`, datetime)\n(`ListPrice`, real)\n(`ModifiedDate`, datetime)\n",
+"Table: `Document`\nColumns:\n(`DocumentNode`, text, primary key)\n(`DocumentLevel`, integer)\n(`Title`, text)\n(`Owner`, integer)\n(`FolderFlag`, integer)\n(`FileName`, text)\n(`FileExtension`, text)\n(`Revision`, text)\n(`ChangeNumber`, integer)\n(`Status`, integer)\n(`DocumentSummary`, text)\n(`Document`, blob)\n(`rowguid`, text)\n(`ModifiedDate`, datetime)\n"
+],
+"BIRDTrans/world/sqlite": [
+"Table: `Country`\nColumns:\n(`Code`, text, primary key)\n(`Name`, text)\n(`Continent`, text)\n(`Region`, text)\n(`SurfaceArea`, real)\n(`IndepYear`, integer)\n(`Population`, integer)\n(`LifeExpectancy`, real)\n(`GNP`, real)\n(`GNPOld`, real)\n(`LocalName`, text)\n(`GovernmentForm`, text)\n(`HeadOfState`, text)\n(`Capital`, integer)\n(`Code2`, text)\n",
+"Table: `CountryLanguage`\nColumns:\n(`CountryCode`, text, primary key)\n(`Language`, text, primary key)\n(`IsOfficial`, text)\n(`Percentage`, real)\n"
+],
+"BUTTERTrans/BUTTERTrans_10/mysql": [
+"Table: `t1`\nColumns:\n(ts, int, )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (ts int);\n",
+"DROP TABLE t1;\n",
+"SELECT TIMESTAMP( '2001-01-01 00:00:00' ); -- TIMESTAMP\n",
+"SELECT DATEDIFF( '2007-12-31 23:59:59', '2007-12-30  00:00:00' ); -- DATEDIFF\n",
+"SELECT TIMEDIFF( '2000:01:01 00:00:00','2000:01:01 00:00:00' ); -- TIMEDIFF\n",
+"SELECT DATE_FORMAT( '2009-10-10 23:59:59', '%W %M %Y' ); -- DATE_FORMAT\n"
+],
+"BUTTERTrans/BUTTERTrans_11/postgresql": [
+"Table: `delete_test`\nColumns:\n(id, integer, PRI)\n(a, integer, )\n(b, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_110/mysql": [
+"Table: `t1`\nColumns:\n(a, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_116/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (i int, ts timestamp);\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-01 00:00:00'),'2003-03-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-30 01:59:59'),'2003-03-30 01:59:59'),(unix_timestamp('2003-03-30 02:30:00'),'2003-03-30 02:30:00'),(unix_timestamp('2003-03-30 03:00:00'),'2003-03-30 03:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-05-01 00:00:00'),'2003-05-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-10-26 01:00:00'),'2003-10-26 01:00:00'),(unix_timestamp('2003-10-26 02:00:00'),'2003-10-26 02:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'),(unix_timestamp('2003-10-26 04:00:00'),'2003-10-26 04:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'); -- UNIX_TIMESTAMP\n",
+"truncate table t1;\n",
+"drop table t1;\n",
+"select from_unixtime(362793609); -- FROM_UNIXTIME\n",
+"create table t1 (ts timestamp);\n",
+"insert into t1 (ts) values (now()); -- NOW\n",
+"CREATE TABLE t1 (a TIMESTAMP, b VARCHAR(30));\n"
+],
+"BUTTERTrans/BUTTERTrans_119/mysql": [
+"Table: `t1`\nColumns:\n(id, int, PRI)\n",
+"Table: `t2`\nColumns:\n(id, int, PRI)\n(val, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_120/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (id INTEGER NOT NULL PRIMARY KEY,gender CHAR(1),name VARCHAR(20));\n"
+],
+"BUTTERTrans/BUTTERTrans_121/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (i int, ts timestamp);\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-01 00:00:00'),'2003-03-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-30 01:59:59'),'2003-03-30 01:59:59'),(unix_timestamp('2003-03-30 02:30:00'),'2003-03-30 02:30:00'),(unix_timestamp('2003-03-30 03:00:00'),'2003-03-30 03:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-05-01 00:00:00'),'2003-05-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-10-26 01:00:00'),'2003-10-26 01:00:00'),(unix_timestamp('2003-10-26 02:00:00'),'2003-10-26 02:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'),(unix_timestamp('2003-10-26 04:00:00'),'2003-10-26 04:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'); -- UNIX_TIMESTAMP\n",
+"truncate table t1;\n",
+"drop table t1;\n",
+"select from_unixtime(362793609); -- FROM_UNIXTIME\n",
+"create table t1 (ts timestamp);\n",
+"insert into t1 (ts) values (now()); -- NOW\n",
+"CREATE TABLE t1 (a TIMESTAMP, b VARCHAR(30));\n",
+"INSERT INTO t1 VALUES('2003-03-30 01:59:59', 'Before the gap'),('2003-03-30 02:30:00', 'Inside the gap'),('2003-03-30 03:00:00',  'After the gap'); -- UNIX_TIMESTAMP\n",
+"SELECT a, UNIX_TIMESTAMP(a), b FROM t1; -- UNIX_TIMESTAMP\n",
+"DROP TABLE t1;\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 01:59:59'), 'Before the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 02:30:00'), 'Inside the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 03:00:00'), 'After the gap' AS b; -- UNIX_TIMESTAMP\n"
+],
+"BUTTERTrans/BUTTERTrans_123/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (i int, ts timestamp);\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-01 00:00:00'),'2003-03-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-30 01:59:59'),'2003-03-30 01:59:59'),(unix_timestamp('2003-03-30 02:30:00'),'2003-03-30 02:30:00'),(unix_timestamp('2003-03-30 03:00:00'),'2003-03-30 03:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-05-01 00:00:00'),'2003-05-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-10-26 01:00:00'),'2003-10-26 01:00:00'),(unix_timestamp('2003-10-26 02:00:00'),'2003-10-26 02:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'),(unix_timestamp('2003-10-26 04:00:00'),'2003-10-26 04:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'); -- UNIX_TIMESTAMP\n",
+"truncate table t1;\n",
+"drop table t1;\n",
+"select from_unixtime(362793609); -- FROM_UNIXTIME\n",
+"create table t1 (ts timestamp);\n",
+"insert into t1 (ts) values (now()); -- NOW\n",
+"CREATE TABLE t1 (a TIMESTAMP, b VARCHAR(30));\n",
+"INSERT INTO t1 VALUES('2003-03-30 01:59:59', 'Before the gap'),('2003-03-30 02:30:00', 'Inside the gap'),('2003-03-30 03:00:00',  'After the gap'); -- UNIX_TIMESTAMP\n",
+"SELECT a, UNIX_TIMESTAMP(a), b FROM t1; -- UNIX_TIMESTAMP\n",
+"DROP TABLE t1;\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 01:59:59'), 'Before the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 02:30:00'), 'Inside the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 03:00:00'), 'After the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT FROM_UNIXTIME(0); -- FROM_UNIXTIME\n",
+"SELECT UNIX_TIMESTAMP(\"1969-12-31 15:59:59\"); -- UNIX_TIMESTAMP\n"
+],
+"BUTTERTrans/BUTTERTrans_125/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (i int, ts timestamp);\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-01 00:00:00'),'2003-03-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-30 01:59:59'),'2003-03-30 01:59:59'),(unix_timestamp('2003-03-30 02:30:00'),'2003-03-30 02:30:00'),(unix_timestamp('2003-03-30 03:00:00'),'2003-03-30 03:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-05-01 00:00:00'),'2003-05-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-10-26 01:00:00'),'2003-10-26 01:00:00'),(unix_timestamp('2003-10-26 02:00:00'),'2003-10-26 02:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'),(unix_timestamp('2003-10-26 04:00:00'),'2003-10-26 04:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'); -- UNIX_TIMESTAMP\n",
+"truncate table t1;\n",
+"drop table t1;\n",
+"select from_unixtime(362793609); -- FROM_UNIXTIME\n",
+"create table t1 (ts timestamp);\n",
+"insert into t1 (ts) values (now()); -- NOW\n",
+"CREATE TABLE t1 (a TIMESTAMP, b VARCHAR(30));\n",
+"INSERT INTO t1 VALUES('2003-03-30 01:59:59', 'Before the gap'),('2003-03-30 02:30:00', 'Inside the gap'),('2003-03-30 03:00:00',  'After the gap'); -- UNIX_TIMESTAMP\n",
+"SELECT a, UNIX_TIMESTAMP(a), b FROM t1; -- UNIX_TIMESTAMP\n",
+"DROP TABLE t1;\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 01:59:59'), 'Before the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 02:30:00'), 'Inside the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP('2003-03-30 03:00:00'), 'After the gap' AS b; -- UNIX_TIMESTAMP\n",
+"SELECT FROM_UNIXTIME(0); -- FROM_UNIXTIME\n",
+"SELECT UNIX_TIMESTAMP(\"1969-12-31 15:59:59\"); -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP(\"1969-12-31 16:00:00\"); -- UNIX_TIMESTAMP\n",
+"SELECT UNIX_TIMESTAMP(\"1969-12-31 16:00:01\"); -- UNIX_TIMESTAMP\n"
+],
+"BUTTERTrans/BUTTERTrans_127/mysql": [
+"Table: `t1`\nColumns:\n(i, int, )\n(ts, timestamp, )\n"
+],
+"BUTTERTrans/BUTTERTrans_13/mysql": [
+"Table: `t1`\nColumns:\n(ts, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_130/mysql": [
+"Table: `t1`\nColumns:\n(i, int, )\n(ts, timestamp, )\n"
+],
+"BUTTERTrans/BUTTERTrans_135/mysql": [
+"select unix_timestamp(utc_timestamp())-unix_timestamp(current_timestamp()); -- UNIX_TIMESTAMP, UTC_TIMESTAMP, CURRENT_TIMESTAMP\n",
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (i int, ts timestamp);\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-01 00:00:00'),'2003-03-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-03-30 01:59:59'),'2003-03-30 01:59:59'),(unix_timestamp('2003-03-30 02:30:00'),'2003-03-30 02:30:00'),(unix_timestamp('2003-03-30 03:00:00'),'2003-03-30 03:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp(20030330015959),20030330015959),(unix_timestamp(20030330023000),20030330023000),(unix_timestamp(20030330030000),20030330030000); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-05-01 00:00:00'),'2003-05-01 00:00:00'); -- UNIX_TIMESTAMP\n",
+"insert into t1 (i, ts) values(unix_timestamp('2003-10-26 01:00:00'),'2003-10-26 01:00:00'),(unix_timestamp('2003-10-26 02:00:00'),'2003-10-26 02:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'),(unix_timestamp('2003-10-26 04:00:00'),'2003-10-26 04:00:00'),(unix_timestamp('2003-10-26 02:59:59'),'2003-10-26 02:59:59'); -- UNIX_TIMESTAMP\n",
+"truncate table t1;\n",
+"drop table t1;\n",
+"select from_unixtime(362793609); -- FROM_UNIXTIME\n",
+"create table t1 (ts timestamp);\n"
+],
+"BUTTERTrans/BUTTERTrans_145/mysql": [
+"Table: `t1`\nColumns:\n(a, bit(7), )\n(b, bit(9), )\n"
+],
+"BUTTERTrans/BUTTERTrans_148/mysql": [
+"Table: `t1`\nColumns:\n(a, bit(7), )\n(b, bit(9), )\n"
+],
+"BUTTERTrans/BUTTERTrans_15/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (ts int);\n",
+"INSERT INTO t1 (ts) VALUES (Unix_timestamp('2002-10-27 01:00')); -- UNIX_TIMESTAMP\n",
+"INSERT INTO t1 (ts) VALUES (Unix_timestamp('2002-10-27 02:00')); -- UNIX_TIMESTAMP\n",
+"INSERT INTO t1 (ts) VALUES (Unix_timestamp('2002-10-27 03:00')); -- UNIX_TIMESTAMP\n",
+"SELECT ts,from_unixtime(ts) FROM t1; -- FROM_UNIXTIME\n",
+"DROP TABLE t1;\n",
+"SELECT TIMESTAMP( '2001-01-01 00:00:00' ); -- TIMESTAMP\n"
+],
+"BUTTERTrans/BUTTERTrans_15/postgresql": [
+"Table: `simple1`\nColumns:\n(id, integer, )\n"
+],
+"BUTTERTrans/BUTTERTrans_150/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (a bit(64));\n",
+"insert into t1 values(b'1111111111111111111111111111111111111111111111111111111111111111'),(b'1000000000000000000000000000000000000000000000000000000000000000'),(b'0000000000000000000000000000000000000000000000000000000000000001'),(b'1010101010101010101010101010101010101010101010101010101010101010'),(b'0101010101010101010101010101010101010101010101010101010101010101');\n",
+"select hex(a) from t1; -- HEX\n",
+"DROP TABLE t1;\n",
+"create table t1 (a bit);\n",
+"insert ignore into t1 values (b'0'), (b'1'), (b'000'), (b'100'), (b'001');\n",
+"create table t1 (a bit(7), b bit(9));\n",
+"insert into t1 values(94, 46), (31, 438), (61, 152), (78, 123), (88, 411), (122, 118), (0, 177),(75, 42), (108, 67), (79, 349), (59, 188), (68, 206), (49, 345), (118, 380),(111, 368), (94, 468), (56, 379), (77, 133), (29, 399), (9, 363), (23, 36),(116, 390), (119, 368), (87, 351), (123, 411), (24, 398), (34, 202), (28, 499),(30, 83), (5, 178), (60, 343), (4, 245), (104, 280), (106, 446), (127, 403),(44, 307), (68, 454), (57, 135);\n",
+"select hex(min(a)) from t1; -- HEX, MIN\n"
+],
+"BUTTERTrans/BUTTERTrans_153/mysql": [
+"Table: `t1`\nColumns:\n(b, bit(1), )\n(i2, int, )\n(s, varchar(255), )\n",
+"Table: `t2`\nColumns:\n(b1, bit(1), )\n(b2, bit(1), )\n(i2, int, )\n(s, varchar(255), )\n"
+],
+"BUTTERTrans/BUTTERTrans_154/mysql": [
+"Table: `t1`\nColumns:\n(b, bit(1), )\n(i2, int, )\n(s, varchar(255), )\n",
+"Table: `t2`\nColumns:\n(b1, bit(1), )\n(b2, bit(1), )\n(i2, int, )\n(s, varchar(255), )\n"
+],
+"BUTTERTrans/BUTTERTrans_155/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, bit(2), )\n"
+],
+"BUTTERTrans/BUTTERTrans_156/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, bit(2), )\n",
+"Table: `t2`\nColumns:\n(b, bit(2), )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (y year);\n",
+"insert into t1 values (now()); -- NOW\n",
+"select if(y = now(), 1, 0) from t1; -- IF, NOW\n",
+"DROP TABLE t1;\n",
+"DROP TABLE IF EXISTS t4;\n",
+"CREATE TABLE t4(yyyy YEAR, c4 CHAR(4));\n",
+"INSERT INTO t4 (c4) VALUES (NULL),(1970),(1999),(2000),(2001),(2069);\n",
+"UPDATE t4 SET yyyy = c4;\n"
+],
+"BUTTERTrans/BUTTERTrans_159/mysql": [
+"Table: `t1`\nColumns:\n(a, varbinary(5), )\n"
+],
+"BUTTERTrans/BUTTERTrans_162/mysql": [
+"Table: `t`\nColumns:\n(c, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_167/mysql": [
+"Table: `t2`\nColumns:\n(id, int, )\n(c, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_172/mysql": [
+"Table: `trans`\nColumns:\n(a, int, )\n",
+"Table: `t1`\nColumns:\n(y, year, )\n"
+],
+"BUTTERTrans/BUTTERTrans_176/mysql": [
+"Table: `t1`\nColumns:\n(y, year, )\n"
+],
+"BUTTERTrans/BUTTERTrans_177/mysql": [
+"Table: `t1`\nColumns:\n(y, year, )\n(d, date, )\n(i, int, )\n(v, varchar(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_178/mysql": [
+"Table: `t4`\nColumns:\n(yyyy, year, )\n(c4, char(4), )\n"
+],
+"BUTTERTrans/BUTTERTrans_179/mysql": [
+"Table: `t1`\nColumns:\n(d, date, )\n(y1, year, )\n(y2, year, )\n(dbl, double, )\n",
+"Table: `t2`\nColumns:\n(name, char(20), PRI)\n"
+],
+"BUTTERTrans/BUTTERTrans_18/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a DATE, b INT);\n",
+"INSERT INTO t1 VALUES (DATE(NOW()), 1); -- DATE, NOW\n",
+"SELECT COUNT(*) FROM t1 WHERE a = NOW(); -- COUNT, NOW\n"
+],
+"BUTTERTrans/BUTTERTrans_184/mysql": [
+"Table: `t1`\nColumns:\n(name, char(20), PRI)\n",
+"Table: `t2`\nColumns:\n(name, char(20), PRI)\n"
+],
+"BUTTERTrans/BUTTERTrans_186/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (name char(20) not null, primary key (name));\n",
+"DROP TABLE IF EXISTS t2;\n",
+"create table t2 (name char(20) not null, primary key (name));\n",
+"insert into t1 values (\"a\");\n",
+"insert into t1 values (\"b\");\n",
+"insert into t1 values (\"o\");\n",
+"insert into t2 select * from t1;\n",
+"select concat(\"*\",name, \"*\") from t1 order by 1; -- CONCAT\n"
+],
+"BUTTERTrans/BUTTERTrans_187/mysql": [
+"Table: `t1`\nColumns:\n(col1, binary(4), )\n"
+],
+"BUTTERTrans/BUTTERTrans_189/mysql": [
+"Table: `t1`\nColumns:\n(col1, binary(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_190/mysql": [
+"Table: `t1`\nColumns:\n(a, binary(20), )\n",
+"select CONVERT(\"2004-01-22 21:45:33\",DATE); -- CONVERT\n",
+"select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select timediff(cast('1 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select cast(concat('12345','6789') as unsigned); -- CONCAT\n",
+"select cast(concat('12345','6789') as signed); -- CONCAT\n",
+"select cast(repeat('1',9) as unsigned); -- REPEAT\n",
+"select cast(repeat('1',9) as signed); -- REPEAT\n",
+"select isnull(date(NULL)), isnull(cast(NULL as DATE)); -- ISNULL, DATE\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (d1 datetime);\n",
+"INSERT INTO t1(d1) VALUES ('2007-07-19 08:30:00'), (NULL),('2007-07-19 08:34:00'), (NULL), ('2007-07-19 08:36:00');\n",
+"SELECT cast(date(d1) as signed) FROM t1; -- DATE\n",
+"drop table t1;\n",
+"CREATE TABLE t1 (f1 DATE);\n",
+"INSERT INTO t1 VALUES ('2007-07-19'), (NULL);\n",
+"SELECT HOUR(f1),MINUTE(f1),SECOND(f1) FROM t1; -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(CAST('2007-07-19' AS DATE)),MINUTE(CAST('2007-07-19' AS DATE)),SECOND(CAST('2007-07-19' AS DATE)); -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(CAST(NULL AS DATE)),MINUTE(CAST(NULL AS DATE)),SECOND(CAST(NULL AS DATE)); -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(NULL),MINUTE(NULL),SECOND(NULL); -- HOUR, MINUTE, SECOND\n"
+],
+"BUTTERTrans/BUTTERTrans_194/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1(a YEAR, b VARCHAR(10));\n",
+"INSERT INTO t1 VALUES ('1997','random_str');\n",
+"SELECT STRCMP(a, b) FROM t1; -- STRCMP\n",
+"DROP TABLE t1;\n"
+],
+"BUTTERTrans/BUTTERTrans_197/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1(a YEAR, b VARCHAR(10));\n",
+"INSERT INTO t1 VALUES ('1997','random_str');\n",
+"SELECT STRCMP(a, b) FROM t1; -- STRCMP\n",
+"DROP TABLE t1;\n",
+"SELECT CAST(1988 AS YEAR), REPEAT(CAST(1988 AS YEAR), 3) AS c2; -- REPEAT\n",
+"SELECT CONCAT('x', CAST(1988 AS YEAR)); -- CONCAT\n",
+"SELECT TIME_TO_SEC(CAST('2030' AS YEAR)); -- TIME_TO_SEC\n"
+],
+"BUTTERTrans/BUTTERTrans_2/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (a1 char(64), a2 char(64), b char(16), c char(16) not null, d char(16), dummy char(248) default ' ');\n",
+"insert into t1 (a1, a2, b, c, d) values('a','a','a','a111','xy1'),('a','a','a','b111','xy2'),('a','a','a','c111','xy3'),('b','a','a','a211','xy1'),('b','a','a','b211','xy2'),('b','a','a','c211','xy3'),('c','a','a','a311','xy1'),('c','a','a','b311','xy2'),('c','a','a','c311','xy3'),('d','a','a','a411','xy1'),('d','a','a','b411','xy2'),('d','a','a','c411','xy3');\n",
+"select a1,a2,b,min(c) from t1 where (ord(a1) > 97) and (ord(a2) + ord(a1) > 194) and (b = 'a') group by a1,a2,b; -- ORD\n"
+],
+"BUTTERTrans/BUTTERTrans_20/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a DATE, b INT);\n",
+"INSERT INTO t1 VALUES (DATE(NOW()), 1); -- DATE, NOW\n",
+"SELECT COUNT(*) FROM t1 WHERE a = NOW(); -- COUNT, NOW\n",
+"INSERT INTO t1 VALUES (DATE(NOW()), 2); -- DATE, NOW\n"
+],
+"BUTTERTrans/BUTTERTrans_200/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (id INT AUTO_INCREMENT PRIMARY KEY,a BIGINT(20) UNSIGNED,b VARCHAR(20));\n",
+"INSERT INTO t1 (a) VALUES (0), (9223372036854775807), (9223372036854775806), (9223372036854775805);\n",
+"UPDATE t1 SET b = a;\n"
+],
+"BUTTERTrans/BUTTERTrans_201/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_207/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a char(10) not null);\n",
+"INSERT INTO t1 VALUES ('a'),('a\\\\0'),('a\\\\t'),('a ');\n"
+],
+"BUTTERTrans/BUTTERTrans_208/mysql": [
+"select CONVERT(\"2004-01-22 21:45:33\",DATE); -- CONVERT\n",
+"select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select timediff(cast('1 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select cast(concat('12345','6789') as unsigned); -- CONCAT\n"
+],
+"BUTTERTrans/BUTTERTrans_21/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a DATE, b INT);\n",
+"INSERT INTO t1 VALUES (DATE(NOW()), 1); -- DATE, NOW\n",
+"SELECT COUNT(*) FROM t1 WHERE a = NOW(); -- COUNT, NOW\n",
+"INSERT INTO t1 VALUES (DATE(NOW()), 2); -- DATE, NOW\n",
+"SELECT COUNT(*) FROM t1 WHERE a = NOW() AND b = 1; -- COUNT, NOW\n",
+"DROP TABLE t1;\n"
+],
+"BUTTERTrans/BUTTERTrans_216/mysql": [
+"select CONVERT(\"2004-01-22 21:45:33\",DATE); -- CONVERT\n",
+"select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select timediff(cast('1 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select cast(concat('12345','6789') as unsigned); -- CONCAT\n",
+"select cast(concat('12345','6789') as signed); -- CONCAT\n",
+"select cast(repeat('1',9) as unsigned); -- REPEAT\n",
+"select cast(repeat('1',9) as signed); -- REPEAT\n",
+"select isnull(date(NULL)), isnull(cast(NULL as DATE)); -- ISNULL, DATE\n",
+"select hex(cast('a' as binary(2))); -- HEX\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (d1 datetime);\n",
+"INSERT INTO t1(d1) VALUES ('2007-07-19 08:30:00'), (NULL),('2007-07-19 08:34:00'), (NULL), ('2007-07-19 08:36:00');\n",
+"drop table t1;\n",
+"CREATE TABLE t1 (f1 DATE);\n",
+"INSERT INTO t1 VALUES ('2007-07-19'), (NULL);\n",
+"SELECT HOUR(f1),MINUTE(f1),SECOND(f1) FROM t1; -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(CAST('2007-07-19' AS DATE)),MINUTE(CAST('2007-07-19' AS DATE)),SECOND(CAST('2007-07-19' AS DATE)); -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(CAST(NULL AS DATE)),MINUTE(CAST(NULL AS DATE)),SECOND(CAST(NULL AS DATE)); -- HOUR, MINUTE, SECOND\n"
+],
+"BUTTERTrans/BUTTERTrans_217/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a MEDIUMINT NULL);\n",
+"INSERT INTO t1 VALUES (1234567);\n",
+"select CONVERT(\"2004-01-22 21:45:33\",DATE); -- CONVERT\n",
+"select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select timediff(cast('1 12:00:00' as time), '12:00:00'); -- TIMEDIFF\n",
+"select cast(concat('12345','6789') as unsigned); -- CONCAT\n",
+"select cast(concat('12345','6789') as signed); -- CONCAT\n",
+"select cast(repeat('1',9) as unsigned); -- REPEAT\n",
+"select cast(repeat('1',9) as signed); -- REPEAT\n",
+"select isnull(date(NULL)), isnull(cast(NULL as DATE)); -- ISNULL, DATE\n",
+"select hex(cast('a' as binary(2))); -- HEX\n",
+"CREATE TABLE t1 (d1 datetime);\n",
+"INSERT INTO t1(d1) VALUES ('2007-07-19 08:30:00'), (NULL),('2007-07-19 08:34:00'), (NULL), ('2007-07-19 08:36:00');\n",
+"drop table t1;\n",
+"CREATE TABLE t1 (f1 DATE);\n",
+"INSERT INTO t1 VALUES ('2007-07-19'), (NULL);\n",
+"SELECT HOUR(f1),MINUTE(f1),SECOND(f1) FROM t1; -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(CAST('2007-07-19' AS DATE)),MINUTE(CAST('2007-07-19' AS DATE)),SECOND(CAST('2007-07-19' AS DATE)); -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(CAST(NULL AS DATE)),MINUTE(CAST(NULL AS DATE)),SECOND(CAST(NULL AS DATE)); -- HOUR, MINUTE, SECOND\n",
+"SELECT HOUR(NULL),MINUTE(NULL),SECOND(NULL); -- HOUR, MINUTE, SECOND\n"
+],
+"BUTTERTrans/BUTTERTrans_223/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a MEDIUMINT NULL);\n",
+"INSERT INTO t1 VALUES (1234567);\n",
+"SELECT GROUP_CONCAT(IFNULL(a,'')) FROM t1; -- GROUP_CONCAT, IFNULL\n",
+"SELECT GROUP_CONCAT(IF(a,a,'')) FROM t1; -- GROUP_CONCAT, IF\n",
+"SELECT GROUP_CONCAT(CASE WHEN a THEN a ELSE '' END) FROM t1; -- GROUP_CONCAT\n",
+"SELECT COALESCE(a,'') FROM t1 GROUP BY 1; -- COALESCE\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 AS SELECT LCASE(a) FROM t1; -- LCASE\n",
+"DROP TABLE t2;\n",
+"CREATE TABLE t2 AS SELECT UCASE(a) FROM t1; -- UCASE\n"
+],
+"BUTTERTrans/BUTTERTrans_226/mysql": [
+"Table: `t`\nColumns:\n(a, int, )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a CHAR(10)) SELECT '' AS a;\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 (a CHAR(10));\n",
+"INSERT t2 SELECT * FROM t1;\n",
+"DROP TABLE t1;\n",
+"DROP TABLE t2;\n",
+"create table t1 (a char(20));\n",
+"insert into t1 values ('       xxx');\n",
+"select * from t1 where a=lpad('xxx',10,' '); -- LPAD\n",
+"create table t1 (c1 char(10));\n",
+"insert into t1 values ('x');\n",
+"select ifnull(c1,''), ifnull(null,c1) from t1; -- IFNULL\n"
+],
+"BUTTERTrans/BUTTERTrans_228/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_229/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a CHAR(10)) SELECT '' AS a;\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 (a CHAR(10));\n",
+"INSERT t2 SELECT * FROM t1;\n",
+"DROP TABLE t1;\n",
+"DROP TABLE t2;\n",
+"create table t1 (a char(20));\n",
+"insert into t1 values ('       xxx');\n",
+"select * from t1 where a=lpad('xxx',10,' '); -- LPAD\n",
+"create table t1 (c1 char(10));\n",
+"insert into t1 values ('x');\n",
+"select ifnull(c1,''), ifnull(null,c1) from t1; -- IFNULL\n",
+"select if(1,c1,''), if(0,c1,'') from t1; -- IF\n",
+"select coalesce('',c1), coalesce(null,c1) from t1; -- COALESCE\n",
+"select least(c1,''), greatest(c1,'') from t1; -- LEAST, GREATEST\n",
+"CREATE TABLE t1 (id INT AUTO_INCREMENT PRIMARY KEY,a BIGINT(20) UNSIGNED,b VARCHAR(20));\n",
+"INSERT INTO t1 (a) VALUES (0), (9223372036854775807), (9223372036854775806), (9223372036854775805);\n",
+"UPDATE t1 SET b = a;\n"
+],
+"BUTTERTrans/BUTTERTrans_232/mysql": [
+"Table: `t1`\nColumns:\n(id, int, PRI)\n(a, bigint unsigned, )\n(b, varchar(20), )\n"
+],
+"BUTTERTrans/BUTTERTrans_234/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (id INT AUTO_INCREMENT PRIMARY KEY,a BIGINT(20) UNSIGNED,b VARCHAR(20));\n",
+"INSERT INTO t1 (a) VALUES (0), (9223372036854775807), (9223372036854775806), (9223372036854775805);\n",
+"UPDATE t1 SET b = a;\n",
+"EXPLAIN SELECT 1 FROM t1 WHERE a = 9223372036854775807 AND TRIM(a) = b; -- TRIM\n",
+"EXPLAIN SELECT 1 FROM t1 WHERE a = 9223372036854775806 AND TRIM(a) = b; -- TRIM\n",
+"EXPLAIN SELECT 1 FROM t1 WHERE a = 9223372036854775805 AND TRIM(a) = b; -- TRIM\n",
+"EXPLAIN SELECT 1 FROM t1 WHERE a = 0 AND TRIM(a) = b; -- TRIM\n",
+"CREATE TABLE t1 (a BIGINT);\n",
+"INSERT INTO t1 VALUES (1);\n",
+"SELECT * FROM t1 WHERE coalesce(a) BETWEEN 0 and 0.9; -- COALESCE\n"
+],
+"BUTTERTrans/BUTTERTrans_235/mysql": [
+"Table: `t1`\nColumns:\n(b, int(2) unsigned zerofill, )\n(c, int(2) unsigned zerofill, )\n"
+],
+"BUTTERTrans/BUTTERTrans_236/mysql": [
+"Table: `t1`\nColumns:\n(a, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_242/mysql": [
+"select str_to_date('04 /30/2004', '%m /%d/%Y'); -- STR_TO_DATE\n",
+"select str_to_date('04/30 /2004', '%m /%d /%Y'); -- STR_TO_DATE\n",
+"select str_to_date('04/30/2004 ', '%m/%d/%Y '); -- STR_TO_DATE\n",
+"SELECT DATE_FORMAT(\"0000-01-01\",'%W %d %M %Y') as valid_date; -- DATE_FORMAT\n"
+],
+"BUTTERTrans/BUTTERTrans_243/mysql": [
+"Table: `t1`\nColumns:\n(f1, int, )\n(f2, int, )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (f1 int, f2 int);\n",
+"insert into t1 values (0,1),(1,2);\n"
+],
+"BUTTERTrans/BUTTERTrans_244/mysql": [
+"Table: `t1`\nColumns:\n(b, varchar(2), )\n"
+],
+"BUTTERTrans/BUTTERTrans_247/mysql": [
+"create table t1 select repeat('a',4000) a; -- REPEAT",
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (text1 varchar(32) not NULL);\n",
+"insert into t1 values ('teststring'), ('nothing'), ('teststring\\\\t');\n",
+"select concat('|', text1, '|') as c from t1 where text1='teststring' or text1 like 'teststring_%' order by c; -- CONCAT\n",
+"select concat('|', text1, '|') from t1 where text1='teststring' or text1 > 'teststring\\\\t'; -- CONCAT\n",
+"select text1, length(text1) from t1 order by text1; -- LENGTH\n",
+"insert into t1 values ('teststring ');\n"
+],
+"BUTTERTrans/BUTTERTrans_25/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1(a int);\n",
+"insert into t1 values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);\n",
+"DROP TABLE IF EXISTS t2;\n",
+"create table t2(a int);\n",
+"insert into t2 select A.a + 10*(B.a + 10*C.a) from t1 A, t1 B, t1 C;\n",
+"DROP TABLE IF EXISTS t3;\n",
+"create table t3 (a char(8) not null, b char(8) not null, filler char(200));\n"
+],
+"BUTTERTrans/BUTTERTrans_251/mysql": [
+"Table: `t1`\nColumns:\n(a, mediumint, )\n"
+],
+"BUTTERTrans/BUTTERTrans_253/mysql": [
+"Table: `t1`\nColumns:\n(a, mediumint, )\n"
+],
+"BUTTERTrans/BUTTERTrans_254/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (f1 INTEGER,f2 LONGBLOB);\n",
+"INSERT INTO t1 VALUES ( 2, REPEAT('-', 104) ); -- REPEAT\n",
+"INSERT INTO t1 VALUES ( 1, REPEAT('x', 104) ); -- REPEAT\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 ( f1 VARCHAR(100) );\n",
+"INSERT INTO t1 VALUES (''), (NULL), (''), (NULL);\n"
+],
+"BUTTERTrans/BUTTERTrans_255/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (f1 INTEGER,f2 LONGBLOB);\n",
+"INSERT INTO t1 VALUES ( 2, REPEAT('-', 104) ); -- REPEAT\n",
+"INSERT INTO t1 VALUES ( 1, REPEAT('x', 104) ); -- REPEAT\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 ( f1 VARCHAR(100) );\n",
+"INSERT INTO t1 VALUES (''), (NULL), (''), (NULL);\n",
+"SELECT CONCAT(f1, '') AS dummy FROM t1 ORDER BY dummy; -- CONCAT\n",
+"CREATE TABLE t1 ( f1 INTEGER );\n",
+"INSERT INTO t1 VALUES (0), (1), (101);\n",
+"CREATE TABLE t1 (a LONGTEXT);\n",
+"INSERT INTO t1 VALUES ('8');\n",
+"CREATE TABLE t1 ( a INTEGER, b TEXT );\n"
+],
+"BUTTERTrans/BUTTERTrans_256/mysql": [
+"Table: `t1`\nColumns:\n(a, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_257/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a MEDIUMINT NULL);\n",
+"INSERT INTO t1 VALUES (1234567);\n",
+"SELECT GROUP_CONCAT(IFNULL(a,'')) FROM t1; -- GROUP_CONCAT, IFNULL\n",
+"SELECT GROUP_CONCAT(IF(a,a,'')) FROM t1; -- GROUP_CONCAT, IF\n",
+"SELECT GROUP_CONCAT(CASE WHEN a THEN a ELSE '' END) FROM t1; -- GROUP_CONCAT\n",
+"SELECT COALESCE(a,'') FROM t1 GROUP BY 1; -- COALESCE\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 AS SELECT CONCAT_WS(1,2,3) FROM t1; -- CONCAT_WS\n",
+"DROP TABLE t2;\n",
+"CREATE TABLE t2 AS SELECT LCASE(a) FROM t1; -- LCASE\n",
+"CREATE TABLE t2 AS SELECT UCASE(a) FROM t1; -- UCASE\n",
+"CREATE TABLE t2 AS SELECT REPEAT(1,2) FROM t1; -- REPEAT\n"
+],
+"BUTTERTrans/BUTTERTrans_260/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (f1 INTEGER,f2 LONGBLOB);\n",
+"INSERT INTO t1 VALUES ( 2, REPEAT('-', 104) ); -- REPEAT\n",
+"INSERT INTO t1 VALUES ( 1, REPEAT('x', 104) ); -- REPEAT\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 ( f1 VARCHAR(100) );\n",
+"INSERT INTO t1 VALUES (''), (NULL), (''), (NULL);\n",
+"SELECT CONCAT(f1, '') AS dummy FROM t1 ORDER BY dummy; -- CONCAT\n",
+"CREATE TABLE t1 ( f1 INTEGER );\n",
+"INSERT INTO t1 VALUES (0), (1), (101);\n",
+"CREATE TABLE t1 (a LONGTEXT);\n",
+"INSERT INTO t1 VALUES ('8');\n",
+"CREATE TABLE t1 ( a INTEGER, b TEXT );\n",
+"INSERT INTO t1 VALUES (1, REPEAT('x', 40001)); -- REPEAT\n",
+"INSERT INTO t1 VALUES (2, REPEAT('x', 40002)); -- REPEAT\n",
+"INSERT INTO t1 VALUES (3, REPEAT('x', 40003)); -- REPEAT\n",
+"INSERT INTO t1 VALUES (4, REPEAT('x', 40005)); -- REPEAT\n",
+"INSERT INTO t1 VALUES (5, REPEAT('x', 40008)); -- REPEAT\n"
+],
+"BUTTERTrans/BUTTERTrans_262/mysql": [
+"Table: `t1`\nColumns:\n(a, char(20), )\n"
+],
+"BUTTERTrans/BUTTERTrans_264/mysql": [
+"Table: `t1`\nColumns:\n(c1, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_270/mysql": [
+"Table: `t1`\nColumns:\n(c1, char(10), )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (a char(4), b double, c date, d tinyint(4));\n",
+"insert into t1 values ('AAAA', 105, '2003-03-01', 1);\n"
+],
+"BUTTERTrans/BUTTERTrans_272/mysql": [
+"Table: `t1`\nColumns:\n(c1, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_276/mysql": [
+"Table: `t1`\nColumns:\n(date1, char(30), )\n(format1, char(30), )\n"
+],
+"BUTTERTrans/BUTTERTrans_28/mysql": [
+"Table: `t1`\nColumns:\n(s1, blob, )\n(s2, varchar(1), )\n"
+],
+"BUTTERTrans/BUTTERTrans_281/mysql": [
+"SELECT TIME_FORMAT(\"24:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"00:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"12:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"15:00:00\", '%r'); -- TIME_FORMAT\n"
+],
+"BUTTERTrans/BUTTERTrans_282/mysql": [
+"SELECT TIME_FORMAT(\"24:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"00:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"12:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"15:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"01:00:00\", '%r'); -- TIME_FORMAT\n"
+],
+"BUTTERTrans/BUTTERTrans_287/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (id int primary key not null, mydate date not null);\n",
+"insert into t1 values (0,\"2002-05-01\"),(1,\"2002-05-01\"),(2,\"2002-05-01\");\n"
+],
+"BUTTERTrans/BUTTERTrans_288/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (id int primary key not null, mydate date not null);\n",
+"insert into t1 values (0,\"2002-05-01\"),(1,\"2002-05-01\"),(2,\"2002-05-01\");\n",
+"select * from t1 where isnull(to_days(mydate)); -- ISNULL, TO_DAYS\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 (pk int PRIMARY KEY NOT NULL,col_int_key INT NOT NULL,col_date_key date NOT NULL);\n",
+"INSERT IGNORE INTO t1 VALUES (14,4,'1919-01-01'), (15,2,'2003-01-13'),(16,5,'2006-07-07'), (17,3,'1919-01-01');\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 (pk INT PRIMARY KEY NOT NULL);\n",
+"INSERT INTO t2 VALUES (1), (2), (3);\n",
+"DROP TABLE IF EXISTS t3;\n",
+"CREATE TABLE t3(pk INT NOT NULL);\n",
+"INSERT INTO t3 VALUES(1),(2),(3);\n"
+],
+"BUTTERTrans/BUTTERTrans_292/mysql": [
+"SELECT TIME_FORMAT(\"24:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"00:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"12:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"15:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"01:00:00\", '%r'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"00:00:00\", '%l %p'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"01:00:00\", '%l %p'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"12:00:00\", '%l %p'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"23:00:00\", '%l %p'); -- TIME_FORMAT\n",
+"SELECT TIME_FORMAT(\"24:00:00\", '%l %p'); -- TIME_FORMAT\n",
+"select str_to_date('04 /30/2004', '%m /%d/%Y'); -- STR_TO_DATE\n",
+"select str_to_date('04/30 /2004', '%m /%d /%Y'); -- STR_TO_DATE\n",
+"select str_to_date('04/30/2004 ', '%m/%d/%Y '); -- STR_TO_DATE\n",
+"SELECT DATE_FORMAT(\"0000-01-01\",'%W %d %M %Y') as valid_date; -- DATE_FORMAT\n",
+"SELECT DATE_FORMAT(\"0000-02-28\",'%W %d %M %Y') as valid_date; -- DATE_FORMAT\n"
+],
+"BUTTERTrans/BUTTERTrans_30/mysql": [
+"Table: `t1`\nColumns:\n(a, date, )\n(b, int, )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a DATE, b INT);\n"
+],
+"BUTTERTrans/BUTTERTrans_300/mysql": [
+"Table: `t1`\nColumns:\n(text1, char(32), )\n"
+],
+"BUTTERTrans/BUTTERTrans_305/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (f1 INTEGER,f2 LONGBLOB);\n",
+"INSERT INTO t1 VALUES ( 2, REPEAT('-', 104) ); -- REPEAT\n",
+"INSERT INTO t1 VALUES ( 1, REPEAT('x', 104) ); -- REPEAT\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 ( f1 VARCHAR(100) );\n",
+"INSERT INTO t1 VALUES (''), (NULL), (''), (NULL);\n"
+],
+"BUTTERTrans/BUTTERTrans_31/mysql": [
+"Table: `t1`\nColumns:\n(a, date, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_315/mysql": [
+"Table: `t1`\nColumns:\n(f1, int, )\n(f2, longblob, )\n"
+],
+"BUTTERTrans/BUTTERTrans_316/mysql": [
+"Table: `t`\nColumns:\n(gid, int, )\n(a, varbinary(514), )\n"
+],
+"BUTTERTrans/BUTTERTrans_32/mysql": [
+"Table: `t1`\nColumns:\n(a, date, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_326/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (a char(4), b double, c date, d tinyint(4));\n",
+"insert into t1 values ('AAAA', 105, '2003-03-01', 1);\n",
+"select * from t1 where concat(A,C,B,D) = 'AAAA2003-03-011051'; -- CONCAT\n",
+"drop table t1;\n"
+],
+"BUTTERTrans/BUTTERTrans_330/mysql": [
+"Table: `t1`\nColumns:\n(f1, varchar(6), )\n"
+],
+"BUTTERTrans/BUTTERTrans_331/mysql": [
+"select date_format(\"1997-12-31 23:59:59.000002\", \"%f\"); -- DATE_FORMAT\n"
+],
+"BUTTERTrans/BUTTERTrans_335/mysql": [
+"Table: `t1`\nColumns:\n(c1, varchar(100), )\n(c2, varchar(100), )\n"
+],
+"BUTTERTrans/BUTTERTrans_34/mysql": [
+"Table: `t1`\nColumns:\n(a, date, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_342/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (id int primary key not null, mydate date not null);\n",
+"insert into t1 values (0,\"2002-05-01\"),(1,\"2002-05-01\"),(2,\"2002-05-01\");\n",
+"select * from t1 where isnull(to_days(mydate)); -- ISNULL, TO_DAYS\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 (pk int PRIMARY KEY NOT NULL,col_int_key INT NOT NULL,col_date_key date NOT NULL);\n",
+"INSERT IGNORE INTO t1 VALUES (14,4,'1919-01-01'), (15,2,'2003-01-13'),(16,5,'2006-07-07'), (17,3,'1919-01-01');\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 (pk INT PRIMARY KEY NOT NULL);\n",
+"INSERT INTO t2 VALUES (1), (2), (3);\n",
+"DROP TABLE IF EXISTS t3;\n",
+"CREATE TABLE t3(pk INT NOT NULL);\n",
+"INSERT INTO t3 VALUES(1),(2),(3);\n"
+],
+"BUTTERTrans/BUTTERTrans_350/mysql": [
+"Table: `t1`\nColumns:\n(c1, char(4), )\n",
+"select maketime(10,11,12); -- MAKETIME\n",
+"select ln(exp(10)),exp(ln(sqrt(10))*2),ln(NULL); -- LN\n",
+"select log2(8),log2(15),log2(NULL); -- LOG2\n",
+"select pow(10,log10(10)),power(2,4); -- POW, POWER\n",
+"select ceil(0.09); -- CEIL\n"
+],
+"BUTTERTrans/BUTTERTrans_358/mysql": [
+"Table: `t1`\nColumns:\n(b, varchar(2), )\n"
+],
+"BUTTERTrans/BUTTERTrans_359/mysql": [
+"Table: `head`\nColumns:\n(head, varchar(4), )\n",
+"Table: `t1`\nColumns:\n(b, varchar(2), )\n",
+"select maketime(10,11,12); -- MAKETIME\n",
+"select maketime(20,11,12); -- MAKETIME\n",
+"select timestamp(\"2001-12-01\", \"01:01:01.999999\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-10-01\", \"01:01:01.000001\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\", \"20:01:01\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\"); -- TIMESTAMP\n",
+"select day(\"1997-12-31 23:59:59.000001\"); -- DAY\n",
+"select time(\"1997-12-31 23:59:59.000001\"); -- TIME\n",
+"DROP TABLE IF EXISTS test;\n",
+"create table test(t1 datetime, t2 time, t3 time, t4 datetime);\n",
+"insert into test values('2001-01-01 01:01:01', '01:01:01', null, '2001-02-01 01:01:01'),('2001-01-01 01:01:01', '23:58:59', '00:00:01', '1997-12-31 23:59:59.000001'),('1997-12-31 23:59:59.000001', '00:00:01', '23:58:59', '2001-01-01 01:01:01'),(NULL, NULL, NULL, NULL);\n",
+"SELECT TIMEDIFF(t1, t4) As ttt, TIMEDIFF(t2, t3) As qqq,TIMEDIFF(t3, t2) As eee, TIMEDIFF(t2, t4) As rrr from test; -- TIMEDIFF\n",
+"select str_to_date(\"2003-01-02 10:11:12.0012\", \"%Y-%m-%d %H:%i:%S.%f\"); -- STR_TO_DATE\n"
+],
+"BUTTERTrans/BUTTERTrans_360/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1(c1 CHAR(4));\n",
+"INSERT INTO t1 VALUES(0x3A), (0x3B), (0x3C), (0x3D), (0x3E), (0x3F), (0x40), (0x5B), (0x5C), (0x5D), (0x5E), (0x5F), (0x60), (0x7B), (0x7C), (0x7D), (0x7E);\n",
+"SELECT HEX(c1) FROM t1; -- HEX\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 SELECT repeat('a',4000) a; -- REPEAT\n",
+"CREATE TABLE t1 (b VARCHAR(2));\n",
+"INSERT INTO t1 VALUES ('0'),('1'),('2'),('3'),('4'),('5'),('6'),('7');\n",
+"INSERT INTO t1 VALUES ('8'),('9'),('A'),('B'),('C'),('D'),('E'),('F');\n",
+"DROP TABLE IF EXISTS head;\n",
+"DROP TABLE IF EXISTS tail;\n",
+"CREATE TABLE head AS SELECT concat(b1.b, b2.b) AS head FROM t1 b1, t1 b2; -- CONCAT\n",
+"CREATE TABLE tail AS SELECT concat(b1.b, b2.b) AS tail FROM t1 b1, t1 b2; -- CONCAT\n",
+"DROP TABLE head;\n",
+"DROP TABLE tail;\n",
+"CREATE TABLE t1 AS SELECT '111111' AS code, ' ' AS a LIMIT 1;\n"
+],
+"BUTTERTrans/BUTTERTrans_361/mysql": [
+"Table: `t1`\nColumns:\n(d, date, )\n"
+],
+"BUTTERTrans/BUTTERTrans_366/mysql": [
+"Table: `t1`\nColumns:\n(id, int, PRI)\n(mydate, date, )\n"
+],
+"BUTTERTrans/BUTTERTrans_367/mysql": [
+"Table: `t1`\nColumns:\n(pk, int, PRI)\n(col_int_key, int, )\n(col_date_key, date, )\n",
+"Table: `t2`\nColumns:\n(pk, int, PRI)\n",
+"Table: `t3`\nColumns:\n(pk, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_369/mysql": [
+"Table: `t1`\nColumns:\n(a, varchar(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_379/mysql": [
+"select md5('a'), hex(md5('a')); -- MD5, HEX\n",
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 as select md5('a') as c1; -- MD5\n",
+"drop table t1;\n",
+"select md5('hello'); -- MD5\n",
+"explain select md5('hello'); -- MD5\n",
+"select length(unhex(md5(\"abrakadabra\"))); -- LENGTH, UNHEX, MD5\n",
+"create table t1 (f1 varchar(4), f2 varchar(64));\n"
+],
+"BUTTERTrans/BUTTERTrans_38/mysql": [
+"Table: `t1`\nColumns:\n(Fld1, int, )\n(Fld2, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_389/mysql": [
+"SELECT GREATEST('11', '5', '2'); -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2); -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2); -- GREATEST\n",
+"SELECT LEAST('11', '5', '2'); -- LEAST\n"
+],
+"BUTTERTrans/BUTTERTrans_390/mysql": [
+"SELECT GREATEST('11', '5', '2'); -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2); -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2); -- GREATEST\n",
+"SELECT LEAST('11', '5', '2'); -- LEAST\n",
+"SELECT LEAST('11', 5, 2); -- LEAST\n"
+],
+"BUTTERTrans/BUTTERTrans_391/mysql": [
+"select date_format(\"1997-12-31 23:59:59.000002\", \"%f\"); -- DATE_FORMAT\n",
+"select datediff(\"1997-12-31 23:59:59.000001\",\"1997-12-30\"); -- DATEDIFF\n"
+],
+"BUTTERTrans/BUTTERTrans_4/mysql": [
+"Table: `t0`\nColumns:\n(a, int, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_400/mysql": [
+"SELECT GREATEST('11', '5', '2'); -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2); -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2); -- GREATEST\n",
+"SELECT LEAST('11', '5', '2'); -- LEAST\n",
+"SELECT LEAST('11', 5, 2); -- LEAST\n",
+"SELECT LEAST(11, 5, 2); -- LEAST\n",
+"SELECT GREATEST('11', '5', '2') + 0; -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2) + 0; -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2) + 0; -- GREATEST\n",
+"SELECT GREATEST('11', '5', '2') + 0.00; -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2) + 0.00; -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2) + 0.00; -- GREATEST\n",
+"DROP TABLE IF EXISTS t0017;\n",
+"CREATE TABLE t0017 (c0002 bigint(20) NOT NULL);\n",
+"INSERT INTO t0017 (c0002)VALUES (0);\n",
+"SELECT greatest(18446744073709551615, NULL)FROM t0017; -- GREATEST\n",
+"DROP TABLE t0017;\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (c1 INT, c2 INT);\n",
+"INSERT INTO t1 VALUES (202, 1);\n",
+"SELECT * FROM t1 WHERE (GREATEST(c1, c2) = 42) AND (c2 = 1); -- GREATEST\n",
+"DROP TABLE t1;\n",
+"CREATE TABLE t1 (a DOUBLE, b DOUBLE);\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2 (a INTEGER, b INTEGER);\n",
+"INSERT INTO t1 values(1, NULL), (1, 1);\n",
+"INSERT INTO t2 values(1, NULL), (1, 1);\n",
+"SELECT SUM(LEAST(a, b)) FROM t1; -- LEAST\n"
+],
+"BUTTERTrans/BUTTERTrans_403/mysql": [
+"select from_unixtime(123456789); -- FROM_UNIXTIME\n",
+"select from_unixtime(234567890); -- FROM_UNIXTIME\n"
+],
+"BUTTERTrans/BUTTERTrans_404/mysql": [
+"select date_format(\"1997-12-31 23:59:59.000002\", \"%f\"); -- DATE_FORMAT\n",
+"select datediff(\"1997-12-31 23:59:59.000001\",\"1997-12-30\"); -- DATEDIFF\n",
+"select datediff(\"1997-11-30 23:59:59.000001\",null); --  DATEDIFF\n",
+"select makedate(03,1); -- MAKEDATE\n",
+"select makedate('0003',1); -- MAKEDATE\n",
+"select makedate(1997,1); -- MAKEDATE\n",
+"select makedate(1997,0); -- MAKEDATE\n",
+"select makedate(9999,365); -- MAKEDATE\n",
+"select makedate(9999,366); -- MAKEDATE\n",
+"select makedate(100,1); -- MAKEDATE\n",
+"select subtime(\"1997-12-31 23:59:59.000001\", \"1 1:1:1.000002\"); -- SUBTIME\n",
+"select subtime(\"1997-12-31 23:59:59.999999\", \"1998-01-01 01:01:01.999999\"); -- SUBTIME\n",
+"select subtime(\"01:00:00.999999\", \"02:00:00.999998\"); -- SUBTIME\n",
+"select subtime(\"02:01:01.999999\", \"01:01:01.999999\"); -- SUBTIME\n",
+"select timediff(\"1997-01-01 23:59:59.000001\",\"1995-12-31 23:59:59.000002\"); -- TIMEDIFF\n"
+],
+"BUTTERTrans/BUTTERTrans_407/mysql": [
+"Table: `t1`\nColumns:\n(f1, varchar(4), )\n(f2, varchar(64), )\n",
+"select maketime(10,11,12); -- MAKETIME\n"
+],
+"BUTTERTrans/BUTTERTrans_411/mysql": [
+"select maketime(10,11,12); -- MAKETIME\n",
+"select maketime(20,11,12); -- MAKETIME\n",
+"select timestamp(\"2001-12-01\", \"01:01:01.999999\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-10-01\", \"01:01:01.000001\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\", \"20:01:01\"); -- TIMESTAMP\n"
+],
+"BUTTERTrans/BUTTERTrans_413/mysql": [
+"select maketime(10,11,12); -- MAKETIME\n",
+"select maketime(20,11,12); -- MAKETIME\n",
+"select timestamp(\"2001-12-01\", \"01:01:01.999999\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-10-01\", \"01:01:01.000001\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\", \"20:01:01\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\"); -- TIMESTAMP\n",
+"select day(\"1997-12-31 23:59:59.000001\"); -- DAY\n"
+],
+"BUTTERTrans/BUTTERTrans_414/mysql": [
+"select maketime(10,11,12); -- MAKETIME\n",
+"select maketime(20,11,12); -- MAKETIME\n",
+"select timestamp(\"2001-12-01\", \"01:01:01.999999\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-10-01\", \"01:01:01.000001\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\", \"20:01:01\"); -- TIMESTAMP\n",
+"select timestamp(\"2001-12-01\"); -- TIMESTAMP\n",
+"select day(\"1997-12-31 23:59:59.000001\"); -- DAY\n",
+"select time(\"1997-12-31 23:59:59.000001\"); -- TIME\n",
+"DROP TABLE IF EXISTS test;\n",
+"create table test(t1 datetime, t2 time, t3 time, t4 datetime);\n",
+"insert into test values('2001-01-01 01:01:01', '01:01:01', null, '2001-02-01 01:01:01'),('2001-01-01 01:01:01', '23:58:59', '00:00:01', '1997-12-31 23:59:59.000001'),('1997-12-31 23:59:59.000001', '00:00:01', '23:58:59', '2001-01-01 01:01:01'),(NULL, NULL, NULL, NULL);\n"
+],
+"BUTTERTrans/BUTTERTrans_418/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a DATE);\n",
+"INSERT INTO t1 VALUES('2006-01-01'),('2006-01-02'),('2006-01-03'),('2006-01-04'),('2006-01-05'),('2006-01-06'),('2006-01-07');\n",
+"SELECT a, date_format(a,'%a') as abday, dayname(a) as day FROM t1 ORDER BY a; -- DATE_FORMAT, DAYNAME\n",
+"DROP TABLE t1;\n",
+"INSERT INTO t1 VALUES('2006-01-01'),('2006-02-01'),('2006-03-01'),('2006-04-01'),('2006-05-01'),('2006-06-01'),('2006-07-01'),('2006-08-01'),('2006-09-01'),('2006-10-01'),('2006-11-01'),('2006-12-01');\n",
+"SELECT a, date_format(a,'%b') as abmon, monthname(a) as mon FROM t1 ORDER BY a; -- DATE_FORMAT, MONTHNAME\n"
+],
+"BUTTERTrans/BUTTERTrans_424/mysql": [
+"select strcmp('','ae'),strcmp('ae',''),strcmp('aeq','q'),strcmp('q','aeq'); -- STRCMP\n",
+"select strcmp('ss',''),strcmp('','ss'),strcmp('s','sss'),strcmp('q','ssq'); -- STRCMP\n",
+"select strcmp('','af'),strcmp('a',''),strcmp('','aeq'),strcmp('','aeaeq'); -- STRCMP\n"
+],
+"BUTTERTrans/BUTTERTrans_426/mysql": [
+"Table: `t1`\nColumns:\n(id, int, )\n(title, varchar(255), )\n(prio, int, )\n(category, int, )\n(program, int, )\n(bugdesc, text, )\n(created, datetime, )\n(modified, timestamp, )\n(bugstatus, int, )\n(submitter, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_427/mysql": [
+"Table: `t1`\nColumns:\n(id, int, )\n(title, varchar(255), )\n(prio, int, )\n(category, int, )\n(program, int, )\n(bugdesc, text, )\n(created, datetime, )\n(modified, timestamp, )\n(bugstatus, int, )\n(submitter, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_432/mysql": [
+"SELECT LPAD(NULL, 5, 'x') AS result; -- LPAD\n"
+],
+"BUTTERTrans/BUTTERTrans_433/mysql": [
+"Table: `t1`\nColumns:\n(id, int, PRI)\n",
+"Table: `t2`\nColumns:\n(id, int, PRI)\n(val, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_436/mysql": [
+"Table: `t1`\nColumns:\n(id, int, )\n(title, varchar(255), )\n(prio, int, )\n(category, int, )\n(program, int, )\n(bugdesc, text, )\n(created, datetime, )\n(modified, timestamp, )\n(bugstatus, int, )\n(submitter, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_440/mysql": [
+"Table: `h`\nColumns:\n(c1, char(20), )\n"
+],
+"BUTTERTrans/BUTTERTrans_442/mysql": [
+"SELECT LPAD(NULL, 5, 'x') AS result; -- LPAD\n",
+"SELECT LPAD(NULL, NULL, 'x') AS result; -- LPAD\n",
+"SELECT LPAD(NULL, NULL, NULL) AS result; -- LPAD\n",
+"SELECT LPAD('a', NULL, 'x') AS result; -- LPAD\n",
+"SELECT LPAD('a', NULL, NULL) AS result; -- LPAD\n",
+"SELECT LPAD('a', 5, NULL) AS result; -- LPAD\n",
+"SELECT LPAD(NULL, 5, NULL) AS result; -- LPAD\n",
+"SELECT LPAD('a', 0, 'x') AS result; -- LPAD\n",
+"SELECT LPAD('a', 0, '') AS result; -- LPAD\n",
+"SELECT LPAD('', 0, 'x') AS result; -- LPAD\n",
+"SELECT LPAD('', 0, '') AS result; -- LPAD\n"
+],
+"BUTTERTrans/BUTTERTrans_444/mysql": [
+"select 0=0,1>0,1>=1,1<0,1<=0,1!=0,strcmp(\"abc\",\"abcd\"),strcmp(\"b\",\"a\"),strcmp(\"a\",\"a\") ; -- STRCMP\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (d varchar(6), k int);\n",
+"INSERT INTO t1 VALUES (\"abc\", 2);\n",
+"SELECT GREATEST(d,d) FROM t1 WHERE k=2; -- GREATEST\n",
+"DROP TABLE t1;\n",
+"select (12 mod 1) <=> null  as 'col'; -- MOD\n",
+"select (12 mod 1) is null   as 'col'; -- MOD\n",
+"select mod(12.0, 1)         as 'col'; -- MOD\n",
+"select mod(12, 1.0)         as 'col'; -- MOD\n",
+"SELECT greatest( 123456789 , 234567890 ) as g; -- GREATEST\n",
+"SELECT least   ( 123456789 , 234567890 ) as l; -- LEAST\n",
+"SELECT greatest (123456789, -1, 234567890 ) as g; -- GREATEST\n",
+"SELECT least    (123456789, -1, 234567890 ) as l; -- LEAST\n"
+],
+"BUTTERTrans/BUTTERTrans_445/mysql": [
+"SELECT LPAD(NULL, 5, 'x') AS result; -- LPAD\n",
+"SELECT LPAD(NULL, NULL, 'x') AS result; -- LPAD\n",
+"SELECT LPAD(NULL, NULL, NULL) AS result; -- LPAD\n",
+"SELECT LPAD('a', NULL, 'x') AS result; -- LPAD\n",
+"SELECT LPAD('a', NULL, NULL) AS result; -- LPAD\n",
+"SELECT LPAD('a', 5, NULL) AS result; -- LPAD\n",
+"SELECT LPAD(NULL, 5, NULL) AS result; -- LPAD\n",
+"SELECT LPAD('a', 0, 'x') AS result; -- LPAD\n",
+"SELECT LPAD('a', 0, '') AS result; -- LPAD\n",
+"SELECT LPAD('', 0, 'x') AS result; -- LPAD\n",
+"SELECT LPAD('', 0, '') AS result; -- LPAD\n",
+"SELECT LPAD('a', -1, 'x'); -- LPAD\n",
+"SELECT LPAD('123', 5, 'x'); -- LPAD\n",
+"SELECT LPAD('a', 5, 'xy'); -- LPAD\n"
+],
+"BUTTERTrans/BUTTERTrans_451/mysql": [
+"DROP TABLE IF EXISTS h;\n",
+"CREATE TABLE h (c1 CHAR(20));\n",
+"INSERT INTO h VALUES ('12345678900987654321'), ('hҼ'), ('߰'), ('ʮ'), (''), ('50515253');\n",
+"INSERT INTO h VALUES ('31'), ('h31'), ('2805');\n",
+"SELECT c1, LENGTH(c1) FROM h; -- LENGTH\n",
+"SELECT c1, LPAD(c1, 20, ' ') FROM h; -- LPAD\n",
+"SELECT c1, RPAD(c1, 20, '52') FROM h; -- RPAD\n",
+"TRUNCATE h;\n",
+"INSERT INTO h VALUES ('h315254');\n",
+"SELECT INSTR(c1, 'h') FROM h; -- INSTR\n",
+"SELECT INSTR(c1, '') FROM h; -- INSTR\n",
+"SELECT INSTR(c1, '52') FROM h; -- INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_453/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (c1 LONGTEXT);\n"
+],
+"BUTTERTrans/BUTTERTrans_455/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (c1 LONGTEXT);\n",
+"INSERT INTO t1 VALUES (REPEAT('ManyMegaByteBlck', 123)); -- REPEAT\n",
+"INSERT INTO t1 VALUES (REPEAT('ManyMegaByteBlck', 234)); -- REPEAT\n"
+],
+"BUTTERTrans/BUTTERTrans_459/mysql": [
+"SELECT GREATEST('11', '5', '2'); -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2); -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2); -- GREATEST\n",
+"SELECT LEAST('11', '5', '2'); -- LEAST\n",
+"SELECT LEAST('11', 5, 2); -- LEAST\n"
+],
+"BUTTERTrans/BUTTERTrans_461/mysql": [
+"Table: `t1`\nColumns:\n(c1, int, )\n(c2, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_462/mysql": [
+"Table: `t1`\nColumns:\n(a, double, )\n(b, double, )\n",
+"Table: `t2`\nColumns:\n(a, int, )\n(b, int, )\n",
+"SELECT GREATEST('11', '5', '2'); -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2); -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2); -- GREATEST\n",
+"SELECT LEAST('11', '5', '2'); -- LEAST\n",
+"SELECT LEAST('11', 5, 2); -- LEAST\n",
+"SELECT LEAST(11, 5, 2); -- LEAST\n",
+"SELECT GREATEST('11', '5', '2') + 0; -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2) + 0; -- GREATEST\n"
+],
+"BUTTERTrans/BUTTERTrans_465/mysql": [
+"SELECT GREATEST('11', '5', '2'); -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2); -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2); -- GREATEST\n",
+"SELECT LEAST('11', '5', '2'); -- LEAST\n",
+"SELECT LEAST('11', 5, 2); -- LEAST\n",
+"SELECT LEAST(11, 5, 2); -- LEAST\n",
+"SELECT GREATEST('11', '5', '2') + 0; -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2) + 0; -- GREATEST\n",
+"SELECT GREATEST(11, 5, 2) + 0; -- GREATEST\n",
+"SELECT GREATEST('11', '5', '2') + 0.00; -- GREATEST\n",
+"SELECT GREATEST('11', 5, 2) + 0.00; -- GREATEST\n"
+],
+"BUTTERTrans/BUTTERTrans_472/mysql": [
+"Table: `t1`\nColumns:\n(a, bigint, )\n"
+],
+"BUTTERTrans/BUTTERTrans_473/mysql": [
+"Table: `t1`\nColumns:\n(a, double, )\n(b, double, )\n",
+"Table: `t2`\nColumns:\n(a, int, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_479/mysql": [
+"SELECT IF(0,\"ERROR\",\"this\"),IF(1,\"is\",\"ERROR\"),IF(NULL,\"ERROR\",\"a\"),IF(1,2,3),IF(1,2.0,3.0)+0; -- IF\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (st varchar(255) NOT NULL, u int NOT NULL);\n",
+"INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);\n",
+"SELECT IF(1,st,st) s FROM t1 ORDER BY s; -- IF\n",
+"SELECT IF(u=1,st,st) s FROM t1 ORDER BY s; -- IF\n",
+"select nullif(u, 1) from t1; -- NULLIF\n",
+"explain select nullif(u, 1) from t1; -- NULLIF\n",
+"drop table t1;\n",
+"create table t1 (num  double(12,2));\n",
+"insert into t1 values (144.54);\n",
+"select sum(if(num is null,0.00,num)) from t1; -- IF\n",
+"create table t1 (x int, y int);\n",
+"insert into t1 values (0,6),(10,16),(20,26),(30,10),(40,46),(50,56);\n",
+"select min(if(y -x > 5,y,NULL)), max(if(y - x > 5,y,NULL)) from t1; -- IF\n",
+"SELECT NULLIF(5,5) IS NULL, NULLIF(5,5) IS NOT NULL; -- NULLIF\n",
+"CREATE TABLE `t1` (`id` int(11) NOT NULL ,`date` int(10) default NULL,`text` varchar(32) NOT NULL);\n",
+"INSERT INTO t1 VALUES (1,1110000000,'Day 1'),(2,1111000000,'Day 2'),(3,1112000000,'Day 3');\n",
+"SELECT id, IF(date IS NULL, '-', FROM_UNIXTIME(date, '%d-%m-%Y')) AS date_ord, text FROM t1 ORDER BY date_ord ASC; -- IF, FROM_UNIXTIME\n"
+],
+"BUTTERTrans/BUTTERTrans_480/mysql": [
+"Table: `t1`\nColumns:\n(id, int, PRI)\n(a, varchar(100), )\n"
+],
+"BUTTERTrans/BUTTERTrans_487/mysql": [
+"Table: `h`\nColumns:\n(c1, char(20), )\n",
+"Table: `t1`\nColumns:\n(c, varchar(30), )\n"
+],
+"BUTTERTrans/BUTTERTrans_49/mysql": [
+"drop table if exists t1;\n",
+"CREATE TABLE t1 (data LONGBLOB);\n",
+"INSERT INTO t1 (data) VALUES ('aaa');\n",
+"UPDATE t1 set data=repeat('a',18*1024); -- REPEAT\n",
+"select length(data) from t1; -- LENGTH\n",
+"delete from t1 where left(data,1)='a';\n",
+"truncate table t1;\n"
+],
+"BUTTERTrans/BUTTERTrans_496/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (a DATE);\n",
+"INSERT INTO t1 VALUES('2006-01-01'),('2006-01-02'),('2006-01-03'),('2006-01-04'),('2006-01-05'),('2006-01-06'),('2006-01-07');\n"
+],
+"BUTTERTrans/BUTTERTrans_498/mysql": [
+"SELECT RPAD(NULL, 5, 'x') AS result; -- RPAD\n",
+"SELECT RPAD(NULL, NULL, 'x') AS result; -- RPAD\n",
+"SELECT RPAD(NULL, NULL, NULL) AS result; -- RPAD\n",
+"SELECT RPAD('a', NULL, 'x') AS result; -- RPAD\n",
+"SELECT RPAD('a', NULL, NULL) AS result; -- RPAD\n",
+"SELECT RPAD('a', 5, NULL) AS result; -- RPAD\n",
+"SELECT RPAD(NULL, 5, NULL) AS result; -- RPAD\n",
+"SELECT RPAD('a', 0, 'x') AS result; -- RPAD\n",
+"SELECT RPAD('a', 0, '') AS result; -- RPAD\n",
+"SELECT RPAD('', 0, 'x') AS result; -- RPAD\n"
+],
+"BUTTERTrans/BUTTERTrans_499/mysql": [
+"Table: `t1`\nColumns:\n(val, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_50/mysql": [
+"Table: `t1`\nColumns:\n(data, longblob, )\n"
+],
+"BUTTERTrans/BUTTERTrans_502/mysql": [
+"select strcmp('','ae'),strcmp('ae',''),strcmp('aeq','q'),strcmp('q','aeq'); -- STRCMP\n"
+],
+"BUTTERTrans/BUTTERTrans_504/mysql": [
+"Table: `t1`\nColumns:\n(a, double, )\n(b, double, )\n",
+"Table: `t2`\nColumns:\n(a, int, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_505/mysql": [
+"Table: `t1`\nColumns:\n(s1, char(5), )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1(a INT, b INT);\n",
+"INSERT INTO t1 VALUES(1,1),(2,2),(3,3);\n",
+"EXPLAIN SELECT * FROM t1 WHERE ISNULL(t1.a IN (SELECT t3.a FROM t1 t3)); -- ISNULL\n"
+],
+"BUTTERTrans/BUTTERTrans_506/mysql": [
+"select strcmp('','ae'),strcmp('ae',''),strcmp('aeq','q'),strcmp('q','aeq'); -- STRCMP\n",
+"select strcmp('ss',''),strcmp('','ss'),strcmp('s','sss'),strcmp('q','ssq'); -- STRCMP\n",
+"select strcmp('','af'),strcmp('a',''),strcmp('','aeq'),strcmp('','aeaeq'); -- STRCMP\n",
+"select strcmp('ss','a'),strcmp('','ssa'),strcmp('sa','sssb'),strcmp('s',''); -- STRCMP\n",
+"select strcmp('','o'),strcmp('','u'),strcmp('','oeb'); -- STRCMP\n"
+],
+"BUTTERTrans/BUTTERTrans_51/mysql": [
+"Table: `t0`\nColumns:\n(a, int, )\n",
+"Table: `t1`\nColumns:\n(a, int, )\n(b, char(20), )\n(filler, char(200), )\n"
+],
+"BUTTERTrans/BUTTERTrans_516/postgresql": [
+"SELECT generate_series(1, 3); -- GENERATE_SERIES\n",
+"SELECT generate_series(1, 3) AS val1, generate_series(3,5) AS val2; -- GENERATE_SERIES\n"
+],
+"BUTTERTrans/BUTTERTrans_517/mysql": [
+"Table: `t1`\nColumns:\n(f1, varchar(5), )\n"
+],
+"BUTTERTrans/BUTTERTrans_519/postgresql": [
+"DROP TABLE IF EXISTS delete_test;\n",
+"CREATE TABLE delete_test (id SERIAL PRIMARY KEY,a INT,b text);\n",
+"INSERT INTO delete_test (id, a) VALUES (1, 10);\n"
+],
+"BUTTERTrans/BUTTERTrans_525/mysql": [
+"Table: `t1`\nColumns:\n(i, int, )\n(a, char(200), UNI)\n(b, text, UNI)\n",
+"Table: `t5`\nColumns:\n(c1, int, )\n(c2, varchar(128), )\n"
+],
+"BUTTERTrans/BUTTERTrans_54/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'd' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, NULL ); -- REGEXP_INSTR\n",
+"SELECT hex( concat(regexp_instr( 'a', 'a' )) ); -- HEX, CONCAT, REGEXP_INSTR\n",
+"SELECT regexp_instr( 1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 1.1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1.1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( subject, pattern ) FROM t1; -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_540/mysql": [
+"Table: `t1`\nColumns:\n(a, varchar(64), )\n"
+],
+"BUTTERTrans/BUTTERTrans_544/mysql": [
+"Table: `t1`\nColumns:\n(c1, longtext, )\n"
+],
+"BUTTERTrans/BUTTERTrans_550/mysql": [
+"Table: `t1`\nColumns:\n(a, varchar(50), )\n"
+],
+"BUTTERTrans/BUTTERTrans_552/mysql": [
+"Table: `t1`\nColumns:\n(a, varchar(50), )\n",
+"select repeat('a',2000); -- REPEAT\n"
+],
+"BUTTERTrans/BUTTERTrans_555/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (a varchar(50));\n",
+"insert into t1 values (0x00410000);\n"
+],
+"BUTTERTrans/BUTTERTrans_557/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"create table t1 (a varchar(50));\n",
+"insert into t1 values (0x00410000);\n",
+"select hex(a) from t1 where a like 'A_'; -- HEX\n",
+"analyze table t1;\n",
+"explain select hex(a) from t1 where a like 'A_'; -- HEX\n"
+],
+"BUTTERTrans/BUTTERTrans_560/mysql": [
+"SELECT IF(0,\"ERROR\",\"this\"),IF(1,\"is\",\"ERROR\"),IF(NULL,\"ERROR\",\"a\"),IF(1,2,3),IF(1,2.0,3.0)+0; -- IF\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (st varchar(255) NOT NULL, u int NOT NULL);\n",
+"INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);\n"
+],
+"BUTTERTrans/BUTTERTrans_561/mysql": [
+"Table: `t1`\nColumns:\n(a, varchar(50), )\n"
+],
+"BUTTERTrans/BUTTERTrans_566/mysql": [
+"Table: `t1`\nColumns:\n(st, varchar(255), )\n(u, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_568/mysql": [
+"Table: `t`\nColumns:\n(i, int, )\n(b, longtext, )\n",
+"SELECT IF(0,\"ERROR\",\"this\"),IF(1,\"is\",\"ERROR\"),IF(NULL,\"ERROR\",\"a\"),IF(1,2,3),IF(1,2.0,3.0)+0; -- IF\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (st varchar(255) NOT NULL, u int NOT NULL);\n",
+"INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);\n",
+"SELECT IF(1,st,st) s FROM t1 ORDER BY s; -- IF\n",
+"SELECT IF(u=1,st,st) s FROM t1 ORDER BY s; -- IF\n",
+"ANALYZE TABLE t1;\n",
+"select nullif(u, 1) from t1; -- NULLIF\n",
+"explain select nullif(u, 1) from t1; -- NULLIF\n",
+"drop table t1;\n",
+"create table t1 (num  double(12,2));\n",
+"insert into t1 values (144.54);\n",
+"select sum(if(num is null,0.00,num)) from t1; -- IF\n",
+"create table t1 (x int, y int);\n",
+"insert into t1 values (0,6),(10,16),(20,26),(30,10),(40,46),(50,56);\n",
+"select min(if(y -x > 5,y,NULL)), max(if(y - x > 5,y,NULL)) from t1; -- IF\n",
+"SELECT NULLIF(5,5) IS NULL, NULLIF(5,5) IS NOT NULL; -- NULLIF\n",
+"CREATE TABLE `t1` (`id` int(11) NOT NULL ,`date` int(10) default NULL,`text` varchar(32) NOT NULL);\n",
+"INSERT INTO t1 VALUES (1,1110000000,'Day 1'),(2,1111000000,'Day 2'),(3,1112000000,'Day 3');\n",
+"SELECT id, IF(date IS NULL, '-', FROM_UNIXTIME(date, '%d-%m-%Y')) AS date_ord, text FROM t1 ORDER BY date_ord ASC; -- IF, FROM_UNIXTIME\n"
+],
+"BUTTERTrans/BUTTERTrans_582/mysql": [
+"Table: `test_log`\nColumns:\n(argument, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_584/mysql": [
+"select row(10,2,3) IN (row(3,2,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(10,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(1,2,3), row('a',1.5,3), row('a','a','a')); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','a','3'), row(1,3,3)); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','0','3'), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n"
+],
+"BUTTERTrans/BUTTERTrans_586/mysql": [
+"Table: `t1`\nColumns:\n(a, varchar(10), )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_588/mysql": [
+"select row(10,2,3) IN (row(3,2,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(10,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(1,2,3), row('a',1.5,3), row('a','a','a')); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','a','3'), row(1,3,3)); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','0','3'), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,4), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n"
+],
+"BUTTERTrans/BUTTERTrans_589/mysql": [
+"select row(10,2,3) IN (row(3,2,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(10,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(1,2,3), row('a',1.5,3), row('a','a','a')); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','a','3'), row(1,3,3)); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','0','3'), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,4), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n",
+"explain select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n"
+],
+"BUTTERTrans/BUTTERTrans_590/mysql": [
+"select row(10,2,3) IN (row(3,2,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(10,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(1,2,3), row('a',1.5,3), row('a','a','a')); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','a','3'), row(1,3,3)); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','0','3'), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,4), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n",
+"explain select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n",
+"select row(1,2,row(3,null)) IN (row(3,2,row(3,4)), row(1,2,row(4,5))); -- ROW\n"
+],
+"BUTTERTrans/BUTTERTrans_592/mysql": [
+"Table: `t1`\nColumns:\n(c11, int, )\n(c12, longtext, )\n",
+"Table: `t2`\nColumns:\n(c21, int, )\n(c22, longtext, )\n"
+],
+"BUTTERTrans/BUTTERTrans_596/mysql": [
+"create table t1 as select to_seconds(null) as to_seconds; -- TO_SECONDS"
+],
+"BUTTERTrans/BUTTERTrans_60/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_602/mysql": [
+"select row(10,2,3) IN (row(3,2,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row(10,2,3) IN (row(3,NULL,3), row(1,2,3), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(1,2,3), row('a',1.5,3), row('a','a','a')); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','a','3'), row(1,3,3)); -- ROW\n",
+"select row('a',0,3) IN (row(3,2,3), row('a','0','3'), row(1,3,3)); -- ROW\n",
+"select row('a',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row(3,NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,3), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row('b',1.5,3) IN (row('b',NULL,4), row('a',1.5,3), row(1,3,3)); -- ROW\n",
+"select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n",
+"explain select row(1,2,row(3,4)) IN (row(3,2,row(3,4)), row(1,2,row(3,NULL))); -- ROW\n",
+"select row(1,2,row(3,null)) IN (row(3,2,row(3,4)), row(1,2,row(4,5))); -- ROW\n",
+"select row(1,2,row(3,null)) IN (row(3,2,row(3,4)), row(1,2,row(3,5))); -- ROW\n",
+"SELECT ROW(1,2,3)=ROW(1,2,3); -- ROW\n",
+"SELECT ROW(2,2,3)=ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(1,2,3)=ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(1,2,3)<ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(1,2,3)>ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(1,2,3)<=ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(1,2,3)>=ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(1,2,3)<>ROW(1+1,2,3); -- ROW\n",
+"SELECT ROW(NULL,2,3)=ROW(NULL,2,3); -- ROW\n",
+"SELECT ROW(1,2,ROW(3,4,5))=ROW(1,2,ROW(3,4,5)); -- ROW\n",
+"SELECT ROW('test',2,3.33)=ROW('test',2,3.33); -- ROW\n"
+],
+"BUTTERTrans/BUTTERTrans_604/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, int, )\n(c, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_605/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, int, )\n(c, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_606/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_609/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_61/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'd' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, NULL ); -- REGEXP_INSTR\n",
+"SELECT hex( concat(regexp_instr( 'a', 'a' )) ); -- HEX, CONCAT, REGEXP_INSTR\n",
+"SELECT regexp_instr( 1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 1.1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1.1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( subject, pattern ) FROM t1; -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 3 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 3 ); -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_612/mysql": [
+"Table: `t1`\nColumns:\n(i, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_613/mysql": [
+"Table: `t`\nColumns:\n(i, int, )\n(b, longtext, )\n"
+],
+"BUTTERTrans/BUTTERTrans_628/mysql": [
+"SELECT RPAD(NULL, 5, 'x') AS result; -- RPAD\n",
+"SELECT RPAD(NULL, NULL, 'x') AS result; -- RPAD\n",
+"SELECT RPAD(NULL, NULL, NULL) AS result; -- RPAD\n",
+"SELECT RPAD('a', NULL, 'x') AS result; -- RPAD\n",
+"SELECT RPAD('a', NULL, NULL) AS result; -- RPAD\n",
+"SELECT RPAD('a', 5, NULL) AS result; -- RPAD\n",
+"SELECT RPAD(NULL, 5, NULL) AS result; -- RPAD\n",
+"SELECT RPAD('a', 0, 'x') AS result; -- RPAD\n",
+"SELECT RPAD('a', 0, '') AS result; -- RPAD\n"
+],
+"BUTTERTrans/BUTTERTrans_640/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1(x INT, y INT);\n",
+"DROP TABLE IF EXISTS t2;\n",
+"CREATE TABLE t2(a INT, b INT);\n",
+"EXPLAIN SELECT * FROM t1 WHERE (SELECT b FROM t2 WHERE CAST(UUID() AS CHAR) = CAST(t2.a AS CHAR)) > 0; -- UUID\n",
+"DROP TABLE t1;\n",
+"DROP TABLE t2;\n",
+"CREATE TABLE t1(a INT);\n",
+"DROP TABLE IF EXISTS t3;\n",
+"CREATE TABLE t3(a INT, b INT);\n",
+"INSERT INTO t1 VALUES (1), (2), (3), (4);\n",
+"INSERT INTO t3 VALUES (5,5), (6,6);\n",
+"ANALYZE TABLE t1;\n",
+"ANALYZE TABLE t3;\n",
+"SELECT (SELECT COALESCE(SUM(t3.b), 0) FROM t3 WHERE t1.a=t3.a) FROM t1 ; -- COALESCE\n",
+"EXPLAIN SELECT (SELECT COALESCE(SUM(t3.b), 0) FROM t3 WHERE t1.a=t3.a) FROM t1 ; -- COALESCE\n"
+],
+"BUTTERTrans/BUTTERTrans_644/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n(b, int, )\n(c, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_644/postgresql": [
+"Table: `bigger_than_it_looks`\nColumns:\n(id, integer, )\n",
+"Table: `extremely_skewed`\nColumns:\n(id, integer, )\n(t, text, )\n",
+"Table: `join_foo`\nColumns:\n(id, integer, )\n(t, text, )\n",
+"Table: `simple1`\nColumns:\n(id, integer, )\n",
+"Table: `wide`\nColumns:\n(id, integer, )\n(t, text, )\n"
+],
+"BUTTERTrans/BUTTERTrans_656/postgresql": [
+"BEGIN;\n",
+"DROP TABLE IF EXISTS simple1;\n",
+"create table simple1 as select generate_series(1, 200) AS id; -- GENERATE_SERIES\n",
+"analyze simple1;\n",
+"DROP TABLE IF EXISTS bigger_than_it_looks;\n",
+"create table bigger_than_it_looks as select generate_series(1, 200) as id; -- GENERATE_SERIES\n",
+"analyze bigger_than_it_looks;\n",
+"DROP TABLE IF EXISTS extremely_skewed;\n",
+"create table extremely_skewed (id int, t text);\n",
+"analyze extremely_skewed;\n",
+"insert into extremely_skewed select 42 as id, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'from generate_series(1, 200); -- GENERATE_SERIES\n",
+"DROP TABLE IF EXISTS wide;\n"
+],
+"BUTTERTrans/BUTTERTrans_657/postgresql": [
+"BEGIN;\n",
+"DROP TABLE IF EXISTS simple1;\n",
+"create table simple1 as select generate_series(1, 200) AS id; -- GENERATE_SERIES\n",
+"analyze simple1;\n",
+"DROP TABLE IF EXISTS bigger_than_it_looks;\n",
+"create table bigger_than_it_looks as select generate_series(1, 200) as id; -- GENERATE_SERIES\n",
+"analyze bigger_than_it_looks;\n",
+"DROP TABLE IF EXISTS extremely_skewed;\n",
+"create table extremely_skewed (id int, t text);\n",
+"analyze extremely_skewed;\n",
+"insert into extremely_skewed select 42 as id, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'from generate_series(1, 200); -- GENERATE_SERIES\n",
+"DROP TABLE IF EXISTS wide;\n",
+"create table wide as select generate_series(1, 2) as id, rpad('', 320000, 'x') as t; -- GENERATE_SERIES, RPAD\n",
+"DROP TABLE IF EXISTS join_foo;\n"
+],
+"BUTTERTrans/BUTTERTrans_679/mysql": [
+"Table: `t1`\nColumns:\n(a, int, )\n",
+"Table: `t3`\nColumns:\n(a, int, )\n(b, int, )\n"
+],
+"BUTTERTrans/BUTTERTrans_697/postgresql": [
+"Table: `bigger_than_it_looks`\nColumns:\n(id, integer, )\n",
+"Table: `extremely_skewed`\nColumns:\n(id, integer, )\n(t, text, )\n",
+"Table: `simple1`\nColumns:\n(id, integer, )\n"
+],
+"BUTTERTrans/BUTTERTrans_71/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'd' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, NULL ); -- REGEXP_INSTR\n",
+"SELECT hex( concat(regexp_instr( 'a', 'a' )) ); -- HEX, CONCAT, REGEXP_INSTR\n",
+"SELECT regexp_instr( 1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 1.1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1.1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( subject, pattern ) FROM t1; -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 3 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 3 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 4 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 4, 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 'a+', 1, 1, NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 1, 0 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 1, 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'aaabcabcabc', 'a+', 1, 1, 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'aaabcabcabc', 'A+', 1, 1, 1, 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'aaabcabcabc', 'A+', 1, 1, 1, 'i' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'aaabcabcabc', 'A+', 1, 1, 1, 'ci' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'aaabcabcabc', 'A+', 1, 1, 1, 'cic' ); -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_73/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'd' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, NULL ); -- REGEXP_INSTR\n",
+"SELECT hex( concat(regexp_instr( 'a', 'a' )) ); -- HEX, CONCAT, REGEXP_INSTR\n",
+"SELECT regexp_instr( 1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 1.1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1.1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( subject, pattern ) FROM t1; -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 2 ); -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_74/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_75/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n",
+"SELECT regexp_replace( 'aaa', 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abc', 'b', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( NULL, 'a', 'X' ); -- REGEXP_REPLACE\n"
+],
+"BUTTERTrans/BUTTERTrans_76/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_77/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'd' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, NULL ); -- REGEXP_INSTR\n",
+"SELECT hex( concat(regexp_instr( 'a', 'a' )) ); -- HEX, CONCAT, REGEXP_INSTR\n",
+"SELECT regexp_instr( 1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 1.1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1.1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( subject, pattern ) FROM t1; -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 3 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 2 ); -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_78/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n",
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1 (subject char(10),pattern char(10));\n",
+"SELECT regexp_instr( 'abc', 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'b' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'c' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abc', 'd' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', NULL ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( NULL, NULL ); -- REGEXP_INSTR\n",
+"SELECT hex( concat(regexp_instr( 'a', 'a' )) ); -- HEX, CONCAT, REGEXP_INSTR\n",
+"SELECT regexp_instr( 1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 1.1, 'a' ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'a', 1.1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( subject, pattern ) FROM t1; -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 1 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'b+', 3 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 2 ); -- REGEXP_INSTR\n",
+"SELECT regexp_instr( 'abcabcabc', 'a+', 1, 3 ); -- REGEXP_INSTR\n"
+],
+"BUTTERTrans/BUTTERTrans_80/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_82/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_85/mysql": [
+"Table: `t1`\nColumns:\n(subject, char(10), )\n(pattern, char(10), )\n"
+],
+"BUTTERTrans/BUTTERTrans_91/mysql": [
+"SELECT regexp_replace( 'aaa', 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abc', 'b', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( NULL, 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaa', NULL, 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaa', 'a', NULL ); -- REGEXP_REPLACE\n",
+"SELECT concat( regexp_replace( 'aaa', 'a', 'X' ), 'x' ); -- CONCAT, REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaa', 'a', 'X', 1 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabbccbbddaa', 'b+', 'X', 1, 1 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabbccbbddaa', 'b+', 'X', 1, 2 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabbccbbddaa', '(b+)', '<$1>', 1, 2 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabbccbbddaa', 'x+', 'x', 1, 0 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabbccbbddaa', 'b+', 'x', 1, 0 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaab', 'b', 'x', 1, 2 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabccc', 'b', 'x', 1, 2 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abcbdb', 'b', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abcbdb', 'b', 'X', 3 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabcbdb', 'b', 'X', 1 ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaabcbdb', 'b', 'X', 2 ); -- REGEXP_REPLACE\n"
+],
+"BUTTERTrans/BUTTERTrans_92/mysql": [
+"SELECT regexp_replace( 'aaa', 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abc', 'b', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( NULL, 'a', 'X' ); -- REGEXP_REPLACE\n"
+],
+"BUTTERTrans/BUTTERTrans_93/mysql": [
+"SELECT regexp_replace( 'aaa', 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abc', 'b', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( NULL, 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaa', NULL, 'X' ); -- REGEXP_REPLACE\n"
+],
+"BUTTERTrans/BUTTERTrans_94/mysql": [
+"DROP TABLE IF EXISTS t1;\n",
+"CREATE TABLE t1(a REAL,b INT,c CHAR(100),d DECIMAL);\n",
+"SELECT regexp_replace( 'aaa', 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'abc', 'b', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( NULL, 'a', 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaa', NULL, 'X' ); -- REGEXP_REPLACE\n",
+"SELECT regexp_replace( 'aaa', 'a', NULL ); -- REGEXP_REPLACE\n"
+]
+}
