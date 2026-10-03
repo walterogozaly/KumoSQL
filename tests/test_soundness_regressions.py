@@ -361,3 +361,16 @@ def test_s006_set_operation_rules_do_not_pair_by_name_columns_by_position():
     assert set_operation_to_exists(except_) is None
     over = sqlglot.parse_one("SELECT DISTINCT d.a, d.b FROM (SELECT x AS a, y AS b FROM t UNION ALL BY NAME SELECT x AS b, y AS a FROM u) d", read="bigquery")
     assert split_distinct_select(over) is None
+
+
+def test_an_order_key_that_is_not_an_output_never_stands_in_for_an_output_column():
+    # LLM-SQL-Solver negatives 124/125: the hidden order key became a second core column and matched Population
+    schema = {"city": ["name", "population"]}
+    two = "SELECT name, population FROM city ORDER BY population DESC LIMIT 1"
+    one = "SELECT name FROM city ORDER BY population DESC LIMIT 1"
+    for dialect in ("bigquery", "sqlite"):
+        for prove in (prove_equivalent_algebraic, prove_equivalent_smt):
+            assert not prove(two, one, schema=schema, dialect=dialect, compare_names=False).proven
+            assert not prove(one, two, schema=schema, dialect=dialect, compare_names=False).proven
+        same = "SELECT c.name FROM city AS c ORDER BY c.population DESC LIMIT 1"
+        assert prove_equivalent_algebraic(one, same, schema=schema, dialect=dialect, compare_names=False).proven
