@@ -47,21 +47,24 @@ from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
 from .named_windows import inline_named_windows
 from .having_rules import key_having_to_where
 from .window_rules import window_rules
-from .intersection_rules import collapse_counted_intersection
+from .intersection_rules import collapse_counted_intersection, collapse_named_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
 from .limit_rules import limit_rule
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
+from .int_div_rules import fold_literal_int_div
 from .date_ranges import extract_to_ranges
 from .dedup_join_rules import drop_unread_outer_join, strip_distinct_sources
 from .distinct_rules import distinct_rules
 from . import set_aggregates
 from .outer_join_flatten import outer_join_rules
+from .grouped_outer_joins import grouped_outer_join_rules
 from .set_split_rules import split_distinct_select
 from .empty_rules import canonical_empty, propagate_empty
 from .setop_rules import _sf_flatten as _flatten_projections, merge_same_source, normalize_set_operations, set_operation_to_exists
+from .outer_join_exists import move_exists_into_padded_side
 from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
 from .lone_source import lift_derived_expressions
@@ -69,10 +72,12 @@ from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .aggregate_rules import rewrite_aggregates
 from .null_rejecting_joins import left_join_to_inner
+from .outer_on_rejection import strengthen_under_outer_on
 from .join_rewrites import join_rewrites
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .union_filter_rules import push_filter_into_set_operation
+from .constant_correlation import propagate_constant_correlations
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -4808,7 +4813,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (distribute_over_constant_union, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select):
+            for rule in (distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map)):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
