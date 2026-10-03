@@ -29,4 +29,4 @@ The full reference lists required keys and optional usefulness, analysis, and pe
 
 “0 wrong” means the specified checks found no wrong result. Read it alongside coverage: doing nothing can avoid wrong rewrites while helping no queries. Cases used to develop a rule should be marked “tuned on test,” even if they later pass.
 
-For a code refactor expected to preserve scores, `python tools/eval_diff.py` compares evaluations on the base branch and your checkout. It can take hours and needs each evaluation's data and dependencies. Documentation-only changes do not require rerunning the SQL corpora to regenerate unchanged numbers.
+For a code refactor expected to preserve scores, `python tools/eval_diff.py` compares evaluations on the base branch and your checkout. It ignores how long each run took, so only changed answers show up as a difference. It can take hours and needs each evaluation's data and dependencies. Documentation-only changes do not require rerunning the SQL corpora to regenerate unchanged numbers.
