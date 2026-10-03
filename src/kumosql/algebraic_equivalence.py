@@ -3630,7 +3630,9 @@ def _lateral_joins(tree: exp.Expression) -> exp.Expression:
             alias = lateral.alias
             kind = (join.args.get("kind") or "").upper()
             side = (join.args.get("side") or "").upper()
-            if not isinstance(body, exp.Select) or not alias or join.args.get("on") is not None and not isinstance(join.args["on"], exp.Boolean):
+            on = join.args.get("on")
+            # ON FALSE keeps no pair (an inner join is empty, a LEFT one pads with NULLs); only TRUE is the plain lateral read
+            if not isinstance(body, exp.Select) or not alias or on is not None and not (isinstance(on, exp.Boolean) and on.this):
                 continue
             if any(body.args.get(k) for k in ("distinct", "limit", "offset", "qualify", "windows", "with_", "with", "having", "order")) or any(body.find_all(exp.Window)):
                 continue
@@ -3647,6 +3649,9 @@ def _lateral_joins(tree: exp.Expression) -> exp.Expression:
                 if not uses or any(c.name.lower() not in values for c in uses):
                     continue
                 if any(c.find_ancestor(exp.Join) is join for c in uses):
+                    continue
+                # the one row comes from the aggregates: a used output without one, (SELECT 7 FROM u), has a row per row of u
+                if not all(any(a.find_ancestor(exp.Select) is body for a in values[c.name.lower()].find_all(exp.AggFunc)) for c in uses):
                     continue
                 for column in uses:
                     probe = body.copy()
