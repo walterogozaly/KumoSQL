@@ -47,7 +47,7 @@ from .lineage_soundness import (
     masked_sql_words,
     pin_single_source_columns,
 )
-from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions
+from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
 from .ast_utils import is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
@@ -404,7 +404,8 @@ class Pipeline:
         def compute():
             parsed = self._analyse().parsed
             with stage("duplicates", models=len(parsed)):
-                return _find_duplicates(parsed, min_nodes=min_nodes)
+                masked = {key: model.masked_expressions for key, model in self.models.items() if model.masked_expressions}
+                return _find_duplicates(parsed, min_nodes=min_nodes, masked=masked)
 
         return self._remembered(("duplicates", min_nodes), compute)
 
@@ -1155,6 +1156,9 @@ class _Analysis:
     conditions: dict[str, frozenset[ColumnRef]] = field(default_factory=dict)
     # Per model: tables a masked template expression may read columns of, though their columns are unknown.
     template_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Per model: tables its other statements, conditions, variables or operations read, with the names those may
+    # use as columns (``None``: any column). Column lineage does not see these reads.
+    script_reads: dict[str, dict[str, frozenset[str] | None]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1212,6 +1216,7 @@ class _Analysis:
         script_opaque: dict[str, frozenset[str]] = {}
         partial_outputs: set[str] = set()
         script_extras: dict[str, tuple[exp.Table, ...]] = {}
+        script_reads: dict[str, dict[str, frozenset[str] | None]] = {}
         # Operations that MERGE or INSERT into a table that is not their own: target -> (writing model, its query).
         writes_into: dict[str, list[tuple[str, exp.Query]]] = {}
         # (writer, written table) pairs whose INSERT has no column list: the table's own columns name the outputs.
@@ -1333,6 +1338,7 @@ class _Analysis:
                 extra = analyse_script(operation, procedures=procedures, functions=functions)
                 if extra.all_reads():
                     script_extras[key] = (*script_extras.get(key, ()), *extra.all_reads())
+                    _note_side_reads(pipeline, key, extra.all_reads(), column_words(operation), script_reads)
                 for table in extra.all_reads():
                     resolved = pipeline.resolve(table)
                     if resolved and resolved != key:
@@ -1356,6 +1362,10 @@ class _Analysis:
                     resolved = pipeline.resolve(table)
                     if resolved and resolved != key:
                         operation_readers.add(resolved)
+                if analysis.side_reads:
+                    operation_readers.update(
+                        _note_side_reads(pipeline, key, analysis.side_reads.values(), column_words(model.sql), script_reads)
+                    )
             columns_known = (
                 analysis is not None
                 and not analysis.unknown
@@ -1755,7 +1765,31 @@ class _Analysis:
             schema_lookup=schema_lookup,
             conditions=conditions,
             template_reads={key: frozenset(tables) for key, tables in template_reads.items()},
+            script_reads=script_reads,
         )
+
+
+def _note_side_reads(
+    pipeline: "Pipeline",
+    key: str,
+    tables: Iterable[exp.Table],
+    words: frozenset[str] | None,
+    script_reads: dict[str, dict[str, frozenset[str] | None]],
+) -> set[str]:
+    """Record the known tables a script reads outside its traced query, with the names that may be their columns."""
+
+    found = set()
+    for table in tables:
+        resolved = pipeline.resolve(table)
+        if not resolved or resolved == key:
+            continue
+        found.add(resolved)
+        known = script_reads.setdefault(key, {})
+        if resolved in known and (known[resolved] is None or words is None):
+            known[resolved] = None
+        else:
+            known[resolved] = (known.get(resolved) or frozenset()) | words if words is not None else None
+    return found
 
 
 def _masked_reads(
