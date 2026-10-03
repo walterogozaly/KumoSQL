@@ -4,6 +4,8 @@
 
 The equivalence checks behind every verified rewrite, from the structural prover to Z3, the algebraic prover and SQLSolver.
 
+**Network.** None of these checks reaches the network. Calling a prover, a rewrite or a pipeline analysis from Python makes no request: the one optional library lookup, the columns of tables a project does not define (`SELECT *` over them), is off by default and needs an explicit opt-in (`KUMOSQL_SCHEMA_FETCH=1`, `--fetch-schema` on `python -m kumosql pipeline-report`, or the Settings checkbox in the local UI); see [whole-pipeline analysis](pipeline-analysis.md). BigQuery dry runs and planner checks are likewise opt-in calls.
+
 ## Conservative SQL equivalence
 
 `kumosql.prove_equivalent(left_sql, right_sql)` returns `proven_equivalent` only when both inputs are strict, single-query BigQuery statements whose normalized ASTs match after relational subquery lifting. By default it compares result bags, so unspecified row order is ignored. With `ignore_row_order=False` (`--respect-row-order`) both queries must also end in the same `ORDER BY`; nothing shows its keys are unique, so rows tied on them may still come back in a different order, as on any two runs of either query.

@@ -18,7 +18,7 @@ from pathlib import Path
 from . import state
 
 SECTION = "storage"
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2  # 2: models carry config_reads and config_reads_unread
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -94,7 +94,7 @@ def pipeline_from_snapshot(value: object, key: str):
         if not isinstance(obj["declared_dependencies"], list):
             raise ValueError("invalid snapshot dependencies")
         obj["declared_dependencies"] = tuple(target(t) for t in obj["declared_dependencies"])
-        for k in ("masked_expressions", "tags", "non_null", "operations_sql"):
+        for k in ("masked_expressions", "tags", "non_null", "operations_sql", "config_reads", "config_reads_unread"):
             obj[k] = tuple(_strings(obj[k]))
         if not isinstance(obj["unique_keys"], list):
             raise ValueError("invalid snapshot unique keys")

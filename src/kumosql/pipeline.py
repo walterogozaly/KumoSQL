@@ -391,7 +391,10 @@ class Pipeline:
 
         Terminal models (nothing downstream) are treated as pipeline outputs
         and never reported. A model is skipped when any consumer could not be
-        analysed, because an unseen reader might use any column.
+        analysed, because an unseen reader might use any column. A column its
+        own config names (a built-in assertion, ``partitionBy``, ``clusterBy``,
+        ``uniqueKey``, ``updatePartitionFilter``) counts as used, and a model
+        whose config reads columns it cannot read is skipped.
         """
 
         analysis = self._analyse()
@@ -405,14 +408,17 @@ class Pipeline:
             if any(reader not in analysis.consumed or reader in cyclic for reader in readers):
                 continue  # a reader that was not analysed, or sits in a dependency cycle (so its input columns were unknown), might use any column
             outputs = analysis.outputs.get(key)
-            if not outputs:
-                continue
+            model = self.models.get(key)
+            if not outputs or (model is not None and model.config_reads_unread):
+                continue  # a config value that reads columns could not be read: any column might be used
             used = {
                 ref.column.lower()
                 for reader in readers
                 for ref in analysis.consumed.get(reader, ())
                 if ref.table == key
             }
+            if model is not None:
+                used.update(model.config_reads)  # built-in assertions, partitioning and clustering read columns too
             dead = tuple(column for column in outputs if column.lower() not in used)
             if dead:
                 result[key] = dead

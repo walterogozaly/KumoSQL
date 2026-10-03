@@ -27,6 +27,7 @@ ASSET_FAILURE_CODES = frozenset(
         "duplicate_model",
         "sqlx_parse_error",
         "unsupported_ref",
+        "dynamic_config",
         "parse_error",
         "no_query",
         "qualify_error",
@@ -56,6 +57,8 @@ _EFFECTS = {
     "lineage_skipped": ("lineage", "impact", "dead_columns"),
     "insert_target_columns": ("lineage", "impact", "dead_columns"),
     "template_columns": ("impact", "dead_columns"),
+    # A computed type changes what a model's stored rows are, not what it reads: only proofs depend on it.
+    "dynamic_config": (),
 }
 
 # Kinds shared with the graph page's gaps table; other codes keep their own name.
@@ -68,6 +71,7 @@ _GAP_KINDS = {
     "no_query": "parse_error",
     "sqlx_parse_error": "parse_error",
     "unsupported_ref": "parse_error",
+    "dynamic_config": "unmatched_reference",
     "qualify_error": "parse_error",
     "lineage_error": "parse_error",
     "lineage_skipped": "lineage_skipped",
