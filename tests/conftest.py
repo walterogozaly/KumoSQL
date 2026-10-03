@@ -188,6 +188,7 @@ EVAL_FILES = {
     "test_singh_bedathur_benchmark.py",
     "test_spider2_bench.py",
     "test_sqlfluff_fixtures_bench.py",
+    "test_sqlfluff_refusals_bench.py",
     "test_sqliq_bench.py",
     "test_sqlsolver_benchmarks.py",
     "test_targeted_data_bench.py",
