@@ -52,7 +52,7 @@ from .intersection_rules import collapse_counted_intersection, collapse_named_co
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
-from .limit_rules import limit_rule as _limit_rule
+from .limit_rules import drops_global_aggregate, limit_rule as _limit_rule, rebinds_grouping_names
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
 from .int_div_rules import fold_literal_int_div
@@ -1289,8 +1289,10 @@ def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
     conditions = []
     if inner.args.get("having") is not None:
         conditions.append(inner.args["having"].this.copy())
-    if select.args.get("where") is not None:
-        conditions.append(substitute(select.args["where"].this))
+    moved = [substitute(select.args["where"].this)] if select.args.get("where") is not None else []
+    if rebinds_grouping_names(inner, outputs, moved):
+        return None
+    conditions += moved
     if conditions:
         result.set("having", exp.Having(this=_and_all([c for cond in conditions for c in _conjuncts(cond)])))
     if _global_aggregate(inner) and not _global_aggregate(result):
@@ -2077,7 +2079,8 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
     A grouped or plain derived table keeps its rows when an output is removed,
     so ``SELECT 1 FROM (SELECT k, COUNT(*) FROM t GROUP BY k) AS d`` is the same
     as ``SELECT 1 FROM (SELECT k FROM t GROUP BY k) AS d``. Not applied under
-    ``DISTINCT`` (removing a column changes which rows collapse) or with a star.
+    ``DISTINCT`` (removing a column changes which rows collapse) or with a star,
+    nor where it would remove the last aggregate of a select without GROUP BY.
     """
 
     if any(
@@ -3172,8 +3175,12 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
     aliased = {n for n, item in by_name.items() if isinstance(item, exp.Alias)}
     if any(c.name.lower() in aliased and not c.table and c.name.lower() not in kept for c in inner.args["order"].find_all(exp.Column)):
         return None
+    if rebinds_grouping_names(inner, items, clauses=("group", "having", "order")):
+        return None
     result = inner.copy()
     result.set("expressions", items)
+    if drops_global_aggregate(inner, result):
+        return None
     return result
 
 
@@ -4532,7 +4539,7 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
         name = item.alias_or_name
         items.append(exp.alias_(value.copy(), name) if name else value.copy())
     # An ORDER BY of the inner select would read output aliases that may be gone; groups have none here.
-    if inner.args.get("order"):
+    if inner.args.get("order") or rebinds_grouping_names(inner, items):
         return None
     result = inner.copy()
     result.set("expressions", items)
