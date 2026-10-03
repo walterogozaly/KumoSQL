@@ -75,6 +75,15 @@ WRONG_PROOFS = [
         id="S004-005-compound-split-loses-hidden-group-key",
     ),
     pytest.param(
+        f"SELECT u.k, SUM(u.x) + 1 AS v FROM {UNION} GROUP BY u.k, u.j",
+        "SELECT k, SUM(kumosql_p0) + 1 AS v FROM (SELECT u.k AS k, SUM(u.x) AS kumosql_p0 FROM (SELECT k, j, x FROM a) AS u"
+        " GROUP BY u.k, u.j UNION ALL SELECT u.k AS k, SUM(u.x) AS kumosql_p0 FROM (SELECT k, j, x FROM b) AS u GROUP BY u.k, u.j)"
+        " AS kumosql_u GROUP BY k",
+        {"a": [(1, 1, 10), (1, 2, 20)]},
+        None,
+        id="S004-005-the-rule-output-itself",
+    ),
+    pytest.param(
         "SELECT k FROM tp GROUP BY k HAVING COUNT(CASE WHEN p = 1 THEN 1 END) > 0 ORDER BY COUNT(*) DESC LIMIT 1",
         "SELECT k FROM tp WHERE p = 1 GROUP BY k ORDER BY COUNT(*) DESC LIMIT 1",
         {"tp": [(1, 1, 0), (1, 0, 0), (1, 0, 0), (2, 1, 0), (2, 1, 0)]},
