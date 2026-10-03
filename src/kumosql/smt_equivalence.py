@@ -157,9 +157,8 @@ _SUPPORTED_AGGREGATES = {
     exp.LogicalOr: "LOGICAL_OR",
     # Bitwise aggregates are left uninterpreted: their value over an empty group differs by engine
     # (NULL in BigQuery, all ones or zero in MySQL), so only equal calls are known to agree.
-    exp.BitwiseAndAgg: "BIT_AND",
-    exp.BitwiseOrAgg: "BIT_OR",
-    exp.BitwiseXorAgg: "BIT_XOR",
+    # sqlglot 26.0.0 has no classes for them (BIT_AND is an unknown function there).
+    **{getattr(exp, cls): name for cls, name in (("BitwiseAndAgg", "BIT_AND"), ("BitwiseOrAgg", "BIT_OR"), ("BitwiseXorAgg", "BIT_XOR")) if hasattr(exp, cls)},
 }
 # Aggregates whose value depends only on the set of non-NULL values, not on how often each occurs.
 _DUPLICATE_INSENSITIVE = ("MIN", "MAX", "LOGICAL_AND", "LOGICAL_OR", "BIT_AND", "BIT_OR")
@@ -659,6 +658,9 @@ class _Compiler:
         self.opaque_sets: set[str] = set()
         # Read DISTINCT derived tables as sets (existence tests) instead of opaque relations.
         self.semijoin = True
+        # Read a DISTINCT derived table in a duplicate-blind select as the rows it deduplicates.
+        self.blind_sets = False
+        self._blind = False
         self.used_setsrc = False
         self.limit_opaque = False
         self.window_opaque = False
@@ -821,6 +823,14 @@ class _Compiler:
 
     def _scan(self, node: exp.Select, ctes: dict, outer: "_Env | None" = None) -> list[_State]:
         """Sources, joins and WHERE of one select, as one state per outer-join case."""
+
+        outer_blind, self._blind = self._blind, self.blind_sets and _duplicate_blind(node)
+        try:
+            return self._scan_sources(node, ctes, outer)
+        finally:
+            self._blind = outer_blind
+
+    def _scan_sources(self, node: exp.Select, ctes: dict, outer: "_Env | None" = None) -> list[_State]:
 
         first = _State([], [], _Env(), [])
         first.env.outer = outer
@@ -1069,7 +1079,10 @@ class _Compiler:
         one_row = self._one_row_source(sub, body, ctes)
         if one_row is not None:
             return one_row
-        if len(sub.branches) == 1 and isinstance(sub.branches[0], _Spj) and not sub.branches[0].distinct:
+        # Joined into a duplicate-blind select, a DISTINCT derived table and the bag it
+        # deduplicates give the same set of output rows.
+        blind = self._blind and not sub.distinct
+        if len(sub.branches) == 1 and isinstance(sub.branches[0], _Spj) and (blind or not sub.branches[0].distinct):
             branch = sub.branches[0]
             if len(set(branch.names)) != len(branch.names) or "" in branch.names:
                 raise Unsupported("derived table with unnamed or duplicate columns")
@@ -2495,6 +2508,30 @@ class _Prover:
             block.facts = block.facts + extra
         return block
 
+    def self_witness_facts(self, block):
+        """Facts ``guard(o) => atom``: a row the block reads can witness an existence test itself.
+
+        An occurrence ``o`` of the block is a row of its table, so when ``o`` satisfies the guard of
+        a test over that same table (one occurrence, no nested tests), the test holds. This lets
+        ``l.user_id = 1 AND l.page_id NOT IN (SELECT page_id FROM likes WHERE user_id = 1)`` be seen
+        to be never TRUE: ``l`` itself is in the subquery.
+        """
+
+        if not block.subs or any(o.opaque for o in block.occs):
+            return block
+        extra = []
+        for sub in block.subs:
+            if len(sub.occs) != 1 or sub.nested or sub.setsrc or sub.occs[0].opaque:
+                continue
+            inner = sub.occs[0]
+            for occ in block.occs:
+                if occ.table.lower() != inner.table.lower() or occ.columns != inner.columns:
+                    continue
+                extra.append(z3.Implies(_subst(sub.guard, _occ_pairs(inner, occ)), sub.atom))
+        if extra:
+            block.facts = block.facts + extra
+        return block
+
     def merge_equivalent_subs(self, block):
         """Two existence tests of one block that agree under its plain conditions share one atom.
 
@@ -2718,6 +2755,49 @@ class _Prover:
             return self.agg_equal(a, b)
         return False
 
+    def set_contained_by_cases(self, a, targets) -> bool:
+        """Every row of ``a`` is a row of some block in ``targets`` (set semantics).
+
+        When no single target contains ``a``, a disjunction ``p OR q`` among the
+        conjuncts of a filter splits that block into ``a AND p`` and ``a AND q``
+        (a row passes the filter only if one disjunct is TRUE, so the cases cover
+        every row). Each case of ``a`` may land in a different target, and a case
+        of a target is part of that target. Up to two disjunctions of ``a`` are split.
+        """
+
+        if any(self.branch_set_contained(a, b) for b in targets):
+            return True
+        targets = list(targets) + [case for b in targets for cases in self._disjunctive_cases(b) for case in cases]
+        return self._contained_by_cases(a, targets, 2)
+
+    def _contained_by_cases(self, a, targets, depth: int) -> bool:
+        if any(self.branch_set_contained(a, b) for b in targets):
+            return True
+        if depth <= 0:
+            return False
+        return any(all(self._contained_by_cases(case, targets, depth - 1) for case in cases) for cases in self._disjunctive_cases(a))
+
+    def _disjunctive_cases(self, block) -> list:
+        """For each disjunction among the conjuncts of a block's filter, the block split by its disjuncts."""
+
+        if not isinstance(block, _Spj) or any(o.opaque for o in block.occs):
+            return []
+        disjunctions, stack = [], [block.cond.t]
+        while stack:
+            term = stack.pop()
+            if z3.is_and(term):
+                stack.extend(term.children())
+            elif z3.is_or(term) and 2 <= term.num_args() <= 4:
+                disjunctions.append(term)
+        # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
+        return [
+            [
+                self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
+                for part in disjunction.children()
+            ]
+            for disjunction in disjunctions
+        ]
+
     def groups_unique(self, block) -> bool:
         """No two groups of a ``GROUP BY`` give the same row: equal outputs force equal group keys,
         whatever the two groups' aggregate values are."""
@@ -2761,7 +2841,9 @@ def _prune(prover: "_Prover", union: _Union) -> None:
     kept = []
     for block in union.branches:
         if block.occs and any(o.opaque for o in block.occs):
-            kept.append(block)
+            # A literal WHERE FALSE needs no model of the opaque source (a global aggregate still returns its one row).
+            if (isinstance(block, _Agg) and block.is_global) or not z3.is_false(z3.simplify(block.cond.t)):
+                kept.append(block)
             continue
         if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
             kept.append(block)
@@ -2818,6 +2900,16 @@ def _selects_a_set(select: exp.Select) -> bool:
     return {o.sql() for o in outputs} == {g.sql() for g in group.expressions}
 
 
+def _duplicate_blind(select: exp.Select) -> bool:
+    """A plain ``SELECT DISTINCT`` (no GROUP BY, aggregates or windows of its own): its rows are a set
+    that depends only on the set of rows each source has."""
+
+    distinct = select.args.get("distinct")
+    if distinct is None or distinct.args.get("on") or select.args.get("group") or select.args.get("having"):
+        return False
+    return not any(n.find_ancestor(exp.Select) is select for n in select.find_all(exp.AggFunc, exp.Window))
+
+
 def _is_set(u: _Union) -> bool:
     return u.distinct or (len(u.branches) == 1 and u.branches[0].distinct)
 
@@ -2836,6 +2928,7 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             b = prover.inline_unique_subs(b)
             b = prover.merge_equivalent_subs(b)
             b = prover.sub_consequences(b)
+            b = prover.self_witness_facts(b)
             if union.distinct or b.distinct:
                 b = prover.inline_unique_subs(b, require_unique=False)
             branches.append(prover.merge_key_occurrences(b))
@@ -2852,10 +2945,10 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
             other.branches = [dataclasses.replace(other.branches[0], distinct=True)]
     if _is_set(left) and _is_set(right):
         for a in left.branches:
-            if not any(prover.branch_set_contained(a, b) for b in right.branches):
+            if not prover.set_contained_by_cases(a, right.branches):
                 return False, "a left branch has rows the right side may lack"
         for b in right.branches:
-            if not any(prover.branch_set_contained(b, a) for a in left.branches):
+            if not prover.set_contained_by_cases(b, left.branches):
                 return False, "a right branch has rows the left side may lack"
         return True, "set semantics: each side is contained in the other"
     if _is_set(left) != _is_set(right) and not (left.distinct or right.distinct):
@@ -3229,9 +3322,10 @@ def _prove_core(
         )
     used = [False]
 
-    def attempt(semijoin: bool) -> SmtEquivalenceResult:
+    def attempt(semijoin: bool, blind: bool = False) -> SmtEquivalenceResult:
         compiler = _Compiler(schema, exact_arithmetic, dialect)
         compiler.semijoin = semijoin
+        compiler.blind_sets = blind
         try:
             left = compiler.compile(left_sql)
             right = compiler.compile(right_sql)
@@ -3298,6 +3392,10 @@ def _prove_core(
     result = attempt(True)
     if result.status is not SmtStatus.NOT_PROVEN or not used[0]:
         return result
+    # Under DISTINCT the derived table can also be read as a plain join (only a proof is taken from it).
+    blind = attempt(True, blind=True)
+    if blind.proven:
+        return blind
     # A DISTINCT derived table read as a set can fail to match what the opaque
     # reading would; try that reading too before giving up.
     fallback = attempt(False)
@@ -3349,8 +3447,9 @@ TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for eq
 def _split_limit(sql: str, dialect: str):
     """``(core_sql, spec)`` for a query ending in ORDER BY .. LIMIT, ``(sql, None)`` without a limit.
 
-    ``spec`` is ``(limit, offset, ordering, covers_all)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
-    ``(output position, descending, nulls first)``; ``None`` as the core means the
+    ``spec`` is ``(limit, offset, ordering, covers_all, visible)`` (``limit`` ``None`` for ``OFFSET`` alone) where ``ordering`` lists
+    ``(output position, descending, nulls first)`` and ``visible`` counts the output columns (order keys that are
+    not outputs become extra columns of the core); ``None`` as the core means the
     shape is not handled (``spec`` then says why).
     """
 
@@ -3422,6 +3521,7 @@ def _split_limit(sql: str, dialect: str):
         int(offset.expression.this) if offset is not None else 0,
         tuple(ordering),
         covers,
+        len(outputs),
     )
     return faithful_sql(core, dialect), spec
 
@@ -3466,6 +3566,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "only one query has a LIMIT")
     if left_spec[:3] != right_spec[:3]:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the queries differ in LIMIT, OFFSET or ORDER BY")
+    if left_spec[4] != right_spec[4]:
+        # An order key that is not an output is an extra column of the core: it must not stand in for an output.
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"different column counts ({left_spec[4]} vs {right_spec[4]})")
     result = _prove_core(left_core, right_core, **kwargs)
     if result.status is SmtStatus.NOT_EQUIVALENT:
         # The rows before the cut differ, but the first rows may still agree.
