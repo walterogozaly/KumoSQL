@@ -50,7 +50,8 @@ def _apply(names, sql):
 
 
 def random_chain(rng: random.Random) -> list[str]:
-    names = list(available_rules())
+    # Opt-in rules (qualify_columns) need table columns the generated queries do not declare.
+    names = [n for n, rule in available_rules().items() if not rule.opt_in]
     chain = rng.sample(names, rng.randint(1, len(names)))
     return chain * rng.randint(1, 3)
 

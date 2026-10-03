@@ -6,6 +6,8 @@
 picks a join order from those estimates. It is plain Python on top of sqlglot:
 no numpy, no database and no model at planning time.
 
+`Statistics.save()` writes gzip-compressed JSON with a version field; `Statistics.load()` validates its fields, scalar types, domain references and bin sizes before use. Legacy pickle statistics are refused and must be collected again. The benchmark runners use `.json.gz` cache names so their first run after upgrading regenerates statistics. Supported sampled values are nulls, booleans, integers, finite floats/decimals, strings, bytes, dates, times, datetimes and timedeltas; unsupported values are rejected on save.
+
 | Module | What it does |
 | --- | --- |
 | `query.py` | Reads a select-project-join query into a join graph: relations, per-relation filters, equi-join edges |

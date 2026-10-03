@@ -29,7 +29,7 @@ from sqlglot import exp
 
 from . import scopes as scope_store
 from . import state
-from .ast_utils import captured_names
+from .ast_utils import captured_names, is_cte_reference
 from .pipeline_equivalence import prove_models
 from .prover_schema import ProverSchema, _select_names
 
@@ -143,15 +143,20 @@ def classify(pipeline, classes: Classes) -> dict[str, str]:
 
 
 def _parse(sql: str) -> exp.Expression:
-    return sqlglot.parse_one(sql, read="bigquery")
+    """One statement; text with several (a script) is refused, as older sqlglot keeps only the first of them."""
+
+    statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
+    if len(statements) != 1:
+        raise sqlglot.errors.ParseError("expected one statement")
+    return statements[0]
 
 
 def _table_nodes(tree: exp.Expression):
-    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    """The physical table reads of ``tree``: every table node that does not read a WITH table in scope there."""
+
     for table in tree.find_all(exp.Table):
-        if not table.db and table.name.lower() in ctes:
-            continue
-        yield table
+        if not is_cte_reference(table):
+            yield table
 
 
 class _Reads:

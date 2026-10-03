@@ -165,7 +165,7 @@ gcloud auth application-default login
 - With a repository connected, **Settings → Repositories** also loads its Dataform workflow configurations (using the same credentials) and the graph marks models that run in a production schedule; see [production schedules](dataform-repositories.md#production-schedules-dataform-workflow-configurations).
 - The **BigQuery** page in the UI lists the projects, datasets, tables and schemas your credentials can see.
 
-Only these features contact BigQuery, and only when you ask.
+Only these features contact BigQuery, and only when you ask. Looking up the columns of tables a project does not define (so `SELECT *` over them can be traced) is off unless you turn it on: tick the checkbox in **Settings → Analysis**, pass `--fetch-schema` to `python -m kumosql pipeline-report`, or set `KUMOSQL_SCHEMA_FETCH=1`. See [whole-pipeline analysis](pipeline-analysis.md).
 
 ## Working on KumoSQL itself
 
@@ -176,6 +176,8 @@ python -m pytest                 # serial
 ```
 
 `tools/run_tests.py` uses pytest-xdist on every CPU (about 9 minutes instead of 35 on 4 CPUs); see the README's testing section. Use `python -m pytest`, not bare `pytest`, so the repository root is importable. The default run skips the `slow` marker. CI runs the suite on the oldest and newest supported `sqlglot`; `python tools/test_sqlglot_matrix.py` reproduces that locally.
+
+Most of the suite is thousands of small tests, so keep a test's fixed cost low. Load DuckDB rows with `kumosql.duckdb_load.insert_rows` (one statement of literals instead of one `execute` per row) and reuse one connection across a helper's trials (`CREATE OR REPLACE TABLE` gives fresh tables, and a new connection costs about 10 ms). Start a test HTTP server with `serve_forever(poll_interval=0.01)`, or its `shutdown()` waits up to half a second. `tests/conftest.py` gives each test its own state directory without making a `tmp_path` unless the test asks for one.
 
 ## Where to go next
 

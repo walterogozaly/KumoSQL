@@ -28,11 +28,16 @@ Each pair gets one outcome:
 ``wrong`` is a proof of a pair labelled inequivalent. A refutation of a pair the
 experts call equivalent is reported as a label dispute: the database is shown.
 
-One pair in five (by a hash of its two queries) is held out; ``--split dev`` runs the
-rest.
+One pair in five (by a hash of its two queries) is held out. A development run reads the
+dev pairs only (``--split dev``, the default); ``--split held-out`` is for final scoring
+and ``--split all`` runs both, reporting dev and held-out pairs separately.
+``--write-results`` scores every pair (the published headline is over all pairs, with
+the held-out part in its own ``held_out`` field) and needs ``--split all`` or no split.
+``--show`` never prints a held-out pair's SQL unless ``--split held-out`` was asked for.
 
-    python tools/llm_sql_solver_bench.py                      # both files
-    python tools/llm_sql_solver_bench.py --split dev --show proven,refuted
+    python tools/llm_sql_solver_bench.py                      # dev pairs of both files
+    python tools/llm_sql_solver_bench.py --show proven,refuted
+    python tools/llm_sql_solver_bench.py --split all          # dev and held-out, reported apart
     python tools/llm_sql_solver_bench.py --write-results
 """
 
@@ -432,35 +437,64 @@ def results_rows(results: list[dict]) -> dict[str, dict]:
     }
 
 
+SPLITS = ("dev", "held-out", "all")
+
+
+def split_cases(cases: list[Case], split: str) -> list[Case]:
+    """The pairs of one split: ``dev``, ``held-out`` (one pair in five, by hash) or ``all``."""
+
+    if split not in SPLITS:
+        raise ValueError(f"split must be one of {', '.join(SPLITS)}")
+    return cases if split == "all" else [c for c in cases if c.held_out == (split == "held-out")]
+
+
+def choose_split(split: str | None, write: bool) -> str:
+    """``--split`` as given, else ``all`` for ``--write-results`` (the published numbers) and ``dev`` otherwise."""
+
+    if split is None:
+        return "all" if write else "dev"
+    if write and split != "all":
+        raise ValueError("--write-results needs --split all")
+    return split
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--split", choices=("all", "dev", "held-out"), default="all", help="held-out pairs are for final scoring only")
+    parser.add_argument(
+        "--split", choices=SPLITS, default=None,
+        help="dev (default) for development runs; held-out is for final scoring only; all reports both apart (default with --write-results)",
+    )
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--show", default="", help="comma-separated outcomes to list (proven, refuted, unknown, unsupported)")
     parser.add_argument("--json", help="write every outcome to this file")
-    parser.add_argument("--write-results", action="store_true", help="update benchmarks/results/llm-sql-solver-*.json (needs --split all)")
+    parser.add_argument("--write-results", action="store_true", help="update benchmarks/results/llm-sql-solver-*.json (scores every pair: --split all)")
     args = parser.parse_args(argv)
+    try:
+        split = choose_split(args.split, args.write_results)
+    except ValueError as error:
+        parser.error(str(error))
     from bench_common import quiet, write_results
 
     quiet()
-    cases = load_cases()
-    if args.split != "all":
-        cases = [c for c in cases if c.held_out == (args.split == "held-out")]
+    cases = split_cases(load_cases(), split)
     started = time.time()
     results = run(cases, args.jobs)
-    for group, counts in summarize(results).items():
-        print(f"{group:24} " + ", ".join(f"{k} {v}" for k, v in counts.items()))
-    print(f"{len(results)} pairs in {time.time() - started:.0f}s")
+    for part in ("dev", "held-out") + (("all",) if split == "all" else ()):
+        rows = results if part == "all" else [r for r in results if r["held_out"] == (part == "held-out")]
+        for group, counts in summarize(rows).items():
+            print(f"{part:9} {group:24} " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    print(f"{len(results)} pairs ({split}) in {time.time() - started:.0f}s")
     show = {s.strip() for s in args.show.split(",") if s.strip()}
     for case, result in zip(cases, results):
         if result["outcome"] in show or result["wrong"]:
             print(f"\n{result['id']} [{result['label']}] {result['outcome']} {result['how']}{' WRONG' if result['wrong'] else ''}")
-            print(f"  1: {case.sql1}\n  2: {case.sql2}")
+            if case.held_out and split != "held-out":
+                print("  held out: rerun with --split held-out to see the SQL")
+            else:
+                print(f"  1: {case.sql1}\n  2: {case.sql2}")
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=1), encoding="utf-8")
     if args.write_results:
-        if args.split != "all":
-            parser.error("--write-results needs --split all")
         for name, row in results_rows(results).items():
             write_results(name, row, scoreboard=False)
         write_results(name, row)

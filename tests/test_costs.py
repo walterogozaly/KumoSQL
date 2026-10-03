@@ -125,3 +125,148 @@ def test_loaders(tmp_path):
     assert csv_job.referenced_tables == ("proj.raw.events",) and not csv_job.cache_hit
     out = build_cost(pipeline(), load_jobs(tmp_path / "j.json"))
     assert out["nodes"][0]["node"] == BASE.key
+
+
+TIB_BYTES = 2 ** 40
+
+
+def rest_resource(**overrides):
+    """A standard nested BigQuery Job resource: 1 TiB processed and billed, 1,500 slot-ms."""
+
+    resource = {
+        "kind": "bigquery#job",
+        "jobReference": {"projectId": "proj", "jobId": "rest-1", "location": "US"},
+        "configuration": {
+            "dryRun": False,
+            "labels": {"team": "data"},
+            "query": {
+                "query": "SELECT id FROM raw.events",
+                "destinationTable": {"projectId": "proj", "datasetId": "core", "tableId": "base"},
+            },
+        },
+        "statistics": {
+            "creationTime": "1735776000000",
+            "totalSlotMs": "1500",
+            "query": {
+                "totalBytesProcessed": str(TIB_BYTES),
+                "totalBytesBilled": str(TIB_BYTES),
+                "cacheHit": False,
+                "statementType": "SELECT",
+                "referencedTables": [{"projectId": "proj", "datasetId": "raw", "tableId": "events"}],
+            },
+        },
+        "status": {"state": "DONE"},
+    }
+    resource.update(overrides)
+    return resource
+
+
+def test_rest_job_resource_is_normalized_not_zeroed():
+    got = ObservedJob.from_record(rest_resource())
+    assert got.job_id == "rest-1" and got.project == "proj" and got.location == "US"
+    assert got.destination_table == {"projectId": "proj", "datasetId": "core", "tableId": "base"}
+    assert got.referenced_tables == ({"projectId": "proj", "datasetId": "raw", "tableId": "events"},)
+    assert (got.total_bytes_billed, got.total_bytes_processed, got.total_slot_ms) == (TIB_BYTES, TIB_BYTES, 1500)
+    assert got.statement_type == "SELECT" and got.labels == {"team": "data"} and got.measured
+    assert got.creation_time == "2025-01-02T00:00:00Z"
+    flat = ObservedJob.from_record({
+        "job_id": "rest-1", "project_id": "proj", "location": "US", "creation_time": "1735776000000",
+        "destination_table": got.destination_table, "referenced_tables": list(got.referenced_tables),
+        "total_bytes_billed": TIB_BYTES, "total_bytes_processed": TIB_BYTES, "total_slot_ms": 1500,
+        "statement_type": "SELECT", "labels": {"team": "data"}, "query": "SELECT id FROM raw.events",
+    })
+    assert got == flat
+    out = build_cost(pipeline(), [got], usd_per_tib=6.25)
+    assert out["totals"]["measured"] == 6.25 and out["nodes"][0]["node"] == BASE.key
+
+
+def test_rest_resource_flags_and_errors_are_read():
+    resource = rest_resource(status={"errorResult": {"reason": "x"}})
+    resource["configuration"]["dryRun"] = True
+    resource["statistics"]["parentJobId"] = "parent"
+    got = ObservedJob.from_record(resource)
+    assert got.dry_run and got.error_result == {"reason": "x"} and got.parent_job_id == "parent"
+    resource = rest_resource()
+    resource["statistics"]["query"]["cacheHit"] = True
+    assert ObservedJob.from_record(resource).cache_hit
+
+
+def test_job_resources_load_from_json_and_jsonl(tmp_path):
+    (tmp_path / "r.json").write_text(json.dumps([rest_resource()]))
+    (tmp_path / "r.jsonl").write_text(json.dumps(rest_resource()) + "\n")
+    for name in ("r.json", "r.jsonl"):
+        (loaded,) = load_jobs(tmp_path / name)
+        assert loaded.job_id == "rest-1" and loaded.total_bytes_billed == TIB_BYTES
+
+
+def test_resource_without_measurements_is_unmeasured_not_zero():
+    resource = rest_resource()
+    del resource["statistics"]
+    got = ObservedJob.from_record(resource)
+    assert got.job_id == "rest-1" and not got.measured
+    assert got.total_bytes_billed is None and got.total_bytes_processed is None and got.total_slot_ms is None
+    with pytest.raises(ValueError):
+        got.cost()
+    out = build_cost(pipeline(), [got, job("ok", 100, destination_table=BASE.key)])
+    assert out["totals"]["measured"] == 100
+    assert out["counts"]["jobs"] == 1 and out["counts"]["unmeasured"] == 1
+    assert out["counts"]["excluded"] == {"unmeasured": 1}
+    result = attribute_costs(pipeline(), [got])
+    assert result.total == Cost() and not result.nodes
+    assert [(a.job_id, a.method) for a in result.attributions] == [("rest-1", "unmeasured")]
+
+
+def test_flat_row_missing_or_unreadable_bytes_is_unmeasured():
+    for bad in (None, "", "n/a", "-5", "1.5", True):
+        record = {"job_id": "a", "destination_table": BASE.key, "total_bytes_billed": bad}
+        got = ObservedJob.from_record(record)
+        assert got.total_bytes_billed is None and not got.measured, bad
+    assert ObservedJob.from_record({"job_id": "a"}).total_bytes_billed is None
+    # A genuine zero is a measurement.
+    zero = ObservedJob.from_record({"job_id": "a", "total_bytes_billed": "0"})
+    assert zero.total_bytes_billed == 0 and zero.measured
+
+
+def test_missing_processed_or_slot_time_is_reported_not_hidden():
+    only_billed = ObservedJob.from_record({"job_id": "a", "total_bytes_billed": 7, "destination_table": BASE.key})
+    out = build_cost(pipeline(), [only_billed])
+    assert out["totals"]["measured"] == 7
+    assert out["counts"]["missing_fields"] == {"total_bytes_processed": 1, "total_slot_ms": 1}
+    assert build_cost(pipeline(), [job("a", destination_table=BASE.key)])["counts"]["missing_fields"] == {}
+
+
+def test_integer_strings_keep_every_digit():
+    from kumosql.costs import _int
+
+    assert _int("9007199254740993") == 9007199254740993
+    assert _int(9007199254740993) == 9007199254740993
+    assert _int(" 42 ") == 42 and _int("1e3") == 1000 and _int("2.0") == 2
+    assert _int(None) is None and _int("") is None and _int("abc") is None and _int("nan") is None
+    assert ObservedJob.from_record(
+        {"job_id": "a", "total_bytes_billed": "9007199254740993"}).total_bytes_billed == 9007199254740993
+
+
+def test_byte_totals_stay_integers():
+    big = 9007199254740993
+    out = build_cost(pipeline(), [job("a", big, destination_table=BASE.key),
+                                  job("b", 1, destination_table=BASE.key)])
+    assert out["totals"]["measured"] == big + 1
+    assert all(isinstance(out["totals"][key], int) for key in ("measured", "attributed", "unattributed"))
+    assert isinstance(out["nodes"][0]["measured"], int) and out["nodes"][0]["bytes_billed"] == big + 1
+    assert isinstance(build_cost(pipeline(), [])["totals"]["measured"], int)
+
+
+def test_money_payload_echoes_rate_model_region_and_invoice_exclusions():
+    jobs = [job("a", TIB_BYTES, destination_table=BASE.key, location="US")]
+    out = build_cost(pipeline(), jobs, usd_per_tib=6.25, billing_model="on_demand", region="us")
+    basis = out["basis"]
+    assert basis["measure"] == "total_bytes_billed" and basis["rate_per_tib"] == 6.25
+    assert basis["currency"] == "USD" and basis["billing_model"] == "on_demand" and basis["region"] == "us"
+    assert basis["job_locations"] == ["US"]
+    for named in ("BI Engine", "reservation", "storage", "credits", "taxes"):
+        assert named in basis["invoice_exclusions"]
+    unset = build_cost(pipeline(), jobs, usd_per_tib=1.0)["basis"]
+    assert unset["billing_model"] is None and unset["region"] is None
+    bytes_only = build_cost(pipeline(), jobs)["basis"]
+    assert bytes_only["rate_per_tib"] is None and bytes_only["currency"] is None
+    assert bytes_only["invoice_exclusions"] is None

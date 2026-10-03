@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -302,6 +303,11 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         type=Path,
         help='JSON mapping of source tables to columns, e.g. {"p.d.t": {"id": "INT64"}}',
     )
+    parser.add_argument(
+        "--fetch-schema",
+        action="store_true",
+        help="Look up columns of tables the project does not define in BigQuery (off by default: nothing reaches the network otherwise)",
+    )
     parser.add_argument("--min-nodes", type=int, default=12, help="Smallest SELECT subtree to report as a duplicate")
     parser.add_argument(
         "--similarity",
@@ -357,6 +363,10 @@ def pipeline_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-o", "--output", type=Path, help="Write the JSON report here; stdout if omitted")
     args = parser.parse_args(argv)
+    if args.fetch_schema:
+        from . import schema_fetch
+
+        os.environ[schema_fetch.ENV] = "1"
     if args.assess and not args.target:
         parser.error("--assess needs --target")
     if bool(args.root) == bool(args.git):

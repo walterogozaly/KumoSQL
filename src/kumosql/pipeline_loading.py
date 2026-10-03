@@ -23,6 +23,7 @@ from .resilience import (
 from .sqlx import (
     _SQLX_BLOCK_RE as _SQLX_CONFIG_RE,
     mask_sqlx_interpolations as _mask_sqlx_interpolations,
+    outside_sql_comments as _outside_sql_comments,
     split_sqlx_sections as _split_sqlx_sections,
 )
 
@@ -82,6 +83,19 @@ _DEPENDENCY_ITEM_RE = re.compile(r"\{[^}]*\}|['\"`][^'\"`]*['\"`]")
 _STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""")
 
 
+def _sub_outside_comments(pattern: re.Pattern[str], replace: Callable[[re.Match[str]], str], text: str) -> str:
+    """``pattern.sub(replace, text)`` that leaves SQL comments alone: Dataform does not evaluate ``${...}`` in them."""
+
+    pieces: list[str] = []
+    cursor = 0
+    for match in _outside_sql_comments(text, pattern):
+        pieces.append(text[cursor : match.start()])
+        pieces.append(replace(match))
+        cursor = match.end()
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def _top_level(config: str) -> str:
     """The text directly inside a config's outer braces, with nested braces, brackets and strings blanked.
 
@@ -124,6 +138,118 @@ def _top_level(config: str) -> str:
 def _config_value(config: str, key: str) -> str | None:
     match = re.search(rf"\b{key}\s*:\s*(['\"`])((?:\\.|(?!\1).)*)\1", _top_level(config))
     return match.group(2) if match else None
+
+
+def _config_literal(config: str, key: str) -> tuple[str | None, bool]:
+    """``(value, computed)`` for a config key: a quoted literal reads as itself, anything else is computed.
+
+    ``type: dataform.projectConfig.vars.kind``, ``type: "a" + x`` and ``type: `${x}``` are computed: their value is
+    only known by running the project, so no default may stand in for it. An absent key is ``(None, False)``.
+    """
+
+    match = re.search(rf"\b{key}\s*:\s*", _blank_strings(_top_level(config)))
+    if not match:
+        return None, False
+    # _top_level starts at the outer brace and blanks without changing lengths, so its offsets shift by that start.
+    value = _value_at(config, max(config.find("{"), 0) + match.end())
+    quoted = re.fullmatch(r"""\s*(['"`])((?:\\.|(?!\1).)*)\1\s*""", value, re.S)
+    if quoted and "${" not in quoted.group(2):
+        return quoted.group(2), False
+    return None, True
+
+
+def _value_at(text: str, start: int) -> str:
+    """The JavaScript value starting at ``start``: up to the next comma or closing brace outside brackets and strings."""
+
+    depth, quote, index = 0, "", start
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif char == "," and depth == 0:
+            break
+        index += 1
+    return text[start:index]
+
+
+_COLUMN_READING_KEYS = ("nonNull", "uniqueKey", "uniqueKeys", "rowConditions", "partitionBy", "clusterBy", "updatePartitionFilter")
+_ANY_STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""", re.S)
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _blank_strings(text: str) -> str:
+    """``text`` with the inside of every string replaced by spaces, so keys are only found outside strings."""
+
+    return _ANY_STRING_RE.sub(lambda m: m.group(1) + " " * len(m.group(2)) + m.group(1), text)
+
+
+def _column_reads(config: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(words, unread keys)`` for the config values that read the table's own columns.
+
+    Built-in assertions (``nonNull``, ``uniqueKey``, ``uniqueKeys``, ``rowConditions``), partitioning and clustering
+    (``partitionBy``, ``clusterBy``), ``updatePartitionFilter`` and an incremental table's ``uniqueKey`` all name or
+    use output columns. Dataform runs or applies them against the table, so dropping such a column breaks them even
+    when no query reads it. ``words`` holds every identifier in those values (a superset of the columns, never
+    fewer) and each quoted value whole (a column that is not a plain identifier). A value that is not a literal
+    string or list of strings is listed in ``unread keys``: its columns are unknown.
+    """
+
+    blanked = _blank_strings(config)
+    words: dict[str, None] = {}
+    unread: dict[str, None] = {}
+    for key in _COLUMN_READING_KEYS:
+        for match in re.finditer(rf"(?<![\w$.])['\"`]?{key}['\"`]?\s*:\s*", blanked):
+            value = _value_at(config, match.end())
+            for literal in _ANY_STRING_RE.finditer(value):
+                text = literal.group(2)
+                words[text.strip().lower()] = None
+                for found in _WORD_RE.findall(text):
+                    words[found.lower()] = None
+                for quoted in re.findall(r"`([^`]+)`", text):
+                    words[quoted.lower()] = None
+            if re.sub(r"[\s,\[\]]", "", _ANY_STRING_RE.sub("", value)):
+                unread[key] = None
+    return tuple(w for w in words if w), tuple(unread)
+
+
+def _compiled_column_reads(item: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The same, from a compiled table entry: its ``assertions`` and ``bigquery`` blocks and a top-level ``uniqueKey``."""
+
+    words: dict[str, None] = {}
+    unread: dict[str, None] = {}
+
+    def add(key: str, value: object) -> None:
+        if value is None or isinstance(value, bool):
+            return
+        if isinstance(value, str):
+            words[value.strip().lower()] = None
+            for found in _WORD_RE.findall(value):
+                words[found.lower()] = None
+            for quoted in re.findall(r"`([^`]+)`", value):
+                words[quoted.lower()] = None
+        elif isinstance(value, list):
+            for entry in value:
+                add(key, entry.get("uniqueKey") if isinstance(entry, dict) and "uniqueKey" in entry else entry)
+        else:
+            unread[key] = None
+
+    for block in (item, item.get("assertions"), item.get("bigquery")):
+        if isinstance(block, dict):
+            for key in _COLUMN_READING_KEYS:
+                if key in block:
+                    add(key, block[key])
+    return tuple(w for w in words if w), tuple(unread)
 
 
 def _config_tags(config: str) -> tuple[str, ...]:
@@ -225,10 +351,14 @@ def _assertion_dataset(root: Path) -> str:
 
     try:
         settings = root / "workflow_settings.yaml"
+        if settings.is_symlink():
+            return "dataform_assertions"
         if settings.is_file():
             match = re.search(r"(?m)^\s*defaultAssertionDataset\s*:\s*['\"]?([^'\"\s#]+)", settings.read_text(encoding="utf-8-sig"))
             return match.group(1) if match else "dataform_assertions"
         legacy = root / "dataform.json"
+        if legacy.is_symlink():
+            return "dataform_assertions"
         if legacy.is_file():
             value = json.loads(legacy.read_text(encoding="utf-8-sig")).get("assertionSchema")
             return value if isinstance(value, str) and value else "dataform_assertions"
@@ -239,6 +369,8 @@ def _assertion_dataset(root: Path) -> str:
 
 def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
     settings = root / "workflow_settings.yaml"
+    if settings.is_symlink():
+        raise OSError("symbolic links are not read")
     if settings.is_file():
         text = settings.read_text(encoding="utf-8-sig")
 
@@ -248,6 +380,8 @@ def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
 
         return value("defaultProject"), value("defaultDataset")
     legacy = root / "dataform.json"
+    if legacy.is_symlink():
+        raise OSError("symbolic links are not read")
     if legacy.is_file():
         data = json.loads(legacy.read_text(encoding="utf-8-sig"))
         return data.get("defaultDatabase", ""), data.get("defaultSchema", "")
@@ -527,7 +661,12 @@ def load_sqlx_project(
     diagnostics: list[PipelineDiagnostic] = []
     database, dataset = _read_project_defaults(root, diagnostics)
     assertion_dataset = _assertion_dataset(root)
-    search_root = root / "definitions" if (root / "definitions").is_dir() else root
+    definitions = root / "definitions"
+    # A definitions junction must be pruned relative to the selected project root,
+    # including on Python versions without Path.is_junction().
+    use_definitions = (definitions.is_dir() and not definitions.is_symlink()
+                       and definitions.resolve().is_relative_to(root.resolve()))
+    search_root = definitions if use_definitions else root
     models: dict[str, Model] = {}
     sources: dict[str, Target] = {}
 
@@ -536,9 +675,10 @@ def load_sqlx_project(
             label = str(directory.relative_to(root))
         except ValueError:
             label = "."
-        diagnostics.append(
-            PipelineDiagnostic(label, "unreadable_directory", f"{reason}; files inside were not analyzed")
-        )
+        file_link = directory.is_symlink() and not directory.is_dir()
+        code = "read_error" if file_link else "unreadable_directory"
+        effect = "asset was skipped" if file_link else "files inside were not analyzed"
+        diagnostics.append(PipelineDiagnostic(label, code, f"{reason}; {effect}"))
 
     def add_model(model: Model) -> None:
         if model.key in models:
@@ -573,13 +713,18 @@ def load_sqlx_project(
             (body for kind, body in sections if kind == "block" and body.lstrip().startswith("config")),
             "",
         )
-        kind = _config_value(config, "type") or "table"
+        declared_type, computed_type = _config_literal(config, "type")
+        kind = declared_type or ("unknown" if computed_type else "table")
         target = Target(
             _config_value(config, "database") or database,
             _config_value(config, "schema") or (assertion_dataset if kind == "assertion" else dataset),
             _config_value(config, "name") or path.stem,
         )
         known.setdefault(target.name, []).append(target)
+        if computed_type:
+            diagnostics.append(PipelineDiagnostic(
+                target.key, "dynamic_config",
+                "its config type is computed (a project variable or a call), so it is not read as a table: it may be incremental"))
         if kind == "declaration":
             sources[target.key] = target
             return None
@@ -599,15 +744,15 @@ def load_sqlx_project(
             dependencies.append(ref)
             return ref.sql()
 
-        body = _REF_RE.sub(substitute, body)
-        body = _SELF_RE.sub(target.sql(), body)
+        body = _sub_outside_comments(_REF_RE, substitute, body)
+        body = _sub_outside_comments(_SELF_RE, lambda match: target.sql(), body)
         if kind == "operations":
             # Dataform separates the statements of an operations file by a line of ``---`` as well as by semicolons.
             body = re.sub(r"(?m)^[ \t]*---[ \t]*$", ";", body)
         # Dataform evaluates ref() in pre_operations and post_operations too, so what they ref is a dependency.
         for kind_, section in sections:
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section):
-                for match in _REF_RE.finditer(section):
+                for match in _outside_sql_comments(section, _REF_RE):
                     try:
                         ref = _parse_ref_args(match.group("args"), default, known, **unknown_names())
                     except ValueError as exc:
@@ -622,7 +767,7 @@ def load_sqlx_project(
             except ValueError:
                 return match.group(0)  # computed argument: left masked like any other interpolation
 
-        body = _RESOLVE_RE.sub(resolve, body)
+        body = _sub_outside_comments(_RESOLVE_RE, resolve, body)
 
         def plain_ref(match: re.Match[str]) -> str:
             try:
@@ -634,7 +779,9 @@ def load_sqlx_project(
         for kind_, section in sections:
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section) and "{" in section and "}" in section:
                 inner = section[section.index("{") + 1 : section.rindex("}")]
-                inner = _SELF_RE.sub(target.sql(), _RESOLVE_RE.sub(plain_ref, _REF_RE.sub(plain_ref, inner)))
+                inner = _sub_outside_comments(_REF_RE, plain_ref, inner)
+                inner = _sub_outside_comments(_RESOLVE_RE, plain_ref, inner)
+                inner = _sub_outside_comments(_SELF_RE, lambda match: target.sql(), inner)
                 if "${" in inner:
                     inner, _restorations = _mask_sqlx_interpolations(inner)
                 if inner.strip():
@@ -660,7 +807,12 @@ def load_sqlx_project(
             non_null, unique_keys = _config_assertions(config)
         except Exception:  # noqa: BLE001 - assertions are optional evidence
             non_null, unique_keys = (), ()
-        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys, tuple(operations)))
+        try:
+            config_reads, config_reads_unread = _column_reads(config)
+        except Exception:  # noqa: BLE001 - a config that cannot be read keeps every column of the model in use
+            config_reads, config_reads_unread = (), ("config",)
+        add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys, tuple(operations),
+                        config_reads=config_reads, config_reads_unread=config_reads_unread))
 
     def unreadable(relative: str, exc: Exception) -> None:
         diagnostics.append(PipelineDiagnostic(
@@ -802,6 +954,7 @@ def load_compiled_graph(
                         columns = entry.get("uniqueKey") if isinstance(entry, dict) else entry
                         if isinstance(columns, list):
                             unique.append(tuple(c for c in columns if isinstance(c, str)))
+                config_reads, config_reads_unread = _compiled_column_reads(item)
                 model = Model(
                     target,
                     str(kind),
@@ -814,6 +967,9 @@ def load_compiled_graph(
                     operations_sql=tuple(
                         text for key_ in ("preOps", "postOps") for text in (item.get(key_) or []) if isinstance(text, str) and text.strip()
                     ),
+                    pre_operations=sum(1 for text in (item.get("preOps") or []) if isinstance(text, str) and text.strip()),
+                    config_reads=config_reads,
+                    config_reads_unread=config_reads_unread,
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(
