@@ -24,13 +24,13 @@ In SQLX, `inline_single_use_ctes`, `remove_trivial_predicates`, `remove_redundan
 
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
 
-- `unchanged`: the output matches the input.
+- `unchanged`: the output text is identical to the input. This says nothing about whether the input parses or whether a rule skipped it; a skipped rule says why in its step's `diagnostics` (for example `unsupported_sqlx`).
 - `proven`: the equivalence prover established equivalence. A planner check, when available, is reported separately.
 - `planner_checked`: a planner accepted the candidate, but equivalence was not proven. This is not trusted for automatic acceptance.
 - `unproven`: equivalence was not established and there is no successful planner-only result. A failed planner check is reported here as a failed check.
 - `failed`: a fatal rewrite error occurred, such as a parse, transform, or output validation failure.
 
-Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
+Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. Trusted means the text was left alone or a proof covers the change; it does not check that the input itself is valid SQL. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
 
 ```python
 from kumosql import apply_rules
@@ -68,7 +68,7 @@ The cleanup rules only use rewrites that hold in SQL's three-valued logic. `remo
 
 **Idempotence.** Running a rule on its own output makes no further change; `tests/test_idempotence.py` checks every registered rule (and `format_sql` with non-default preferences) against the fixture corpus and hand-written edge cases, so a newly registered rule is covered automatically. `canonical_rule_order()` returns the pipeline that is also a fixed point: every rule except `lift_subqueries` and `qualify_columns`, with `format_sql` last. `lift_subqueries` and `inline_single_use_ctes` are inverses, so a pipeline containing both rewrites its own output on every run; run the lifter separately. To check any rule list at run time, call `check_idempotence(names, sql)` or pass `--check-idempotence` to `python -m kumosql rewrite-sql`: it re-runs the rules on their own output, compares the exact text, and names the rules that changed it again (the CLI exits 4 on a violation). It doubles the work, so it is opt in. Formatting last matters because the other rules re-render a statement and discard its layout.
 
-The structural proof no longer refuses a query just because it contains `RAND()`, `GENERATE_UUID()`, `CURRENT_*` or `SESSION_USER()`. Such a call is accepted when the rewrite leaves it identical and in the same number and place (checked before and after normalization); any added, removed, duplicated, merged or modified call stays `not_proven`. Windows, tie-sensitive or order-sensitive aggregates, sampling and `LIMIT`/`OFFSET` still block the proof. A proof that relied on unchanged calls reports how many in its diagnostics.
+The structural proof no longer refuses a query just because it contains `RAND()`, `GENERATE_UUID()`, `CURRENT_*` or `SESSION_USER()`. Such a call, or a call that may be a user-defined function (its definition is unknown), is accepted when the rewrite leaves it identical and in the same number and place (checked before and after normalization); any added, removed, duplicated, merged or modified call stays `not_proven`. Windows, tie-sensitive, order-sensitive or approximate aggregates, sampling and `LIMIT`/`OFFSET` still block the proof. A proof that relied on unchanged calls reports how many in its diagnostics.
 
 To add a rule, subclass `RewriteRule`, set `name` and `summary`, implement `rewrite_statement(statement, index)` to edit the statement in place and return `(change_count, diagnostics)`, and decorate the class with `@register_rule`.
 
