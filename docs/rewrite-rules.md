@@ -72,7 +72,7 @@ Existing CTE dependencies are respected: a lift from inside an existing CTE is p
 
 Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
-For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
+For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers. Recovery also accepts broken input (`SELECT 1 FROM t WHERE 1 =`, or trailing text after the last clause) and `success` stays true for it, so check `result.recovered` as well when broken SQL must not count as success.
 
 ```python
 from kumosql import lift_subqueries
@@ -91,3 +91,30 @@ SELECT *
 FROM (SELECT id FROM ${ref("customers")}) AS c''')
 assert result.success
 ```
+
+### Authored fixture gate
+
+`tests/test_workbook_fixture.py` scores the 32 hand-written samples in `tests/fixtures/sql_subquery_samples.json` (nested relations, joins, CTE placement, DML, DDL and Dataform SQLX; each entry is only an `id` and `sql_text`). It runs in the default suite, `tools/run_tests.py` and CI (`python -m pytest tests/test_workbook_fixture.py -s` prints the outcome table). Each sample is labelled in `tests/fixtures/sql_subquery_samples.expected.json`, which pins the fixture by sha256 (CRLF read as LF) and case count and gives every id an expected outcome:
+
+| Outcome | How it is observed |
+| --- | --- |
+| `strict_parse` | the lifter parsed the input without `sqlglot` recovery mode (`LiftResult.recovered` is false) |
+| `valid_input` | DuckDB binds and runs the input, transpiled from BigQuery, on empty tables of the manifest's `duckdb_schema` (SQLX: blocks skipped, `ref("x")` read as `demo.dataform.x`, `when(incremental(), a, b)` as `b`). This can refute an input; it does not show BigQuery accepts it |
+| `expect_change`, `lifted` | `lift_subqueries` returns different SQL, and how many subqueries it reports lifting |
+| structural | `LiftResult.success`: no FROM/JOIN subquery left and no fatal diagnostic |
+| `verification` | `apply_rule("lift_subqueries", sql).verification.status`; `verification_before_sqlglot` gives the status expected on older `sqlglot` releases |
+
+Every row stays in the denominator. A row is credited only when it parses strictly, is a valid input, changes, leaves no relational subquery and is proven; the test fails when any row differs from its label, when a valid input's lifted output no longer runs in DuckDB, or when the labels do not match the fixture. On the current fixture:
+
+| Outcome | Count |
+| --- | --- |
+| Strict parse / recovered | 32 / 0 |
+| Valid input / invalid | 30 / 2: `q09` selects `customer_id` from a CTE that only outputs `region`; `q21` has `HAVING` on an outer query with no grouping or aggregate |
+| Changed / unchanged | 31 / 1: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are) |
+| No relational subquery left | 32 (41 subqueries lifted) |
+| Proven / unchanged / unproven | 30 / 1 (`q16`) / 1 (`q17`: the lift puts a `WITH` in front of `UPDATE`, which the prover reports as text outside the query) |
+| Credited | 28 of 32 (27 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
+
+`q09` and `q21` are still lifted and proven (the rewrite preserves whatever the query means) but are counted as invalid inputs, not credited.
+
+Set `KUMOSQL_TEST_FIXTURE` to score another CSV or JSON fixture. A requested path that does not exist fails the test instead of skipping it, and the fixture must be a non-empty list of rows with unique non-empty ids (`id`, or `record_id` in a CSV) and non-empty `sql_text` strings. Labels for it come from `KUMOSQL_TEST_FIXTURE_EXPECTED` or a sibling `<name>.expected.json` in the same format; without labels every row must still parse strictly and leave no relational subquery, and the other outcomes are only reported. `tests/test_generic_fixture.py` separately checks the sample file's shape.

@@ -53,6 +53,17 @@ class LiftResult:
             and self.remaining_inline_subqueries == 0
         )
 
+    @property
+    def recovered(self) -> bool:
+        """Whether strict parsing failed and sqlglot's recovery mode supplied the statements.
+
+        ``success`` does not look at this: recovery is kept for valid BigQuery that sqlglot cannot
+        parse strictly. Recovery also accepts truncated or trailing-garbage input (``WHERE 1 =``),
+        so a gate that must not credit broken SQL checks this as well as ``success``.
+        """
+
+        return any(diagnostic.code == "recovered_parse" for diagnostic in self.diagnostics)
+
 
 def _is_relation_subquery(node: exp.Expression) -> bool:
     return isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join))

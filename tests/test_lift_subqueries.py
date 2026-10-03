@@ -163,3 +163,15 @@ def test_parse_failure_is_not_reported_as_success():
     assert not result.success
     assert result.sql == source
     assert result.diagnostics
+
+
+def test_recovered_parse_is_visible_without_changing_success():
+    # Recovery is kept for valid BigQuery sqlglot cannot parse strictly, so success stays True, but a
+    # truncated predicate or trailing garbage must be distinguishable from a strict parse.
+    truncated = lift_subqueries("SELECT 1 FROM t WHERE 1 =")
+    trailing = lift_subqueries("SELECT * FROM (SELECT 1 AS a) AS q garbage extra")
+    strict = lift_subqueries("SELECT * FROM (SELECT 1 AS a) AS q")
+
+    assert truncated.success and truncated.recovered
+    assert trailing.success and trailing.recovered
+    assert strict.success and not strict.recovered
