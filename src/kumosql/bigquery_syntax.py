@@ -416,8 +416,8 @@ def _check_literals(sql: str, tokens: list) -> None:
         return
     for token in tokens:
         if token.token_type in _ONE_LINE:
-            text = sql[token.start : token.end + 1]
-            if ("\n" in text or "\r" in text) and not text.lstrip("rRbB").startswith(("'''", '"""')):
+            text = sql[token.start : token.end + 1].lstrip("rRbB")  # a command's remaining text is a STRING token too
+            if text[:1] in ("'", '"', "`") and ("\n" in text or "\r" in text) and not text.startswith(("'''", '"""')):
                 raise UnclosedLiteral(f"Unclosed literal: a quoted string or name that is not triple-quoted runs past the end of line {token.line}")
 
 

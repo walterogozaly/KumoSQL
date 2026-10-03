@@ -139,3 +139,5 @@ def test_a_one_line_literal_with_a_line_break_is_rejected_like_bigquery_does(sql
 def test_triple_quoted_literals_and_escaped_line_breaks_still_read():
     tree = sqlglot.parse_one("SELECT '''a\nb''' AS x, \"\"\"c\nd\"\"\" AS y, 'e\\nf' AS z\nFROM t", read="bigquery")
     assert [e.this.this for e in tree.expressions] == ["a\nb", "c\nd", "e\nf"]
+    # a command such as EXECUTE IMMEDIATE keeps its remaining text as one STRING token that spans the line break
+    assert sqlglot.parse_one("EXECUTE IMMEDIATE 'SELECT ? + ?' USING 1, 2\n", read="bigquery") is not None
