@@ -1,5 +1,7 @@
 # Schema-change compatibility suite
 
+[Plain-language version](../../docs_simple/evals/schema-change-bench.md)
+
 Question: if a table gains, loses, renames or retypes a column, which downstream models break and which change their
 output columns or types? `Pipeline.assess_schema_change(kind, table, column, new_name=..., new_type=...)` answers it
 (`src/kumosql/schema_change.py`). It re-resolves every model that reads the table, in dependency order, against the

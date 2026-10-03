@@ -1,5 +1,7 @@
 # Join ordering and cardinality estimation
 
+[Plain-language version](../docs_simple/joinorder.md)
+
 `kumosql.joinorder` estimates how many rows each sub-join of a query returns and
 picks a join order from those estimates. It is plain Python on top of sqlglot:
 no numpy, no database and no model at planning time.

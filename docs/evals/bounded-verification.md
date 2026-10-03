@@ -1,5 +1,7 @@
 # Bounded verification (z3, at most N rows per table)
 
+[Plain-language version](../../docs_simple/evals/bounded-verification.md)
+
 `kumosql.bounded_equivalence` checks that two queries return the same bag of rows on **every database with at most N rows per table**, with symbolic values, so the solver covers every combination of values and NULLs up to the bound. It is a third evidence level, next to an unbounded proof and agreement on executed random databases:
 
 | Evidence | What it says | Where it comes from |

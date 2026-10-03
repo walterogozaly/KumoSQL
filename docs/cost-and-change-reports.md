@@ -1,5 +1,7 @@
 # Cost, change reports and the BigQuery dry run
 
+[Plain-language version](../docs_simple/cost-and-change-reports.md)
+
 The BigQuery dry-run check, cost attribution, change reports and refactoring proposals.
 
 ## BigQuery dry-run check

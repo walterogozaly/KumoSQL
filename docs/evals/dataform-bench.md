@@ -1,5 +1,7 @@
 # Dataform preservation eval
 
+[Plain-language version](../../docs_simple/evals/dataform-bench.md)
+
 Rewrites must never touch what they do not understand. This eval builds SQLX files from parts whose role is known and scores three things apart. No language model runs at evaluation time.
 
 `python tools/dataform_bench.py [--scale] [--write-results]`. The floors are in `tests/test_lineage_benchmarks.py`; the scoreboard row is `benchmarks/results/dataform-preservation.json`.
