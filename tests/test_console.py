@@ -23,7 +23,7 @@ def test_quick_edit_is_a_noop_off_windows():
 def test_requests_are_logged_not_printed(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
     server = ui.UIServer(("127.0.0.1", 0), ui.UIHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/version").read()
     finally:
