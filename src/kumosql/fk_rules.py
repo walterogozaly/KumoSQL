@@ -8,6 +8,10 @@ repeated). Take any one away and the rewrite changes results, which is why all t
 be declared; the prover's assumptions list them. Reads of the parent's joined columns
 become reads of the equal child columns (``c.id`` is ``o.customer_id``); any other read of
 the parent keeps the join.
+
+The child may also be a derived table that only filters and renames one table's columns
+(``(SELECT customer_id AS cid FROM orders WHERE ..) AS o``): each of its rows is a row of the
+table, so the declared key, NOT NULL and reference hold for it too.
 """
 
 from __future__ import annotations
@@ -42,6 +46,35 @@ def drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expres
     return _drop_fk_join(swapped, keys, not_null, foreign_keys)
 
 
+def _filtered_table(source: exp.Expression) -> tuple[str, dict[str, str]] | None:
+    """For ``(SELECT c AS d, .. FROM t WHERE ..) AS s``: ``t`` and each output name's column of ``t``."""
+
+    inner = source.this if isinstance(source, exp.Subquery) and source.alias else None
+    if not isinstance(inner, exp.Select) or inner.args.get("joins") or inner.args.get("laterals"):
+        return None
+    if any(inner.args.get(k) for k in ("group", "having", "distinct", "limit", "offset", "qualify", "windows", "with")):
+        return None
+    table = (inner.args.get("from_") or inner.args.get("from") or exp.From()).this
+    if not isinstance(table, exp.Table) or isinstance(table.this, exp.Func):
+        return None
+    columns: dict[str, str] = {}
+    for item in inner.expressions:
+        value = item.this if isinstance(item, exp.Alias) else item
+        if not isinstance(value, exp.Column) or isinstance(value.this, exp.Star) or value.table not in ("", table.alias_or_name):
+            return None
+        columns.setdefault(item.alias_or_name.lower(), value.name.lower())
+    return table.name.lower(), columns
+
+
+def _in_derived_child(column: exp.Column, select: exp.Select, derived: dict[str, dict[str, str]]) -> bool:
+    """Whether ``column`` is inside the body of one of ``select``'s filtered derived tables (its own scope)."""
+
+    subquery = column.find_ancestor(exp.Subquery)
+    while subquery is not None and subquery.parent is not None and subquery.find_ancestor(exp.Select) is not select:
+        subquery = subquery.find_ancestor(exp.Subquery)
+    return subquery is not None and (subquery.alias or "").lower() in derived and subquery.find_ancestor(exp.Select) is select
+
+
 def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expression | None:
     if not foreign_keys:
         return None
@@ -50,9 +83,13 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
     if from_ is None or not joins:
         return None
     sources = {}
+    base_columns: dict[str, dict[str, str]] = {}  # derived child alias -> output name -> base column
     for source in [from_.this] + [j.this for j in joins]:
         if isinstance(source, exp.Table):
             sources[source.alias_or_name.lower()] = source
+        elif isinstance(source, exp.Subquery) and source.alias and (filtered := _filtered_table(source)) is not None:
+            sources[source.alias.lower()] = exp.Table(this=exp.to_identifier(filtered[0]), alias=exp.TableAlias(this=exp.to_identifier(source.alias)))
+            base_columns[source.alias.lower()] = filtered[1]
     if any(isinstance(s, exp.Star) and not isinstance(s.parent, exp.Count) for s in select.find_all(exp.Star)):
         return None
     key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
@@ -81,7 +118,13 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
         if not ok or child is None or not pairs:
             continue
         child_name, parent_name = child.name.lower(), parent.name.lower()
+        base_of = base_columns.get(child_alias or "")  # the derived child's output names -> its table's columns
+        if base_of is not None and not all(c in base_of for c in pairs.values()):
+            continue
         declared = {c.lower() for c in (not_null or {}).get(child_name, frozenset())}
+        if base_of is not None:
+            declared = {name for name, base in base_of.items() if base in declared}
+        base_of = base_of or {}
         where = select.args.get("where")
         for part in (_conjuncts(where.this) if where is not None else []):
             # a WHERE conjunct ``child.col IS NOT NULL`` makes the column non-NULL for every row that is kept
@@ -89,7 +132,7 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
                 column = part.this.this
                 if isinstance(column, exp.Column) and column.table.lower() == child_alias:
                     declared.add(column.name.lower())
-        wanted = {child_col: parent_col for parent_col, child_col in pairs.items()}
+        wanted = {base_of.get(child_col, child_col): parent_col for parent_col, child_col in pairs.items()}
         covered = any(
             _same_table(parent_name, fk_parent) and {c.lower(): p.lower() for c, p in zip(cols, parent_cols)} == wanted
             for cols, fk_parent, parent_cols in (foreign_keys.get(child_name) or [])
@@ -100,7 +143,7 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
         copy_join = copy.args["joins"][index]
         output_names = [item.output_name for item in copy.expressions]
         replaced = False
-        if any(not c.table for c in copy.find_all(exp.Column) if c.find_ancestor(exp.Join) is not copy_join):
+        if any(not c.table for c in copy.find_all(exp.Column) if c.find_ancestor(exp.Join) is not copy_join and not _in_derived_child(c, copy, base_columns)):
             continue  # an unqualified column may be the parent's
         for column in list(copy.find_all(exp.Column)):
             if column.find_ancestor(exp.Join) is copy_join or column.table.lower() != p_alias:

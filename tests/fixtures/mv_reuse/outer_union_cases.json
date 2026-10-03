@@ -1,0 +1,1102 @@
+{
+ "description": "Write tests/fixtures/mv_reuse/outer_union_cases.json: outer-join, key-aware, union-compensation and",
+ "schemas": {
+  "shop": {
+   "customers": {
+    "columns": [
+     [
+      "c_id",
+      "int",
+      true
+     ],
+     [
+      "c_name",
+      "text",
+      false
+     ],
+     [
+      "c_region",
+      "text",
+      false
+     ]
+    ],
+    "keys": [
+     [
+      "c_id"
+     ]
+    ]
+   },
+   "orders": {
+    "columns": [
+     [
+      "o_id",
+      "int",
+      true
+     ],
+     [
+      "o_cust",
+      "int",
+      false
+     ],
+     [
+      "o_total",
+      "float",
+      true
+     ],
+     [
+      "o_date",
+      "date",
+      true
+     ],
+     [
+      "o_status",
+      "text",
+      false
+     ]
+    ],
+    "keys": [
+     [
+      "o_id"
+     ]
+    ],
+    "foreign_keys": [
+     [
+      [
+       "o_cust"
+      ],
+      "customers",
+      [
+       "c_id"
+      ]
+     ]
+    ]
+   },
+   "parts": {
+    "columns": [
+     [
+      "p_id",
+      "int",
+      true
+     ],
+     [
+      "p_name",
+      "text",
+      false
+     ],
+     [
+      "p_brand",
+      "text",
+      false
+     ]
+    ],
+    "keys": [
+     [
+      "p_id"
+     ]
+    ]
+   },
+   "items": {
+    "columns": [
+     [
+      "i_order",
+      "int",
+      true
+     ],
+     [
+      "i_line",
+      "int",
+      true
+     ],
+     [
+      "i_part",
+      "int",
+      true
+     ],
+     [
+      "i_qty",
+      "int",
+      false
+     ],
+     [
+      "i_price",
+      "float",
+      false
+     ]
+    ],
+    "keys": [
+     [
+      "i_order",
+      "i_line"
+     ]
+    ],
+    "foreign_keys": [
+     [
+      [
+       "i_order"
+      ],
+      "orders",
+      [
+       "o_id"
+      ]
+     ],
+     [
+      [
+       "i_part"
+      ],
+      "parts",
+      [
+       "p_id"
+      ]
+     ]
+    ]
+   },
+   "notes": {
+    "columns": [
+     [
+      "n_order",
+      "int",
+      false
+     ],
+     [
+      "n_text",
+      "text",
+      false
+     ]
+    ]
+   }
+  },
+  "sr": {
+   "emps2": {
+    "columns": [
+     [
+      "empid",
+      "int",
+      true
+     ],
+     [
+      "deptno",
+      "int",
+      true
+     ],
+     [
+      "name",
+      "text",
+      true
+     ],
+     [
+      "salary",
+      "float",
+      false
+     ]
+    ]
+   },
+   "depts2": {
+    "columns": [
+     [
+      "deptno",
+      "int",
+      true
+     ],
+     [
+      "name",
+      "text",
+      true
+     ]
+    ]
+   },
+   "t02": {
+    "columns": [
+     [
+      "v1",
+      "int",
+      false
+     ],
+     [
+      "v2",
+      "int",
+      false
+     ],
+     [
+      "v3",
+      "int",
+      false
+     ]
+    ]
+   },
+   "test_all_type2": {
+    "columns": [
+     [
+      "t1a",
+      "text",
+      false
+     ],
+     [
+      "t1b",
+      "int",
+      false
+     ],
+     [
+      "t1c",
+      "int",
+      false
+     ],
+     [
+      "t1d",
+      "int",
+      false
+     ],
+     [
+      "t1e",
+      "float",
+      false
+     ],
+     [
+      "t1f",
+      "float",
+      false
+     ],
+     [
+      "t1g",
+      "int",
+      false
+     ],
+     [
+      "id_date",
+      "date",
+      false
+     ]
+    ]
+   },
+   "mt1": {
+    "columns": [
+     [
+      "k1",
+      "int",
+      false
+     ],
+     [
+      "k2",
+      "text",
+      false
+     ],
+     [
+      "v1",
+      "int",
+      false
+     ],
+     [
+      "v2",
+      "int",
+      false
+     ]
+    ]
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "ou.outer.inner-from-left",
+   "name": "inner-from-left",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_name FROM orders o JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, c_name FROM mv0 WHERE c_id IS NOT NULL",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.outer.left-projection",
+   "name": "left-projection",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, c_name FROM mv0"
+  },
+  {
+   "id": "ou.outer.preserved-side-filter",
+   "name": "preserved-side-filter",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id WHERE o.o_total > 100",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, c_region FROM mv0 WHERE o_total > 100"
+  },
+  {
+   "id": "ou.outer.null-side-filter-in-where",
+   "name": "null-side-filter-in-where",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id WHERE c.c_region = 'EU'",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, c_name FROM mv0 WHERE c_region = 'EU'",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0 WHERE c_region = 'EU' OR c_id IS NULL"
+   ]
+  },
+  {
+   "id": "ou.outer.null-side-filter-in-on-keyed",
+   "name": "null-side-filter-in-on-keyed",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id AND c.c_region = 'EU'",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT o_id, CASE WHEN c_region = 'EU' THEN c_name END AS c_name FROM mv0",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0 WHERE c_region = 'EU' OR c_id IS NULL",
+    "SELECT o_id, c_name FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.outer.null-side-filter-in-on-unkeyed",
+   "name": "null-side-filter-in-on-unkeyed",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_total AS o_total, n.n_text AS n_text FROM orders o LEFT JOIN notes n ON n.n_order = o.o_id",
+   "query": "SELECT o.o_total, n.n_text FROM orders o LEFT JOIN notes n ON n.n_order = o.o_id AND n.n_text = 'x'",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT o_total, CASE WHEN n_text = 'x' THEN n_text END AS n_text FROM mv0",
+    "SELECT o_total, n_text FROM mv0 WHERE n_text = 'x' OR n_text IS NULL"
+   ],
+   "why": "orders with notes {x, y} and an order with no note, versus orders with {x}, {y} and none, give the same view rows and different query rows"
+  },
+  {
+   "id": "ou.outer.single-table-keyed-parent",
+   "name": "single-table-keyed-parent",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o_id, o_total FROM orders WHERE o_status = 'open'",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, o_total FROM mv0 WHERE o_status = 'open'"
+  },
+  {
+   "id": "ou.outer.single-table-unkeyed-child",
+   "name": "single-table-unkeyed-child",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_total AS o_total, n.n_text AS n_text FROM orders o LEFT JOIN notes n ON n.n_order = o.o_id",
+   "query": "SELECT o_total FROM orders",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT o_total FROM mv0",
+    "SELECT DISTINCT o_total FROM mv0"
+   ],
+   "why": "an order with two notes gives two view rows; nothing in the view says which rows are one order"
+  },
+  {
+   "id": "ou.outer.single-table-dedup-by-key",
+   "name": "single-table-dedup-by-key",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, n.n_text AS n_text FROM orders o LEFT JOIN notes n ON n.n_order = o.o_id",
+   "query": "SELECT o_id, o_total FROM orders",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT DISTINCT o_id, o_total FROM mv0",
+   "traps": [
+    "SELECT o_id, o_total FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.outer.anti-join",
+   "name": "anti-join",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id WHERE c.c_id IS NULL",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id FROM mv0 WHERE c_id IS NULL",
+   "traps": [
+    "SELECT o_id FROM mv0 WHERE c_name IS NULL"
+   ]
+  },
+  {
+   "id": "ou.outer.not-exists",
+   "name": "not-exists",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.c_id = o.o_cust)",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT o_id FROM mv0 WHERE c_id IS NULL"
+  },
+  {
+   "id": "ou.outer.full-to-left",
+   "name": "full-to-left",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_id AS c_id, c.c_name AS c_name FROM orders o FULL JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, o.o_total, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, o_total, c_name FROM mv0 WHERE o_id IS NOT NULL",
+   "traps": [
+    "SELECT o_id, o_total, c_name FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.outer.full-to-right",
+   "name": "full-to-right",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_id AS c_id, c.c_name AS c_name FROM orders o FULL JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_id, c.c_name FROM orders o RIGHT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, c_id, c_name FROM mv0 WHERE c_id IS NOT NULL"
+  },
+  {
+   "id": "ou.outer.full-to-inner",
+   "name": "full-to-inner",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_id AS c_id, c.c_name AS c_name FROM orders o FULL JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_name FROM orders o JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id, c_name FROM mv0 WHERE o_id IS NOT NULL AND c_id IS NOT NULL",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0 WHERE o_id IS NOT NULL"
+   ]
+  },
+  {
+   "id": "ou.outer.full-to-one-side-by-key",
+   "name": "full-to-one-side-by-key",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_id AS c_id, c.c_name AS c_name FROM orders o FULL JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT c.c_name FROM customers c",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT c_name FROM (SELECT DISTINCT c_id, c_name FROM mv0 WHERE c_id IS NOT NULL) AS t",
+   "traps": [
+    "SELECT c_name FROM mv0 WHERE c_id IS NOT NULL"
+   ]
+  },
+  {
+   "id": "ou.outer.chain-inner-then-left",
+   "name": "chain-inner-then-left",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT i.i_order AS i_order, i.i_line AS i_line, i.i_qty AS i_qty, o.o_id AS o_id, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name FROM items i LEFT JOIN orders o ON i.i_order = o.o_id LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT i.i_order, i.i_qty, c.c_name FROM items i JOIN orders o ON i.i_order = o.o_id LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT i_order, i_qty, c_name FROM mv0 WHERE o_id IS NOT NULL"
+  },
+  {
+   "id": "ou.outer.chain-all-inner",
+   "name": "chain-all-inner",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT i.i_order AS i_order, i.i_line AS i_line, i.i_qty AS i_qty, o.o_id AS o_id, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name FROM items i LEFT JOIN orders o ON i.i_order = o.o_id LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT i.i_order, i.i_qty, c.c_name FROM items i JOIN orders o ON i.i_order = o.o_id JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT i_order, i_qty, c_name FROM mv0 WHERE c_id IS NOT NULL",
+   "traps": [
+    "SELECT i_order, i_qty, c_name FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.outer.chain-first-table-only",
+   "name": "chain-first-table-only",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT i.i_order AS i_order, i.i_line AS i_line, i.i_qty AS i_qty, o.o_id AS o_id, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name FROM items i LEFT JOIN orders o ON i.i_order = o.o_id LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT i_order, i_line, i_qty FROM items WHERE i_qty > 2",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT i_order, i_line, i_qty FROM mv0 WHERE i_qty > 2"
+  },
+  {
+   "id": "ou.outer.aggregate-over-left",
+   "name": "aggregate-over-left",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT c.c_region, COUNT(*) AS n, SUM(o.o_total) AS total FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id GROUP BY c.c_region",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT c_region, COUNT(*) AS n, SUM(o_total) AS total FROM mv0 GROUP BY c_region"
+  },
+  {
+   "id": "ou.outer.aggregate-inner-from-left",
+   "name": "aggregate-inner-from-left",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT c.c_name, SUM(o.o_total) AS total FROM orders o JOIN customers c ON o.o_cust = c.c_id GROUP BY c.c_name",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT c_name, SUM(o_total) AS total FROM mv0 WHERE c_id IS NOT NULL GROUP BY c_name",
+   "traps": [
+    "SELECT c_name, SUM(o_total) AS total FROM mv0 GROUP BY c_name"
+   ]
+  },
+  {
+   "id": "ou.outer.aggregated-left-rollup",
+   "name": "aggregated-left-rollup",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT c.c_region AS c_region, o.o_status AS o_status, COUNT(*) AS n, SUM(o.o_total) AS total FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id GROUP BY c.c_region, o.o_status",
+   "query": "SELECT c.c_region, SUM(o.o_total) AS total, COUNT(*) AS n FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id GROUP BY c.c_region",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT c_region, SUM(total) AS total, SUM(n) AS n FROM mv0 GROUP BY c_region"
+  },
+  {
+   "id": "ou.outer.aggregated-left-to-inner",
+   "name": "aggregated-left-to-inner",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT c.c_region AS c_region, o.o_status AS o_status, COUNT(*) AS n, SUM(o.o_total) AS total FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id GROUP BY c.c_region, o.o_status",
+   "query": "SELECT c.c_region, SUM(o.o_total) AS total FROM orders o JOIN customers c ON o.o_cust = c.c_id GROUP BY c.c_region",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT c_region, SUM(total) AS total FROM mv0 WHERE c_region IS NOT NULL GROUP BY c_region",
+    "SELECT c_region, SUM(total) AS total FROM mv0 GROUP BY c_region"
+   ],
+   "why": "an order without a customer and an order whose customer has no region fall in the same view group"
+  },
+  {
+   "id": "ou.outer.wrong-direction",
+   "name": "wrong-direction",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT c.c_id, c.c_name, o.o_id FROM customers c LEFT JOIN orders o ON o.o_cust = c.c_id",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT c_id, c_name, o_id FROM mv0 WHERE c_id IS NOT NULL"
+   ],
+   "why": "a customer without orders is not in the view"
+  },
+  {
+   "id": "ou.outer.view-filters-null-side-in-on",
+   "name": "view-filters-null-side-in-on",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, c.c_name AS c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id AND c.c_region = 'EU'",
+   "query": "SELECT o.o_id, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0"
+   ],
+   "why": "the view drops the names of customers outside EU"
+  },
+  {
+   "id": "ou.outer.view-filters-preserved-side",
+   "name": "view-filters-preserved-side",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_name AS c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id WHERE o.o_total > 100",
+   "query": "SELECT o.o_id, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT o_id, c_name FROM mv0 UNION ALL SELECT o.o_id, c.c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id WHERE NOT (o.o_total > 100)",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.outer.filters-on-both-sides",
+   "name": "filters-on-both-sides",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id FROM orders o JOIN customers c ON o.o_cust = c.c_id WHERE c.c_region = 'EU' AND o.o_status = 'open'",
+   "expect": "rewrite",
+   "source": "Larson and Zhou, View matching for outer-join views (VLDB 2005); written for KumoSQL",
+   "witness": "SELECT o_id FROM mv0 WHERE c_region = 'EU' AND o_status = 'open'"
+  },
+  {
+   "id": "ou.outer.coalesce-of-null-side",
+   "name": "coalesce-of-null-side",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, o.o_status AS o_status, c.c_id AS c_id, c.c_name AS c_name, c.c_region AS c_region FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, COALESCE(c.c_name, 'none') AS who FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT o_id, COALESCE(c_name, 'none') AS who FROM mv0"
+  },
+  {
+   "id": "ou.outer.no-presence-column",
+   "name": "no-presence-column",
+   "origin": "outer",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, c.c_name AS c_name FROM orders o LEFT JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o.o_id, c.c_name FROM orders o JOIN customers c ON o.o_cust = c.c_id",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT o_id, c_name FROM mv0 WHERE c_name IS NOT NULL"
+   ],
+   "why": "an order whose customer has no name looks like an order without a customer"
+  },
+  {
+   "id": "ou.keys.fk-join-dropped",
+   "name": "fk-join-dropped",
+   "origin": "keys",
+   "schema": "hr",
+   "materialization": "SELECT e.empid AS empid, e.name AS name, d.name AS dname FROM emps e JOIN depts d ON e.deptno = d.deptno",
+   "query": "SELECT empid, name FROM emps",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT empid, name FROM mv0"
+  },
+  {
+   "id": "ou.keys.unkeyed-join-kept",
+   "name": "unkeyed-join-kept",
+   "origin": "keys",
+   "schema": "hr",
+   "materialization": "SELECT e.empid AS empid, e.name AS name FROM emps e JOIN dependents p ON e.empid = p.empid",
+   "query": "SELECT empid, name FROM emps",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT empid, name FROM mv0",
+    "SELECT DISTINCT empid, name FROM mv0"
+   ],
+   "why": "employees without dependents are missing and employees with two dependents repeat"
+  },
+  {
+   "id": "ou.keys.nullable-fk-join",
+   "name": "nullable-fk-join",
+   "origin": "keys",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_name AS c_name FROM orders o JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o_id, o_total FROM orders",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT o_id, o_total FROM mv0"
+   ],
+   "why": "orders with no customer are not in the view"
+  },
+  {
+   "id": "ou.keys.nullable-fk-join-not-null-query",
+   "name": "nullable-fk-join-not-null-query",
+   "origin": "keys",
+   "schema": "shop",
+   "materialization": "SELECT o.o_id AS o_id, o.o_total AS o_total, c.c_name AS c_name FROM orders o JOIN customers c ON o.o_cust = c.c_id",
+   "query": "SELECT o_id, o_total FROM orders WHERE o_cust IS NOT NULL",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT o_id, o_total FROM mv0"
+  },
+  {
+   "id": "ou.keys.not-null-fk-join",
+   "name": "not-null-fk-join",
+   "origin": "keys",
+   "schema": "shop",
+   "materialization": "SELECT i.i_order AS i_order, i.i_qty AS i_qty, p.p_brand AS p_brand FROM items i JOIN parts p ON i.i_part = p.p_id",
+   "query": "SELECT i_order, i_qty FROM items WHERE i_qty > 2",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT i_order, i_qty FROM mv0 WHERE i_qty > 2"
+  },
+  {
+   "id": "ou.keys.two-fk-joins-one-dropped",
+   "name": "two-fk-joins-one-dropped",
+   "origin": "keys",
+   "schema": "shop",
+   "materialization": "SELECT i.i_order AS i_order, i.i_qty AS i_qty, p.p_name AS p_name, o.o_date AS o_date FROM items i JOIN parts p ON i.i_part = p.p_id JOIN orders o ON i.i_order = o.o_id",
+   "query": "SELECT i.i_qty, p.p_name FROM items i JOIN parts p ON i.i_part = p.p_id",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT i_qty, p_name FROM mv0"
+  },
+  {
+   "id": "ou.keys.fk-join-with-parent-filter",
+   "name": "fk-join-with-parent-filter",
+   "origin": "keys",
+   "schema": "shop",
+   "materialization": "SELECT i.i_order AS i_order, i.i_qty AS i_qty FROM items i JOIN parts p ON i.i_part = p.p_id WHERE p.p_brand = 'A'",
+   "query": "SELECT i_order, i_qty FROM items",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT i_order, i_qty FROM mv0"
+   ],
+   "why": "items of other brands are not in the view"
+  },
+  {
+   "id": "ou.keys.injective-group-key",
+   "name": "injective-group-key",
+   "origin": "keys",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno, COUNT(DISTINCT name) AS n FROM emps GROUP BY deptno",
+   "query": "SELECT deptno * 2 AS d2, COUNT(DISTINCT name) AS n FROM emps GROUP BY deptno * 2",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT deptno * 2 AS d2, n FROM mv0"
+  },
+  {
+   "id": "ou.keys.non-injective-group-key",
+   "name": "non-injective-group-key",
+   "origin": "keys",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno, COUNT(DISTINCT name) AS n FROM emps GROUP BY deptno",
+   "query": "SELECT deptno % 10 AS d, COUNT(DISTINCT name) AS n FROM emps GROUP BY deptno % 10",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT deptno % 10 AS d, SUM(n) AS n FROM mv0 GROUP BY deptno % 10",
+    "SELECT deptno % 10 AS d, MAX(n) AS n FROM mv0 GROUP BY deptno % 10"
+   ],
+   "why": "distinct counts of two departments that share a remainder cannot be added"
+  },
+  {
+   "id": "ou.keys.injective-key-with-other-key",
+   "name": "injective-key-with-other-key",
+   "origin": "keys",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno, name, SUM(salary) AS s FROM emps GROUP BY deptno, name",
+   "query": "SELECT deptno + 1 AS d, name, SUM(salary) AS s FROM emps GROUP BY deptno + 1, name",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT deptno + 1 AS d, name, s FROM mv0"
+  },
+  {
+   "id": "ou.union.single-table-range",
+   "name": "single-table-range",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps2 WHERE empid < 3",
+   "query": "SELECT empid, deptno, name, salary FROM emps2 WHERE empid < 5",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite1 (Apache-2.0), adapted",
+   "witness": "SELECT empid, deptno, name, salary FROM mv0 UNION ALL SELECT empid, deptno, name, salary FROM emps2 WHERE empid < 5 AND empid >= 3",
+   "traps": [
+    "SELECT empid, deptno, name, salary FROM mv0",
+    "SELECT empid, deptno, name, salary FROM mv0 UNION ALL SELECT empid, deptno, name, salary FROM emps2 WHERE empid < 5"
+   ]
+  },
+  {
+   "id": "ou.union.single-table-range-subset",
+   "name": "single-table-range-subset",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps2 WHERE empid < 3",
+   "query": "SELECT deptno, empid FROM emps2 WHERE empid < 5",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite1 (Apache-2.0), adapted",
+   "witness": "SELECT deptno, empid FROM mv0 UNION ALL SELECT deptno, empid FROM emps2 WHERE empid >= 3 AND empid < 5"
+  },
+  {
+   "id": "ou.union.join-range",
+   "name": "join-range",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT emps2.empid, emps2.salary, depts2.deptno, depts2.name FROM emps2 JOIN depts2 USING (deptno) WHERE depts2.deptno < 100",
+   "query": "SELECT emps2.empid, emps2.salary, depts2.deptno, depts2.name FROM emps2 JOIN depts2 USING (deptno) WHERE depts2.deptno < 120",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite2 (Apache-2.0), adapted",
+   "witness": "SELECT empid, salary, deptno, name FROM mv0 UNION ALL SELECT emps2.empid, emps2.salary, depts2.deptno, depts2.name FROM emps2 JOIN depts2 USING (deptno) WHERE depts2.deptno >= 100 AND depts2.deptno < 120"
+  },
+  {
+   "id": "ou.union.self-join-range",
+   "name": "self-join-range",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT emps2.empid, emps2.salary, d1.deptno, d1.name AS name1, d2.name AS name2 FROM emps2 JOIN depts2 d1 ON emps2.deptno = d1.deptno JOIN depts2 d2 ON emps2.deptno = d2.deptno WHERE d1.deptno < 100",
+   "query": "SELECT emps2.empid, emps2.salary, d1.deptno, d1.name AS name1, d2.name AS name2 FROM emps2 JOIN depts2 d1 ON emps2.deptno = d1.deptno JOIN depts2 d2 ON emps2.deptno = d2.deptno WHERE d1.deptno < 120",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite3 (Apache-2.0), adapted",
+   "witness": "SELECT empid, salary, deptno, name1, name2 FROM mv0 UNION ALL SELECT emps2.empid, emps2.salary, d1.deptno, d1.name, d2.name FROM emps2 JOIN depts2 d1 ON emps2.deptno = d1.deptno JOIN depts2 d2 ON emps2.deptno = d2.deptno WHERE d1.deptno >= 100 AND d1.deptno < 120"
+  },
+  {
+   "id": "ou.union.aggregate-range-on-group-key",
+   "name": "aggregate-range-on-group-key",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT t02.v1 AS v1, test_all_type2.t1d, SUM(test_all_type2.t1c) AS total_sum, COUNT(test_all_type2.t1c) AS total_num FROM t02 JOIN test_all_type2 ON t02.v1 = test_all_type2.t1d WHERE t02.v1 < 100 GROUP BY v1, test_all_type2.t1d",
+   "query": "SELECT t02.v1 AS v1, test_all_type2.t1d, SUM(test_all_type2.t1c) AS total_sum, COUNT(test_all_type2.t1c) AS total_num FROM t02 JOIN test_all_type2 ON t02.v1 = test_all_type2.t1d WHERE t02.v1 < 120 GROUP BY v1, test_all_type2.t1d",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite4 (Apache-2.0), adapted",
+   "witness": "SELECT v1, t1d, total_sum, total_num FROM mv0 UNION ALL SELECT t02.v1, test_all_type2.t1d, SUM(test_all_type2.t1c), COUNT(test_all_type2.t1c) FROM t02 JOIN test_all_type2 ON t02.v1 = test_all_type2.t1d WHERE t02.v1 >= 100 AND t02.v1 < 120 GROUP BY t02.v1, test_all_type2.t1d"
+  },
+  {
+   "id": "ou.union.left-join-aggregate-range",
+   "name": "left-join-aggregate-range",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT t02.v1 AS v1, test_all_type2.t1d, SUM(test_all_type2.t1c) AS total_sum, COUNT(test_all_type2.t1c) AS total_num FROM t02 LEFT JOIN test_all_type2 ON t02.v1 = test_all_type2.t1d WHERE t02.v1 < 100 GROUP BY v1, test_all_type2.t1d",
+   "query": "SELECT t02.v1 AS v1, test_all_type2.t1d, SUM(test_all_type2.t1c) AS total_sum, COUNT(test_all_type2.t1c) AS total_num FROM t02 LEFT JOIN test_all_type2 ON t02.v1 = test_all_type2.t1d WHERE t02.v1 < 120 GROUP BY v1, test_all_type2.t1d",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite5 (Apache-2.0), adapted",
+   "witness": "SELECT v1, t1d, total_sum, total_num FROM mv0 UNION ALL SELECT t02.v1, test_all_type2.t1d, SUM(test_all_type2.t1c), COUNT(test_all_type2.t1c) FROM t02 LEFT JOIN test_all_type2 ON t02.v1 = test_all_type2.t1d WHERE t02.v1 >= 100 AND t02.v1 < 120 GROUP BY t02.v1, test_all_type2.t1d"
+  },
+  {
+   "id": "ou.union.aggregate-range-off-group-key",
+   "name": "aggregate-range-off-group-key",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT deptno, name, SUM(salary) AS salary FROM emps2 WHERE empid < 5 GROUP BY deptno, name",
+   "query": "SELECT deptno, name, SUM(salary) AS salary FROM emps2 GROUP BY deptno, name",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionRewrite7 (Apache-2.0), adapted",
+   "witness": "SELECT deptno, name, SUM(salary) AS salary FROM (SELECT deptno, name, salary FROM mv0 UNION ALL SELECT deptno, name, SUM(salary) FROM emps2 WHERE empid >= 5 GROUP BY deptno, name) AS u GROUP BY deptno, name",
+   "traps": [
+    "SELECT deptno, name, salary FROM mv0 UNION ALL SELECT deptno, name, SUM(salary) FROM emps2 WHERE empid >= 5 GROUP BY deptno, name"
+   ]
+  },
+  {
+   "id": "ou.union.filter-point",
+   "name": "filter-point",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 = 1",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0 WHERE k1 = 1"
+  },
+  {
+   "id": "ou.union.filter-same",
+   "name": "filter-same",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0"
+  },
+  {
+   "id": "ou.union.filter-narrower",
+   "name": "filter-narrower",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 2",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0 WHERE k1 < 2"
+  },
+  {
+   "id": "ou.union.range-wider",
+   "name": "range-wider",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 6",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0 UNION ALL SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 6 AND k1 >= 3"
+  },
+  {
+   "id": "ou.union.range-wider-extra-predicate",
+   "name": "range-wider-extra-predicate",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 6 AND k2 LIKE 'a%'",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0 WHERE k2 LIKE 'a%' UNION ALL SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 >= 3 AND k1 < 6 AND k2 LIKE 'a%'"
+  },
+  {
+   "id": "ou.union.range-not-equal",
+   "name": "range-not-equal",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 != 3 AND k2 LIKE 'a%'",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0 WHERE k2 LIKE 'a%' UNION ALL SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 != 3 AND k1 >= 3 AND k2 LIKE 'a%'"
+  },
+  {
+   "id": "ou.union.range-lower-bound",
+   "name": "range-lower-bound",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 < 3",
+   "query": "SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 > 0 AND k2 LIKE 'a%'",
+   "expect": "rewrite",
+   "source": "StarRocks 3.3.0 MvRewriteUnionTest.testUnionAllRewriteWithExtraPredicates (Apache-2.0), adapted",
+   "witness": "SELECT k1, k2, v1, v2 FROM mv0 WHERE k1 > 0 AND k2 LIKE 'a%' UNION ALL SELECT k1, k2, v1, v2 FROM mt1 WHERE k1 >= 3 AND k2 LIKE 'a%'"
+  },
+  {
+   "id": "ou.union.nullable-complement",
+   "name": "nullable-complement",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT v1, v2, v3 FROM t02 WHERE v2 < 10",
+   "query": "SELECT v1, v2, v3 FROM t02 WHERE v1 < 5",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT v1, v2, v3 FROM mv0 WHERE v1 < 5 UNION ALL SELECT v1, v2, v3 FROM t02 WHERE v1 < 5 AND (v2 < 10) IS NOT TRUE",
+   "traps": [
+    "SELECT v1, v2, v3 FROM mv0 WHERE v1 < 5 UNION ALL SELECT v1, v2, v3 FROM t02 WHERE v1 < 5 AND NOT (v2 < 10)"
+   ]
+  },
+  {
+   "id": "ou.union.missing-column",
+   "name": "missing-column",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT empid, deptno FROM emps2 WHERE empid < 3",
+   "query": "SELECT empid, name FROM emps2 WHERE empid < 5",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT m.empid, e.name FROM mv0 m JOIN emps2 e ON e.empid = m.empid UNION ALL SELECT empid, name FROM emps2 WHERE empid >= 3 AND empid < 5"
+   ],
+   "why": "the view has no name; reading it back from emps2 by empid repeats rows that share an empid"
+  },
+  {
+   "id": "ou.union.overlapping-ranges",
+   "name": "overlapping-ranges",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT empid, deptno, name, salary FROM emps2 WHERE empid < 3",
+   "query": "SELECT empid, deptno FROM emps2 WHERE empid > 1 AND empid < 5",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT empid, deptno FROM mv0 WHERE empid > 1 UNION ALL SELECT empid, deptno FROM emps2 WHERE empid >= 3 AND empid < 5",
+   "traps": [
+    "SELECT empid, deptno FROM mv0 WHERE empid > 1 UNION ALL SELECT empid, deptno FROM emps2 WHERE empid > 1 AND empid < 5"
+   ]
+  },
+  {
+   "id": "ou.union.aggregate-range-regrouped",
+   "name": "aggregate-range-regrouped",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT deptno, SUM(salary) AS s FROM emps2 WHERE empid < 3 GROUP BY deptno",
+   "query": "SELECT deptno, SUM(salary) AS s FROM emps2 WHERE empid < 5 GROUP BY deptno",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT deptno, SUM(s) AS s FROM (SELECT deptno, s FROM mv0 UNION ALL SELECT deptno, SUM(salary) FROM emps2 WHERE empid >= 3 AND empid < 5 GROUP BY deptno) AS u GROUP BY deptno",
+   "traps": [
+    "SELECT deptno, s FROM mv0 UNION ALL SELECT deptno, SUM(salary) FROM emps2 WHERE empid >= 3 AND empid < 5 GROUP BY deptno"
+   ]
+  },
+  {
+   "id": "ou.union.average-without-count",
+   "name": "average-without-count",
+   "origin": "union",
+   "schema": "sr",
+   "materialization": "SELECT deptno, AVG(salary) AS a FROM emps2 WHERE empid < 3 GROUP BY deptno",
+   "query": "SELECT deptno, AVG(salary) AS a FROM emps2 WHERE empid < 5 GROUP BY deptno",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT deptno, AVG(a) AS a FROM (SELECT deptno, a FROM mv0 UNION ALL SELECT deptno, AVG(salary) FROM emps2 WHERE empid >= 3 AND empid < 5 GROUP BY deptno) AS u GROUP BY deptno"
+   ],
+   "why": "an average without its count cannot be combined with another"
+  },
+  {
+   "id": "ou.setop.union-all-branch",
+   "name": "union-all-branch",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT empid, deptno FROM emps WHERE deptno = 10 UNION ALL SELECT empid, deptno FROM emps WHERE deptno = 20",
+   "query": "SELECT empid FROM emps WHERE deptno = 10",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT empid FROM mv0 WHERE deptno = 10",
+   "traps": [
+    "SELECT empid FROM mv0"
+   ]
+  },
+  {
+   "id": "ou.setop.intersect-all-filter",
+   "name": "intersect-all-filter",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno FROM emps INTERSECT ALL SELECT deptno FROM depts",
+   "query": "SELECT deptno FROM emps WHERE deptno > 10 INTERSECT ALL SELECT deptno FROM depts WHERE deptno > 10",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT deptno FROM mv0 WHERE deptno > 10"
+  },
+  {
+   "id": "ou.setop.except-all-filter",
+   "name": "except-all-filter",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT name FROM emps EXCEPT ALL SELECT name FROM dependents",
+   "query": "SELECT name FROM emps WHERE name = 'Bill' EXCEPT ALL SELECT name FROM dependents",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT name FROM mv0 WHERE name = 'Bill'"
+  },
+  {
+   "id": "ou.setop.except-all-left-operand",
+   "name": "except-all-left-operand",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT name FROM emps EXCEPT ALL SELECT name FROM dependents",
+   "query": "SELECT name FROM emps",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT name FROM mv0"
+   ],
+   "why": "names that dependents also have are removed from the view"
+  },
+  {
+   "id": "ou.setop.intersect-all-commuted",
+   "name": "intersect-all-commuted",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno, name FROM emps INTERSECT ALL SELECT deptno, name FROM depts",
+   "query": "SELECT name, deptno FROM depts INTERSECT ALL SELECT name, deptno FROM emps",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT name, deptno FROM mv0"
+  },
+  {
+   "id": "ou.setop.union-distinct-to-all",
+   "name": "union-distinct-to-all",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno FROM emps UNION SELECT deptno FROM depts",
+   "query": "SELECT deptno FROM emps UNION ALL SELECT deptno FROM depts",
+   "expect": "none",
+   "source": "written for KumoSQL",
+   "traps": [
+    "SELECT deptno FROM mv0"
+   ],
+   "why": "the view has lost the duplicates"
+  },
+  {
+   "id": "ou.setop.union-all-to-distinct",
+   "name": "union-all-to-distinct",
+   "origin": "setop",
+   "schema": "hr_plain",
+   "materialization": "SELECT deptno FROM emps UNION ALL SELECT deptno FROM depts",
+   "query": "SELECT deptno FROM emps UNION SELECT deptno FROM depts",
+   "expect": "rewrite",
+   "source": "written for KumoSQL",
+   "witness": "SELECT DISTINCT deptno FROM mv0"
+  }
+ ]
+}

@@ -1,7 +1,7 @@
 """Write tests/fixtures/mv_reuse/adapted_cases.json: shared-model reuse cases written for KumoSQL.
 
 Each case is a model (the SQL of an existing table or view) and a query that should, or cannot, read
-from it. Schema: Calcite's HR test schema (see tools/mv_reuse_bench.py). ``expect`` is ``rewrite``
+from it. Schema: Calcite's HR test tables with no keys (``hr_plain`` in tools/mv_reuse_bench.py). ``expect`` is ``rewrite``
 (the query can be answered from the model) or ``none`` (the model lacks something the query needs, so
 a rewrite would be wrong). Kept apart from the Calcite cases, which are extracted unchanged.
 """
@@ -52,7 +52,7 @@ CASES = [
 
 
 def main() -> None:
-    cases = [{"id": f"shared.{name}", "name": name, "origin": "adapted", "materialization": model, "query": query, "expect": expect, "schema": "hr", "disabled": False} for name, model, query, expect in CASES]
+    cases = [{"id": f"shared.{name}", "name": name, "origin": "adapted", "materialization": model, "query": query, "expect": expect, "schema": "hr_plain", "disabled": False} for name, model, query, expect in CASES]
     OUT.write_text(json.dumps({"description": __doc__.strip().splitlines()[0], "cases": cases}, indent=1) + "\n", encoding="utf-8")
     print(f"{len(cases)} cases written to {OUT}")
 
