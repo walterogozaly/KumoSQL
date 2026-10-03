@@ -81,6 +81,19 @@ _TIME = {"TIME"}
 _DATETIME = {"DATETIME", "TIMESTAMP", "TIMESTAMP_NTZ"}
 
 
+# Legal values of BigQuery's real types: (decimal digits after the point or None, exclusive bound on |value|).
+_REAL_DOMAINS = {
+    "NUMERIC": (9, 10**29),
+    "BIGNUMERIC": (38, 578960446186580977117854925043439539267),
+    "BIGDECIMAL": (38, 578960446186580977117854925043439539267),
+    "FLOAT64": (None, 10**308),
+}
+
+
+def _base_type(sql_type: str) -> str:
+    return re.split(r"[(\s<]", sql_type.strip().upper(), maxsplit=1)[0]
+
+
 def kind_of(sql_type: str) -> str | None:
     """The encoding kind (int, real, str, bool, date) of a SQL type name; ``None`` if not modeled."""
 
@@ -157,6 +170,8 @@ def schema_from_prover(schema: Mapping[str, Sequence[str]], constraints=None, ty
         constraint = constraints.get(name)
         column_types = {k.lower(): v for k, v in (types.get(name) or {}).items()}
         not_null = {c.lower() for c in (constraint.not_null if constraint else ())}
+        # a key's columns are NOT NULL (``TableConstraints.keys``: a primary key, or UNIQUE over NOT NULL columns)
+        not_null |= {c.lower() for key in (constraint.keys if constraint else ()) for c in key}
         table = BTable(
             name,
             [BColumn(c, column_types.get(c.lower(), "UNKNOWN"), c.lower() in not_null) for c in columns],
@@ -559,6 +574,13 @@ class SymbolicDatabase:
                         self.constraints.append(z3.InRe(value, z3.Star(z3.Range(" ", "~"))))
                     if "decimal" in self.restrict and kind == "real":
                         self.constraints.append(z3.IsInt(value * 4))
+                    domain = _REAL_DOMAINS.get(_base_type(column.type)) if kind == "real" else None
+                    if domain is not None:
+                        digits, bound = domain
+                        legal = [value < z3.RealVal(bound), value > -z3.RealVal(bound)]
+                        if digits is not None:
+                            legal.append(z3.IsInt(value * 10**digits))
+                        self.constraints.append(z3.Or(z3.Not(present), null, z3.And(*legal)))
                 slots.append(Row(present, vals))
             self.tables[name] = slots
             for left, right in zip(slots, slots[1:]):  # rows fill from the front: fewer symmetric models
@@ -583,8 +605,12 @@ class SymbolicDatabase:
                     needs = [child.present] + [z3.Not(child.vals[index[c.lower()]].null) for c in cols]
                     options = []
                     for candidate in parent_slots:
+                        # a NULL parent value matches nothing, whatever value hides behind it
                         options.append(z3.And(candidate.present, *[
-                            candidate.vals[pindex[pc.lower()]].val == child.vals[index[c.lower()]].val
+                            z3.And(
+                                z3.Not(candidate.vals[pindex[pc.lower()]].null),
+                                candidate.vals[pindex[pc.lower()]].val == child.vals[index[c.lower()]].val,
+                            )
                             for c, pc in zip(cols, pcols)
                         ]))
                     self.constraints.append(z3.Implies(z3.And(*needs), z3.Or(*options) if options else _false()))
@@ -1926,9 +1952,14 @@ class DuckDBReplay:
         self.duckdb = duckdb
         self.db = duckdb.connect(":memory:")
         self.cx = cx
+        self.bigquery = dialect == "bigquery"
+        if self.bigquery:
+            from .bigquery_on_duckdb import configure
+
+            configure(self.db)
         self.names = {}
         for name, table in schema.tables.items():
-            columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
+            columns = ", ".join(f'"{c.name}" {_duck_type(c, self.bigquery)}' for c in table.columns)
             self.db.execute(f'CREATE TABLE "{name}" ({columns})')
         self.left = translate(left) if translate is not None else self._translate(left, dialect)
         self.right = translate(right) if translate is not None else self._translate(right, dialect)
@@ -1945,6 +1976,10 @@ class DuckDBReplay:
                 table.set("catalog", None)
                 table.set("db", None)
                 table.set("this", exp.to_identifier(found.name))
+        if dialect == "bigquery":
+            from .bigquery_on_duckdb import faithful
+
+            tree = faithful(tree)
         return spell_for_duckdb(tree).sql(dialect="duckdb")
 
     def _run(self, data: dict[str, list[tuple]]):
@@ -1954,7 +1989,15 @@ class DuckDBReplay:
             if rows:
                 marks = ", ".join("?" * len(table.columns))
                 self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', rows)
-        return self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+        left, right = self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+        if self.bigquery:
+            from .bigquery_on_duckdb import UnfaithfulOutput, bigquery_rows
+
+            try:
+                return bigquery_rows(left), bigquery_rows(right)
+            except UnfaithfulOutput as error:
+                raise self.duckdb.InvalidInputException(str(error)) from error
+        return left, right
 
     def differ(self, data: dict[str, list[tuple]]) -> bool | None:
         """``True``: the bags differ on every shuffle; ``False``: they agree; ``None``: could not run."""
@@ -1964,9 +2007,7 @@ class DuckDBReplay:
             expected = (self.cx._bag(a), self.cx._bag(b))
             if expected[0] == expected[1]:
                 return False
-            rng = random.Random(0)
-            for _ in range(self.shuffles):
-                shuffled = {n: rng.sample(rows, len(rows)) for n, rows in data.items()}
+            for shuffled in _reorders(data, random.Random(0), self.shuffles):
                 a2, b2 = self._run(shuffled)
                 if (self.cx._bag(a2), self.cx._bag(b2)) != expected:
                     return None
@@ -2011,9 +2052,7 @@ class SQLiteReplay:
             expected = (self.cx._bag(a), self.cx._bag(b))
             if expected[0] == expected[1]:
                 return False
-            rng = random.Random(0)
-            for _ in range(self.shuffles):
-                shuffled = {n: rng.sample(rows, len(rows)) for n, rows in data.items()}
+            for shuffled in _reorders(data, random.Random(0), self.shuffles):
                 a2, b2 = self._run(shuffled)
                 if (self.cx._bag(a2), self.cx._bag(b2)) != expected:
                     return None
@@ -2022,13 +2061,25 @@ class SQLiteReplay:
             return None
 
 
+def _reorders(data: dict[str, list[tuple]], rng: random.Random, shuffles: int):
+    """``data`` reversed, then rotated by a row, then ``shuffles`` random shuffles (random shuffles
+    alone keep a two-row table in order once in ``2**shuffles``)."""
+
+    yield {n: list(reversed(rows)) for n, rows in data.items()}
+    yield {n: list(rows[1:]) + list(rows[:1]) for n, rows in data.items()}
+    for _ in range(shuffles):
+        yield {n: rng.sample(rows, len(rows)) for n, rows in data.items()}
+
+
 def _sqlite_type(column: BColumn) -> str:
     kind = kind_of(column.type)
     return {"int": "INTEGER", "real": "REAL", "str": "TEXT", "bool": "INTEGER", "date": "TEXT", "time": "TEXT", "datetime": "TEXT", None: "INTEGER"}[kind]
 
 
-def _duck_type(column: BColumn) -> str:
+def _duck_type(column: BColumn, bigquery: bool = False) -> str:
     kind = kind_of(column.type)
+    if bigquery and _base_type(column.type) == "NUMERIC":
+        return "DECIMAL(38, 9)"  # BigQuery's NUMERIC; a value it cannot hold fails to load
     return {"int": "BIGINT", "real": "DOUBLE", "str": "VARCHAR", "bool": "BOOLEAN", "date": "DATE", "time": "TIME", "datetime": "TIMESTAMP", None: "BIGINT"}[kind]
 
 
@@ -2053,6 +2104,10 @@ class BoundedResult:
         """The evidence label, for example ``bounded, 3 rows``."""
 
         return f"bounded, {self.bound} {'row' if self.bound == 1 else 'rows'}" if self.bounded_equivalent else self.status.value
+
+
+def _no_replay(data) -> None:
+    return None
 
 
 def _check_bounded(
@@ -2093,7 +2148,12 @@ def _check_bounded(
     restrictions: list[str] = []
     try:
         if replay is None:
-            replay = DuckDBReplay(schema, left_sql, right_sql, dialect, translate=translate)
+            from .bigquery_on_duckdb import Unfaithful
+
+            try:
+                replay = DuckDBReplay(schema, left_sql, right_sql, dialect, translate=translate)
+            except Unfaithful:
+                replay = _no_replay  # DuckDB cannot run these as BigQuery does: no counterexample is confirmed
         for bound in range(start, rows + 1):
             outcome = None
             for attempt in range(3):

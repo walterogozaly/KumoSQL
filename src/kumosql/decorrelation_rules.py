@@ -44,19 +44,47 @@ def _and_all(parts: list[exp.Expression]) -> exp.Expression | None:
     return out
 
 
-def _declared(node: exp.Expression) -> set[str]:
-    """Every relation alias declared anywhere under ``node``."""
+def _extended_grouping(group: exp.Group) -> bool:
+    """ROLLUP, CUBE or GROUPING SETS, which add subtotal rows (sqlglot keeps them among the keys, MySQL's WITH ROLLUP as an arg)."""
 
+    return bool(group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets")) or any(
+        isinstance(e, (exp.Rollup, exp.Cube, exp.GroupingSets)) for e in group.expressions
+    )
+
+
+def _bound_by(select: exp.Select) -> set[str]:
+    """The relation aliases ``select`` itself declares in its FROM and joins (not those of nested selects)."""
+
+    clauses = [select.args.get("from_") or select.args.get("from")] + list(select.args.get("joins") or [])
     return {
         (n.alias_or_name or "").lower()
-        for n in node.walk()
-        if isinstance(n, (exp.Table, exp.Subquery, exp.Lateral, exp.Unnest)) and n.alias_or_name
+        for clause in clauses
+        if clause is not None
+        for n in clause.walk()
+        if isinstance(n, (exp.Table, exp.Subquery, exp.Lateral, exp.Unnest)) and n.alias_or_name and n.find_ancestor(exp.Select) is select
     }
 
 
+def _bound_within(column: exp.Column, root: exp.Expression) -> bool:
+    """Whether ``column``'s qualifier names a relation of a select that encloses it inside ``root``.
+
+    Each select only sees its own relations and those of the selects around it, so an alias declared
+    in a sibling or deeper subquery does not bind the column.
+    """
+
+    name = column.table.lower()
+    node = column
+    while node is not None:
+        if isinstance(node, exp.Select) and name in _bound_by(node):
+            return True
+        if node is root:
+            return False
+        node = node.parent
+    return False
+
+
 def _free_qualifiers(node: exp.Expression) -> set[str]:
-    declared = _declared(node)
-    return {c.table.lower() for c in node.find_all(exp.Column) if c.table and c.table.lower() not in declared}
+    return {c.table.lower() for c in node.find_all(exp.Column) if c.table and not _bound_within(c, node)}
 
 
 def _plain_body(inner: exp.Select) -> bool:
@@ -213,7 +241,7 @@ def _existence_body(body: exp.Select) -> bool:
     """``SELECT TRUE AS c FROM .. WHERE p GROUP BY TRUE``: one constant row when ``FROM .. WHERE p`` has a row, else none."""
 
     group = body.args.get("group")
-    if group is None or group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets"):
+    if group is None or _extended_grouping(group):
         return False
     if not group.expressions or not all(_constant(e) for e in group.expressions):
         return False
@@ -415,7 +443,7 @@ def distinct_lateral_to_in(select: exp.Select) -> exp.Expression | None:
         group = body.args.get("group")
         if group is None or len(body.expressions) != 1 or len(group.expressions) != 1:
             continue
-        if any(body.args.get(k) for k in ("distinct", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with")) or group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets"):
+        if any(body.args.get(k) for k in ("distinct", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with")) or _extended_grouping(group):
             continue
         value = body.expressions[0].unalias()
         if value != group.expressions[0] or any(isinstance(n, (exp.AggFunc, exp.Window)) for n in value.walk()):
@@ -497,10 +525,16 @@ def one_row_joins(select: exp.Select) -> exp.Expression | None:
         holder = join.parent
         if holder is None or join.arg_key != "joins":
             continue
-        for column in uses:
+        probes = {}
+        for name, value in values.items():
             probe = body.copy()
-            probe.set("expressions", [values[column.name.lower()].copy()])
-            value = exp.Subquery(this=probe)
+            probe.set("expressions", [value.copy()])
+            probes[name] = probe
+        # the body's one row comes from its aggregates: (SELECT 7 FROM u) alone has a row per row of u
+        if not all(_one_row_body(probes[c.name.lower()]) for c in uses):
+            continue
+        for column in uses:
+            value = exp.Subquery(this=probes[column.name.lower()].copy())
             column.replace(_named(value, column.name) if column.parent is select and column.arg_key == "expressions" else value)
         holder.set("joins", [j for j in holder.args["joins"] if j is not join] or None)
         wrapper = holder.parent
@@ -608,14 +642,13 @@ def _closed(node: exp.Expression, schema: dict[str, list[str]] | None) -> bool:
     """Whether every column under ``node`` is bound inside it (qualified by an alias it declares, or a
     bare name of the one table it reads, by ``schema``)."""
 
-    declared = _declared(node)
     for select in node.find_all(exp.Select):
         tables = [s for s in _sources(select)]
         for column in select.find_all(exp.Column):
             if column.find_ancestor(exp.Select) is not select:
                 continue
             if column.table:
-                if column.table.lower() not in declared:
+                if not _bound_within(column, node):
                     return False
                 continue
             if len(tables) != 1 or not isinstance(tables[0], exp.Table):
@@ -812,7 +845,7 @@ def _base_column(select: exp.Select, column: exp.Column, depth: int = 0) -> tupl
         return None
     inner = source.this
     group = inner.args.get("group")
-    if group is not None and (group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets")):
+    if group is not None and (_extended_grouping(group)):
         return None
     for item in inner.expressions:
         if item.alias_or_name.lower() == column.name.lower():
@@ -865,7 +898,7 @@ def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | N
                     keys = None
                     break
                 keys.append(k.name.lower())
-            if keys is None or set(keys) != set(outputs.values()) or group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets"):
+            if keys is None or set(keys) != set(outputs.values()) or _extended_grouping(group):
                 continue
         elif not (isinstance(distinct, exp.Distinct) and not distinct.args.get("on")):
             continue

@@ -366,7 +366,14 @@ class _Analyzer:
             keys += [(k, p | _prov_of(left.keys, left_bound)) for k, p in right.keys]
         for kl, pl in left.keys:
             for kr, pr in right.keys:
-                keys.append((kl | kr, pl | pr))
+                if side != "FULL":
+                    keys.append((kl | kr, pl | pr))
+                    continue
+                # A row padded on the right and one padded on the left are equal when both keys are
+                # NULL (or empty); a key column never NULL on its own side tells them apart.
+                witness = [rel.cols[q] for rel, key in ((left, kl), (right, kr)) for q in sorted(key) if rel.cols[q][0]]
+                if witness:
+                    keys.append((kl | kr, pl | pr | witness[0][1]))
         out.keys = _prune_keys(keys)
         scope[alias] = right
         return out
@@ -507,13 +514,29 @@ class _Analyzer:
             if any(isinstance(g, exp.Literal) for g in self._group_items(group)):
                 raise _Unsupported("grouping sets by position")
             rel = self._rolled_up(rel, group, sets)
+        if any(set_returning_item(item) for item in select.expressions):
+            raise _Unsupported("set-returning function in the select list")  # several rows per input row
         projected: list[tuple[str, exp.Expression]] = []
         for item in select.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
                 qualifier = item.table.lower() if isinstance(item, exp.Column) else ""
+                star = item if isinstance(item, exp.Star) else item.this
+                if star.args.get("rename") or star.args.get("ilike"):
+                    raise _Unsupported("SELECT * RENAME / ILIKE")
+                dropped = star.args.get("except_") or []
+                replaced = star.args.get("replace") or []
+                if any(not isinstance(c, exp.Column) or c.table for c in dropped) or any(not isinstance(a, exp.Alias) for a in replaced):
+                    raise _Unsupported("SELECT * EXCEPT / REPLACE of this shape")
+                dropped = {c.name.lower() for c in dropped}
+                replaced = {a.alias.lower(): a.this for a in replaced}
                 for q in rel.order:
                     table, name = q.split(".", 1)
                     if not qualifier or table == qualifier:
+                        if _base(name) in dropped:
+                            continue  # * EXCEPT (name)
+                        if _base(name) in replaced:
+                            projected.append((name, replaced[_base(name)]))  # * REPLACE (expr AS name)
+                            continue
                         column = exp.column(name, table=table)
                         column.meta[_STAR_SOURCE] = q  # the column itself, even when its name repeats
                         projected.append((name, column))
@@ -664,7 +687,9 @@ class _Analyzer:
             return (True, frozenset().union(*(p for _, p in parts))) if parts and all(ok for ok, _ in parts) else none
 
         def all_args(n: exp.Expression) -> tuple[bool, Provenance]:
-            args = [v for v in (n.args.get("this"), *(n.args.get("expressions") or []), n.args.get("expression")) if isinstance(v, exp.Expression)]
+            # Every argument, not only this/expressions: SUBSTR's start, REPLACE's replacement and
+            # ROUND's decimals make the result NULL too.
+            args = [v for value in n.args.values() for v in (value if isinstance(value, list) else [value]) if isinstance(v, exp.Expression)]
             return combine(*args) if args else none
 
         def under(tested: set, node: exp.Expression) -> tuple[bool, Provenance]:
@@ -844,6 +869,22 @@ def select_has_aggregate(node: exp.Expression) -> bool:
             if owner is node:
                 return True
             owner = owner.parent
+    return False
+
+
+def set_returning_item(node: exp.Expression) -> bool:
+    """Whether a select item can return several rows per input row (DuckDB's ``SELECT UNNEST(list)``,
+    Postgres's ``SELECT generate_series(...)``); not inside a subquery, nor ``x IN UNNEST(array)``."""
+
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, exp.Query):
+            continue
+        if isinstance(current, (exp.UDTF, exp.ExplodingGenerateSeries)):
+            return True
+        unnest = current.args.get("unnest") if isinstance(current, exp.In) else None
+        stack.extend(child for child in current.iter_expressions() if child is not unnest)
     return False
 
 

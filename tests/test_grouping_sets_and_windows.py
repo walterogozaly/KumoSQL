@@ -1,9 +1,12 @@
 """ROLLUP / CUBE / GROUPING SETS expansion, key-only HAVING, and window rewrites (cluster 20)."""
 
+from collections import Counter
+
 import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import run_unoptimized
 from kumosql.grouping_sets import expand_grouping_sets
 from kumosql.having_rules import key_having_to_where
 from kumosql.window_rules import never_null_counts
@@ -28,22 +31,11 @@ def test_rollup_cube_and_mixed_lists_spell_out_their_sets():
     assert _sets("SELECT a FROM t GROUP BY CUBE(a, b)") == "SELECT a FROM t GROUP BY GROUPING SETS ((a, b), (a), (b), ())"
     assert _sets("SELECT a FROM t GROUP BY x, ROLLUP(a)") == "SELECT a FROM t GROUP BY GROUPING SETS ((x, a), (x))"
     assert _sets("SELECT a FROM t GROUP BY a, b WITH ROLLUP") == "SELECT a FROM t GROUP BY GROUPING SETS ((a, b), (a), ())"
-
-
-NESTED = "SELECT a FROM t GROUP BY GROUPING SETS (a, ROLLUP(b))"
-
-
-def _parses(sql: str) -> bool:
     try:
-        sqlglot.parse_one(sql, read="mysql")
+        nested = _sets("SELECT a FROM t GROUP BY GROUPING SETS (a, ROLLUP(b))")
     except sqlglot.errors.ParseError:
-        return False
-    return True
-
-
-@pytest.mark.skipif(not _parses(NESTED), reason="older sqlglot versions cannot parse a ROLLUP inside GROUPING SETS")
-def test_a_rollup_nested_in_grouping_sets_spells_out_its_sets():
-    assert _sets(NESTED) == "SELECT a FROM t GROUP BY GROUPING SETS ((a), (b), ())"
+        return  # older sqlglot cannot parse a ROLLUP inside GROUPING SETS
+    assert nested == "SELECT a FROM t GROUP BY GROUPING SETS ((a), (b), ())"
 
 
 def test_a_repeated_set_is_left_alone():
@@ -195,3 +187,49 @@ def test_global_sum_of_counts_under_nullif_is_the_count():
     right = "SELECT SUM(t.s) / NULLIF(SUM(t.n), 0) FROM (SELECT deptno, SUM(sal) AS s, COUNT(sal) AS n FROM emp GROUP BY deptno) AS t"
     assert proven(right)
     assert not proven(right.replace("NULLIF(SUM(t.n), 0)", "NULLIF(SUM(t.n), 1)"))
+
+
+def _rows_differ(left: str, right: str, rows: list[tuple]) -> bool:
+    duckdb = pytest.importorskip("duckdb")
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (k BIGINT)")
+    for row in rows:
+        db.execute("INSERT INTO t VALUES (?)", row)
+    first, second = run_unoptimized(db, left, right)
+    return Counter(first) != Counter(second)
+
+
+NESTED_COUNT = "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY ROLLUP(k)"
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [pytest.param([], id="s007-002-empty-input"), pytest.param([(1,), (2,), (3,)], id="s007-002-three-rows")],
+)
+def test_an_aggregate_of_a_nested_query_does_not_make_the_empty_set_an_aggregate(rows):
+    # COUNT(*) belongs to the source-free subquery; the grand total is still one row, not one per input row
+    right = "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY k UNION ALL SELECT NULL AS k, (SELECT COUNT(*)) AS c FROM t"
+    assert _rows_differ(NESTED_COUNT, right, rows)
+    assert not prove_equivalent_algebraic(NESTED_COUNT, right, dialect="bigquery").proven
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        pytest.param(
+            NESTED_COUNT,
+            "SELECT k, (SELECT COUNT(*)) AS c FROM t GROUP BY k UNION ALL SELECT NULL AS k, (SELECT COUNT(*)) AS c",
+            id="s007-002-near-miss-one-grand-total-row",
+        ),
+        pytest.param(
+            "SELECT k, (SELECT COUNT(*)) AS c, COUNT(*) AS n FROM t GROUP BY ROLLUP(k)",
+            "SELECT k, (SELECT COUNT(*)) AS c, COUNT(*) AS n FROM t GROUP BY k "
+            "UNION ALL SELECT NULL AS k, (SELECT COUNT(*)) AS c, COUNT(*) AS n FROM t",
+            id="s007-002-near-miss-own-aggregate-too",
+        ),
+    ],
+)
+def test_a_nested_aggregate_next_to_the_grand_total_stays_proven(left, right):
+    for rows in ([], [(1,), (2,), (3,)], [(None,), (1,), (1,)]):
+        assert not _rows_differ(left, right, rows)
+    assert prove_equivalent_algebraic(left, right, dialect="bigquery").proven

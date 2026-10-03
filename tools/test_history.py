@@ -529,18 +529,23 @@ def slow_tests(records: list[dict]) -> dict[str, float]:
     return {nodeid: round(statistics.median(values), 1) for nodeid, values in seen.items()}
 
 
-def build_order(records: list[dict], risky_limit: int = 40) -> dict:
+def build_order(records: list[dict], risky_limit: int = 40, root: Path | None = None) -> dict:
+    """The order file; with ``root``, only tests whose files exist there (other branches' new tests are left out)."""
+
+    def here(nodeid: str) -> bool:
+        return root is None or (root / nodeid.split("::", 1)[0]).is_file()
+
     counts = failure_counts(records)
     collateral = collateral_counts(records)
     risky = sorted(
-        (n for n, e in counts.items() if e["failed"] >= 1),
+        (n for n, e in counts.items() if e["failed"] >= 1 and here(n)),
         key=lambda n: (-collateral.get(n, {}).get("runs", 0), -counts[n]["failed"], n),
     )[:risky_limit]
     return {
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "runs": len(records),
         "slow_seconds": SLOW_SECONDS,
-        "slow": dict(sorted(slow_tests(records).items(), key=lambda kv: -kv[1])),
+        "slow": dict(sorted(((n, s) for n, s in slow_tests(records).items() if here(n)), key=lambda kv: -kv[1])),
         "risky": risky,
     }
 
@@ -676,7 +681,7 @@ def command_order(args) -> int:
     if not records:
         print("No test history to build an order from.", file=sys.stderr)
         return 1
-    order = build_order(records)
+    order = build_order(records, root=ROOT)
     target = Path(args.output)
     if args.write:
         target.write_text(json.dumps(order, indent=1) + "\n", encoding="utf-8")

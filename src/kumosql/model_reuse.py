@@ -33,7 +33,7 @@ from sqlglot import exp
 from sqlglot.optimizer.merge_subqueries import merge_subqueries
 from sqlglot.optimizer.qualify import qualify
 
-from .ast_utils import extended_grouping, inside as _inside
+from .ast_utils import captured_names, grouping_elements, inside as _inside
 from .smt_equivalence import SmtStatus, TableConstraints
 
 
@@ -98,6 +98,33 @@ def _lowercase(tree: exp.Expression) -> exp.Expression:
         ident.set("this", ident.name.lower())
         ident.set("quoted", False)
     return tree
+
+
+def _name_clash(sqls: Sequence[str], schema: Mapping[str, Sequence[str]], dialect: str, model_name: str) -> str:
+    """Why dropping schema prefixes (as :func:`_plain` and :func:`_prepare` do) would make two tables one, or ``""``.
+
+    The schema names tables by their last part, so ``a.t`` and ``b.t`` both become ``t``: that is only sound
+    when every spelling of ``t`` across the query and the model is the same table. A WITH table called ``t``
+    would capture a read of ``a.t`` once the prefix is gone, and a table called like the model would be
+    replaced by the model's definition, so both are refused too.
+    """
+
+    known = {t.lower() for t in schema}
+    spellings: dict[str, set[tuple[str, ...]]] = {}
+    for sql in sqls:
+        tree = _lowercase(sqlglot.parse_one(sql, read=dialect))
+        for table in tree.find_all(exp.Table):
+            if model_name and table.name == model_name.lower():
+                return f"the SQL reads a table called {model_name}, the name the model is given"
+            prefix = tuple(p.name for p in (table.args.get("catalog"), table.args.get("db")) if p is not None and p.name)
+            spellings.setdefault(table.name, set()).add(prefix)
+        for cte in tree.find_all(exp.CTE):
+            spellings.setdefault(cte.alias_or_name.lower(), set()).add(("<with>",))
+    for name, found in sorted(spellings.items()):
+        if name in known and len(found) > 1:
+            shown = sorted(".".join((*p, name)) if p != ("<with>",) else f"WITH {name}" for p in found)
+            return f"{' and '.join(shown)} would be read as the same table {name}"
+    return ""
 
 
 def _plain(sql: str, schema: Mapping[str, Sequence[str]], dialect: str) -> exp.Expression:
@@ -240,7 +267,7 @@ def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None)
         tables.append((table.alias_or_name, table.name))
     conjuncts += _split_and(tree.args.get("where"))
     outputs = list(tree.expressions)
-    group = extended_grouping(tree.args.get("group"))
+    group = grouping_elements(tree.args.get("group"))
     if tree.args.get("group") and tree.args["group"].args.get("totals") or any(isinstance(g, (exp.Rollup, exp.Cube)) and not g.expressions for g in group):
         raise _Unsupported("WITH ROLLUP, WITH CUBE or WITH TOTALS")
     having = tree.args["having"].this if tree.args.get("having") else None
@@ -899,6 +926,12 @@ def rewrite_over_model(
 
     from .algebraic_equivalence import prove_equivalent_algebraic
 
+    try:
+        clash = _name_clash((query_sql, model_sql), schema, dialect, model_name)
+    except sqlglot.errors.SqlglotError as error:
+        return ModelReuse("unsupported", f"parse error: {error}")
+    if clash:
+        return ModelReuse("unsupported", clash)
     nn = not_null_columns(constraints)
     opaque = ""  # why the proposer cannot read the model, when it cannot
     model: _Block | None
@@ -982,6 +1015,8 @@ def rewrite_over_model(
     for candidate in candidates:
         replacement = sqlglot.parse_one(candidate.sql, read="postgres")
         tried += 1
+        if _captures_model_reads(replacement, model_name, named_model):
+            continue  # the model's definition would read the replacement's WITH table instead of its own source
         replacement_sql = _inline(replacement, model_name, named_model)
         try:
             result = prove_equivalent_algebraic(
@@ -1014,6 +1049,19 @@ ORDER_ASSUMPTION = "the rows are compared as a bag; ORDER BY keys are carried ov
 
 def query_has_order(tree: exp.Expression) -> bool:
     return isinstance(tree, exp.Query) and bool(tree.args.get("order"))
+
+
+def _captures_model_reads(replacement: exp.Expression, model_name: str, named_model: str) -> bool:
+    """Where ``replacement`` reads the model, a WITH table in scope shares the name of a table the model reads."""
+
+    if not any(replacement.find_all(exp.CTE)):
+        return False
+    model = sqlglot.parse_one(named_model, read="postgres")
+    return any(
+        captured_names(model, table)
+        for table in replacement.find_all(exp.Table)
+        if table.name == model_name and not table.args.get("db")
+    )
 
 
 def _inline(replacement: exp.Expression, model_name: str, named_model: str) -> str:

@@ -39,6 +39,7 @@ from .incremental import (
     _row_wise,
     _strip,
     _watermark_predicate,
+    modelled_exactly,
     prove_watermark,
 )
 
@@ -48,7 +49,7 @@ _GROUP_AGGREGATES = (exp.Sum, exp.Count, exp.Max, exp.Min, exp.Avg, exp.CountIf)
 
 
 def _parse(model: IncrementalModel) -> tuple[exp.Expression, exp.Expression] | None:
-    if model.pre_operations:
+    if model.pre_operations or not modelled_exactly(model):
         return None
     try:
         full = sqlglot.parse_one(model.full_sql, read=model.dialect)
