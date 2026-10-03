@@ -432,33 +432,50 @@ def _flat(tree: exp.Expression) -> exp.Expression:
 class Executor:
     """A pipeline materialised in DuckDB, one database after another on one connection.
 
-    The models are translated to DuckDB once and the source tables created once; each database swaps the source
-    rows and re-creates every model table in dependency order, as a fresh connection would.
+    Each model is translated to DuckDB once, when first reached, and the source tables are created once; each
+    database drops the last one's model tables, swaps the source rows and creates every model table again in
+    dependency order, as a fresh connection would.
     """
 
     def __init__(self, pipeline):
         import duckdb
 
-        self.models = []
-        for key in pipeline.topological_order():
-            tree = _flat(sqlglot.parse_one(pipeline.models[key].sql, read="bigquery"))
-            self.models.append(("an__" + key.split(".")[-1], tree.sql(dialect="duckdb")))
+        from kumosql.bigquery_on_duckdb import configure
+
+        self.pipeline = pipeline
+        self.order = list(pipeline.topological_order())
+        self.sql: dict[str, str] = {}
+        self.created: list[str] = []
         self.con = duckdb.connect(":memory:")
+        configure(self.con)  # the models are BigQuery: run them as BigQuery does, or fail where it fails
         types = {"status": "VARCHAR", "region": "VARCHAR", "tier": "VARCHAR", "kind": "VARCHAR"}
         for table, columns in SOURCES.items():
             self.con.execute(f'CREATE TABLE "raw__{table}" (' + ", ".join(f"{c} {types.get(c, 'BIGINT')}" for c in columns) + ")")
 
+    def _model_sql(self, key: str) -> str:
+        from kumosql.bigquery_on_duckdb import faithful
+
+        if key not in self.sql:  # a model that cannot be translated raises here on every database that reaches it
+            tree = _flat(sqlglot.parse_one(self.pipeline.models[key].sql, read="bigquery"))
+            self.sql[key] = faithful(tree).sql(dialect="duckdb")
+        return self.sql[key]
+
     def execute(self, db: dict[str, list[tuple]], outputs: list[str]) -> dict[str, Counter]:
         """Materialise every model on ``db`` and return each requested model as a bag."""
 
+        from kumosql.bigquery_on_duckdb import bigquery_rows
         from kumosql.duckdb_load import insert_rows
 
+        while self.created:  # the last database's model tables, so each CREATE TABLE starts as on a fresh connection
+            self.con.execute(f'DROP TABLE "{self.created.pop()}"')
         for table in SOURCES:
             self.con.execute(f'DELETE FROM "raw__{table}"')
             insert_rows(self.con, f'"raw__{table}"', db[table])
-        for name, sql in self.models:
-            self.con.execute(f'CREATE OR REPLACE TABLE "{name}" AS {sql}')
-        return {out: Counter(self.con.execute(f'SELECT * FROM "an__{out}"').fetchall()) for out in outputs}
+        for key in self.order:
+            name = "an__" + key.split(".")[-1]
+            self.con.execute(f'CREATE TABLE "{name}" AS ' + self._model_sql(key))
+            self.created.append(name)
+        return {out: Counter(bigquery_rows(self.con.execute(f'SELECT * FROM "an__{out}"').fetchall())) for out in outputs}
 
     def close(self) -> None:
         self.con.close()
@@ -479,12 +496,19 @@ def executed_check(pipeline, case: Case, rename: dict[str, str], trials: int, se
 
     rng = random.Random(seed)
     dbs = databases if databases is not None else [random_database(rng) for _ in range(trials)]
+    from kumosql.bigquery_on_duckdb import is_bigquery_failure
+
     executor = None
     try:
         for db in dbs:
-            executor = executor or Executor(pipeline)
             names = [*case.outputs, *(rename[o] for o in case.outputs if o in rename)]
-            bags = executor.execute(db, names)
+            try:
+                executor = executor or Executor(pipeline)
+                bags = executor.execute(db, names)
+            except Exception as error:
+                if is_bigquery_failure(error):
+                    continue  # BigQuery fails on this database: it tells the pipelines apart nowhere
+                raise
             for out in case.outputs:
                 if bags[out] != bags[rename.get(out, out)]:
                     return False, {"database": db, "output": out}

@@ -38,6 +38,8 @@ ASSET_FAILURE_CODES = frozenset(
         "skipped_statements",
         "unparsed_operation",
         "ambiguous_reference",
+        "insert_target_columns",
+        "template_columns",
     }
 )
 
@@ -50,6 +52,8 @@ _EFFECTS = {
     "external_tables": ("lineage",),
     "unresolved_template": ("graph", "lineage", "impact", "dead_columns"),
     "lineage_skipped": ("lineage", "impact", "dead_columns"),
+    "insert_target_columns": ("lineage", "impact", "dead_columns"),
+    "template_columns": ("impact", "dead_columns"),
 }
 
 # Kinds shared with the graph page's gaps table; other codes keep their own name.

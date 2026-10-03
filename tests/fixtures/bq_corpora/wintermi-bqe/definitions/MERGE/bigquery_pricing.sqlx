@@ -1,0 +1,34 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.TARGET_DATA,
+  dependencies: ["stg_bigquery_pricing"],
+  bigquery: {
+    clusterBy: ["bq_region"],
+  },
+  assertions: {
+    uniqueKey: ["bq_region"]
+  },
+  tags: ["MERGE_DATA"]
+}
+
+
+SELECT
+    bq_region
+  , bq_region_name
+  , active_logical_storage_list_price
+  , long_term_logical_storage_list_price
+  , active_physical_storage_list_price
+  , long_term_physical_storage_list_price
+  , bq_standard_edition
+  , bq_enterprise_edition
+  , bq_enterprise_1_year
+  , bq_enterprise_3_years
+  , bq_enterprise_plus_edition
+  , bq_enterprise_plus_1_year
+  , bq_enterprise_plus_3_years
+  , bq_flat_rate_flex
+  , bq_flat_rate_monthly
+  , bq_flat_rate_annual
+  , bq_on_demand
+  , bq_on_demand_after
+FROM ${ ref({ schema: dataform.projectConfig.vars.STAGING_DATA, name: "stg_bigquery_pricing" }) }

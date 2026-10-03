@@ -161,10 +161,14 @@ def random_tables(schema: Schema, seed: int, domains: dict[str, list], rows: int
     return out
 
 
-def _connect(schema: Schema):
+def _connect(schema: Schema, dialect: str = "postgres"):
     import duckdb
 
     db = duckdb.connect(":memory:")
+    if dialect == "bigquery":
+        from .bigquery_on_duckdb import configure
+
+        configure(db)
     for table in schema.tables:
         not_null = schema.not_null(table)
         columns = ", ".join(f'"{c.name}" {_DUCK_TYPES[c.type]}{" NOT NULL" if c.name in not_null else ""}' for c in table.columns)
@@ -206,6 +210,10 @@ def _duck(sql: str, dialect: str) -> str:
         sql = canonical_literals(sql)
     try:
         tree = sqlglot.parse_one(sql, read=dialect).transform(_floor_to_unit).transform(_quote_reserved)
+        if dialect == "bigquery":
+            from .bigquery_on_duckdb import faithful
+
+            tree = faithful(tree)
         return tree.sql(dialect="duckdb")
     except sqlglot.errors.SqlglotError as error:
         raise CheckError(f"cannot translate: {error}") from error
@@ -240,6 +248,22 @@ def _load(db, schema: Schema, tables: dict[str, list[tuple]]) -> None:
             db.execute(f'INSERT INTO "{table.name}" VALUES {values}')
 
 
+def _reader(dialect: str):
+    """BigQuery-dialect rows as BigQuery returns them (other dialects as DuckDB returns them)."""
+
+    if dialect != "bigquery":
+        return lambda rows: rows
+    from .bigquery_on_duckdb import bigquery_rows
+
+    return bigquery_rows
+
+
+def _bigquery_failure(error: BaseException) -> bool:
+    from .bigquery_on_duckdb import is_bigquery_failure
+
+    return is_bigquery_failure(error)
+
+
 def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dialect: str = "postgres", modes: Sequence[str] = ("bag",)) -> dict[str, Witness | None]:
     """Run the pair of ``queries`` ([a, b]) on every seed; per mode, the first database where it fails, else None."""
 
@@ -247,7 +271,8 @@ def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dia
 
     a_sql, b_sql = (_duck(q, dialect) for q in queries)
     domains = _domains(list(queries))
-    db = _connect(schema)
+    db = _connect(schema, dialect)
+    read = _reader(dialect)
     found: dict[str, Witness | None] = {m: None for m in modes}
     # A database already run gives the same rows again (every ninth seed is the all-empty one), and two queries
     # that translate to the same DuckDB text give the same rows: run each only once.
@@ -260,14 +285,18 @@ def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dia
         seen.add(content)
         _load(db, schema, tables)
         try:
-            a = Counter(tuple(_norm(v) for v in row) for row in db.execute(a_sql).fetchall())
-            b = a if b_sql == a_sql else Counter(tuple(_norm(v) for v in row) for row in db.execute(b_sql).fetchall())
-        except duckdb.Error as error:
-            raise CheckError(str(error)) from error
+            a = Counter(tuple(_norm(v) for v in row) for row in read(db.execute(a_sql).fetchall()))
+            b = a if b_sql == a_sql else Counter(tuple(_norm(v) for v in row) for row in read(db.execute(b_sql).fetchall()))
+        except Exception as error:
+            if dialect == "bigquery" and _bigquery_failure(error):
+                continue  # BigQuery fails on this database: it shows nothing either way
+            if isinstance(error, duckdb.Error):
+                raise CheckError(str(error)) from error
+            raise
         if a != b:
             try:
-                plain = [Counter(tuple(_norm(v) for v in row) for row in rows) for rows in run_unoptimized(db, a_sql, b_sql)]
-            except duckdb.Error:
+                plain = [Counter(tuple(_norm(v) for v in row) for row in read(rows)) for rows in run_unoptimized(db, a_sql, b_sql)]
+            except Exception:
                 plain = None
             if plain != [a, b]:
                 continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
@@ -293,12 +322,19 @@ def find_difference(schema: Schema, left: str, right: str, *, mode: str = "bag",
 def replay(schema: Schema, witness: Witness, left: str, right: str, *, mode: str = "subbag", dialect: str = "postgres") -> bool:
     """Re-run both queries on the witness database alone: does it separate them under ``mode``?"""
 
-    db = _connect(schema)
+    db = _connect(schema, dialect)
     _load(db, schema, witness.tables)
     left_sql, right_sql = _duck(left, dialect), _duck(right, dialect)
-    a = Counter(tuple(_norm(v) for v in row) for row in db.execute(left_sql).fetchall())
-    b = Counter(tuple(_norm(v) for v in row) for row in db.execute(right_sql).fetchall())
-    if [Counter(tuple(_norm(v) for v in row) for row in rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
+    read = _reader(dialect)
+    try:
+        a = Counter(tuple(_norm(v) for v in row) for row in read(db.execute(left_sql).fetchall()))
+        b = Counter(tuple(_norm(v) for v in row) for row in read(db.execute(right_sql).fetchall()))
+        plain = [Counter(tuple(_norm(v) for v in row) for row in read(rows)) for rows in run_unoptimized(db, left_sql, right_sql)]
+    except Exception as error:
+        if dialect == "bigquery" and _bigquery_failure(error):
+            return False  # BigQuery fails on the witness database: it separates nothing
+        raise
+    if plain != [a, b]:
         return False  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
     if mode in ("set", "subset"):
         a, b = Counter(set(a)), Counter(set(b))

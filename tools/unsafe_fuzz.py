@@ -68,8 +68,11 @@ class Oracle:
     def __init__(self, trials: int = 40, seed: int = 7):
         import duckdb
 
+        from kumosql.bigquery_on_duckdb import configure
+
         self._duckdb = duckdb
         self.db = duckdb.connect(":memory:")
+        configure(self.db)  # BigQuery's reading of the queries, or a failure where BigQuery fails
         for table in TABLES:
             self.db.execute(f"CREATE TABLE {table} ({', '.join(c + ' BIGINT' for c in COLUMNS)})")
         self.trials = trials
@@ -97,17 +100,27 @@ class Oracle:
         return data
 
     def run(self, sql: str) -> Counter:
+        from kumosql.bigquery_on_duckdb import bigquery_rows, faithful
+
         text = self._duck.get(sql)
         if text is None:
-            text = self._duck[sql] = sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]
-        return Counter(tuple(row) for row in self.db.execute(text).fetchall())
+            text = self._duck[sql] = faithful(sqlglot.parse_one(sql, read="bigquery")).sql(dialect="duckdb")
+        return Counter(bigquery_rows(self.db.execute(text).fetchall()))
 
     def compare(self, left: str, right: str, data: dict[str, list[tuple]] | None = None):
-        """``(left_rows, right_rows)`` on ``data`` when the bags differ, else ``None``."""
+        """``(left_rows, right_rows)`` on ``data`` when the bags differ, else ``None`` (also when
+        BigQuery fails on ``data``: such a database separates nothing)."""
+
+        from kumosql.bigquery_on_duckdb import is_bigquery_failure
 
         self.load(data)
-        a = self.run(left)
-        b = a if right == left else self.run(right)  # the same query gives the same rows (a validity check)
+        try:
+            a = self.run(left)
+            b = a if right == left else self.run(right)  # the same query gives the same rows (a validity check)
+        except Exception as error:
+            if is_bigquery_failure(error):
+                return None
+            raise
         return None if a == b else (a, b)
 
     def search(self, left: str, right: str):
