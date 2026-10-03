@@ -59,10 +59,28 @@ def fails(db, sql: str) -> bool:
 
 
 def test_row6_nulls_sort_first_ascending_and_last_descending(db):
-    # also for SQL that does not spell NULLS FIRST (sqlglot writes it; raw DuckDB SQL may not)
-    assert db.execute("SELECT x FROM (VALUES (2), (NULL), (1)) t(x) ORDER BY x").fetchall() == [(None,), (1,), (2,)]
-    assert db.execute("SELECT x FROM (VALUES (2), (NULL), (1)) t(x) ORDER BY x DESC").fetchall() == [(2,), (1,), (None,)]
+    # BigQuery: NULL first ascending, last descending, unless the query says otherwise
+    rows = "FROM UNNEST([2, NULL, 1]) x"
+    assert run(db, f"SELECT x {rows} ORDER BY x") == [(None,), (1,), (2,)]
+    assert run(db, f"SELECT x {rows} ORDER BY x DESC") == [(2,), (1,), (None,)]
     assert run(db, "SELECT x, SUM(1) OVER (ORDER BY x) FROM UNNEST([3, NULL, 1]) x ORDER BY x") == [(None, 1), (1, 2), (3, 3)]
+
+
+def test_countif_is_zero_over_no_rows_or_only_nulls(db):
+    # BigQuery: COUNTIF over no rows or only NULL conditions is 0; DuckDB's count_if gives NULL
+    assert one(db, "SELECT COUNTIF(x > 1) FROM UNNEST(CAST([] AS ARRAY<INT64>)) x") == 0
+    assert one(db, "SELECT COUNTIF(x) FROM UNNEST([CAST(NULL AS BOOL)]) x") == 0
+    assert one(db, "SELECT COUNTIF(x > 1) FROM UNNEST([1, 2, 3]) x") == 2
+    assert run(db, "SELECT COUNTIF(x > 1) OVER (ORDER BY x) FROM UNNEST([1, 2]) x ORDER BY x") == [(0,), (1,)]
+
+
+def test_explicit_nulls_last_and_first_are_kept(db):
+    # sqlglot writes ASC NULLS LAST as a bare ASC (DuckDB's default): BigQuery returns 1 here, not NULL
+    rows = "FROM UNNEST([1, NULL, 2]) x"
+    assert run(db, f"SELECT x {rows} ORDER BY x ASC NULLS LAST LIMIT 1") == [(1,)]
+    assert run(db, f"SELECT x {rows} ORDER BY x DESC NULLS FIRST LIMIT 1") == [(None,)]
+    assert run(db, f"SELECT ROW_NUMBER() OVER (ORDER BY x NULLS LAST) AS r, x {rows} ORDER BY r") == [(1, 1), (2, 2), (3, None)]
+    assert run(db, f"SELECT ROW_NUMBER() OVER (ORDER BY x) AS r, x {rows} ORDER BY r") == [(1, None), (2, 1), (3, 2)]
 
 
 def test_rows24_25_timestamps_are_read_in_utc(db):

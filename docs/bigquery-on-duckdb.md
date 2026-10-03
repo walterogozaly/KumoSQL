@@ -4,7 +4,7 @@ Every refutation KumoSQL reports from execution runs BigQuery SQL on DuckDB afte
 
 It does three things.
 
-**Session settings** (`configure(connection)`): `NULL` sorts first ascending and last descending, as in BigQuery, and timestamps are read in UTC whatever the machine's zone.
+**Session settings** (`configure(connection)`): timestamps are read in UTC whatever the machine's zone. NULL order needs no setting: sqlglot writes BigQuery's (`NULL` first ascending, last descending) against DuckDB's default, spelling `NULLS FIRST` where the two differ and leaving `ASC NULLS LAST` bare, so a session default would flip the keys it leaves bare.
 
 **Translation fixes** (`faithful(tree)`), each checked against BigQuery itself:
 
