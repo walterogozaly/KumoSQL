@@ -296,14 +296,15 @@ def generate_synthetic_dataset(
         if not columns:
             raise ValueError(f"table {table_name!r} has no columns")
         count = 0 if seed == 0 else rng.randint(1, rows_per_table)
+        # Values are drawn in column-name order and placed in the declared order, so listing the same
+        # columns in another order gives the same values per column (the declared order is kept for SELECT *).
+        draw_order = sorted(range(len(columns)), key=lambda i: (columns[i][0].lower(), columns[i][0], columns[i][1]))
         rows: list[Row] = []
         for _ in range(count):
-            rows.append(
-                tuple(
-                    None if rng.random() < null_rate else _draw(rng, col_type, extras)
-                    for _, col_type in columns
-                )
-            )
+            row: list[Any] = [None] * len(columns)
+            for index in draw_order:
+                row[index] = None if rng.random() < null_rate else _draw(rng, columns[index][1], extras)
+            rows.append(tuple(row))
         table_rules = rules.get(table_name.lower()) if rules is not None else None
         rows = respect_rules(columns, rows, table_rules)
         if rows and not (table_rules and table_rules.keys):
