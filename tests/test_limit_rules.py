@@ -303,7 +303,6 @@ def test_order_by_uncast_needs_a_documented_32_bit_int(dialect):
     assert _uncast(dialect, "int") is None
 
 
-@pytest.mark.xfail(strict=True, reason="cast_rules._declared still reads every declared type as MySQL (S007-003)")
 def test_s007_001_uncast_snowflake_int_is_not_proven():
     assert not _uncast_proven("snowflake")
 
