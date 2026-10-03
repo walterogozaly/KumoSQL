@@ -429,26 +429,49 @@ def _flat(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+class Executor:
+    """A pipeline materialised in DuckDB, one database after another on one connection.
+
+    The models are translated to DuckDB once and the source tables created once; each database swaps the source
+    rows and re-creates every model table in dependency order, as a fresh connection would.
+    """
+
+    def __init__(self, pipeline):
+        import duckdb
+
+        self.models = []
+        for key in pipeline.topological_order():
+            tree = _flat(sqlglot.parse_one(pipeline.models[key].sql, read="bigquery"))
+            self.models.append(("an__" + key.split(".")[-1], tree.sql(dialect="duckdb")))
+        self.con = duckdb.connect(":memory:")
+        types = {"status": "VARCHAR", "region": "VARCHAR", "tier": "VARCHAR", "kind": "VARCHAR"}
+        for table, columns in SOURCES.items():
+            self.con.execute(f'CREATE TABLE "raw__{table}" (' + ", ".join(f"{c} {types.get(c, 'BIGINT')}" for c in columns) + ")")
+
+    def execute(self, db: dict[str, list[tuple]], outputs: list[str]) -> dict[str, Counter]:
+        """Materialise every model on ``db`` and return each requested model as a bag."""
+
+        from kumosql.duckdb_load import insert_rows
+
+        for table in SOURCES:
+            self.con.execute(f'DELETE FROM "raw__{table}"')
+            insert_rows(self.con, f'"raw__{table}"', db[table])
+        for name, sql in self.models:
+            self.con.execute(f'CREATE OR REPLACE TABLE "{name}" AS {sql}')
+        return {out: Counter(self.con.execute(f'SELECT * FROM "an__{out}"').fetchall()) for out in outputs}
+
+    def close(self) -> None:
+        self.con.close()
+
+
 def execute(pipeline, db: dict[str, list[tuple]], outputs: list[str]) -> dict[str, Counter]:
     """Materialise every model in DuckDB on ``db`` and return each requested model as a bag."""
 
-    import duckdb
-
-    con = duckdb.connect(":memory:")
-    for table, columns in SOURCES.items():
-        types = {"status": "VARCHAR", "region": "VARCHAR", "tier": "VARCHAR", "kind": "VARCHAR"}
-        con.execute(f'CREATE TABLE "raw__{table}" (' + ", ".join(f"{c} {types.get(c, 'BIGINT')}" for c in columns) + ")")
-        if db[table]:
-            con.executemany(f'INSERT INTO "raw__{table}" VALUES ({", ".join("?" * len(columns))})', db[table])
-    for key in pipeline.topological_order():
-        model = pipeline.models[key]
-        tree = _flat(sqlglot.parse_one(model.sql, read="bigquery"))
-        name = "an__" + key.split(".")[-1]
-        con.execute(f'CREATE TABLE "{name}" AS ' + tree.sql(dialect="duckdb"))
-    result = {}
-    for out in outputs:
-        result[out] = Counter(con.execute(f'SELECT * FROM "an__{out}"').fetchall())
-    return result
+    executor = Executor(pipeline)
+    try:
+        return executor.execute(db, outputs)
+    finally:
+        executor.close()
 
 
 def executed_check(pipeline, case: Case, rename: dict[str, str], trials: int, seed: int = 7, databases=None):
@@ -456,13 +479,19 @@ def executed_check(pipeline, case: Case, rename: dict[str, str], trials: int, se
 
     rng = random.Random(seed)
     dbs = databases if databases is not None else [random_database(rng) for _ in range(trials)]
-    for db in dbs:
-        names = [*case.outputs, *(rename[o] for o in case.outputs if o in rename)]
-        bags = execute(pipeline, db, names)
-        for out in case.outputs:
-            if bags[out] != bags[rename.get(out, out)]:
-                return False, {"database": db, "output": out}
-    return True, None
+    executor = None
+    try:
+        for db in dbs:
+            executor = executor or Executor(pipeline)
+            names = [*case.outputs, *(rename[o] for o in case.outputs if o in rename)]
+            bags = executor.execute(db, names)
+            for out in case.outputs:
+                if bags[out] != bags[rename.get(out, out)]:
+                    return False, {"database": db, "output": out}
+        return True, None
+    finally:
+        if executor is not None:
+            executor.close()
 
 
 # --------------------------------------------------------------------- scoring

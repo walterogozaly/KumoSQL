@@ -249,12 +249,19 @@ def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dia
     domains = _domains(list(queries))
     db = _connect(schema)
     found: dict[str, Witness | None] = {m: None for m in modes}
+    # A database already run gives the same rows again (every ninth seed is the all-empty one), and two queries
+    # that translate to the same DuckDB text give the same rows: run each only once.
+    seen: set[str] = set()
     for seed in seeds:
         tables = random_tables(schema, seed, domains)
+        content = repr(tables)
+        if content in seen:
+            continue
+        seen.add(content)
         _load(db, schema, tables)
         try:
             a = Counter(tuple(_norm(v) for v in row) for row in db.execute(a_sql).fetchall())
-            b = Counter(tuple(_norm(v) for v in row) for row in db.execute(b_sql).fetchall())
+            b = a if b_sql == a_sql else Counter(tuple(_norm(v) for v in row) for row in db.execute(b_sql).fetchall())
         except duckdb.Error as error:
             raise CheckError(str(error)) from error
         if a != b:

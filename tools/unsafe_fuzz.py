@@ -74,14 +74,14 @@ class Oracle:
             self.db.execute(f"CREATE TABLE {table} ({', '.join(c + ' BIGINT' for c in COLUMNS)})")
         self.trials = trials
         self.seed = seed
+        self._duck: dict[str, str] = {}  # BigQuery text -> DuckDB text; a search runs each pair up to 2 * trials times
 
     def load(self, data: dict[str, list[tuple]]) -> None:
+        from kumosql.duckdb_load import insert_rows
+
         for table in TABLES:
             self.db.execute(f"DELETE FROM {table}")
-            rows = data.get(table, [])
-            if rows:
-                marks = ", ".join("?" * len(COLUMNS))
-                self.db.executemany(f"INSERT INTO {table} VALUES ({marks})", rows)
+            insert_rows(self.db, table, data.get(table, []))
 
     def random_data(self, rng: random.Random) -> dict[str, list[tuple]]:
         data = {}
@@ -97,14 +97,17 @@ class Oracle:
         return data
 
     def run(self, sql: str) -> Counter:
-        text = sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]
+        text = self._duck.get(sql)
+        if text is None:
+            text = self._duck[sql] = sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]
         return Counter(tuple(row) for row in self.db.execute(text).fetchall())
 
     def compare(self, left: str, right: str, data: dict[str, list[tuple]] | None = None):
         """``(left_rows, right_rows)`` on ``data`` when the bags differ, else ``None``."""
 
         self.load(data)
-        a, b = self.run(left), self.run(right)
+        a = self.run(left)
+        b = a if right == left else self.run(right)  # the same query gives the same rows (a validity check)
         return None if a == b else (a, b)
 
     def search(self, left: str, right: str):
