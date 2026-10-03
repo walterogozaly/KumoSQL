@@ -415,6 +415,24 @@ def table_parts(table: exp.Table) -> list[str]:
     return [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
 
 
+def same_table(a: exp.Table, b: exp.Table, dialect: str = "bigquery") -> bool:
+    """Whether two table references certainly name one relation: every part (catalog, dataset, table) matches.
+
+    A part one reference spells and the other leaves out may resolve to anything, so they count as
+    different. BigQuery dataset and table names are case-sensitive and kept as written (project ids are
+    lower case anyway); other dialects fold each part as they resolve it (unquoted parts, say).
+    """
+
+    def identity(table: exp.Table) -> list[str]:
+        if (dialect or "bigquery") == "bigquery":
+            return [p.name for p in table.parts]
+        resolver = sqlglot.Dialect.get_or_raise(dialect)
+        copy = table.copy()  # normalizing rewrites the identifier in place; the copy keeps its parent table
+        return [resolver.normalize_identifier(p).name if isinstance(p, exp.Identifier) else p.sql(dialect=dialect) for p in copy.parts]
+
+    return identity(a) == identity(b)
+
+
 def with_arg_key(node: exp.Expression) -> str:
     """Return the sqlglot WITH argument name across supported versions."""
 

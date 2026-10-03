@@ -1882,7 +1882,7 @@ class _Prover:
                 if value is not None and kind in ("count", "count*"):
                     facts.append(z3.And(V.is_Num(value.val), z3.IsInt(V.num(value.val)), V.num(value.val) >= (1 if kind == "count*" else 0)))
             for s in occs:
-                if s.opaque or s.table.lower() != table:
+                if s.opaque or s.table != table:
                     continue
                 pairs = [(s.cols.get(k), d.cols.get(f"c{i}")) for k, i in keys]
                 if any(a is None or b is None for a, b in pairs):
@@ -2603,7 +2603,7 @@ class _Prover:
                 continue
             inner = sub.occs[0]
             for occ in block.occs:
-                if occ.table.lower() != inner.table.lower() or occ.columns != inner.columns:
+                if occ.table != inner.table or occ.columns != inner.columns:  # BigQuery: ds.T is not ds.t
                     continue
                 extra.append(z3.Implies(_subst(sub.guard, _occ_pairs(inner, occ)), sub.atom))
         if extra:
@@ -3311,7 +3311,7 @@ def _group_shape(key: str):
             else:
                 outputs.append((None, None))
         if {k for k, _ in keys} == group_names:
-            shape = (_Compiler._table_key(from_.this).lower(), keys, outputs)
+            shape = (_Compiler._table_key(from_.this), keys, outputs)
     _GROUP_SHAPES[key] = shape
     return shape
 
