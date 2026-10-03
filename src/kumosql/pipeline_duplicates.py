@@ -29,15 +29,19 @@ def _plain_sql(node: exp.Expression) -> str:
     different tables. (A one-part name is usually a CTE, whose name has no case either.)
     """
 
-    if not any(table.args.get("db") or table.args.get("catalog") for table in node.find_all(exp.Table)):
+    def cased_table_parts(tree: exp.Expression) -> set[int]:
+        return {
+            id(part)
+            for table in tree.find_all(exp.Table)
+            if table.args.get("db") or table.args.get("catalog")
+            for part in table.parts
+            if isinstance(part, exp.Identifier) and not part.quoted and part.name != part.name.lower()
+        }
+
+    if not cased_table_parts(node):  # nothing that lower-casing would change
         return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
     copy = node.copy()
-    keep = {
-        id(part)
-        for table in copy.find_all(exp.Table)
-        if table.args.get("db") or table.args.get("catalog")
-        for part in table.parts
-    }
+    keep = cased_table_parts(copy)
     for identifier in copy.find_all(exp.Identifier):
         if id(identifier) not in keep and not identifier.quoted:
             identifier.set("this", identifier.this.lower())
