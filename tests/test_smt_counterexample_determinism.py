@@ -61,37 +61,26 @@ def test_repeated_lookup_join_counterexample_is_stable(imports):
     assert done.returncode == 0, done.stdout + done.stderr
 
 
-def test_isolated_candidate_search_keeps_the_solver_timeout(monkeypatch):
-    """Z3's translate() drops the timeout and work cap, so the isolated solver must get them back (#472)."""
+def test_isolated_candidate_search_keeps_the_solver_limits(monkeypatch):
+    """A fresh Z3 solver has no timeout or work cap of its own, so the isolated one must be given both (#472)."""
     import z3
     from kumosql.smt_equivalence import _Prover
     from kumosql.solver_lock import WORK_PER_MS
 
     prover = _Prover(250)
     solver = z3.Solver()
-    solver.set("timeout", prover.timeout_ms)
     solver.add(z3.Int("x") > 0)
     assert solver.check() == z3.sat
 
-    translated = []
-    real_translate, real_set = z3.Solver.translate, z3.Solver.set
-
-    def translate(self, ctx):
-        out = real_translate(self, ctx)
-        translated.append(out)
-        return out
-
-    timeouts = []
+    limits = []
+    real_set = z3.Solver.set
 
     def set_(self, *args, **kwargs):
         if args[:1] in (("timeout",), ("rlimit",)):
-            timeouts.append((self, args[0], args[1]))
+            limits.append((self.ctx is not solver.ctx, args[0], args[1]))
         return real_set(self, *args, **kwargs)
 
-    monkeypatch.setattr(z3.Solver, "translate", translate)
     monkeypatch.setattr(z3.Solver, "set", set_)
-    prover._counterexample(solver, [])
-    assert translated
-    for s in translated:
-        assert any(t is s and k == "timeout" and v == 250 for t, k, v in timeouts)
-        assert any(t is s and k == "rlimit" and v == 250 * WORK_PER_MS for t, k, v in timeouts)
+    prover._counterexample(solver.assertions(), solver.model(), [])
+    assert (True, "timeout", 250) in limits
+    assert (True, "rlimit", 250 * WORK_PER_MS) in limits

@@ -2114,7 +2114,7 @@ class _Prover:
         self.unknown = False
         self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
-        self.candidates: list[tuple[object, list[_Occ], list[_Val]]] = []
+        self.candidates: list[tuple[object, object, list[_Occ], list[_Val]]] = []
 
     @staticmethod
     def _typing(occs: list[_Occ]):
@@ -2230,12 +2230,14 @@ class _Prover:
     def _candidate(self, solver, occs):
         # Internal proof attempts often discard their candidates or prove the pair.
         # Only extract a model if refutation search actually consumes this candidate.
+        # Keep the asserted terms and the plain model, not the solver: a solver holds its whole search state,
+        # and a prover that collects many candidates would hold all of it until the search ends.
         # Snapshot the values now: occurrences can acquire more columns later.
         values = [v for occ in occs for v in occ.cols.values()]
-        self.candidates.append((solver, list(occs), values))
+        self.candidates.append((solver.assertions(), solver.model(), list(occs), values))
 
-    def _counterexample(self, solver, values):
-        """A model of the last satisfiable check, preferring an integral one.
+    def _counterexample(self, assertions, base, values):
+        """A model of a satisfiable check, preferring an integral one.
 
         Extract candidates in a fresh context: the shared context's term ids can
         change which unconstrained NULL flags Z3 picks across identical calls.
@@ -2243,13 +2245,13 @@ class _Prover:
         against the constraints and both queries before it is returned.
         """
 
-        base = solver.model()
-        isolated = bound(solver.translate(z3.Context()), self.timeout_ms)  # translate() drops the solver's limits
+        context = z3.Context()
+        isolated = bound(z3.Solver(ctx=context), self.timeout_ms)  # a fresh solver has no limits of its own
+        isolated.add(*[assertion.translate(context) for assertion in assertions])
         if isolated.check() != z3.sat:
             return base  # A timeout in the extra search must not lose a satisfiable model.
-        base = isolated.model()
-        model = self._nice_model(isolated, values) or base
-        return model.translate(solver.ctx)
+        model = self._nice_model(isolated, values) or isolated.model()
+        return model.translate(base.ctx)
 
     def _nice_model(self, solver, values):
         """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
@@ -3559,8 +3561,8 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         prover.witness(block.cond.t, block.occs, block.facts)
     empty = z3.Solver()
     empty.check()
-    for solver, occs, values in [(empty, [], [])] + prover.candidates:
-        model = prover._counterexample(solver, values) if occs else solver.model()
+    for assertions, base, occs, values in [(None, empty.model(), [], [])] + prover.candidates:
+        model = prover._counterexample(assertions, base, values) if occs else base
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})
