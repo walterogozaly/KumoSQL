@@ -44,4 +44,6 @@ A model is also reported as changed when only its surroundings changed, even wit
 
 In the app, Change reports can compare the connected git project with another branch.
 
+A repeated piece of SQL that reads a column of the query around it, such as a correlated subquery `(SELECT COUNT(*) FROM u WHERE k = x)` where `x` comes from the outer query, cannot become a shared table of its own, so it is never marked ready or proven. Details are in the [full reference](../docs/cost-and-change-reports.md).
+
 Read a proposal's proof, consumer coverage, assumptions, and readiness together. An incomplete consumer list or unknown cost rationale is still incomplete, even when part of the SQL has a proof. The [UI roadmap](ui-roadmap.md) explains the API payloads behind the views.
