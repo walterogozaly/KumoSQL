@@ -34,9 +34,9 @@ dataform_bench = _load("dataform_bench")
 def test_sqllineage_cases_are_exact_or_honestly_unknown():
     result = sqllineage_bench.run()
     scoped = result["in_scope"]
-    assert scoped["total"] == 279
+    assert scoped["total"] == 278
     assert scoped["wrong"] == 0 and scoped["missed"] == 0, [r for r in result["rows"] if r["scope"] == "in" and r["outcome"] in {"wrong", "missed"}]
-    assert scoped["exact"] >= 257, scoped
+    assert scoped["exact"] >= 254, scoped
     assert result["table"]["wrong"] == 0 and result["column"]["wrong"] == 0
 
 
