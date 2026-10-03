@@ -30,7 +30,7 @@ Moves, each scored on the whole set of tables:
 | merge | An unprotected table that returns the same columns from the same tables as another is replaced by it in its readers. |
 | prune | Columns of an unprotected table that no reader mentions are removed (never under `DISTINCT` or a star read). |
 | simplify | One table's SQL is replaced by a simpler form of itself. |
-| factor | With `factor=True`: a query written in at least two places (a derived table in `FROM` or `JOIN`, a top-level CTE, or a whole table) with the same canonical form and output names, which reads only tables whose columns are known, is moved into one new table (named after the CTE it replaces when there is one), or replaced by an existing table that already returns it. |
+| factor | With `factor=True`: a query written in at least two places (a derived table in `FROM` or `JOIN`, a top-level CTE, or a whole table) with the same canonical form (table aliases and column qualifiers do not matter) and output names, which reads only tables whose columns are known, is moved into one new table (named after the CTE it replaces when there is one), or replaced by an existing table that already returns it. |
 
 The search is greedy: at each step every move is scored, the cheapest are proved first, and the first one proved is taken. A table that could merge into several equal-looking tables tries an exact copy first. A second start folds every unprotected table into its readers at once and then continues greedily; the cheaper proved result wins. A shared intermediate that would be copied into several readers stays when copying costs more.
 

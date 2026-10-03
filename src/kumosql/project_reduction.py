@@ -1006,7 +1006,7 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
     surviving_text = " ".join([*final.values(), *added.values(), *(project.texts.get(k, "") for k in final)]).lower()
     for key, path in sorted(project.declarations.items()):
         name = key.split(".")[-1].lower()
-        if name in project.js_words or name in project.include_words or re.search(rf"\b{re.escape(name)}\b", surviving_text):
+        if name in project.js_words or name in project.include_words or re.search(rf"(?<!\w){re.escape(name)}(?!\w)", surviving_text):
             continue
         try:
             before = _read(project.root / path)

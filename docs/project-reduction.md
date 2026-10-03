@@ -48,7 +48,7 @@ To move one repeated CTE into a shared model and change nothing else, use [Share
 
 `reduce_project` works out the needed actions from the dependency graph, then hands their SQL to [`minimize_tables`](table-minimization.md) with the kept outputs protected, the actions kept as written passed as `fixed`, tables with config assertions as `checked`, `factor=True` and `lower_score_only=True` (a rewrite has to lower the score; equal-score rewrites would only churn the files). Masked `${...}` expressions become one token per distinct expression across the project, so the prover sees the same constant wherever the same expression is written.
 
-Factoring finds a query that is written in at least two places (a derived table in `FROM` or `JOIN`, a top-level CTE, or a whole table), with the same canonical form and output names, that stands on its own (it reads only tables and sources whose columns are known). It moves the query into a new table and replaces each copy with a read of it, or reuses an existing table that already returns it. The step is proved like any other.
+Factoring finds a query that is written in at least two places (a derived table in `FROM` or `JOIN`, a top-level CTE, or a whole table), with the same canonical form (table aliases and column qualifiers do not matter) and output names, that stands on its own (it reads only tables and sources whose columns are known). It moves the query into a new table and replaces each copy with a read of it, or reuses an existing table that already returns it. The step is proved like any other.
 
 ## Eval
 

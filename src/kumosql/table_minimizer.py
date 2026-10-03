@@ -915,9 +915,11 @@ def _nested_columns(columns: Mapping[str, Sequence[str]], keys: Iterable[str]) -
     return nested
 
 
-def _standalone(setup: _Setup, body: exp.Expression, outer_ctes: set[str], columns) -> tuple[str, tuple[str, ...]] | None:
-    """``(sql, output names)`` when ``body`` can be its own table: it reads only tables (no WITH table of the
-    query around it, no column of an outer query), has named outputs and gives the same rows wherever it runs."""
+def _standalone(setup: _Setup, body: exp.Expression, outer_ctes: set[str], columns) -> tuple[str, tuple[str, ...], str] | None:
+    """``(sql, output names, fingerprint)`` when ``body`` can be its own table: it reads only tables (no WITH
+    table of the query around it, no column of an outer query), has named outputs and gives the same rows
+    wherever it runs. The fingerprint is taken with every column qualified, so ``p.amount`` over
+    ``payments AS p`` and ``amount`` over ``payments`` match."""
 
     if not isinstance(body, exp.Query):
         return None
@@ -949,11 +951,11 @@ def _standalone(setup: _Setup, body: exp.Expression, outer_ctes: set[str], colum
     try:
         from sqlglot.optimizer.qualify import qualify
 
-        qualify(sqlglot.parse_one(sql, read="bigquery"), schema=schema or {}, dialect="bigquery",
-                validate_qualify_columns=True, quote_identifiers=False)
+        qualified = qualify(sqlglot.parse_one(sql, read="bigquery"), schema=schema or {}, dialect="bigquery",
+                            validate_qualify_columns=True, quote_identifiers=False)
     except Exception:  # noqa: BLE001 - a column the body cannot resolve on its own belongs to an outer query
         return None
-    return sql, names
+    return sql, names, _fingerprint(qualified) + "|" + ",".join(names)
 
 
 def _occurrences(setup: _Setup, key: str, sql: str, columns) -> list[tuple[str, _Occurrence]]:
@@ -967,7 +969,7 @@ def _occurrences(setup: _Setup, key: str, sql: str, columns) -> list[tuple[str, 
     ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
     whole = _standalone(setup, tree, set(), columns)
     if whole is not None:
-        found.append((_fingerprint(tree) + "|" + ",".join(whole[1]), _Occurrence(key, "table", "", whole[0])))
+        found.append((whole[2], _Occurrence(key, "table", "", whole[0])))
     for node in tree.find_all(exp.Subquery):
         if not isinstance(node.parent, (exp.From, exp.Join)) or not node.alias:
             continue
@@ -976,15 +978,13 @@ def _occurrences(setup: _Setup, key: str, sql: str, columns) -> list[tuple[str, 
             continue
         done = _standalone(setup, node.this, ctes, columns)
         if done is not None:
-            found.append((_fingerprint(node.this) + "|" + ",".join(done[1]),
-                          _Occurrence(key, "derived", node.alias.lower(), done[0])))
+            found.append((done[2], _Occurrence(key, "derived", node.alias.lower(), done[0])))
     clause = with_clause(tree)
     if clause is not None and not clause.args.get("recursive"):
         for cte in clause.expressions:
             done = _standalone(setup, cte.this, ctes, columns)
             if done is not None:
-                found.append((_fingerprint(cte.this) + "|" + ",".join(done[1]),
-                              _Occurrence(key, "cte", cte.alias_or_name.lower(), done[0])))
+                found.append((done[2], _Occurrence(key, "cte", cte.alias_or_name.lower(), done[0])))
     return found
 
 
@@ -998,7 +998,7 @@ def _replace_occurrences(sql: str, fingerprint: str, target: str, setup: _Setup,
         if not isinstance(node.parent, (exp.From, exp.Join)) or not node.alias:
             continue
         done = _standalone(setup, node.this, ctes, columns)
-        if done is None or _fingerprint(node.this) + "|" + ",".join(done[1]) != fingerprint:
+        if done is None or done[2] != fingerprint:
             continue
         node.replace(_table_for(target, node.alias))
         changed = True
@@ -1006,7 +1006,7 @@ def _replace_occurrences(sql: str, fingerprint: str, target: str, setup: _Setup,
     if clause is not None and not clause.args.get("recursive"):
         for cte in list(clause.expressions):
             done = _standalone(setup, cte.this, ctes, columns)
-            if done is None or _fingerprint(cte.this) + "|" + ",".join(done[1]) != fingerprint:
+            if done is None or done[2] != fingerprint:
                 continue
             name = cte.alias_or_name.lower()
             if sum(1 for c in tree.find_all(exp.CTE) if c.alias_or_name.lower() == name) != 1:

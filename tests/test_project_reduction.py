@@ -251,3 +251,18 @@ def test_cli(tmp_path, capsys):
     assert main([str(root), "--keep", "rpt_revenue", "--write"]) == 0
     assert not (root / "definitions/staging/paid_orders.sqlx").exists()
     assert "paid_orders" not in (root / "definitions/reports/rpt_revenue.sqlx").read_text(encoding="utf-8")
+
+
+def test_declarations_stay_while_something_names_them(tmp_path):
+    files = {
+        "workflow_settings.yaml": SETTINGS,
+        "definitions/sources/events.sqlx": _declare("events_*"),  # a wildcard table
+        "definitions/sources/helper_only.sqlx": _declare("helper_only"),
+        "definitions/sources/unused.sqlx": _declare("unused"),
+        "includes/helpers.js": 'const source = "helper_only";\nmodule.exports = { source };\n',
+        "definitions/rpt.sqlx": _sqlx('  type: "table"', 'SELECT COUNT(*) AS n\nFROM ${ref("events_*")}'),
+    }
+    root = _write(tmp_path / "declarations", files)
+    result = reduce_project(root, ["rpt"])
+    assert result.verified
+    assert [entry["model"] for entry in result.removed] == ["shop.raw.unused"]
