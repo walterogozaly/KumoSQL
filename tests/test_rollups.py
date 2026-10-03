@@ -1,7 +1,13 @@
+from collections import Counter
+
+import duckdb
 import pytest
 
 from kumosql import GrainMapping, Pipeline, Scope, Target, find_rollups
+from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows, run_unoptimized
 from kumosql.pipeline import Model
+from kumosql.smt_equivalence import SmtStatus
 
 SALES = Target("proj", "raw", "sales")
 CITIES = Target("proj", "raw", "cities")
@@ -278,3 +284,60 @@ def test_to_json_shape_has_no_query_text():
     assert set(data) == {"summary", "target", "rollups", "compared", "skipped", "candidates_in_scope"}
     assert data["rollups"][0]["derivability"] == "derivable_exact"
     assert "FROM" not in str(data)
+
+
+# S007-006: a value can recur across finer groups, so per-group distinct sums and counts do not
+# combine into a coarser AVG(DISTINCT). On these rows AVG(DISTINCT x) for k=1 is 3.0 and the
+# reconstruction SUM(s) / SUM(n) is 2.5. A plain AVG and a raw-row table stay exact.
+RAW = Target("proj", "raw", "raw")
+RAW_ROWS = [(1, 1, 1), (1, 1, 3), (1, 2, 1), (1, 2, 5)]
+FINE_DISTINCT = "SELECT k, j, SUM(DISTINCT x) AS s, COUNT(DISTINCT x) AS n FROM {raw} GROUP BY k, j"
+FINE_PLAIN = "SELECT k, j, SUM(x) AS s, COUNT(x) AS n FROM {raw} GROUP BY k, j"
+REBUILT = "SELECT k, SUM(s) / SUM(n) AS a FROM ({fine}) fine GROUP BY k"
+
+
+def raw_rollups(fine: str, target: str):
+    model = Target("proj", "core", "fine")
+    pipeline = Pipeline(
+        {model.key: Model(model, "table", fine.format(raw="proj.raw.raw"))},
+        sources={RAW.key: RAW}, source_schema={RAW.key: {"k": "INT64", "j": "INT64", "x": "INT64"}},
+    )  # fmt: skip
+    return [r for r in find_rollups(pipeline, target.format(raw="proj.raw.raw")).rollups if r.attribute == "a"]
+
+
+def raw_rows(*queries: str) -> list[Counter]:
+    db = duckdb.connect()
+    db.execute("CREATE TABLE raw (k BIGINT, j BIGINT, x BIGINT)")
+    insert_rows(db, "raw", RAW_ROWS)
+    return [Counter(rows) for rows in run_unoptimized(db, *(q.format(raw="raw") for q in queries))]
+
+
+@pytest.mark.parametrize("fine, target", [
+    pytest.param(FINE_DISTINCT, "SELECT k, AVG(DISTINCT x) AS a FROM {raw} GROUP BY k", id="s007-006-avg-distinct"),
+    pytest.param(
+        "SELECT k, j, SUM(DISTINCT x) AS s, COUNT(DISTINCT x) AS n, AVG(DISTINCT x) AS m FROM {raw} GROUP BY k, j",
+        "SELECT k, AVG(DISTINCT x) AS a FROM {raw} GROUP BY k", id="s007-006-avg-distinct-with-avg-held",
+    ),
+    pytest.param(FINE_DISTINCT, "SELECT k, SUM(DISTINCT x) / COUNT(DISTINCT x) AS a FROM {raw} GROUP BY k", id="s007-006-distinct-ratio"),
+])  # fmt: skip
+def test_distinct_average_is_not_combined_from_finer_distinct_parts(fine, target):
+    rebuilt = REBUILT.format(fine=FINE_DISTINCT)
+    left, right = raw_rows(target, rebuilt)
+    assert left != right  # {(1, 3.0)} against {(1, 2.5)}
+    schema = {"raw": {"k": "BIGINT", "j": "BIGINT", "x": "BIGINT"}}
+    proof = prove_equivalent_algebraic(target.format(raw="raw"), rebuilt.format(raw="raw"), schema=schema, dialect="bigquery")
+    assert proof.status != SmtStatus.PROVEN_EQUIVALENT
+    # not reported, or reported as not derivable (a table holding the same distinct aggregate)
+    assert [r.derivability for r in raw_rollups(fine, target)] in ([], ["not_derivable"])
+
+
+@pytest.mark.parametrize("fine, target", [
+    pytest.param(FINE_PLAIN, "SELECT k, AVG(x) AS a FROM {raw} GROUP BY k", id="s007-006-plain-avg-stays-exact"),
+    pytest.param("SELECT k, j, x FROM {raw}", "SELECT k, AVG(DISTINCT x) AS a FROM {raw} GROUP BY k", id="s007-006-raw-rows-stay-exact"),
+])  # fmt: skip
+def test_average_from_plain_parts_or_raw_rows_stays_exact(fine, target):
+    if fine == FINE_PLAIN:
+        left, right = raw_rows(target, REBUILT.format(fine=FINE_PLAIN))
+        assert left == right
+    [item] = raw_rollups(fine, target)
+    assert item.derivability == "derivable_exact"

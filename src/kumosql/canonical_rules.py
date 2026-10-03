@@ -5,10 +5,12 @@ included); none relies on keys or NOT NULL facts. They are applied by
 ``canonicalize`` until nothing changes, and ``prove_with_canonical_rules`` only
 uses them when the prover cannot decide the original pair:
 
-* ``ORDER BY`` without ``LIMIT`` is dropped (results are compared as bags).
+* ``ORDER BY`` without ``LIMIT`` is dropped (results are compared as bags), except
+  under ``DISTINCT ON``, where it picks the row kept for each key.
 * ``SELECT DISTINCT`` over a ``GROUP BY`` whose keys are all selected is a plain
-  grouped select: each group already gives one distinct row.
-* ``HAVING COUNT(*) > 0`` (or ``>= 1``) under a ``GROUP BY`` is always true.
+  grouped select: each group already gives one distinct row. (Not under ROLLUP,
+  CUBE or GROUPING SETS, which output a row per grouping set.)
+* ``HAVING COUNT(*) > 0`` (or ``>= 1``) under a plain ``GROUP BY`` is always true.
 * A select that reads only one derived table and only projects or filters its
   columns is merged into it: the outer filter joins the inner ``WHERE`` (plain
   inner select) or ``HAVING`` (grouped inner select, one row per group).
@@ -22,7 +24,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _conjuncts, faithful_sql, select_sources as _sources
+from .ast_utils import conjuncts as _conjuncts, distinct_on, extended_grouping, faithful_sql, plain_distinct, select_sources as _sources
 
 ORDERED = (exp.Limit, exp.Fetch, exp.Offset)
 
@@ -70,6 +72,8 @@ def _strip_qualifier(node: exp.Expression, name: str | None) -> str:
 def drop_order_without_limit(tree: exp.Expression) -> bool:
     changed = False
     for select in list(tree.find_all(exp.Select)):
+        if distinct_on(select):
+            continue  # the ORDER BY picks the row DISTINCT ON keeps per key
         if select.args.get("order") is not None and not select.args.get("limit") and not select.args.get("offset"):
             select.set("order", None)
             changed = True
@@ -84,10 +88,10 @@ def drop_distinct_over_group_keys(tree: exp.Expression) -> bool:
     changed = False
     for select in list(tree.find_all(exp.Select)):
         group = select.args.get("group")
-        if not select.args.get("distinct") or group is None or not group.expressions or _own(select, (exp.Window,)):
+        if not plain_distinct(select) or group is None or not group.expressions or _own(select, (exp.Window,)):
             continue
-        if select.args["distinct"].args.get("on"):
-            continue
+        if extended_grouping(group):
+            continue  # a group per grouping set: a key repeats across sets (and a repeated set repeats its rows)
         name = _single_source_name(select)
         projected = {_strip_qualifier(_unalias(e), name) for e in select.expressions}
         if all(_strip_qualifier(g, name) in projected for g in group.expressions):
@@ -121,8 +125,8 @@ def drop_trivial_having(tree: exp.Expression) -> bool:
     for select in list(tree.find_all(exp.Select)):
         having = select.args.get("having")
         group = select.args.get("group")
-        if having is None or group is None or not group.expressions:
-            continue
+        if having is None or group is None or not group.expressions or extended_grouping(group):
+            continue  # ROLLUP's empty grouping set gives a row (COUNT(*) = 0) even over no input
         parts = _conjuncts(having.this)
         kept = [p for p in parts if not _always_nonempty_count(p)]
         if len(kept) != len(parts):
@@ -175,7 +179,7 @@ def merge_projection_over_derived(tree: exp.Expression) -> bool:
         outer_distinct = outer.args.get("distinct") is not None
         if inner_distinct and not outer_distinct:
             continue
-        if any(d.args.get("on") for d in (inner.args.get("distinct"), outer.args.get("distinct")) if d is not None):
+        if distinct_on(inner) or distinct_on(outer):
             continue
         names = [_output_name(e) for e in inner.expressions]
         if len(set(names)) != len(names):
