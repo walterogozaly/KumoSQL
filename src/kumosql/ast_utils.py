@@ -409,6 +409,40 @@ def select_sources(select: exp.Select) -> list[exp.Expression]:
     return ([from_.this] if from_ is not None else []) + [join.this for join in select.args.get("joins") or []]
 
 
+def plain_distinct(select: exp.Expression) -> bool:
+    """Whether ``select`` is ``SELECT DISTINCT``: duplicate removal over whole output rows.
+
+    ``DISTINCT ON (k)`` is not: it keeps one row per ``k``, the first in the select's ``ORDER BY``, so it
+    picks values (and its ORDER BY shows) rather than only dropping repeats.
+    """
+
+    distinct = select.args.get("distinct")  # a set operation's is a bool
+    return isinstance(distinct, exp.Distinct) and not distinct.args.get("on")
+
+
+def distinct_on(select: exp.Expression) -> bool:
+    """Whether ``select`` is a ``SELECT DISTINCT ON (..)``."""
+
+    distinct = select.args.get("distinct")
+    return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
+
+
+def extended_grouping(group: exp.Expression | None) -> bool:
+    """Whether a ``GROUP BY`` uses ROLLUP, CUBE, GROUPING SETS or WITH TOTALS.
+
+    Such a GROUP BY outputs a row per grouping set, so a key is not one row per value (a repeated set
+    repeats its groups, and the empty set gives a row even over no input). sqlglot keeps ``ROLLUP (..)``
+    and the others as items of ``group.expressions``; older releases (and MySQL's ``WITH ROLLUP``) use
+    the group's own args, so both are checked.
+    """
+
+    if group is None:
+        return False
+    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        return True
+    return any(isinstance(e, (exp.Rollup, exp.Cube, exp.GroupingSets)) for e in group.expressions)
+
+
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 
