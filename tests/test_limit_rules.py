@@ -214,3 +214,62 @@ def test_a_global_aggregate_near_misses_stay_proven(left, right):
     assert not _differ(left, right, [(1, 1), (2, 1), (3, 2)])
     assert not _differ(left, right, [])
     assert _proven_bigquery(left, right)
+
+
+# GROUP BY and HAVING may name an output alias, and a name an alias shares with a column may be read as
+# the alias: a rewrite that gives the grouped select a new list must not change what those names read.
+# (left, right, rows of t on which they differ)
+REBOUND_GROUPING_NAMES = [
+    pytest.param(
+        "SELECT d.b + 0 AS bb FROM (SELECT a AS bb, b FROM t GROUP BY bb, b) d",
+        "SELECT b + 0 AS bb FROM t GROUP BY b",
+        [(1, 1), (2, 1)],
+        id="s007-001-folded-alias-group-key",
+    ),
+    pytest.param(
+        "SELECT d.b, d.b + 0 AS bb FROM (SELECT a AS bb, b FROM t GROUP BY bb, b ORDER BY b LIMIT 3) d",
+        "SELECT b, b + 0 AS bb FROM t GROUP BY b ORDER BY b LIMIT 3",
+        [(1, 1), (2, 1)],
+        id="s007-001-lifted-alias-group-key",
+    ),
+    pytest.param(
+        "SELECT d.b AS bb FROM (SELECT a AS bb, b FROM t GROUP BY bb, b ORDER BY b LIMIT 5) d",
+        "SELECT b AS bb FROM t GROUP BY b ORDER BY b LIMIT 5",
+        [(1, 1), (2, 1)],
+        id="s007-001-root-lifted-alias-group-key",
+    ),
+    pytest.param(
+        "SELECT d.b AS a FROM (SELECT b, COUNT(*) AS n FROM t GROUP BY b HAVING MAX(a) > 1) d",
+        "SELECT b AS a FROM t GROUP BY b HAVING MAX(b) > 1",
+        [(1, 1), (2, 1), (1, 2)],
+        id="s007-001-unwrapped-alias-captures-having",
+    ),
+    pytest.param(
+        "SELECT d.b AS a FROM (SELECT b, MAX(a) AS m FROM t GROUP BY b) d WHERE d.m > 1",
+        "SELECT b AS a FROM t GROUP BY b HAVING MAX(b) > 1",
+        [(1, 1), (2, 1), (1, 2)],
+        id="s007-001-folded-alias-captures-filter",
+    ),
+]
+
+
+@pytest.mark.parametrize("left, right, rows", REBOUND_GROUPING_NAMES)
+def test_a_new_select_list_keeps_what_group_by_and_having_read(left, right, rows):
+    assert _differ(left, right, rows)
+    assert not _proven_bigquery(left, right)
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        pytest.param("SELECT d.bb FROM (SELECT b AS bb, COUNT(*) AS n FROM t GROUP BY bb) d", "SELECT b AS bb FROM t GROUP BY b", id="s007-001-near-miss-kept-alias"),
+        pytest.param(
+            "SELECT d.s FROM (SELECT b, SUM(a) AS s FROM t GROUP BY b) d WHERE d.s > 1",
+            "SELECT SUM(a) AS s FROM t GROUP BY b HAVING SUM(a) > 1",
+            id="s007-001-near-miss-filter-into-having",
+        ),
+    ],
+)
+def test_grouping_name_near_misses_stay_proven(left, right):
+    assert not _differ(left, right, [(1, 1), (2, 1), (3, 2)])
+    assert _proven_bigquery(left, right)

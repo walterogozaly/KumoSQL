@@ -237,6 +237,34 @@ def drops_global_aggregate(before: exp.Select, after: exp.Select) -> bool:
     return not _owns_aggregate(after, ("expressions", "having"))
 
 
+def _renamed(expressions) -> dict[str, str]:
+    """Output alias -> its value's SQL, for each alias that is not the column of that name."""
+
+    return {
+        e.alias.lower(): e.this.sql()
+        for e in expressions
+        if isinstance(e, exp.Alias) and e.alias and not (isinstance(e.this, exp.Column) and e.this.name.lower() == e.alias.lower())
+    }
+
+
+def rebinds_grouping_names(before: exp.Select, outputs, moved=(), clauses=("group", "having")) -> bool:
+    """A name in ``before``'s GROUP BY or HAVING means something else once its select list is ``outputs``.
+
+    Those clauses may name an output alias (``SELECT k AS kk .. GROUP BY kk``), and a name an alias shares
+    with a column may be read as the alias. A new select list can drop the alias, leaving the name to a
+    column, or bring one (``SELECT x AS k .. HAVING MAX(k) > 1``). ``moved`` are conditions over the input
+    columns that join HAVING alongside the new list; ``clauses`` adds ``"order"`` for an ORDER BY kept too.
+    """
+
+    old, new = _renamed(before.expressions), _renamed(outputs)
+    clauses = [(before.args.get(clause), old) for clause in clauses] + [(m, {}) for m in moved]
+    for node, meaning in clauses:
+        for column in node.find_all(exp.Column) if node is not None else ():
+            if not column.table and meaning.get(column.name.lower()) != new.get(column.name.lower()):
+                return True
+    return False
+
+
 def _ordering(query: exp.Expression):
     """The ``ORDER BY`` of ``query`` as ``(key in position form, descending, nulls first)`` over the
     relation the keys read: the FROM source of a select, the output of a set operation."""
@@ -574,6 +602,8 @@ def _lift_cut(select: exp.Select) -> exp.Expression | None:
             value = new_names.get(column.name.lower())
             if not column.table and value is not None and value.sql() != column.sql():
                 return None
+    if rebinds_grouping_names(inner, items):
+        return None
     result = inner.copy()
     result.set("expressions", items)
     result.set("order", exp.Order(expressions=keys))
