@@ -279,6 +279,11 @@ def test_order_by_that_may_raise_is_not_dropped():
     for key in ("ERROR('boom')", "a / b", "CAST(s AS INT64)"):
         result = prove_equivalent(f"SELECT a FROM t ORDER BY {key}", "SELECT a FROM t")
         assert not result.proven, key
+    # A LIMIT that cannot cut rows is stripped, but the sort that may raise stays.
+    for key in ("ERROR('boom')", "CAST('x' AS INT64)", "CAST(id AS INT64) + 9223372036854775807", "LN(-1)", "SQRT(-1)"):
+        result = prove_equivalent(f"SELECT COUNT(*) AS n FROM t ORDER BY {key} LIMIT 10", "SELECT COUNT(*) AS n FROM t")
+        assert not result.proven, key
+    assert prove_equivalent("SELECT COUNT(*) AS n FROM t ORDER BY id LIMIT 10", "SELECT COUNT(*) AS n FROM t").proven
     for left in (
         "SELECT a FROM t ORDER BY a DESC",
         "SELECT a / b AS r FROM t ORDER BY r",

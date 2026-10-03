@@ -205,15 +205,26 @@ def test_a_planned_response_without_a_schema_is_not_a_schema_match():
 
     check = check_rewrite("SELECT 1 AS x", "SELECT 'changed' AS y", "p", token="t", transport=fake)
     assert check.planned_same_schema is None
+    assert check.schema_matches is None
     assert check.outcome == "not_run"
     assert "no output schema" in check.reason
 
-    schemas, errors = fetch_table_schemas(["SELECT 1 AS x"], "p", token="t", transport=FakeBigQuery(
-        {"SELECT * FROM `SELECT 1 AS x`": no_schema}
+    schemas, errors = fetch_table_schemas(["p.d.t"], "p", token="t", transport=FakeBigQuery(
+        {"SELECT * FROM `p.d.t`": no_schema}
     ))
-    assert schemas == {} and errors == {"SELECT 1 AS x": "the dry run returned no schema"}
+    assert schemas == {} and errors == {"p.d.t": "the dry run returned no schema"}
 
 
 def test_an_observed_empty_field_list_is_still_observed():
     fake = FakeBigQuery({"SELECT 1": ok([])})
     assert dry_run("SELECT 1", "p", token="t", transport=fake).schema_observed
+
+
+def test_missing_null_and_empty_object_schemas_are_not_observed():
+    for payload in ({"statistics": {}}, {"statistics": {"query": {"schema": None}}}, {"statistics": {"query": {"schema": {}}}}):
+        fake = FakeBigQuery({"SELECT 1 AS x": (200, payload), "SELECT 2 AS x": (200, payload)})
+        assert not dry_run("SELECT 1 AS x", "p", token="t", transport=fake).schema_observed, payload
+        check = check_rewrite("SELECT 1 AS x", "SELECT 2 AS x", "p", token="t", transport=fake)
+        assert check.schema_matches is None and check.outcome == "not_run", payload
+    listed = (200, {"statistics": {"query": {"schema": {"fields": []}}}})
+    assert dry_run("SELECT 1 AS x", "p", token="t", transport=FakeBigQuery({"SELECT 1 AS x": listed})).schema_observed

@@ -8,7 +8,7 @@ import re
 
 from sqlglot import exp
 
-from .canonical import canonical_copy, scope_key
+from .canonical import canonical_copy, scope_key, visible_ctes
 from .pipeline_types import DuplicateGroup, DuplicateOccurrence
 
 def _select_location(select: exp.Expression) -> str:
@@ -22,30 +22,42 @@ def _select_location(select: exp.Expression) -> str:
     return f"nested:{type(parent).__name__.lower()}"
 
 
-def _plain_sql(node: exp.Expression) -> str:
-    """Normalized text: identifiers lower-cased, except the parts of a qualified table name.
+def _plain_sql(node: exp.Expression, outside_ctes: frozenset[str] | None = None) -> str:
+    """Normalized text: identifiers lower-cased, except the names of physical tables.
 
-    BigQuery column names and aliases have no case, but ``p.d.Orders`` and ``p.d.orders`` are
-    different tables. (A one-part name is usually a CTE, whose name has no case either.)
+    BigQuery column names, aliases and CTE names have no case, but ``p.d.Orders`` and ``p.d.orders``
+    are different tables, and so are a bare ``Orders`` and ``orders`` that a default catalog resolves.
+    A one-part table name is lower-cased only when a CTE of that name is visible at that point: one
+    defined inside ``node`` or in ``outside_ctes`` (the lower-case names visible around ``node``, by
+    default those of its parents).
     """
 
-    def cased_table_parts(tree: exp.Expression) -> set[int]:
-        return {
-            id(part)
-            for table in tree.find_all(exp.Table)
-            if table.args.get("db") or table.args.get("catalog")
-            for part in table.parts
-            if isinstance(part, exp.Identifier) and not part.quoted and part.name != part.name.lower()
-        }
+    def cased_table_parts(tree: exp.Expression, outside: frozenset[str]) -> set[int]:
+        keep = set()
+        for table in tree.find_all(exp.Table):
+            if not any(isinstance(p, exp.Identifier) and not p.quoted and p.name != p.name.lower() for p in table.parts):
+                continue
+            if not (table.args.get("db") or table.args.get("catalog")):
+                bound = {name.lower() for name in visible_ctes(table)} | outside
+                if table.name.lower() in bound:
+                    continue
+            keep.update(id(part) for part in table.parts if isinstance(part, exp.Identifier) and not part.quoted and part.name != part.name.lower())
+        return keep
 
-    if not cased_table_parts(node):  # nothing that lower-casing would change
+    if outside_ctes is None:
+        outside_ctes = frozenset(name.lower() for name in visible_ctes(node))
+    if not cased_table_parts(node, outside_ctes):  # nothing that lower-casing would change
         return node.sql(dialect="bigquery", normalize=True, normalize_functions="upper", comments=False)
     copy = node.copy()
-    keep = cased_table_parts(copy)
+    keep = cased_table_parts(copy, outside_ctes)
     for identifier in copy.find_all(exp.Identifier):
         if id(identifier) not in keep and not identifier.quoted:
             identifier.set("this", identifier.this.lower())
     return copy.sql(dialect="bigquery", normalize_functions="upper", comments=False)
+
+
+def _outside_ctes(select: exp.Expression) -> frozenset[str]:
+    return frozenset(name.lower() for name in visible_ctes(select))
 
 
 def _remembered(select: exp.Expression, key: str, compute):
@@ -71,7 +83,7 @@ def _fingerprint_hash(select: exp.Expression) -> str:
 
     def compute() -> str:
         try:
-            canonical = _plain_sql(canonical_copy(select)) + scope_key(select, _plain_sql)
+            canonical = _plain_sql(canonical_copy(select), _outside_ctes(select)) + scope_key(select, _plain_sql)
         except Exception:  # a shape the canonicalizer cannot follow keeps its literal text
             canonical = _plain_sql(select)
         return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
@@ -82,7 +94,7 @@ def _fingerprint_hash(select: exp.Expression) -> str:
 def _fingerprint(select: exp.Expression) -> tuple[str, str]:
     """The canonical fingerprint of a select and its own normalized text."""
 
-    return _fingerprint_hash(select), _remembered(select, "kumosql_text", lambda: _plain_sql(select))
+    return _fingerprint_hash(select), _remembered(select, "kumosql_text", lambda: _plain_sql(select, _outside_ctes(select)))
 
 
 _TOKEN = re.compile(r"__sqlx_token_(\d+)__")

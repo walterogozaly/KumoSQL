@@ -633,7 +633,7 @@ def dry_run_main(argv: list[str] | None = None) -> int:
         print(check.reason)
         print(f"original_planned={check.original_planned}")
         print(f"rewritten_planned={check.rewritten_planned}")
-        print(f"schema_matches={check.schema_matches}")
+        print(f"schema_matches={'unknown' if check.schema_matches is None else check.schema_matches}")
         print("scope=planning and output-schema comparison only; results were not compared")
         for difference in check.schema_differences:
             print(f"schema: {difference}")

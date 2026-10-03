@@ -115,6 +115,8 @@ class RewriteCheck:
     def schema_matches(self) -> bool | None:
         if self.original_planned is not True or self.rewritten_planned is not True:
             return None
+        if self.original is None or self.rewritten is None or not (self.original.schema_observed and self.rewritten.schema_observed):
+            return None  # never "matches" unless both schemas were actually observed
         return not self.schema_differences
 
     @property
@@ -230,8 +232,10 @@ def dry_run(
 
     statistics = payload.get("statistics", {})
     query_stats = statistics.get("query", {})
-    observed = isinstance(query_stats.get("schema"), dict)
-    schema = query_stats.get("schema", {}).get("fields", []) if observed else []
+    schema_object = query_stats.get("schema")
+    # Observed means the response carried a fields list; `{}` or `{"schema": {}}` observed nothing.
+    observed = isinstance(schema_object, dict) and isinstance(schema_object.get("fields"), list)
+    schema = schema_object["fields"] if observed else []
     tables = tuple(
         ".".join(filter(None, (t.get("projectId"), t.get("datasetId"), t.get("tableId"))))
         for t in query_stats.get("referencedTables", [])

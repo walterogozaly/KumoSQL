@@ -28,7 +28,7 @@ To show a project in the graph, start with `--project path/to/project`, or conne
 
 ## Settings in everyday terms
 
-- **Formatting** controls how SQL looks, including indentation and keyword case.
+- **Formatting** controls how SQL looks, including indentation and keyword case. SQL the formatter cannot read, such as Dataform SQLX, shows *Output unchanged* with the reason.
 - **Scopes** choose which models, tables, or job records an analysis includes.
 - **Tags** attach your own local labels to objects. They do not update BigQuery labels.
 - **Catalogs** describe the objects your team owns, including objects outside Dataform.

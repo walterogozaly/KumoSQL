@@ -907,10 +907,12 @@ def _drop_noop_limit(sql: str) -> str | None:
         return None
     body = query.copy()
     body.set("limit", None)
-    body.set("order", None)
-    bound = _max_rows(body)
+    unordered = body.copy()
+    unordered.set("order", None)
+    bound = _max_rows(unordered)
     if bound is None or bound > int(count.name):
         return None
+    # Keep the ORDER BY: only the prover's own ordering step may erase it, and only when no key can raise.
     return body.sql(dialect="bigquery")
 
 

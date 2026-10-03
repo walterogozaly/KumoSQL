@@ -266,6 +266,20 @@ def test_duplicates_keep_the_case_of_qualified_table_names():
     assert graph("SELECT id FROM p.d.Orders", "SELECT id FROM p.d.orders").duplicate_selects(min_nodes=1) == []
     [group] = graph("SELECT Id FROM p.d.Orders", "SELECT id FROM p.d.Orders").duplicate_selects(min_nodes=1)
     assert group.sql == "SELECT id FROM p.d.Orders"
+    # A bare name resolved by a default catalog is a physical table too, unless a CTE of that name is visible.
+    for one, two in (
+        ("SELECT id FROM Orders", "SELECT id FROM orders"),
+        ("SELECT id FROM ORDERS", "SELECT id FROM orders"),
+        ("SELECT o.id FROM Orders AS o", "SELECT o.id FROM orders AS o"),
+        ("SELECT id FROM Orders WHERE id > 1", "SELECT id FROM orders WHERE id > 1"),
+    ):
+        assert graph(one, two).duplicate_selects(min_nodes=1) == [], (one, two)
+    assert len(graph("SELECT id FROM Orders", "SELECT id FROM Orders").duplicate_selects(min_nodes=1)) == 1
+    # CTE names have no case: the same body read under differently cased names is still one duplicate group.
+    cte = "WITH Base AS (SELECT id FROM p.d.t) SELECT id FROM {}"
+    assert graph(cte.format("Base"), cte.format("base")).duplicate_selects(min_nodes=1)
+    # A CTE does not make a same-named physical table, read elsewhere, case-insensitive.
+    assert graph("WITH Orders AS (SELECT 1 AS id) SELECT id FROM orders", "SELECT id FROM Orders").duplicate_selects(min_nodes=1) == []
 
 
 def test_plain_sql_folder_resolves_bare_table_names(tmp_path):
