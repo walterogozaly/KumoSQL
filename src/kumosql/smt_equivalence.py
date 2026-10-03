@@ -208,6 +208,12 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
         from_ = select.args.get("from_") or select.args.get("from")
         return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
+    def names(node: exp.Expression) -> set[str]:
+        alias = node.args.get("alias")
+        element = alias.args.get("columns") if isinstance(node, exp.Unnest) and alias is not None else None
+        # BigQuery: ``UNNEST(..) AS e`` declares the element ``e``, which hides an outer alias ``e``
+        return {(node.alias_or_name or "").lower()} | ({element[0].name.lower()} if element else set())
+
     renames: list[tuple[exp.Column, str]] = []
     for column in body.find_all(exp.Column):
         qualifier = column.table.lower()
@@ -224,7 +230,7 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
             continue
         scope = column.find_ancestor(exp.Select)
         while scope is not None:
-            hit = next((n for n in declared(scope) if (n.alias_or_name or "").lower() == qualifier), None)
+            hit = next((n for n in declared(scope) if qualifier in names(n)), None)
             if hit is not None:
                 if id(hit) in fresh:
                     renames.append((column, fresh[id(hit)]))
@@ -520,6 +526,8 @@ class _Source:
     order: list[str] = field(default_factory=list)
     # The unmatched side of an outer join over a table whose columns are not declared: every column is NULL.
     all_null: _Val | None = None
+    # An UNNEST named by its element (``UNNEST(..) AS e``): ``e`` is a value, so ``e.f`` and ``e.*`` read its fields.
+    value_table: bool = False
 
     def lookup(self, name: str) -> _Val | None:
         if self.all_null is not None:
@@ -855,9 +863,10 @@ class _Compiler:
                 if side or (join is not None and join.args.get("on") is not None) or len(source_node.expressions) != 1:
                     raise Unsupported("UNNEST outside a cross join")
                 alias_node = source_node.args.get("alias")
-                alias = (alias_node.name if alias_node is not None else "") or self.fresh("unnest")
-                alias = alias.lower()
                 columns = alias_node.args.get("columns") if alias_node is not None else None
+                # BigQuery names the element ``e`` in ``UNNEST(..) AS e``; it hides an outer alias ``e``
+                alias = (alias_node.name if alias_node is not None else "") or (columns[0].name if columns else "")
+                alias = (alias or self.fresh("unnest")).lower()
                 element = (columns[0].name if columns else alias).lower()
                 offset_arg = source_node.args.get("offset")
                 offset = ((offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else "").lower()
@@ -865,7 +874,7 @@ class _Compiler:
                 cols = {element: occ.col("value")}
                 if offset:
                     cols[offset] = occ.col("offset")
-                source = _Source(cols=cols, order=list(cols))
+                source = _Source(cols=cols, order=list(cols), value_table=alias == element)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -992,7 +1001,7 @@ class _Compiler:
                     sources = list(env.values())
                 else:
                     table = item.table.lower()
-                    if table not in env:
+                    if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
                 for source in sources:
@@ -1247,6 +1256,8 @@ class _Compiler:
                 scope = getattr(scope, "outer", None)
             if scope is None:
                 raise Unsupported(f"unknown alias {table}")
+            if scope[table].value_table:
+                raise Unsupported(f"field {table}.{name} of an UNNEST element")
             val = scope[table].lookup(name)
             if val is None:
                 raise Unsupported(f"{table}.{name} is not a column of {table}")
