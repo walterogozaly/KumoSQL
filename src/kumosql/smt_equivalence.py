@@ -208,6 +208,12 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
         from_ = select.args.get("from_") or select.args.get("from")
         return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
+    def names(node: exp.Expression) -> set[str]:
+        alias = node.args.get("alias")
+        element = alias.args.get("columns") if isinstance(node, exp.Unnest) and alias is not None else None
+        # BigQuery: ``UNNEST(..) AS e`` declares the element ``e``, which hides an outer alias ``e``
+        return {(node.alias_or_name or "").lower()} | ({element[0].name.lower()} if element else set())
+
     renames: list[tuple[exp.Column, str]] = []
     for column in body.find_all(exp.Column):
         qualifier = column.table.lower()
@@ -224,7 +230,7 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
             continue
         scope = column.find_ancestor(exp.Select)
         while scope is not None:
-            hit = next((n for n in declared(scope) if (n.alias_or_name or "").lower() == qualifier), None)
+            hit = next((n for n in declared(scope) if qualifier in names(n)), None)
             if hit is not None:
                 if id(hit) in fresh:
                     renames.append((column, fresh[id(hit)]))
@@ -520,6 +526,8 @@ class _Source:
     order: list[str] = field(default_factory=list)
     # The unmatched side of an outer join over a table whose columns are not declared: every column is NULL.
     all_null: _Val | None = None
+    # An UNNEST named by its element (``UNNEST(..) AS e``): ``e`` is a value, so ``e.f`` and ``e.*`` read its fields.
+    value_table: bool = False
 
     def lookup(self, name: str) -> _Val | None:
         if self.all_null is not None:
@@ -663,6 +671,7 @@ class _Compiler:
         self._blind = False
         self.used_setsrc = False
         self.limit_opaque = False
+        self.numeric_differences = False  # ABS(x - y) was read with x and y numbers
         self.window_opaque = False
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
@@ -855,9 +864,10 @@ class _Compiler:
                 if side or (join is not None and join.args.get("on") is not None) or len(source_node.expressions) != 1:
                     raise Unsupported("UNNEST outside a cross join")
                 alias_node = source_node.args.get("alias")
-                alias = (alias_node.name if alias_node is not None else "") or self.fresh("unnest")
-                alias = alias.lower()
                 columns = alias_node.args.get("columns") if alias_node is not None else None
+                # BigQuery names the element ``e`` in ``UNNEST(..) AS e``; it hides an outer alias ``e``
+                alias = (alias_node.name if alias_node is not None else "") or (columns[0].name if columns else "")
+                alias = (alias or self.fresh("unnest")).lower()
                 element = (columns[0].name if columns else alias).lower()
                 offset_arg = source_node.args.get("offset")
                 offset = ((offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else "").lower()
@@ -865,7 +875,7 @@ class _Compiler:
                 cols = {element: occ.col("value")}
                 if offset:
                     cols[offset] = occ.col("offset")
-                source = _Source(cols=cols, order=list(cols))
+                source = _Source(cols=cols, order=list(cols), value_table=alias == element)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -992,7 +1002,7 @@ class _Compiler:
                     sources = list(env.values())
                 else:
                     table = item.table.lower()
-                    if table not in env:
+                    if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
                 for source in sources:
@@ -1137,15 +1147,17 @@ class _Compiler:
     def _set_source(self, branch, names, conds) -> _Source:
         """A DISTINCT (or key-only GROUP BY) derived table as an existence test.
 
-        Its columns are free values; the atom says some row of the table has
-        exactly those values. Joined on all of its columns, each outer row matches
-        at most one row, so the join is that test (``resolve_set_sources``).
+        Its columns are free values, NULL or not; the atom says some row of the
+        table has exactly those values (NULL matching NULL, as DISTINCT does).
+        Joined on all of its columns, each outer row matches at most one row, so
+        the join is that test (``resolve_set_sources``).
         """
 
         V = _value_sort()
         uid = self.fresh("set")
-        columns = [_Val(z3.BoolVal(False), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
-        match = [z3.And(z3.Not(o.null), o.val == c.val) for o, c in zip(branch.outputs, columns)]
+        # Not ``#null``: ``resolve_set_sources`` reads that suffix as an outer column's NULL flag.
+        columns = [_Val(z3.Bool(f"{uid}.{i}#setnull"), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
+        match = [_null_eq(o, c) for o, c in zip(branch.outputs, columns)]
         atom = z3.Bool(f"{self.fresh('ex')}#exists")
         guard = z3.And(branch.cond.t, *match)
         self.collector.append(_Sub(atom, list(branch.occs), guard, list(branch.subs), setsrc=(branch, columns)))
@@ -1247,6 +1259,8 @@ class _Compiler:
                 scope = getattr(scope, "outer", None)
             if scope is None:
                 raise Unsupported(f"unknown alias {table}")
+            if scope[table].value_table:
+                raise Unsupported(f"field {table}.{name} of an UNNEST element")
             val = scope[table].lookup(name)
             if val is None:
                 raise Unsupported(f"{table}.{name} is not a column of {table}")
@@ -1529,6 +1543,13 @@ class _Compiler:
             if isinstance(e, exp.Div):
                 nulls = z3.Or(nulls, null_fn(*args))  # SAFE_DIVIDE-like shapes stay possible
             return _Val(nulls, val_fn(*args))
+        if isinstance(e, exp.Abs) and self.exact:
+            a = self._val(e.this, env, agg, aliases)
+            self._numeric(a)
+            x = V.num(a.val)
+            return _Val(a.null, V.Num(z3.If(x < 0, -x, x)))
+        if isinstance(e, exp.Abs) and isinstance(e.this.unnest() if isinstance(e.this, exp.Paren) else e.this, exp.Sub):
+            return self._abs_difference(e, env, agg, aliases)
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
             inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
@@ -1556,6 +1577,41 @@ class _Compiler:
             self.uses_uf = True
             return _Val(z3.BoolVal(False), z3.Const(f"interval:{e.sql(dialect='bigquery')}", _value_sort()))
         raise Unsupported(f"expression {type(e).__name__}: {e.sql(dialect='bigquery')}")
+
+    def _abs_difference(self, e, env, agg, aliases) -> _Val:
+        """``ABS(x - y)`` with ``-`` and ``ABS`` left uninterpreted, plus what holds for every
+        number type (IEEE subtraction rounds ``x - y`` to exactly ``-(y - x)``, and is zero only
+        when ``x = y``): it is ``ABS(y - x)``, it is ``x - y`` when ``y < x`` and ``y - x`` when
+        ``x < y``, it is 0 when ``x = y`` and positive otherwise. ``x`` and ``y`` are taken to be
+        numbers (MySQL also subtracts strings, which sort differently), which the proof's
+        assumptions record."""
+
+        V = _value_sort()
+        diff = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+        a, b = self._val(diff.this, env, agg, aliases), self._val(diff.expression, env, agg, aliases)
+        self._numeric(a)
+        self._numeric(b)
+        self.numeric_differences = True
+        swapped = exp.Sub(this=diff.expression.copy(), expression=diff.this.copy())
+        result = self._generic(e, env, agg, aliases)
+        mirror = self._generic(exp.Abs(this=swapped), env, agg, aliases)
+        forward, backward = self._val(diff, env, agg, aliases), self._val(swapped, env, agg, aliases)
+        value = result.val
+        self.facts.append(
+            z3.Implies(
+                z3.And(z3.Not(a.null), z3.Not(b.null)),
+                z3.And(
+                    z3.Not(result.null),
+                    z3.Not(mirror.null),
+                    value == mirror.val,
+                    z3.Implies(_lt(b.val, a.val), value == forward.val),
+                    z3.Implies(_lt(a.val, b.val), value == backward.val),
+                    z3.Implies(a.val == b.val, value == V.Num(0)),
+                    z3.Implies(a.val != b.val, z3.And(V.is_Num(value), V.num(value) > 0)),
+                ),
+            )
+        )
+        return result
 
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
@@ -2354,6 +2410,24 @@ class _Prover:
             return self.valid(z3.Implies(a.cond.t, call_a.arg.null == arg.null), a.occs, facts)
         return False
 
+    def set_source_facts(self, block) -> list:
+        """``NOT NULL`` for each column of the block's DISTINCT derived tables that the table never
+        returns as NULL (a NOT NULL column, or one its WHERE filters), so ``d.x IS NULL`` is FALSE."""
+
+        facts, stack = [], list(block.subs)
+        while stack:
+            sub = stack.pop()
+            stack.extend(sub.nested)
+            if not sub.setsrc:
+                continue
+            inner, columns = sub.setsrc
+            for output, column in zip(inner.outputs, columns):
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(inner.cond.t, z3.Not(output.null)), inner.occs, inner.facts):
+                    facts.append(z3.Not(column.null))
+                del self.candidates[saved:]
+        return facts
+
     def resolve_set_sources(self, block):
         """Pin the columns of DISTINCT derived tables to the outer columns they are joined on.
 
@@ -2392,8 +2466,12 @@ class _Prover:
             for position, column in enumerate(columns):
                 produced = inner.outputs[position] if position < len(inner.outputs) else None
                 if produced is not None and _is_ground(produced.val) and _is_ground(produced.null):
-                    pairs.append((column.val, produced.val))  # a constant column is pinned by what it is
+                    # a constant column is pinned by what it is
+                    pairs.extend([(column.val, produced.val), (column.null, produced.null)])
                     continue
+                if not _implied(conjuncts, z3.Not(column.null), ids):
+                    raise _SetSourceUnresolved  # only a non-NULL column can be pinned by an equality
+                pairs.append((column.null, z3.BoolVal(False)))
                 for term in conjuncts:
                     if not z3.is_eq(term):
                         continue
@@ -2788,14 +2866,22 @@ class _Prover:
             if z3.is_and(term):
                 stack.extend(term.children())
             elif z3.is_or(term) and 2 <= term.num_args() <= 4:
-                disjunctions.append(term)
+                disjunctions.append(term.children())
+            elif z3.is_distinct(term) and term.num_args() == 2 and term.arg(0).sort() == _value_sort():
+                # x <> y is x < y OR y < x where the order is total on the two values.
+                x, y = term.children()
+                parts = [_lt(x, y), _lt(y, x)]
+                saved = len(self.candidates)
+                if self.valid(z3.Implies(block.cond.t, z3.Or(*parts)), block.occs, block.facts):
+                    disjunctions.append(parts)
+                del self.candidates[saved:]
         # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
         return [
             [
                 self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
-                for part in disjunction.children()
+                for part in parts
             ]
-            for disjunction in disjunctions
+            for parts in disjunctions
         ]
 
     def groups_unique(self, block) -> bool:
@@ -2845,7 +2931,7 @@ def _prune(prover: "_Prover", union: _Union) -> None:
             if (isinstance(block, _Agg) and block.is_global) or not z3.is_false(z3.simplify(block.cond.t)):
                 kept.append(block)
             continue
-        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts):
+        if not prover.unsatisfiable(block.cond.t, block.occs, block.facts + prover.set_source_facts(block)):
             kept.append(block)
             continue
         if isinstance(block, _Agg) and block.is_global and block.having is None and all(c.func in _NULL_WHEN_EMPTY + _CONST_PAIRS_NULL for c in block.aggs):
@@ -3343,7 +3429,7 @@ def _prove_core(
         )
         assumed = assumptions + ((LIMIT_SOURCE_ASSUMPTION,) if compiler.limit_opaque else ()) + (
             (WINDOW_SOURCE_ASSUMPTION,) if compiler.window_opaque else ()
-        )
+        ) + ((NUMERIC_DIFFERENCE_ASSUMPTION,) if compiler.numeric_differences else ())
         if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
             # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)
@@ -3440,6 +3526,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 WINDOW_SOURCE_ASSUMPTION = "window functions over the same input with the same text give the same values (ties in ORDER BY resolve alike)"
+NUMERIC_DIFFERENCE_ASSUMPTION = "x and y in ABS(x - y) are numbers"
 LIMIT_SOURCE_ASSUMPTION = "a LIMIT subquery with the same text returns the same rows each time"
 TIE_ASSUMPTION = "rows tied on the ORDER BY are cut by LIMIT the same way for equal inputs"
 

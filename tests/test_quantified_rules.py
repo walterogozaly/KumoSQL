@@ -221,3 +221,57 @@ def test_expansions_fold_only_when_they_mean_the_quantified_test(block):
                 assert _bag(con, folded) == expected, (expansion, folded)
             if proof.proven:
                 assert _bag(con, original) == expected, (original, expansion)
+
+
+# False proofs found by an outside audit: each lowering or fold changed the query's rows.
+
+def _rows(setup: str, sql: str) -> Counter:
+    con = duckdb.connect()
+    con.execute("PRAGMA disable_optimizer")
+    con.execute(setup)
+    return _bag(con, sql)
+
+
+def _lowered(sql: str) -> str:
+    return lower_quantified(sqlglot.parse_one(sql, read="bigquery")).sql(dialect="duckdb")
+
+
+def test_lowering_keeps_the_output_alias_an_order_by_reads():
+    setup = "CREATE TABLE t (x INTEGER); CREATE TABLE u (y INTEGER, v INTEGER); INSERT INTO t VALUES (5); INSERT INTO u VALUES (1, 9), (9, 1)"
+    sql = "SELECT t.x FROM t WHERE t.x > ANY (SELECT y AS v FROM u ORDER BY v LIMIT 1)"
+    assert _rows(setup, _lowered(sql)) == _rows(setup, sql) == Counter({(5,): 1})
+
+
+def test_lowering_never_shadows_an_unaliased_table():
+    setup = "CREATE TABLE kumosql_q0 (kumosql_v INTEGER); CREATE TABLE u (y INTEGER); INSERT INTO kumosql_q0 VALUES (5); INSERT INTO u VALUES (1)"
+    sql = "SELECT kumosql_q0.kumosql_v FROM kumosql_q0 WHERE kumosql_q0.kumosql_v > ANY (SELECT y FROM u)"
+    assert _rows(setup, _lowered(sql)) == _rows(setup, sql) == Counter({(5,): 1})
+    right = "SELECT kumosql_q0.kumosql_v FROM kumosql_q0 WHERE EXISTS (SELECT 1 FROM (SELECT y AS kumosql_v FROM u) AS kumosql_q0 WHERE kumosql_q0.kumosql_v > kumosql_q0.kumosql_v)"
+    schema = {"kumosql_q0": ["kumosql_v"], "u": ["y"]}
+    assert not prove_equivalent_algebraic(sql, right, schema=schema, dialect="bigquery").proven
+
+
+def test_a_join_to_grouping_sets_is_not_dropped_as_at_most_one_match():
+    left = "SELECT t.x FROM t CROSS JOIN (SELECT MIN(y) AS m FROM u) AS g LEFT JOIN (SELECT k FROM v GROUP BY GROUPING SETS ((k), (k))) AS d ON t.x = d.k WHERE t.x > g.m"
+    right = "SELECT t.x FROM t WHERE t.x > ANY (SELECT y FROM u)"
+    setup = "CREATE TABLE t (x INTEGER); CREATE TABLE u (y INTEGER); CREATE TABLE v (k INTEGER); INSERT INTO t VALUES (1); INSERT INTO u VALUES (0); INSERT INTO v VALUES (1)"
+    assert _rows(setup, left) != _rows(setup, right)
+    assert not prove_equivalent_algebraic(left, right, schema={"t": ["x"], "u": ["y"], "v": ["k"]}, dialect="bigquery").proven
+    folded = fold_expansions(sqlglot.parse_one(left, read="bigquery"), {"t": ["x"], "u": ["y"], "v": ["k"]}, {}).sql(dialect="duckdb")
+    assert _rows(setup, folded) == _rows(setup, left)
+
+
+def test_a_volatile_operand_is_not_copied_into_two_tests():
+    sql = "SELECT (RAND() > ANY (SELECT u.c FROM u)) AS v FROM t"
+    assert "ANY" in _lowered(sql).upper()
+
+
+def test_row_identity_keeps_table_arguments_and_deeper_readers():
+    from kumosql.quantified_rules import _canonical
+
+    sampled = _canonical(sqlglot.parse_one("SELECT r.b FROM (SELECT u.c AS b FROM u TABLESAMPLE SYSTEM (10 PERCENT)) AS r WHERE r.b > 0", read="bigquery"))
+    assert "TABLESAMPLE" in sampled
+    # r.b read from a nested select must not become u's own column b.
+    nested = _canonical(sqlglot.parse_one("SELECT r.b FROM (SELECT u.c AS b FROM u) AS r WHERE EXISTS (SELECT 1 FROM w WHERE w.b = r.b)", read="bigquery"))
+    assert nested != _canonical(sqlglot.parse_one("SELECT u.c FROM u WHERE EXISTS (SELECT 1 FROM w WHERE w.b = u.b)", read="bigquery"))
+    assert "AS b" in nested

@@ -3,7 +3,7 @@
 import pytest
 import sqlglot
 
-from kumosql.join_rewrites import _fk_left_join_to_inner, _having_left_join_to_inner, _nested_join_to_derived
+from kumosql.join_rewrites import _fk_left_join_to_inner, _having_left_join_to_inner, _map_equalities_into_left_join, _nested_join_to_derived
 
 SCHEMA = {"a": ["id", "k", "x"], "b": ["id", "k", "y"], "c": ["id", "k", "z"]}
 FK = {"a": [(("k",), "b", ("id",))]}
@@ -95,3 +95,30 @@ def test_nested_join_group_becomes_a_derived_table():
 )
 def test_nested_join_rule_refuses(sql):
     assert _nested(sql) is None
+
+
+def _mapped(sql):
+    return _sql(_map_equalities_into_left_join(sqlglot.parse_one(sql, read="bigquery")))
+
+
+def test_where_test_on_a_joined_column_also_filters_the_far_side():
+    assert _mapped("SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE a.k = 2") == "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k AND b.k = 2 WHERE a.k = 2"
+    assert _mapped("SELECT a.id FROM a LEFT JOIN b ON b.k = a.k WHERE a.k IN (1, 2) AND a.x > 0") == (
+        "SELECT a.id FROM a LEFT JOIN b ON b.k = a.k AND b.k IN (1, 2) WHERE a.k IN (1, 2) AND a.x > 0"
+    )
+    assert _mapped("SELECT a.id FROM a LEFT JOIN b ON a.k = b.k AND b.k = 2 WHERE a.k = 2") is None  # already there
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE a.k = 2 OR a.x = 1",  # not a conjunct
+        "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE a.x = 2",  # not a joined column
+        "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE b.k = 2",  # the far side's own column
+        "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE a.k = a.x",  # not a literal test
+        "SELECT a.id FROM a LEFT JOIN b ON a.k = b.k WHERE a.k IN (SELECT z FROM c)",
+        "SELECT a.id FROM a FULL JOIN b ON a.k = b.k WHERE a.k = 2",
+    ],
+)
+def test_equality_mapping_refuses(sql):
+    assert _mapped(sql) is None
