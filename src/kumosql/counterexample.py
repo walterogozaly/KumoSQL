@@ -543,11 +543,32 @@ def _dollars(sql: str) -> str:
     return re.sub(r"(?<=[\w$])\$|\$(?=\w)", "_S_", sql)
 
 
+def zoneless_timestamps(tree: exp.Expression) -> exp.Expression:
+    """Read MySQL ``TIMESTAMP(p)`` as DuckDB's plain ``TIMESTAMP(p)``, not ``TIMESTAMPTZ``.
+
+    sqlglot reads MySQL's TIMESTAMP as TIMESTAMPTZ, but a MySQL TIMESTAMP (like DATETIME) is a
+    wall-clock value with no zone attached. DuckDB also hands TIMESTAMPTZ values to Python only
+    through ``pytz``: without it every fetch raises, so a query casting to TIMESTAMP was only ever
+    run on empty tables. MySQL has no zoned type, so every TIMESTAMPTZ in a MySQL tree is one of these.
+    """
+
+    for node in list(tree.find_all(exp.DataType)):
+        if node.this == exp.DataType.Type.TIMESTAMPTZ:
+            node.set("this", exp.DataType.Type.TIMESTAMP)
+    return tree
+
+
 def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -> str:
     tree = sqlglot.parse_one(_dollars(sql), read=dialect)
+    if dialect == "mysql":
+        tree = zoneless_timestamps(tree)
     if known is not None:
         tree = _barewords(tree, known)
     tree = relax_grouping(_fill_empty_select_lists(_calcite_forms(_date_functions(tree))))
+    if dialect == "bigquery":
+        from .bigquery_on_duckdb import faithful
+
+        tree = faithful(tree)
     return _quote_unusual_names(tree).sql(dialect="duckdb")
 
 
@@ -582,6 +603,11 @@ class Searcher:
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
             self.having = self.having or tree.find(exp.Having) is not None
         self.db = duckdb.connect(":memory:")
+        self.bigquery = dialect == "bigquery"
+        if self.bigquery:
+            from .bigquery_on_duckdb import configure
+
+            configure(self.db)
         for name, arity in (predicates or {}).items():
             if not _PLAIN_NAME.match(name):
                 raise ValueError(f"predicate name {name!r}")
@@ -605,12 +631,27 @@ class Searcher:
                 statements.append(f'INSERT INTO "{name}" VALUES {values};')
         self.db.execute(" ".join(statements))
 
+    def _read(self, rows):
+        """BigQuery-dialect rows as BigQuery returns them; a row it could not return fails like a query error."""
+
+        if not self.bigquery:
+            return rows
+        from .bigquery_on_duckdb import UnfaithfulOutput, bigquery_rows
+
+        try:
+            return bigquery_rows(rows)
+        except UnfaithfulOutput as error:
+            raise duckdb.InvalidInputException(str(error)) from error
+
+    def _rows(self, sql: str):
+        return self._read(self.db.execute(sql).fetchall())
+
     def runs(self) -> bool:
         """Whether DuckDB accepts both queries on an empty database."""
 
         try:
-            self.db.execute(self.left_sql).fetchall()
-            self.db.execute(self.right_sql).fetchall()
+            self._rows(self.left_sql)
+            self._rows(self.right_sql)
         except duckdb.Error:
             return False
         return True
@@ -695,8 +736,8 @@ class Searcher:
                 if not self._satisfies(data, generator):
                     continue
                 self._load(data)
-                a = self.db.execute(self.left_sql).fetchall()
-                b = self.db.execute(self.right_sql).fetchall()
+                a = self._rows(self.left_sql)
+                b = self._rows(self.right_sql)
                 if _bag(a) != _bag(b) and self._stable(data, a, b, random.Random(1)):
                     return "found", Counterexample(data, a, b)
         except duckdb.Error:
@@ -737,8 +778,8 @@ class Searcher:
                 continue
             try:
                 self._load(data)
-                a = self.db.execute(self.left_sql).fetchall()
-                b = self.db.execute(self.right_sql).fetchall()
+                a = self._rows(self.left_sql)
+                b = self._rows(self.right_sql)
             except duckdb.Error:
                 continue  # a runtime error on this database (a failed cast, SINGLE_VALUE of two rows): try the next
             if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
@@ -784,8 +825,8 @@ class Searcher:
                         self.db.execute(f'DELETE FROM "{name}"')
                         if data[name]:
                             self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', data[name])
-                    a = self.db.execute(self.left_sql).fetchall()
-                    b = self.db.execute(self.right_sql).fetchall()
+                    a = self._rows(self.left_sql)
+                    b = self._rows(self.right_sql)
                 except duckdb.Error:
                     continue
                 if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
@@ -829,12 +870,15 @@ class Searcher:
             # DuckDB's optimizer has returned wrong rows for some correlated subqueries: the same rows must
             # come back with the optimizer off, so a counterexample never rests on an engine bug
             self._load(data)
-            if tuple(_bag(rows) for rows in run_unoptimized(self.db, self.left_sql, self.right_sql)) != expected:
+            if tuple(_bag(self._read(rows)) for rows in run_unoptimized(self.db, self.left_sql, self.right_sql)) != expected:
                 return False
-            for _ in range(3):
-                shuffled = {name: rng.sample(data[name], len(data[name])) for name in self.used}
+            # reversed and rotated first: three random shuffles of a two-row table keep its order 1 time in 8
+            orders = [{name: list(reversed(data[name])) for name in self.used}]
+            orders.append({name: list(data[name][1:]) + list(data[name][:1]) for name in self.used})
+            orders += [{name: rng.sample(data[name], len(data[name])) for name in self.used} for _ in range(3)]
+            for shuffled in orders:
                 self._load(shuffled)
-                if (_bag(self.db.execute(self.left_sql).fetchall()), _bag(self.db.execute(self.right_sql).fetchall())) != expected:
+                if (_bag(self._rows(self.left_sql)), _bag(self._rows(self.right_sql))) != expected:
                     return False
         except duckdb.Error:
             return False

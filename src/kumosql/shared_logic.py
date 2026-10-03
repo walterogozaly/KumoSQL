@@ -24,9 +24,11 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
-from .canonical import free_cte_refs
+from .canonical import _declared, free_cte_refs
 from .graph import GraphResult, ObservedRead, build_query_graph
 from .pipeline_duplicates import _fingerprint, _select_location
+from .ast_utils import select_sources
+from .scalar_subqueries import _select_names
 
 if TYPE_CHECKING:
     from .near_duplicates import NearDuplicateCluster
@@ -309,6 +311,102 @@ def _merges_back(proposal: SharedLogicProposal, model_sql: str, sites) -> bool:
     return True
 
 
+def _known_columns(pipeline: "Pipeline | None"):
+    """A lookup from a table in SQL to its lower-case column names, or ``None`` where they are not known."""
+
+    if pipeline is None:
+        return lambda table: None
+
+    def lookup(table: exp.Table):
+        try:
+            key = pipeline._resolver.resolve(table) or ".".join(p.name for p in table.parts)
+            columns = {k.lower(): v for k, v in pipeline.source_schema.items()}.get(key.lower())
+            if columns is None:
+                columns = pipeline._analyse().outputs.get(key)
+        except Exception:  # noqa: BLE001  # unknown columns make the caller careful, never wrong
+            return None
+        return None if columns is None else {c.lower() for c in columns}
+
+    return lookup
+
+
+def _binding(column: exp.Column, scopes: list[exp.Select], shared: exp.Expression, columns_of) -> str:
+    """Where an unqualified column of the shared SELECT comes from: ``bound``, ``free`` or ``unknown``.
+
+    ``bound``: a source inside the SELECT provides it. ``free``: every source on the way is known and none does,
+    so it can only come from the query around the copy. ``unknown``: some source's columns are not known.
+    """
+
+    name = column.name.lower()
+    ctes = {c.alias_or_name.lower(): c.this for c in shared.find_all(exp.CTE)}
+    for scope in scopes:
+        unknown = False
+        for source in select_sources(scope):
+            if isinstance(source, exp.Table):
+                cte = None if source.args.get("db") else ctes.get(source.name.lower())
+                names = _select_names(cte) if cte is not None else columns_of(source)
+            elif isinstance(source, exp.Subquery):
+                names = _select_names(source.this)
+            else:
+                names = None
+            if names is None:
+                unknown = True
+            elif name in names:
+                return "bound"
+        if unknown:
+            return "unknown"
+        if name in {(item.alias or "").lower() for item in scope.expressions}:
+            return "bound"  # an output alias used in GROUP BY, HAVING or ORDER BY
+    return "free"
+
+
+def _not_shareable(proposal: SharedLogicProposal, pipeline: "Pipeline | None" = None) -> str:
+    """Why one shared table cannot stand in for the copies whatever their text, or ``""``.
+
+    Equal canonical text says the copies are the same code, not that one materialized result serves them all:
+    a clock or RAND is evaluated again by every build, a Dataform expression the loader masked may differ
+    between models, and a SELECT that reads a column of the query around it has no rows on its own.
+    """
+
+    from .pipeline_equivalence import run_dependent
+
+    text = proposal.shared_sql or ""
+    if "__sqlx_" in text or "${" in text:
+        return "the shared SELECT holds a Dataform expression that was not resolved"
+    try:
+        shared = sqlglot.parse_one(text, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return "the shared SELECT does not parse"
+    if shared is None:
+        return "the shared SELECT does not parse"
+    why = run_dependent(shared)
+    if why:
+        return f"the shared SELECT computes {why.split(': ', 1)[-1]}, which each build evaluates again"
+    # A scalar subquery sits in an expression of the query around it, so it may read that query's columns.
+    nested = any(
+        not location.startswith(("query", "cte:", "subquery:")) or location == "subquery:<anonymous>"
+        for _, location in proposal.sites
+    )
+    columns_of = _known_columns(pipeline)
+    for column in shared.find_all(exp.Column):
+        if isinstance(column.this, exp.Star):
+            continue
+        qualifier = column.table.lower() if column.table else ""
+        scopes = [s for s in [column.find_ancestor(exp.Select)] if s is not None]
+        while scopes[-1:] and scopes[-1].find_ancestor(exp.Select) is not None:
+            scopes.append(scopes[-1].find_ancestor(exp.Select))
+        declared = {name for scope in scopes for name in _declared(scope)}
+        if qualifier and qualifier not in declared:
+            return f"the shared SELECT reads {column.sql(dialect='bigquery')} from the query around it"
+        if not qualifier:
+            where = _binding(column, scopes, shared, columns_of)
+            if where == "free":
+                return f"the shared SELECT reads {column.name} from the query around it"
+            if where == "unknown" and nested:
+                return "a copy sits inside an expression and reads a column it does not qualify, which may belong to the query around it"
+    return ""
+
+
 def verify_proposal(pipeline: "Pipeline", proposal: SharedLogicProposal) -> SharedLogicProposal:
     """Apply the refactor to every copy and label each consumer by what the prover shows.
 
@@ -324,7 +422,11 @@ def verify_proposal(pipeline: "Pipeline", proposal: SharedLogicProposal) -> Shar
     by_model: dict[str, list[tuple[str, str]]] = {}
     for site in proposal.sites:
         by_model.setdefault(site[0], []).append(site)
+    blocked = _not_shareable(proposal, pipeline)
     for model_key, sites in by_model.items():
+        if blocked:
+            results[model_key] = ConsumerResult(model_key, "unknown", blocked)
+            continue
         model = pipeline.models.get(model_key)
         before = getattr(model, "sql", None) if model is not None else None
         outside = _outside_reads(proposal, before, sites)

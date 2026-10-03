@@ -31,3 +31,33 @@ def test_every_test_file_that_loads_an_eval_script_is_marked_eval():
         if loads and test.name not in conftest.EVAL_FILES:
             missing.append(f"{test.name} (loads {', '.join(sorted(loads))})")
     assert not missing, "add to EVAL_FILES in tests/conftest.py: " + "; ".join(missing)
+
+
+def _scoreboard():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("scoreboard_tool", ROOT / "tools" / "scoreboard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_coverage_must_add_up_to_size_unless_it_says_what_it_counts():
+    check = _scoreboard().check
+    row = {"size": 10, "coverage": {"proven": 7, "unknown": 3}}
+    assert check(row) is None
+    assert check({"size": 10, "coverage": {}}) is None  # no such outcomes
+    assert "adds up to 9, not size 10" in check({"size": 10, "coverage": {"proven": 7, "unknown": 2}})
+    assert "adds up to 0" in check({"size": 10, "coverage": {"error": 0}})
+    stage = {"size": 10, "coverage": {"proven": 7, "unknown": 3, "unsupported": 4}, "coverage_of": "All 14 cases: the 10 scored plus 4 skipped before translation."}
+    assert check(stage) is None
+    assert "coverage_of must be" in check({**stage, "coverage_of": " "})
+    assert "whole numbers" in check({"size": 10, "coverage": {"proven": 10.0}})
+    assert "unknown coverage outcome" in check({"size": 10, "coverage": {"passed": 10}})
+
+
+def test_environment_is_optional_and_an_object():
+    check = _scoreboard().check
+    row = {"size": 1, "coverage": {"proven": 1}}
+    assert check({**row, "environment": {"git_commit": "abc", "sqlglot": "30.21.0"}}) is None
+    assert "environment must be an object" in check({**row, "environment": "sqlglot 30.21.0"})

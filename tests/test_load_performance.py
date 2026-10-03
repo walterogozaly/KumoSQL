@@ -149,7 +149,7 @@ def ui_server_url():
     from kumosql.ui import UIHandler, UIServer
 
     server = UIServer(("127.0.0.1", 0), UIHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}"
@@ -306,3 +306,17 @@ def test_a_generated_project_analyses_within_its_time_budget(tmp_path, monkeypat
     pipeline = live_graph.pipeline_from_files(files)
     pipeline.report(include_duplicates=False)
     assert time.perf_counter() - start < 30
+
+
+def test_two_loops_of_one_name_keep_their_own_progress():
+    """Two analyses can run a loop of the same name at once (the UI's background job and another load)."""
+
+    first, second = timing.Progress("same loop", 2), timing.Progress("same loop", 3)
+    first.step("alpha")
+    second.step("beta")
+    second.step("gamma")
+    assert sorted((p["name"], p["done"], p["total"]) for p in timing.current_progress()) == [("same loop", 0, 2), ("same loop", 1, 3)]
+    first.finish()
+    second.step("delta")  # the other loop ending took its entry with it, and this step raised KeyError
+    second.finish()
+    assert timing.current_progress() == []

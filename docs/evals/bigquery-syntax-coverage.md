@@ -1,5 +1,7 @@
 # BigQuery and Dataform syntax coverage
 
+[Plain-language version](../../docs_simple/evals/bigquery-syntax-coverage.md)
+
 `tests/fixtures/bq_syntax/` is a checked-in manifest of small, valid cases, one per construct: every GoogleSQL statement family (query syntax, pipe syntax, DDL, DML, procedural language, transactions, DCL, `EXPORT DATA`/`LOAD DATA`, search and vector functions, JSON, geography, `ML.*`, UDFs, wildcard tables, `FOR SYSTEM_TIME AS OF`, `INFORMATION_SCHEMA`, quoting) and the Dataform action types (table, view, incremental, operations, assertion, declaration, test), their config options, the `ref`/`resolve`/`self`/`when`/`incremental()` helpers, `js` blocks and includes, plus whole-project layouts (`workflow_settings.yaml`, `dataform.json`, `actions.yaml`, the JavaScript API).
 
 ```
@@ -64,6 +66,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - `DROP TABLE FUNCTION` did not parse; `bigquery_syntax.py` now reads it as a drop of kind `TABLE FUNCTION`. Script cleanup gaps closed by [the script reader](../scripts.md) are no longer listed.
 - Raw bytes literals (`br'a\d'`, `rb".."`) did not parse; they are read as the `b'..'` literal with the same bytes. Pipe `|> WITH y AS (...)` did not parse; it is read as a `WITH` at the front of its query, but only when nothing before it spells a name it defines and the query has no `WITH` of its own (otherwise moving it could change what a name means).
 - An outside GoogleSQL feature checklist (287 entries from the BigQuery reference and release notes, 2026-10-02) was checked against BigQuery: 31 of its 154 single-statement query examples were not valid GoogleSQL. The 119 distinct valid queries are kept in `tests/fixtures/googlesql_checklist.json` (source noted there), and `tests/test_googlesql_checklist.py` checks on every sqlglot build that each parses and prints back to SQL that reads the same. Four are recorded as not read yet: `MATCH_RECOGNIZE` (sqlglot's BigQuery tokenizer lacks the keyword, and reading it needs column lineage for `MEASURES` first), a parenthesized join that starts with `UNNEST`, the `WITH(a AS 1, a + 1)` expression, and pipe `RENAME` (on purpose, above). The same check found two false proofs, now fixed ([provers.md](../provers.md)): bytes literals that differ only in backslash escapes, and `CAST` to a parameterized type.
+- sqlglot read a string, bytes literal or backticked name that runs onto a second line without triple quotes (`'a<line break>b'`), which BigQuery rejects as an unclosed literal, so the provers equated it with `'a\nb'`. `bigquery_syntax.py` now rejects it as BigQuery does; triple-quoted literals still span lines.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
 
 ## Gaps that are not fixed here

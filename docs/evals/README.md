@@ -1,5 +1,7 @@
 # Evals
 
+[Plain-language version](../../docs_simple/evals/README.md)
+
 KumoSQL is scored on public benchmarks and on suites generated for its own features. None of them calls a language model at run time. This folder has one page per eval family: where the data comes from, how a case is scored, how to rerun it and what the limits are. The headline numbers are in the [README scoreboard](../../README.md#benchmark-scoreboard).
 
 ## How the evals are organised
@@ -18,28 +20,32 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 
 | Page | What it scores | Results files |
 | --- | --- | --- |
-| [Algebraic prover on SQLSolver, R-Bot, QED, Cosette, SPES and mined Calcite tests](sqlsolver.md) | Equivalent query pairs proved, with refutations by a replayed counterexample | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `rbot-calcite`, `qed-calcite`, `cosette`, `spes-only`, `calcite-mined` |
+| [Algebraic prover on SQLSolver, R-Bot, QED, Cosette, SPES and mined Calcite tests](sqlsolver.md) | Equivalent query pairs proved, with refutations by a replayed counterexample | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `rbot-calcite`, `qed-calcite`, `cosette`, `cosette-adapted`, `spes-only`, `calcite-mined` |
 | [VeriEQL](verieql.md) | LeetCode, Literature and Calcite suites, proofs and counterexamples scored separately | `verieql-leetcode-proof`, `verieql-leetcode-executed`, `verieql-literature-proof`, `verieql-literature-executed`, `verieql-calcite-proof`, `verieql-calcite-executed` |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs | `singh-bedathur-leetcode` |
+| [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict (proved equal under minimal NOT NULL, unique-key and foreign-key conditions) on the Singh and VeriEQL LeetCode pairs, plus three hand-checked suites | `conditional-equivalence-singh`, `conditional-equivalence-verieql` |
 | [Bounded verification](bounded-verification.md) | The same suites under the z3 bounded checker (at most 3 rows per table) | `bounded-sqlsolver-calcite`, `bounded-sqlsolver-spark`, `bounded-sqlsolver-tpch`, `bounded-sqlsolver-tpcc`, `bounded-qed`, `bounded-rbot`, `bounded-cosette`, `bounded-spes`, `bounded-singh`, `bounded-literature`, `bounded-calcite`, `bounded-leetcode` |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification | `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` |
 | [LLM-SQL-Solver](llm-sql-solver.md) | 180 Spider pairs that must never be proved, 70 pairs with expert labels | `llm-sql-solver-negatives`, `llm-sql-solver-relaxed` |
 | [DLBench](dlbench.md) | Cross-dialect translations from SQLite, MySQL and PostgreSQL into six databases: parsed, and proved equal to the source | `dlbench` |
+| [DB-GPT rewrite examples](dbgpt-rules.md) | DB-GPT's 36 PostgreSQL before/after rewrites, labelled by hand and checked on DuckDB | `dbgpt-rules` |
+| [Documented rewrites](documented-rewrites.md) | Rewrites recommended by vendor and style-guide docs, written as KumoSQL's own cases; the ones that change results must not be proved | `documented-rewrites` |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Query pairs from public optimizer bug reports (Calcite, Spark, CockroachDB, DuckDB, MySQL, ClickHouse): none may be proved | `optimizer-bugs` |
 | [Join rewrites to LEFT JOIN](join-rewrites.md) | Hand-checked rewrites between CROSS, INNER, RIGHT, FULL, semi and anti joins and LEFT JOIN, proved or refuted | `join-rewrites` |
-| [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output | `pipeline-equivalence`, `pipeline-refutation` |
+| [Whole-pipeline equivalence](pipeline-equivalence.md) | Multi-model refactors that keep, or break, every consumer-visible output; the Jaffle Shop dbt project built, loaded, rewritten and refactored | `pipeline-equivalence`, `pipeline-refutation`, `jaffle-shop`, `jaffle-shop-refactors`, `jaffle-shop-refutation` |
 | [Targeted test data](targeted-test-data.md) | Targeted databases, multi-database checking and counterexample minimization | `targeted-test-data`, `multi-database-semantic`, `counterexample-minimization`, `unsafe-rewrite-variants` |
-| [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC fuzzing, unsafe-rewrite detection and rewrite composition | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition` |
+| [Metamorphic fuzzing](fuzzing.md) | TLP/NoREC fuzzing, unsafe-rewrite detection, rewrite composition and the typed soundness fuzzer | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition`, `soundness-fuzz` |
 
 ## Rewriting and performance
 
 | Page | What it scores | Results files |
 | --- | --- | --- |
-| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `clickbench-rewrites`, `cost-recommendation-validity` |
+| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, QueryBooster's experiment rewrites, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `querybooster`, `clickbench-rewrites`, `cost-recommendation-validity` |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data | `transformation-workloads`, `job-alternative-forms` |
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on 11,353 queries, test files held out | `llm-r2-scale` |
 | [MV-based rewriting](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS | `mv-benchmark` |
 | [Table minimization](table-minimization.md) | Simplest pipeline that keeps the protected tables identical, from 3 to 20 tables, with traps | `table-minimization` |
+| [Project reduction](project-reduction.md) | Smallest Dataform project that keeps the chosen outputs, as a patch: converted minimization cases checked on DuckDB, and open-source Dataform projects | `project-reduction` |
 | [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors | `duplicate-exact`, `duplicate-similar`, `shared-refactors-proof`, `shared-refactors-executed` |
 
 ## Coverage and engine behaviour

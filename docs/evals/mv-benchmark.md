@@ -1,5 +1,7 @@
 # Materialized-view rewriting benchmark
 
+[Plain-language version](../../docs_simple/evals/mv-benchmark.md)
+
 Scores the python-forward part of the materialized-view benchmark from [edx-h/Benchmarking-MV-Based-Rewriting](https://github.com/edx-h/Benchmarking-MV-Based-Rewriting), commit `83da57fbc7` (arXiv 2607.19679): given a workload, which views does KumoSQL find, how many queries can it rewrite onto them, and is every rewrite proven. The paper's stages that need engines and data (Hive, Doris, StarRocks, latency, time savings) are out of scope.
 
 ```

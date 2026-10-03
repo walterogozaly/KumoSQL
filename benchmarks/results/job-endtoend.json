@@ -14,5 +14,6 @@
     "timeout": 0,
     "error": 0
   },
+  "coverage_of": "Failures only: 0 timeouts and 0 errors over the 113 queries run with KumoSQL's plans; equivalence outcomes do not apply.",
   "held_out": "Families 17-33 (54 queries): 6.3 s against DuckDB's 8.4 s and true sizes' 6.2 s"
 }

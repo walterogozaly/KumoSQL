@@ -1,5 +1,7 @@
 # Engine test suites
 
+[Plain-language version](../../docs_simple/evals/engine-suites.md)
+
 An execution-based regression eval. Other engines' test suites hold thousands of queries with real data. Each query runs in DuckDB, goes through every KumoSQL rewrite (inline single-use CTEs, remove trivial predicates, redundant parentheses and unused CTEs, deduplicate CTEs, remove redundant DISTINCT, format), and runs again. A rewrite that changes the result is a behaviour change, and that count must stay 0.
 
     python tools/engine_suites.py --suite duckdb-slt          # about 2 hours on 4 cores

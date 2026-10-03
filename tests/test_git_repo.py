@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from kumosql import git_repo, live_graph
+from kumosql import git_repo, live_graph, redact
 
 FILES = {
     "workflow_settings.yaml": "defaultProject: p\ndefaultDataset: d\n",
@@ -88,7 +88,7 @@ def test_unsafe_remotes_are_rejected(value):
 
 
 @pytest.mark.parametrize("value", [
-    "https://github.com/o/r.git", "ssh://git@github.com/o/r.git", "git@github.com:o/r.git", "/srv/r.git",
+    "https://github.com/o/r.git", "ssh://github.com/o/r.git", "git@github.com:o/r.git", "/srv/r.git",
 ])
 def test_supported_remote_forms(value):
     assert git_repo.parse_remote(value) == value
@@ -346,3 +346,54 @@ def test_javascript_declarations_are_read_so_a_one_argument_ref_finds_them(remot
     pipeline = live_graph.pipeline_from_files(fetched["files"])
     assert any(key.endswith("raw_loop.loop_a") for key in pipeline.sources)  # the declared schema, not the default dataset
     assert not any(key.endswith("d.loop_a") for key in pipeline.sources)
+
+
+@pytest.mark.parametrize('url', [
+    'https://FAKE_TOKEN@github.com/owner/repo.git',
+    'https://user:FAKE_TOKEN@github.com/owner/repo.git',
+    'ssh://user:FAKE_TOKEN@github.com/owner/repo.git',
+    'https://github.com/owner/repo.git?token=FAKE_TOKEN',
+    'https://github.com/owner/repo.git#FAKE_TOKEN',
+    'http://user%3AFAKE_TOKEN@host/repo.git',
+])
+def test_embedded_credentials_rejected_before_git(url, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail('git must not receive embedded credentials')
+    monkeypatch.setattr(git_repo, '_run', unexpected)
+    for action in (git_repo.parse_remote, git_repo.sync, git_repo.fetch_project):
+        with pytest.raises(git_repo.GitRepoError, match='credential helper|query string') as caught:
+            action(url)
+        assert 'FAKE_TOKEN' not in str(caught.value)
+
+
+def test_same_protocol_credential_rewrite_is_rejected(monkeypatch):
+    monkeypatch.setattr(git_repo, '_git', lambda *a, **k: 'https://FAKE_TOKEN@github.com/owner/repo.git')
+    with pytest.raises(git_repo.GitRepoError, match='credential helper') as caught:
+        git_repo._refuse_rewritten_transport('https://github.com/owner/repo.git')
+    assert 'FAKE_TOKEN' not in str(caught.value)
+
+
+def test_git_failure_removes_url_credentials(monkeypatch):
+    monkeypatch.setattr(git_repo.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(
+        a, 128, b'', b"fatal: Authentication failed for 'https://FAKE_TOKEN@host/repo.git'"))
+    with pytest.raises(git_repo.GitRepoError) as caught:
+        git_repo._git(['clone', 'clean'])
+    assert 'FAKE_TOKEN' not in str(caught.value)
+    assert 'Authentication failed' in str(caught.value)
+
+
+def test_clone_config_contains_only_credential_free_origin(remote):
+    bare, _ = remote
+    checkout = git_repo.sync(str(bare))
+    # Repair an older cached clone that retained a token before the fix.
+    run('remote', 'set-url', 'origin', 'https://FAKE_TOKEN@host/repo.git', cwd=checkout)
+    git_repo.sync(str(bare))
+    config = (checkout / '.git' / 'config').read_text()
+    assert 'FAKE_TOKEN' not in config
+    assert git_repo._git(['remote', 'get-url', 'origin'], cwd=checkout).strip() == str(bare)
+
+
+@pytest.mark.parametrize('url', ['ssh://git@github.com/owner/repo.git', 'git@github.com:owner/repo.git'])
+def test_ssh_login_names_are_not_credentials(url):
+    assert git_repo.parse_remote(url) == url
+    assert redact.strip_url_userinfo(url) == url

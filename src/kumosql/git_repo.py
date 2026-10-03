@@ -1,7 +1,7 @@
 """Load a Dataform project from any git remote, using the local ``git`` CLI.
 
 Private repositories work because ``git`` uses whatever credentials the user
-already has (SSH keys, a credential helper, a token in the URL). KumoSQL never
+already has (SSH keys or a credential helper). KumoSQL never
 asks for or stores credentials and makes no unauthenticated HTTP requests.
 
 The repository is shallow-cloned into a cache directory and reused on later
@@ -24,9 +24,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, ProjectError
-from . import console, state
+from . import console, redact, state
 from .state import data_dir
-from .resilience import decode_text
+from .resilience import decode_text, unsafe_checkout_path
 
 # One git load at a time: the UI can start several (a double click, the startup
 # reload plus a manual one), and they must not clone into or delete the same cache.
@@ -139,6 +139,10 @@ def parse_remote(value: object) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 2048:
         raise GitRepoError("Enter a git repository URL, such as git@github.com:owner/repository.git")
     remote = value.strip()
+    if redact.strip_url_userinfo(remote) != remote:
+        raise GitRepoError("Repository URLs must not contain credentials or userinfo. Use your Git credential helper (Git Credential Manager or gh auth setup-git), or an SSH key with git@host:path.")
+    if re.match(r"(?i)(?:https?|ssh|git)://", remote) and re.search(r"[?#]", remote):
+        raise GitRepoError("Repository URLs must not contain a query string or fragment, which can carry tokens.")
     if remote.startswith("-") or not _REMOTE.match(remote) or any(c in remote for c in "\0\n\r"):
         raise GitRepoError(
             "Use an https://, ssh:// or git@host:path remote (or an absolute path to a local repository)"
@@ -190,12 +194,11 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
     except subprocess.TimeoutExpired as exc:
         raise GitRepoError(f"git {args[0]} timed out after {_TIMEOUT_SECONDS} seconds") from exc
     if done.returncode != 0:
-        reason = (done.stderr.decode("utf-8", "replace").strip().splitlines() or ["no message"])[-1][:300]
-        console.say(f"{label}: exit {done.returncode} in {time.monotonic() - started:.1f}s: {reason}")
+        console.say(f"{label}: exit {done.returncode} in {time.monotonic() - started:.1f}s")
     if _TRACE is not None:
         _TRACE.append({
             "command": ["git", *args], "cwd": str(cwd), "cwd_exists": Path(cwd).is_dir(),
-            "returncode": done.returncode, "seconds": round(time.monotonic() - started, 2), "stderr": done.stderr.decode("utf-8", "replace").strip()[:2000],
+            "returncode": done.returncode, "seconds": round(time.monotonic() - started, 2), "stderr": "<git output withheld>" if done.stderr else "",
         })
     if done.returncode != 0:
         message = (done.stderr or done.stdout).decode("utf-8", "replace").strip() or f"exit status {done.returncode}"
@@ -206,7 +209,7 @@ def _run(args: list[str], cwd: Path | None = None, stdin: bytes | None = None) -
             hint = f"\n{_AUTH_HINT}"
         else:
             hint = ""
-        raise GitRepoError(f"git {args[0]} failed: {message}{hint}")
+        raise GitRepoError(redact.sanitize_credentials(f"git {args[0]} failed: {message}{hint}"))
     return done.stdout
 
 
@@ -215,9 +218,22 @@ def _cache_path(remote: str, branch: str | None) -> Path:
     return cache_dir() / digest
 
 
+def sanitize_cached_origin(remote: str, branch: str | None) -> None:
+    """Repair a historical credential-bearing URL's old cache before changing its saved key."""
+
+    clean = redact.strip_url_userinfo(remote)
+    if clean == remote:
+        return
+    with _LOAD_LOCK:
+        path = _cache_path(remote, branch)
+        if (path / ".git").is_dir():
+            _repair_origin(path, clean)
+
+
 def sync(remote: str, branch: str | None = None, refresh: bool = False) -> Path:
     """Clone (shallow) or update the cached checkout and return its path."""
 
+    remote, branch = parse_remote(remote), parse_branch(branch)
     with _LOAD_LOCK:
         try:
             return _sync(remote, branch, refresh)
@@ -239,6 +255,8 @@ def _refuse_rewritten_transport(remote: str) -> None:
     if _scheme(remote) not in ("http", "https", "ssh", "git"):
         return
     effective = _git(["ls-remote", "--get-url", "--", remote]).strip()
+    if effective:
+        parse_remote(effective)  # also reject credential-bearing url.<base>.insteadOf rewrites
     if effective and _scheme(effective) != _scheme(remote):
         raise GitRepoError(
             f"Your git configuration rewrites {remote} to {effective} (a url.<base>.insteadOf setting), "
@@ -310,6 +328,7 @@ def _sync(remote: str, branch: str | None, refresh: bool) -> Path:
 
 
 def _clone(remote: str, branch: str | None, path: Path) -> None:
+    remote, branch = parse_remote(remote), parse_branch(branch)
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = Path(tempfile.mkdtemp(prefix=path.name + ".partial-", dir=path.parent))
     # No working tree: files are read from git objects, so path length and
@@ -320,6 +339,7 @@ def _clone(remote: str, branch: str | None, path: Path) -> None:
     try:
         with console.task("clone", repo=remote, branch=branch or "default"):
             _git([*args, "--", remote, str(partial)])
+            _repair_origin(partial, remote)  # Git/config rewrites must not retain URL userinfo
     except GitRepoError:
         shutil.rmtree(partial, ignore_errors=True)
         raise
@@ -345,8 +365,8 @@ def _tree_blobs(checkout: Path) -> dict[str, str]:
         parts = meta.split()
         if len(parts) != 3 or parts[1] != "blob" or parts[0] == "120000":
             continue
-        if "node_modules/" in f"/{path}":
-            continue
+        if "node_modules/" in f"/{path}" or unsafe_checkout_path(path):
+            continue  # a name that cannot be written safely (``:``, device names) is skipped, not a failed load
         if path.lower().endswith(_SUFFIXES) or path in _CONFIG_FILES:
             blobs[path] = parts[2]
     return blobs
@@ -477,8 +497,6 @@ def diagnose(value: object, branch: object = None) -> str:
     """Run a full refresh load while recording every git call; returns a report to paste into a bug report."""
 
     import platform
-    import traceback
-
     from . import version
 
     global _TRACE
@@ -506,14 +524,14 @@ def diagnose(value: object, branch: object = None) -> str:
     lines.append(f"Cache directory: {cache_dir()} (exists: {cache_dir().is_dir()})")
     lines.append(f"Temp directory: {tempfile.gettempdir()} (exists: {Path(tempfile.gettempdir()).is_dir()})")
     lines.append(f"State directory: {data_dir()} (exists: {data_dir().is_dir()})")
-    lines.append(f"Remote: {value!r}   Branch: {branch!r}")
+    lines.append(f"Remote: {redact.GLOBAL._register('repo', str(value))}   Branch: {redact.GLOBAL._register('branch', str(branch)) if branch else 'default'}")
     _TRACE = []
     outcome = "OK"
     try:
         result = fetch_project(value, branch, refresh=True)
-        outcome = f"OK: loaded {len(result['files'])} files from {result['repository']} ({result['branch']} @ {result['commit']})"
-    except Exception:  # noqa: BLE001 - the report is the point
-        outcome = "FAILED:\n" + traceback.format_exc()
+        outcome = f"OK: loaded {len(result['files'])} files (commit {result['commit']})"
+    except Exception as exc:  # noqa: BLE001 - the report is the point
+        outcome = "FAILED:\n" + "\n".join(console.format_traceback(exc))
     trace, _TRACE = _TRACE, None
     try:
         sizes = _git(["count-objects", "-vH"], cwd=_cache_path(parse_remote(value), parse_branch(branch)))
@@ -529,4 +547,4 @@ def diagnose(value: object, branch: object = None) -> str:
             lines.append("   stderr: " + call["stderr"].replace("\n", "\n           "))
     lines.append("")
     lines.append("Result: " + outcome)
-    return "\n".join(lines)
+    return redact.GLOBAL.scrub("\n".join(lines), force=True)

@@ -1,5 +1,7 @@
 # Table minimization eval
 
+[Plain-language version](../../docs_simple/evals/table-minimization.md)
+
 Given a pipeline of tables (say tables 1 to 20) and the tables that must stay, how simple can the pipeline get? A **protected** table must still exist under the same name and give exactly the same output: the same column names in the same order and the same bag of rows, on every database. Every other table may be dropped, merged, inlined or rewritten. The answer is scored by complexity: the repo's sqlfluff score summed over the pipeline, plus one per table.
 
 ```

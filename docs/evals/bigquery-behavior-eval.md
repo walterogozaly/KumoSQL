@@ -1,5 +1,7 @@
 # BigQuery behaviour eval (GoogleSQL compliance queries and edge cases)
 
+[Plain-language version](../../docs_simple/evals/bigquery-behavior-eval.md)
+
 Does a KumoSQL rewrite (inline single-use CTEs, trivial-predicate and parenthesis cleanup, CTE dedupe, unused-CTE removal, redundant DISTINCT, and optionally subquery lifting) keep the query's behaviour on BigQuery-specific syntax and semantics, or does it say so and decline?
 
 ```

@@ -80,6 +80,8 @@ class SmtStatus(str, Enum):
     PROVEN_EQUIVALENT = "proven_equivalent"
     NOT_EQUIVALENT = "not_equivalent"
     NOT_PROVEN = "not_proven"
+    # Equivalent on every database that meets ``SmtEquivalenceResult.conditions``; never counted as proven.
+    PROVEN_CONDITIONALLY = "proven_conditionally"
 
 
 @dataclass(frozen=True)
@@ -97,10 +99,16 @@ class SmtEquivalenceResult:
     reason: str
     counterexample: Counterexample | None = None
     assumptions: tuple[str, ...] = ()
+    # ``kumosql.conditional_equivalence.Condition`` items of a PROVEN_CONDITIONALLY result.
+    conditions: tuple = ()
 
     @property
     def proven(self) -> bool:
         return self.status is SmtStatus.PROVEN_EQUIVALENT
+
+    @property
+    def conditionally_proven(self) -> bool:
+        return self.status is SmtStatus.PROVEN_CONDITIONALLY
 
 
 @dataclass(frozen=True)
@@ -204,6 +212,23 @@ class _Env(dict):
 
 class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
+
+
+def _lost_null_ordering(body: exp.Expression, text: str) -> str:
+    """A suffix naming every NULLS FIRST/LAST of ``body`` when its BigQuery ``text`` lost one, else "".
+
+    sqlglot drops a NULLS placement BigQuery cannot spell there, such as ``ASC NULLS LAST`` in an aggregate's
+    window, so ``SUM(v) OVER (ORDER BY t NULLS FIRST)`` and ``.. NULLS LAST`` would print alike.
+    """
+
+    before = [bool(o.args.get("nulls_first")) for o in body.find_all(exp.Ordered)]
+    if not before:
+        return ""
+    try:
+        after = [bool(o.args.get("nulls_first")) for o in sqlglot.parse_one(text, read="bigquery").find_all(exp.Ordered)]
+    except sqlglot.errors.ParseError:
+        after = None
+    return "" if before == after else " NULLS[" + "".join("F" if b else "L" for b in before) + "]"
 
 
 def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
@@ -1396,10 +1421,13 @@ class _Compiler:
                     order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
                 position = {old: new for new, old in enumerate(order)}
                 root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
-        key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
+        text = canonical.sql(dialect="bigquery", normalize_functions="upper")
+        lost = _lost_null_ordering(canonical, text)
+        key = "(" + text + ")" + lost
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
-        self.opaque_bodies[key] = (key[1:-1], len(names))
+        if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
+            self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
         return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
@@ -1935,6 +1963,15 @@ class _Compiler:
         V = _value_sort()
         target = e.this
         distinct = False
+        # COUNT(a, b, ..) counts the rows where no argument is NULL, and COUNT(DISTINCT a, b, ..) the
+        # distinct tuples among them: the argument is the tuple, NULL when any component is, and its
+        # value an uninterpreted function of the components (a claim valid for every such function
+        # holds for the injective one that a tuple is).
+        arguments = None
+        if func == "COUNT" and isinstance(target, exp.Distinct) and len(target.expressions) > 1:
+            arguments, distinct, target = list(target.expressions), True, None
+        elif func == "COUNT" and e.args.get("expressions") and not isinstance(target, exp.Distinct):
+            arguments, target = [target, *e.args["expressions"]], None
         if isinstance(target, exp.Distinct):
             if len(target.expressions) != 1:
                 raise Unsupported("multi-argument DISTINCT aggregate")
@@ -1947,7 +1984,12 @@ class _Compiler:
                 raise Unsupported(f"aggregate modifier {key}")
         if func in _DUPLICATE_INSENSITIVE:
             distinct = False
-        if func == "COUNT" and (target is None or isinstance(target, exp.Star)):
+        if arguments is not None:
+            if any(isinstance(a, exp.Star) for a in arguments):
+                raise Unsupported("* among several COUNT arguments")
+            vals = [self._val(a, env, None, None) for a in arguments]
+            arg = _Val(z3.Or(*[v.null for v in vals]), self._function("Tuple", len(vals))[1](*self._uf_args(vals)))
+        elif func == "COUNT" and (target is None or isinstance(target, exp.Star)):
             arg = None
         elif func in ("COUNTIF", "LOGICAL_AND", "LOGICAL_OR"):
             arg = _box(self._pred(target, env, None, None))
@@ -2118,7 +2160,7 @@ class _Prover:
                 if value is not None and kind in ("count", "count*"):
                     facts.append(z3.And(V.is_Num(value.val), z3.IsInt(V.num(value.val)), V.num(value.val) >= (1 if kind == "count*" else 0)))
             for s in occs:
-                if s.opaque or s.table.lower() != table:
+                if s.opaque or s.table != table:
                     continue
                 pairs = [(s.cols.get(k), d.cols.get(f"c{i}")) for k, i in keys]
                 if any(a is None or b is None for a, b in pairs):
@@ -2839,7 +2881,7 @@ class _Prover:
                 continue
             inner = sub.occs[0]
             for occ in block.occs:
-                if occ.table.lower() != inner.table.lower() or occ.columns != inner.columns:
+                if occ.table != inner.table or occ.columns != inner.columns:  # BigQuery: ds.T is not ds.t
                     continue
                 extra.append(z3.Implies(_subst(sub.guard, _occ_pairs(inner, occ)), sub.atom))
         if extra:
@@ -3559,7 +3601,7 @@ def _group_shape(key: str):
             else:
                 outputs.append((None, None))
         if {k for k, _ in keys} == group_names:
-            shape = (_Compiler._table_key(from_.this).lower(), keys, outputs)
+            shape = (_Compiler._table_key(from_.this), keys, outputs)
     _GROUP_SHAPES[key] = shape
     return shape
 
@@ -3748,6 +3790,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--schema", help="JSON file mapping table names to column lists")
     parser.add_argument("--exact-arithmetic", action="store_true", help="model + - * exactly (INT64/NUMERIC)")
     parser.add_argument("--timeout-ms", type=int, default=5000)
+    parser.add_argument(
+        "--conditional",
+        action="store_true",
+        help="when the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
+    )
     args = parser.parse_args(argv)
     with open(args.left, encoding="utf-8") as handle:
         left = handle.read()
@@ -3760,13 +3807,16 @@ def main(argv: list[str] | None = None) -> int:
     from .statement_proof import prove_statements_smt
 
     result = prove_statements_smt(
-        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms
+        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms,
+        conditional=args.conditional,
     )
     payload = {
         "status": result.status.value,
         "reason": result.reason,
         "assumptions": list(result.assumptions),
     }
+    if result.conditions:
+        payload["conditions"] = [c.to_json() for c in result.conditions]
     if result.counterexample is not None:
         payload["counterexample"] = {
             "tables": result.counterexample.tables,
@@ -3775,6 +3825,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
+    if result.conditionally_proven:
+        return 3
     return 0 if result.proven else 1
 
 
@@ -3867,6 +3919,34 @@ def _split_limit(sql: str, dialect: str):
 
 
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    With ``conditional=True`` a pair that is not proven is retried under facts taken from the
+    queries (NOT NULL columns, unique keys, foreign keys); a proof that needs some of them comes back
+    as ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (see ``kumosql.conditional_equivalence``).
+    See ``_prove_with_limit`` for the rest.
+    """
+
+    conditional = kwargs.pop("conditional", False)
+    wall = kwargs.pop("conditional_seconds", None)
+    result = _prove_with_limit(left_sql, right_sql, **kwargs)
+    if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
+        return result
+    from . import conditional_equivalence
+
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return _prove_with_limit(*pair, **{**kwargs, "constraints": constraints, "compare_names": False})
+        return _prove_with_limit(left_sql, right_sql, **{**kwargs, "constraints": constraints})
+
+    options = {} if wall is None else {"wall_seconds": wall}
+    return conditional_equivalence.add_conditions(
+        left_sql, right_sql, result, prove,
+        schema=kwargs.get("schema"), constraints=kwargs.get("constraints"), types=kwargs.get("types"), dialect=kwargs.get("dialect", "bigquery"), **options,
+    )
+
+
+def _prove_with_limit(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
     A query ending in ``ORDER BY .. LIMIT n [OFFSET m]`` is handled when both sides
