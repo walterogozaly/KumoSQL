@@ -28,6 +28,11 @@ This describes lineage. It does not establish that the script produces correct b
 
 ## What makes the result incomplete?
 
+Table changes retain the tables they read and write. For example, creating `new` from `old` with LIKE or CLONE
+connects those tables; renaming `old` to `new` keeps both names. Dropping or truncating a table records its output
+without inventing an input. A script can write several tables, even though only its final supported output has
+column lineage. Stored nested fields still trace to their containing column.
+
 - Dynamic SQL may build a table name at runtime. KumoSQL does not guess it.
 - Updating or merging a temporary table can make its column lineage unknown while its table dependencies remain visible.
 - Unresolved Dataform expressions and unsupported statements are reported.
