@@ -42,6 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import UnmodeledConstruct, expand_group_by_all
 from .set_operations import positional_sql_pair
 
 try:  # pragma: no cover - exercised through the tests
@@ -627,6 +628,10 @@ class Compiler:
 
     def compile(self, sql: str) -> Rel:
         tree = sqlglot.parse_one(sql, read=self.dialect)
+        try:
+            tree = expand_group_by_all(tree)
+        except UnmodeledConstruct as error:
+            raise Unsupported(str(error)) from None
         return self.query(tree, None)
 
     def query(self, node: exp.Expression, outer: Scope | None) -> Rel:

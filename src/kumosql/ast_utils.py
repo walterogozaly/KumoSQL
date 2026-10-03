@@ -194,14 +194,81 @@ def check_distinct_from_grouping(tree: exp.Expression) -> None:
             raise UnmodeledConstruct("IS DISTINCT FROM next to another comparison without parentheses reads differently across engines")
 
 
+def _uncorrelated(select: exp.Select) -> bool:
+    """Whether ``select`` sits only under derived tables, CTEs and set operations, so its columns are its own."""
+
+    node = select
+    while node.parent is not None:
+        parent = node.parent
+        if isinstance(parent, (exp.Subquery, exp.CTE, exp.With, exp.From, exp.Join, exp.SetOperation)):
+            pass
+        elif isinstance(parent, exp.Select) and node.arg_key in ("from", "from_", "joins", "with", "with_"):
+            pass
+        else:
+            return False
+        node = parent
+    return True
+
+
+def expand_group_by_all(tree: exp.Expression) -> exp.Expression:
+    """Spell ``GROUP BY ALL`` as the grouping keys it infers, in place, or raise :class:`UnmodeledConstruct`.
+
+    The keys are the select items that reference a column and hold no aggregate, written as positions.
+    With no keys the query has one group even on empty input, so an aggregate-only select becomes a
+    plain global aggregate. Correlated selects, stars, windows, subqueries, unknown functions (which may
+    be aggregates) and a select of only constants (engines differ on whether constants are keys) are declined.
+    """
+
+    for group in list(tree.find_all(exp.Group)):
+        if not group.args.get("all"):
+            continue
+        select = group.parent
+        if not isinstance(select, exp.Select) or group.expressions or not _uncorrelated(select):
+            raise UnmodeledConstruct("GROUP BY ALL is not modeled here")
+        keys: list[int] = []
+        key_sql: set[str] = set()
+        aggregated: list[exp.Expression] = []
+        constants = False
+        for position, item in enumerate(select.expressions, start=1):
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Star) or (isinstance(value, exp.Column) and isinstance(value.this, exp.Star)):
+                raise UnmodeledConstruct("GROUP BY ALL with a star select is not modeled")
+            if value.find(exp.Window, exp.Subquery, exp.Select, exp.Exists, exp.Lambda):
+                raise UnmodeledConstruct("GROUP BY ALL next to a window or subquery is not modeled")
+            if value.find(exp.AggFunc):
+                aggregated.append(value)
+            elif value.find(exp.Anonymous):
+                raise UnmodeledConstruct("GROUP BY ALL with an unknown function is not modeled")
+            elif value.find(exp.Column):
+                keys.append(position)
+                key_sql.add(value.sql())
+            else:
+                constants = True
+        for value in aggregated:
+            # A column outside the aggregates must be a key, or the query is not valid.
+            for column in value.find_all(exp.Column):
+                if not column.find_ancestor(exp.AggFunc) and column.sql() not in key_sql:
+                    raise UnmodeledConstruct("GROUP BY ALL with an ungrouped column is not modeled")
+        if keys:
+            group.set("all", None)
+            group.set("expressions", [exp.Literal.number(p) for p in keys])
+        elif aggregated and not constants:
+            select.set("group", None)
+        else:
+            raise UnmodeledConstruct("GROUP BY ALL without grouping keys is not modeled")
+    return tree
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
     Covers ``TABLESAMPLE``, time travel, ``SYMMETRIC`` ranges, ``WITH TIES`` and ``PERCENT``
     limits, ``OUTER APPLY`` and the like. sqlglot versions differ in which of these they parse, so
-    anything carried on the node is refused whichever version produced it.
+    anything carried on the node is refused whichever version produced it. ``GROUP BY ALL`` is
+    spelled out first (see :func:`expand_group_by_all`).
     """
 
+    tree = expand_group_by_all(tree)
     check_distinct_from_grouping(tree)
     for node in tree.walk():
         for kind, arg in _UNMODELED_ARGS:
