@@ -200,6 +200,7 @@ def run(suite: str, prove=sb.prove_result, trials: int = 60) -> dict:
                 out["disputed"].append(name)
         else:
             out["unknown"].append(name)
+    out["scored"] = out["total"] - len(out["disputed"])  # a pair labelled equivalent with a replayed counterexample is not one to prove
     out["seconds"] = time.time() - start
     return out
 
@@ -210,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     for suite in suites:
         r = run(suite)
         print(
-            f"{suite}: {r['correct']}/{r['total']} correct, 0 wrong" if not r["wrong"] else f"{suite}: {len(r['wrong'])} WRONG",
+            f"{suite}: {r['correct']}/{r['scored']} correct ({r['total']} pairs), 0 wrong" if not r["wrong"] else f"{suite}: {len(r['wrong'])} WRONG",
             f"| proven {len(r['proven'])}, refuted {len(r['refuted'])} (label disputes {len(r['disputed'])}), unknown {len(r['unknown'])}, {r['seconds']:.1f}s",
         )
         for key in ("wrong", "disputed", "refuted"):
