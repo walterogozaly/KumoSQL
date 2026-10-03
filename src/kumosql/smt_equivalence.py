@@ -2182,6 +2182,7 @@ class _Prover:
 
         base = solver.model()
         isolated = solver.translate(z3.Context())
+        isolated.set("timeout", self.timeout_ms)  # translate() drops the solver's parameters
         if isolated.check() != z3.sat:
             return base  # A timeout in the extra search must not lose a satisfiable model.
         base = isolated.model()
