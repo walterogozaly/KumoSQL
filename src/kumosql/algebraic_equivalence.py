@@ -73,6 +73,7 @@ from .join_rewrites import join_rewrites
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .union_filter_rules import push_filter_into_set_operation
+from .set_operation_types import mixed_types
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -4850,6 +4851,11 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
+    mixed = mixed_types(left_sql, kwargs.get("types"), kwargs.get("dialect", "bigquery")) or mixed_types(
+        right_sql, kwargs.get("types"), kwargs.get("dialect", "bigquery")
+    )
+    if mixed:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {mixed} (the rules do not model the conversion)")
     result = _prove_algebraic(left_sql, right_sql, 0, **kwargs)
     for level in (1, 2):
         if result.proven or (level == 1 and not (kwargs.get("constraints") or {})):
