@@ -1,0 +1,19 @@
+{
+  "order": 27,
+  "held_out": "none",
+  "docs": "docs/evals/conditional-equivalence.md",
+  "date": "2026-10-03",
+  "evidence": "proof",
+  "suite": "Equivalent under conditions: VeriEQL LeetCode (every 8th case)",
+  "size": 2139,
+  "score": "316 cases proved only under conditions beyond the declared ones, 0 wrong",
+  "metric": "Of 3,000 cases (every eighth of 23,994), the 2,139 the prover does not prove outright with the spec's own types, keys, NOT NULL columns and foreign keys (861 are proved outright): 316 proved under a minimal set of extra NOT NULL, unique-key and foreign-key conditions, 1,823 unknown (5 more are conditional proofs that rest on a composite foreign key the executed check cannot impose; they are not scored).",
+  "correctness": "0 wrong, 0 crashed: every conditional proof re-run on 900 random DuckDB databases repaired to meet its conditions and on the executed counterexample search with the conditions in the spec, both with no difference; the prover loses each proof when any one condition is dropped; 119 are separated by a database that breaks the conditions",
+  "coverage": {
+    "proven": 316,
+    "refuted": 0,
+    "unknown": 1823
+  },
+  "command": "python tools/conditional_bench.py verieql --every 8",
+  "caveats": "A sample, not the whole set (3,000 of 23,994 cases). Proof under assumed conditions beyond the declared ones. No held-out split reserved; the harness was developed against Singh dev pairs and an early 80-case sample (tuned on test). Conditions beyond the spec are rarer than on the Singh pairs because the declared keys already carry what the prover can use. Measured on master 69 commits after the branch point, merged in."
+}

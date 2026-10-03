@@ -1,5 +1,7 @@
 # BigQuery test bed
 
+[Plain-language version](../docs_simple/bigquery-testbed.md)
+
 `examples/bq_testbed/` builds a deliberately messy model layer in a BigQuery project and runs a repeatable query workload, so the project has real job history (`INFORMATION_SCHEMA.JOBS`) for exercising KumoSQL's graph, cost, table-role and repeated-work features.
 
 ## What it builds

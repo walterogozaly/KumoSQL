@@ -1,6 +1,8 @@
 # Metamorphic fuzzing and unsafe-rewrite detection
 
-Three seeded suites check KumoSQL's rewrites and its equivalence prover without any LLM at run time. They share one oracle (random small DuckDB databases with NULLs, duplicates and empty tables) and one report format. Every case id names its seed, so a failure is reproduced by rerunning the same command.
+[Plain-language version](../../docs_simple/evals/fuzzing.md)
+
+Three seeded suites check KumoSQL's rewrites and its equivalence prover without any LLM at run time (a fourth, the [typed soundness fuzzer](#typed-soundness-fuzzer), hunts false proofs on typed schemas with integrity constraints). They share one oracle (random small DuckDB databases with NULLs, duplicates and empty tables) and one report format. Every case id names its seed, so a failure is reproduced by rerunning the same command.
 
 ```
 python tools/unsafe_fuzz.py fuzz --count 60 --seed 1     # SQLancer-style TLP, NoREC and mutants
@@ -61,3 +63,34 @@ Every discovered failure becomes a regression test in `tests/test_unsafe_fuzz.py
 Seeds 31 (fuzz, count 40: 850 cases) and 31 (compose, 60 queries) over the richer shapes found no further bugs: 0 false proofs, 0 bad counterexamples, 0 behaviour changes.
 
 The generated shapes also cover window functions, QUALIFY, SAFE_*/NULLIF/IF, date arithmetic, UNNEST, STRUCT and NULL-heavy LEFT/RIGHT/FULL joins. Counterexamples that need a fractional value are replayed on DOUBLE columns (they are valid for FLOAT64 only). A fix from the first run over these shapes: when no integer model exists, a counterexample column that the queries only compare with numbers could be given a string; the model now prefers any numeric value before any other.
+
+## Typed soundness fuzzer
+
+`tools/soundness_fuzz.py` hunts false proofs: pairs the prover proves while a database separates them. It is adapted from Sol's S015 differential fuzzer (an external review deliverable), with its oracle and execution domain kept and the generator widened.
+
+```
+python tools/soundness_fuzz.py --seed 2 --count 2000 --jobs 4 --output run.json   # a long run
+python tools/soundness_fuzz.py --replay run.json --show                          # re-evaluate its findings
+```
+
+**Schema and databases.** Every pair runs over a small typed schema: `t(id, x, y INT64, s STRING)` keyed on `id`, `u(k INT64, v STRING)` (sometimes keyed on `k`, with `t.y` a foreign key to it) and sometimes a third table, with NULLs allowed except where a key or NOT NULL is declared. The prover gets the same schema, types and constraints (`TableConstraints` with keys, NOT NULL and foreign keys). Each pair runs on six DuckDB databases that obey the constraints: the seeded primary one, two more random ones (`--random-databases`), a NULL-heavy one, a duplicate-heavy one and an empty one.
+
+**Oracle.** Results are exact row bags (duplicates count, order does not; integers and floats compare as exact rationals, so 9007199254740993 differs from its FLOAT64 rounding; NULL, booleans and strings stay apart). A difference counts only when DuckDB with its optimizer off agrees (`kumosql.duckdb_load.run_unoptimized`, #347). Queries are translated from BigQuery only inside a closed list of SQL node types where both engines agree: no division, no failing or narrowing casts, no positive `LIMIT` or `ROW_NUMBER` without a declared-key total order, no large-integer arithmetic, no explicit window frames, no `OFFSET`. Anything else is skipped, and DuckDB binding or runtime errors are never evidence.
+
+**Generators** (mixed per seed; `--generators template,sol,mutant`):
+
+* `template`: 24 rewrite templates that build both sides from shared random predicates, expressions, join types and aggregates. They cover predicate and NULL identities, COUNT/SUM/DISTINCT variants, outer-join type changes, ON/WHERE moves, join commutation, self-joins on keys, semi- and anti-joins, IN as a value, set operations with pushed filters and LIMIT 0 tails, aggregates over UNION ALL, GROUPING SETS/ROLLUP/CUBE expansions, HAVING moves, filters pushed into grouped and windowed derived tables, scalar subqueries against grouped LEFT JOINs (the COUNT bug), CTE scope and shadowing, QUALIFY/ROW_NUMBER, ordered LIMIT, foreign keys and LIKE. Some instances are sound and some are not; the databases decide. A pair is labelled equivalent only when its template is sound on every database, and a labelled pair that a database separates is a `label_error` (a generator bug).
+* `sol`: Sol's 24 construct families, with sound identity, wrapper and duplicated-filter mutations on one pass and deliberate semantic changes on the next.
+* `mutant`: a template query against one of its single-site mutants from `kumosql.query_mutants`.
+
+The five false proofs Sol's S009 audit published run first (`tests/fixtures/soundness_fuzz/historical.json`); none may be proved again.
+
+**Isolation and reduction.** Each evaluation runs in one of `--jobs` long-lived child processes, with a wall timeout after which the child is killed and restarted. A false proof is reduced while it stays one: SQL edits on either side (each rechecked by the prover and the databases), then the witness database alone, then its rows one at a time (rows need only the oracle; the prover never sees data).
+
+**Known false proofs.** `tests/fixtures/soundness_fuzz/known_false_proofs.json` lists open false proofs with their cause and the thread fixing them. The report marks a finding `known` when its pair, or its reduced pair, is listed; the command exits 1 on any other false proof.
+
+**Results** (seed 2, 2,000 generated pairs plus the 5 published ones, master a481075, about 80 seconds on four cores): 1,059 proved, 222 refuted, 715 unknown, 8 skipped and 1 timeout, with 1 false proof and 0 label errors. The false proof is `_collapse_aggregate` folding `COUNT(d.n)` over a derived table with one row per group (here a global aggregate) into the inner `COUNT`, which is open and routed. On master 6e86a4b, 26,000 pairs over three seeds also found float widening of INT64 values above 2^53 (fixed by #427) and LIMIT 0 tails dropped from INTERSECT, EXCEPT and same-source UNION DISTINCT (S006-001, fixed since). On the same master, all but 2 of Sol's original 9 false proofs were already gone.
+
+One oracle bug was fixed along the way. sqlglot writes `(y IS NOT NULL) IS NULL` for DuckDB as `NOT y IS NULL IS NULL`, which DuckDB reads differently, so the translator now parenthesizes every operator operand.
+
+**Tests.** `tests/test_soundness_fuzz.py` checks the oracle (exact bags, refused queries, legal databases, the unoptimized recheck, worker timeouts), runs every template and checks that pairs labelled equivalent agree on every database, keeps the published S009 pairs unproved, and makes a seeded smoke run (seed 3, 120 pairs, about 20 seconds) that fails on any false proof not in the known list. The file is listed in `EVAL_FILES`, so `run_tests.py --evals` includes it. Long runs are opt-in from the command line.

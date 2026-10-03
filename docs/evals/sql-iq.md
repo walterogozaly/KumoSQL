@@ -1,5 +1,7 @@
 # SQL-IQ
 
+[Plain-language version](../../docs_simple/evals/sql-iq.md)
+
 [SQL-IQ](https://github.com/SQL-IQ/SQL-IQ) (MIT) scores a model on seven SQL tasks. KumoSQL answers the three that can be answered with deterministic Python and no model at runtime, and leaves out the rest:
 
 | Task | In the harness | Why |

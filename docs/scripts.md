@@ -1,5 +1,7 @@
 # Multi-statement scripts
 
+[Plain-language version](../docs_simple/scripts.md)
+
 BigQuery scripts (several statements run together, with variables, temporary tables, control flow and stored procedures) are broken apart wherever SQL comes in, and what they read and write is followed from statement to statement. The same code (`kumosql.scripts`) serves every entry point, so a script is understood the same way in each:
 
 - a model written as a script in a `.sql` file or a Dataform `operations` action, and its `pre_operations` and `post_operations` blocks;

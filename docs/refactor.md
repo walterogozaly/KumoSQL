@@ -1,5 +1,7 @@
 # Refactor: keep some tables, rearrange the rest
 
+[Plain-language version](../docs_simple/refactor.md)
+
 Say which tables must keep existing and keep returning the same rows, which may be dropped, merged or rewritten, and let KumoSQL look for simpler pipelines. Every option it returns has every protected table **proved** equal to the original; a move it cannot prove is rejected, never accepted.
 
 ## Classes
