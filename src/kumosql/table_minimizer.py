@@ -205,6 +205,7 @@ class _Setup:
     unscored: list[int] = field(default_factory=lambda: [0])
     scores: dict[str, float] = field(default_factory=dict)
     names_cache: dict[tuple, tuple[str, ...]] = field(default_factory=dict)
+    back: dict = field(default_factory=dict)  # internal parts -> the name as the input spelled it
     proof_cache: dict = field(default_factory=dict)
     schema_cache: dict = field(default_factory=dict)
     forms_cache: dict = field(default_factory=dict)
@@ -335,6 +336,7 @@ def _prepare(tables, protected, sources, dialect, timeout_ms):
     fixed = frozenset(opaque) | {key for key, sql in original.items() if _volatile(sql)}
     setup = _Setup(pipeline, original, protected_keys, frozenset(opaque), pinned, fixed, _Reads(pipeline), source_columns,
                    facts, timeout_ms)
+    setup.back = back
     return setup, names, mapping, back
 
 
@@ -452,11 +454,24 @@ def _check(setup: _Setup, state: Mapping[str, str], keys: Iterable[str] | None =
             continue
         if not after.get(key) or after.get(key) != before.get(key):
             return False, [], f"{key}: output columns are not known to be the same"
+    for key, sql in state.items():
+        if sql != setup.original.get(key):
+            captured = _captured(setup, sql)
+            if captured:
+                return False, [], f"{key}: a WITH table named {captured} would hide the table of that name"
     known = None
     assumptions: list[str] = []
     for key in keys:
         if state[key] == setup.original[key] and _closure(setup, state, key) == _closure(setup, setup.original, key):
             continue
+        try:
+            full = [_expanded(setup, sqls, key, set()) for sqls in (setup.original, state)]
+        except (sqlglot.errors.SqlglotError, RecursionError) as error:
+            return False, [], f"{key}: {error}"
+        if any(_repeated_ctes(tree) for tree in full):
+            # inlined tables would put two WITH tables of one name in one query, where one can capture the
+            # other's readers; such a proof is not trusted
+            return False, [], f"{key}: two WITH tables share a name once the tables are inlined"
         ok, used, why = _prove_frontier(setup, state, key, before)
         if not ok:
             # the whole pipeline prover: layer lemmas, then everything inlined; it sees the original
@@ -471,6 +486,29 @@ def _check(setup: _Setup, state: Mapping[str, str], keys: Iterable[str] | None =
             return False, [], why
         assumptions.extend(a for a in used if a not in assumptions)
     return True, assumptions, ""
+
+
+def _repeated_ctes(tree: exp.Expression) -> bool:
+    names = [c.alias_or_name.lower() for c in tree.find_all(exp.CTE)]
+    return len(names) != len(set(names))
+
+
+def _captured(setup: _Setup, sql: str) -> str:
+    """The name of a table that a WITH table of ``sql`` would capture once names are written as given, or ``""``."""
+
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return ""
+    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    if not ctes:
+        return ""
+    for table in tree.find_all(exp.Table):
+        parts = _table_parts(table)
+        given = setup.back.get(parts)
+        if given is not None and len(given) == 1 and given[0] in ctes:
+            return given[0]
+    return ""
 
 
 def _shared(setup: _Setup, state: Mapping[str, str]) -> set[str]:

@@ -357,3 +357,44 @@ def test_non_deterministic_tables_are_never_folded_or_rewritten():
     }
     result = minimize_tables(tables, ["a", "b", "c"], sources=SOURCES)
     assert result.tables["sample"] == tables["sample"] and result.tables["firsts"] == tables["firsts"]
+
+
+def test_a_with_table_never_captures_a_folded_table():
+    # folding ``base`` into ``report`` would write ``FROM orders``, which report's own WITH table named
+    # ``orders`` would capture
+    tables = {
+        "base": "SELECT id, amount FROM orders WHERE amount > 0",
+        "report": "WITH orders AS (SELECT 1 AS id) SELECT b.id, b.amount FROM base AS b JOIN orders AS o ON b.id = o.id",
+    }
+    result = minimize_tables(tables, ["report"], sources=SOURCES)
+    _assert_same(tables, result.tables, ["report"], databases=40)
+    capture = {"report": "WITH orders AS (SELECT 1 AS id) SELECT b.id, b.amount FROM "
+                         "(SELECT id, amount FROM orders WHERE amount > 0) AS b JOIN orders AS o ON b.id = o.id"}
+    assert table_minimizer.verify_tables(tables, capture, ["report"], sources=SOURCES)["report"].status == "unknown"
+
+
+def test_tables_with_one_name_in_two_datasets_stay_apart():
+    tables = {
+        "a.t": "SELECT id, amount FROM orders WHERE amount > 0",
+        "b.t": "SELECT id, amount FROM orders",
+        "r": "SELECT id FROM a.t",
+        "s": "SELECT COUNT(*) AS n FROM b.t",
+    }
+    result = minimize_tables(tables, ["r", "s"], sources=SOURCES)
+    con = duckdb.connect()
+    con.execute("CREATE TABLE orders (id BIGINT, customer_id BIGINT, amount BIGINT, status VARCHAR)")
+    con.execute("INSERT INTO orders VALUES (1, 1, -5, 'paid'), (2, 1, 3, 'open'), (3, 2, NULL, NULL)")
+    con.execute("CREATE SCHEMA a")
+    con.execute("CREATE SCHEMA b")
+
+    def outputs(pipeline):
+        for name in ("a.t", "b.t", "r", "s"):
+            con.execute(f"DROP VIEW IF EXISTS {name}")
+        for name in ("a.t", "b.t", "r", "s"):
+            if name in pipeline:
+                con.execute(f"CREATE VIEW {name} AS {sqlglot.transpile(pipeline[name], read='bigquery', write='duckdb')[0]}")
+        return {name: sorted(con.execute(f"SELECT * FROM {name}").fetchall(), key=str) for name in ("r", "s")}
+
+    assert outputs(tables) == outputs(result.tables)
+    swapped = {**tables, "r": "SELECT id FROM b.t"}
+    assert table_minimizer.verify_tables(tables, swapped, ["r", "s"], sources=SOURCES)["r"].status == "unknown"

@@ -37,11 +37,14 @@ A table whose rows can change from one evaluation to the next is never folded, m
 
 `tests/test_table_minimizer.py` carries seven tempting rewrites that each change a protected table (a filter pushed into a protected stage, shared siblings built with `UNION ALL`, a `LEFT JOIN` ON predicate taken as a filter, `DISTINCT` on a superset, `AVG` as a sum over `COUNT(*)`, a `NULL` join key kept, a global `COUNT(*)` turned into a grouped one). For each, DuckDB shows the difference on a witness database, `verify_tables` refuses it, and the minimizer's own answer agrees with the original on the witness and on random databases.
 
+Two name traps are refused outright. A change whose SQL, written back with the names as given, has a `WITH` table named like a table it reads is rejected, because the `WITH` table would capture the reference. A change whose tables, once inlined, put two `WITH` tables of one name in one query is not trusted to the prover. Tables of one name in two datasets (`a.t`, `b.t`) are kept apart.
+
 A table that is not a single readable query (a script, `CALL`, DDL) is returned exactly as given, and every table it reads is kept and proved unchanged like a protected one.
 
 ## Limits
 
 - Greedy search: it finds a good answer, not always the optimum. `max_seconds` and `max_steps` bound it; `.stopped` says which one stopped it.
 - It does not yet extract shared logic into a new table, and it does not rewrite protected tables beyond the simplifier's forms.
+- Proofs are as sound as KumoSQL's prover: "0 wrong" on the eval means no answer differed on the DuckDB check databases, and known false proofs that are still open in the prover apply here too.
 - Proof coverage is the prover's: steps it cannot prove (some outer-join chains, AVG rebuilt across a rollup) are rejected and listed in `rejected_moves` with the reason.
 - The prover reads BigQuery SQL. Another `dialect` is transpiled to BigQuery with sqlglot to search and back for the answer.
