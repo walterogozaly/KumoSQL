@@ -32,7 +32,7 @@ from typing import Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _conjuncts, is_call
+from .ast_utils import EXCEPT_KEY, conjuncts as _conjuncts, is_call
 from .smt_equivalence import TableConstraints
 
 # A fact's provenance: the declared facts it rests on (empty = follows from the query).
@@ -523,7 +523,7 @@ class _Analyzer:
                 star = item if isinstance(item, exp.Star) else item.this
                 if star.args.get("rename") or star.args.get("ilike"):
                     raise _Unsupported("SELECT * RENAME / ILIKE")
-                dropped = star.args.get("except_") or []
+                dropped = star.args.get(EXCEPT_KEY) or []
                 replaced = star.args.get("replace") or []
                 if any(not isinstance(c, exp.Column) or c.table for c in dropped) or any(not isinstance(a, exp.Alias) for a in replaced):
                     raise _Unsupported("SELECT * EXCEPT / REPLACE of this shape")
