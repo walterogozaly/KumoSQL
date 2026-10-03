@@ -88,16 +88,36 @@ def _two_models(sql: str, extra_sql: str | None):
     return Pipeline(models, {}, {})
 
 
+class _Models:
+    """The two pipelines the lineage, rename and drop stages read for one query (the query alone, and with a
+    model renaming its columns), each built and analysed once instead of once per stage."""
+
+    def __init__(self, sql: str):
+        self.sql = sql
+        self._base: Pipeline | None = None
+        self._renamed: Pipeline | None = None
+
+    def base(self) -> Pipeline:
+        if self._base is None:
+            self._base = _two_models(self.sql, None)
+        return self._base
+
+    def renamed(self, columns: tuple[str, ...]) -> Pipeline:
+        if self._renamed is None:
+            self._renamed = _two_models(self.sql, _rename_sql(columns))
+        return self._renamed
+
+
 def _sources(pipeline: Pipeline, model: str, column: str) -> tuple[frozenset, bool]:
     trace = pipeline.trace_column(ColumnRef(model, column))
     return trace.sources, trace.complete
 
 
-def stage_lineage(sql: str) -> tuple[str, str]:
+def stage_lineage(sql: str, models: _Models | None = None) -> tuple[str, str]:
     """Every output column of the query is traced to source columns, or honestly marked unknown."""
 
     try:
-        pipeline = _two_models(sql, None)
+        pipeline = (models or _Models(sql)).base()
         records = pipeline.explain_lineage()
     except Exception as exc:  # noqa: BLE001
         return FAIL, cov._error(exc)
@@ -115,18 +135,19 @@ def _rename_sql(columns: tuple[str, ...]) -> str:
     return f"SELECT {items} FROM `p.d.base`"
 
 
-def stage_rename(sql: str) -> tuple[str, str]:
+def stage_rename(sql: str, models: _Models | None = None) -> tuple[str, str]:
     """A model that renames every column must trace to the same sources as the original column."""
 
+    models = models or _Models(sql)
     try:
-        base = _two_models(sql, None)
+        base = models.base()
         columns = base.output_columns("p.d.base")
     except Exception as exc:  # noqa: BLE001
         return FAIL, cov._error(exc)
     if not columns or len(set(c.lower() for c in columns)) != len(columns):
         return UNSUPPORTED, "no unique output column names"
     try:
-        pipeline = _two_models(sql, _rename_sql(columns))
+        pipeline = models.renamed(columns)
         wrong, unknown = 0, 0
         for column in columns:
             expected, complete = _sources(pipeline, "p.d.base", column)
@@ -144,15 +165,16 @@ def stage_rename(sql: str) -> tuple[str, str]:
     return PASS, f"{len(columns)} columns"
 
 
-def stage_drop(sql: str) -> tuple[str, str]:
+def stage_drop(sql: str, models: _Models | None = None) -> tuple[str, str]:
     """Dropping a column of the query must break the renaming model, and no other column's readers."""
 
+    models = models or _Models(sql)
     try:
-        base = _two_models(sql, None)
+        base = models.base()
         columns = base.output_columns("p.d.base")
         if not columns or len(set(c.lower() for c in columns)) != len(columns):
             return UNSUPPORTED, "no unique output column names"
-        pipeline = _two_models(sql, _rename_sql(columns))
+        pipeline = models.renamed(columns)
         target = columns[0]
         impact = pipeline.assess_change("drop_column", "p.d.base", target)
     except Exception as exc:  # noqa: BLE001
@@ -216,9 +238,10 @@ def run_query(case_id: str) -> tuple[str, dict]:
         out["load"] = tuple(loaded)
         out["graph"] = cov.stage_graph(pipeline, out["parse"][0], sql) if pipeline is not None else (UNSUPPORTED, "not loaded")
         if out["parse"][0] == PASS:
-            out["lineage"] = stage_lineage(sql)
-            out["rename"] = stage_rename(sql)
-            out["drop"] = stage_drop(sql)
+            models = _Models(sql)
+            out["lineage"] = stage_lineage(sql, models)
+            out["rename"] = stage_rename(sql, models)
+            out["drop"] = stage_drop(sql, models)
         else:
             for stage in ("lineage", "rename", "drop"):
                 out[stage] = (UNSUPPORTED, "did not parse")
@@ -253,8 +276,10 @@ def _stage_state(result: dict, stage: str) -> str:
 
 def run(split: str = "dev", workers: int = 4) -> dict[str, dict]:
     ids = [c["id"] for c in cases() if split in ("all", split_of(c["id"]))]
+    # Longest query first (time grows with length), so no slow query is left running alone at the end
+    ids.sort(key=lambda case_id: len(text_of(case_id)), reverse=True)
     with Pool(workers) as pool:
-        return dict(pool.imap_unordered(run_query, ids, chunksize=2))
+        return dict(pool.imap_unordered(run_query, ids, chunksize=1))
 
 
 def summarise(results: dict[str, dict]) -> dict:

@@ -600,6 +600,7 @@ class DatasetRunner:
         for key, columns in columns_by_table.items():
             column_sql = ", ".join(f'"{name}" {_DUCKDB_TYPES[t]}' for name, t in columns)
             self._connection.execute(f'CREATE TABLE "{_local_name(key)}" ({column_sql})')
+        self._contents = {_local_name(key): "" for key in columns_by_table}  # each table's rows as literal text
         self._prepared: dict[str, str] = {}
 
     def close(self) -> None:
@@ -627,12 +628,17 @@ class DatasetRunner:
             return
         for key, table in dataset.tables.items():
             local = _local_name(key)
-            self._connection.execute(f'DELETE FROM "{local}"')
+            values_sql = ", ".join("(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows)
+            # Datasets of one suite often share a table's rows; a table already holding them is left as it is
+            current = self._contents.pop(local, None)
+            if values_sql == current:
+                self._contents[local] = values_sql
+                continue
+            if current != "":
+                self._connection.execute(f'DELETE FROM "{local}"')
             if table.rows:
-                values_sql = ", ".join(
-                    "(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows
-                )
                 self._connection.execute(f'INSERT INTO "{local}" VALUES {values_sql}')
+            self._contents[local] = values_sql
         self._loaded = dataset
 
     def run(self, sql: str, dataset: SyntheticDataset, *, timeout: float | None = None) -> QueryOutput:
