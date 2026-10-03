@@ -38,10 +38,10 @@ Two `CREATE [OR REPLACE] TABLE|VIEW name AS query` statements are compared as a 
 
 The static prover only accepts rewrites whose normalized ASTs match. To test rewrites it cannot prove, `kumosql.check_result_equivalence(left_sql, right_sql, schema)` runs both sides against the same deterministic synthetic tables in a local DuckDB engine (BigQuery SQL is translated with `sqlglot`) and compares the results as multisets, including column names.
 
-- Seed 0 is always empty tables; other seeds include NULLs and duplicate rows, drawn from small value domains so joins and groups collide.
+- Seed 0 is always empty tables. On other seeds each value is NULL with probability `null_rate` (default 0.15, so a small table can come out with no NULLs at all), every non-empty table without a declared key gets one exact duplicate row, and values come from small domains so joins and groups collide.
 - Every run gets a fresh in-memory connection. Tables written by a script (`CREATE TABLE ... AS`, `INSERT`) are renamed to run-unique local names, and the final written table is compared when the script does not end in a query.
 - Dataform SQLX is supported: blocks are dropped and `${ref(...)}` becomes a table name. Any other interpolation, unknown table, or execution failure is reported as `error`, never as equivalent.
-- A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof.
+- A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof, and it is weaker than BigQuery agreement: the queries run on DuckDB after translation, floats are compared to 12 significant digits, column names are compared without case, and result column types are not compared (`SELECT 1` and `SELECT 1.0` agree).
 - Data generation is seeded and repeatable: the same schema and seed always produce the same rows (a test pins a digest of a small dataset, so a change to the value domains or draw order fails loudly). Column order in the schema mapping is part of the input.
 - Each side is executed twice per seed on identical data. A side that differs from itself (for example `RAND()` or `GENERATE_UUID()`) makes the result `inconclusive`, naming the side and seed, instead of a false `different` or `equivalent`. Failures while fetching results are reported as `error`.
 
