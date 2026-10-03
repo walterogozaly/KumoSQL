@@ -543,8 +543,25 @@ def _dollars(sql: str) -> str:
     return re.sub(r"(?<=[\w$])\$|\$(?=\w)", "_S_", sql)
 
 
+def zoneless_timestamps(tree: exp.Expression) -> exp.Expression:
+    """Read MySQL ``TIMESTAMP(p)`` as DuckDB's plain ``TIMESTAMP(p)``, not ``TIMESTAMPTZ``.
+
+    sqlglot reads MySQL's TIMESTAMP as TIMESTAMPTZ, but a MySQL TIMESTAMP (like DATETIME) is a
+    wall-clock value with no zone attached. DuckDB also hands TIMESTAMPTZ values to Python only
+    through ``pytz``: without it every fetch raises, so a query casting to TIMESTAMP was only ever
+    run on empty tables. MySQL has no zoned type, so every TIMESTAMPTZ in a MySQL tree is one of these.
+    """
+
+    for node in list(tree.find_all(exp.DataType)):
+        if node.this == exp.DataType.Type.TIMESTAMPTZ:
+            node.set("this", exp.DataType.Type.TIMESTAMP)
+    return tree
+
+
 def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -> str:
     tree = sqlglot.parse_one(_dollars(sql), read=dialect)
+    if dialect == "mysql":
+        tree = zoneless_timestamps(tree)
     if known is not None:
         tree = _barewords(tree, known)
     tree = relax_grouping(_fill_empty_select_lists(_calcite_forms(_date_functions(tree))))
