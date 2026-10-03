@@ -50,9 +50,12 @@ targets (changed-tests): tests/test_quantified_rules.py
 
 `python tools/test_history.py order --write` writes `tests/order.json` from the history: the tests that took 3 seconds or more with their median durations, and the tests that failed most. Under pytest-xdist `tests/conftest.py` then runs, in this order:
 
-1. tests that failed before;
-2. the fast tests, so a broken one shows up in minutes;
-3. the slow tests, longest first, so one long benchmark never runs alone at the end.
+1. any test that alone takes more than half of one worker's share of the run (started after the fast tests, it would end the run late);
+2. tests that failed before;
+3. the fast tests, so a broken one shows up in minutes;
+4. the slow tests, longest first, so one long benchmark never runs alone at the end.
+
+The workers take tests in exactly that order. `tools/xdist_scheduler.py` replaces pytest-xdist's `loadgroup` scheduler, which kept up to three tests queued on each worker and moved test groups to the front: a worker now takes more work only while everything it holds is fast, so a worker running a slow test gets its next one when it finishes, and two long benchmarks never wait in one worker's queue while another worker is idle. Groups (`xdist_group`) still run on one worker.
 
 Without `tests/order.json` data it falls back to starting the files in `HEAVY_FILES` first. `python tools/run_tests.py --quick` skips the slow tier (about 6,300 of 6,440 tests, a few minutes). `python tools/run_tests.py -x` stops at the first failure.
 
