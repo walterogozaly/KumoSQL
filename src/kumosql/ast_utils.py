@@ -528,6 +528,42 @@ def with_arg_key(node: exp.Expression) -> str:
     return "with_"
 
 
+def merge_wrapper_tails(node: exp.Expression) -> exp.Expression | None:
+    """The query inside any parentheses around ``node``, with the wrappers' ORDER BY / LIMIT / OFFSET on it.
+
+    In sqlglot the tail of ``(a UNION b) ORDER BY k LIMIT 1`` hangs on the enclosing ``Subquery``, so code that
+    unwraps the parentheses to reach the set operation silently drops it. This returns the innermost query
+    carrying the tail of whichever layer held the LIMIT or OFFSET (a copy when it had to move), or ``None``
+    when the layers cannot be folded into one tail: two layers cut rows (``((q LIMIT 3) LIMIT 1)``), or an
+    ORDER BY sits outside the layer that cuts them (``((q ORDER BY k LIMIT 3) ORDER BY k DESC)``) and so reorders
+    the survivors. Without a LIMIT or OFFSET anywhere the ordering cannot change the bag and is left alone.
+    """
+
+    layers = [node]
+    while isinstance(layers[-1], exp.Subquery):
+        layers.append(layers[-1].this)
+    inner = layers[-1]
+    cutting = [i for i, layer in enumerate(layers) if layer.args.get("limit") or layer.args.get("offset")]
+    if not cutting:
+        return inner
+    if len(cutting) > 1 or any(layer.args.get("order") for layer in layers[: cutting[0]]):
+        return None
+    holder = layers[cutting[0]]
+    if holder is inner:
+        return inner
+    merged = inner.copy()
+    outer_with = [layer.args[key] for layer in layers[:-1] for key in ("with", "with_") if layer.args.get(key)]
+    if outer_with:
+        if len(outer_with) > 1 or any(inner.args.get(key) for key in ("with", "with_")):
+            return None
+        merged.set(with_arg_key(merged), outer_with[0].copy())
+    merged.set("limit", holder.args["limit"].copy() if holder.args.get("limit") else None)
+    merged.set("offset", holder.args["offset"].copy() if holder.args.get("offset") else None)
+    order = next((layer.args["order"] for layer in layers[cutting[0] :] if layer.args.get("order")), None)
+    merged.set("order", order.copy() if order is not None else None)
+    return merged
+
+
 def top_level_query(statement: exp.Expression) -> exp.Expression | None:
     if isinstance(statement, (exp.Create, exp.Insert)):
         candidate = statement.expression

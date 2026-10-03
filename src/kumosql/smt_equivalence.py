@@ -64,7 +64,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, merge_wrapper_tails
 from .set_operations import positional_sql_pair
 from .string_literals import canonical_literals
 
@@ -897,8 +897,10 @@ class _Compiler:
                     raise Unsupported(f"{name.upper()} is not modeled")
 
     def _query(self, node: exp.Expression, ctes: dict) -> _Union:
-        while isinstance(node, exp.Subquery):
-            node = node.this
+        # The tail of a parenthesized query hangs on the parentheses, not on the query inside.
+        node = merge_wrapper_tails(node)
+        if node is None:
+            raise Unsupported("LIMIT is not modeled")
         if node.args.get("limit") or node.args.get("offset"):
             if _is_limit_zero(node):
                 # Nothing survives LIMIT 0: the columns, with no rows.
@@ -1555,9 +1557,9 @@ class _Compiler:
         Correlated column references resolve through ``env``.
         """
 
-        node = query
-        while isinstance(node, exp.Subquery):
-            node = node.this
+        node = merge_wrapper_tails(query)
+        if node is None:
+            raise Unsupported("LIMIT inside a predicate subquery")
         if not isinstance(node, exp.Select):
             raise Unsupported(f"{type(node).__name__} inside a predicate subquery")
         for key in ("group", "having", "qualify", "windows", "limit", "offset", "laterals", "pivots", "with_", "with"):
@@ -1591,9 +1593,9 @@ class _Compiler:
         """
 
         query = e.args["query"]
-        inner_node = query
-        while isinstance(inner_node, exp.Subquery):
-            inner_node = inner_node.this
+        inner_node = merge_wrapper_tails(query)
+        if inner_node is None:
+            raise Unsupported("LIMIT inside an IN subquery")
         lefts = list(e.this.expressions) if isinstance(e.this, exp.Tuple) else [e.this]
         if not isinstance(inner_node, exp.Select) or len(inner_node.expressions) != len(lefts):
             raise Unsupported("IN subquery shape")
@@ -3849,9 +3851,9 @@ def _split_limit(sql: str, dialect: str):
         tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
     except UnmodeledConstruct:
         return sql, None
-    root = tree
-    while isinstance(root, exp.Subquery):
-        root = root.this
+    root = merge_wrapper_tails(tree)
+    if root is None:
+        return None, "LIMIT or OFFSET tails stacked in parentheses"
     if not isinstance(root, (exp.Select, exp.Union, exp.Intersect, exp.Except)):
         return sql, None
     limit, offset, order = root.args.get("limit"), root.args.get("offset"), root.args.get("order")
@@ -3900,7 +3902,11 @@ def _split_limit(sql: str, dialect: str):
         nulls_first = item.args.get("nulls_first")
         ordering.append((position, desc, (not desc) if nulls_first is None else bool(nulls_first)))
     covers = {p for p, _, _ in ordering} >= set(range(len(outputs)))
-    core = tree.copy()
+    # A tail that sat on the parentheses was moved onto ``root``; the core is then the merged query.
+    innermost = tree
+    while isinstance(innermost, exp.Subquery):
+        innermost = innermost.this
+    core = root.copy() if root is not innermost else tree.copy()
     stripped = core
     while isinstance(stripped, exp.Subquery):
         stripped = stripped.this
