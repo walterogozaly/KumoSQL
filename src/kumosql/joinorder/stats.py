@@ -21,7 +21,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
 
 
@@ -109,7 +109,7 @@ class Statistics:
             with gzip.open(path, "rt", encoding="utf-8") as fh:
                 data = json.load(fh)
             return _decode_statistics(data)
-        except (OSError, EOFError, UnicodeError, ValueError, TypeError, KeyError, OverflowError) as exc:
+        except (OSError, EOFError, UnicodeError, ValueError, TypeError, KeyError, OverflowError, InvalidOperation) as exc:
             raise ValueError("invalid statistics cache; regenerate statistics") from exc
 
 

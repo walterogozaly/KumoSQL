@@ -195,7 +195,9 @@ def test_statistics_round_trip_and_schema_validation(tmp_path):
         valid = json.load(handle)
     for edit in [lambda d: d.update(version=True), lambda d: d.update(extra={}),
                  lambda d: d["tables"]["a"]["keys"]["k"].update(sample_bins=[999]),
-                 lambda d: d["tables"]["a"].update(weight=-1), lambda d: d.update(column_domain=[])]:
+                 lambda d: d["tables"]["a"].update(weight=-1), lambda d: d.update(column_domain=[]),
+                 lambda d: d["tables"]["a"]["sample"][0].update(id={"type": "eval", "value": "1+1"}),
+                 lambda d: d["tables"]["a"]["sample"][0].update(id={"type": "decimal", "value": "invalid"})]:
         bad = deepcopy(valid)
         edit(bad)
         with gzip.open(path, "wt") as handle:
