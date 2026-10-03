@@ -692,8 +692,13 @@ def _prepare_query(
     # Require strict parsing before invoking the lifting transformer. Recovery
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
-    if table_function_reads_cte(_parse_single_query(sql)):
+    parsed = _parse_single_query(sql)
+    if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
+    if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):
+        # BigQuery rejects CAST(x AS NUMERIC(10, 2)), and the printed form drops the
+        # parameters, so the query would compare equal to its valid unparameterized twin.
+        raise ValueError("BigQuery does not allow parameterized types in CAST")
     lifted = lift_subqueries(sql, rewrite_pipe_syntax=True)
     if lifted.diagnostics:
         details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)

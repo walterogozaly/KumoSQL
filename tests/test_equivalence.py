@@ -222,3 +222,15 @@ def test_forward_cte_reference_blocks_reordering():
     )
 
     assert not result.proven
+
+
+def test_parameterized_cast_types_are_not_proven():
+    # BigQuery rejects CAST(x AS NUMERIC(10, 2)); the printed form drops the
+    # parameters, so the invalid query must not match its valid twin.
+    for typed in ("NUMERIC(10, 2)", "STRING(2)", "BYTES(3)", "STRUCT<a STRING(2)>"):
+        plain = typed.split("(")[0] if "<" not in typed else "STRUCT<a STRING>"
+        result = prove_equivalent(
+            f"SELECT SAFE_CAST(x AS {typed}) AS y FROM d.t", f"SELECT SAFE_CAST(x AS {plain}) AS y FROM d.t"
+        )
+        assert result.status is EquivalenceStatus.NOT_PROVEN
+        assert "parameterized types in CAST" in result.diagnostics[0]
