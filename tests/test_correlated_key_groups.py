@@ -89,3 +89,9 @@ def test_lateral_function_filter_is_not_relocated(function):
 def test_conjunctive_filter_keeps_logical_operators():
     left=LEFT.replace("i.id=o.mgr", "i.id=o.mgr AND i.x>0")
     assert proves(left,RIGHT+" WHERE i.x>0")
+
+
+@pytest.mark.parametrize("keys,not_null,types", [(None, NN, TYPES), (KEYS, None, TYPES), (KEYS, NN, None)])
+def test_missing_schema_facts_decline_instead_of_crashing(keys, not_null, types):
+    select = sqlglot.parse_one("SELECT MAX(i.x) FROM t i WHERE i.id = o.mgr GROUP BY i.k", dialect="duckdb")
+    assert expose_correlated_key_groups(select, keys, not_null, types) is None

@@ -36,6 +36,8 @@ def _integer(column, select, types):
 
 
 def _fixed_key(select, keys, not_null, types):
+    if not keys or not not_null or not types:
+        return None  # no declared keys, NOT NULL facts or types: nothing to prove a key fixed
     sources = select_sources(select)
     if len(sources) != 1 or not isinstance(sources[0], exp.Table) or select.args.get("laterals"):
         return None
