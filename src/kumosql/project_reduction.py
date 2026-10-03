@@ -203,6 +203,7 @@ class _Project:
     includes: set[str]
     declarations: dict[str, str]  # declaration target key -> its .sqlx path
     js_words: set[str]  # words of the project's .js files: actions they may name
+    include_words: set[str] = field(default_factory=set)  # words of includes/*.js: declarations they may name
 
 
 def _read(path: Path) -> str:
@@ -255,6 +256,12 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
             continue
         try:
             js_words |= {w.lower() for w in _WORD.findall(_read(path))}
+        except (OSError, UnicodeError):
+            continue
+    include_words: set[str] = set()
+    for path in (root / "includes").rglob("*.js") if (root / "includes").is_dir() else ():
+        try:
+            include_words |= {w.lower() for w in _WORD.findall(_read(path))}
         except (OSError, UnicodeError):
             continue
     texts, sql, tokens, movable, reads = {}, {}, {}, {}, {}
@@ -319,7 +326,8 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
         database = _config_value(config, "database") or pipeline.default_project
         key = ".".join(p for p in (database, schema, name) if p)
         declarations[key] = str(path.relative_to(root)).replace("\\", "/")
-    return _Project(root, pipeline, texts, sql, tokens, movable, reads, ref_text, includes, declarations, js_words)
+    return _Project(root, pipeline, texts, sql, tokens, movable, reads, ref_text, includes, declarations, js_words,
+                    include_words)
 
 
 def _resolve_keep(pipeline: Pipeline, names: Iterable[str]) -> list[str]:
@@ -964,10 +972,12 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
     for entry in removed + dropped_assertions:
         if entry.get("path"):
             files.append(FileChange(entry["path"], "delete", project.texts.get(entry["model"], ""), ""))
-    surviving_text = " ".join(final.values()).lower() + " " + " ".join(added.values()).lower()
+    # a declaration stays while anything that stays may name it: its SQL, its file as written (with the
+    # ${...} expressions), or JavaScript
+    surviving_text = " ".join([*final.values(), *added.values(), *(project.texts.get(k, "") for k in final)]).lower()
     for key, path in sorted(project.declarations.items()):
         name = key.split(".")[-1].lower()
-        if name in project.js_words or re.search(rf"\b{re.escape(name)}\b", surviving_text):
+        if name in project.js_words or name in project.include_words or re.search(rf"\b{re.escape(name)}\b", surviving_text):
             continue
         try:
             before = _read(project.root / path)
