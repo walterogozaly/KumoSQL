@@ -221,8 +221,13 @@ def _branches(select: exp.Select) -> list[exp.Select] | None:
 
 
 def _aggregates(select: exp.Select) -> bool:
+    """Whether ``select``'s own list or ``HAVING`` aggregates; one inside a nested query aggregates that query."""
+
     roots = list(select.expressions) + [select.args["having"]] if select.args.get("having") else list(select.expressions)
-    return any(not isinstance(n, exp.Grouping) for root in roots for n in root.find_all(exp.AggFunc))
+    nested = lambda n: isinstance(n, (exp.Query, exp.Subquery))  # noqa: E731
+    return any(
+        isinstance(n, exp.AggFunc) and not isinstance(n, exp.Grouping) for root in roots for n in root.walk(prune=nested)
+    )
 
 
 def _key_of(column: exp.Expression, keys: list[exp.Column]) -> str | None:

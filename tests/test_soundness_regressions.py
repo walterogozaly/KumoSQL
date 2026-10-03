@@ -302,6 +302,41 @@ S006_WRONG_PROOFS = [
         {"p1.d.t": [(1,)], "p2.d.t": [(2,)]},
         id="s006-003-same-table-name-in-two-projects",
     ),
+    pytest.param(
+        "SELECT a.x, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT u.k, 1 AS marker FROM u GROUP BY u.k) d ON d.k = a.x AND d.k = a.y",
+        "SELECT a.x, NOT EXISTS(SELECT 1 FROM u AS kqj0 WHERE kqj0.k = a.x) AS missing FROM a",
+        {"a": ["x", "y"], "u": ["k"]},
+        {"a": [(1, 2)], "u": [(1,)]},
+        id="s006-004-indicator-keeps-every-on-equality",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE RIGHT JOIN b ON FALSE",
+        "SELECT b.z, NOT EXISTS(SELECT 1 FROM u AS kqj3) AS missing FROM a RIGHT JOIN b ON FALSE",
+        {"a": ["x"], "b": ["z"], "u": ["k"]},
+        {"a": [(1,)], "b": [(7,)], "u": [(1,)]},
+        id="s006-005-indicator-padded-by-a-later-right-join",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM a JOIN (SELECT k, 1 AS marker FROM u GROUP BY k) d ON d.k = a.x FULL JOIN b ON FALSE",
+        "SELECT b.z, FALSE AS missing FROM a FULL JOIN b ON FALSE WHERE EXISTS(SELECT 1 FROM u WHERE u.k = a.x)",
+        {"a": ["x"], "b": ["z"], "u": ["k"]},
+        {"a": [(1,)], "b": [(7,)], "u": [(1,)]},
+        id="s006-005-inner-indicator-before-a-full-join",
+    ),
+    pytest.param(
+        "SELECT q.v FROM (SELECT y AS v FROM u ORDER BY v LIMIT 1) AS q, t",
+        "SELECT q.w FROM (SELECT y AS w FROM u ORDER BY v LIMIT 1) AS q, t",
+        {"t": ["x"], "u": ["y", "v"]},
+        {"t": [(5,)], "u": [(1, 9), (9, 1)]},
+        id="order-by-output-alias-in-a-derived-limit",
+    ),
+    pytest.param(
+        "SELECT x FROM t WHERE EXISTS (SELECT 1 FROM (SELECT y AS v FROM u ORDER BY v LIMIT 1) AS q WHERE q.v = t.x)",
+        "SELECT x FROM t WHERE EXISTS (SELECT 1 FROM (SELECT y AS w FROM u ORDER BY v LIMIT 1) AS q WHERE q.w = t.x)",
+        {"t": ["x"], "u": ["y", "v"]},
+        {"t": [(1,)], "u": [(1, 9), (9, 1)]},
+        id="order-by-output-alias-in-a-derived-limit-under-exists",
+    ),
 ]
 
 
@@ -329,7 +364,7 @@ def _bigquery_bags_differ(left: str, right: str, schema: dict[str, list[str]], r
 @pytest.mark.parametrize("left,right,schema,rows", S006_WRONG_PROOFS)
 def test_s006_pairs_that_differ_are_never_proven(left, right, schema, rows):
     assert _bigquery_bags_differ(left, right, schema, rows)
-    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery", compare_names=False).proven
 
 
 S006_STILL_PROVEN = [
@@ -341,13 +376,45 @@ S006_STILL_PROVEN = [
         id="union-of-filters-of-one-qualified-table",
     ),
     pytest.param("SELECT x FROM p1.d.t UNION DISTINCT SELECT x FROM p2.d.t", "SELECT x FROM p2.d.t UNION DISTINCT SELECT x FROM p1.d.t", id="union-of-two-projects-commutes"),
+    pytest.param(
+        "SELECT a.x, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT u.k, 1 AS marker FROM u GROUP BY u.k) d ON d.k = a.x AND d.k = a.y",
+        "SELECT a.x, NOT EXISTS(SELECT 1 FROM u AS q WHERE q.k = a.x AND q.k = a.y) AS missing FROM a",
+        id="indicator-with-two-equalities",
+    ),
+    pytest.param(
+        "SELECT a.x, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE",
+        "SELECT a.x, NOT EXISTS(SELECT 1 FROM u) AS missing FROM a",
+        id="indicator-without-a-later-join",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE LEFT JOIN b ON FALSE",
+        "SELECT b.z, NOT EXISTS(SELECT 1 FROM u) AS missing FROM a LEFT JOIN b ON FALSE",
+        id="indicator-before-a-later-left-join",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM b RIGHT JOIN a ON FALSE LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE",
+        "SELECT b.z, NOT EXISTS(SELECT 1 FROM u) AS missing FROM b RIGHT JOIN a ON FALSE",
+        id="indicator-after-an-earlier-right-join",
+    ),
+    pytest.param(
+        "SELECT q.v FROM (SELECT y AS v FROM u ORDER BY v LIMIT 1) AS q, t",
+        "SELECT q.w FROM (SELECT y AS w FROM u ORDER BY y LIMIT 1) AS q, t",
+        id="order-by-output-alias-is-its-expression",
+    ),
+    pytest.param(
+        "SELECT q.v FROM (SELECT y AS v FROM u ORDER BY y LIMIT 1) AS q, t",
+        "SELECT q.w FROM (SELECT y AS w FROM u ORDER BY y LIMIT 1) AS q, t",
+        id="renamed-output-of-a-derived-limit",
+    ),
 ]
 
 
 @pytest.mark.parametrize("left,right", S006_STILL_PROVEN)
 def test_s006_near_misses_stay_proven(left, right):
-    schema = {"t": ["x"], "p1.d.t": ["x"], "p2.d.t": ["x"]}
-    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+    schema = {"t": ["x"], "p1.d.t": ["x"], "p2.d.t": ["x"], "a": ["x", "y"], "b": ["z"], "u": ["k"]}
+    if "ORDER BY" in left:
+        schema = {"t": ["x"], "u": ["y", "v"]}
+    assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery", compare_names=False).proven
 
 
 def test_s006_dataset_names_are_case_sensitive():

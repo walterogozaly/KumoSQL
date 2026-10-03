@@ -36,7 +36,7 @@ from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
-from .string_literals import canonical_literals
+from .string_literals import canonical_literals, invalid_literal
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -78,6 +78,7 @@ from .join_rewrites import join_rewrites
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .union_filter_rules import push_filter_into_set_operation
+from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types, unchecked_types
 from .constant_correlation import propagate_constant_correlations
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
@@ -3259,7 +3260,9 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     elif group_columns is None and any(not isinstance(e, (exp.Column, exp.Literal, exp.Boolean)) for e in outputs.values()):
         return False
     alias = alias.lower()
-    equated: dict[str, exp.Expression] = {}
+    if any((later.args.get("side") or "").upper() in ("RIGHT", "FULL") for later in select.args["joins"][select.args["joins"].index(join) + 1 :]):
+        return False  # a later outer join NULL-pads the joined relation, and its indicator with it, but not an EXISTS test
+    equated: dict[str, list[exp.Expression]] = {}
     for part in ([] if isinstance(join.args["on"], exp.Boolean) and join.args["on"].this else _conjuncts(join.args["on"])):
         if not isinstance(part, exp.EQ):
             return False
@@ -3273,7 +3276,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
         column = outputs.get(mine[0].name.lower())
         if not isinstance(column, exp.Column) or column.table.lower() not in ("", inner_alias):
             return False
-        equated.setdefault(column.name.lower(), other)
+        equated.setdefault(column.name.lower(), []).append(other)  # every equality is a condition of the match
     if group_columns is not None:
         if not group_columns <= set(equated):
             return False
@@ -3311,8 +3314,8 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
             if column.table.lower() in ("", inner_alias):
                 column.set("table", exp.to_identifier(fresh))
         conditions.append(own)
-    for name, other in equated.items():
-        conditions.append(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()))
+    for name, others in equated.items():
+        conditions.extend(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()) for other in others)
     where = _and_all(conditions)
     if where is not None:
         probe.set("where", exp.Where(this=where))
@@ -4872,8 +4875,21 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     With ``search_counterexample=True`` an unproven pair the solver cannot refute is
     run on databases built for it (:mod:`kumosql.executed_refutation`); a database
     on which the results differ comes back as a ``NOT_EQUIVALENT`` counterexample.
+
+    A proof over a set operation whose branch types are not all known carries
+    ``set_operation_types.ASSUMPTION``; one whose branches have different known types is declined.
     """
 
+    dialect = kwargs.get("dialect", "bigquery")
+    if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+    result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
+    if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
+        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    return result
+
+
+def _prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     search = kwargs.pop("search_counterexample", False)
     if kwargs.get("dialect", "bigquery") == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
@@ -4881,6 +4897,11 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, kwargs.get("dialect", "bigquery"))
     if problem:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BY NAME set operation ({problem})")
+    mixed = mixed_types(left_sql, kwargs.get("types"), kwargs.get("dialect", "bigquery")) or mixed_types(
+        right_sql, kwargs.get("types"), kwargs.get("dialect", "bigquery")
+    )
+    if mixed:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {mixed} (the rules do not model the conversion)")
     result = _prove_algebraic(left_sql, right_sql, 0, **kwargs)
     for level in (1, 2):
         if result.proven or (level == 1 and not (kwargs.get("constraints") or {})):
