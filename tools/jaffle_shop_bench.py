@@ -579,7 +579,7 @@ def track_round_trip(models: dict[str, DbtModel], pipeline, dbs) -> dict:
 def transformations() -> list[str]:
     from kumosql.rewrite import available_rules
 
-    return [*sorted(available_rules()), "pipeline"]
+    return [*sorted(name for name, rule in available_rules().items() if not rule.opt_in), "pipeline"]
 
 
 def apply_transformation(name: str, sql: str):

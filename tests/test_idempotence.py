@@ -79,7 +79,7 @@ def test_format_sql_is_idempotent_with_non_default_preferences(prefs, case):
 
 
 def test_canonical_order_runs_every_rule_with_formatting_last():
-    assert set(CANONICAL_ORDER) == set(available_rules()) - {"lift_subqueries"}
+    assert set(CANONICAL_ORDER) == set(available_rules()) - {"lift_subqueries", "qualify_columns"}
     assert CANONICAL_ORDER[-1] == "format_sql"
 
 

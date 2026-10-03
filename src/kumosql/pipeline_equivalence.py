@@ -88,6 +88,8 @@ def stored_rows_differ(model) -> str:
 
     if model.kind == "incremental":
         return "is incremental, so its rows depend on its run history"
+    if model.kind == "unknown":
+        return "has a config type that cannot be read without running the project, so it may be incremental"
     if model.operations_sql:
         return "runs pre or post operations, which can change its rows"
     return ""
