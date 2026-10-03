@@ -367,6 +367,8 @@ def _drop_unread_order(select: exp.Select) -> exp.Expression | None:
     if isinstance(source, exp.Subquery) and isinstance(source.this, exp.SetOperation):
         targets.append(source.this)
     for query in targets:
+        if isinstance(query.args.get("distinct"), exp.Distinct) and query.args["distinct"].args.get("on"):
+            continue  # DISTINCT ON keeps the first row of each group in this order
         if query.args.get("order") is not None and query.args.get("limit") is None and query.args.get("offset") is None and _order_unread(query):
             query.set("order", None)
             changed = True

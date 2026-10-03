@@ -465,3 +465,44 @@ def test_in_over_union_split_keeps_a_union_level_limit():
         assert _split_in_over_union(sqlglot.parse_one(f"SELECT x FROM t WHERE x IN ({sub})", read="bigquery")) is None, sub
     split = _split_in_over_union(sqlglot.parse_one("SELECT x FROM t WHERE x IN (SELECT a FROM p UNION ALL SELECT b FROM q)", read="bigquery"))
     assert split is not None and "LIMIT" not in split.sql()
+
+
+DISTINCT_ON_SCHEMA = {"u": ["k"], "t": ["x", "y"]}
+DISTINCT_ON_WRONG_PROOFS = [
+    pytest.param(
+        "SELECT a.k FROM u a LEFT JOIN (SELECT DISTINCT ON (x) 1 AS one FROM t) d ON TRUE WHERE d.one IS NOT NULL",
+        "SELECT a.k FROM u a WHERE EXISTS (SELECT 1 FROM t)",
+        id="distinct-on-is-not-a-one-row-indicator",
+    ),
+    pytest.param(
+        "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC) d",
+        "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y) d",
+        id="distinct-on-keeps-its-derived-order",
+    ),
+    pytest.param(
+        "SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC",
+        "SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y",
+        id="distinct-on-keeps-its-result-order",
+    ),
+]
+
+
+@pytest.mark.parametrize("left,right", DISTINCT_ON_WRONG_PROOFS)
+def test_distinct_on_pairs_that_differ_are_never_proven(left, right):
+    duckdb = pytest.importorskip("duckdb")
+    from kumosql.duckdb_load import run_unoptimized
+
+    db = duckdb.connect()
+    db.execute("CREATE TABLE u (k BIGINT); CREATE TABLE t (x BIGINT, y BIGINT)")
+    db.execute("INSERT INTO u VALUES (1); INSERT INTO t VALUES (1, 1), (1, 2), (2, 1)")
+    found_left, found_right = run_unoptimized(db, left, right)
+    assert Counter(found_left) != Counter(found_right)
+    assert not prove_equivalent_algebraic(left, right, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
+
+
+def test_distinct_on_near_misses_stay_proven():
+    same = "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC) d"
+    aliased = "SELECT d.y FROM (SELECT DISTINCT ON (x) x, y FROM t ORDER BY x, y DESC) AS d"
+    assert prove_equivalent_algebraic(same, aliased, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
+    indicator = "SELECT a.k FROM u a LEFT JOIN (SELECT DISTINCT 1 AS one FROM t) d ON TRUE WHERE d.one IS NOT NULL"
+    assert prove_equivalent_algebraic(indicator, "SELECT a.k FROM u a WHERE EXISTS (SELECT 1 FROM t)", schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven

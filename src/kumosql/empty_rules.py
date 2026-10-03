@@ -115,7 +115,8 @@ def propagate_empty(tree: exp.Expression) -> exp.Expression:
             return exp.false()
         if isinstance(node, exp.Subquery) and isinstance(node.this, exp.Select) and isinstance(node.parent, (exp.From, exp.Join)):
             inner = node.this
-            if inner.args.get("order") and not inner.args.get("limit") and not inner.args.get("offset") and not inner.args.get("fetch"):
+            distinct_on = inner.args.get("distinct") is not None and inner.args["distinct"].args.get("on")  # keeps the first row in this order
+            if inner.args.get("order") and not inner.args.get("limit") and not inner.args.get("offset") and not inner.args.get("fetch") and not distinct_on:
                 inner.set("order", None)
         if isinstance(node, exp.Select):
             dropped = _drop_empty_left_joins(node)

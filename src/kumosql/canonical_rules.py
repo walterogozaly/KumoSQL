@@ -70,6 +70,9 @@ def _strip_qualifier(node: exp.Expression, name: str | None) -> str:
 def drop_order_without_limit(tree: exp.Expression) -> bool:
     changed = False
     for select in list(tree.find_all(exp.Select)):
+        distinct = select.args.get("distinct")
+        if distinct is not None and distinct.args.get("on"):
+            continue  # DISTINCT ON keeps the first row of each group in this order
         if select.args.get("order") is not None and not select.args.get("limit") and not select.args.get("offset"):
             select.set("order", None)
             changed = True

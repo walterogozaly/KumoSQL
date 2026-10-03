@@ -522,6 +522,9 @@ def _remove_comments(query: exp.Expression) -> None:
 def _remove_unordered_result_order(query: exp.Expression) -> None:
     """Ignore root result ordering when it cannot affect row membership."""
 
+    distinct = query.args.get("distinct")
+    if distinct is not None and distinct.args.get("on"):
+        return  # DISTINCT ON keeps the first row of each group in this order
     if query.args.get("limit") is None and query.args.get("offset") is None:
         query.set("order", None)
 
