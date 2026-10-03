@@ -44,7 +44,7 @@ The static prover only accepts rewrites whose normalized ASTs match. To test rew
 - Every run gets a fresh in-memory connection. Tables written by a script (`CREATE TABLE ... AS`, `INSERT`) are renamed to run-unique local names, and the final written table is compared when the script does not end in a query.
 - Dataform SQLX is supported: blocks are dropped and `${ref(...)}` becomes a table name. Any other interpolation, unknown table, or execution failure is reported as `error`, never as equivalent.
 - A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof.
-- Data generation is seeded and repeatable: the same schema and seed always produce the same rows (a test pins a digest of a small dataset, so a change to the value domains or draw order fails loudly). Values are drawn column by column in name order, so the order a schema lists its columns does not change the values (the listed order is kept for `SELECT *`).
+- Data generation is seeded and repeatable: the same schema and seed always produce the same rows (a test pins a digest of a small dataset, so a change to the value domains or draw order fails loudly). Column order in the schema mapping is part of the input.
 - Each side is executed twice per seed on identical data. A side that differs from itself (for example `RAND()` or `GENERATE_UUID()`) makes the result `inconclusive`, naming the side and seed, instead of a false `different` or `equivalent`. Failures while fetching results are reported as `error`.
 
 ```python
