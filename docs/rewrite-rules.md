@@ -66,7 +66,7 @@ python -m kumosql rewrite-sql input.sqlx --rule inline_single_use_ctes --output 
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
-Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
+Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. BigQuery does not allow `WITH` in front of `UPDATE`, `DELETE` or `MERGE`, so in those statements subqueries are lifted only inside a nested query (for example `DELETE ... WHERE id IN (WITH ... SELECT ...)`); a subquery directly in `UPDATE ... FROM` stays inline and is reported as remaining, so the result is not a success. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
 Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
 
@@ -100,19 +100,19 @@ assert result.success
 | --- | --- |
 | `strict_parse` | the lifter parsed the input without `sqlglot` recovery mode (`LiftResult.recovered` is false) |
 | `valid_input` | DuckDB binds and runs the input, transpiled from BigQuery, on empty tables of the manifest's `duckdb_schema` (SQLX: blocks skipped, `ref("x")` read as `demo.dataform.x`, `when(incremental(), a, b)` as `b`). This can refute an input; it does not show BigQuery accepts it |
-| `expect_change`, `lifted` | `lift_subqueries` returns different SQL, and how many subqueries it reports lifting |
+| `expect_change`, `lifted`, `remaining` | `lift_subqueries` returns different SQL, how many subqueries it reports lifting, and how many are left (a label that expects one left needs a reason) |
 | structural | `LiftResult.success`: no FROM/JOIN subquery left and no fatal diagnostic |
 | `verification` | `apply_rule("lift_subqueries", sql).verification.status`; `verification_before_sqlglot` gives the status expected on older `sqlglot` releases |
 
-Every row stays in the denominator. A row is credited only when it parses strictly, is a valid input, changes, leaves no relational subquery and is proven; the test fails when any row differs from its label, when a valid input's lifted output no longer runs in DuckDB, or when the labels do not match the fixture. On the current fixture:
+Every row stays in the denominator. A row is credited only when it parses strictly, is a valid input, changes, leaves no relational subquery and is proven; the test fails when any row differs from its label or reports a fatal diagnostic other than a labelled leftover subquery, when a valid input's lifted output no longer runs in DuckDB, or when the labels do not match the fixture. On the current fixture:
 
 | Outcome | Count |
 | --- | --- |
 | Strict parse / recovered | 32 / 0 |
 | Valid input / invalid | 30 / 2: `q09` selects `customer_id` from a CTE that only outputs `region`; `q21` has `HAVING` on an outer query with no grouping or aggregate |
-| Changed / unchanged | 31 / 1: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are) |
-| No relational subquery left | 32 (41 subqueries lifted) |
-| Proven / unchanged / unproven | 30 / 1 (`q16`) / 1 (`q17`: the lift puts a `WITH` in front of `UPDATE`, which the prover reports as text outside the query) |
+| Changed / unchanged | 30 / 2: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are); `q17`'s subquery sits directly in `UPDATE ... FROM`, and BigQuery rejects `WITH` before `UPDATE` |
+| No relational subquery left | 31 (40 subqueries lifted); `q17` leaves 1 and is reported as a failure |
+| Proven / unchanged / failed | 30 / 1 (`q16`) / 1 (`q17`) |
 | Credited | 28 of 32 (27 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
 
 `q09` and `q21` are still lifted and proven (the rewrite preserves whatever the query means) but are counted as invalid inputs, not credited.

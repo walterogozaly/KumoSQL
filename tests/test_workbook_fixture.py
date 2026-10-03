@@ -33,6 +33,7 @@ from typing import Mapping
 import pytest
 
 from kumosql import apply_rule, lift_subqueries
+from kumosql.engine import FATAL_DIAGNOSTIC_CODES
 from kumosql.sqlx import looks_like_sqlx, split_sqlx_sections
 
 
@@ -158,6 +159,11 @@ def load_expectations(path: Path, fixture_path: Path, rows: list[dict]) -> dict:
             problems.append(f"{path.name} {identifier}: an invalid input needs an invalid_reason")
         if case.get("expect_change") is False and not case.get("unchanged_reason"):
             problems.append(f"{path.name} {identifier}: an unchanged case needs an unchanged_reason")
+        remaining = case.get("remaining", 0)
+        if not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 0:
+            problems.append(f"{path.name} {identifier}: remaining must be a non-negative int")
+        elif remaining and not case.get("remaining_reason"):
+            problems.append(f"{path.name} {identifier}: a case that leaves a subquery needs a remaining_reason")
     fixture_ids = {row_id(row) for row in rows}
     if set(by_id) != fixture_ids:
         missing, extra = sorted(fixture_ids - set(by_id)), sorted(set(by_id) - fixture_ids)
@@ -288,6 +294,7 @@ class Outcome:
     output_error: str | None
     changed: bool
     lifted: int
+    remaining: int  # relational subqueries left in the output
     structural: bool  # LiftResult.success: no relational subquery left and no fatal diagnostic
     verification: str
     diagnostics: tuple[str, ...]
@@ -329,6 +336,7 @@ def score_row(identifier: str, sql: str, checker: DuckDBChecker | None) -> Outco
         output_error=output_error,
         changed=changed,
         lifted=result.lifted_subqueries,
+        remaining=result.remaining_inline_subqueries,
         structural=result.success,
         verification=apply_rule("lift_subqueries", sql).verification.status.value,
         diagnostics=codes,
@@ -338,12 +346,17 @@ def score_row(identifier: str, sql: str, checker: DuckDBChecker | None) -> Outco
 def expectation_mismatches(outcome: Outcome, case: Mapping) -> list[str]:
     import sqlglot
 
-    expected = {**case, "verification": expected_verification(case, sqlglot.__version__)}
+    expected = {
+        **case,
+        "remaining": case.get("remaining", 0),
+        "verification": expected_verification(case, sqlglot.__version__),
+    }
     observed = {
         "strict_parse": outcome.parse == "strict",
         "valid_input": outcome.valid_input,
         "expect_change": outcome.changed,
         "lifted": outcome.lifted,
+        "remaining": outcome.remaining,
         "verification": outcome.verification,
     }
     if outcome.valid_input is None:
@@ -354,8 +367,10 @@ def expectation_mismatches(outcome: Outcome, case: Mapping) -> list[str]:
         for key, value in observed.items()
         if value != expected[key]
     ]
-    if not outcome.structural:
-        problems.append(f"{outcome.id}: a relational subquery is left or a fatal diagnostic was reported {outcome.diagnostics}")
+    # A labelled leftover subquery reports inline_subqueries_remaining; any other fatal diagnostic fails.
+    fatal = [code for code in outcome.diagnostics if code in FATAL_DIAGNOSTIC_CODES and code != "inline_subqueries_remaining"]
+    if fatal:
+        problems.append(f"{outcome.id}: fatal diagnostics {fatal}")
     if outcome.valid_input and outcome.changed and outcome.output_error:
         problems.append(f"{outcome.id}: the input runs in DuckDB but the lifted output does not ({outcome.output_error})")
     return problems
@@ -384,7 +399,7 @@ def summarize(outcomes: list[Outcome], declared: int | None) -> str:
         f"invalid {ids(lambda o: o.valid_input is False)}, not checked {ids(lambda o: o.valid_input is None)}",
         f"change: changed {ids(lambda o: o.changed)}, unchanged {ids(lambda o: not o.changed)}",
         f"structural: no relational subquery left {ids(lambda o: o.structural)}, not {ids(lambda o: not o.structural)}; "
-        f"{sum(o.lifted for o in outcomes)} lifted",
+        f"{sum(o.lifted for o in outcomes)} lifted, {sum(o.remaining for o in outcomes)} left",
         "verification (apply_rule): "
         + ", ".join(f"{status} {ids(lambda o, s=status: o.verification == s)}" for status in statuses),
         f"credited (strict, valid, changed, structural, proven): {sum(o.credited for o in outcomes)}/{len(outcomes)}",
@@ -431,7 +446,8 @@ def test_every_fixture_query_lifts_all_relational_subqueries():
         assert len(outcomes) == 32
         assert sum(outcome.credited for outcome in outcomes) >= 27
         assert [o.id for o in outcomes if o.valid_input is False] == ["q09", "q21"]
-        assert [o.id for o in outcomes if not o.changed] == ["q16"]
+        assert [o.id for o in outcomes if not o.changed] == ["q16", "q17"]
+        assert [o.id for o in outcomes if not o.structural] == ["q17"]
         assert {o.id for o in outcomes if o.verification != "proven"} <= {"q16", "q17", "q20"}
 
 
@@ -511,6 +527,9 @@ def test_labels_must_match_the_fixture_they_describe(tmp_path):
     write(sha256=sha, case_count=1, cases=[{**case, "expect_change": False}])
     with pytest.raises(FixtureError, match="needs an unchanged_reason"):
         run_gate(fixture, labels)
+    write(sha256=sha, case_count=1, cases=[{**case, "remaining": 1}])
+    with pytest.raises(FixtureError, match="needs a remaining_reason"):
+        run_gate(fixture, labels)
 
     # An override picks up its sibling labels, and a wrong label fails the gate instead of passing it.
     write(sha256=sha, case_count=1, cases=[{**case, "lifted": 2}])
@@ -528,5 +547,6 @@ def test_default_labels_explain_every_case_that_earns_no_credit():
     assert "MERGE USING subquery is not lifted" in cases["q16"]["unchanged_reason"]
     assert {i for i, c in cases.items() if not c["valid_input"]} == {"q09", "q21"}
     assert all(c.get("verification_reason") for c in cases.values() if c["verification"] not in ("proven", "unchanged"))
+    assert cases["q17"]["remaining"] == 1 and "UPDATE" in cases["q17"]["remaining_reason"]
     assert expected_verification(cases["q20"], "27.0.0") == "unproven"
     assert expected_verification(cases["q20"], "30.21.0") == "proven"

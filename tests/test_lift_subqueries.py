@@ -1,3 +1,4 @@
+import pytest
 import sqlglot
 from sqlglot import exp
 
@@ -175,3 +176,49 @@ def test_recovered_parse_is_visible_without_changing_success():
     assert truncated.success and truncated.recovered
     assert trailing.success and trailing.recovered
     assert strict.success and not strict.recovered
+
+
+DML_WITH_RELATION_SUBQUERIES = [
+    "UPDATE `p.d.t` AS t SET v = s.v FROM (SELECT id, v FROM `p.d.u`) AS s WHERE t.id = s.id",
+    "UPDATE `p.d.t` AS t SET v = s.v FROM (SELECT * FROM (SELECT id, v FROM `p.d.u`) AS x) AS s WHERE t.id = s.id",
+    "UPDATE `p.d.t` SET v = 1 WHERE id IN (SELECT id FROM (SELECT id FROM `p.d.u`) AS x)",
+    "DELETE FROM `p.d.t` WHERE id IN (SELECT id FROM (SELECT id FROM `p.d.u`) AS s)",
+    "DELETE FROM `p.d.t` WHERE EXISTS (SELECT 1 FROM (SELECT id FROM `p.d.u`) AS s WHERE s.id = `p.d.t`.id)",
+    "MERGE `p.d.t` AS t USING (SELECT id FROM (SELECT id FROM `p.d.u`) AS x) AS s ON t.id = s.id WHEN MATCHED THEN DELETE",
+]
+
+
+@pytest.mark.parametrize("source", DML_WITH_RELATION_SUBQUERIES)
+def test_update_delete_and_merge_never_start_with_a_with_clause(source):
+    # BigQuery rejects `WITH s AS (...) UPDATE ...` ("Unexpected keyword UPDATE"), and DELETE and MERGE alike.
+    result = lift_subqueries(source)
+
+    assert not result.sql.lstrip().upper().startswith("WITH")
+    statement = sqlglot.parse_one(result.sql, read="bigquery")
+    assert isinstance(statement, (exp.Update, exp.Delete, exp.Merge))
+    assert statement.args.get("with_") is None and statement.args.get("with") is None
+
+
+def test_subquery_in_a_delete_predicate_is_lifted_inside_its_select():
+    result = lift_subqueries("DELETE FROM `p.d.t` WHERE id IN (SELECT id FROM (SELECT id FROM `p.d.u`) AS s)")
+
+    assert result.success
+    assert result.lifted_subqueries == 1
+    statement = sqlglot.parse_one(result.sql, read="bigquery")
+    inner = statement.find(exp.In).args["query"].this
+    assert isinstance(inner, exp.Select)
+    ctes = (inner.args.get("with_") or inner.args.get("with")).expressions
+    assert [cte.alias for cte in ctes] == ["__lifted_subquery_001"]
+    assert "FROM __lifted_subquery_001 AS s" in result.sql
+
+
+def test_subquery_directly_in_update_from_is_reported_as_remaining():
+    source = "UPDATE `p.d.t` AS t SET v = s.v FROM (SELECT id, v FROM `p.d.u`) AS s WHERE t.id = s.id"
+
+    result = lift_subqueries(source)
+
+    assert result.sql == source
+    assert result.lifted_subqueries == 0
+    assert result.remaining_inline_subqueries == 1
+    assert not result.success
+    assert [d.code for d in result.diagnostics] == ["inline_subqueries_remaining"]
