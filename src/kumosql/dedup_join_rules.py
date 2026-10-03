@@ -12,14 +12,19 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
+
 _BLIND = (exp.Min, exp.Max)
 
 
 def _duplicate_blind(select: exp.Select) -> bool:
-    if select.args.get("distinct") is not None and not select.args["distinct"].args.get("on"):
-        return not any(w.find_ancestor(exp.Select) is select for w in select.find_all(exp.Window))
-    if not select.args.get("group"):
+    distinct = select.args.get("distinct")
+    if distinct is not None and distinct.args.get("on"):
         return False
+    if distinct is None and not select.args.get("group"):
+        return False
+    # DISTINCT dedups output rows, not what its aggregates read: ``SELECT DISTINCT COUNT(*)`` sees repeats
     for node in select.find_all(exp.AggFunc):
         if node.find_ancestor(exp.Select) is not select:
             continue
@@ -115,7 +120,7 @@ def _set_former(select: exp.Expression) -> bool:
     if distinct is not None:
         return not distinct.args.get("on") and not select.args.get("group")
     group = select.args.get("group")
-    return bool(group) and not any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup", "totals"))
+    return bool(group) and not extended_grouping(group)
 
 
 def _strip_set_formers(select: exp.Select) -> bool:
