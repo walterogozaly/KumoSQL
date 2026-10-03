@@ -451,3 +451,17 @@ def test_an_order_key_that_is_not_an_output_never_stands_in_for_an_output_column
             assert not prove(one, two, schema=schema, dialect=dialect, compare_names=False).proven
         same = "SELECT c.name FROM city AS c ORDER BY c.population DESC LIMIT 1"
         assert prove_equivalent_algebraic(one, same, schema=schema, dialect=dialect, compare_names=False).proven
+
+
+def test_in_over_union_split_keeps_a_union_level_limit():
+    # the sibling of S009-005: x IN (A UNION B LIMIT n) is not x IN (A) OR x IN (B)
+    from kumosql.set_split_rules import _split_in_over_union
+
+    for sub in (
+        "SELECT a FROM p UNION DISTINCT SELECT b FROM q LIMIT 1",
+        "(SELECT a FROM p UNION ALL SELECT b FROM q) ORDER BY 1 LIMIT 1 OFFSET 1",
+        "SELECT a FROM p UNION ALL SELECT b FROM q LIMIT 1",
+    ):
+        assert _split_in_over_union(sqlglot.parse_one(f"SELECT x FROM t WHERE x IN ({sub})", read="bigquery")) is None, sub
+    split = _split_in_over_union(sqlglot.parse_one("SELECT x FROM t WHERE x IN (SELECT a FROM p UNION ALL SELECT b FROM q)", read="bigquery"))
+    assert split is not None and "LIMIT" not in split.sql()
