@@ -60,9 +60,9 @@ def prove_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--respect-row-order",
         action="store_true",
-        help="Require explicit and identical result ordering",
+        help="Also require the same ORDER BY on both queries (rows tied on its keys may still come back in either order)",
     )
-    parser.add_argument("--verifier-sql", type=Path, help="Write generated bag-verifier SQL")
+    parser.add_argument("--verifier-sql", type=Path, help="Write generated SQL that compares the result bags (not their order)")
     args = parser.parse_args(argv)
 
     result = prove_statements(

@@ -3,8 +3,9 @@
 This module intentionally proves only a narrow class of equivalences. It
 normalizes relational shape after CTE lifting and compares query ASTs under
 bag semantics (row order ignored). It refuses to prove queries with value
-nondeterminism or row-selection nondeterminism. A false negative is therefore
-preferred to a false positive.
+nondeterminism or row-selection nondeterminism, except a volatile or possibly
+user-defined call that both sides leave identical and in place. A false
+negative is therefore preferred to a false positive.
 """
 
 from __future__ import annotations
