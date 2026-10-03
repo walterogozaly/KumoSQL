@@ -9,8 +9,9 @@ Runs in the default suite:
 valid input (DuckDB binds and runs it on a declared schema), whether the lifter should change it,
 how many subqueries it lifts and what the verified API (``apply_rule``) says about the rewrite. The
 labels pin the fixture by sha256 and case count, so every row stays in the denominator, and a row
-is credited only when it parses strictly, is valid, changes, leaves no relational subquery and is
-proven.
+is credited only when it parses strictly, is shown valid, changes, leaves no relational subquery and is
+proven. Validity is shown by running the input on a declared schema; a fixture with no schema earns
+no credit, and a label that says valid cannot stand in for the run.
 
 Set ``KUMOSQL_TEST_FIXTURE`` to score another CSV or JSON fixture (it must exist, have unique
 non-empty ids and non-empty ``sql_text``). Its labels come from ``KUMOSQL_TEST_FIXTURE_EXPECTED``
@@ -307,7 +308,7 @@ class Outcome:
     def credited(self) -> bool:
         return (
             self.parse == "strict"
-            and self.valid_input is not False
+            and self.valid_input is True  # not checked is not valid: credit needs a schema run
             and self.changed
             and self.structural
             and self.verification == "proven"
@@ -550,3 +551,75 @@ def test_default_labels_explain_every_case_that_earns_no_credit():
     assert cases["q17"]["remaining"] == 1 and "UPDATE" in cases["q17"]["remaining_reason"]
     assert expected_verification(cases["q20"], "27.0.0") == "unproven"
     assert expected_verification(cases["q20"], "30.21.0") == "proven"
+
+
+INVALID_INPUTS = {
+    "missing table": "SELECT q.x FROM (SELECT x FROM demo.sales.nope) AS q",
+    "inner column": "SELECT q.x FROM (SELECT missing AS x FROM demo.sales.regions) AS q",
+    "outer column": "SELECT q.missing FROM (SELECT 1 AS x) AS q",
+    "ambiguous join column": (
+        "SELECT region FROM (SELECT region FROM demo.sales.regions) AS a "
+        "JOIN (SELECT region FROM demo.sales.regions) AS b ON TRUE"
+    ),
+}
+
+
+def test_unchecked_validity_earns_no_credit(tmp_path):
+    # Without a schema DuckDB cannot say whether an input runs, so "not checked" must not count
+    # as valid: each of these cannot run and used to be credited 1/1.
+    fixture = tmp_path / "override.json"
+    fixture.write_text(
+        json.dumps([{"id": name, "sql_text": sql} for name, sql in INVALID_INPUTS.items()]), encoding="utf-8"
+    )
+
+    outcomes, _, summary = run_gate(fixture, None)
+
+    assert [o.valid_input for o in outcomes] == [None] * len(INVALID_INPUTS)
+    assert not any(o.credited for o in outcomes)
+    assert f"credited (strict, valid, changed, structural, proven): 0/{len(INVALID_INPUTS)}" in summary
+
+
+def test_explicit_invalid_label_without_a_schema_earns_no_credit(tmp_path):
+    fixture = tmp_path / "f.json"
+    fixture.write_text(json.dumps([{"id": "a", "sql_text": INVALID_INPUTS["outer column"]}]), encoding="utf-8")
+    labels = tmp_path / "f.expected.json"
+    case = {
+        "id": "a", "strict_parse": True, "valid_input": False, "invalid_reason": "q has no column missing",
+        "expect_change": True, "lifted": 1, "verification": "proven",
+    }
+    labels.write_text(
+        json.dumps({"sha256": fixture_sha256(fixture), "case_count": 1, "cases": [case]}), encoding="utf-8"
+    )
+
+    outcomes, _, _ = run_gate(fixture, labels)
+
+    assert outcomes[0].valid_input is None
+    assert not outcomes[0].credited
+
+
+def test_declared_schema_decides_validity_credit(tmp_path):
+    fixture = tmp_path / "f.json"
+    rows = [{"id": "valid", "sql_text": "SELECT q.region FROM (SELECT region FROM demo.sales.regions) AS q"}]
+    rows += [{"id": name, "sql_text": sql} for name, sql in INVALID_INPUTS.items()]
+    fixture.write_text(json.dumps(rows), encoding="utf-8")
+    labels = tmp_path / "f.expected.json"
+    cases = [
+        {
+            "id": row["id"], "strict_parse": True, "valid_input": row["id"] == "valid",
+            **({} if row["id"] == "valid" else {"invalid_reason": "cannot run"}),
+            "expect_change": True, "lifted": 2 if row["id"] == "ambiguous join column" else 1,
+            "verification": "proven",
+        }
+        for row in rows
+    ]
+    schema = {"demo.sales.regions": {"region": "STRING"}}
+    labels.write_text(
+        json.dumps({"sha256": fixture_sha256(fixture), "case_count": len(rows), "duckdb_schema": schema, "cases": cases}),
+        encoding="utf-8",
+    )
+
+    outcomes, problems, _ = run_gate(fixture, labels)
+
+    assert [o.id for o in outcomes if o.credited] == ["valid"]
+    assert [o.id for o in outcomes if o.valid_input is False] == list(INVALID_INPUTS)
+    assert problems == []

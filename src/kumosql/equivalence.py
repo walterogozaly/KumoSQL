@@ -152,12 +152,33 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
     # references are matched by lower-cased name; a CTE name repeated up to case
     # is ambiguous and not canonicalized.
     mapping: dict[str, str] = {}
-    for index, cte in enumerate(with_clause.expressions, start=1):
+    cte_index: dict[str, int] = {}
+    ctes = list(with_clause.expressions)
+    for index, cte in enumerate(ctes, start=1):
         old = _cte_alias(cte)
         if old:
             if old.lower() in mapping:
                 raise ValueError("CTE names repeat up to case")
             mapping[old.lower()] = f"__canonical_cte_{index:03d}"
+            cte_index[old.lower()] = index - 1
+    recursive = bool(with_clause.args.get("recursive"))
+
+    # A non-recursive CTE is visible only after its definition, so a reference in the
+    # same or an earlier CTE body names a physical table even when it matches the CTE's
+    # name up to case. Renaming it would make `FROM A` inside CTE `a` look like a read
+    # of the CTE itself. The decision is made before the aliases are renamed.
+    renames: list[tuple[exp.Table, str]] = []
+    for table in query.find_all(exp.Table):
+        old = table.name
+        if old.lower() not in mapping or not is_cte_reference_candidate(table):
+            continue
+        owner = nearest_root_cte(table, ctes)
+        owner_index = len(ctes) if owner is None else next(
+            i for i, cte in enumerate(ctes) if cte is owner
+        )
+        defined = cte_index[old.lower()]
+        if defined < owner_index or (recursive and defined == owner_index):
+            renames.append((table, old))
 
     for cte in with_clause.expressions:
         old = _cte_alias(cte)
@@ -165,16 +186,12 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
             alias = cte.args.get("alias")
             alias.set("this", exp.to_identifier(mapping[old.lower()]))
 
-    for table in query.find_all(exp.Table):
-        old = table.name
-        # A one-part table reference can be a CTE reference. Qualified tables
-        # are physical objects and must never be renamed by this pass.
-        if old.lower() in mapping and is_cte_reference_candidate(table):
-            # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable
-            # name so column qualifiers still match after renaming.
-            if not table.alias:
-                table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
-            table.set("this", exp.to_identifier(mapping[old.lower()]))
+    for table, old in renames:
+        # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable name so
+        # column qualifiers still match after renaming.
+        if not table.alias:
+            table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
+        table.set("this", exp.to_identifier(mapping[old.lower()]))
 
 
 def _canonicalize_cte_order(query: exp.Expression, with_clause: exp.With) -> None:

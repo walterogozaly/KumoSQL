@@ -271,3 +271,42 @@ def test_cte_references_resolve_case_insensitively():
     right = "WITH b AS (SELECT 1 AS x), a AS (SELECT 2 AS x) SELECT x FROM A"
 
     assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_physical_table_named_like_the_cte_being_defined_is_not_renamed():
+    # A non-recursive CTE is not visible inside its own body, so `FROM A` there reads the
+    # physical table A (an outside review reproduced this with A = [7, 7, NULL] and
+    # B = [9, 9, NULL]: the two queries return different bags). Renaming it to the CTE
+    # made both bodies self-references and the queries compared equal.
+    pairs = [
+        ("SELECT s.x FROM A s", "SELECT s.x FROM B s", "SELECT q.x"),
+        ("SELECT s.x FROM `A` s", "SELECT s.x FROM `B` s", "SELECT q.x"),
+        (
+            "SELECT s.x FROM A s WHERE s.x IS NOT NULL",
+            "SELECT s.x FROM B s WHERE s.x IS NOT NULL",
+            "SELECT q.x",
+        ),
+        ("SELECT DISTINCT s.x FROM A s", "SELECT DISTINCT s.x FROM B s", "SELECT q.x"),
+        ("SELECT s.x FROM A s", "SELECT s.x FROM B s", "SELECT SUM(q.x) AS t"),
+    ]
+    for left_body, right_body, projection in pairs:
+        left = f"WITH a AS ({left_body}) {projection} FROM a q"
+        right = f"WITH b AS ({right_body}) {projection} FROM b q"
+        assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT, left
+
+
+def test_physical_table_named_like_a_later_cte_is_not_renamed():
+    # CTE `b` is defined after `a`, so `FROM B` inside `a` reads the physical table B.
+    # Renaming both made them the same self-describing query although B and b differ.
+    left = "WITH a AS (SELECT s.x FROM B s), b AS (SELECT 1 AS x) SELECT q.x FROM a q"
+    right = "WITH a AS (SELECT s.x FROM b s), b AS (SELECT 1 AS x) SELECT q.x FROM a q"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_mixed_case_cte_alpha_renaming_is_still_proven():
+    # Control: a visible CTE read with different case, and a CTE renamed, is the same query.
+    left = "WITH a AS (SELECT 1 AS x) SELECT q.x FROM A q"
+    right = "WITH b AS (SELECT 1 AS x) SELECT q.x FROM b q"
+
+    assert prove_equivalent(left, right).status is EquivalenceStatus.PROVEN_EQUIVALENT
