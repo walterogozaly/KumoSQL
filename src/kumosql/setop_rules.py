@@ -583,3 +583,41 @@ def set_operation_to_exists(node: exp.Expression) -> exp.Expression | None:
     ).where(test)
     out.set("distinct", exp.Distinct())
     return out
+
+
+def collapse_named_counted_intersection(select: exp.Select) -> exp.Expression | None:
+    """Calcite's ``IntersectToDistinctRule`` encoding, with renamed outputs, as ``INTERSECT``.
+
+    ``SELECT u.a AS x, u.b AS y FROM (B1 UNION ALL .. UNION ALL Bn) AS u GROUP BY u.a, u.b HAVING
+    COUNT(*) = n``, where each ``Bi`` groups by exactly its ``a`` and ``b`` columns, is ``B1' INTERSECT
+    .. INTERSECT Bn'`` with ``Bi'`` the ``SELECT DISTINCT`` of those columns: each ``Bi`` outputs a key at
+    most once, so ``COUNT(*)`` counts the branches holding it, and ``n`` means all of them. ``GROUP BY``
+    and ``INTERSECT`` both treat NULLs as equal. The shape check is ``collapse_counted_intersection``'s
+    (``UNION ALL`` only, no other clause, distinct plain columns); this only carries the output names.
+    """
+
+    from .intersection_rules import collapse_counted_intersection
+
+    if select.args.get("having") is None or select.args.get("group") is None:
+        return None
+    items = select.expressions
+    if not items or any(not isinstance(e.this if isinstance(e, exp.Alias) else e, exp.Column) for e in items):
+        return None
+    names = [e.alias_or_name for e in items]
+    if any(not n for n in names) or len({n.lower() for n in names}) != len(names):
+        return None
+    bare = select.copy()
+    bare.set("expressions", [(e.this if isinstance(e, exp.Alias) else e).copy() for e in items])
+    result = collapse_counted_intersection(bare)
+    if result is None:
+        return None
+    parts, node = [], result
+    while isinstance(node, exp.Intersect):
+        parts.append(node.expression)
+        node = node.this
+    parts.append(node)
+    for part in parts:
+        if not isinstance(part, exp.Select) or len(part.expressions) != len(names):
+            return None
+        part.set("expressions", [exp.alias_(e.this.copy(), n) for e, n in zip(part.expressions, names)])
+    return result
