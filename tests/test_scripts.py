@@ -141,8 +141,8 @@ def test_ignored_statements_read_nothing_and_decoys_in_text_are_not_reads():
     )
     assert reads(a) == ["real"]
     assert kinds(a, UNKNOWN) == []
-    assert kinds(a, IGNORED) == ["assert", "declare", "drop", "load_data", "set", "transaction", "transaction"]
-    assert a.writes == []
+    assert kinds(a, IGNORED) == ["assert", "declare", "load_data", "set", "transaction", "transaction"]
+    assert [(w.table.name, w.kind) for w in a.writes] == [("old", "drop")]
 
 
 def test_kept_statement_kinds_and_writes():

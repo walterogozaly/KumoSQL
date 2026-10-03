@@ -14,9 +14,9 @@ Reading happens in three steps:
    not depend on sqlglot, whose tokenizer treats ``BEGIN`` as a command and
    swallows the rest.
 2. Each statement is *kept* (it reads or writes tables: queries,
-   ``CREATE TABLE/VIEW ... AS``, ``INSERT``, ``MERGE``, ``UPDATE``, ``DELETE``,
+   ``CREATE TABLE/VIEW ... AS``, ``INSERT``, ``MERGE``, ``UPDATE``, ``DELETE``, table DDL,
    ``CALL`` of a known procedure), *ignored* (``DECLARE``/``SET`` of scalars,
-   ``ASSERT``, transactions, ``LOAD DATA``, DDL, control-flow shells) or
+   ``ASSERT``, transactions, ``LOAD DATA``, definitions outside tables, control-flow shells) or
    *unknown* (it might read tables and could not be understood: dynamic
    ``EXECUTE IMMEDIATE``, an unknown procedure, text that does not parse).
    Unknown is never guessed.
@@ -1829,10 +1829,10 @@ class _Run:
         if first == "DELETE":
             return self.dml_statement(text_, line, "delete", conditional)
         if first == "TRUNCATE":
-            return done("truncate", IGNORED, "removes rows only")
+            return self.ddl_statement(text_, line, "truncate", conditional)
         if first in _DDL:
-            if first == "DROP" and not conditional:
-                self.drop_temp(text_)  # a DROP that may not run leaves the temporary table in place
+            if first in {"ALTER", "DROP"}:
+                return self.ddl_statement(text_, line, first.lower(), conditional)
             return done(first.lower(), IGNORED, "definition change, no data flow")
         if first == "DECLARE":
             return self.declare_statement(text_, line, conditional)
@@ -1873,13 +1873,45 @@ class _Run:
                     statement.complete = True  # undone: nothing it wrote is left to trace
         self.restore_temps(snapshot)
 
-    def drop_temp(self, text_: str) -> None:
+    def ddl_statement(self, text_: str, line: int, kind: str, conditional: bool) -> Statement:
+        """Table DDL writes its targets; a rename also reads the original table."""
+
         tree = self.parse(text_)
-        if isinstance(tree, exp.Drop):
-            # sqlglot 26 keeps the table in ``this``, later releases in ``tables``
-            for table in tree.args.get("tables") or [tree.this]:
-                if isinstance(table, exp.Table) and _is_temp_name(table):
-                    self.temps.pop(table.name.casefold(), None)
+        valid = {"alter": exp.Alter, "drop": exp.Drop, "truncate": exp.TruncateTable}[kind]
+        index = len(self.a.statements)
+        if not isinstance(tree, valid):
+            return self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional))
+        if kind != "truncate" and str(tree.args.get("kind") or "").upper() not in {"TABLE", "VIEW", "MATERIALIZED VIEW"}:
+            return self.record(Statement(index, line, kind, IGNORED, "definition change outside tables", conditional))
+        targets = tree.expressions if kind == "truncate" else tree.args.get("tables") or [tree.this]
+        if not targets or any(not isinstance(table, exp.Table) or not table.name for table in targets):
+            return self.record(Statement(index, line, kind, UNKNOWN, "target could not be read", conditional))
+        statement = self.record(Statement(index, line, kind, KEPT, "table definition or rows changed", conditional))
+        statement.complete = True  # no output column values are assigned
+        for target in targets:
+            temporary = _is_temp_name(target) and target.name.casefold() in self.temps
+            if temporary:
+                if kind == "drop" and not conditional:
+                    self.temps.pop(target.name.casefold(), None)
+                continue
+            rename = next((a for a in tree.args.get("actions") or [] if isinstance(a, exp.AlterRename)), None)
+            sources = {}
+            if rename is not None:
+                destination = rename.this
+                if not isinstance(destination, exp.Table) or not destination.name:
+                    statement.disposition = UNKNOWN
+                    statement.reason = "rename target could not be read"
+                    continue
+                sources = {_norm(_table_ref(target)): _clean(target)}
+                self.a.reads.update(sources)
+                statement.reads.update(sources)
+                destination = destination.copy()
+                for part in ("db", "catalog"):
+                    if not destination.args.get(part) and target.args.get(part):
+                        destination.set(part, target.args[part].copy())
+                target = destination
+            self.write(target, sources, kind, conditional)
+        return statement
 
     # -- queries and DDL
     def parse(self, text_: str) -> exp.Expression | None:
@@ -1974,6 +2006,9 @@ class _Run:
     def query_statement(self, text_: str, line: int, conditional: bool, top_level: bool, *, kind: str) -> Statement:
         index = len(self.a.statements)
         tree = self.parse(text_)
+        for cls, dml_kind in ((exp.Insert, "insert"), (exp.Update, "update"), (exp.Delete, "delete"), (exp.Merge, "merge")):
+            if isinstance(tree, cls):
+                return self.dml_statement(text_, line, dml_kind, conditional)
         query = _query_of(tree) if tree is not None else None
         if tree is None or query is None:
             return self.degrade(self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional)), text_)
@@ -2071,6 +2106,8 @@ class _Run:
             statement = self.record(Statement(index, line, kind, KEPT, "no source query", conditional))
             if temp:
                 self.define_temp(target, {}, None, columns, conditional, [statement])
+            else:
+                self.write(target, {}, kind, conditional)
             return statement
         statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
         output = self.after_query(statement, tree, query, target, conditional, top_level and not temp)
@@ -2195,6 +2232,11 @@ class _Run:
         if not isinstance(tree, valid):
             return self.degrade(self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional)), text_)
         target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+        if not isinstance(target, exp.Table) and kind == "delete":
+            # BigQuery permits DELETE without FROM; sqlglot stores that target in tables.
+            targets = tree.args.get("tables") or []
+            if len(targets) == 1:
+                target = targets[0]
         if not isinstance(target, exp.Table) or not target.name:
             return self.record(Statement(index, line, kind, UNKNOWN, "target could not be read", conditional))
         statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
