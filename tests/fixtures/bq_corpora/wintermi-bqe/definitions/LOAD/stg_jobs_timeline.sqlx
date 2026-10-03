@@ -1,0 +1,33 @@
+config {
+  hasOutput: true,
+  type: "operations",
+  schema: dataform.projectConfig.vars.STAGING_DATA,
+  dependencies: ["collect_jobs_timeline"],
+  tags: ["LOAD_DATA"]
+}
+
+
+LOAD DATA OVERWRITE ${ self() }
+(
+    bq_region               STRING        NOT NULL
+  , project_id              STRING        NOT NULL
+  , period_start            TIMESTAMP     NOT NULL
+  , job_id                  STRING        NOT NULL
+  , period_slot_ms          INT64
+  , total_bytes_processed   INT64
+  , total_bytes_billed      INT64
+  , job_type                STRING
+  , statement_type          STRING
+  , job_creation_time       TIMESTAMP
+  , job_start_time          TIMESTAMP
+  , job_end_time            TIMESTAMP
+  , job_state               STRING
+  , reservation_id          STRING
+)
+FROM FILES (
+  format = "CSV",
+  field_delimiter = "\t",
+  skip_leading_rows = 1,
+  allow_jagged_rows = true,
+  uris = ["gs://${ dataform.projectConfig.vars.EXPORT_GCS_BUCKET }/jobs_timeline/${ dataform.projectConfig.vars.PRIMARY_REGION }_*.csv"]
+);
