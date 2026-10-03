@@ -53,6 +53,17 @@ class LiftResult:
             and self.remaining_inline_subqueries == 0
         )
 
+    @property
+    def recovered(self) -> bool:
+        """Whether strict parsing failed and sqlglot's recovery mode supplied the statements.
+
+        ``success`` does not look at this: recovery is kept for valid BigQuery that sqlglot cannot
+        parse strictly. Recovery also accepts truncated or trailing-garbage input (``WHERE 1 =``),
+        so a gate that must not credit broken SQL checks this as well as ``success``.
+        """
+
+        return any(diagnostic.code == "recovered_parse" for diagnostic in self.diagnostics)
+
 
 def _is_relation_subquery(node: exp.Expression) -> bool:
     return isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join))
@@ -198,15 +209,22 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
     return lifted
 
 
+# BigQuery has no statement-level WITH for these: ``WITH s AS (...) UPDATE ...`` is a syntax error
+# ("Unexpected keyword UPDATE"), and likewise for DELETE and MERGE.
+_NO_STATEMENT_WITH = (exp.Update, exp.Delete, exp.Merge)
+
+
 def _transform_statement(statement: exp.Expression) -> int:
-    query = top_level_query(statement)
+    query = None if isinstance(statement, _NO_STATEMENT_WITH) else top_level_query(statement)
     if query is not None:
         return _lift_query(query)
 
     # BigQuery scripting statements such as SET can contain a query inside a
-    # scalar expression. There is no statement-level WITH slot for those, so
-    # lift within the innermost query scope instead (for example, SET x =
-    # (WITH ... SELECT ...)).
+    # scalar expression, and UPDATE, DELETE and MERGE cannot start with WITH.
+    # There is no statement-level WITH slot for those, so lift within the
+    # innermost query scope instead (for example, SET x = (WITH ... SELECT ...)
+    # or DELETE ... WHERE id IN (WITH ... SELECT ...)). A subquery directly in
+    # UPDATE ... FROM has no such scope and is reported as remaining.
     lifted = 0
     query_nodes = [
         node
