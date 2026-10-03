@@ -42,6 +42,8 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .set_operations import positional_sql_pair
+
 try:  # pragma: no cover - exercised through the tests
     import z3
 except ImportError:  # pragma: no cover
@@ -656,6 +658,12 @@ class Compiler:
     # -- set operations ------------------------------------------------------------------------
 
     def set_operation(self, node, outer: Scope | None) -> Rel:
+        # Branches are matched by position. BY NAME / CORRESPONDING (made positional by
+        # ``positional_sql_pair`` before compiling), an outer or inner mode, and a LIMIT or
+        # OFFSET of the operation itself are not modeled; ORDER BY alone keeps the bag.
+        modifiers = [k for k, v in node.args.items() if v and k not in ("this", "expression", "distinct", "with_", "with", "order")]
+        if modifiers:
+            raise Unsupported(f"set operation with {', '.join(sorted(modifiers))}")
         left = self.query(node.this, outer)
         right = self.query(node.expression, outer)
         if len(left.cols) != len(right.cols):
@@ -2074,6 +2082,11 @@ def _check_bounded(
     began = time.time()
     if prepare is not None:
         left_sql, right_sql = prepare(left_sql), prepare(right_sql)
+    # The compiler matches set-operation branches by position: align BY NAME ones first (the
+    # replay then runs the same positional queries the encoding compiled).
+    left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
+    if problem:
+        return BoundedResult(BoundedStatus.UNKNOWN, f"unsupported: {problem}", 0, None, time.time() - began)
     done = 0
     unconfirmed = 0
     restrictions: list[str] = []

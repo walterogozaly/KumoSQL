@@ -5,9 +5,13 @@ which differs from ``'a"b'`` although BigQuery gives both the same string (and s
 ``'a\\\\"b'``, a different string). It also reads two adjacent quoted names, ``col``col``, as one name containing a
 backtick. ``canonical_literals`` rewrites the source text before it is parsed: every plain string whose escapes
 are all among ``\\\\ \\' \\" \\` \\? \\n \\r \\t`` becomes a single-quoted literal using only ``\\\\``, ``\\'``, ``\\n``,
-``\\r`` and ``\\t``, and a space goes between adjacent backtick names. Raw (``r'..'``) and bytes (``b'..'``)
-literals, strings with other escapes (``\\x41``, ``\\u0041``, octal) and everything else are left as written, so
-equal values written with those escapes stay unproven rather than being called different by a wrong reading.
+``\\r`` and ``\\t``, and a space goes between adjacent backtick names. Raw strings (``r'..'``), strings with other
+escapes (``\\x41``, ``\\u0041``, octal) and everything else are left as written, so equal values written with those
+escapes stay unproven rather than being called different by a wrong reading.
+
+Bytes literals (``b'..'``, and raw ``rb'..'``) are decoded and written back with printable ASCII as is and every other
+byte as ``\\xHH``. sqlglot reads ``\\\\`` in a bytes literal as one backslash but keeps ``\\x41`` undecoded, so
+``b'\\\\x41'`` (four bytes) and ``b'\\x41'`` (the one byte ``A``) used to read the same.
 """
 
 from __future__ import annotations
@@ -32,6 +36,48 @@ def _decode(body: str) -> str | None:
         out.append(_SIMPLE[body[i + 1]])
         i += 2
     return "".join(out)
+
+
+_BYTE_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, "?": 63, '"': 34, "'": 39, "`": 96}
+_HEX = "0123456789abcdefABCDEF"
+
+
+def _decode_bytes(body: str, *, raw: bool) -> bytes | None:
+    """The value of a bytes literal body (UTF-8 text plus BigQuery's escapes), ``None`` for an escape it does not have."""
+
+    if raw:
+        return body.encode("utf-8")
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        char = body[i]
+        if char != "\\":
+            out += char.encode("utf-8")
+            i += 1
+            continue
+        code = body[i + 1 : i + 2]
+        digits = body[i + 2 : i + 4]
+        if code in _BYTE_ESCAPES:
+            out.append(_BYTE_ESCAPES[code])
+            i += 2
+        elif code in ("x", "X") and len(digits) == 2 and all(d in _HEX for d in digits):
+            out.append(int(digits, 16))
+            i += 4
+        elif len(octal := body[i + 1 : i + 4]) == 3 and all(d in "01234567" for d in octal) and int(octal, 8) < 256:
+            out.append(int(octal, 8))
+            i += 4
+        else:
+            return None
+    return bytes(out)
+
+
+def _bytes_literal(value: bytes) -> str:
+    """``value`` as ``b'..'`` with printable ASCII kept and every other byte, quote and backslash written ``\\xHH``.
+
+    With no ``\\\\`` left, sqlglot has exactly one reading of each byte string.
+    """
+
+    return "b'" + "".join(chr(b) if 32 <= b < 127 and b not in (39, 92) else f"\\x{b:02X}" for b in value) + "'"
 
 
 def _string_end(sql: str, start: int) -> tuple[int, str, str]:
@@ -80,8 +126,9 @@ def canonical_literals(sql: str) -> str:
                 j += 1
             word = sql[i:j]
             if word.lower() in ("r", "b", "rb", "br") and j < size and sql[j] in "'\"":
-                end = _string_end(sql, j)[0]  # a raw or bytes literal: copied as written
-                out.append(sql[i:end])
+                end, _, body = _string_end(sql, j)
+                value = None if body is None or word.lower() == "r" else _decode_bytes(body, raw=len(word) == 2)
+                out.append(sql[i:end] if value is None else _bytes_literal(value))  # a raw string: copied as written
                 i = end
             else:
                 out.append(word)

@@ -10,7 +10,10 @@ removes rows whose output is NULL there, and those never survive the outer WHERE
 A condition rejects a table when it cannot be TRUE once every column of that table is NULL:
 a comparison, ``BETWEEN``, ``IN (list)``, ``LIKE`` or ``IS NOT NULL`` whose operand is a column of
 the table or NULL-propagating arithmetic on one, an AND with one such part, or an OR whose every
-part rejects it. ``<=>``, ``COALESCE``, ``IS NULL``, ``NOT IN`` and subqueries never count.
+part rejects it. ``x IN (SELECT ...)`` rejects the tables ``x`` is strict in (NULL IN a set is NULL or
+FALSE), and ``EXISTS (SELECT ... WHERE p)`` rejects an outer table that ``p`` rejects when the subquery
+neither aggregates nor declares a source of that name (no row passes ``p``, so it returns no row).
+``<=>``, ``COALESCE``, ``IS NULL``, ``NOT IN`` and ``NOT EXISTS`` never count.
 Only chains of inner, cross and LEFT joins are read; any RIGHT, FULL, semi, anti, NATURAL or
 USING join leaves the query as it is.
 """
@@ -35,6 +38,9 @@ def _strict_tables(node: exp.Expression) -> set[str]:
         return {node.table.lower()}
     if isinstance(node, _STRICT_BINARY):
         return _strict_tables(node.this) | _strict_tables(node.expression)
+    if isinstance(node, exp.Concat) and node.args.get("coalesce") is False:
+        # CONCAT is NULL when any argument is (BigQuery, MySQL); dialects that skip NULLs set ``coalesce``
+        return set().union(*(_strict_tables(e) for e in node.expressions))
     if isinstance(node, _STRICT_UNARY):
         if isinstance(node, (exp.Cast, exp.TryCast)) and node.args.get("format") is not None:
             return set()
@@ -62,9 +68,28 @@ def rejected_tables(condition: exp.Expression) -> set[str]:
         return _strict_tables(condition.this) | _strict_tables(condition.expression)
     if isinstance(condition, exp.Between):
         return _strict_tables(condition.this) | _strict_tables(condition.args["low"]) | _strict_tables(condition.args["high"])
-    if isinstance(condition, exp.In) and condition.expressions and not condition.args.get("query") and not condition.args.get("unnest") and not condition.args.get("field"):
-        return _strict_tables(condition.this)
+    if isinstance(condition, exp.In) and not condition.args.get("unnest") and not condition.args.get("field"):
+        if condition.expressions or isinstance(condition.args.get("query"), (exp.Select, exp.Subquery)):
+            return _strict_tables(condition.this)
+        return set()
+    if isinstance(condition, exp.Exists):
+        return _exists_rejected(condition.this)
     return set()
+
+
+def _exists_rejected(query: exp.Expression) -> set[str]:
+    """Outer tables that the WHERE of ``EXISTS (query)`` rejects (the subquery then returns no row)."""
+
+    while isinstance(query, exp.Subquery) and not query.alias:
+        query = query.this
+    if not isinstance(query, exp.Select) or query.args.get("where") is None:
+        return set()
+    if any(query.args.get(k) for k in ("group", "having", "qualify", "laterals")):
+        return set()  # an aggregate without GROUP BY returns a row even when WHERE keeps none
+    if any(node.find_ancestor(exp.Select) is query for node in query.find_all(exp.AggFunc, exp.Window)):
+        return set()
+    inner = {(s.alias_or_name or "").lower() for s in query.find_all(exp.Table, exp.Subquery, exp.Unnest)}
+    return rejected_tables(query.args["where"].this) - inner
 
 
 def _source_name(source: exp.Expression) -> str:
@@ -150,7 +175,8 @@ def _through_derived(part: exp.Expression, alias: str, inner: exp.Select, only_s
         outputs[name] = item.this if isinstance(item, exp.Alias) else item
     holder = exp.Paren(this=part.copy())
     for column in list(holder.find_all(exp.Column)):
-        if column.name.lower() in outputs and (column.table.lower() == alias or (only_source and not column.table)):
+        nested = column.find_ancestor(exp.Select) is not None  # a subquery's own source may shadow ``alias``
+        if not nested and column.name.lower() in outputs and (column.table.lower() == alias or (only_source and not column.table)):
             column.replace(exp.Paren(this=outputs[column.name.lower()].copy()))
         else:
             # Any other column is opaque: it must not be read as one of the inner tables.

@@ -1,0 +1,743 @@
+{
+ "source": "GoogleSQL feature checklist (257, then 287 entries) compiled from the BigQuery reference and release notes for this project on 2026-10-02. Only queries BigQuery accepted in a dry run on 2026-10-02 are kept; 31 invalid ones are left out.",
+ "cases": [
+  {
+   "feature": "WITH CTE",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "WITH t AS (SELECT 1 AS x) SELECT x FROM t"
+  },
+  {
+   "feature": "WITH RECURSIVE",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "WITH RECURSIVE t AS (SELECT 1 AS n UNION ALL SELECT n+1 FROM t WHERE n<3) SELECT n FROM t"
+  },
+  {
+   "feature": "SELECT ALL",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT ALL 1"
+  },
+  {
+   "feature": "SELECT DISTINCT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT DISTINCT x FROM UNNEST([1,1]) x"
+  },
+  {
+   "feature": "SELECT AS STRUCT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT AS STRUCT 1 AS x"
+  },
+  {
+   "feature": "SELECT *",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM UNNEST([STRUCT(1 AS x)])"
+  },
+  {
+   "feature": "qualified star",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT t.* FROM (SELECT 1 AS x) t"
+  },
+  {
+   "feature": "star REPLACE",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * REPLACE(2 AS x) FROM (SELECT 1 AS x)"
+  },
+  {
+   "feature": "expression alias with AS",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 AS x"
+  },
+  {
+   "feature": "expression alias without AS",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 x"
+  },
+  {
+   "feature": "FROM subquery",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM (SELECT 1 AS x) q"
+  },
+  {
+   "feature": "FROM UNNEST",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x FROM UNNEST([1,2]) x"
+  },
+  {
+   "feature": "UNNEST WITH OFFSET",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, off FROM UNNEST([2]) x WITH OFFSET off"
+  },
+  {
+   "feature": "correlated UNNEST",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x FROM UNNEST([STRUCT([1] AS a)]) t, UNNEST(t.a) x"
+  },
+  {
+   "feature": "FOR SYSTEM_TIME AS OF",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM `p.d.t` FOR SYSTEM_TIME AS OF TIMESTAMP(\"2024-01-01\")",
+   "bigquery": "valid syntax; names a table that does not exist"
+  },
+  {
+   "feature": "GROUP BY expression",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x FROM UNNEST([1]) x GROUP BY x"
+  },
+  {
+   "feature": "GROUP BY ordinal",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x FROM UNNEST([1]) x GROUP BY 1"
+  },
+  {
+   "feature": "GROUP BY alias",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x AS k FROM UNNEST([1]) x GROUP BY k"
+  },
+  {
+   "feature": "GROUP BY ALL",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, COUNT(*) FROM UNNEST([1,1]) x GROUP BY ALL"
+  },
+  {
+   "feature": "GROUPING SETS",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, COUNT(*) FROM UNNEST([1]) x GROUP BY GROUPING SETS ((x),())"
+  },
+  {
+   "feature": "ROLLUP",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, COUNT(*) FROM UNNEST([1]) x GROUP BY ROLLUP(x)"
+  },
+  {
+   "feature": "CUBE",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, COUNT(*) FROM UNNEST([1]) x GROUP BY CUBE(x)"
+  },
+  {
+   "feature": "GROUP BY STRUCT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT s FROM UNNEST([STRUCT(1 AS a)]) s GROUP BY s"
+  },
+  {
+   "feature": "HAVING",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, COUNT(*) c FROM UNNEST([1]) x GROUP BY x HAVING c>0"
+  },
+  {
+   "feature": "QUALIFY",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT x, ROW_NUMBER() OVER() rn FROM UNNEST([1]) x QUALIFY rn=1"
+  },
+  {
+   "feature": "WINDOW clause",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT ROW_NUMBER() OVER w FROM UNNEST([1]) WINDOW w AS ()"
+  },
+  {
+   "feature": "LIMIT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 LIMIT 1"
+  },
+  {
+   "feature": "LIMIT OFFSET",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 LIMIT 1 OFFSET 0"
+  },
+  {
+   "feature": "PIVOT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM (SELECT \"a\" k,1 v) PIVOT(SUM(v) FOR k IN (\"a\"))"
+  },
+  {
+   "feature": "TABLESAMPLE SYSTEM",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM `p.d.t` TABLESAMPLE SYSTEM (10 PERCENT)",
+   "bigquery": "valid syntax; names a table that does not exist"
+  },
+  {
+   "feature": "INNER JOIN ON",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM UNNEST([1]) a JOIN UNNEST([1]) b ON a=b"
+  },
+  {
+   "feature": "CROSS JOIN",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM UNNEST([1]) a CROSS JOIN UNNEST([2]) b"
+  },
+  {
+   "feature": "LEFT JOIN",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM UNNEST([1]) a LEFT JOIN UNNEST([2]) b ON a=b"
+  },
+  {
+   "feature": "JOIN USING",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM (SELECT 1 x) a JOIN (SELECT 1 x) b USING(x)"
+  },
+  {
+   "feature": "parenthesized join",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT * FROM (UNNEST([1]) a JOIN UNNEST([1]) b ON a=b)",
+   "gap": "not read: sqlglot reads a parenthesized join only when it starts with a table"
+  },
+  {
+   "feature": "UNION ALL",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 x UNION ALL SELECT 2 x"
+  },
+  {
+   "feature": "UNION DISTINCT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 x UNION DISTINCT SELECT 1 x"
+  },
+  {
+   "feature": "INTERSECT DISTINCT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 x INTERSECT DISTINCT SELECT 1 x"
+  },
+  {
+   "feature": "EXCEPT DISTINCT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 x EXCEPT DISTINCT SELECT 2 x"
+  },
+  {
+   "feature": "UNION ALL BY NAME",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a UNION ALL BY NAME SELECT 2 a"
+  },
+  {
+   "feature": "INNER UNION BY NAME",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a INNER UNION ALL BY NAME SELECT 2 a",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "LEFT OUTER UNION BY NAME",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a LEFT OUTER UNION ALL BY NAME SELECT 2 a",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "FULL OUTER UNION BY NAME",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a FULL OUTER UNION ALL BY NAME SELECT 2 a",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "BY NAME ON column list",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a UNION ALL BY NAME ON(a) SELECT 2 a",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "STRICT CORRESPONDING",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a UNION ALL STRICT CORRESPONDING SELECT 2 a",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "CORRESPONDING",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "SELECT 1 a UNION ALL CORRESPONDING SELECT 2 a",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "query expression parentheses",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
+   "sql": "(SELECT 1)"
+  },
+  {
+   "feature": "pipe SELECT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#select_pipe_operator",
+   "sql": "FROM UNNEST([1]) x |> SELECT x",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe EXTEND",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#extend_pipe_operator",
+   "sql": "FROM UNNEST([1]) x |> EXTEND x+1 AS y",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe SET",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#set_pipe_operator",
+   "sql": "FROM (SELECT 1 x) |> SET x=x+1",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe DROP",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#drop_pipe_operator",
+   "sql": "FROM (SELECT 1 x,2 y) |> DROP y",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe RENAME",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#rename_pipe_operator",
+   "sql": "FROM (SELECT 1 x) |> RENAME x AS y",
+   "gap": "not read on purpose: no SELECT keeps the renamed column in place without knowing the columns"
+  },
+  {
+   "feature": "pipe AGGREGATE",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#aggregate_pipe_operator",
+   "sql": "FROM UNNEST([1,1]) x |> AGGREGATE COUNT(*) AS n",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe AGGREGATE GROUP BY",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#aggregate_group_by_pipe_operator",
+   "sql": "FROM UNNEST([1,1]) x |> AGGREGATE COUNT(*) AS n GROUP BY x",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe GROUP AND ORDER BY",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#group_and_order_by_pipe_operator",
+   "sql": "FROM UNNEST([1]) x |> AGGREGATE COUNT(*) AS n GROUP AND ORDER BY x DESC",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe JOIN",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#join_pipe_operator",
+   "sql": "FROM UNNEST([1]) x |> JOIN UNNEST([1]) y ON x=y",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe WITH",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#with_pipe_operator",
+   "sql": "FROM UNNEST([1]) x |> WITH y AS (SELECT 2 z) |> SELECT x",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "pipe PIVOT",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax#pivot_pipe_operator",
+   "sql": "FROM (SELECT \"a\" k,1 v) |> PIVOT(SUM(v) FOR k IN(\"a\"))",
+   "since_sqlglot": 30
+  },
+  {
+   "feature": "single-quoted string literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#string_literals",
+   "sql": "SELECT 'abc'"
+  },
+  {
+   "feature": "double-quoted string literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#string_literals",
+   "sql": "SELECT \"abc\""
+  },
+  {
+   "feature": "triple-quoted string literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#string_literals",
+   "sql": "SELECT '''abc'''"
+  },
+  {
+   "feature": "raw string literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#string_literals",
+   "sql": "SELECT r'\\d+'"
+  },
+  {
+   "feature": "bytes literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#bytes_literals",
+   "sql": "SELECT B'abc'"
+  },
+  {
+   "feature": "raw bytes literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#bytes_literals",
+   "sql": "SELECT br'abc'"
+  },
+  {
+   "feature": "triple-quoted bytes literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#bytes_literals",
+   "sql": "SELECT B'''abc'''"
+  },
+  {
+   "feature": "integer literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#numeric_literals",
+   "sql": "SELECT 123"
+  },
+  {
+   "feature": "floating-point literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#numeric_literals",
+   "sql": "SELECT 1.25"
+  },
+  {
+   "feature": "hex integer literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#numeric_literals",
+   "sql": "SELECT 0x1A"
+  },
+  {
+   "feature": "scientific notation literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#numeric_literals",
+   "sql": "SELECT 1.2e3"
+  },
+  {
+   "feature": "Boolean literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#boolean_literals",
+   "sql": "SELECT TRUE"
+  },
+  {
+   "feature": "NULL literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#null_literals",
+   "sql": "SELECT NULL"
+  },
+  {
+   "feature": "date literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#date_literals",
+   "sql": "SELECT DATE '2024-01-01'"
+  },
+  {
+   "feature": "time literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#time_literals",
+   "sql": "SELECT TIME '12:00:00'"
+  },
+  {
+   "feature": "datetime literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#datetime_literals",
+   "sql": "SELECT DATETIME '2024-01-01 12:00:00'"
+  },
+  {
+   "feature": "timestamp literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#timestamp_literals",
+   "sql": "SELECT TIMESTAMP '2024-01-01 00:00:00+00'"
+  },
+  {
+   "feature": "interval literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#interval_literals",
+   "sql": "SELECT INTERVAL 1 DAY"
+  },
+  {
+   "feature": "JSON literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#json_literals",
+   "sql": "SELECT JSON '{\"a\":1}'"
+  },
+  {
+   "feature": "range literal",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#range_literals",
+   "sql": "SELECT RANGE<DATE> '[2024-01-01, 2024-02-01)'"
+  },
+  {
+   "feature": "typed literal prefix",
+   "category": "literal",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#numeric_literals",
+   "sql": "SELECT NUMERIC '1.25'"
+  },
+  {
+   "feature": "raw prefix",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#string_literals",
+   "sql": "SELECT r\"abc\""
+  },
+  {
+   "feature": "quoted identifier",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#quoted_identifiers",
+   "sql": "SELECT `column-name` FROM `project.dataset.table`",
+   "bigquery": "valid syntax; names a table that does not exist"
+  },
+  {
+   "feature": "line comment",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#comments",
+   "sql": "SELECT 1 -- comment"
+  },
+  {
+   "feature": "block comment",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#comments",
+   "sql": "SELECT /* comment */ 1"
+  },
+  {
+   "feature": "parameter named",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#query_parameters",
+   "sql": "SELECT @x"
+  },
+  {
+   "feature": "statement terminator",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#statement_terminators",
+   "sql": "SELECT 1"
+  },
+  {
+   "feature": "INT64 type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#integer_types",
+   "sql": "SELECT CAST(1 AS INT64)"
+  },
+  {
+   "feature": "FLOAT64 type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#floating_point_types",
+   "sql": "SELECT CAST(1 AS FLOAT64)"
+  },
+  {
+   "feature": "NUMERIC type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#decimal_types",
+   "sql": "SELECT NUMERIC '1.2'"
+  },
+  {
+   "feature": "BIGNUMERIC type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#decimal_types",
+   "sql": "SELECT BIGNUMERIC '1.2'"
+  },
+  {
+   "feature": "STRING type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#string_type",
+   "sql": "SELECT CAST(\"x\" AS STRING)"
+  },
+  {
+   "feature": "BYTES type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#bytes_type",
+   "sql": "SELECT CAST('x' AS BYTES)"
+  },
+  {
+   "feature": "BOOL type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#boolean_type",
+   "sql": "SELECT CAST(TRUE AS BOOL)"
+  },
+  {
+   "feature": "ARRAY type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type",
+   "sql": "SELECT ARRAY<INT64>[1,2]"
+  },
+  {
+   "feature": "ARRAY constructor",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type",
+   "sql": "SELECT [1,2,3]"
+  },
+  {
+   "feature": "STRUCT type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#struct_type",
+   "sql": "SELECT STRUCT<id INT64>(1)"
+  },
+  {
+   "feature": "STRUCT constructor",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#struct_type",
+   "sql": "SELECT STRUCT(1 AS x)"
+  },
+  {
+   "feature": "anonymous STRUCT",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#struct_type",
+   "sql": "SELECT (1, \"x\")"
+  },
+  {
+   "feature": "ARRAY of STRUCT",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type",
+   "sql": "SELECT ARRAY<STRUCT<x INT64>>[STRUCT(1)]"
+  },
+  {
+   "feature": "RANGE<DATETIME> type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#range_type",
+   "sql": "SELECT RANGE<DATETIME> '[2024-01-01 00:00:00, 2024-02-01 00:00:00)'"
+  },
+  {
+   "feature": "RANGE<TIMESTAMP> type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#range_type",
+   "sql": "SELECT RANGE<TIMESTAMP> '[2024-01-01 00:00:00+00, 2024-02-01 00:00:00+00)'"
+  },
+  {
+   "feature": "ARRAY of STRUCT with nested ARRAY field",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type",
+   "sql": "SELECT ARRAY<STRUCT<a ARRAY<INT64>>>[STRUCT([1])]"
+  },
+  {
+   "feature": "nested STRUCT type",
+   "category": "type",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#struct_type",
+   "sql": "SELECT STRUCT(STRUCT(1 AS x) AS inner_s)"
+  },
+  {
+   "feature": "scalar subquery",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#scalar_subqueries",
+   "sql": "SELECT (SELECT 1)"
+  },
+  {
+   "feature": "EXISTS subquery",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#exists_subqueries",
+   "sql": "SELECT EXISTS(SELECT 1)"
+  },
+  {
+   "feature": "IN subquery",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#in_subqueries",
+   "sql": "SELECT 1 IN (SELECT 1)"
+  },
+  {
+   "feature": "ARRAY subquery",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#array_subqueries",
+   "sql": "SELECT ARRAY(SELECT 1)"
+  },
+  {
+   "feature": "table subquery in FROM",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#subqueries",
+   "sql": "SELECT * FROM (SELECT 1 x) q"
+  },
+  {
+   "feature": "WITH expression",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/operators#with_expression",
+   "sql": "SELECT WITH(a AS 1, a+1)",
+   "gap": "not read: no sqlglot expression for it"
+  },
+  {
+   "feature": "chained function call syntax",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#chained_function_calls",
+   "sql": "SELECT (\"abc\").UPPER()"
+  },
+  {
+   "feature": "SAFE function call prefix",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#safe_prefix",
+   "sql": "SELECT SAFE_CAST(\"x\" AS INT64)"
+  },
+  {
+   "feature": "aggregate FILTER/ORDER BY syntax",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#aggregate_function_calls",
+   "sql": "SELECT ARRAY_AGG(x ORDER BY x DESC) FROM UNNEST([1,2]) x"
+  },
+  {
+   "feature": "aggregate DISTINCT syntax",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#aggregate_function_calls",
+   "sql": "SELECT COUNT(DISTINCT x) FROM UNNEST([1,1]) x"
+  },
+  {
+   "feature": "aggregate LIMIT syntax",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#aggregate_function_calls",
+   "sql": "SELECT ARRAY_AGG(x LIMIT 1) FROM UNNEST([1,2]) x"
+  },
+  {
+   "feature": "analytic OVER syntax",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#window_function_calls",
+   "sql": "SELECT ROW_NUMBER() OVER (ORDER BY x) FROM UNNEST([1]) x"
+  },
+  {
+   "feature": "window frame ROWS",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#window_frame_clause",
+   "sql": "SELECT SUM(x) OVER (ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM UNNEST([1]) x"
+  },
+  {
+   "feature": "window frame RANGE",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#window_frame_clause",
+   "sql": "SELECT SUM(x) OVER (ORDER BY x RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM UNNEST([1]) x"
+  },
+  {
+   "feature": "named window inheritance",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#window_clause",
+   "sql": "SELECT SUM(x) OVER w2 FROM UNNEST([1]) x WINDOW w AS (), w2 AS (w)"
+  },
+  {
+   "feature": "MATCH_RECOGNIZE clause",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#match_recognize_clause",
+   "sql": "SELECT * FROM (SELECT 1 AS x UNION ALL SELECT 2 UNION ALL SELECT 3) MATCH_RECOGNIZE (ORDER BY x MEASURES ARRAY_AGG(high.x) AS high_agg, ARRAY_AGG(low.x) AS low_agg AFTER MATCH SKIP TO NEXT ROW PATTERN (low | high) DEFINE low AS x <= 2, high AS x >= 2)",
+   "gap": "not read: sqlglot's BigQuery tokenizer has no MATCH_RECOGNIZE keyword, and reading it needs column lineage for MEASURES first"
+  },
+  {
+   "feature": "GRAPH_TABLE operator",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/graph-sql-queries#graph_table_operator",
+   "sql": "SELECT name, id FROM GRAPH_TABLE(graph_db.FinGraph MATCH (n:Person) RETURN n.name AS name, n.id AS id)",
+   "bigquery": "valid syntax; names a table that does not exist"
+  }
+ ]
+}

@@ -35,6 +35,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql, parenthesize_is_operands, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
+from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .string_literals import canonical_literals
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -68,6 +69,7 @@ from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .aggregate_rules import rewrite_aggregates
 from .null_rejecting_joins import left_join_to_inner
+from .join_rewrites import join_rewrites
 from .quantified_rules import rewrite_quantified
 from .regroup_arithmetic import regroup_arithmetic
 from .union_filter_rules import push_filter_into_set_operation
@@ -140,6 +142,31 @@ def _no_extras(select: exp.Select, *, allow_group: bool) -> bool:
     if any(select.args.get(k) for k in banned):
         return False
     return not any(select.find_all(exp.Window))
+
+
+def _global_aggregate(select: exp.Select) -> bool:
+    """``select`` aggregates without a GROUP BY: it returns one row even over no input.
+
+    Pruning its outputs must keep one of its aggregates, or it becomes a plain select with a row per input row.
+    """
+
+    return not select.args.get("group") and any(
+        a.find_ancestor(exp.Select) is select and not isinstance(a.parent, exp.Window) for a in select.find_all(exp.AggFunc)
+    )
+
+
+def _where_false_is_empty(select: exp.Select) -> bool:
+    """``select`` has ``WHERE FALSE`` and so no rows: not with an aggregate, which still returns its one row
+    over no input, nor with a GROUP BY (an empty grouping set does the same)."""
+
+    where = select.args.get("where")
+    return (
+        where is not None
+        and isinstance(where.this, exp.Boolean)
+        and not where.this.this
+        and not select.args.get("group")
+        and not any(select.find_all(exp.AggFunc))
+    )
 
 
 def _is_agg(node: exp.Expression) -> bool:
@@ -651,6 +678,17 @@ def _fold_dates(tree: exp.Expression) -> exp.Expression:
     return tree.transform(step)
 
 
+def _plain_union(node: exp.Expression) -> bool:
+    """A bare ``UNION [ALL]`` of its two operands: no LIMIT or OFFSET over the whole union, no ``BY NAME``,
+    side, CTE or other clause. Only then is it the sum (or set) of its operands' rows; an ORDER BY alone
+    keeps every row."""
+
+    if type(node) is not exp.Union:
+        return False
+    extra = {key for key, value in node.args.items() if value and key not in ("this", "expression", "distinct")}
+    return not extra or extra == {"order"}
+
+
 def _union_all_branches(node: exp.Expression) -> list[exp.Select] | None:
     """The SELECTs of a (nested) UNION ALL, or ``None`` for any other shape."""
 
@@ -694,16 +732,28 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
 
 
 def _null_extended(select: exp.Select, source: exp.Expression) -> bool:
-    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join."""
+    """Whether ``source`` (the FROM item or a joined item of ``select``) can be NULL-extended by an outer join.
+
+    Its own LEFT or FULL join pads it, and so does every later RIGHT or FULL join, which pads all
+    that was joined before it (``t JOIN d ON .. RIGHT JOIN b ON FALSE`` gives rows where ``d`` is
+    NULL). A source that is not one of the select's own items, or that carries joins of its own
+    (a parenthesized join), counts as padded.
+    """
 
     joins = select.args.get("joins") or []
     sides = [(j.args.get("side") or "").upper() for j in joins]
     kinds = [(j.args.get("kind") or "").upper() for j in joins]
-    for join, side, kind in zip(joins, sides, kinds):
-        if join.this is source:
-            return side in ("LEFT", "FULL") or kind in ("LEFT", "FULL")
-    # the FROM item, or anything joined before a RIGHT or FULL join, is padded by that join
-    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides, kinds))
+    if source.args.get("joins"):
+        return True
+    from_ = select.args.get("from_") or select.args.get("from")
+    if from_ is not None and from_.this is source:
+        later = 0
+    else:
+        position = next((i for i, j in enumerate(joins) if j.this is source), None)
+        if position is None or sides[position] in ("LEFT", "FULL") or kinds[position] in ("LEFT", "FULL"):
+            return True
+        later = position + 1
+    return any(side in ("RIGHT", "FULL") or kind in ("RIGHT", "FULL") for side, kind in zip(sides[later:], kinds[later:]))
 
 
 _STRICT = (exp.Paren, exp.Neg, exp.Cast, exp.Add, exp.Sub, exp.Mul, exp.Div, exp.IntDiv, exp.Mod, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
@@ -734,7 +784,7 @@ def _null_propagating(node: exp.Expression) -> bool:
     return False
 
 
-def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
+def _inline_expression_projection(select: exp.Select, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """``(SELECT f(a) AS x FROM t) AS d`` joined in: read ``t AS d`` and replace ``d.x`` by ``f(d.a)``.
 
     A derived table that only computes expressions over one table keeps every row, so it can be
@@ -782,6 +832,9 @@ def _inline_expression_projection(select: exp.Select) -> exp.Expression | None:
             continue
         # Alias clashes with another declared name would capture references.
         if sum(1 for n in select.walk() if isinstance(n, (exp.Table, exp.Subquery)) and (n.alias_or_name or "").lower() == alias.lower()) != 1:
+            continue
+        # the table's other columns become visible where only the derived outputs were
+        if _may_capture(select, source, table, set(), schema):
             continue
         for column in uses:
             replacement = by_name[column.name.lower()].copy()
@@ -1229,6 +1282,8 @@ def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
         conditions.append(substitute(select.args["where"].this))
     if conditions:
         result.set("having", exp.Having(this=_and_all([c for cond in conditions for c in _conjuncts(cond)])))
+    if _global_aggregate(inner) and not _global_aggregate(result):
+        return None  # the outer select drops every aggregate: the merged select would lose the one-row result
     return result
 
 
@@ -1244,8 +1299,8 @@ def _distinct_over_union_all(select: exp.Select) -> exp.Expression | None:
     if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Union) or source.this.args.get("distinct"):
         return None
     union = source.this
-    if not isinstance(union, exp.Union) or isinstance(union, (exp.Intersect, exp.Except)) or type(union) is not exp.Union:
-        return None
+    if not _plain_union(union):
+        return None  # the rewrite keeps only the operands, so a LIMIT over the whole union would be lost
     names = _select_names(union)
     wanted = [e.name.lower() for e in select.expressions if isinstance(e, exp.Column) and not isinstance(e.this, exp.Star)]
     if names is None or wanted != names or len(wanted) != len(select.expressions):
@@ -2046,6 +2101,15 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
         keep = [e for e in inner.expressions if e.alias_or_name and e.alias_or_name.lower() in used]
         if not keep:
             keep = inner.expressions[:1]
+        if _global_aggregate(inner):
+            # keep an aggregate output, or the one-row aggregate becomes a row per input row
+            pruned = inner.copy()
+            pruned.set("expressions", [e.copy() for e in keep])
+            if not _global_aggregate(pruned):
+                witness = next((e for e in inner.expressions if any(a.find_ancestor(exp.Select) is inner for a in e.find_all(exp.AggFunc))), None)
+                if witness is None:
+                    continue
+                keep = [e for e in inner.expressions if e is witness or any(e is k for k in keep)]
         if len(keep) == len(inner.expressions):
             continue
         inner.set("expressions", [e.copy() for e in keep])
@@ -2053,7 +2117,49 @@ def _prune_derived(select: exp.Select) -> exp.Expression | None:
     return select if changed else None
 
 
-def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
+def _declared_names(select: exp.Select) -> set[str]:
+    """The names ``select``'s FROM and JOIN items declare, lower-case (an UNNEST's element name included)."""
+
+    names = set()
+    for source in _sources_of(select):
+        if source.alias_or_name:
+            names.add(source.alias_or_name.lower())
+        alias = source.args.get("alias")
+        if isinstance(source, exp.Unnest) and alias is not None and alias.args.get("columns"):
+            names.add(alias.args["columns"][0].name.lower())  # BigQuery: the element is a range variable
+    return names
+
+
+def _may_capture(outer: exp.Select, node: exp.Subquery, table: exp.Table, exposed: set[str], schema: dict[str, list[str]] | None) -> bool:
+    """Whether reading ``node`` as its base ``table`` could change what a column in ``outer``'s scope names.
+
+    The table may have columns ``node`` does not expose. A bare column that is not one of ``exposed``
+    (it named an outer query's column, or another source's) could then bind to such a column, and so
+    could the head of a path ``s.f`` that names no visible alias, unless ``schema`` lists the table's
+    columns and none is that name. A qualifier that names a visible alias is read as that alias, as the
+    provers read it. Sibling derived tables cannot see ``node`` and are not searched.
+    """
+
+    known = {k.lower(): v for k, v in (schema or {}).items()}.get(".".join(p.name for p in table.parts).lower())
+    hidden = None if known is None else {c.lower() for c in known} - exposed
+    siblings = [s for s in _sources_of(outer) if isinstance(s, exp.Subquery) and s is not node]
+    for column in outer.find_all(exp.Column):
+        if isinstance(column.this, exp.Star) or _within(column, node) or any(_within(column, s) for s in siblings):
+            continue
+        lead = column.parts[0].name.lower()
+        if lead in exposed or (hidden is not None and lead not in hidden):
+            continue
+        if not column.table:
+            return True
+        scope = column.find_ancestor(exp.Select)
+        while scope is not None and lead not in _declared_names(scope):
+            scope = scope.find_ancestor(exp.Select)
+        if scope is None:
+            return True
+    return False
+
+
+def _inline_projection(node: exp.Subquery, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """``(SELECT a, b FROM t) AS u`` is ``t AS u`` when every column is passed through.
 
     Only the columns of ``u`` the enclosing query uses matter, so dropping the
@@ -2075,6 +2181,8 @@ def _inline_projection(node: exp.Subquery) -> exp.Expression | None:
         return None
     outer = node.find_ancestor(exp.Select)
     if outer is None or any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in outer.find_all(exp.Star)):
+        return None
+    if _may_capture(outer, node, table, {e.name.lower() for e in inner.expressions}, schema):
         return None
     return exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=node.args.get("alias"))
 
@@ -2276,14 +2384,13 @@ def _fold_constants(tree: exp.Expression) -> exp.Expression:
 
 
 def _is_empty_select(node: exp.Expression) -> bool:
-    """A SELECT whose WHERE is literally FALSE (or that has LIMIT 0) returns no rows."""
+    """A SELECT whose WHERE is literally FALSE (and has no aggregate) or that has LIMIT 0 returns no rows."""
 
     while isinstance(node, exp.Subquery):
         node = node.this
     if not isinstance(node, exp.Select) or node.args.get("group") or node.args.get("having"):
         return False
-    where = node.args.get("where")
-    if where is not None and isinstance(where.this, exp.Boolean) and not where.this.this:
+    if _where_false_is_empty(node):
         return True
     limit = node.args.get("limit")
     return limit is not None and isinstance(limit.expression, exp.Literal) and limit.expression.name == "0"
@@ -2320,8 +2427,10 @@ def _fold_trivia(tree: exp.Expression) -> exp.Expression:
                 node.set("group", None)
                 node.set("distinct", exp.Distinct())
                 return node
-        if isinstance(node, (exp.Upper, exp.Lower)) and isinstance(node.this, (exp.Upper, exp.Lower)):
-            return type(node)(this=node.this.this.copy())  # the outer case wins whatever the inner one did
+        if isinstance(node, (exp.Upper, exp.Lower)) and type(node.this) is type(node):
+            # Repeating a case map changes nothing; across maps the inner one can matter
+            # (LOWER(UPPER('ς')) is 'σ', UPPER(LOWER('İ')) is 'I'), so those are kept.
+            return node.this.copy()
         if isinstance(node, exp.Anonymous) and node.name.upper() == "POSITIVE" and len(node.expressions) == 1:
             return node.expressions[0].copy()
         if isinstance(node, exp.Concat) and any(isinstance(e, exp.Concat) for e in node.expressions):
@@ -2803,6 +2912,37 @@ def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _declaring_cte(table: exp.Table, name: str, stop: exp.Expression) -> exp.CTE | None:
+    """The CTE a reference to ``name`` at ``table`` reads, searching the WITH clauses out to ``stop``.
+
+    The nearest WITH that defines the name wins, so an inner ``WITH q`` hides an outer one. Inside a
+    CTE's own body only the CTEs before it are visible (all of them in a ``WITH RECURSIVE``).
+    """
+
+    child, parent = table, table.parent
+    while parent is not None:
+        if isinstance(parent, exp.CTE) and isinstance(parent.parent, exp.With):
+            with_ = parent.parent
+            for cte in with_.expressions:
+                if cte is parent and not with_.args.get("recursive"):
+                    break
+                if cte.alias_or_name.lower() == name:
+                    return cte
+            # the WITH's own names were just searched; its owner must not search them again
+            child, parent = with_, with_.parent
+            if parent is None:
+                return None
+        with_ = parent.args.get("with_") or parent.args.get("with")
+        if isinstance(with_, exp.With) and child is not with_:
+            for cte in with_.expressions:
+                if cte.alias_or_name.lower() == name:
+                    return cte
+        if parent is stop:
+            return None
+        child, parent = parent, parent.parent
+    return None
+
+
 def _inline_ctes(tree: exp.Expression) -> exp.Expression:
     """Replace each reference to a WITH table by the table's query as a derived table."""
 
@@ -2826,8 +2966,7 @@ def _inline_ctes(tree: exp.Expression) -> exp.Expression:
                 uses = [
                     t
                     for t in owner.find_all(exp.Table)
-                    if not t.db and not t.catalog and t.name.lower() == name and t.find_ancestor(exp.CTE) is not cte
-                    and not any(a is cte for a in _ancestors_of(t, owner))
+                    if not t.db and not t.catalog and t.name.lower() == name and _declaring_cte(t, name, owner) is cte
                 ]
                 for table in uses:
                     derived = exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name)))
@@ -3978,14 +4117,7 @@ def _provably_empty(node: exp.Expression) -> bool:
     while isinstance(node, exp.Subquery) and not node.args.get("limit") and not node.args.get("order"):
         node = node.this
     if isinstance(node, exp.Select):
-        where = node.args.get("where")
-        return (
-            where is not None
-            and isinstance(where.this, exp.Boolean)
-            and not where.this.this
-            and not node.args.get("group")
-            and not any(node.find_all(exp.AggFunc))
-        )
+        return _where_false_is_empty(node)
     if isinstance(node, exp.Union):
         return _provably_empty(node.this) and _provably_empty(node.expression)
     if isinstance(node, exp.Intersect):
@@ -4385,6 +4517,8 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
         return None
     result = inner.copy()
     result.set("expressions", items)
+    if _global_aggregate(inner) and not _global_aggregate(result):
+        return None  # the outer select drops every aggregate: unwrapping would lose the one-row result
     return result
 
 
@@ -4392,19 +4526,20 @@ def _in_over_union(tree: exp.Expression) -> exp.Expression:
     """``x IN (SELECT a FROM p UNION ALL SELECT b FROM q)`` is ``x IN (SELECT a FROM p) OR x IN (SELECT b FROM q)``.
 
     A match in either branch is a match in the union and an unknown stays unknown, so the three-valued
-    result agrees (and so does ``NOT IN`` as the negation).
+    result agrees (and so does ``NOT IN`` as the negation). Every union in the tree must be bare: a
+    ``LIMIT`` over the whole union (or ``BY NAME``) changes which rows it has, and the split would lose it.
     """
 
     def step(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.In) or node.args.get("expressions") or node.args.get("unnest"):
             return node
         query = node.args.get("query")
-        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union:
+        if not isinstance(query, exp.Subquery) or type(query.this) is not exp.Union or any(v for k, v in query.args.items() if k != "this"):
             return node
         branches, stack = [], [query.this]
         while stack:
             part = stack.pop()
-            if type(part) is exp.Union:
+            if _plain_union(part):
                 stack.extend([part.expression, part.this])
             elif isinstance(part, exp.Select):
                 branches.append(part)
@@ -4662,7 +4797,7 @@ def normalize(
 
     def step(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.Subquery):
-            return _inline_projection(node) or node
+            return _inline_projection(node, schema) or node
         if isinstance(node, exp.SetOperation):
             return merge_same_source(node) or set_operation_to_exists(node) or node
         if isinstance(node, exp.Select):
@@ -4678,7 +4813,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select):
+            for rule in (distribute_over_constant_union, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, _drop_exists_witnessed_by_join, _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
@@ -4694,7 +4829,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step))))))), not_null), not_null)
+        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(fold_string_literals(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))))), not_null), not_null)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
