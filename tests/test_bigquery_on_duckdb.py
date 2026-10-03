@@ -65,6 +65,16 @@ def test_row6_nulls_sort_first_ascending_and_last_descending(db):
     assert run(db, "SELECT x, SUM(1) OVER (ORDER BY x) FROM UNNEST([3, NULL, 1]) x ORDER BY x") == [(None, 1), (1, 2), (3, 3)]
 
 
+def test_explicit_nulls_last_ascending_is_kept(db):
+    # sqlglot leaves ASC NULLS LAST unwritten for DuckDB; under the session order NULL would come first.
+    # Found by the GoogleSQL expected-results eval (analytic_sum_range_orderby_bool_nulls_last).
+    assert run(db, "SELECT x FROM UNNEST([2, NULL, 1]) x ORDER BY x NULLS LAST") == [(1,), (2,), (None,)]
+    assert run(db, "SELECT x FROM UNNEST([2, NULL, 1]) x ORDER BY 1 ASC NULLS LAST") == [(1,), (2,), (None,)]
+    window = "SUM(x) OVER (ORDER BY x NULLS LAST RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
+    assert run(db, f"SELECT x, {window} FROM UNNEST([3, NULL, 1]) x ORDER BY x") == [(None, None), (1, 4), (3, 3)]
+    assert one(db, "SELECT ARRAY_AGG(x ORDER BY IF(x = 2, NULL, x) NULLS LAST) FROM UNNEST([2, 1, 3]) x") == (1, 3, 2)
+
+
 def test_rows24_25_timestamps_are_read_in_utc(db):
     zone = db.execute("SELECT current_setting('TimeZone')").fetchone()[0]
     assert zone in ("UTC", "Etc/UTC")
