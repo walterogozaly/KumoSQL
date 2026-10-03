@@ -47,6 +47,7 @@ from .grouping_expansion import collapse_grouping_expansion
 from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
 from .named_windows import inline_named_windows
 from .having_rules import key_having_to_where
+from .window_canonical import canonical_windows
 from .window_rules import window_rules
 from .intersection_rules import collapse_counted_intersection, collapse_named_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
@@ -4784,7 +4785,7 @@ def normalize(
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
         tree = _expand_stars(tree, schema)
-    tree = _isolate_windows(tree)
+    tree = _isolate_windows(canonical_windows(tree, types))
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source

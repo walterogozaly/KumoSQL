@@ -185,6 +185,23 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+def _lost_null_ordering(body: exp.Expression, text: str) -> str:
+    """A suffix naming every NULLS FIRST/LAST of ``body`` when its BigQuery ``text`` lost one, else "".
+
+    sqlglot drops a NULLS placement BigQuery cannot spell there, such as ``ASC NULLS LAST`` in an aggregate's
+    window, so ``SUM(v) OVER (ORDER BY t NULLS FIRST)`` and ``.. NULLS LAST`` would print alike.
+    """
+
+    before = [bool(o.args.get("nulls_first")) for o in body.find_all(exp.Ordered)]
+    if not before:
+        return ""
+    try:
+        after = [bool(o.args.get("nulls_first")) for o in sqlglot.parse_one(text, read="bigquery").find_all(exp.Ordered)]
+    except sqlglot.errors.ParseError:
+        after = None
+    return "" if before == after else " NULLS[" + "".join("F" if b else "L" for b in before) + "]"
+
+
 def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
@@ -1221,10 +1238,13 @@ class _Compiler:
                     order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
                 position = {old: new for new, old in enumerate(order)}
                 root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
-        key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
+        text = canonical.sql(dialect="bigquery", normalize_functions="upper")
+        lost = _lost_null_ordering(canonical, text)
+        key = "(" + text + ")" + lost
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         occs.append(occ)
-        self.opaque_bodies[key] = (key[1:-1], len(names))
+        if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
+            self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
         return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
