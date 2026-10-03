@@ -8,7 +8,7 @@ The equivalence checks behind every verified rewrite, from the structural prover
 
 Root CTEs are renamed by position after being put in a canonical dependency order, so CTE order alone does not block a proof; reordering is skipped for recursive WITH, forward references, or names that differ only in case.
 
-Before comparing, the prover also removes grouping parentheses, flattens `AND`/`OR` chains, removes `TRUE` from `AND` and `FALSE` from `OR` in filter and join conditions, drops `WHERE TRUE`, merges root CTEs with identical bodies, and drops unreferenced CTEs. These normalizations are written separately from the cleanup rules, and a three-valued-logic test evaluates both against the original predicates.
+Before comparing, the prover also removes grouping parentheses, flattens `AND`/`OR` chains, removes `TRUE` from `AND` and `FALSE` from `OR` in filter and join conditions, drops `WHERE TRUE`, merges root CTEs with identical bodies, and drops unreferenced CTEs. The predicate step is re-derived by an independent checker that shares no code with the cleanup rules or the prover; if it refuses, the pair is `not_proven`, and accepted steps are listed in `result.proof_checks` ([proof safeguards](proof-safeguards.md)).
 
 It refuses to prove queries containing volatile values, windows, tie-sensitive aggregates, `TABLESAMPLE`, or any `LIMIT`/`OFFSET`. Structural differences are reported as `not_proven`, never as a proof of inequivalence. This is intentional: false negatives are acceptable; false positives are not.
 

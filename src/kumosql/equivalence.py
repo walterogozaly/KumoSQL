@@ -29,6 +29,7 @@ from .ast_utils import (
 from .distinct_safety import distinct_is_redundant
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
+from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
 from .string_literals import canonical_literals, invalid_literal
 
 
@@ -51,6 +52,8 @@ class EquivalenceResult:
     normalized_right: str | None = None
     verifier_sql: str | None = None
     diagnostics: tuple[str, ...] = ()
+    #: The independent checks of this proof's own predicate normalization (see ``proof_steps``).
+    proof_checks: tuple[StepCheck, ...] = ()
 
     @property
     def proven(self) -> bool:
@@ -63,12 +66,14 @@ _VALUE_NONDETERMINISTIC_TYPES = {
     "ApproxQuantile",
     "ArrayAgg",
     "CurrentDate",
+    "CurrentDatetime",
     "CurrentTime",
     "CurrentTimestamp",
     "GroupConcat",
     "MaxBy",
     "MinBy",
     "Rand",
+    "SessionUser",
     "TableSample",
     "Uuid",
 }
@@ -93,9 +98,11 @@ _VALUE_NONDETERMINISTIC_NAMES = {
 # identical expression is not enough and it keeps blocking the proof.
 _STABLE_IF_UNCHANGED_TYPES = {
     "CurrentDate",
+    "CurrentDatetime",
     "CurrentTime",
     "CurrentTimestamp",
     "Rand",
+    "SessionUser",
     "Uuid",
 }
 
@@ -690,8 +697,36 @@ SELECT COUNTIF(left_count != right_count) = 0 AS equivalent
 FROM joined_counts"""
 
 
+class _StepRejected(ValueError):
+    """The independent checker refused a normalization step, so the proof must not rely on it."""
+
+    def __init__(self, check: StepCheck):
+        super().__init__(check.reason)
+        self.check = check
+
+
+def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
+    """Run ``_normalize_predicates`` and have ``proof_steps`` re-derive the change from scratch.
+
+    Rules such as ``remove_trivial_predicates`` fold predicates the same way, so a folding bug would
+    make both sides of a proof agree. The checker shares no code with either. ``None`` when nothing
+    changed; raises ``_StepRejected`` when the checker refuses the change.
+    """
+
+    before = query.copy()
+    _normalize_predicates(query)
+    if same_tree(before, query):
+        return None
+    rendered = lambda q: _parenthesize_operators(q).sql(dialect="bigquery", comments=False)
+    step = RewriteStep("normalize_predicates", PREDICATE_FAMILY, 0, rendered(before), rendered(query))
+    check = check_predicate_transition(step, before, query)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
 def _prepare_query(
-    sql: str, *, ignore_row_order: bool
+    sql: str, *, ignore_row_order: bool, checks: list[StepCheck] | None = None
 ) -> tuple[exp.Expression, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     # Require strict parsing before invoking the lifting transformer. Recovery
     # mode is useful for formatting, but a proof must not be based on a
@@ -716,7 +751,9 @@ def _prepare_query(
     _drop_redundant_distinct(query)
     _strip_grouping_parens(query)
     _flatten_connectors(query)
-    _normalize_predicates(query)
+    check = _checked_predicate_normalization(query)
+    if check is not None and checks is not None:
+        checks.append(check)
     unambiguous = _cte_references_are_unambiguous(query)
     _canonicalize_cte_names(query)
     if unambiguous and _merge_duplicate_ctes(query):
@@ -905,14 +942,22 @@ def _prove_equivalent(
     ignore_row_order: bool = True,
 ) -> EquivalenceResult:
     verifier_sql: str | None = None
+    checks: list[StepCheck] = []
     try:
         left_query, left_canonical, left_nondeterminism, left_before, left_after = _prepare_query(
-            left_sql, ignore_row_order=ignore_row_order
+            left_sql, ignore_row_order=ignore_row_order, checks=checks
         )
         right_query, right_canonical, right_nondeterminism, right_before, right_after = _prepare_query(
-            right_sql, ignore_row_order=ignore_row_order
+            right_sql, ignore_row_order=ignore_row_order, checks=checks
         )
         verifier_sql = build_bag_verifier_sql(left_sql, right_sql)
+    except _StepRejected as exc:
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="the independent check of predicate normalization refused a step",
+            diagnostics=(exc.check.reason,),
+            proof_checks=(*checks, exc.check),
+        )
     except Exception as exc:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
@@ -940,6 +985,7 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
             diagnostics=diagnostics,
         )
 
@@ -952,6 +998,7 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
             diagnostics=("row-selection nondeterminism",),
         )
 
@@ -966,6 +1013,7 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
         )
 
     if not ignore_row_order:
@@ -978,6 +1026,7 @@ def _prove_equivalent(
                 normalized_left=left_canonical,
                 normalized_right=right_canonical,
                 verifier_sql=verifier_sql,
+                proof_checks=tuple(checks),
             )
 
     unchanged = (
@@ -994,4 +1043,5 @@ def _prove_equivalent(
         normalized_right=right_canonical,
         verifier_sql=verifier_sql,
         diagnostics=unchanged,
+        proof_checks=tuple(checks),
     )
