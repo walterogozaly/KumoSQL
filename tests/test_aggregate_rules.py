@@ -2,8 +2,22 @@ import sqlglot
 
 from kumosql import aggregate_rules as rules
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.ast_utils import LossySql, faithful_sql
 
 SCHEMA = {"emp": ["empno", "ename", "sal", "comm", "deptno", "mgr"], "dept": ["deptno", "name"]}
+
+
+
+def _prints_div() -> bool:
+    try:
+        faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql")
+    except LossySql:
+        return False
+    return True
+
+
+# sqlglot 26 has no generator that writes MySQL's DIV back as DIV, so a query using it is refused there
+MYSQL_DIV = _prints_div()
 
 
 def _rule(rule, sql):
@@ -117,7 +131,8 @@ def test_expression_of_derived_aggregates_is_computed_outside():
 def test_compound_and_boolean_aggregates_split_through_union_all():
     union = "(SELECT ename, sal > 1 AS b FROM emp UNION ALL SELECT ename, sal > 2 AS b FROM emp) AS t"
     out = _rule(rules._split_compound_aggregates, f"SELECT ename, BOOL_AND(b), BOOL_OR(b) FROM {union} GROUP BY ename")
-    assert out == (
+    # MySQL prints LOGICAL_AND as MIN in current sqlglot and as LOGICAL_AND in sqlglot 26
+    assert out.replace("LOGICAL_AND", "MIN").replace("LOGICAL_OR", "MAX") == (
         "SELECT ename, LOGICAL_AND(kumosql_p0), LOGICAL_OR(kumosql_p1) FROM ("
         "SELECT ename AS ename, LOGICAL_AND(b) AS kumosql_p0, LOGICAL_OR(b) AS kumosql_p1 FROM (SELECT ename, sal > 1 AS b FROM emp) AS t GROUP BY ename "
         "UNION ALL SELECT ename AS ename, LOGICAL_AND(b) AS kumosql_p0, LOGICAL_OR(b) AS kumosql_p1 FROM (SELECT ename, sal > 2 AS b FROM emp) AS t GROUP BY ename"
@@ -129,7 +144,7 @@ def test_compound_and_boolean_aggregates_split_through_union_all():
     assert _proven(
         "SELECT t.ename, SUM(t.sal) DIV COUNT(t.sal) FROM (SELECT ename, sal FROM emp UNION ALL SELECT ename, sal FROM emp) AS t GROUP BY t.ename",
         "SELECT t.e, SUM(t.s) DIV COUNT(t.s) FROM (SELECT sal AS s, ename AS e FROM emp UNION ALL SELECT sal AS s, ename AS e FROM emp) AS t GROUP BY t.e",
-    )
+    ) == MYSQL_DIV
     assert not _proven(
         "SELECT ename, BOOL_AND(b) FROM (SELECT ename, sal > 1 AS b FROM emp UNION ALL SELECT ename, sal > 2 AS b FROM emp) AS t GROUP BY ename",
         "SELECT ename, BOOL_AND(b) FROM (SELECT ename, sal > 1 AS b FROM emp UNION ALL SELECT ename, sal > 1 AS b FROM emp) AS t GROUP BY ename",

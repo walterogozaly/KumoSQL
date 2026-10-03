@@ -27,6 +27,8 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.schema import MappingSchema
 
+from .ast_utils import EXCEPT_KEY
+
 if TYPE_CHECKING:
     from .pipeline import Pipeline
 
@@ -120,7 +122,7 @@ def _resolve(pipeline: "Pipeline", key: str, tables: dict[str, Columns | None]) 
             node = node.setdefault(part, {})
         node[canonical.name] = {col: typ for col, typ in columns}
     for star in query.find_all(exp.Star):
-        named = [c.name.lower() for c in (star.args.get("except_") or [])]
+        named = [c.name.lower() for c in (star.args.get(EXCEPT_KEY) or [])]
         named += [r.alias_or_name.lower() for r in (star.args.get("replace") or [])]
         if not named:
             continue

@@ -8,6 +8,7 @@ import sqlglot
 pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
+from kumosql.ast_utils import spell_for_duckdb  # noqa: E402
 from kumosql import bounded_equivalence as be  # noqa: E402
 from kumosql.bounded_equivalence import BColumn, BoundedSchema, BoundedStatus, BTable, check_bounded  # noqa: E402
 from kumosql.duckdb_load import insert_rows  # noqa: E402
@@ -201,7 +202,7 @@ def test_encoding_matches_duckdb(sql):
             if "side condition" in str(error) or "ungrouped" in str(error):  # an answer the engines leave arbitrary
                 continue
             raise
-        theirs = duck_rows(db, data, sqlglot.transpile(sql, read="mysql", write="duckdb")[0])
+        theirs = duck_rows(db, data, spell_for_duckdb(sqlglot.parse_one(sql, read="mysql")).sql(dialect="duckdb"))
         assert norm(mine) == norm(theirs), (sql, data)
         compared += 1
     assert compared >= 3
