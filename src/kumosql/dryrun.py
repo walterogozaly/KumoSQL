@@ -32,6 +32,7 @@ import urllib.request
 from sqlglot import exp
 
 from .ast_utils import parse_statements
+from .sql_validation import quote_table_path
 
 Transport = Callable[[str, dict[str, str], bytes], tuple[int, dict]]
 
@@ -162,11 +163,11 @@ def access_token(scope: str = _SCOPE) -> str:
             credentials, _ = google.auth.default(scopes=[scope])
             if not credentials.valid:
                 credentials.refresh(Request())
-        except Exception as exc:
+        except Exception:
             raise RuntimeError(
                 "no BigQuery credentials: set BQ_ACCESS_TOKEN, configure a service account, "
                 "or run 'gcloud auth application-default login'"
-            ) from exc
+            ) from None
         return credentials.token
     try:
         from google.auth.transport.requests import Request
@@ -175,14 +176,17 @@ def access_token(scope: str = _SCOPE) -> str:
         raise RuntimeError(
             "service account credentials need google-auth: pip install 'kumosql[bigquery]'"
         ) from exc
-    if raw_key:
-        credentials = service_account.Credentials.from_service_account_info(
-            json.loads(raw_key), scopes=[scope]
-        )
-    else:
-        credentials = service_account.Credentials.from_service_account_file(key_path, scopes=[scope])
-    if not credentials.valid:
-        credentials.refresh(Request())
+    try:
+        if raw_key:
+            credentials = service_account.Credentials.from_service_account_info(
+                json.loads(raw_key), scopes=[scope]
+            )
+        else:
+            credentials = service_account.Credentials.from_service_account_file(key_path, scopes=[scope])
+        if not credentials.valid:
+            credentials.refresh(Request())
+    except Exception:
+        raise RuntimeError("could not load or refresh service account credentials") from None
     return credentials.token
 
 
@@ -349,9 +353,12 @@ def fetch_table_schemas(
 
     schemas: dict[str, dict[str, str]] = {}
     errors: dict[str, str] = {}
-    for table in tables:
+    # Validate the whole batch before a valid first table can acquire credentials
+    # or build a request while a later path contains SQL punctuation.
+    quoted = [quote_table_path(table) for table in tables]
+    for table, reference in zip(tables, quoted):
         result = dry_run(
-            f"SELECT * FROM `{table}`",
+            f"SELECT * FROM {reference}",
             project,
             location=location,
             token=token,

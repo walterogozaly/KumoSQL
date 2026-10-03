@@ -122,19 +122,22 @@ def _prepare(path: Path) -> None:
         redact.GLOBAL.set_data_folder(folder)
 
 
-def log(message: str, level: str = "INFO") -> None:
-    """Append one line to the UI log; never raises and never touches the console."""
+def log(message: str, level: str = "INFO", *, summarized: bool = False) -> None:
+    """Append a producer summary or withheld marker; never raises or touches the console."""
 
     try:
         path = log_path()
         _prepare(path)
-        text = redact.GLOBAL.scrub(message).replace("\r", " ").replace("\n", " | ")
+        # Unknown free-form payloads may be data with no recognizable syntax.
+        # Only producer summaries belong in a shareable log.
+        text = redact.GLOBAL.scrub(message) if summarized else "<unsummarized log entry withheld>"
+        text = text.replace("\r", " ").replace("\n", " | ")
         with _LOCK:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists() and path.stat().st_size > MAX_LOG_BYTES:
                 path.replace(path.with_suffix(".log.1"))
             with path.open("a", encoding="utf-8", errors="replace") as handle:
-                handle.write(f"{datetime.now().isoformat(timespec='seconds')} {redact.GLOBAL.session} {level:<5} {text}\n")
+                handle.write(f"{datetime.now().isoformat(timespec='seconds')} {redact.GLOBAL.session} {level:<5} {'[summary] ' if summarized else ''}{text}\n")
     except Exception:
         pass
 
@@ -183,7 +186,7 @@ def _show(line: str) -> None:
 def say(message: str, console: bool = True, level: str = "INFO") -> None:
     """One status line: to ``ui.log`` always, to the console unless ``console`` is false."""
 
-    log(message, level)
+    log(message, level, summarized=True)
     if console:
         shown = scrub(message)
         _show(f"{datetime.now():%H:%M:%S} {shown}" if level == "INFO" else f"{datetime.now():%H:%M:%S} {level} {shown}")
@@ -261,7 +264,8 @@ def format_traceback(exc: BaseException) -> list[str]:
             name = frame.filename
             shown = f"kumosql/{Path(name).name}" if name.startswith(package) else Path(name).name
             lines.append(f"  at {shown}:{frame.lineno} in {frame.name}")
-        lines.append(f"{type(item).__name__}: {str(item).splitlines()[0] if str(item) else ''}")
+        position = re.search(r"Line \d+, Col: \d+", str(item))
+        lines.append(f"{type(item).__name__}: [{classify(item)}]" + (f" {position.group(0)}" if position else ""))
         if item is not chain[0]:
             lines.append("  (was the cause of)" if item.__cause__ is not None else "  (during handling of the above)")
     return lines
@@ -271,12 +275,12 @@ def error(message: str, exc: BaseException | None = None, trace: bool = True, co
     """One clear ``ERROR [code]`` line, a ``hint:`` line, and (in ``ui.log`` only) the traceback."""
 
     code = code or classify(exc, message)
-    detail = f" ({type(exc).__name__}: {(str(exc).splitlines() or [''])[0][:240]})" if exc is not None and str(exc) not in message else ""
+    detail = f" ({type(exc).__name__})" if exc is not None else ""
     say(f"ERROR [{code}] {message}{detail}", level="INFO")
     say(f"  hint: {hint or HINTS.get(code) or HINTS['KS-INTERNAL']}")
     if exc is not None and trace and exc.__traceback__ is not None:
         for line in format_traceback(exc):
-            log("  " + line, "TRACE")
+            log("  " + line, "TRACE", summarized=True)
         _show(f"{datetime.now():%H:%M:%S}   (traceback with file names and line numbers is in ui.log)")
 
 
@@ -330,7 +334,19 @@ class Task:
         return time.monotonic() - self.started
 
     def _summary(self) -> str:
-        return ", ".join(f"{key} {value if key not in redact.KINDS else ref(key, value)}" for key, value in self.details.items())
+        parts = []
+        for key, value in self.details.items():
+            if key in redact.KINDS:
+                shown = ref(key, value)
+            elif key in ("files", "models", "tables", "columns", "items", "done", "total", "exit", "megabytes", "rows", "count") and isinstance(value, (int, float, bool)):
+                shown = value
+            elif key == "mode" and value in ("fetch latest", "use cached copy", "cached copy if any"):
+                shown = value
+            else:
+                shown = "<value withheld>"
+            shown_key = key if key in redact.KINDS or key in ("files", "models", "tables", "columns", "items", "done", "total", "exit", "megabytes", "rows", "count", "mode") else "detail"
+            parts.append(f"{shown_key} {shown}")
+        return ", ".join(parts)
 
     def _beat(self) -> None:
         elapsed = self.elapsed()
@@ -382,11 +398,10 @@ def task(name: str, quiet: bool = False, warn_after: float | None = None, heartb
                 pass
             context = current._summary()
             kind = type(exc).__name__
-            reason = (str(exc).splitlines() or [""])[0][:300]
             if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
                 say(f"{current.path}: stopped after {seconds:.1f}s ({kind})")
             else:
-                error(f"{current.path}: failed ({kind}) after {seconds:.1f}s" + (f" [{context}]" if context else "") + (f": {reason}" if reason else ""),
+                error(f"{current.path}: failed ({kind}) after {seconds:.1f}s" + (f" [{context}]" if context else ""),
                       exc)
         else:
             say(f"{current.path}: failed after {seconds:.1f}s (details above)")
@@ -464,28 +479,37 @@ def announce(url: str) -> None:
 
 
 _SAFE_STRING_KEYS = frozenset(("theme", "mode", "view", "op", "operator", "type", "kind", "state", "status", "combine"))
-_HIDDEN_KEYS = re.compile(r"(?i)token|secret|password|passwd|credential|api[_-]?key|authorization")
+_SAFE_SETTING_KEYS = frozenset((
+    "ui", "theme", "sidebar", "repositories", "items", "active", "id", "url", "branch", "query", "sql", "scopes",
+    "name", "mode", "view", "op", "operator", "type", "kind", "state", "status", "combine", "files", "models",
+    "tables", "columns", "loading", "last_loaded", "error", "error_at", "stale_reason", "content_key", "actual_branch",
+    "projects", "project", "location", "storage", "folder", "vars", "variables", "rows", "results", "parameters", "bindings",
+))
+_SAFE_ENUMS = frozenset(("dark", "light", "system", "loading", "ready", "failed", "idle", "running", "done", "and", "or"))
+_HIDDEN_KEYS = re.compile(r"(?i)token|secret|password|passwd|credential|api[_-]?key|private[_-]?key|authorization|^(?:vars|variables|rows|results|parameters|bindings|values)$")
 
 
 def _safe_settings(value: object, key: str = "") -> object:
-    """Settings with every name replaced: numbers and booleans stay, strings become ``name#N``."""
+    """Keep known structure, fixed enums and counts; withhold arbitrary keys and values."""
 
+    if _HIDDEN_KEYS.search(key):
+        return "<hidden>"
     if isinstance(value, dict):
-        return {_safe_settings(str(k), "key") if not isinstance(k, str) or len(k) > 20 or not re.fullmatch(r"[a-z_]+", k) else k: _safe_settings(v, str(k))
-                for k, v in value.items()}
+        return {k if k in _SAFE_SETTING_KEYS else f"<field {index}>": _safe_settings(v, str(k))
+                for index, (k, v) in enumerate(value.items(), 1)}
     if isinstance(value, (list, tuple)):
         return [_safe_settings(item, key) for item in value]
     if isinstance(value, str):
-        if _HIDDEN_KEYS.search(key):
-            return "<hidden>"
         if key in ("query", "sql"):
             return f"<SQL withheld, {len(value)} characters>"
-        if key in _SAFE_STRING_KEYS and re.fullmatch(r"[a-z_ -]{1,24}", value):
+        if key in _SAFE_STRING_KEYS and value in _SAFE_ENUMS:
             return value
         if not value:
             return value
-        return redact.GLOBAL._register("name", value) if len(value) >= 1 else value
-    return value
+        return "<value withheld>"  # settings may contain SQL literals; never put these into the reverse map
+    if value is None or isinstance(value, bool):
+        return value
+    return value if key in ("files", "models", "tables", "columns") else "<value withheld>"
 
 
 def diagnostics(max_log_lines: int = 300) -> str:
@@ -530,7 +554,13 @@ def diagnostics(max_log_lines: int = 300) -> str:
     else:
         try:
             lines = log_path().read_text(encoding="utf-8", errors="replace").splitlines()[-max_log_lines:]
-            out.extend(lines)
+            # Legacy and free-form log payloads have no safe producer summary. Do not export them.
+            safe = [line for line in lines if re.match(r"^\d{4}-\d\d-\d\dT\S+ [0-9a-f]+ [A-Z]+\s+\[summary\] ", line)]
+            out.extend(redact.GLOBAL.scrub(line, force=True) for line in safe)
+            if len(safe) != len(lines):
+                out.append(f"{len(lines) - len(safe)} unsummarized log entries omitted")
         except OSError:
             out.append("no log yet")
-    return redact.GLOBAL.scrub("\n".join(out), force=True)
+    # Each section above already has a safe shape. Scrub lines independently so
+    # the safe settings JSON is not mistaken for an arbitrary multi-line dump.
+    return "\n".join(redact.GLOBAL.scrub(line, force=True) for line in "\n".join(out).splitlines())

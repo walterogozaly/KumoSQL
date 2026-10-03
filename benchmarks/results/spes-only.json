@@ -16,5 +16,6 @@
     "unknown": 1,
     "unsupported": 61
   },
+  "coverage_of": "All 95 SPES Calcite pairs whose wording differs from SQLSolver's: the 34 scored (proven, refuted, unknown) plus the 61 that cannot run (unsupported).",
   "held_out": "none"
 }
