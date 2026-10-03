@@ -56,7 +56,7 @@ _PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
 _PROJECT_CACHE_SIZE = 3
 _ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
 _ACTIVITY_IDS = iter(range(1, 1 << 62))
-_CACHE_VERSION = "5"
+_CACHE_VERSION = "6"  # 6: the parsed project keeps its source files (source_files)
 _CACHE_KEEP = 12
 _SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
@@ -631,6 +631,7 @@ def pipeline_from_files(files: object, repo_url: str | None = None):
             with stage("parse project"):
                 pipeline = load_sqlx_project(directory, compiled_targets=_compiled_targets(repo_url))
             pipeline.completeness()  # analyse now: the folder is deleted on exit
+            pipeline.source_files = dict(files)  # the text a patch edits (kumosql.shared_models)
         except Exception as exc:  # loader errors are user-facing
             from . import console
 
