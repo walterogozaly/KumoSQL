@@ -374,6 +374,15 @@ def build_query_graph(
             )
             item.parsed = True
             item.parse_incomplete = downstream_key in parse_incomplete
+            if upstream.kind == "wildcard":
+                # A wildcard query reads every known table its pattern matches.
+                for member in pipeline.wildcard_members(table):
+                    member_identity, member_kind = identity_for_key(pipeline, member)
+                    if member_identity.stable_key == downstream.stable_key:
+                        continue
+                    shard = get_evidence(member_identity, downstream, member_kind, model.kind)
+                    shard.parsed = True
+                    shard.parse_incomplete = downstream_key in parse_incomplete
 
     # A table another model's script writes (a MERGE or INSERT into a declared source or into another model) is fed by
     # what that script reads.

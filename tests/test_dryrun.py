@@ -76,6 +76,18 @@ def test_dry_run_reports_bigquery_errors():
 def test_missing_credentials_are_a_clear_error(monkeypatch):
     for name in ("BQ_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS_JSON", "GOOGLE_APPLICATION_CREDENTIALS"):
         monkeypatch.delenv(name, raising=False)
+    # Credentials saved on the machine (gcloud application-default login, a metadata server) would be found
+    # even with the variables cleared, so discovery is made to find nothing.
+    try:
+        import google.auth
+        from google.auth.exceptions import DefaultCredentialsError
+    except ImportError:
+        pass  # without google-auth the error names the missing package, which is the same clear error
+    else:
+        def no_saved_credentials(*args, **kwargs):
+            raise DefaultCredentialsError("no saved credentials")
+
+        monkeypatch.setattr(google.auth, "default", no_saved_credentials)
 
     with pytest.raises(RuntimeError, match="no BigQuery credentials"):
         dry_run("SELECT 1", "p", transport=FakeBigQuery({}))

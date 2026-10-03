@@ -50,7 +50,9 @@ CASES = [
     Case("dimension joined by two routes", BASE,
          {"via_alias": "SELECT s.region_id, SUM(s.amount) AS total FROM p.raw.sales s GROUP BY s.region_id",
           "via_using": "SELECT region_id, SUM(amount) AS total FROM p.raw.sales JOIN p.raw.regions USING (region_id) GROUP BY region_id"},
-         {"via_alias": "same_meaning", "via_using": "unknown"}),
+         # USING takes the left table's key, so this reads like the same join written with ON: the inner join
+         # filters (and may repeat) rows, so the row scope differs.
+         {"via_alias": "same_meaning", "via_using": "partial"}),
     Case("join that fans out changes the grain", "SELECT sale_id, amount FROM p.raw.sales",
          {"fanned": "SELECT s.sale_id, s.amount FROM p.raw.sales s JOIN p.raw.regions r ON s.status = r.label"},
          {"fanned": "unknown"}),

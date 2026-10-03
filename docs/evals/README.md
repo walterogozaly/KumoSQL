@@ -56,6 +56,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Lineage goldens](lineage-goldens-bench.md) | DataHub and OpenLineage lineage tests (OpenLineage is the independent oracle) | `lineage-goldens-openlineage`, `lineage-goldens-datahub` |
 | [Spider 2.0](spider2-bench.md) | Spider 2.0 BigQuery reference queries as inputs to KumoSQL's analyses | `spider2-bigquery` |
 | [Dataform preservation](dataform-bench.md) | Protected SQLX text and dependencies | `dataform-preservation` |
+| [Real BigQuery projects](bq-real-corpora.md) | Open-source Dataform projects and BigQuery SQL loaded whole, cleaned up and formatted | `bq-real-corpora` |
 | [Schema-change compatibility](schema-change-bench.md) | Which models break when a column changes | `schema-change` |
 
 ## Evals documented with their feature

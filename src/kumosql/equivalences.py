@@ -28,7 +28,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import state
-from .ast_utils import UnmodeledConstruct, faithful_sql, table_parts as _parts
+from .ast_utils import UnmodeledConstruct, faithful_sql, table_parts as _parts, visible_ctes
 
 MAX_DECLARATIONS = 2000
 _LOCK = threading.Lock()
@@ -218,6 +218,8 @@ def rewrite_tree(tree: exp.Expression, items: list[Equivalence], columns: dict[s
             if len(hits) != 1:
                 continue  # an ambiguous spelling says nothing certain
             item = hits[0]
+            if "." not in item.left and item.left.lower() in visible_ctes(table):
+                continue  # a WITH table of that name would capture the replacement's read
             alias = table.alias or table.name
             left_columns = None
             if columns:
