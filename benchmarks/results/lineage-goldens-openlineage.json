@@ -16,5 +16,5 @@
   "evidence": "executed",
   "date": "2026-10-03",
   "held_out": "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to shape the adapter, so they are a generalisation check; current run: datahub: 40/80 exact, 15 unknown, 16 missed, 8 wrong; openlineage: 11/29 exact, 0 unknown, 6 missed, 12 wrong. Their wrong/missed counts are dialect differences and are not in the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.",
-  "performance": "112 in-scope cases in 49.6 s (sqlglot 30.21.0)"
+  "performance": "112 in-scope cases in 4.1 s (sqlglot 30.21.0)"
 }
