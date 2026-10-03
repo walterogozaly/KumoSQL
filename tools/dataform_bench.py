@@ -331,7 +331,7 @@ def evaluate_project(cases: list[Case]) -> dict:
 
 
 def run_families(families: tuple[str, ...], per_family: int = 12, seeds=(1, 2, 3)) -> dict:
-    rules = [name for name in available_rules()]
+    rules = [name for name, rule in available_rules().items() if not rule.opt_in]
     total = defaultdict(int)
     details: list[str] = []
     cases_total = 0
@@ -421,7 +421,7 @@ def write_results(dev: dict, held: dict, timing: list[dict]) -> None:
                 ),
                 "evidence": "executed",
                 "correctness": (
-                    f"{dev['spans_damaged'] + held['spans_damaged']} protected spans changed, moved, lost or duplicated by any of the {len(list(available_rules()))} rules; "
+                    f"{dev['spans_damaged'] + held['spans_damaged']} protected spans changed, moved, lost or duplicated by any of the {len([r for r in available_rules().values() if not r.opt_in])} rules; "
                     f"{dev['crashes'] + held['crashes']} crashes; {dev['deps_wrong'] + held['deps_wrong']} dependencies claimed that the file does not have; "
                     f"{held['unsupported_flagged']}/{held['unsupported']} templates KumoSQL cannot resolve were flagged, none silently, and no column is called dead near one"
                 ),

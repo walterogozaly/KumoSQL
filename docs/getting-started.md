@@ -165,7 +165,7 @@ gcloud auth application-default login
 - With a repository connected, **Settings → Repositories** also loads its Dataform workflow configurations (using the same credentials) and the graph marks models that run in a production schedule; see [production schedules](dataform-repositories.md#production-schedules-dataform-workflow-configurations).
 - The **BigQuery** page in the UI lists the projects, datasets, tables and schemas your credentials can see.
 
-Only these features contact BigQuery, and only when you ask.
+Only these features contact BigQuery, and only when you ask. Looking up the columns of tables a project does not define (so `SELECT *` over them can be traced) is off unless you turn it on: tick the checkbox in **Settings → Analysis**, pass `--fetch-schema` to `python -m kumosql pipeline-report`, or set `KUMOSQL_SCHEMA_FETCH=1`. See [whole-pipeline analysis](pipeline-analysis.md).
 
 ## Working on KumoSQL itself
 
