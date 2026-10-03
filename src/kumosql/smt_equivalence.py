@@ -3922,8 +3922,9 @@ def _check_options(kwargs: dict) -> None:
             raise TypeError(f"{name} must map table names to their entries, not {type(value).__name__}")
     schema = kwargs.get("schema") or {}
     for table, columns in schema.items():
-        if not isinstance(table, str) or isinstance(columns, (str, bytes, dict)) or not all(isinstance(c, str) for c in columns):
-            raise TypeError(f"schema entry {table!r} must be a list of column names")
+        # A column list, or a mapping whose keys are the column names (column -> type).
+        if not isinstance(table, str) or isinstance(columns, (str, bytes)) or not all(isinstance(c, str) for c in columns):
+            raise TypeError(f"schema entry {table!r} must list column names")
     for table, columns in (kwargs.get("types") or {}).items():
         if not isinstance(table, str) or not isinstance(columns, dict):
             raise TypeError(f"types entry {table!r} must map column names to type names")
