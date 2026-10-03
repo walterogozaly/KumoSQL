@@ -38,6 +38,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `clickbench-rewrites`, `cost-recommendation-validity` |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data | `transformation-workloads`, `job-alternative-forms` |
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on 11,353 queries, test files held out | `llm-r2-scale` |
+| [Sample databases](sample-databases.md) | Chinook and Northwind loaded whole into DuckDB from their pinned scripts; Northwind's 16 views and an authored workload through every rewrite, checked on the real data; authored equivalent pairs and key-dependent siblings through the provers | `sample-databases-rewrites`, `sample-databases-pairs` |
 | [MV-based rewriting](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS | `mv-benchmark` |
 | [Table minimization](table-minimization.md) | Simplest pipeline that keeps the protected tables identical, from 3 to 20 tables, with traps | `table-minimization` |
 | [Duplicate detection](duplicate-detection.md) | Exact and similar duplicates, shared-model refactors | `duplicate-exact`, `duplicate-similar`, `shared-refactors-proof`, `shared-refactors-executed` |

@@ -1,0 +1,275 @@
+{
+  "about": "Authored query pairs on Chinook for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the Chinook data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates.",
+  "pairs": [
+    {
+      "id": "ch-fk-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "Track.MediaTypeId is NOT NULL and references MediaType's key: every track joins exactly one media type",
+      "left": "SELECT t.TrackId, t.Name FROM Track AS t JOIN MediaType AS m ON t.MediaTypeId = m.MediaTypeId",
+      "right": "SELECT TrackId, Name FROM Track"
+    },
+    {
+      "id": "ch-fk-join-elimination-nullable",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "ch-fk-join-elimination",
+      "why": "Track.AlbumId may be NULL: such a track joins no album",
+      "left": "SELECT t.TrackId, t.Name FROM Track AS t JOIN Album AS a ON t.AlbumId = a.AlbumId",
+      "right": "SELECT TrackId, Name FROM Track",
+      "witness": {"Track": [{"TrackId": 1, "Name": "a", "AlbumId": null}]}
+    },
+    {
+      "id": "ch-fk-join-elimination-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "ch-fk-join-elimination",
+      "drop": ["fk:Track.MediaTypeId"],
+      "why": "without the foreign key a track may name a media type that does not exist",
+      "left": "SELECT t.TrackId, t.Name FROM Track AS t JOIN MediaType AS m ON t.MediaTypeId = m.MediaTypeId",
+      "right": "SELECT TrackId, Name FROM Track",
+      "witness": {"Track": [{"TrackId": 1, "Name": "a", "MediaTypeId": 99}]}
+    },
+    {
+      "id": "ch-fk-join-elimination-without-key",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "ch-fk-join-elimination",
+      "drop": ["pk:MediaType"],
+      "why": "without MediaType's key two media types may share an id, and the join repeats the track",
+      "left": "SELECT t.TrackId, t.Name FROM Track AS t JOIN MediaType AS m ON t.MediaTypeId = m.MediaTypeId",
+      "right": "SELECT TrackId, Name FROM Track",
+      "witness": {"MediaType": [{"MediaTypeId": 1, "Name": "x"}, {"MediaTypeId": 1, "Name": "y"}], "Track": [{"TrackId": 1, "Name": "a", "MediaTypeId": 1}]}
+    },
+    {
+      "id": "ch-left-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "a LEFT JOIN to Employee on its key neither drops nor repeats a customer, and no Employee column is read",
+      "left": "SELECT c.CustomerId, c.LastName FROM Customer AS c LEFT JOIN Employee AS e ON c.SupportRepId = e.EmployeeId",
+      "right": "SELECT CustomerId, LastName FROM Customer"
+    },
+    {
+      "id": "ch-left-join-elimination-not-unique",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "ch-left-join-elimination",
+      "why": "Invoice.CustomerId is no key: a customer with two invoices appears twice",
+      "left": "SELECT c.CustomerId, c.LastName FROM Customer AS c LEFT JOIN Invoice AS i ON i.CustomerId = c.CustomerId",
+      "right": "SELECT CustomerId, LastName FROM Customer",
+      "witness": "real"
+    },
+    {
+      "id": "ch-distinct-on-key",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "TrackId is the key, so the rows are already distinct",
+      "left": "SELECT DISTINCT TrackId, Name FROM Track",
+      "right": "SELECT TrackId, Name FROM Track"
+    },
+    {
+      "id": "ch-distinct-not-on-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "ch-distinct-on-key",
+      "why": "many tracks share an album",
+      "left": "SELECT DISTINCT AlbumId FROM Track",
+      "right": "SELECT AlbumId FROM Track",
+      "witness": "real"
+    },
+    {
+      "id": "ch-distinct-on-key-without-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "ch-distinct-on-key",
+      "drop": ["pk:Track"],
+      "why": "without the key two tracks may be the same row",
+      "left": "SELECT DISTINCT TrackId, Name FROM Track",
+      "right": "SELECT TrackId, Name FROM Track",
+      "witness": {"Track": [{"TrackId": 1, "Name": "a"}, {"TrackId": 1, "Name": "a"}]}
+    },
+    {
+      "id": "ch-in-to-exists",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "IN over a subquery is a semi-join, as EXISTS is",
+      "left": "SELECT CustomerId FROM Customer WHERE CustomerId IN (SELECT CustomerId FROM Invoice WHERE Total > 20)",
+      "right": "SELECT c.CustomerId FROM Customer AS c WHERE EXISTS (SELECT 1 FROM Invoice AS i WHERE i.CustomerId = c.CustomerId AND i.Total > 20)"
+    },
+    {
+      "id": "ch-in-to-join",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "ch-in-to-exists",
+      "why": "a join repeats a customer once per matching invoice; IN does not",
+      "left": "SELECT c.CustomerId FROM Customer AS c JOIN Invoice AS i ON i.CustomerId = c.CustomerId WHERE i.Total > 5",
+      "right": "SELECT CustomerId FROM Customer WHERE CustomerId IN (SELECT CustomerId FROM Invoice WHERE Total > 5)",
+      "witness": "real"
+    },
+    {
+      "id": "ch-not-in-to-not-exists",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "both TrackId columns are NOT NULL, so NOT IN and NOT EXISTS agree",
+      "left": "SELECT TrackId FROM Track WHERE TrackId NOT IN (SELECT TrackId FROM InvoiceLine)",
+      "right": "SELECT t.TrackId FROM Track AS t WHERE NOT EXISTS (SELECT 1 FROM InvoiceLine AS il WHERE il.TrackId = t.TrackId)"
+    },
+    {
+      "id": "ch-not-in-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "ch-not-in-to-not-exists",
+      "why": "Track.Composer holds NULLs, so NOT IN returns no row while NOT EXISTS returns many",
+      "left": "SELECT ArtistId FROM Artist WHERE Name NOT IN (SELECT Composer FROM Track)",
+      "right": "SELECT a.ArtistId FROM Artist AS a WHERE NOT EXISTS (SELECT 1 FROM Track AS t WHERE t.Composer = a.Name)",
+      "witness": "real"
+    },
+    {
+      "id": "ch-not-in-without-not-null",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "ch-not-in-to-not-exists",
+      "drop": ["not_null:InvoiceLine.TrackId"],
+      "why": "once InvoiceLine.TrackId may be NULL, one NULL line empties the NOT IN result",
+      "left": "SELECT TrackId FROM Track WHERE TrackId NOT IN (SELECT TrackId FROM InvoiceLine)",
+      "right": "SELECT t.TrackId FROM Track AS t WHERE NOT EXISTS (SELECT 1 FROM InvoiceLine AS il WHERE il.TrackId = t.TrackId)",
+      "witness": {"Track": [{"TrackId": 1}], "InvoiceLine": [{"InvoiceLineId": 1, "TrackId": null}]}
+    },
+    {
+      "id": "ch-count-not-null-column",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "Customer.Email is NOT NULL, so COUNT(Email) counts every row",
+      "left": "SELECT COUNT(Email) FROM Customer",
+      "right": "SELECT COUNT(*) FROM Customer"
+    },
+    {
+      "id": "ch-count-nullable-column",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "ch-count-not-null-column",
+      "why": "Customer.Company is NULL for most customers",
+      "left": "SELECT COUNT(Company) FROM Customer",
+      "right": "SELECT COUNT(*) FROM Customer",
+      "witness": "real"
+    },
+    {
+      "id": "ch-group-by-dependent-column",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "AlbumId is Album's key, so Title and ArtistId are fixed within a group: grouping by them too changes nothing",
+      "left": "SELECT al.AlbumId, al.Title, COUNT(*) AS n FROM Album AS al JOIN Track AS t ON t.AlbumId = al.AlbumId GROUP BY al.AlbumId, al.Title, al.ArtistId",
+      "right": "SELECT al.AlbumId, al.Title, COUNT(*) AS n FROM Album AS al JOIN Track AS t ON t.AlbumId = al.AlbumId GROUP BY al.AlbumId, al.Title"
+    },
+    {
+      "id": "ch-group-by-independent-column",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "ch-group-by-dependent-column",
+      "why": "an album's tracks may have several genres, which splits its group",
+      "left": "SELECT t.AlbumId, COUNT(*) AS n FROM Track AS t GROUP BY t.AlbumId, t.GenreId",
+      "right": "SELECT t.AlbumId, COUNT(*) AS n FROM Track AS t GROUP BY t.AlbumId",
+      "witness": "real"
+    },
+    {
+      "id": "ch-union-all-vs-distinct",
+      "category": "set operation",
+      "label": "different",
+      "why": "UNION DISTINCT removes the repeated countries UNION ALL keeps",
+      "left": "SELECT Country FROM Customer UNION ALL SELECT Country FROM Employee",
+      "right": "SELECT Country FROM Customer UNION DISTINCT SELECT Country FROM Employee",
+      "witness": "real"
+    },
+    {
+      "id": "ch-union-all-of-complementary-filters",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "Milliseconds is NOT NULL, so every track satisfies exactly one of the two filters",
+      "left": "SELECT TrackId FROM Track WHERE Milliseconds > 300000 UNION ALL SELECT TrackId FROM Track WHERE Milliseconds <= 300000",
+      "right": "SELECT TrackId FROM Track"
+    },
+    {
+      "id": "ch-union-all-of-complementary-filters-nullable",
+      "category": "set operation",
+      "label": "different",
+      "sibling": "ch-union-all-of-complementary-filters",
+      "why": "Track.Bytes may be NULL: such a track satisfies neither filter",
+      "left": "SELECT TrackId FROM Track WHERE Bytes > 1000000 UNION ALL SELECT TrackId FROM Track WHERE Bytes <= 1000000",
+      "right": "SELECT TrackId FROM Track",
+      "witness": {"Track": [{"TrackId": 1, "Bytes": null}]}
+    },
+    {
+      "id": "ch-outer-to-inner-join",
+      "category": "outer join",
+      "label": "equivalent",
+      "why": "the WHERE condition rejects the NULL-extended rows of the LEFT JOIN",
+      "left": "SELECT c.CustomerId, e.LastName FROM Customer AS c LEFT JOIN Employee AS e ON c.SupportRepId = e.EmployeeId WHERE e.Title = 'Sales Support Agent'",
+      "right": "SELECT c.CustomerId, e.LastName FROM Customer AS c JOIN Employee AS e ON c.SupportRepId = e.EmployeeId WHERE e.Title = 'Sales Support Agent'"
+    },
+    {
+      "id": "ch-outer-to-inner-join-null-accepting",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "ch-outer-to-inner-join",
+      "why": "e.Title IS NULL accepts the NULL-extended row of a customer without a support rep",
+      "left": "SELECT c.CustomerId, e.LastName FROM Customer AS c LEFT JOIN Employee AS e ON c.SupportRepId = e.EmployeeId WHERE e.Title IS NULL OR e.Title = 'Sales Support Agent'",
+      "right": "SELECT c.CustomerId, e.LastName FROM Customer AS c JOIN Employee AS e ON c.SupportRepId = e.EmployeeId WHERE e.Title IS NULL OR e.Title = 'Sales Support Agent'",
+      "witness": {"Customer": [{"CustomerId": 1, "SupportRepId": null}]}
+    },
+    {
+      "id": "ch-having-on-group-key",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "a HAVING condition on the grouping column can filter the rows before grouping",
+      "left": "SELECT GenreId, COUNT(*) AS n FROM Track GROUP BY GenreId HAVING GenreId > 5",
+      "right": "SELECT GenreId, COUNT(*) AS n FROM Track WHERE GenreId > 5 GROUP BY GenreId"
+    },
+    {
+      "id": "ch-filter-vs-conditional-count",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "ch-having-on-group-key",
+      "why": "a genre with no long track is missing on the left and counted 0 on the right",
+      "left": "SELECT GenreId, COUNT(*) AS n FROM Track WHERE Milliseconds > 200000 GROUP BY GenreId",
+      "right": "SELECT GenreId, COUNTIF(Milliseconds > 200000) AS n FROM Track GROUP BY GenreId",
+      "witness": {"Track": [{"TrackId": 1, "GenreId": 1, "Milliseconds": 1000}]}
+    },
+    {
+      "id": "ch-window-filter-on-partition-key",
+      "category": "window",
+      "label": "equivalent",
+      "why": "a filter on the PARTITION BY column keeps or drops whole partitions, so it can run before the window",
+      "left": "SELECT TrackId, AlbumId, r FROM (SELECT TrackId, AlbumId, Milliseconds, RANK() OVER (PARTITION BY AlbumId ORDER BY Milliseconds) AS r FROM Track) WHERE AlbumId = 5",
+      "right": "SELECT TrackId, AlbumId, RANK() OVER (PARTITION BY AlbumId ORDER BY Milliseconds) AS r FROM Track WHERE AlbumId = 5"
+    },
+    {
+      "id": "ch-window-filter-on-other-column",
+      "category": "window",
+      "label": "different",
+      "sibling": "ch-window-filter-on-partition-key",
+      "why": "filtering on Milliseconds first removes rows the ranking counted",
+      "left": "SELECT TrackId, AlbumId, r FROM (SELECT TrackId, AlbumId, Milliseconds, RANK() OVER (PARTITION BY AlbumId ORDER BY Milliseconds) AS r FROM Track) WHERE Milliseconds > 300000",
+      "right": "SELECT TrackId, AlbumId, RANK() OVER (PARTITION BY AlbumId ORDER BY Milliseconds) AS r FROM Track WHERE Milliseconds > 300000",
+      "witness": "real"
+    },
+    {
+      "id": "ch-nullable-fk-join-as-filter",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "Track.GenreId references Genre's key: a track joins one genre exactly when GenreId is not NULL",
+      "left": "SELECT t.TrackId FROM Track AS t JOIN Genre AS g ON g.GenreId = t.GenreId",
+      "right": "SELECT TrackId FROM Track WHERE GenreId IS NOT NULL"
+    },
+    {
+      "id": "ch-nullable-fk-join-as-filter-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "ch-nullable-fk-join-as-filter",
+      "drop": ["fk:Track.GenreId"],
+      "why": "without the foreign key a track may name a genre that does not exist",
+      "left": "SELECT t.TrackId FROM Track AS t JOIN Genre AS g ON g.GenreId = t.GenreId",
+      "right": "SELECT TrackId FROM Track WHERE GenreId IS NOT NULL",
+      "witness": {"Track": [{"TrackId": 1, "GenreId": 99}]}
+    }
+  ]
+}
