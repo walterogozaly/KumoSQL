@@ -1,0 +1,19 @@
+{
+  "suite": "Paired engine tests (Trino, Spark, PostgreSQL, DuckDB) and authored guards",
+  "order": 37,
+  "size": 157,
+  "score": "33/157 decided correctly, 0 wrong",
+  "metric": "Query pairs from Trino's two-query join assertions, Spark's predicate-subquery tests, a PostgreSQL join-removal regression and a DuckDB collation fixture, plus authored JoinEquiv and jOOQ guards, each labelled equivalent, same rows on the source data only, or not equivalent: correct is a proof of an equivalent pair or a replayed refutation of any other.",
+  "evidence": "proof",
+  "correctness": "A proof of a pair not labelled equivalent, or any claim that an equivalent pair differs, counts as wrong; a refutation counts only when its database loads as declared and replays in DuckDB with the optimizer off (0 prover claims that did not replay are left unknown). Labels were checked by hand and by running both queries on the source's own data (157/157 agree with their label there).",
+  "coverage": {
+    "proven": 20,
+    "refuted": 13,
+    "unknown": 124
+  },
+  "held_out": "10/36, 0 wrong",
+  "docs": "docs/evals/engine-paired-tests.md",
+  "command": "python tools/engine_pairs_bench.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "133 equivalent, 15 same-on-fixture-only and 9 not-equivalent pairs (duckdb 3, joinequiv 3, jooq 8, postgres 2, spark 7, trino 134); 6 more extracted pairs are kept unscored (two Trino clock reads, Trino array_intersect, two Spark multi-column NOT IN, a DuckDB row_number without ORDER BY). Trino pairs are translated by sqlglot plus recorded hand edits, and the translations were run on DuckDB through KumoSQL's BigQuery reading, not on BigQuery; the Spark pairing, the PostgreSQL and DuckDB counterparts and the JoinEquiv and jOOQ guards are ours. Most unknowns are Trino's inline VALUES, which sqlglot writes as UNNEST of STRUCT arrays and the prover does not read. Every case, held-out ones included, was seen while building the harness; no prover change was made for this eval."
+}

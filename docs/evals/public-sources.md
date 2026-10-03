@@ -107,14 +107,14 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
 | A-SQLFluff | ST01, ST02, ST04, ST05, ST06, ST09, CV12 fixes | MIT | yes | 119 fixes | covered: all 119 are in `sqlfluff-semantic-fixes` (sqlfluff 4.3.0). **new** (batch 2): the `pass_str` refusal cases (recursive CTEs, name clashes, correlated subqueries, templating, ST05's later-branch correlation from PR 8169, CV12's templated joins) run through KumoSQL's own lifter and CTE rules, which must decline or prove |
-| A-R01 | Trino `AbstractTestJoinQueries` two-query assertions | Apache-2.0 | yes (raw file) | 6 named, more in the file | **new** (batch 2, with A-R02): paired engine tests |
-| A-R02 | Spark `SubquerySuite` EXISTS/IN/NOT IN cases | Apache-2.0 | yes (raw file) | 5 | **new** (batch 2): two positive pairs and the NULL-sensitive NOT IN / NOT EXISTS negative |
+| A-R01 | Trino `AbstractTestJoinQueries` two-query assertions | Apache-2.0 | yes (raw file) | 6 named, more in the file | covered: `engine-paired-tests`, all 137 two-literal assertions at a pinned commit ([page](engine-paired-tests.md)) |
+| A-R02 | Spark `SubquerySuite` EXISTS/IN/NOT IN cases | Apache-2.0 | yes (raw file) | 5 | covered: `engine-paired-tests`, six pairs on the l/r tables and the NOT IN / NOT EXISTS negative ([page](engine-paired-tests.md)) |
 | A-R03 | EET bug bundles | GPL-3.0 | links only | — | not added: the index links to reports on blocked hosts |
-| A-R04 | PostgreSQL EET regressions | PostgreSQL | reports blocked; the PG17976 fix's `join.sql`/`join.out` are on GitHub | 3 | **new** (batch 2, with A-R01): the regression-file case, added to the [optimizer-bug pairs](../../tests/fixtures/optimizer_bugs/README.md) if it fits |
+| A-R04 | PostgreSQL EET regressions | PostgreSQL | reports blocked; the PG17976 fix's `join.sql`/`join.out` are on GitHub | 3 | covered: `engine-paired-tests`, PG17976's regression query from `join.sql` with its join-removed and dropped-qual counterparts ([page](engine-paired-tests.md)); the other two reports are blocked |
 | A-R05 | SQLite `OR FALSE` report | public domain | no: `sqlite.org` is blocked | 1 | not added |
-| A-R06 | JoinEquiv | no licence found | yes | — | not added as code; its projection boundary becomes an authored negative with A-R01 |
-| A-R07 | jOOQ documented transforms | documentation | no fixtures | 3 patterns | **new** (batch 2, with A-R01): authored pairs and guards, citing the pages |
-| A-R08 | DuckDB JoinEquiv issues 20483, 20486, 20608 | MIT | the MIT test file is on GitHub; the issues API is blocked | 3 | **new** (batch 2, with A-R01): from the engine test file where the pair is recoverable |
+| A-R06 | JoinEquiv | no licence found | yes | — | not added as code; its projection boundary is an authored negative in `engine-paired-tests` ([page](engine-paired-tests.md)) |
+| A-R07 | jOOQ documented transforms | documentation | no fixtures | 3 patterns | covered: `engine-paired-tests`, eight authored pairs and guards citing the pages ([page](engine-paired-tests.md)) |
+| A-R08 | DuckDB JoinEquiv issues 20483, 20486, 20608 | MIT | the MIT test file is on GitHub; the issues API is blocked | 3 | covered: `engine-paired-tests`, the 20608 fixture and the file's collation pair ([page](engine-paired-tests.md)); 20483 and 20486 live only in the blocked issues |
 
 ### Databases
 
