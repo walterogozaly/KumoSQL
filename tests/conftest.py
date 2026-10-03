@@ -1,4 +1,6 @@
+import itertools
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -9,10 +11,34 @@ ORDER_FILE = Path(__file__).resolve().parent / "order.json"
 
 
 @pytest.fixture(autouse=True)
-def isolated_state(tmp_path, monkeypatch):
-    """Keep saved UI, scope and formatting state out of the real user directory."""
+def short_sys_path():
+    """Test modules and the tools they load each put tools/ and src/ on ``sys.path`` again, so a worker's path grew
+    past 100 entries, and every import that fails searched all of them: DuckDB looks for pandas twice per bound
+    parameter, about 1 ms per value. A later copy of an entry never decides an import, so dropping it changes
+    nothing else."""
 
-    monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path / "kumosql-home"))
+    if len(sys.path) != len(set(sys.path)):
+        sys.path[:] = dict.fromkeys(sys.path)
+
+
+@pytest.fixture(scope="session")
+def _homes(tmp_path_factory):
+    return tmp_path_factory.mktemp("homes"), itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def isolated_state(request, _homes, monkeypatch):
+    """Keep saved UI, scope and formatting state out of the real user directory.
+
+    A test that asks for ``tmp_path`` finds the folder at ``tmp_path / "kumosql-home"``; any other test gets an
+    empty folder of its own without the cost of making a ``tmp_path`` for it."""
+
+    if "tmp_path" in request.fixturenames:
+        parent = request.getfixturevalue("tmp_path")
+    else:
+        parent = _homes[0] / str(next(_homes[1]))
+        os.mkdir(parent)
+    monkeypatch.setenv("KUMOSQL_HOME", str(parent / "kumosql-home"))
 
 
 @pytest.fixture(autouse=True)

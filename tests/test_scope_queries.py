@@ -73,8 +73,8 @@ def test_results_are_cached_until_the_timer_ends_and_refresh_runs_again(_fresh):
     scope_queries.result_for(SQL, refresh=True)
     assert len(_fresh) == 2
     state.set_section("scope_queries", {"max_bytes_billed": 50_000_000})
-    state.set_section("bigquery", {"billingProject": "billing-p", "queryCacheHours": 0.001})
-    time.sleep(3.7)
+    state.set_section("bigquery", {"billingProject": "billing-p", "queryCacheHours": 0.0001})  # 0.36 seconds
+    time.sleep(0.5)
     scope_queries.result_for(SQL)
     assert len(_fresh) == 3 and _fresh[-1][3] == 50_000_000
 
@@ -187,7 +187,7 @@ def test_runner_reads_every_page(monkeypatch):
 @pytest.fixture
 def server():
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread = Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_port}"

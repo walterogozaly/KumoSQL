@@ -136,7 +136,7 @@ def test_bundle_leaves_the_log_out_when_started_without_redaction(tmp_path, monk
 def test_diagnostics_endpoint(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
     server = ui.UIServer(("127.0.0.1", 0), ui.UIHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         body = urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/diagnostics").read()
     finally:
@@ -149,7 +149,7 @@ def test_diagnostics_endpoint(tmp_path, monkeypatch):
 def test_request_log_drops_query_values(tmp_path, monkeypatch):
     monkeypatch.setenv("KUMOSQL_HOME", str(tmp_path))
     server = ui.UIServer(("127.0.0.1", 0), ui.UIHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/catalog/table?project=acme-prod&table=orders").read()
     except Exception:
