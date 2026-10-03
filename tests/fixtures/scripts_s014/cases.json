@@ -1,0 +1,483 @@
+{
+ "about": "Script lineage cases from an external audit of BigQuery scripting (variables, scopes, procedures, EXECUTE IMMEDIATE, conditions, loops, transactions, temporary tables). Expected writes and reads follow GoogleSQL semantics; kind says whether master got the case wrong (finding), right (control) or it marks a documented boundary.",
+ "cases": [
+  {
+   "id": "declare_chain",
+   "kind": "finding",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); DECLARE y INT64 DEFAULT x; CREATE TABLE dest AS SELECT y AS v;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "declare_unused",
+   "kind": "boundary",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); SELECT 1 AS v;",
+   "writes": {},
+   "reads": [],
+   "unknown": 0
+  },
+  {
+   "id": "set_chain",
+   "kind": "control",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); DECLARE y INT64; SET y=x; CREATE TABLE dest AS SELECT y AS v;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "set_overwrite",
+   "kind": "control",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); SET x=(SELECT MAX(v) FROM source_b); CREATE TABLE dest AS SELECT x AS v;",
+   "writes": {
+    "dest": [
+     "source_b"
+    ]
+   },
+   "reads": [
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "block_leak",
+   "kind": "finding",
+   "sql": "BEGIN DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); END; CREATE TABLE dest AS SELECT x.v FROM source_b x;",
+   "writes": {
+    "dest": [
+     "source_b"
+    ]
+   },
+   "reads": [
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "for_leak",
+   "kind": "finding",
+   "sql": "FOR x IN (SELECT v FROM source_a) DO SELECT 0; END FOR; CREATE TABLE dest AS SELECT x.v FROM source_b x;",
+   "writes": {
+    "dest": [
+     "source_b"
+    ]
+   },
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "sibling_redeclare",
+   "kind": "control",
+   "sql": "BEGIN DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); CREATE TABLE first_dest AS SELECT x AS v; END; BEGIN DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_b); CREATE TABLE dest AS SELECT x AS v; END;",
+   "writes": {
+    "first_dest": [
+     "source_a"
+    ],
+    "dest": [
+     "source_b"
+    ]
+   },
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "procedure_collision",
+   "kind": "finding",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); DECLARE y INT64 DEFAULT (SELECT MAX(v) FROM source_b); CREATE PROCEDURE f(x INT64) BEGIN SELECT x; END; CALL f(y); CREATE TABLE dest AS SELECT x AS v;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "procedure_out",
+   "kind": "finding",
+   "sql": "DECLARE x INT64; CREATE PROCEDURE f(OUT val INT64) BEGIN SET val=(SELECT MAX(v) FROM source_a); END; CALL f(x); CREATE TABLE dest AS SELECT x AS v;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "procedure_inout",
+   "kind": "finding",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); CREATE PROCEDURE f(INOUT val INT64) BEGIN SET val=(SELECT MAX(v) FROM source_b); END; CALL f(x); CREATE TABLE dest AS SELECT x AS v;",
+   "writes": {
+    "dest": [
+     "source_b"
+    ]
+   },
+   "reads": [
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "execute_using",
+   "kind": "finding",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); EXECUTE IMMEDIATE 'CREATE TABLE dest AS SELECT @x AS v' USING x AS x;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "execute_into",
+   "kind": "finding",
+   "sql": "DECLARE x INT64; EXECUTE IMMEDIATE 'SELECT MAX(v) FROM source_a' INTO x; CREATE TABLE dest AS SELECT x AS v;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "guard_if",
+   "kind": "finding",
+   "sql": "IF (SELECT MAX(v) FROM guard_source)>0 THEN CREATE TABLE dest AS SELECT v FROM body_source; END IF;",
+   "writes": {
+    "dest": [
+     "body_source",
+     "guard_source"
+    ]
+   },
+   "reads": [
+    "body_source",
+    "guard_source"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "guard_while",
+   "kind": "finding",
+   "sql": "WHILE (SELECT MAX(v) FROM guard_source)>0 DO CREATE TABLE dest AS SELECT v FROM body_source; END WHILE;",
+   "writes": {
+    "dest": [
+     "body_source",
+     "guard_source"
+    ]
+   },
+   "reads": [
+    "body_source",
+    "guard_source"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "guard_case",
+   "kind": "finding",
+   "sql": "CASE (SELECT MAX(v) FROM guard_source) WHEN 1 THEN CREATE TABLE dest AS SELECT v FROM body_source; END CASE;",
+   "writes": {
+    "dest": [
+     "body_source",
+     "guard_source"
+    ]
+   },
+   "reads": [
+    "body_source",
+    "guard_source"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "guard_repeat",
+   "kind": "finding",
+   "sql": "REPEAT CREATE TABLE dest AS SELECT v FROM body_source; UNTIL (SELECT MAX(v) FROM guard_source)>0 END REPEAT;",
+   "writes": {
+    "dest": [
+     "body_source",
+     "guard_source"
+    ]
+   },
+   "reads": [
+    "body_source",
+    "guard_source"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "loop_fixedpoint",
+   "kind": "finding",
+   "sql": "DECLARE x INT64 DEFAULT (SELECT MAX(v) FROM source_a); DECLARE y INT64 DEFAULT 0; DECLARE n INT64 DEFAULT 0; WHILE n<2 DO CREATE OR REPLACE TABLE dest AS SELECT y AS v; SET y=x; SET n=n+1; END WHILE;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "branch_both",
+   "kind": "control",
+   "sql": "IF RAND()>0.5 THEN CREATE TABLE dest AS SELECT v FROM source_a; ELSE CREATE TABLE other_dest AS SELECT v FROM source_b; END IF;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ],
+    "other_dest": [
+     "source_b"
+    ]
+   },
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "branch_temp_union",
+   "kind": "control",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; IF RAND()>0.5 THEN CREATE OR REPLACE TEMP TABLE t AS SELECT v FROM source_b; END IF; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "exception_possible",
+   "kind": "control",
+   "sql": "BEGIN SELECT v FROM source_a; EXCEPTION WHEN ERROR THEN SELECT v FROM source_b; END;",
+   "writes": {},
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "return_unreachable",
+   "kind": "boundary",
+   "sql": "RETURN; SELECT v FROM source_a;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "dynamic",
+   "kind": "control",
+   "sql": "DECLARE s STRING DEFAULT 'SELECT v FROM source_a'; EXECUTE IMMEDIATE s; SELECT 1 AS v;",
+   "writes": {},
+   "reads": [],
+   "unknown": 1
+  },
+  {
+   "id": "call_unknown",
+   "kind": "control",
+   "sql": "CALL unknown_proc(); SELECT 1 AS v;",
+   "writes": {},
+   "reads": [],
+   "unknown": 1
+  },
+  {
+   "id": "nested_unknown",
+   "kind": "finding",
+   "sql": "CREATE PROCEDURE f() BEGIN CALL missing(); END; CALL f(); SELECT 1 AS v;",
+   "writes": {},
+   "reads": [],
+   "unknown": 1
+  },
+  {
+   "id": "literal",
+   "kind": "control",
+   "sql": "EXECUTE IMMEDIATE 'CREATE TABLE dest AS SELECT v FROM source_a'; SELECT 1 AS v;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_chain",
+   "kind": "control",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; CREATE TEMP TABLE u AS SELECT v FROM t; SELECT v FROM u;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_redefine",
+   "kind": "control",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; CREATE OR REPLACE TEMP TABLE t AS SELECT v+1 AS v FROM t; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_insert",
+   "kind": "control",
+   "sql": "CREATE TEMP TABLE t(v INT64); INSERT INTO t SELECT v FROM source_a; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_delete",
+   "kind": "boundary",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; DELETE FROM t WHERE v>0; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_truncate",
+   "kind": "boundary",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; TRUNCATE TABLE t; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_update",
+   "kind": "control",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; UPDATE t SET v=(SELECT MAX(v) FROM source_b) WHERE TRUE; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "temp_merge",
+   "kind": "control",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; MERGE t USING source_b b ON t.v=b.v WHEN MATCHED THEN UPDATE SET v=b.v; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "rollback",
+   "kind": "finding",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; BEGIN TRANSACTION; INSERT INTO t SELECT v FROM source_b; ROLLBACK TRANSACTION; CREATE TABLE dest AS SELECT v FROM t;",
+   "writes": {
+    "dest": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "real_insert",
+   "kind": "control",
+   "sql": "INSERT INTO t SELECT v FROM source_a; SELECT v FROM t;",
+   "writes": {
+    "t": [
+     "source_a"
+    ]
+   },
+   "reads": [
+    "source_a",
+    "t"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "branch_drop",
+   "kind": "finding",
+   "sql": "CREATE TEMP TABLE t AS SELECT v FROM source_a; IF FALSE THEN DROP TABLE t; END IF; SELECT v FROM t;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "column_shadows_variable",
+   "kind": "boundary",
+   "sql": "DECLARE v INT64 DEFAULT (SELECT MAX(v) FROM source_a); SELECT v FROM source_b;",
+   "writes": {},
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "session_temp",
+   "kind": "finding",
+   "sql": "CREATE TEMP TABLE _SESSION.t AS SELECT v FROM source_a; SELECT v FROM _SESSION.t;",
+   "writes": {},
+   "reads": [
+    "source_a"
+   ],
+   "unknown": 0
+  },
+  {
+   "id": "split_order_control",
+   "kind": "control",
+   "sql": "SELECT 'a;b' AS v; -- FROM decoy;\n IF TRUE THEN SELECT v FROM source_a; ELSE SELECT v FROM source_b; END IF; SELECT 9;",
+   "writes": {},
+   "reads": [
+    "source_a",
+    "source_b"
+   ],
+   "unknown": 0
+  }
+ ]
+}

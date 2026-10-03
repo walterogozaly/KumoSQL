@@ -20,8 +20,9 @@ reading of them, the search only runs when
   comparisons, arithmetic, ``CASE``/``IF``/``COALESCE``, the plain aggregates and
   aggregate windows; no ``LIMIT``, string or date functions, ``LIKE``, arrays,
   ``ROW_NUMBER`` or anything nondeterministic),
-* a division is guarded so a zero divisor fails the run (BigQuery raises an
-  error where DuckDB returns infinity), and
+* the DuckDB run follows BigQuery's semantics (:mod:`kumosql.bigquery_on_duckdb`:
+  a zero divisor fails the run as it does in BigQuery, NULL sorts first, and so
+  on), and
 * the difference survives rounding floats to 6 digits and both sides return the
   same bag with every table's rows reversed (no dependence on row order).
 
@@ -79,19 +80,9 @@ def _day_unit(node: exp.Expression) -> bool:
 
 
 def _struct_refusal(tree: exp.Expression) -> str | None:
-    """A STRUCT may only be read field by field: DuckDB compares and groups whole structs with NULL fields differently."""
+    from .bigquery_on_duckdb import struct_refusal
 
-    names = set()
-    for node in tree.find_all(exp.Struct):
-        if not (isinstance(node.parent, exp.Alias) and isinstance(node.parent.parent, exp.Select)):
-            return "STRUCT outside a select list"
-        names.add(node.parent.alias.lower())
-    if names and any(isinstance(n, exp.Star) and not isinstance(n.parent, exp.Count) for n in tree.walk()):
-        return "STRUCT read by *"
-    for column in tree.find_all(exp.Column):
-        if column.name.lower() in names and column.table.lower() not in names:
-            return "whole STRUCT"
-    return None
+    return struct_refusal(tree)
 
 
 def _refusal(tree: exp.Expression) -> str | None:
@@ -137,18 +128,12 @@ def _refusal(tree: exp.Expression) -> str | None:
 
 
 def _faithful(tree: exp.Expression) -> exp.Expression:
-    """``tree`` with the DuckDB reading pinned to BigQuery's.
-
-    ``a / b`` becomes ``IF(b = 0, ERROR(..), a / b)`` (BigQuery fails on a zero
-    divisor, DuckDB returns infinity) and ``DATE_ADD``/``DATE_SUB`` are cast back to
-    ``DATE`` (DuckDB's date plus interval is a timestamp).
+    """``tree`` with ``DATE_ADD``/``DATE_SUB`` cast back to ``DATE`` (DuckDB's date plus
+    interval is a timestamp). The rest of the BigQuery reading (a zero divisor fails, NULL
+    order, ...) is :mod:`kumosql.bigquery_on_duckdb`, applied by the runner.
     """
 
     def guard(node: exp.Expression) -> exp.Expression:
-        if isinstance(node, exp.Div) and not node.args.get("safe"):
-            zero = exp.EQ(this=node.expression.copy(), expression=exp.Literal.number(0))
-            error = exp.Anonymous(this="ERROR", expressions=[exp.Literal.string("division by zero")])
-            return exp.If(this=zero, true=error, false=node)
         if isinstance(node, (exp.DateAdd, exp.DateSub)) and not isinstance(node.parent, exp.Cast):
             return exp.Cast(this=node, to=exp.DataType.build("DATE"))
         return node

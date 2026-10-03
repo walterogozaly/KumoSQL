@@ -1,0 +1,24 @@
+config {
+  hasOutput: true,
+  type: "operations",
+  schema: dataform.projectConfig.vars.RAW_DATA,
+  tags: ["LOAD_DATA"]
+}
+
+
+LOAD DATA OVERWRITE ${ self() }
+(
+    tconst STRING NOT NULL OPTIONS(description="Alphanumeric identifier of episode.")
+  , parent_tconst STRING OPTIONS(description="Alphanumeric identifier of the parent TV Series.")
+  , season_number INT64 OPTIONS(description="Season number the episode belongs to.")
+  , episode_number INT64 OPTIONS(description="Episode number of the tconst in the TV series.")
+)
+FROM FILES (
+  format = "CSV",
+  field_delimiter = "\t",
+  skip_leading_rows = 1,
+  allow_jagged_rows = true,
+  quote = "",
+  null_marker = "\\N",
+  uris = ["gs://${ dataform.projectConfig.vars.LOAD_GCS_BUCKET }/title.episode.tsv"]
+);

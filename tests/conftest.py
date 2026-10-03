@@ -1,3 +1,4 @@
+import functools
 import json
 import sys
 from pathlib import Path
@@ -6,6 +7,63 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 ORDER_FILE = Path(__file__).resolve().parent / "order.json"
+
+
+def _one_thread(config):
+    """``config`` with ``threads`` set to 1, unless the caller chose a thread count; never mutates the caller's dict."""
+
+    if config is None:
+        return {"threads": 1}
+    if not isinstance(config, dict) or any(str(key).lower() in ("threads", "worker_threads") for key in config):
+        return config  # the caller's own choice, or a value DuckDB rejects exactly as before
+    return {**config, "threads": 1}
+
+
+def _single_threaded_duckdb():
+    """Run DuckDB on one thread in tests unless a caller sets ``threads`` itself.
+
+    Tests open thousands of tiny databases. Each ``duckdb.connect`` otherwise starts a thread per core, and under
+    pytest-xdist those threads compete with the other workers for the same cores while doing nothing useful on a few
+    rows. Every other argument and config key is passed on unchanged. Pool workers forked by a test inherit this.
+    """
+
+    try:
+        import duckdb
+    except ImportError:
+        return
+    connect = duckdb.connect
+    if getattr(connect, "_kumosql_one_thread", False):
+        return
+
+    @functools.wraps(connect)
+    def connect_one_thread(*args, **kwargs):
+        if len(args) >= 3:  # connect(database, read_only, config)
+            args = (*args[:2], _one_thread(args[2]), *args[3:])
+        else:
+            kwargs["config"] = _one_thread(kwargs.get("config"))
+        return connect(*args, **kwargs)
+
+    connect_one_thread._kumosql_one_thread = True
+    duckdb.connect = connect_one_thread
+
+
+def _no_pandas_probe():
+    """Mark pandas as missing in ``sys.modules`` when it is not installed, so DuckDB stops searching for it.
+
+    DuckDB tries ``import pandas`` for every bound parameter of ``execute`` and ``executemany``; without pandas each try
+    is a full, failing search of ``sys.path``. A ``None`` entry fails the same import at once. ``import pandas`` still
+    raises ``ModuleNotFoundError`` and ``importlib.util.find_spec("pandas")`` still returns None, and an installed pandas
+    is never shadowed.
+    """
+
+    import importlib.util
+
+    try:
+        missing = importlib.util.find_spec("pandas") is None
+    except (ImportError, ValueError):
+        return
+    if missing:
+        sys.modules.setdefault("pandas", None)
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +116,7 @@ HEAVY_FILES = [
     "test_sqlfluff_fixtures_bench.py",
     "test_lineage_benchmarks.py",
     "test_pipeline_bench.py",
+    "test_jaffle_shop_bench.py",
     "test_minimization_bench.py",
     "test_unsafe_fuzz.py",
     "test_safety_corpus.py",
@@ -66,6 +125,7 @@ HEAVY_FILES = [
     "test_cosette_benchmarks.py",
     "test_rbot_benchmarks.py",
     "test_bq_behavior_eval.py",
+    "test_bq_corpus_bench.py",
     "test_incremental.py",
     "test_model_reuse_evals.py",
 ]
@@ -77,13 +137,16 @@ EVAL_FILES = {
     "test_cost_validity_bench.py",
     "test_engine_suites.py",
     "test_bq_behavior_eval.py",
+    "test_bq_corpus_bench.py",
     "test_calcite_mined_benchmarks.py",
     "test_constraint_dependence.py",
     "test_join_rewrite_bench.py",
     "test_cosette_benchmarks.py",
+    "test_dbgpt_rules_bench.py",
     "test_dlbench_bench.py",
     "test_dup_bench.py",
     "test_incremental.py",
+    "test_jaffle_shop_bench.py",
     "test_lineage_benchmarks.py",
     "test_lineage_goldens_bench.py",
     "test_llm_sql_solver_bench.py",
@@ -91,10 +154,12 @@ EVAL_FILES = {
     "test_minimization_bench.py",
     "test_model_reuse_evals.py",
     "test_mv_workload_bench.py",
+    "test_optimizer_bugs_bench.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
     "test_rbot_benchmarks.py",
+    "test_soundness_fuzz.py",
     "test_safety_corpus.py",
     "test_schema_change.py",
     "test_script_bench.py",
@@ -110,13 +175,31 @@ EVAL_FILES = {
 }
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_make_scheduler(config, log):
+    """``--dist loadgroup`` that never queues a test behind a slow one (``tools/xdist_scheduler.py``)."""
+
+    if config.getvalue("dist") != "loadgroup":
+        return None
+    sys.path.insert(0, str(TOOLS))
+    try:
+        import xdist_scheduler
+    finally:
+        sys.path.remove(str(TOOLS))
+    seconds, together = _timing(_order_data())
+    return xdist_scheduler.DurationScheduling(config, log, seconds=seconds, together=together)
+
+
 def pytest_addoption(parser):
     parser.addoption("--quick", action="store_true", default=False, help="skip the slow tier (tests listed as slow in tests/order.json and the heavy files)")
 
 
 def pytest_configure(config):
-    """Record every run in the shared test history (tools/test_history.py); a no-op without a history folder."""
+    """Run DuckDB single-threaded without the pandas probe, and record every run in the shared test history
+    (tools/test_history.py; a no-op without a history folder)."""
 
+    _single_threaded_duckdb()
+    _no_pandas_probe()
     sys.path.insert(0, str(TOOLS))
     try:
         import test_history
@@ -137,18 +220,43 @@ def _order_data():
         return {}
 
 
+NEW_EVAL_SECONDS = 60.0  # a test in an eval file the history has never run counts as this slow until it is timed
+
+
+def _timing(order):
+    """``seconds(nodeid)``: how long a slow-tier test is expected to take, None for a fast test; and the files whose
+    tests run together on one worker (a slow shared fixture), with the whole file's seconds."""
+
+    slow = order.get("slow", {})
+    together = order.get("together", {})
+    known = set(order.get("files", []))
+
+    def seconds(nodeid: str) -> float | None:
+        name = nodeid.split("::", 1)[0]
+        if name in together:
+            return together[name]
+        if nodeid in slow:
+            return slow[nodeid]
+        if known and name not in known and name.rsplit("/", 1)[-1] in EVAL_FILES:
+            return NEW_EVAL_SECONDS
+        return None
+
+    return seconds, together
+
+
 def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.path.name in EVAL_FILES:
             item.add_marker(pytest.mark.eval)
     order = _order_data()
     slow = order.get("slow", {})
+    seconds, together = _timing(order)
     risky = {nodeid: position for position, nodeid in enumerate(order.get("risky", []))}
     heavy = {name: position for position, name in enumerate(HEAVY_FILES)}
 
     def is_slow(item):
         # without recorded durations the hand-kept list of heavy files stands in for the slow tier
-        return item.nodeid in slow or (not slow and item.path.name in heavy)
+        return seconds(item.nodeid) is not None or (not slow and item.path.name in heavy)
 
     if config.getoption("--quick"):
         dropped = [item for item in items if is_slow(item)]
@@ -160,18 +268,31 @@ def pytest_collection_modifyitems(config, items):
         return  # a serial run keeps the natural order
 
     # Tests that failed before come first, then the fast tests (a broken one shows up in minutes), then the slow
-    # tests longest-first so one long benchmark never runs alone at the end. Without recorded durations the heavy
-    # files go first, as they always did.
+    # tests longest-first so one long benchmark never runs alone at the end. A test that alone takes more than half
+    # of one worker's share of the run starts before all of them: started after the fast tests it would end the run
+    # late. A file with a slow shared fixture counts as one unit of its whole time. Without recorded durations the
+    # heavy files go first, as they always did.
     if not slow:
         items.sort(key=lambda item: heavy.get(item.path.name, len(heavy)))
         return
+    workers = getattr(config, "workerinput", {}).get("workercount") or 1
+    units = {}
+    for item in items:
+        name = item.nodeid.split("::", 1)[0]
+        expected = seconds(item.nodeid)
+        if expected is not None:
+            units[name if name in together else item.nodeid] = expected
+    share = sum(units.values()) / workers
 
     def rank(item):
         nodeid = item.nodeid
+        expected = seconds(nodeid)
+        if expected is not None and expected > share / 2:
+            return (-1, -expected, 0)
         if nodeid in risky:
             return (0, risky[nodeid], 0)
-        if nodeid in slow:
-            return (2, -slow[nodeid], 0)
+        if expected is not None:
+            return (2, -expected, 0)
         return (1, int(item.path.name in heavy), 0)  # a new test in a heavy file waits behind the other fast ones
 
     items.sort(key=rank)

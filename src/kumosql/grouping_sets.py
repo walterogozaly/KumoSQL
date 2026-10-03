@@ -19,6 +19,15 @@ from sqlglot import exp
 MAX_SETS = 64
 
 
+_GROUPING = getattr(exp, "Grouping", ())  # GROUPING() has its own node only in newer sqlglot
+
+
+def is_grouping_call(node: exp.Expression) -> bool:
+    """``GROUPING(k)``: its own node in newer sqlglot, an anonymous function in older ones."""
+
+    return isinstance(node, _GROUPING) or (isinstance(node, exp.Anonymous) and node.name.upper() == "GROUPING")
+
+
 class _Decline(Exception):
     pass
 
@@ -28,6 +37,12 @@ def expand_grouping_sets(tree: exp.Expression) -> exp.Expression:
 
     for select in tree.find_all(exp.Select):
         group = select.args.get("group")
+        if group is not None and not group.expressions and not any(group.args.get(k) for k in ("rollup", "cube")):
+            lone = group.args.get("grouping_sets") or []
+            if len(lone) == 1:
+                # older sqlglot keeps a lone GROUPING SETS list out of ``expressions``; read it from there
+                group.set("expressions", [lone[0]])
+                group.set("grouping_sets", None)
         if group is None or not _needs_expansion(group):
             continue
         try:
@@ -194,7 +209,7 @@ def _branches(select: exp.Select) -> list[exp.Select] | None:
             branch = select.copy()
             branch.set("group", exp.Group(expressions=[m.copy() for m in members]) if members else None)
             for node in _own_scope(branch):
-                if isinstance(node, exp.Grouping):
+                if is_grouping_call(node):
                     bits = 0
                     for argument in node.expressions:
                         key = _key_of(argument, keys)
@@ -221,8 +236,13 @@ def _branches(select: exp.Select) -> list[exp.Select] | None:
 
 
 def _aggregates(select: exp.Select) -> bool:
+    """Whether ``select``'s own list or ``HAVING`` aggregates; one inside a nested query aggregates that query."""
+
     roots = list(select.expressions) + [select.args["having"]] if select.args.get("having") else list(select.expressions)
-    return any(not isinstance(n, exp.Grouping) for root in roots for n in root.find_all(exp.AggFunc))
+    nested = lambda n: isinstance(n, (exp.Query, exp.Subquery))  # noqa: E731
+    return any(
+        isinstance(n, exp.AggFunc) and not isinstance(n, _GROUPING) for root in roots for n in root.walk(prune=nested)
+    )
 
 
 def _key_of(column: exp.Expression, keys: list[exp.Column]) -> str | None:
@@ -260,7 +280,7 @@ def _own_scope(select: exp.Select) -> list[exp.Expression]:
             if any(True for _ in node.find_all(exp.Column)):
                 raise _Decline
             return
-        if isinstance(node, exp.Grouping):
+        if is_grouping_call(node):
             found.append(node)
             return
         if isinstance(node, exp.AggFunc):
