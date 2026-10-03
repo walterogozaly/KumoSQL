@@ -302,6 +302,27 @@ S006_WRONG_PROOFS = [
         {"p1.d.t": [(1,)], "p2.d.t": [(2,)]},
         id="s006-003-same-table-name-in-two-projects",
     ),
+    pytest.param(
+        "SELECT a.x, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT u.k, 1 AS marker FROM u GROUP BY u.k) d ON d.k = a.x AND d.k = a.y",
+        "SELECT a.x, NOT EXISTS(SELECT 1 FROM u AS kqj0 WHERE kqj0.k = a.x) AS missing FROM a",
+        {"a": ["x", "y"], "u": ["k"]},
+        {"a": [(1, 2)], "u": [(1,)]},
+        id="s006-004-indicator-keeps-every-on-equality",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE RIGHT JOIN b ON FALSE",
+        "SELECT b.z, NOT EXISTS(SELECT 1 FROM u AS kqj3) AS missing FROM a RIGHT JOIN b ON FALSE",
+        {"a": ["x"], "b": ["z"], "u": ["k"]},
+        {"a": [(1,)], "b": [(7,)], "u": [(1,)]},
+        id="s006-005-indicator-padded-by-a-later-right-join",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM a JOIN (SELECT k, 1 AS marker FROM u GROUP BY k) d ON d.k = a.x FULL JOIN b ON FALSE",
+        "SELECT b.z, FALSE AS missing FROM a FULL JOIN b ON FALSE WHERE EXISTS(SELECT 1 FROM u WHERE u.k = a.x)",
+        {"a": ["x"], "b": ["z"], "u": ["k"]},
+        {"a": [(1,)], "b": [(7,)], "u": [(1,)]},
+        id="s006-005-inner-indicator-before-a-full-join",
+    ),
 ]
 
 
@@ -341,12 +362,32 @@ S006_STILL_PROVEN = [
         id="union-of-filters-of-one-qualified-table",
     ),
     pytest.param("SELECT x FROM p1.d.t UNION DISTINCT SELECT x FROM p2.d.t", "SELECT x FROM p2.d.t UNION DISTINCT SELECT x FROM p1.d.t", id="union-of-two-projects-commutes"),
+    pytest.param(
+        "SELECT a.x, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT u.k, 1 AS marker FROM u GROUP BY u.k) d ON d.k = a.x AND d.k = a.y",
+        "SELECT a.x, NOT EXISTS(SELECT 1 FROM u AS q WHERE q.k = a.x AND q.k = a.y) AS missing FROM a",
+        id="indicator-with-two-equalities",
+    ),
+    pytest.param(
+        "SELECT a.x, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE",
+        "SELECT a.x, NOT EXISTS(SELECT 1 FROM u) AS missing FROM a",
+        id="indicator-without-a-later-join",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM a LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE LEFT JOIN b ON FALSE",
+        "SELECT b.z, NOT EXISTS(SELECT 1 FROM u) AS missing FROM a LEFT JOIN b ON FALSE",
+        id="indicator-before-a-later-left-join",
+    ),
+    pytest.param(
+        "SELECT b.z, d.marker IS NULL AS missing FROM b RIGHT JOIN a ON FALSE LEFT JOIN (SELECT DISTINCT 1 AS marker FROM u) d ON TRUE",
+        "SELECT b.z, NOT EXISTS(SELECT 1 FROM u) AS missing FROM b RIGHT JOIN a ON FALSE",
+        id="indicator-after-an-earlier-right-join",
+    ),
 ]
 
 
 @pytest.mark.parametrize("left,right", S006_STILL_PROVEN)
 def test_s006_near_misses_stay_proven(left, right):
-    schema = {"t": ["x"], "p1.d.t": ["x"], "p2.d.t": ["x"]}
+    schema = {"t": ["x"], "p1.d.t": ["x"], "p2.d.t": ["x"], "a": ["x", "y"], "b": ["z"], "u": ["k"]}
     assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
 
 
