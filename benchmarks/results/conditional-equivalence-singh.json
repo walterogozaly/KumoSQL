@@ -1,19 +1,19 @@
 {
   "order": 26,
-  "held_out": "126/580 conditional, 0 wrong (held-out fifth, by hash of the pair, run once)",
+  "held_out": "131/580 conditional, 0 wrong (held-out fifth, by hash of the pair, run once)",
   "docs": "docs/evals/conditional-equivalence.md",
   "date": "2026-10-03",
   "evidence": "proof",
   "suite": "Equivalent under conditions: Singh & Bedathur LeetCode pairs",
-  "size": 2032,
-  "score": "557 pairs proved only under named conditions, 0 wrong",
-  "metric": "Of the 2,800 pairs, the 2,032 the prover does not prove outright (768 are scored in the Singh eval): 557 proved equal under a minimal set of NOT NULL, unique-key and foreign-key conditions, 357 refuted by a database that meets every candidate condition, 1,118 unknown. Reported apart from the unconditional proofs; the published labels are not ground truth for a conditional pair.",
-  "correctness": "0 wrong, 0 crashed: every conditional proof re-run on 900 random DuckDB databases repaired to meet its conditions with no difference, and the prover loses each proof when any one condition is dropped; for 500 of the 557 a database that breaks the conditions separates the queries",
+  "size": 1954,
+  "score": "610 pairs proved only under named conditions, 0 wrong",
+  "metric": "Of the 2,800 pairs, the 1,954 the prover does not prove outright (846 are scored in the Singh eval): 610 proved equal under a minimal set of NOT NULL, unique-key and foreign-key conditions, 357 refuted by a database that meets every candidate condition, 987 unknown. Reported apart from the unconditional proofs; the published labels are not ground truth for a conditional pair.",
+  "correctness": "0 wrong, 0 crashed: every conditional proof re-run on 900 random DuckDB databases repaired to meet its conditions with no difference, and the prover loses each proof when any one condition is dropped; for 553 of the 610 a database that breaks the conditions separates the queries",
   "coverage": {
-    "proven": 557,
+    "proven": 610,
     "refuted": 357,
-    "unknown": 1118
+    "unknown": 987
   },
   "command": "python tools/conditional_bench.py singh",
-  "caveats": "Proof under assumed conditions, never counted as an unconditional proof. Minimal means minimal for the prover. The catalog is NOT NULL, unique keys and single-column foreign keys read off the queries; CHECK, non-empty tables, filtered keys and functional dependencies are outside it. Held-out fifth (hash of the pair): 126 of 580 conditional, 0 wrong, run once at the end; development used the dev split. 148 of the 557 are labelled equivalent and 409 labelled different in the files. Singh data downloaded from a pinned commit."
+  "caveats": "Proof under assumed conditions, never counted as an unconditional proof. Minimal means minimal for the prover. The catalog is NOT NULL, unique keys and single-column foreign keys read off the queries; CHECK, non-empty tables, filtered keys and functional dependencies are outside it. Held-out fifth (hash of the pair): 131 of 580 conditional, 0 wrong, run once at the end; development used the dev split. 175 of the 610 are labelled equivalent and 435 labelled different in the files. Singh data downloaded from a pinned commit. Measured on master 69 commits after the branch point, merged in."
 }

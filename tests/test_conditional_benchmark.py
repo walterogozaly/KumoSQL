@@ -22,8 +22,8 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["conditional_bench"] = bench
 _spec.loader.exec_module(bench)
 
-# measured 20 of 120 Singh pairs, 10 of 160 VeriEQL cases and 557 of 2,800 Singh pairs; a little room for solver timeouts under load
-FLOORS = {"singh-sample": 17, "verieql-sample": 8, "singh-all": 520}
+# measured 20 of 120 Singh pairs, 13 of 160 VeriEQL cases and 610 of 2,800 Singh pairs; a little room for solver timeouts under load
+FLOORS = {"singh-sample": 17, "verieql-sample": 11, "singh-all": 570}
 
 
 def _singh_pairs():

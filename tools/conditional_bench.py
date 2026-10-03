@@ -62,7 +62,7 @@ WITHOUT_DATABASES = 300  # random databases without the conditions, to show they
 
 @dataclass
 class Outcome:
-    kind: str  # equivalent | conditional | refuted | unknown | wrong | crash (a harness bug: must stay 0)
+    kind: str  # equivalent | conditional | refuted | unknown | wrong | unchecked (a conditional proof the executed check cannot re-run) | crash (a harness bug: must stay 0)
     detail: str = ""
     conditions: list[dict] = field(default_factory=list)
     validated: int = 0  # databases that met the conditions and ran on both queries
@@ -311,7 +311,8 @@ def decide_verieql(case: dict) -> Outcome:
         return Outcome("unknown", result.reason[:200], seconds=time.time() - start, **base)
     conditions = _conditions_of(result)
     if any(c.kind == "foreign_key" and len(c.columns) != 1 for c in conditions):
-        return Outcome("conditional", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
+        # the executed check has no composite foreign key to impose, so the proof cannot be re-checked: not scored as conditional
+        return Outcome("unchecked", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
     stricter = veri.build_spec(case)  # the spec again, with the conditions as extra constraints
     names = {t.name.lower(): t for t in stricter.tables.values()}
     def actual(table, name):  # the spec keeps each column's own case; the prover works in lower case
@@ -328,7 +329,7 @@ def decide_verieql(case: dict) -> Outcome:
             stricter.foreign_keys.append((table.name, actual(table, c.columns[0]), parent.name, actual(parent, c.parent_columns[0])))
     searcher = cx.Searcher(stricter, left, right)
     if not searcher.runs():
-        return Outcome("conditional", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
+        return Outcome("unchecked", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
     found = searcher.search(VALIDATION_DATABASES // 3, seed=index + 5_000_011) or searcher.search(VALIDATION_DATABASES // 3, seed=index + 6_000_011, wide=True)
     if found is not None:
         return Outcome("wrong", "proved under conditions but a database that meets them separates the queries", [c.to_json() for c in conditions], seconds=time.time() - start, **base)
@@ -373,7 +374,7 @@ class Report:
         minimal = sum(1 for o in conditional if o.minimal)
         return (
             f"{self.suite}: {len(self.outcomes)} pairs: {c['equivalent']} proved outright, {c['conditional']} equivalent under conditions, "
-            f"{c['refuted']} refuted by a database meeting every candidate condition, {c['unknown']} unknown, {c['wrong']} wrong, {c['crash']} crashed; "
+            f"{c['refuted']} refuted by a database meeting every candidate condition, {c['unknown']} unknown, {c['wrong']} wrong, {c['unchecked']} not re-checkable, {c['crash']} crashed; "
             f"of the conditional ones {needed} separated without the conditions and {minimal} have a minimal set"
         )
 
