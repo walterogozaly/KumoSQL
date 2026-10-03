@@ -113,6 +113,20 @@ EVAL_FILES = {
 }
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_make_scheduler(config, log):
+    """``--dist loadgroup`` that never queues a test behind a slow one (``tools/xdist_scheduler.py``)."""
+
+    if config.getvalue("dist") != "loadgroup":
+        return None
+    sys.path.insert(0, str(TOOLS))
+    try:
+        import xdist_scheduler
+    finally:
+        sys.path.remove(str(TOOLS))
+    return xdist_scheduler.DurationScheduling(config, log, slow=_order_data().get("slow", {}))
+
+
 def pytest_addoption(parser):
     parser.addoption("--quick", action="store_true", default=False, help="skip the slow tier (tests listed as slow in tests/order.json and the heavy files)")
 
@@ -163,14 +177,19 @@ def pytest_collection_modifyitems(config, items):
         return  # a serial run keeps the natural order
 
     # Tests that failed before come first, then the fast tests (a broken one shows up in minutes), then the slow
-    # tests longest-first so one long benchmark never runs alone at the end. Without recorded durations the heavy
-    # files go first, as they always did.
+    # tests longest-first so one long benchmark never runs alone at the end. A test that alone takes more than half
+    # of one worker's share of the run starts before all of them: started after the fast tests it would end the run
+    # late. Without recorded durations the heavy files go first, as they always did.
     if not slow:
         items.sort(key=lambda item: heavy.get(item.path.name, len(heavy)))
         return
+    workers = getattr(config, "workerinput", {}).get("workercount") or 1
+    share = sum(slow.get(item.nodeid, 0.0) for item in items) / workers
 
     def rank(item):
         nodeid = item.nodeid
+        if slow.get(nodeid, 0.0) > share / 2:
+            return (-1, -slow[nodeid], 0)
         if nodeid in risky:
             return (0, risky[nodeid], 0)
         if nodeid in slow:
