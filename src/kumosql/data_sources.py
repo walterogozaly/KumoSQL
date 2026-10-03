@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
-from . import query_context, scope_queries, state
+from . import console, query_context, scope_queries, state
 
 SECTION = "data_sources"
 PREFIX = "source:"
@@ -97,13 +97,20 @@ def parse_source(data: object) -> Source:
 # ------------------------------------------------------------------- storage
 
 
+_SKIPPED_WARNED: set[str] = set()
+
+
 def list_sources() -> list[Source]:
     stored = state.get_section(SECTION, [])
     found: list[Source] = []
     for item in stored if isinstance(stored, list) else []:
         try:
             source = parse_source(item)
-        except ValueError:
+        except ValueError as exc:
+            # Never drop a saved source without a trace: a script or an unparseable query is not run, but the user can fix it.
+            if str(exc) not in _SKIPPED_WARNED:
+                _SKIPPED_WARNED.add(str(exc))
+                console.warn(f"saved data source skipped: {exc}")
             continue
         if source.id not in {s.id for s in found}:
             found.append(source)

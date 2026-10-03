@@ -309,6 +309,8 @@ def _cache_path() -> Path:
 
 def _load_disk() -> None:
     global _disk_loaded
+    if _disk_loaded:
+        return
     _disk_loaded = True
     try:
         stored = json.loads(_cache_path().read_text(encoding="utf-8"))
