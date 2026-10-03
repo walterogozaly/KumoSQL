@@ -68,15 +68,21 @@ class ResultEquivalence:
     only_right: tuple[Row, ...] = ()
     left_duckdb_sql: tuple[str, ...] = ()
     right_duckdb_sql: tuple[str, ...] = ()
+    float_digits: int | None = 12
+    """The float policy the rows were compared under: significant digits, or ``None`` for exact."""
 
     @property
     def equivalent(self) -> bool:
         return self.status is ResultEquivalenceStatus.EQUIVALENT
 
+    @property
+    def float_comparison(self) -> str:
+        return float_policy(self.float_digits)
+
     def describe(self, max_rows: int = 10) -> str:
         """Render a human-readable report, including any counterexample."""
 
-        lines = [f"{self.status.value}: {self.reason}"]
+        lines = [f"{self.status.value}: {self.reason}", f"floats compared: {self.float_comparison}"]
         if self.failing_seed is not None:
             lines.append(f"failing seed: {self.failing_seed}")
         if self.left_output is not None and self.right_output is not None:
@@ -623,24 +629,44 @@ class DatasetRunner:
         return QueryOutput(columns=columns, rows=rows)
 
 
-def _normalize_value(value: Any, float_digits: int) -> Any:
+def _normalize_value(value: Any, float_digits: int | None) -> Any:
+    """Encode one result value as a hashable key that keeps its kind.
+
+    Booleans, NaN, arrays and structs get tagged tuples, so ``TRUE`` never equals
+    ``1``, NaN never equals the string or array ``"NaN"``, and a struct never
+    equals an array of pairs; every non-scalar encoding is such a tuple. Numbers
+    stay untagged so ``int``, ``float`` and ``Decimal`` still compare by value:
+    DuckDB's result types legitimately differ from BigQuery's (and between two
+    equivalent queries), e.g. a ``NUMERIC`` column comes back as ``Decimal`` but
+    dividing it gives a ``float``. ``float_digits`` rounds floats to that many significant digits;
+    ``None`` compares them exactly.
+    """
+
+    if isinstance(value, bool):
+        return ("bool", value)
     if isinstance(value, float):
         if math.isnan(value):
-            return ("NaN",)
+            return ("nan",)
         if value == 0:
             return 0.0
-        return float(f"{value:.{float_digits}g}")
+        return value if float_digits is None else float(f"{value:.{float_digits}g}")
     if isinstance(value, Decimal):
-        return value.normalize() if value == value else ("NaN",)
-    if isinstance(value, list):
-        return tuple(_normalize_value(v, float_digits) for v in value)
+        return value.normalize() if value == value else ("nan",)
+    if isinstance(value, (list, tuple)):
+        return ("array", *(_normalize_value(v, float_digits) for v in value))
     if isinstance(value, dict):
-        return tuple(sorted((k, _normalize_value(v, float_digits)) for k, v in value.items()))
+        return ("struct", *sorted((k, _normalize_value(v, float_digits)) for k, v in value.items()))
     return value
 
 
 def _sort_key(row: Row) -> tuple:
     return tuple((value is None, type(value).__name__, repr(value)) for value in row)
+
+
+def float_policy(float_digits: int | None) -> str:
+    """Name the float comparison policy, as recorded on results."""
+
+    return "exact" if float_digits is None else f"{float_digits} significant digits"
 
 
 def compare_outputs(
@@ -649,22 +675,43 @@ def compare_outputs(
     *,
     ignore_row_order: bool = True,
     check_column_names: bool = True,
-    float_digits: int = 12,
+    float_digits: int | None = 12,
 ) -> tuple[bool, str, tuple[Row, ...], tuple[Row, ...]]:
-    """Compare two outputs; returns (equal, reason, only_left, only_right)."""
+    """Compare two outputs; returns (equal, reason, only_left, only_right).
+
+    Rows are compared as multisets of type-tagged values (see
+    :func:`_normalize_value`); ``float_digits=None`` compares floats exactly.
+    ``only_left``/``only_right`` hold the rows as the engine returned them.
+    """
 
     if len(left.columns) != len(right.columns):
         return False, f"column counts differ ({len(left.columns)} vs {len(right.columns)})", (), ()
     if check_column_names and [c.lower() for c in left.columns] != [c.lower() for c in right.columns]:
         return False, "column names differ", (), ()
 
-    left_rows = [tuple(_normalize_value(v, float_digits) for v in row) for row in left.rows]
-    right_rows = [tuple(_normalize_value(v, float_digits) for v in row) for row in right.rows]
+    def keyed(rows: tuple[Row, ...]) -> tuple[list[Row], dict[Row, list[Row]]]:
+        keys: list[Row] = []
+        originals: dict[Row, list[Row]] = {}
+        for row in rows:
+            key = tuple(_normalize_value(v, float_digits) for v in row)
+            keys.append(key)
+            originals.setdefault(key, []).append(row)
+        return keys, originals
+
+    def surplus(counts: Counter, originals: dict[Row, list[Row]]) -> tuple[Row, ...]:
+        return tuple(
+            row
+            for key in sorted(counts, key=_sort_key)
+            for row in originals[key][: counts[key]]
+        )
+
+    left_rows, left_originals = keyed(left.rows)
+    right_rows, right_originals = keyed(right.rows)
 
     left_counts = Counter(left_rows)
     right_counts = Counter(right_rows)
-    only_left = tuple(sorted((left_counts - right_counts).elements(), key=_sort_key))
-    only_right = tuple(sorted((right_counts - left_counts).elements(), key=_sort_key))
+    only_left = surplus(left_counts - right_counts, left_originals)
+    only_right = surplus(right_counts - left_counts, right_originals)
     if only_left or only_right:
         return False, "result multisets differ", only_left, only_right
     if not ignore_row_order and left_rows != right_rows:
@@ -682,7 +729,7 @@ def check_result_equivalence(
     null_rate: float = 0.15,
     ignore_row_order: bool = True,
     check_column_names: bool = True,
-    float_digits: int = 12,
+    float_digits: int | None = 12,
     use_query_constants: bool = True,
     targeted: bool = False,
 ) -> ResultEquivalence:
@@ -728,7 +775,8 @@ def check_result_equivalence(
             )
         except ExecutionError as exc:
             return ResultEquivalence(
-                ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed
+                ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed,
+                float_digits=float_digits,
             )
         try:
             right_output, right_sql_out = execute_on_dataset(
@@ -742,6 +790,7 @@ def check_result_equivalence(
                 seed,
                 left_output=left_output,
                 left_duckdb_sql=tuple(left_sql_out),
+                float_digits=float_digits,
             )
         # A side that disagrees with itself on identical input cannot support
         # either an equivalence or a counterexample claim.
@@ -759,6 +808,7 @@ def check_result_equivalence(
                     f"{side} side failed on repeat run: {exc}",
                     tuple(checked),
                     seed,
+                    float_digits=float_digits,
                 )
             stable, _, _, _ = compare_outputs(
                 first_output,
@@ -777,6 +827,7 @@ def check_result_equivalence(
                     seed,
                     left_duckdb_sql=tuple(left_sql_out),
                     right_duckdb_sql=tuple(right_sql_out),
+                    float_digits=float_digits,
                 )
         checked.append(seed)
         equal, reason, only_left, only_right = compare_outputs(
@@ -798,6 +849,7 @@ def check_result_equivalence(
                 only_right,
                 tuple(left_sql_out),
                 tuple(right_sql_out),
+                float_digits=float_digits,
             )
     if not checked:
         raise ValueError("at least one seed is required")
@@ -807,6 +859,7 @@ def check_result_equivalence(
         tuple(checked),
         left_duckdb_sql=tuple(left_sql_out),
         right_duckdb_sql=tuple(right_sql_out),
+        float_digits=float_digits,
     )
 
 
