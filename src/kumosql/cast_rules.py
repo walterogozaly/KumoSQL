@@ -19,7 +19,9 @@
 * An ``INT`` (or narrower) expression cast to ``DOUBLE``, ``FLOAT`` or a wide
   enough ``DECIMAL`` keeps its order and its ties (the cast is exact and
   one-to-one there), so as an ``ORDER BY`` key it is the expression itself; and
-  such a cast is NULL exactly when its input is.
+  such a cast is NULL exactly when its input is. Here the operands' width is not
+  enough: ``i * i`` of two ``INT`` values can need 19 digits, and a ``SUM`` any
+  number, so arithmetic is bounded by its operands' sizes and ``SUM`` keeps its cast.
 * ``ROUND(x)`` is ``ROUND(x, 0)``.
 * ``1 * x`` is ``x`` where ``x`` is already a number (an aggregate or arithmetic)
   or is read as one (inside arithmetic or ``SUM``/``AVG``), in dialects whose
@@ -84,7 +86,7 @@ def _sources(select: exp.Select) -> list[exp.Expression]:
     return ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
 
 
-def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int, dialect: str) -> tuple[str, int] | None:
+def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int, dialect: str, bound: bool) -> tuple[str, int] | None:
     name = column.name.lower()
     found = []
     for source in _sources(select):
@@ -105,54 +107,63 @@ def _column_type(select: exp.Select, column: exp.Column, types: dict, depth: int
             if len(items) > 1:
                 return None
             if items:
-                found.append(expression_type(items[0].unalias(), inner, types, depth + 1, dialect))
+                found.append(expression_type(items[0].unalias(), inner, types, depth + 1, dialect, bound))
         else:
             return None  # VALUES, UNNEST, set operations: not followed
     return found[0] if len(found) == 1 else None
 
 
-def expression_type(node: exp.Expression, select: exp.Select, types: dict, depth: int = 0, dialect: str = "bigquery") -> tuple[str, int] | None:
-    """``(kind, digits)`` of ``node`` read in ``select``'s scope, or ``None`` when unknown."""
+def expression_type(node: exp.Expression, select: exp.Select, types: dict, depth: int = 0, dialect: str = "bigquery", bound: bool = False) -> tuple[str, int] | None:
+    """``(kind, digits)`` of ``node`` read in ``select``'s scope, or ``None`` when unknown.
+
+    An integer's ``digits`` is the width of its operands for ``SUM`` and arithmetic (overflow is
+    excluded), which says nothing about its size: ``2000000000 * 2000000000`` has 19 digits. With
+    ``bound`` it is a true bound instead, every value being below ``10 ** digits`` in magnitude.
+    """
 
     if depth > 8 or node is None:
         return None
     if isinstance(node, exp.Paren):
-        return expression_type(node.this, select, types, depth + 1, dialect)
+        return expression_type(node.this, select, types, depth + 1, dialect, bound)
     if isinstance(node, exp.Literal):
         if not node.is_string and re.fullmatch(r"\d+", node.name or "") and int(node.name) < _LONG_LIMIT:
             return "int", len(node.name.lstrip("0") or "0")
         return None
     if isinstance(node, exp.Neg):
-        inner = expression_type(node.this, select, types, depth + 1, dialect)
+        inner = expression_type(node.this, select, types, depth + 1, dialect, bound)
         return inner if inner and inner[0] == "int" else None
     if isinstance(node, exp.Boolean) or isinstance(node, _PREDICATES):
         return "bool", 0
     if isinstance(node, exp.Column):
         if not isinstance(node.this, exp.Identifier):
             return None
-        return _column_type(select, node, types, depth, dialect)
+        return _column_type(select, node, types, depth, dialect, bound)
     if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast) and isinstance(node.args.get("to"), exp.DataType):
         target = _target(node.args["to"], dialect)
         if target is None:
             return None
-        if target[0] == "bool" and expression_type(node.this, select, types, depth + 1, dialect) != ("bool", 0):
+        if target[0] == "bool" and expression_type(node.this, select, types, depth + 1, dialect, bound) != ("bool", 0):
             return None  # what an integer casts to differs between engines
         return target
     if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.IntDiv)):
-        a = expression_type(node.this, select, types, depth + 1, dialect)
-        b = expression_type(node.expression, select, types, depth + 1, dialect)
-        if a and b and a[0] == b[0] == "int":
-            return "int", max(a[1], b[1])
-        return None
+        a = expression_type(node.this, select, types, depth + 1, dialect, bound)
+        b = expression_type(node.expression, select, types, depth + 1, dialect, bound)
+        if not (a and b and a[0] == b[0] == "int"):
+            return None
+        if bound and isinstance(node, exp.Mul):
+            return "int", a[1] + b[1]
+        if bound and isinstance(node, (exp.Add, exp.Sub)):
+            return "int", max(a[1], b[1]) + 1
+        return "int", max(a[1], b[1])  # a true bound for DIV too: |a DIV b| <= |a|
     if isinstance(node, (exp.Sum, exp.Min, exp.Max)):
         argument = node.this
         if isinstance(argument, exp.Distinct):
             if len(argument.expressions) != 1:
                 return None
             argument = argument.expressions[0]
-        inner = expression_type(argument, select, types, depth + 1, dialect)
+        inner = expression_type(argument, select, types, depth + 1, dialect, bound)
         if isinstance(node, exp.Sum):
-            return inner if inner and inner[0] == "int" else None
+            return inner if inner and inner[0] == "int" and not bound else None  # a sum of many rows has no bound
         return inner
     if isinstance(node, exp.Count):
         return "int", 19
@@ -163,7 +174,7 @@ def expression_type(node: exp.Expression, select: exp.Select, types: dict, depth
             values = [branch.args.get("true") for branch in node.args.get("ifs") or []] + [node.args.get("default")]
         else:
             values = [node.this] + list(node.expressions)
-        kinds = [expression_type(v, select, types, depth + 1, dialect) for v in values if v is not None and not isinstance(v, exp.Null)]
+        kinds = [expression_type(v, select, types, depth + 1, dialect, bound) for v in values if v is not None and not isinstance(v, exp.Null)]
         if not kinds or any(k is None for k in kinds) or len({k[0] for k in kinds}) != 1:
             return None
         return kinds[0][0], max(k[1] for k in kinds)
@@ -231,7 +242,7 @@ def _exact_numeric_cast(cast: exp.Expression, select: exp.Select, types: dict, d
 
     if not isinstance(cast, exp.Cast) or isinstance(cast, exp.TryCast) or not isinstance(cast.args.get("to"), exp.DataType):
         return None
-    have = expression_type(cast.this, select, types, dialect=dialect)
+    have = expression_type(cast.this, select, types, dialect=dialect, bound=True)
     if have is None or have[0] != "int" or have[1] > _INTEGER_DIGITS["INT"]:
         return None
     name = _type_name(cast.args["to"])
