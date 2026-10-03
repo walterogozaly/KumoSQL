@@ -33,11 +33,13 @@ FOLDABLE = ("table", "view", "sql")
 
 HELP_SUMMARY = (
     "READ-ONLY PREVIEW. Shows what one table would look like with a chain of intermediate tables folded into it,\n"
-    "and whether that was proved to return the same rows. It prints JSON to the screen and changes nothing."
+    "and whether that was proved to return the same rows. It prints JSON to the screen and changes none of your files."
 )
 HELP_EPILOG = (
-    "This command never writes, moves, renames or deletes a file, never touches the project folder, and has no\n"
-    "option that does. Copy the printed \"sql\" into the target model yourself if you want it.\n"
+    "This command never writes, moves, renames or deletes any of your files, never touches the project folder, and\n"
+    "has no option that does. Copy the printed \"sql\" into the target model yourself if you want it.\n"
+    "(Like every KumoSQL command that analyzes a project, it appends timing lines to KumoSQL's own diagnostic log,\n"
+    "ui.log, in KumoSQL's data folder; that is not part of your project.)\n"
     "\n"
     "Exit code: 0 proved equal, 1 not proved (unknown), 2 refused or bad input.\n"
     "Example: python -m kumosql consolidate-tables path/to/project D A B C"
