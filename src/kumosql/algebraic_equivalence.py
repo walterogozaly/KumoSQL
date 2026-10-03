@@ -54,6 +54,9 @@ from .intersection_rules import collapse_counted_intersection, collapse_named_co
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
+from .singleton_aggregate_rules import singleton_count_sum
+from .set_identity import expose_set_identity
+from .projected_in_rules import normalize_projected_in
 from .limit_rules import drops_global_aggregate, limit_rule as _limit_rule, rebinds_grouping_names
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
@@ -4855,6 +4858,12 @@ def normalize(
             quantified = rewrite_nonnull_any(node.copy(), schema, not_null, types, _assumptions)
             if quantified.sql() != node.sql() and (names is None or _keeps_names(names, _derived_output_names(quantified))):
                 return quantified
+            projected = normalize_projected_in(node, not_null)
+            if projected is not None and (names is None or _keeps_names(names, _derived_output_names(projected))):
+                return projected
+            singleton = singleton_count_sum(node, keys, types_map, _assumptions)
+            if singleton is not None and (names is None or _keeps_names(names, _derived_output_names(singleton))):
+                return singleton
             constrained = normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
                 if names is None or _keeps_names(names, _derived_output_names(constrained)):
@@ -4893,6 +4902,7 @@ def normalize(
             replacement = _canonicalize_union_source(subquery)
             if replacement is not None:
                 subquery.replace(replacement)
+    tree = expose_set_identity(tree, schema)
     return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
@@ -5004,9 +5014,9 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
             normalize(sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, foreign_keys=fks, _assumptions=normalization_assumptions)
             for sql in (left_sql, right_sql)
         ):
-            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop")
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop", assumptions=tuple(sorted(normalization_assumptions)))
     except sqlglot.errors.SqlglotError as error:
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=tuple(sorted(normalization_assumptions)))
     from . import scalar_subqueries
 
     replaced = False

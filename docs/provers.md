@@ -4,6 +4,11 @@
 
 The equivalence checks behind every verified rewrite, from the structural prover to Z3, the algebraic prover and SQLSolver.
 
+The [singleton aggregation and set identity bridges](singleton-and-set-identity.md)
+cover key-fixed zero-or-one-row joins and deterministic set trees differing in
+scoped relation aliases. String singleton joins report an explicit collation
+condition; normalization without an assumption collector refuses that rewrite.
+
 ## Conservative SQL equivalence
 
 `kumosql.prove_equivalent(left_sql, right_sql)` returns `proven_equivalent` only when both inputs are strict, single-query BigQuery statements whose normalized ASTs match after relational subquery lifting. By default it compares result bags, so unspecified row order is ignored.
