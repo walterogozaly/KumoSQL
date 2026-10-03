@@ -350,6 +350,16 @@ def test_s006_near_misses_stay_proven(left, right):
     assert prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
 
 
+def test_s006_dataset_names_are_case_sensitive():
+    # BigQuery dataset and table names are case-sensitive: p.d.t and p.D.t are two tables
+    from kumosql.setop_rules import merge_same_source
+
+    schema = {"p.d.t": ["x"], "p.D.t": ["x"]}
+    left, right = "SELECT x FROM p.d.t UNION DISTINCT SELECT x FROM p.D.t", "SELECT DISTINCT x FROM p.d.t"
+    assert merge_same_source(sqlglot.parse_one(left, read="bigquery")) is None
+    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven
+
+
 def test_s006_set_operation_rules_do_not_pair_by_name_columns_by_position():
     # S006-006 and S006-007: the public prover aligns BY NAME first, so these are checked on the rules themselves
     from kumosql.set_split_rules import split_distinct_select

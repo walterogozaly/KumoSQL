@@ -509,12 +509,13 @@ def _sf_reads_only(condition: exp.Expression | None, projected: set[str]) -> boo
 
 def _sf_table_identity(table: exp.Table) -> tuple:
     """Everything that picks the rows a table reference reads: project, dataset, name and modifiers
-    such as ``FOR SYSTEM_TIME AS OF`` (only the alias is left out)."""
+    such as ``FOR SYSTEM_TIME AS OF`` (only the alias is left out). Spelled exactly: BigQuery dataset
+    and table names are case-sensitive, so ``p.d.t`` and ``p.D.t`` are two tables."""
 
     rest = table.copy()
     for key in ("this", "db", "catalog", "alias"):
         rest.set(key, None)
-    return (table.name.lower(), (table.text("db") or "").lower(), (table.text("catalog") or "").lower(), rest.sql())
+    return (table.name, table.text("db"), table.text("catalog"), rest.sql())
 
 
 def merge_same_source(node: exp.Expression) -> exp.Expression | None:
