@@ -33,9 +33,10 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
+from .solver_lock import serialized
 from .string_literals import canonical_literals, invalid_literal
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -4757,6 +4758,7 @@ def limit_rule(select: exp.Select, types: dict[str, dict[str, str]] | None = Non
     return None if distinct_on(select) else _limit_rule(select, types, dialect)
 
 
+@serialized
 def normalize(
     sql: str,
     *,
@@ -4881,6 +4883,7 @@ def normalize(
     return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
+@serialized
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result.
 
@@ -4893,19 +4896,28 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (:mod:`kumosql.conditional_equivalence`).
     A proof over a set operation whose branch types are not all known carries
     ``set_operation_types.ASSUMPTION``; one whose branches have different known types is declined.
+    Text that cannot be tokenized or nests too deeply is ``NOT_PROVEN``, never an exception.
     """
 
     dialect = kwargs.get("dialect", "bigquery")
-    if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
-    result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
-    if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
-        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    try:
+        if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
+        if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
+            result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
+    except sqlglot.errors.SqlglotError as error:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {str(error)[:200]}")
+    except RecursionError:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: the query nests too deeply")
     return result
 
 
 def _prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     search = kwargs.pop("search_counterexample", False)
+    for name in ("schema", "types", "constraints"):
+        if kwargs.get(name):
+            kwargs[name] = drop_case_conflicts(kwargs[name])
     conditional = kwargs.pop("conditional", False)
     wall = kwargs.pop("conditional_seconds", None)
     result = _prove_algebraic_levels(left_sql, right_sql, search, **kwargs)
