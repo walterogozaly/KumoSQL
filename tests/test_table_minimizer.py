@@ -398,3 +398,149 @@ def test_tables_with_one_name_in_two_datasets_stay_apart():
     assert outputs(tables) == outputs(result.tables)
     swapped = {**tables, "r": "SELECT id FROM b.t"}
     assert table_minimizer.verify_tables(tables, swapped, ["r", "s"], sources=SOURCES)["r"].status == "unknown"
+
+
+# ---- #538: a protected output must not change under a script, a name's case, a name clash or a nested WITH
+
+RAW = {"raw": {"x": "INT64"}}
+
+
+def _min(tables, protected, sources=None, **kw):
+    return minimize_tables(tables, protected, sources=sources or RAW, timeout_ms=1000, max_seconds=60, max_steps=15, **kw)
+
+
+def _execute(tables):
+    """Each table's rows after running ``tables`` in dependency order over ``raw(x) = (1)``, in DuckDB."""
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE raw (x BIGINT)")
+    con.execute("INSERT INTO raw VALUES (1)")
+    pending = dict(tables)
+    while pending:
+        progressed = False
+        for name, sql in list(pending.items()):
+            try:
+                con.execute(f"CREATE VIEW {name} AS {sqlglot.transpile(sql, read='bigquery', write='duckdb')[0]}")
+            except duckdb.CatalogException:
+                continue
+            del pending[name]
+            progressed = True
+        assert progressed, pending
+    return {name: sorted(con.execute(f"SELECT * FROM {name}").fetchall()) for name in tables}
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1 AS x; SELECT 2 AS x",
+    "SELECT 1 AS x; ",  # one statement and a stray semicolon is still one query
+])
+def test_single_query_counts_statements(sql):
+    from kumosql.minimizer_identity import single_query
+
+    assert (single_query(sql, "bigquery") is not None) == (sql.count(";") == 1 and sql.strip().endswith(";"))
+
+
+@pytest.mark.parametrize("name, tables", [
+    # a script's last result is not its first SELECT
+    ("last-result", {"stage": "SELECT x FROM raw", "out": "SELECT x FROM stage; SELECT x + 100 AS x FROM stage"}),
+    # a later statement's effect on a table is part of the script
+    ("effect", {"effect": "SELECT 0 AS x; DELETE FROM raw; SELECT 0 AS x", "out": "SELECT x FROM raw"}),
+    # a later statement's reads are dependencies
+    ("tail", {"tail": "SELECT x FROM raw", "out": "SELECT 0 AS x; SELECT x FROM tail"}),
+])
+def test_a_script_is_kept_whole_with_everything_it_mentions(name, tables):
+    result = _min(tables, ["out"])
+    assert result.tables == tables and not result.moves and not result.removed
+    assert result.proofs["out" if "out" in tables else name].status in {"unchanged"}
+
+
+def test_a_candidate_script_is_not_checked_as_its_first_select():
+    tables = {"stage": "SELECT x FROM raw", "out": "SELECT x FROM stage"}
+    candidate = {"stage": "SELECT x FROM raw", "out": "SELECT x FROM stage; SELECT x + 100 AS x FROM stage"}
+    assert table_minimizer.verify_tables(tables, candidate, ["out"], sources=RAW)["out"].status == "unknown"
+    candidate = {"stage": "SELECT x FROM raw; SELECT x + 100 AS x FROM raw", "out": "SELECT x FROM stage"}
+    assert table_minimizer.verify_tables(tables, candidate, ["out"], sources=RAW)["out"].status == "unknown"
+
+
+def test_a_protected_script_gets_a_result_instead_of_none():
+    tables = {"out": "SELECT 1 AS x; SELECT 2 AS x"}
+    assert _min(tables, ["out"]).proofs["out"].status == "unchanged"
+    assert table_minimizer.verify_tables(tables, {}, ["out"], sources=RAW)["out"].status == "missing"
+    assert table_minimizer.verify_tables(tables, tables, ["out"], sources=RAW)["out"].status == "unchanged"
+    assert table_minimizer.verify_tables(tables, {"out": "SELECT 2 AS x"}, ["out"], sources=RAW)["out"].status == "unknown"
+
+
+@pytest.mark.parametrize("external", ["p.D.stage", "p.d.Stage"])
+def test_names_that_differ_only_by_case_are_different_tables(external):
+    tables = {"p.d.stage": "SELECT x FROM raw", "out": f"SELECT x FROM `{external}`"}
+    result = _min(tables, ["out"])
+    assert result.tables == tables and result.proofs["out"].status == "unchanged"
+    # a declared source of that name is not "both a source and a table" either
+    declared = _min(tables, ["out"], sources={**RAW, external: {"x": "INT64"}})
+    assert declared.tables == tables
+    # and a changed model is not credited to the reader of the other-case name
+    changed = {**tables, "p.d.stage": "SELECT 99 AS x"}
+    assert table_minimizer.verify_tables(tables, changed, ["out"], sources=RAW)["out"].status == "unknown"
+
+
+def test_a_case_clash_pins_what_it_touches_but_leaves_the_rest_to_the_search():
+    tables = {
+        "p.d.stage": "SELECT x FROM raw",
+        "out": "SELECT x FROM `p.D.stage`",
+        "a": "SELECT x FROM raw",
+        "b": "SELECT x + 1 AS y FROM a",
+    }
+    result = _min(tables, ["out", "b"])
+    assert result.tables["out"] == tables["out"] and "p.d.stage" in result.tables
+    assert "a" not in result.tables  # the unrelated chain is still folded, and proved
+    assert result.proofs["b"].status == "proved"
+
+
+def test_a_bare_name_cannot_be_overwritten_by_an_internal_one():
+    tables = {"t": "SELECT 1 AS x", "kumo_min.tables.t": "SELECT 2 AS x", "out": "SELECT x FROM t"}
+    result = _min(tables, ["out"])
+    assert result.original_score == pipeline_score(tables)
+    assert _execute(result.tables)["out"] == [(1,)]
+    assert _min({"kumo_min.tables.t": "SELECT 2 AS x", "out": "SELECT x FROM kumo_min.tables.t"}, ["out"]).tables
+
+
+def test_a_bare_name_and_a_two_part_name_stay_apart():
+    tables = {"t": "SELECT 1 AS x", "tables.t": "SELECT 2 AS x", "out": "SELECT x FROM t", "out2": "SELECT x FROM tables.t"}
+    result = _min(tables, ["out", "out2"])
+    assert result.original_score == pipeline_score(tables)
+    assert _execute({"t": "SELECT 1 AS x", "out": result.tables["out"]})["out"] == [(1,)]
+
+
+NESTED = ("SELECT x FROM stage UNION ALL "
+          "SELECT x FROM (WITH stage AS (SELECT 100 AS x) SELECT x FROM stage)")
+
+
+def test_a_with_table_hides_a_physical_read_only_inside_its_own_query():
+    from kumosql.refactor import _table_nodes
+
+    tree = sqlglot.parse_one(NESTED, read="bigquery")
+    assert [(t.name, t.sql()) for t in _table_nodes(tree)] == [("stage", "stage")]  # the outer read only
+    # a WITH table sees the ones listed before it, so ``b`` in the first is a physical table
+    tree = sqlglot.parse_one("WITH a AS (SELECT x FROM b), b AS (SELECT x FROM a) SELECT x FROM a", read="bigquery")
+    assert [t.name for t in _table_nodes(tree)] == ["b"]
+
+
+def test_a_nested_with_table_does_not_hide_the_outer_read():
+    tables = {"stage": "SELECT x FROM raw", "out": NESTED}
+    changed = {**tables, "stage": "SELECT 99 AS x"}
+    assert table_minimizer.verify_tables(tables, changed, ["out"], sources=RAW)["out"].status == "unknown"
+    assert _execute(tables)["out"] == [(1,), (100,)] and _execute(changed)["out"] == [(99,), (100,)]
+    result = _min(tables, ["out"])
+    assert _execute(result.tables)["out"] == [(1,), (100,)]  # whatever it kept or folded, out keeps its rows
+
+
+def test_an_answer_never_reads_a_table_it_removed():
+    from kumosql.minimizer_identity import single_query
+
+    tables = {"stage": "SELECT x FROM raw", "out": NESTED}
+    setup, names, mapping, back = table_minimizer._prepare(tables, ["out"], RAW, "bigquery", 1000)
+    state = {k: v for k, v in setup.original.items() if not k.endswith(".stage")}
+    ok, _, why = table_minimizer._check(setup, state)
+    assert not ok and "no longer exists" in why
+    out = {"out": "SELECT x FROM stage"}
+    assert not table_minimizer._holds_together(setup, state, out, names, back, "bigquery")
+    assert single_query(out["out"], "bigquery") is not None
