@@ -167,9 +167,10 @@ def _read_item(repo_id: str) -> dict:
 
 
 def _update(repo_id: str, drop: tuple = (), activate: bool = False, **fields: object) -> None:
+    """Change one saved entry (re-read first: the list may have been edited while git ran)."""
+
     fields = {key: redact.sanitize_credentials(value) if isinstance(value, str) else value
               for key, value in fields.items()}
-    """Change one saved entry (re-read first: the list may have been edited while git ran)."""
 
     with _LOCK:
         data = _read()

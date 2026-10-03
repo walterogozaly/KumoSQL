@@ -248,3 +248,16 @@ def test_no_redact_still_never_retains_or_shows_credentials():
     assert console.ref('repo', url) == 'https://host/repo.git'
     assert 'FAKE_TOKEN' not in console.scrub(url)
     assert 'FAKE_PASSWORD' not in console.scrub("password='FAKE_PASSWORD'")
+
+
+def test_authorization_scheme_does_not_hide_the_credential():
+    for line in ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "authorization: Bearer abc.def.ghi-jklmnop"):
+        cleaned = redact.sanitize_credentials(line)
+        assert "dXNlcjpw" not in cleaned and "abc.def" not in cleaned
+
+
+def test_ordinary_messages_are_not_withheld_as_data_payloads():
+    for text in ("rows: 5", "results: 12 found", "Please select a model", "cannot open file"):
+        assert not redact._DATA_PAYLOAD.search(text), text
+    for text in ("rows: [1, 2]", "query: 'select 1'", "SELECT a FROM t"):
+        assert redact._DATA_PAYLOAD.search(text), text

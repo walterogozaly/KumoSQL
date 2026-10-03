@@ -19,7 +19,7 @@ For a one-off load:
 python -m kumosql ui --git https://github.com/owner/dataform-project.git --branch main
 ```
 
-Replace the URL and branch with your own. Do not put a token, password or user name inside a URL: those URLs are rejected. Use a Git credential helper for HTTPS, or an SSH key with `git@host:path`. Authentication must already work for git. If you use GitHub CLI for HTTPS authentication, `gh auth setup-git` lets git use that login; `gh auth login` alone is not enough.
+Replace the URL and branch with your own. Do not put a token, password or user name inside an https URL, or a password inside an ssh URL: those URLs are rejected, as is any URL with a query string. Use a Git credential helper for HTTPS, or an SSH key with `git@host:path` or `ssh://git@host/path`. Authentication must already work for git. If you use GitHub CLI for HTTPS authentication, `gh auth setup-git` lets git use that login; `gh auth login` alone is not enough.
 
 ## What gets stored
 

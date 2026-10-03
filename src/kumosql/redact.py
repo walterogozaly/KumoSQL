@@ -46,12 +46,12 @@ _SECRET = re.compile(
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{12,}")
 _ASSIGNED_SECRET = re.compile(
     r"(?i)\b(password|passwd|token|secret|api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|private[_-]?key|authorization)"
-    r"([\"']?\s*[=:]\s*)(?:\"(?:\\.|[^\"\\])*(?:\"|$)|'(?:\\.|''|[^'\\])*(?:'|$)|(?!<)[^\s,;&'\"]+)")
+    r"([\"']?\s*[=:]\s*)(?:(?:basic|bearer|token)\s+(?=\S))?(?:\"(?:\\.|[^\"\\])*(?:\"|$)|'(?:\\.|''|[^'\\])*(?:'|$)|(?!<)[^\s,;&'\"]+)")
 _PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9 ]* )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9 ]* )?PRIVATE KEY-----|$)", re.S)
 # SQL and value dumps cannot be made safe by guessing which names are private.
 _DATA_PAYLOAD = re.compile(
-    r"(?i)\b(?:select\s+(?!projects?\b)|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|merge\s+into\b|with\s+\S+\s+as\s*\()"
-    r"|\b(?:sql|query|rows?|results|vars|variables|parameters|bindings)[\"']?\s*[=:]\s*(?:[\"'\[({]|\S)"
+    r"(?i)\b(?:select\s+(?!projects?\b).*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|merge\s+into\b|with\s+\S+\s+as\s*\()"
+    r"|\b(?:sql|query|rows?|results|vars|variables|parameters|bindings)[\"']?\s*[=:]\s*[\"'\[({]"
     r"|(?:^|\s)[\[{(]\s*[\"']"
     r"|(?:\b(?:project|dataset|table|model)\s*[=:]\s*[\"'])")
 _URL = re.compile(r"""(?i)\b(?:https?|ssh|git|ftp|file)://[^\s'"`<>)\]]+""")
@@ -331,7 +331,13 @@ def _split_tail(text: str) -> tuple[str, str]:
 def strip_url_userinfo(url: str) -> str:
     """Drop URL authority userinfo without parsing/re-emitting a possibly malformed URL."""
 
-    return re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)([^/\s?#]*@)", lambda m: m.group(1), url)
+    def strip(m: re.Match) -> str:
+        # An SSH login name (ssh://git@host) is not a secret; only a password after ``:`` or an HTTP(S) userinfo is.
+        if m.group(1).lower() in {"ssh://", "git://"} and ":" not in m.group(2):
+            return m.group(0)
+        return m.group(1)
+
+    return re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)([^/\s?#]*@)", strip, url)
 
 
 def sanitize_credentials(text: str) -> str:

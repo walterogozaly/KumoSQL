@@ -141,6 +141,8 @@ def parse_remote(value: object) -> str:
     remote = value.strip()
     if redact.strip_url_userinfo(remote) != remote:
         raise GitRepoError("Repository URLs must not contain credentials or userinfo. Use your Git credential helper (Git Credential Manager or gh auth setup-git), or an SSH key with git@host:path.")
+    if re.match(r"(?i)(?:https?|ssh|git)://", remote) and re.search(r"[?#]", remote):
+        raise GitRepoError("Repository URLs must not contain a query string or fragment, which can carry tokens.")
     if remote.startswith("-") or not _REMOTE.match(remote) or any(c in remote for c in "\0\n\r"):
         raise GitRepoError(
             "Use an https://, ssh:// or git@host:path remote (or an absolute path to a local repository)"
