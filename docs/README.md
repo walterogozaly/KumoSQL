@@ -11,6 +11,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
 | [Proof safeguards](proof-safeguards.md) | The independent predicate checker, Dataform expressions in proofs, and what is not covered yet |
+| [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
 | [Cost, change reports and the BigQuery dry run](cost-and-change-reports.md) | Dry-run checks, cost attribution, change reports and refactoring proposals |
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |
@@ -24,6 +25,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Multi-statement scripts and MERGE](scripts.md) | Splitting BigQuery scripts, following temporary tables and variables, MERGE lineage, job history, and the script eval |
 | [Model reuse and containment](model-reuse.md) | View reuse, query containment, aggregate decomposition |
 | [Public SQL evaluation sources](public-sql-evaluation-sources.md) | The research list of public suites, databases and projects; what KumoSQL already scores from it is in the [inventory](evals/public-sources.md) |
+| [Additional public SQL sources](additional-public-sql-sources.md) | A second research list: engine paired tests, repair corpora, more sample databases and GoogleSQL projects; see the [inventory](evals/public-sources.md#additional-sources) |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
 
 ## Evals
