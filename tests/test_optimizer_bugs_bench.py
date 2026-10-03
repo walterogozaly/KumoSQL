@@ -19,7 +19,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["optimizer_bugs_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {"refuted": 5}  # measured 5
+FLOORS = {"refuted": 21}  # measured 21 with the counterexample search (5 without)
 # Proved before the fix that came with this eval; never proved again
 REGRESSIONS = {"bug-004"}
 
@@ -37,6 +37,10 @@ def test_every_pair_differs_on_its_own_data(results):
 def test_no_pair_is_proved(results):
     assert not [i for i, r in results.items() if r["outcome"] == "proven"]
     assert sum(r["outcome"] == "refuted" for r in results.values()) >= FLOORS["refuted"]
+
+
+def test_every_attached_counterexample_replays(results):
+    assert not [i for i, r in results.items() if r["replayed"] is False]
 
 
 def test_the_setup_declares_keys_and_not_null_columns():

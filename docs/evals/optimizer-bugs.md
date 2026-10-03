@@ -10,8 +10,8 @@ python tools/optimizer_bugs_bench.py --write-results
 
 ## How a pair is decided
 
-1. **proven**: `prove_equivalent_algebraic` (DuckDB dialect, output names ignored) proves the pair, using the primary keys, UNIQUE and NOT NULL columns the setup declares (CHECK constraints are not used). Any proof is **wrong**.
-2. **refuted**: the prover itself finds the two queries differ.
+1. **proven**: `prove_equivalent_algebraic` (DuckDB dialect, output names ignored) proves the pair, using the column types, primary keys, UNIQUE and NOT NULL columns the setup declares (CHECK constraints are not used). Any proof is **wrong**.
+2. **refuted**: the prover, with its counterexample search on (`search_counterexample=True`, see [refutation strength](refutation-strength.md)), finds the two queries differ. A database it attaches is replayed by the harness (`kumosql.refutation_replay`) and must separate the pair; one that does not is **wrong**.
 3. **unknown**: anything else.
 
 Every run also checks that each pair really differs on its own data: DuckDB with its optimizer off (`kumosql.duckdb_load.run_unoptimized`), or SQLite for the one pair DuckDB cannot run. Results are compared as lists when both queries end in `ORDER BY`, and as bags otherwise.
@@ -20,14 +20,14 @@ Every run also checks that each pair really differs on its own data: DuckDB with
 
 ## Scores
 
-2026-10-03: **5/24 refuted, 0 proved, 0 wrong**; every pair confirmed to differ. Held out: 2/5 refuted, 0 proved.
+2026-10-03: **21/24 refuted, 0 proved, 0 wrong**; every pair confirmed to differ and every attached database replayed. Held out: 4/5 refuted, 0 proved. Before the counterexample search was switched on here, 5/24 were refuted (held out 2/5).
 
 | Outcome | Pairs |
 | --- | --- |
-| refuted | bug-001 (null-safe equality under `NOT`), bug-013 (a dropped filter), bug-015 (a lost `GROUP BY`), bug-019 (`= NULL` read as `IS NULL`), bug-021 (an empty-input aggregate) |
-| unknown | the other 19 |
+| unknown | bug-001 (held out: the solver's counterexample does not separate the pair when run, so it is dropped and nothing else finds one in time), bug-005 (runs only on SQLite, and the search runs on DuckDB), bug-025 (differs only through an arbitrary `DISTINCT ON` pick) |
+| refuted | the other 21 |
 
-**Baseline.** On master before 2026-10-03 01:51 UTC, bug-004 was **proved**: a false proof. `SELECT 'US' FROM events` was proved equal to `SELECT 'US' FROM (SELECT COUNT(*) FROM events) g`, because a rule folded the outer select into a global aggregate and dropped its one-row result. The global-aggregate cardinality fix (#417) landed before this eval; bug-004 is kept as a regression in the eval's test. No prover change was made for this eval.
+**Baseline.** On master before 2026-10-03 01:51 UTC, bug-004 was **proved**: a false proof. `SELECT 'US' FROM events` was proved equal to `SELECT 'US' FROM (SELECT COUNT(*) FROM events) g`, because a rule folded the outer select into a global aggregate and dropped its one-row result. The global-aggregate cardinality fix (#417) landed before this eval; bug-004 is kept as a regression in the eval's test. The counterexample search was built with these pairs in the refutation-strength eval; held-out bug-001 prompted the replay of solver counterexamples (tuned on test).
 
 ## Limits
 

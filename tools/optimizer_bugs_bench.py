@@ -8,9 +8,11 @@ rewrite the optimizer made, as SQL. The two differ on the case's own data, so th
 
 Each case gets one outcome:
 
-1. **proven**: the algebraic prover (DuckDB dialect, with the keys and NOT NULL columns the setup
-   declares) proved the pair. This is **wrong**.
-2. **refuted**: the prover itself found the two queries differ.
+1. **proven**: the algebraic prover (DuckDB dialect, with the column types, keys and NOT NULL
+   columns the setup declares) proved the pair. This is **wrong**.
+2. **refuted**: the prover, with its counterexample search on
+   (``search_counterexample=True``), found the two queries differ; any database it attaches is
+   replayed here (``kumosql.refutation_replay``) and must separate them.
 3. **unknown**: anything else.
 
 The harness also runs both queries on the case's data (DuckDB with its optimizer off, as
@@ -98,6 +100,18 @@ def declared(case: Case) -> tuple[dict[str, list[str]], dict]:
     return schema, constraints
 
 
+def declared_types(case: Case) -> dict[str, dict[str, str]]:
+    """Each setup table's column types, as DuckDB spells them."""
+
+    types: dict[str, dict[str, str]] = {}
+    for statement in sqlglot.parse(case.setup, read="duckdb") if case.setup else ():
+        if isinstance(statement, exp.Create) and statement.kind == "TABLE":
+            types[statement.this.this.name] = {
+                item.name: item.args["kind"].sql("duckdb") for item in statement.this.expressions if isinstance(item, exp.ColumnDef)
+            }
+    return types
+
+
 def results(case: Case) -> tuple[list[tuple], list[tuple]]:
     """Both queries' rows on the case's data."""
 
@@ -124,26 +138,39 @@ def differs(case: Case) -> bool:
     return Counter(left) != Counter(right)
 
 
-def prove(case: Case) -> str:
+def prove(case: Case) -> tuple[str, bool | None]:
+    """The prover's outcome and, for a refutation that comes with a database, whether that database
+    separates the pair when replayed (``None`` without one)."""
+
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+    from kumosql.refutation_replay import replay_counterexample
     from kumosql.smt_equivalence import SmtStatus
 
     schema, constraints = declared(case)
+    types = declared_types(case)
     try:
         result = prove_equivalent_algebraic(
-            case.left, case.right, schema=schema or None, constraints=constraints or None,
-            compare_names=False, dialect="duckdb", timeout_ms=PROVER_TIMEOUT_MS,
+            case.left, case.right, schema=schema or None, constraints=constraints or None, types=types or None,
+            compare_names=False, dialect="duckdb", timeout_ms=PROVER_TIMEOUT_MS, search_counterexample=True,
         )
     except Exception:  # a crash is a failure to prove, never a proof
-        return "unknown"
-    return {SmtStatus.PROVEN_EQUIVALENT: "proven", SmtStatus.NOT_EQUIVALENT: "refuted"}.get(result.status, "unknown")
+        return "unknown", None
+    outcome = {SmtStatus.PROVEN_EQUIVALENT: "proven", SmtStatus.NOT_EQUIVALENT: "refuted"}.get(result.status, "unknown")
+    if outcome != "refuted" or result.counterexample is None:
+        return outcome, None
+    replayed = replay_counterexample(
+        case.left, case.right, result.counterexample, schema=types, dialect="duckdb",
+        keys={t: [list(k) for k in c.keys] for t, c in constraints.items() if c.keys},
+        not_null={t: sorted(c.not_null) for t, c in constraints.items() if c.not_null},
+    )
+    return outcome, replayed
 
 
 def decide(case: Case) -> dict:
-    outcome = prove(case)
+    outcome, replayed = prove(case)
     return {
-        "id": case.id, "tracker": case.tracker, "family": case.family, "outcome": outcome,
-        "confirmed": differs(case), "wrong": outcome == "proven", "held_out": case.held_out,
+        "id": case.id, "tracker": case.tracker, "family": case.family, "outcome": outcome, "replayed": replayed,
+        "confirmed": differs(case), "wrong": outcome == "proven" or replayed is False, "held_out": case.held_out,
     }
 
 
@@ -162,15 +189,15 @@ def results_row(rows: list[dict]) -> dict:
         "order": 38,
         "size": len(rows),
         "score": f"{counts['refuted']}/{len(rows)} refuted, {counts['proven']} proved, {sum(r['wrong'] for r in rows)} wrong",
-        "metric": "Query pairs from public optimizer wrong-result bug reports (a query and the rewrite an optimizer made of it), which return different rows on the report's data: none may be proved; refuted means the prover itself found a difference.",
+        "metric": "Query pairs from public optimizer wrong-result bug reports (a query and the rewrite an optimizer made of it), which return different rows on the report's data: none may be proved; refuted means the prover, with its counterexample search on, found a difference, and any database it attached replays to one.",
         "evidence": "executed",
-        "correctness": "Every pair is checked to differ on its own data (DuckDB with the optimizer off, or SQLite), so any proof counts as wrong.",
+        "correctness": "Every pair is checked to differ on its own data (DuckDB with the optimizer off, or SQLite), so any proof counts as wrong, and so does a refutation whose database does not replay to a difference.",
         "coverage": {k: counts[k] for k in ("proven", "refuted", "unknown") if counts[k]},
         "held_out": f"{sum(r['outcome'] == 'refuted' for r in held)}/{len(held)} refuted, {sum(r['outcome'] == 'proven' for r in held)} proved",
         "docs": "docs/evals/optimizer-bugs.md",
         "command": "python tools/optimizer_bugs_bench.py --write-results",
         "date": today(),
-        "caveats": "The pairs were collected by an outside research assistant and re-checked here; one was dropped (it ran a single query under two optimizer settings). Most rewrites are spelled out from the reports' plans, so they are SQL readings of a plan, not SQL the reporters wrote. Every case, held-out ones included, was seen while building the harness; no prover change was made for this eval.",
+        "caveats": "The pairs were collected by an outside research assistant and re-checked here; one was dropped (it ran a single query under two optimizer settings). Most rewrites are spelled out from the reports' plans, so they are SQL readings of a plan, not SQL the reporters wrote. Every case, held-out ones included, was seen while building the harness. The counterexample search (kumosql.refutation_synthesis) was built with these pairs in the refutation-strength eval; held-out bug-001 prompted the replay of solver counterexamples (tuned on test). bug-005 runs only on SQLite and bug-025 differs only through an arbitrary DISTINCT ON pick, so neither can be refuted on DuckDB.",
     }
 
 
