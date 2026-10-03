@@ -409,6 +409,24 @@ def select_sources(select: exp.Select) -> list[exp.Expression]:
     return ([from_.this] if from_ is not None else []) + [join.this for join in select.args.get("joins") or []]
 
 
+def plain_distinct(select: exp.Expression) -> bool:
+    """Whether ``select`` is ``SELECT DISTINCT``: duplicate removal over whole output rows.
+
+    ``DISTINCT ON (k)`` is not: it keeps one row per ``k``, the first in the select's ``ORDER BY``, so it
+    picks values (and its ORDER BY shows) rather than only dropping repeats.
+    """
+
+    distinct = select.args.get("distinct")  # a set operation's is a bool
+    return isinstance(distinct, exp.Distinct) and not distinct.args.get("on")
+
+
+def distinct_on(select: exp.Expression) -> bool:
+    """Whether ``select`` is a ``SELECT DISTINCT ON (..)``."""
+
+    distinct = select.args.get("distinct")
+    return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
+
+
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 
