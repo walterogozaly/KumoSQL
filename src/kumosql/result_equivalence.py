@@ -168,16 +168,63 @@ def _normalize_type(bq_type: str) -> str:
     upper = bq_type.strip().upper()
     upper = _TYPE_ALIASES.get(upper, upper)
     if upper not in _DOMAINS:
-        raise ValueError(f"unsupported synthetic column type: {bq_type!r}")
+        nested = _nested_type(bq_type)
+        if nested is None:
+            raise ValueError(f"unsupported synthetic column type: {bq_type!r}")
+        return nested.sql()
     return upper
+
+
+def _nested_type(bq_type: str):
+    """The :class:`~kumosql.nested_values.NestedType` of an ARRAY or STRUCT type whose scalars all have
+    domains, or ``None``."""
+
+    from .nested_values import parse_type
+
+    parsed = parse_type(bq_type) if bq_type.strip().upper().startswith(("ARRAY", "STRUCT")) else None
+    if parsed is None or not parsed.nested:
+        return None
+    scalars = [t for _, t in parsed.walk() if not t.nested]
+    element = parsed.element if parsed.kind == "ARRAY" else None
+    if element is not None and not element.nested:
+        scalars.append(element)
+    if any(_TYPE_ALIASES.get(t.kind, t.kind) not in _DOMAINS for t in scalars):
+        return None
+    return parsed
+
+
+def _duckdb_type(col_type: str) -> str:
+    """The DuckDB column type of a normalized synthetic type."""
+
+    known = _DUCKDB_TYPES.get(col_type)
+    return known if known is not None else _nested_type(col_type).duckdb()
+
+
+def is_array_type(col_type: str) -> bool:
+    """Whether a normalized synthetic type is an ARRAY (stored arrays are never NULL in BigQuery)."""
+
+    return col_type.startswith("ARRAY<")
 
 
 @dataclass(frozen=True)
 class SyntheticTable:
-    """Column (name, BigQuery type) pairs and the rows generated for them."""
+    """Column (name, BigQuery type) pairs and the rows generated for them.
+
+    BigQuery stores a NULL array as an empty one, so a NULL in an ARRAY column is read as ``[]``:
+    every generated table is one BigQuery can hold.
+    """
 
     columns: tuple[tuple[str, str], ...]
     rows: tuple[Row, ...]
+
+    def __post_init__(self) -> None:
+        arrays = [i for i, (_, t) in enumerate(self.columns) if t.startswith("ARRAY<")]
+        if arrays and any(row[i] is None for row in self.rows for i in arrays):
+            from .nested_values import Array
+
+            empty = Array(())
+            rows = tuple(tuple(empty if v is None and i in arrays else v for i, v in enumerate(row)) for row in self.rows)
+            object.__setattr__(self, "rows", rows)
 
 
 @dataclass(frozen=True)
@@ -281,12 +328,33 @@ def query_constants(*sqls: str) -> dict[str, tuple[Any, ...]]:
     return out
 
 
-def _draw(rng: random.Random, col_type: str, extras: Mapping[str, tuple[Any, ...]]) -> Any:
+def _draw(rng: random.Random, col_type: str, extras: Mapping[str, tuple[Any, ...]], null_rate: float = 0.15) -> Any:
     # Half the values come from the queries' constants when there are any, so that rows
     # matching several filters at once are common, not a rare coincidence.
+    if col_type not in _DOMAINS:
+        return draw_nested(rng, col_type, lambda kind, path: _draw(rng, kind, extras), null_rate)
     if extras.get(col_type) and rng.random() < 0.5:
         return rng.choice(extras[col_type])
     return rng.choice(_DOMAINS[col_type])
+
+
+ARRAY_LENGTHS = (0, 1, 1, 2, 2, 3)
+"""Array lengths drawn for generated data: empty arrays and repeated elements are where nested rewrites break."""
+
+
+def draw_nested(rng: random.Random, col_type: str, scalar, null_rate: float = 0.15) -> Any:
+    """A random value of the ARRAY or STRUCT type ``col_type`` that BigQuery can store; ``scalar(kind, path)``
+    draws a scalar of a normalized type for the field at ``path``."""
+
+    from .nested_values import build_value
+
+    nested = _nested_type(col_type)
+    return build_value(
+        nested,
+        lambda t, path: scalar(_TYPE_ALIASES.get(t.kind, t.kind), path),
+        lambda path: rng.choice(ARRAY_LENGTHS),
+        lambda path: rng.random() < null_rate,
+    )
 
 
 def generate_synthetic_dataset(
@@ -323,7 +391,7 @@ def generate_synthetic_dataset(
         for _ in range(count):
             rows.append(
                 tuple(
-                    None if rng.random() < null_rate else _draw(rng, col_type, extras)
+                    None if rng.random() < null_rate and not is_array_type(col_type) else _draw(rng, col_type, extras, null_rate)
                     for _, col_type in columns
                 )
             )
@@ -400,6 +468,12 @@ def _schema_lookup(schema: Schema) -> dict[str, str]:
     for key in schema:
         lookup[key.lower()] = key
     return lookup
+
+
+def _column_types(schema: Schema) -> dict[str, str]:
+    """Column name -> type over every table of ``schema`` (for reading nested columns as BigQuery does)."""
+
+    return {name: col_type for columns in schema.values() for name, col_type in columns.items() if isinstance(col_type, str)}
 
 
 def prepare_statements(
@@ -488,7 +562,7 @@ def prepare_statements(
             if dialect == "bigquery":
                 from .bigquery_on_duckdb import faithful
 
-                statement = faithful(statement)
+                statement = faithful(statement, _column_types(schema))
             duckdb_sql.append(statement.sql(dialect="duckdb"))
         except sqlglot.errors.SqlglotError as exc:
             raise ExecutionError(f"cannot translate statement {index + 1} to DuckDB: {exc}") from exc
@@ -528,13 +602,19 @@ def _sql_literal(value: Any) -> str:
         return f"DATE '{value.isoformat()}'"
     if isinstance(value, str):
         return "'" + value.replace("'", "''") + "'"
+    from .nested_values import Array, Struct
+
+    if isinstance(value, Array):
+        return "[" + ", ".join(_sql_literal(v) for v in value) + "]"
+    if isinstance(value, Struct):
+        return "{" + ", ".join(f"'{name or f'_field_{i + 1}'}': {_sql_literal(v)}" for i, (name, v) in enumerate(value.fields)) + "}"
     raise TypeError(f"cannot render synthetic value {value!r}")
 
 
 def _load_dataset(connection, dataset: SyntheticDataset) -> None:
     for key, table in dataset.tables.items():
         local = _local_name(key)
-        column_sql = ", ".join(f'"{name}" {_DUCKDB_TYPES[t]}' for name, t in table.columns)
+        column_sql = ", ".join(f'"{name}" {_duckdb_type(t)}' for name, t in table.columns)
         connection.execute(f'CREATE TABLE "{local}" ({column_sql})')
         if table.rows:
             # One multi-row INSERT of literals: executemany costs a round trip
@@ -598,7 +678,7 @@ class DatasetRunner:
         self._loaded: SyntheticDataset | None = None
         columns_by_table = {key: tuple((n, _normalize_type(t)) for n, t in cols.items()) for key, cols in schema.items()}
         for key, columns in columns_by_table.items():
-            column_sql = ", ".join(f'"{name}" {_DUCKDB_TYPES[t]}' for name, t in columns)
+            column_sql = ", ".join(f'"{name}" {_duckdb_type(t)}' for name, t in columns)
             self._connection.execute(f'CREATE TABLE "{_local_name(key)}" ({column_sql})')
         self._prepared: dict[str, str] = {}
 
@@ -665,7 +745,7 @@ def _normalize_value(value: Any, float_digits: int) -> Any:
         return float(f"{value:.{float_digits}g}")
     if isinstance(value, Decimal):
         return value.normalize() if value == value else ("NaN",)
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):  # arrays and structs (bigquery_rows reads both as tuples)
         return tuple(_normalize_value(v, float_digits) for v in value)
     if isinstance(value, dict):
         return tuple(sorted((k, _normalize_value(v, float_digits)) for k, v in value.items()))

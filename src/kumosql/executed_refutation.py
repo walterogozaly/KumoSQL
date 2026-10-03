@@ -18,8 +18,11 @@ reading of them, the search only runs when
 * both queries use only constructs whose DuckDB translation evaluates as
   BigQuery does (a fixed allow-list: joins, set operations, subqueries,
   comparisons, arithmetic, ``CASE``/``IF``/``COALESCE``, the plain aggregates and
-  aggregate windows; no ``LIMIT``, string or date functions, ``LIKE``, arrays,
-  ``ROW_NUMBER`` or anything nondeterministic),
+  aggregate windows, ``UNNEST`` of array columns and struct field access,
+  ``x IN UNNEST(..)``, ``ARRAY_LENGTH``, ``ARRAY_CONCAT`` and ``arr[OFFSET(i)]``;
+  no ``LIMIT``, string or date functions, ``LIKE``, ``ARRAY_AGG``, ``ARRAY(subquery)``,
+  ``ROW_NUMBER`` or anything nondeterministic, and no window over an ``UNNEST``,
+  whose row order BigQuery leaves open),
 * the DuckDB run follows BigQuery's semantics (:mod:`kumosql.bigquery_on_duckdb`:
   a zero divisor fails the run as it does in BigQuery, NULL sorts first, and so
   on), and
@@ -54,8 +57,9 @@ _ALLOWED_NAMES = (
     "Add", "Sub", "Mul", "Neg", "Div", "SafeDivide", "Abs", "Case", "If", "Coalesce", "Nullif", "Cast", "TryCast",
     # aggregates and aggregate windows
     "Count", "Sum", "Min", "Max", "Avg", "CountIf", "LogicalAnd", "LogicalOr", "Window", "WindowSpec",
-    # checked further in _refusal: field access to a STRUCT, day arithmetic on dates, CROSS JOIN UNNEST
+    # checked further in _refusal: field access to a STRUCT, day arithmetic on dates, UNNEST and arrays
     "Struct", "PropertyEQ", "DateAdd", "DateSub", "DateDiff", "Interval", "Var", "Unnest", "Array",
+    "Dot", "Bracket", "ArraySize", "ArrayConcat",
 )
 _ALLOWED = tuple(cls for cls in (getattr(exp, name, None) for name in _ALLOWED_NAMES) if cls is not None)
 _CAST_TARGETS = {
@@ -101,17 +105,16 @@ def _refusal(tree: exp.Expression) -> str | None:
             return "date arithmetic other than days"
         if isinstance(node, (exp.Interval, exp.Var)) and not isinstance(node.parent, (exp.DateAdd, exp.DateSub, exp.DateDiff, exp.Interval)):
             return type(node).__name__
-        if isinstance(node, exp.Unnest) and not (
-            isinstance(node.parent, exp.Join)
-            and not node.parent.args.get("side")
-            and not node.parent.args.get("on")
-            and not node.args.get("offset")
-            and len(node.expressions) == 1
-            and isinstance(node.expressions[0], exp.Array)
-        ):
+        if isinstance(node, exp.Unnest) and not (_unnest_read(node) or (isinstance(node.parent, exp.In) and node.arg_key == "unnest")):
             return "UNNEST"
-        if isinstance(node, exp.Array) and not isinstance(node.parent, exp.Unnest):
-            return "ARRAY"
+        if isinstance(node, exp.Array) and any(isinstance(e, exp.Query) for e in node.expressions):
+            return "ARRAY(subquery)"
+        if isinstance(node, exp.Bracket) and (
+            len(node.expressions) != 1 or (isinstance(node.expressions[0], exp.Literal) and node.expressions[0].is_string)
+        ):
+            return "subscript"
+        if isinstance(node, exp.Window) and tree.find(exp.Unnest) is not None:
+            return "window over UNNEST"
         if isinstance(node, _SET_OPERATIONS) and (node.args.get("by_name") or node.args.get("side") or node.args.get("kind")):
             return "set operation by name"
         if isinstance(node, exp.Window) and not isinstance(
@@ -125,6 +128,18 @@ def _refusal(tree: exp.Expression) -> str | None:
         if isinstance(node, exp.Join) and (node.args.get("using") or node.args.get("method")):
             return "join form"
     return _struct_refusal(tree)
+
+
+def _unnest_read(node: exp.Unnest) -> bool:
+    """``UNNEST`` of one array in ``FROM``, a comma or ``CROSS JOIN``, or a ``LEFT JOIN`` (rows with an empty
+    array kept), with an element name when it has ``WITH OFFSET``."""
+
+    from .bigquery_on_duckdb import _source_unnest
+
+    join = node.parent
+    if isinstance(join, exp.Join) and ((join.args.get("side") or "").upper() not in ("", "LEFT") or join.args.get("using")):
+        return False
+    return _source_unnest(node)
 
 
 def _faithful(tree: exp.Expression) -> exp.Expression:
@@ -252,7 +267,7 @@ def _narrow_datasets(typed, rules, extras, count: int = 60):
 
     import random
 
-    from .result_equivalence import _DOMAINS, SyntheticDataset, SyntheticTable, respect_rules
+    from .result_equivalence import _DOMAINS, SyntheticDataset, SyntheticTable, draw_nested, respect_rules
 
     ints = sorted({v + d for v in extras.get("INT64", ()) for d in (-1, 0, 1)} | {0, 1})[:8]
     rng = random.Random(17)
@@ -262,7 +277,11 @@ def _narrow_datasets(typed, rules, extras, count: int = 60):
             cols = tuple(columns.items())
             pools = []
             for _, col_type in cols:
-                pool = ints if col_type == "INT64" else list(_DOMAINS[col_type][:3])
+                if col_type in _DOMAINS:
+                    pool = ints if col_type == "INT64" else list(_DOMAINS[col_type][:3])
+                else:
+                    small = lambda kind, path: rng.choice(ints if kind == "INT64" else _DOMAINS[kind][:3])  # noqa: E731
+                    pool = [draw_nested(rng, col_type, small, 0.25) for _ in range(3)]
                 pools.append([rng.choice(pool)] if rng.random() < 0.4 else pool)
             rows = [
                 tuple(None if rng.random() < 0.25 else rng.choice(pool) for pool in pools)
@@ -354,8 +373,16 @@ class _Search:
 def _export(value: Any) -> Any:
     from decimal import Decimal
 
+    from .nested_values import Array, Struct
+
     if isinstance(value, Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, Array):
+        return [_export(v) for v in value]
+    if isinstance(value, Struct):
+        return {(name or f"_field_{i + 1}"): _export(v) for i, (name, v) in enumerate(value.fields)}
+    if isinstance(value, tuple):  # an array or struct read back from DuckDB
+        return [_export(v) for v in value]
     return value
 
 

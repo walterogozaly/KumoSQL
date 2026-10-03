@@ -31,14 +31,19 @@ from typing import Any, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .nested_values import Array, Struct
 from .result_equivalence import (
     _DOMAINS,
     DataRules,
     Schema,
     SyntheticDataset,
     SyntheticTable,
+    _nested_type,
     _normalize_type,
+    _TYPE_ALIASES,
+    draw_nested,
     generate_synthetic_dataset,
+    is_array_type,
     respect_rules,
 )
 
@@ -121,9 +126,22 @@ class _Facts:
 
     def __init__(self, sql: str, schema: Schema, dialect: str):
         self.types: dict[str, str] = {}
+        nested: list[tuple[str, str]] = []
         for columns in schema.values():
             for name, bq_type in columns.items():
-                self.types.setdefault(name.lower(), _normalize_type(bq_type))
+                col_type = _normalize_type(bq_type)
+                self.types.setdefault(name.lower(), col_type)
+                if col_type not in _DOMAINS:
+                    nested.append((name.lower(), col_type))
+        # The scalar fields of ARRAY and STRUCT columns pool like columns of their own name (``p.key = 'x'``
+        # compares the field ``key``), and a scalar array's elements pool under ``<column>[]``.
+        for name, col_type in nested:
+            parsed = _nested_type(col_type)
+            for path, field_type in parsed.walk():
+                if not field_type.nested:
+                    self.types.setdefault(path[-1].lower(), _TYPE_ALIASES.get(field_type.kind, field_type.kind))
+            if parsed.kind == "ARRAY" and not parsed.element.nested:
+                self.types.setdefault(f"{name}[]", _TYPE_ALIASES.get(parsed.element.kind, parsed.element.kind))
         self.constants: dict[str, list[list[Any]]] = {}  # column -> groups of boundary values
         self.parent: dict[str, str] = {}
         self.nullable_tests: set[str] = set()
@@ -133,6 +151,8 @@ class _Facts:
             tree = sqlglot.parse_one(sql, read=dialect)
         except sqlglot.errors.SqlglotError:
             return
+        for node in tree.find_all(exp.Unnest):
+            self._unnest(node)
         for node in tree.find_all(*_COMPARISONS):
             self._comparison(node)
         for node in tree.find_all(exp.Between):
@@ -141,6 +161,15 @@ class _Facts:
         for node in tree.find_all(exp.In):
             for item in node.expressions:
                 self._constant_against(item, node.this, exp.EQ)
+            array = node.args.get("unnest")
+            array = array.expressions[0] if isinstance(array, exp.Unnest) and len(array.expressions) == 1 else None
+            if isinstance(array, exp.Column) and f"{array.name.lower()}[]" in self.types:
+                # ``x IN UNNEST(arr)`` compares ``x`` with the elements of ``arr``
+                element = f"{array.name.lower()}[]"
+                if isinstance(node.this, exp.Column) and node.this.name.lower() in self.types:
+                    self._union(node.this.name.lower(), element)
+                elif isinstance(node.this, exp.Literal):
+                    self._constant_against(node.this, exp.column(element), exp.EQ)
         for node in tree.find_all(exp.Like, exp.ILike):
             pattern = node.expression
             if isinstance(pattern, exp.Literal) and pattern.is_string:
@@ -151,6 +180,19 @@ class _Facts:
         for node in tree.find_all(exp.Is):
             for column in node.this.find_all(exp.Column):
                 self.nullable_tests.add(column.name.lower())
+
+    def _unnest(self, node: exp.Unnest) -> None:
+        """``UNNEST(arr) AS x``: ``x`` is an element of ``arr``, so it shares the element pool."""
+
+        if len(node.expressions) != 1 or not isinstance(node.expressions[0], exp.Column):
+            return
+        element = f"{node.expressions[0].name.lower()}[]"
+        alias = node.args.get("alias")
+        columns = alias.args.get("columns") if alias is not None else None
+        name = (columns[0].name if columns else alias.name if alias is not None else "").lower()
+        if element in self.types and name and name not in self.types:
+            self.types[name] = self.types[element]
+            self._union(name, element)
 
     def _find(self, name: str) -> str:
         while self.parent.get(name, name) != name:
@@ -199,6 +241,10 @@ class _Facts:
         if cached is not None:
             return cached
         col_type = self.types[name]
+        if col_type not in _DOMAINS:
+            out = self._nested_pool(name, col_type)
+            self._pools[name] = out
+            return out
         root = self._find(name)
         values: list[Any] = []
         for member in self.types:
@@ -211,6 +257,41 @@ class _Facts:
                 out.append(value)
         self._pools[name] = out
         return out
+
+    def _nested_pool(self, name: str, col_type: str) -> list[Any]:
+        """Values of an ARRAY or STRUCT column built from its fields' pools: for an array the empty array,
+        one element, a repeated element and mixed elements; for a struct three filled ones and an all-NULL one."""
+
+        parsed = _nested_type(col_type)
+        if parsed.kind == "STRUCT":
+            return [self._pick(parsed, (), name, k) for k in range(3)] + [Struct(tuple((f, None) for f, _ in parsed.fields))]
+        first, second, third = (self._pick(parsed.element, (), name, k) for k in range(3))
+        out: list[Any] = []
+        for elements in ((), (first,), (first, first), (first, second), (second, third, first), (second,)):
+            value = Array(tuple(elements))
+            if value not in out:
+                out.append(value)
+        return out
+
+    def field_value(self, kind: str, path: tuple[str, ...], column: str, rng: random.Random) -> Any:
+        """A random value for the scalar field at ``path`` of nested column ``column``."""
+
+        name = path[-1].lower() if path else f"{column}[]"
+        pool = self.pool(name) if self.types.get(name) == kind else list(_DOMAINS[kind])
+        return rng.choice(pool)
+
+    def _pick(self, t, path: tuple[str, ...], column: str, index: int) -> Any:
+        if t.nested:
+            if t.kind == "ARRAY":
+                return Array(tuple(self._pick(t.element, path, column, k) for k in range(index % 3)))
+            return Struct(tuple(
+                (field, self._pick(inner, path + ((field or f"_field_{i + 1}"),), column, index))
+                for i, (field, inner) in enumerate(t.fields)
+            ))
+        kind = _TYPE_ALIASES.get(t.kind, t.kind)
+        name = path[-1].lower() if path else f"{column}[]"
+        pool = self.pool(name) if self.types.get(name) == kind else list(_DOMAINS[kind][:3])
+        return pool[index % len(pool)]
 
     def is_joined(self, name: str) -> bool:
         root = self._find(name)
@@ -273,6 +354,8 @@ def _build_rows(
                     value = pool[(index + offset) % len(pool)]
                 elif rng.random() < pool_bias:
                     value = rng.choice(pool)
+                elif col_type not in _DOMAINS:
+                    value = draw_nested(rng, col_type, lambda kind, path: facts.field_value(kind, path, lowered, rng))
                 else:
                     value = rng.choice(_DOMAINS[col_type])
                 if lowered not in required and lowered not in key_columns and rng.random() < null_rate:

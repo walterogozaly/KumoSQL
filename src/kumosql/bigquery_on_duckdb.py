@@ -18,9 +18,13 @@ is a wrong answer. This module is the one place that closes those gaps, in three
   digits), ``>>`` of a negative number (logical in BigQuery), ``CAST(FLOAT64 AS STRING)``, strings
   cast to numbers, booleans, dates or timestamps in any form the two engines may read differently
   (``'1.0'`` as INT64, ``'nan'``, ``'t'``), and whole queries using constructs without a faithful
-  reading (``FORMAT``, ``COLLATE``, approximate aggregates, ``WITH OFFSET``, ``BIGNUMERIC``,
-  ``WEEK(<weekday>)`` other than Sunday or Monday, ``STRUCT`` compared or grouped, float literals
-  large enough to overflow).
+  reading (``FORMAT``, ``COLLATE``, approximate aggregates, ``BIGNUMERIC``, ``WEEK(<weekday>)`` other
+  than Sunday or Monday, a ``STRUCT`` compared, float literals large enough to overflow).
+
+Nested data (:func:`faithful` with ``columns``, the column types of the tables read): ``UNNEST .. WITH
+OFFSET`` counts from 0 (DuckDB's ``WITH ORDINALITY`` from 1), the fields of an ``UNNEST`` of structs are
+columns of their own as in BigQuery (``FROM t, UNNEST(t.params) AS p WHERE key = 'x'``), and
+``ARRAY_CONCAT`` is ``NULL`` when an argument is (DuckDB skips a ``NULL`` list).
 
 Results are then read the way BigQuery returns them (:func:`bigquery_rows`): a NULL array is ``[]``,
 a ``STRUCT`` is its values in order (BigQuery compares structs by position), and a ``DATE`` that
@@ -38,7 +42,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import date, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import sqlglot
 from sqlglot import exp
@@ -156,12 +160,18 @@ _APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLA
 _STRUCT_COMPARISONS = _class("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "NullSafeEQ", "NullSafeNEQ", "In", "Is")
 
 
-def struct_refusal(tree: exp.Expression) -> str | None:
+def struct_refusal(tree: exp.Expression, struct_columns: Iterable[str] = ()) -> str | None:
     """A STRUCT may only be read field by field: DuckDB compares and groups whole structs by field
-    name (BigQuery by position) and treats NULL fields differently."""
+    name (BigQuery by position) and treats NULL fields differently.
+
+    ``struct_columns`` names columns (and UNNEST elements) of STRUCT type in the tables read: one of
+    them may be output, grouped, tested ``IS NULL`` or read field by field, but not compared whole
+    (``{'a': 1, 'b': NULL} = {'a': 1, 'b': NULL}`` is TRUE in DuckDB and NULL in BigQuery)."""
 
     names = set()
     for node in tree.find_all(exp.Struct):
+        if isinstance(node.parent, exp.Dot) and node.arg_key == "this" and _named_fields(node):
+            continue  # STRUCT(1 AS a, 2 AS b).b reads one field
         if not (isinstance(node.parent, exp.Alias) and isinstance(node.parent.parent, exp.Select)):
             return "STRUCT outside a select list"
         names.add(node.parent.alias.lower())
@@ -170,14 +180,37 @@ def struct_refusal(tree: exp.Expression) -> str | None:
     for column in tree.find_all(exp.Column):
         if column.name.lower() in names and column.table.lower() not in names:
             return "whole STRUCT"
+    stored = {name.lower() for name in struct_columns}
+    if stored:
+        for column in tree.find_all(exp.Column):
+            if column.name.lower() in stored and not _whole_struct_allowed(column):
+                return "whole STRUCT compared"
     return None
+
+
+def _named_fields(node: exp.Struct) -> bool:
+    """Every field of a STRUCT constructor is named, and no two alike."""
+
+    names = [e.name.lower() if isinstance(e, (exp.PropertyEQ, exp.Alias)) else None for e in node.expressions]
+    return bool(names) and None not in names and len(set(names)) == len(names)
+
+
+def _whole_struct_allowed(column: exp.Column) -> bool:
+    """A whole STRUCT value output by a select, grouped on, or tested for NULL."""
+
+    node = column.parent
+    if isinstance(node, exp.Alias):
+        node = node.parent
+    if isinstance(node, (exp.Select, exp.Group)):
+        return True
+    return isinstance(column.parent, exp.Is) and isinstance(column.parent.expression, exp.Null)
 
 
 def _capture_groups(pattern: str) -> int:
     return len(re.findall(r"(?<!\\)\((?!\?)", pattern))
 
 
-_ORDERED_AGGREGATES = _class("ArrayAgg", "GroupConcat")
+_ORDERED_AGGREGATES = _class("ArrayAgg", "GroupConcat", "ArrayConcatAgg")
 _CURRENT = _class("CurrentDate", "CurrentDatetime", "CurrentTime", "CurrentTimestamp")
 
 
@@ -192,7 +225,18 @@ def _ordered(node: exp.Expression) -> bool:
     return isinstance(inner, exp.Order) or (isinstance(node.parent, exp.Window) and bool(node.parent.args.get("order")))
 
 
-def refusal(tree: exp.Expression) -> str | None:
+def _source_unnest(node: exp.Unnest) -> bool:
+    """An ``UNNEST`` read as a table: in ``FROM`` or a join, over one array, with an element name when
+    it has ``WITH OFFSET``."""
+
+    if not isinstance(node.parent, (exp.From, exp.Join)) or node.arg_key != "this" or len(node.expressions) != 1:
+        return False
+    alias = node.args.get("alias")
+    columns = alias.args.get("columns") if alias is not None else None
+    return not node.args.get("offset") or bool(columns) or bool(alias is not None and alias.name)
+
+
+def refusal(tree: exp.Expression, struct_columns: Iterable[str] = ()) -> str | None:
     """Why ``tree`` has no faithful DuckDB reading, or ``None``."""
 
     for node in tree.walk():
@@ -200,7 +244,7 @@ def refusal(tree: exp.Expression) -> str | None:
             return type(node).__name__
         if isinstance(node, exp.Anonymous) and _APPROX_NAMES.match(str(node.this)):
             return str(node.this).upper()
-        if isinstance(node, exp.Unnest) and node.args.get("offset"):
+        if isinstance(node, exp.Unnest) and node.args.get("offset") and not _source_unnest(node):
             return "UNNEST WITH OFFSET"  # sqlglot writes WITH ORDINALITY, which counts from 1
         if isinstance(node, exp.DataType) and node.this == exp.DataType.Type.BIGDECIMAL:
             return "BIGNUMERIC"
@@ -226,7 +270,7 @@ def refusal(tree: exp.Expression) -> str | None:
                 return "REGEXP_EXTRACT with a position"
             if not (isinstance(pattern, exp.Literal) and pattern.is_string) or _capture_groups(pattern.this) > 1:
                 return "REGEXP_EXTRACT pattern"
-    return struct_refusal(tree)
+    return struct_refusal(tree, struct_columns)
 
 
 # --- translation fixes and guards --------------------------------------------------------------
@@ -376,6 +420,8 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         )
     if isinstance(node, exp.Concat):
         return _null_if_any_null(node, node.expressions)
+    if isinstance(node, exp.ArrayConcat):
+        return _null_if_any_null(node, [node.this, *node.expressions])
     if isinstance(node, (exp.Least, exp.Greatest)):
         return _null_if_any_null(node, [node.this, *node.expressions])
     if isinstance(node, exp.Substring):
@@ -400,19 +446,99 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
     return None
 
 
-def faithful(tree: exp.Expression) -> exp.Expression:
+def _nested_names(columns: Mapping[str, str] | None) -> dict[str, Any]:
+    """``{lower-case name: NestedType}`` for the nested columns in ``columns`` and every field below them
+    (a name with two different types is left out)."""
+
+    from .nested_values import parse_type
+
+    found: dict[str, Any] = {}
+    clashes: set[str] = set()
+
+    def note(name: str, value) -> None:
+        name = name.lower()
+        if name in found and found[name] != value:
+            clashes.add(name)
+        found[name] = value
+
+    for name, text in (columns or {}).items():
+        parsed = parse_type(text) if isinstance(text, str) and text.upper().startswith(("ARRAY", "STRUCT")) else None
+        if parsed is None or not parsed.nested:
+            continue
+        note(name, parsed)
+        for path, inner in parsed.walk():
+            note(path[-1], inner)
+    return {k: v for k, v in found.items() if k not in clashes}
+
+
+def _array_of(expression: exp.Expression, nested: Mapping[str, Any]):
+    """The ARRAY type of ``expression`` (a column or field path) when ``nested`` knows it."""
+
+    name = expression.name if isinstance(expression, (exp.Column, exp.Dot)) else ""
+    parsed = nested.get(name.lower()) if name else None
+    return parsed if parsed is not None and parsed.kind == "ARRAY" else None
+
+
+def _unnest_source(node: exp.Unnest, nested: Mapping[str, Any], number: int) -> exp.Expression | None:
+    """An ``UNNEST`` in ``FROM`` as a DuckDB derived table with BigQuery's columns: the element under its
+    alias, the offset counted from 0, and the fields of a struct element; ``None`` keeps sqlglot's own
+    translation (an element of unknown or scalar type and no offset)."""
+
+    if not _source_unnest(node):
+        return None
+    alias = node.args.get("alias")
+    columns = alias.args.get("columns") if alias is not None else None
+    element = (columns[0].name if columns else alias.name if alias is not None else "") or ""
+    offset_arg = node.args.get("offset")
+    offset = (offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else ""
+    array = _array_of(node.expressions[0], nested)
+    fields = [n for n, _ in array.element.fields if n] if array is not None and array.element.kind == "STRUCT" else []
+    if not offset and not fields:
+        return None
+    lowered = [f.lower() for f in fields]
+    if element.lower() in lowered or offset.lower() in lowered or (element and element.lower() == offset.lower()):
+        raise Unfaithful("no DuckDB reading matches BigQuery: an UNNEST field shares its alias's name")
+    items = []
+    if element:
+        items.append(f'__kumo_e AS "{element}"')
+    if offset:
+        items.append(f'__kumo_o - 1 AS "{offset}"')
+    if fields:
+        items.append("UNNEST(__kumo_e)")
+    source = "UNNEST(__array) WITH ORDINALITY AS __kumo_t(__kumo_e, __kumo_o)" if offset else "UNNEST(__array) AS __kumo_t(__kumo_e)"
+    select = _duckdb(f"SELECT {', '.join(items)} FROM {source}", array=node.expressions[0])
+    join = node.parent
+    if isinstance(join, exp.Join) and join.args.get("side") and join.args.get("on") is None:
+        join.set("on", exp.true())  # DuckDB writes a LEFT JOIN of a derived table without ON as a comma join
+    return exp.Subquery(this=select, alias=exp.TableAlias(this=exp.to_identifier(f"__kumo_unnest_{number}")))
+
+
+def faithful(tree: exp.Expression, columns: Mapping[str, str] | None = None) -> exp.Expression:
     """A copy of the BigQuery ``tree`` whose DuckDB SQL evaluates as BigQuery does, or fails where
     BigQuery fails; raises :class:`Unfaithful` when no such reading exists. Run the result on a
-    connection prepared by :func:`configure`."""
+    connection prepared by :func:`configure`.
 
-    reason = refusal(tree)
+    ``columns`` maps the column names of the tables read to their BigQuery types; with it, nested
+    columns are read as BigQuery reads them (struct fields of an ``UNNEST``, whole-struct comparisons
+    refused)."""
+
+    nested = _nested_names(columns)
+    structs = {name for name, t in nested.items() if t.kind == "STRUCT"}
+    for node in tree.find_all(exp.Unnest):
+        array = _array_of(node.expressions[0], nested) if len(node.expressions) == 1 else None
+        alias = node.args.get("alias")
+        names = alias.args.get("columns") if alias is not None else None
+        element = (names[0].name if names else alias.name if alias is not None else "") or ""
+        if array is not None and array.element.kind == "STRUCT" and element:
+            structs.add(element.lower())
+    reason = refusal(tree, structs)
     if reason is not None:
         raise Unfaithful(f"no DuckDB reading matches BigQuery: {reason}")
     tree = tree.copy()
     # children before parents, so a replacement wraps already-rewritten operands exactly once
-    for node in reversed(list(tree.find_all(exp.Expression, bfs=False))):
+    for number, node in enumerate(reversed(list(tree.find_all(exp.Expression, bfs=False)))):
         parent, key, index = node.parent, node.arg_key, node.index
-        replacement = _rewrite(node)
+        replacement = _unnest_source(node, nested, number) if isinstance(node, exp.Unnest) else _rewrite(node)
         if replacement is None or replacement is node:
             continue
         if parent is None:

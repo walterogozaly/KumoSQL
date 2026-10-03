@@ -1,0 +1,1644 @@
+{
+ "about": "Hand-written query pairs over nested data (ARRAY, STRUCT, UNNEST) in GA4, Snowplow and shop schemas; see README.md.",
+ "schemas": {
+  "ga4": {
+   "events": {
+    "event_date": "STRING",
+    "event_timestamp": "INT64",
+    "event_name": "STRING",
+    "user_pseudo_id": "STRING",
+    "event_params": "ARRAY<STRUCT<key STRING, value STRUCT<string_value STRING, int_value INT64>>>",
+    "items": "ARRAY<STRUCT<item_id STRING, quantity INT64, price FLOAT64>>",
+    "device": "STRUCT<category STRING, operating_system STRING>",
+    "geo": "STRUCT<country STRING, city STRING>"
+   }
+  },
+  "snowplow": {
+   "events": {
+    "event_id": "STRING",
+    "domain_userid": "STRING",
+    "collector_tstamp": "TIMESTAMP",
+    "contexts_web_page": "ARRAY<STRUCT<id STRING>>",
+    "contexts_ua": "ARRAY<STRUCT<useragent_family STRING, os_family STRING>>",
+    "unstruct_link_click": "STRUCT<target_url STRING, element_id STRING>"
+   }
+  },
+  "shop": {
+   "orders": {
+    "order_id": "INT64",
+    "customer_id": "INT64",
+    "tags": "ARRAY<STRING>",
+    "lines": "ARRAY<STRUCT<sku STRING, qty INT64>>",
+    "ship": "STRUCT<city STRING, zip STRING>"
+   },
+   "customers": {
+    "customer_id": "INT64",
+    "name": "STRING",
+    "emails": "ARRAY<STRING>",
+    "scores": "ARRAY<INT64>"
+   }
+  }
+ },
+ "datasets": {
+  "ga4": [
+   {
+    "events": [
+     {
+      "event_date": "20260101",
+      "event_timestamp": 1,
+      "event_name": "page_view",
+      "user_pseudo_id": "u1",
+      "event_params": [
+       {
+        "key": "page_location",
+        "value": {
+         "string_value": "home",
+         "int_value": null
+        }
+       },
+       {
+        "key": "ga_session_id",
+        "value": {
+         "string_value": null,
+         "int_value": 100
+        }
+       },
+       {
+        "key": "ga_session_number",
+        "value": {
+         "string_value": null,
+         "int_value": 1
+        }
+       },
+       {
+        "key": "engagement_time_msec",
+        "value": {
+         "string_value": null,
+         "int_value": 5
+        }
+       },
+       {
+        "key": "engagement_time_msec",
+        "value": {
+         "string_value": null,
+         "int_value": 7
+        }
+       },
+       {
+        "key": "session_engaged",
+        "value": {
+         "string_value": "1",
+         "int_value": null
+        }
+       }
+      ],
+      "items": [
+       {
+        "item_id": "i1",
+        "quantity": 2,
+        "price": 1.5
+       },
+       {
+        "item_id": "i2",
+        "quantity": 1,
+        "price": 2.0
+       }
+      ],
+      "device": {
+       "category": "mobile",
+       "operating_system": "iOS"
+      },
+      "geo": {
+       "country": "US",
+       "city": "NYC"
+      }
+     },
+     {
+      "event_date": "20260101",
+      "event_timestamp": 2,
+      "event_name": "scroll",
+      "user_pseudo_id": "u1",
+      "event_params": [
+       {
+        "key": "page_location",
+        "value": {
+         "string_value": "shop",
+         "int_value": null
+        }
+       },
+       {
+        "key": "session_engaged",
+        "value": {
+         "string_value": "1",
+         "int_value": null
+        }
+       },
+       {
+        "key": "session_engaged",
+        "value": {
+         "string_value": "1",
+         "int_value": null
+        }
+       }
+      ],
+      "items": [],
+      "device": {
+       "category": "desktop",
+       "operating_system": null
+      },
+      "geo": {
+       "country": "US",
+       "city": null
+      }
+     },
+     {
+      "event_date": "20260102",
+      "event_timestamp": 3,
+      "event_name": "page_view",
+      "user_pseudo_id": "u2",
+      "event_params": [],
+      "items": [
+       {
+        "item_id": "i1",
+        "quantity": null,
+        "price": null
+       }
+      ],
+      "device": null,
+      "geo": null
+     },
+     {
+      "event_date": "20260102",
+      "event_timestamp": 4,
+      "event_name": "click",
+      "user_pseudo_id": "u2",
+      "event_params": [
+       {
+        "key": "ga_session_id",
+        "value": {
+         "string_value": null,
+         "int_value": 200
+        }
+       },
+       {
+        "key": "page_location",
+        "value": {
+         "string_value": "home",
+         "int_value": null
+        }
+       }
+      ],
+      "items": [],
+      "device": {
+       "category": null,
+       "operating_system": null
+      },
+      "geo": {
+       "country": null,
+       "city": null
+      }
+     },
+     {
+      "event_date": null,
+      "event_timestamp": null,
+      "event_name": null,
+      "user_pseudo_id": null,
+      "event_params": [
+       {
+        "key": null,
+        "value": null
+       },
+       {
+        "key": "page_location",
+        "value": {
+         "string_value": null,
+         "int_value": null
+        }
+       }
+      ],
+      "items": [],
+      "device": {
+       "category": "mobile",
+       "operating_system": "Android"
+      },
+      "geo": {
+       "country": "FR",
+       "city": "Paris"
+      }
+     }
+    ]
+   },
+   {
+    "events": [
+     {
+      "event_date": "20260103",
+      "event_timestamp": 5,
+      "event_name": "page_view",
+      "user_pseudo_id": "u3",
+      "event_params": [
+       {
+        "key": "page_location",
+        "value": {
+         "string_value": "home",
+         "int_value": null
+        }
+       },
+       {
+        "key": "page_location",
+        "value": {
+         "string_value": "home",
+         "int_value": null
+        }
+       },
+       {
+        "key": "ga_session_id",
+        "value": {
+         "string_value": null,
+         "int_value": 300
+        }
+       },
+       {
+        "key": "ga_session_id",
+        "value": {
+         "string_value": null,
+         "int_value": 301
+        }
+       }
+      ],
+      "items": [
+       {
+        "item_id": "i3",
+        "quantity": 4,
+        "price": 1.0
+       }
+      ],
+      "device": {
+       "category": "tablet",
+       "operating_system": "iOS"
+      },
+      "geo": {
+       "country": "US",
+       "city": "NYC"
+      }
+     },
+     {
+      "event_date": "20260103",
+      "event_timestamp": 6,
+      "event_name": "scroll",
+      "user_pseudo_id": "u3",
+      "event_params": [
+       {
+        "key": "ga_session_id",
+        "value": {
+         "string_value": null,
+         "int_value": 300
+        }
+       }
+      ],
+      "items": [],
+      "device": null,
+      "geo": {
+       "country": "DE",
+       "city": null
+      }
+     }
+    ]
+   },
+   {
+    "events": []
+   }
+  ],
+  "snowplow": [
+   {
+    "events": [
+     {
+      "event_id": "a",
+      "domain_userid": "d1",
+      "collector_tstamp": "2026-01-01 10:00:00",
+      "contexts_web_page": [
+       {
+        "id": "p1"
+       },
+       {
+        "id": "p2"
+       }
+      ],
+      "contexts_ua": [
+       {
+        "useragent_family": "Chrome",
+        "os_family": "Mac"
+       },
+       {
+        "useragent_family": "Firefox",
+        "os_family": "Linux"
+       }
+      ],
+      "unstruct_link_click": {
+       "target_url": "https://example.com",
+       "element_id": "btn"
+      }
+     },
+     {
+      "event_id": "b",
+      "domain_userid": "d1",
+      "collector_tstamp": "2026-01-01 11:00:00",
+      "contexts_web_page": [
+       {
+        "id": null
+       }
+      ],
+      "contexts_ua": [],
+      "unstruct_link_click": null
+     },
+     {
+      "event_id": "c",
+      "domain_userid": "d2",
+      "collector_tstamp": null,
+      "contexts_web_page": [],
+      "contexts_ua": [
+       {
+        "useragent_family": "Safari",
+        "os_family": "iOS"
+       }
+      ],
+      "unstruct_link_click": {
+       "target_url": null,
+       "element_id": "x"
+      }
+     },
+     {
+      "event_id": "d",
+      "domain_userid": "d2",
+      "collector_tstamp": "2026-01-02 09:30:00",
+      "contexts_web_page": [
+       {
+        "id": "p9"
+       },
+       {
+        "id": "p3"
+       }
+      ],
+      "contexts_ua": [
+       {
+        "useragent_family": "Chrome",
+        "os_family": "Windows"
+       }
+      ],
+      "unstruct_link_click": {
+       "target_url": "https://other.com",
+       "element_id": null
+      }
+     },
+     {
+      "event_id": "d",
+      "domain_userid": null,
+      "collector_tstamp": "2026-01-02 09:30:00",
+      "contexts_web_page": [
+       {
+        "id": "p9"
+       }
+      ],
+      "contexts_ua": [
+       {
+        "useragent_family": null,
+        "os_family": null
+       }
+      ],
+      "unstruct_link_click": {
+       "target_url": "https://example.com",
+       "element_id": null
+      }
+     }
+    ]
+   },
+   {
+    "events": []
+   }
+  ],
+  "shop": [
+   {
+    "orders": [
+     {
+      "order_id": 1,
+      "customer_id": 1,
+      "tags": [
+       "gift",
+       "rush",
+       "gift"
+      ],
+      "lines": [
+       {
+        "sku": "A",
+        "qty": 2
+       },
+       {
+        "sku": "B",
+        "qty": 1
+       }
+      ],
+      "ship": {
+       "city": "Paris",
+       "zip": "75001"
+      }
+     },
+     {
+      "order_id": 2,
+      "customer_id": 2,
+      "tags": [
+       "2"
+      ],
+      "lines": [
+       {
+        "sku": "A",
+        "qty": 3
+       }
+      ],
+      "ship": {
+       "city": "Lyon",
+       "zip": null
+      }
+     },
+     {
+      "order_id": 3,
+      "customer_id": null,
+      "tags": [
+       "rush"
+      ],
+      "lines": [],
+      "ship": null
+     },
+     {
+      "order_id": 4,
+      "customer_id": 1,
+      "tags": [],
+      "lines": [
+       {
+        "sku": "C",
+        "qty": null
+       }
+      ],
+      "ship": {
+       "city": null,
+       "zip": null
+      }
+     }
+    ],
+    "customers": [
+     {
+      "customer_id": 1,
+      "name": "Ann",
+      "emails": [
+       "a@example.com",
+       "b@example.com"
+      ],
+      "scores": [
+       95,
+       50,
+       60
+      ]
+     },
+     {
+      "customer_id": 2,
+      "name": "Bob",
+      "emails": [],
+      "scores": []
+     },
+     {
+      "customer_id": 3,
+      "name": null,
+      "emails": [
+       "a@example.com"
+      ],
+      "scores": [
+       90,
+       90
+      ]
+     }
+    ]
+   },
+   {
+    "orders": [
+     {
+      "order_id": 1,
+      "customer_id": 1,
+      "tags": [
+       "gift"
+      ],
+      "lines": [
+       {
+        "sku": "A",
+        "qty": 2
+       }
+      ],
+      "ship": null
+     },
+     {
+      "order_id": 1,
+      "customer_id": 2,
+      "tags": [],
+      "lines": [
+       {
+        "sku": "B",
+        "qty": 5
+       }
+      ],
+      "ship": {
+       "city": "Rome",
+       "zip": "00100"
+      }
+     }
+    ],
+    "customers": [
+     {
+      "customer_id": null,
+      "name": "Dee",
+      "emails": [],
+      "scores": [
+       90
+      ]
+     },
+     {
+      "customer_id": 1,
+      "name": "Ann",
+      "emails": [
+       "a@example.com"
+      ],
+      "scores": [
+       1
+      ]
+     },
+     {
+      "customer_id": 1,
+      "name": "Ann",
+      "emails": [],
+      "scores": []
+     }
+    ]
+   },
+   {
+    "orders": [],
+    "customers": []
+   }
+  ]
+ },
+ "pairs": [
+  {
+   "id": "ga4-lookup-qualified",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS page FROM events",
+   "right": "SELECT e.event_name, (SELECT p.value.string_value FROM UNNEST(e.event_params) AS p WHERE p.key = 'page_location') AS page FROM events AS e",
+   "note": "The same lookup with the UNNEST element named and every column qualified."
+  },
+  {
+   "id": "ga4-lookup-flipped-test",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS session_id FROM events",
+   "right": "SELECT event_name, (SELECT value.int_value FROM UNNEST(event_params) WHERE 'ga_session_id' = key) AS session_id FROM events",
+   "note": "The key test written the other way round."
+  },
+  {
+   "id": "ga4-lookup-other-key",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS v FROM events",
+   "right": "SELECT event_name, (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_number') AS v FROM events",
+   "note": "Trap: a different parameter."
+  },
+  {
+   "id": "ga4-lookup-other-field",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') AS v FROM events",
+   "right": "SELECT event_name, (SELECT CAST(value.int_value AS STRING) FROM UNNEST(event_params) WHERE key = 'page_location') AS v FROM events",
+   "note": "Trap: the integer field instead of the string field of the same parameter."
+  },
+  {
+   "id": "ga4-max-lookup-pivot",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, (SELECT MAX(value.int_value) FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS t FROM events",
+   "right": "SELECT event_name, (SELECT MAX(IF(key = 'engagement_time_msec', value.int_value, NULL)) FROM UNNEST(event_params)) AS t FROM events",
+   "note": "A filtered MAX against MAX of IF: MAX skips the NULLs that IF gives other keys, and both are NULL without a match."
+  },
+  {
+   "id": "ga4-max-vs-min-lookup",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, (SELECT MAX(value.int_value) FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS t FROM events",
+   "right": "SELECT event_name, (SELECT MIN(value.int_value) FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS t FROM events",
+   "note": "Trap: a key that repeats with two values."
+  },
+  {
+   "id": "ga4-sum-vs-max-lookup",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, (SELECT SUM(value.int_value) FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS t FROM events",
+   "right": "SELECT event_name, (SELECT MAX(value.int_value) FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS t FROM events",
+   "note": "Trap: SUM and MAX part when a key repeats."
+  },
+  {
+   "id": "ga4-exists-vs-in",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key = 'page_location' AND value.string_value = 'home')",
+   "right": "SELECT event_name FROM events WHERE 'home' IN (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')",
+   "note": "EXISTS and IN over the same parameter rows."
+  },
+  {
+   "id": "ga4-distinct-join-vs-exists",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT DISTINCT e.user_pseudo_id FROM events AS e, UNNEST(e.event_params) AS p WHERE p.key = 'page_location' AND p.value.string_value = 'home'",
+   "right": "SELECT DISTINCT user_pseudo_id FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params) AS p WHERE p.key = 'page_location' AND p.value.string_value = 'home')",
+   "note": "Under DISTINCT, joining the parameters and testing that one exists are the same."
+  },
+  {
+   "id": "ga4-join-vs-exists",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT e.user_pseudo_id FROM events AS e, UNNEST(e.event_params) AS p WHERE p.key = 'page_location' AND p.value.string_value = 'home'",
+   "right": "SELECT user_pseudo_id FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params) AS p WHERE p.key = 'page_location' AND p.value.string_value = 'home')",
+   "note": "Trap: without DISTINCT, an event with two matching parameters gives two rows on the left."
+  },
+  {
+   "id": "ga4-cross-vs-left-unnest",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT e.event_name, p.key FROM events AS e CROSS JOIN UNNEST(e.event_params) AS p",
+   "right": "SELECT e.event_name, p.key FROM events AS e LEFT JOIN UNNEST(e.event_params) AS p",
+   "note": "Trap: LEFT JOIN keeps an event with no parameters."
+  },
+  {
+   "id": "ga4-comma-vs-cross",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT e.event_name, p.key FROM events AS e, UNNEST(e.event_params) AS p",
+   "right": "SELECT e.event_name, p.key FROM events AS e CROSS JOIN UNNEST(e.event_params) AS p",
+   "note": "Comma and CROSS JOIN are the same join."
+  },
+  {
+   "id": "ga4-cross-vs-join-on-true",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT e.event_name, p.key FROM events AS e CROSS JOIN UNNEST(e.event_params) AS p",
+   "right": "SELECT e.event_name, p.key FROM events AS e JOIN UNNEST(e.event_params) AS p ON TRUE",
+   "note": "An inner join on TRUE is a cross join."
+  },
+  {
+   "id": "ga4-left-unnest-null-rejected",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT e.event_name, p.key FROM events AS e LEFT JOIN UNNEST(e.event_params) AS p WHERE p.key IS NOT NULL",
+   "right": "SELECT e.event_name, p.key FROM events AS e CROSS JOIN UNNEST(e.event_params) AS p WHERE p.key IS NOT NULL",
+   "note": "A WHERE test that rejects NULL removes every padded row, so the LEFT JOIN is an inner one."
+  },
+  {
+   "id": "ga4-left-unnest-null-kept",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT e.event_name, p.key FROM events AS e LEFT JOIN UNNEST(e.event_params) AS p WHERE p.key IS NULL",
+   "right": "SELECT e.event_name, p.key FROM events AS e CROSS JOIN UNNEST(e.event_params) AS p WHERE p.key IS NULL",
+   "note": "Trap: IS NULL keeps the padded row of an event with no parameters."
+  },
+  {
+   "id": "ga4-filter-pushed-into-derived",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT e.event_name, p.key FROM (SELECT * FROM events WHERE event_name = 'page_view') AS e, UNNEST(e.event_params) AS p",
+   "right": "SELECT e.event_name, p.key FROM events AS e, UNNEST(e.event_params) AS p WHERE e.event_name = 'page_view'",
+   "note": "A filter on the event moved into a derived table that is then unnested."
+  },
+  {
+   "id": "ga4-conjuncts-reordered",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT e.event_name, p.value.int_value AS v FROM events AS e, UNNEST(e.event_params) AS p WHERE p.key = 'ga_session_id' AND e.event_name = 'page_view'",
+   "right": "SELECT e.event_name, p.value.int_value AS v FROM events AS e, UNNEST(e.event_params) AS p WHERE e.event_name = 'page_view' AND p.key = 'ga_session_id'",
+   "note": "The same conjuncts in another order."
+  },
+  {
+   "id": "ga4-max-lookup-vs-left-join",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT e.event_name, (SELECT MAX(value.int_value) FROM UNNEST(e.event_params) WHERE key = 'ga_session_id') AS v FROM events AS e",
+   "right": "SELECT e.event_name, p.value.int_value AS v FROM events AS e LEFT JOIN UNNEST(e.event_params) AS p ON p.key = 'ga_session_id'",
+   "note": "Trap: a repeated key gives one row on the left and two on the right."
+  },
+  {
+   "id": "ga4-grouped-pivot-vs-lookup",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT e.user_pseudo_id, MAX(IF(p.key = 'ga_session_id', p.value.int_value, NULL)) AS v FROM events AS e LEFT JOIN UNNEST(e.event_params) AS p GROUP BY e.user_pseudo_id",
+   "right": "SELECT e.user_pseudo_id, (SELECT MAX(IF(key = 'ga_session_id', value.int_value, NULL)) FROM UNNEST(e.event_params)) AS v FROM events AS e",
+   "note": "Trap: grouping by user merges that user's events; the lookup keeps one row per event."
+  },
+  {
+   "id": "ga4-length-vs-count",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, ARRAY_LENGTH(event_params) AS n FROM events",
+   "right": "SELECT event_name, (SELECT COUNT(*) FROM UNNEST(event_params)) AS n FROM events",
+   "note": "A stored array is never NULL (BigQuery stores NULL as an empty array), so its length is the number of rows UNNEST gives."
+  },
+  {
+   "id": "ga4-length-vs-distinct-keys",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, ARRAY_LENGTH(event_params) AS n FROM events",
+   "right": "SELECT event_name, (SELECT COUNT(DISTINCT key) FROM UNNEST(event_params)) AS n FROM events",
+   "note": "Trap: a repeated key."
+  },
+  {
+   "id": "ga4-nonempty-vs-exists",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE ARRAY_LENGTH(event_params) > 0",
+   "right": "SELECT event_name FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params))",
+   "note": "A non-empty array is one that UNNEST gives a row for."
+  },
+  {
+   "id": "ga4-nonempty-vs-not-null",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name FROM events WHERE ARRAY_LENGTH(event_params) > 0",
+   "right": "SELECT event_name FROM events WHERE event_params IS NOT NULL",
+   "note": "Trap: a stored array is never NULL, but it can be empty."
+  },
+  {
+   "id": "ga4-items-sum-alias",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, (SELECT SUM(i.quantity) FROM UNNEST(items) AS i) AS q FROM events",
+   "right": "SELECT event_name, (SELECT SUM(quantity) FROM UNNEST(items)) AS q FROM events",
+   "note": "A field read through the element's name or directly."
+  },
+  {
+   "id": "ga4-items-sum-vs-count",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, (SELECT SUM(quantity) FROM UNNEST(items)) AS q FROM events",
+   "right": "SELECT event_name, (SELECT COUNT(*) FROM UNNEST(items)) AS q FROM events",
+   "note": "Trap: quantities against item rows."
+  },
+  {
+   "id": "ga4-struct-field-qualified",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT device.category AS category FROM events",
+   "right": "SELECT e.device.category AS category FROM events AS e",
+   "note": "A struct field read with and without the table's name."
+  },
+  {
+   "id": "ga4-struct-other-field",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT device.category AS v FROM events",
+   "right": "SELECT device.operating_system AS v FROM events",
+   "note": "Trap: another field."
+  },
+  {
+   "id": "ga4-struct-equality-vs-fields",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE geo = STRUCT('US' AS country, 'NYC' AS city)",
+   "right": "SELECT event_name FROM events WHERE geo.country = 'US' AND geo.city = 'NYC'",
+   "note": "Struct equality compares field by field, NULL when a field is NULL and none differs: the same as AND of the field tests."
+  },
+  {
+   "id": "ga4-struct-equality-null-field",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name FROM events WHERE geo.country = 'US'",
+   "right": "SELECT event_name FROM events WHERE geo = STRUCT('US' AS country, CAST(NULL AS STRING) AS city)",
+   "note": "Trap: comparing with a NULL field is never TRUE."
+  },
+  {
+   "id": "ga4-struct-null-vs-fields-null",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name FROM events WHERE geo IS NULL",
+   "right": "SELECT event_name FROM events WHERE geo.country IS NULL AND geo.city IS NULL",
+   "note": "Trap: a struct whose fields are all NULL is not NULL itself."
+  },
+  {
+   "id": "ga4-field-of-null-struct",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, IF(geo IS NULL, NULL, geo.country) AS country FROM events",
+   "right": "SELECT event_name, geo.country AS country FROM events",
+   "note": "A field of a NULL struct is NULL."
+  },
+  {
+   "id": "ga4-in-unnest-literal",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE event_name IN UNNEST(['page_view', 'scroll'])",
+   "right": "SELECT event_name FROM events WHERE event_name IN ('page_view', 'scroll')",
+   "note": "IN UNNEST of a literal array is an IN list."
+  },
+  {
+   "id": "ga4-not-in-unnest-literal",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE event_name NOT IN UNNEST(['page_view', 'scroll'])",
+   "right": "SELECT event_name FROM events WHERE event_name NOT IN ('page_view', 'scroll')",
+   "note": "NOT IN UNNEST of a literal array is a NOT IN list (both NULL for a NULL name)."
+  },
+  {
+   "id": "ga4-exists-alias-renamed",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params) AS a WHERE a.key = 'session_engaged')",
+   "right": "SELECT event_name FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params) AS b WHERE b.key = 'session_engaged')",
+   "note": "Only the element's name differs."
+  },
+  {
+   "id": "ga4-exists-vs-count",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key = 'session_engaged')",
+   "right": "SELECT event_name FROM events WHERE (SELECT COUNT(*) FROM UNNEST(event_params) WHERE key = 'session_engaged') > 0",
+   "note": "A positive count of matching parameters is EXISTS."
+  },
+  {
+   "id": "ga4-count-0-vs-1",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name FROM events WHERE (SELECT COUNT(*) FROM UNNEST(event_params) WHERE key = 'session_engaged') > 0",
+   "right": "SELECT event_name FROM events WHERE (SELECT COUNT(*) FROM UNNEST(event_params) WHERE key = 'session_engaged') > 1",
+   "note": "Trap: one matching parameter."
+  },
+  {
+   "id": "ga4-count-zero-vs-not-exists",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE (SELECT COUNT(*) FROM UNNEST(event_params) WHERE key = 'session_engaged') = 0",
+   "right": "SELECT event_name FROM events WHERE NOT EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key = 'session_engaged')",
+   "note": "A zero count is NOT EXISTS."
+  },
+  {
+   "id": "ga4-distinct-keys-array",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name, ARRAY(SELECT DISTINCT key FROM UNNEST(event_params) ORDER BY key) AS keys FROM events",
+   "right": "SELECT event_name, ARRAY(SELECT key FROM UNNEST(event_params) GROUP BY key ORDER BY key) AS keys FROM events",
+   "note": "DISTINCT and GROUP BY give the same sorted keys."
+  },
+  {
+   "id": "ga4-keys-array-distinct-vs-all",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT event_name, ARRAY(SELECT DISTINCT key FROM UNNEST(event_params) ORDER BY key) AS keys FROM events",
+   "right": "SELECT event_name, ARRAY(SELECT key FROM UNNEST(event_params) ORDER BY key) AS keys FROM events",
+   "note": "Trap: a repeated key appears twice on the right."
+  },
+  {
+   "id": "ga4-param-count-total",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT COUNT(*) AS n FROM events AS e, UNNEST(e.event_params) AS p",
+   "right": "SELECT IFNULL(SUM(ARRAY_LENGTH(event_params)), 0) AS n FROM events",
+   "note": "Counting unnested rows is summing the array lengths (0 over no events)."
+  },
+  {
+   "id": "ga4-param-count-total-no-ifnull",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT COUNT(*) AS n FROM events AS e, UNNEST(e.event_params) AS p",
+   "right": "SELECT SUM(ARRAY_LENGTH(event_params)) AS n FROM events",
+   "note": "Trap: over no events COUNT is 0 and SUM is NULL."
+  },
+  {
+   "id": "ga4-group-by-key-unaliased",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT p.key, COUNT(*) AS n FROM events AS e, UNNEST(e.event_params) AS p GROUP BY p.key",
+   "right": "SELECT key, COUNT(*) AS n FROM events, UNNEST(event_params) GROUP BY key",
+   "note": "The element named or not."
+  },
+  {
+   "id": "ga4-group-count-vs-users",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "different",
+   "left": "SELECT p.key, COUNT(*) AS n FROM events AS e, UNNEST(e.event_params) AS p GROUP BY p.key",
+   "right": "SELECT p.key, COUNT(DISTINCT e.user_pseudo_id) AS n FROM events AS e, UNNEST(e.event_params) AS p GROUP BY p.key",
+   "note": "Trap: rows against distinct users."
+  },
+  {
+   "id": "ga4-lookup-in-where-vs-exists",
+   "family": "ga4",
+   "schema": "ga4",
+   "label": "equivalent",
+   "left": "SELECT event_name FROM events WHERE 'home' IN (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')",
+   "right": "SELECT event_name FROM events AS e WHERE EXISTS (SELECT 1 FROM UNNEST(e.event_params) AS p WHERE p.key = 'page_location' AND p.value.string_value = 'home')",
+   "note": "An IN subquery over the parameters is an EXISTS with the comparison added."
+  },
+  {
+   "id": "sp-offset-vs-ordinal",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT event_id, contexts_web_page[SAFE_OFFSET(0)].id AS page_view_id FROM events",
+   "right": "SELECT event_id, contexts_web_page[SAFE_ORDINAL(1)].id AS page_view_id FROM events",
+   "note": "Offset 0 is ordinal 1."
+  },
+  {
+   "id": "sp-offset1-vs-ordinal1",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "different",
+   "left": "SELECT event_id, contexts_web_page[SAFE_OFFSET(1)].id AS page_view_id FROM events",
+   "right": "SELECT event_id, contexts_web_page[SAFE_ORDINAL(1)].id AS page_view_id FROM events",
+   "note": "Trap: offset 1 is the second element."
+  },
+  {
+   "id": "sp-offset-vs-unnest-offset",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT event_id, contexts_web_page[SAFE_OFFSET(0)].id AS page_view_id FROM events",
+   "right": "SELECT event_id, (SELECT c.id FROM UNNEST(contexts_web_page) AS c WITH OFFSET AS o WHERE o = 0) AS page_view_id FROM events",
+   "note": "The first element read by subscript or by UNNEST WITH OFFSET."
+  },
+  {
+   "id": "sp-offset-vs-min",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "different",
+   "left": "SELECT event_id, contexts_web_page[SAFE_OFFSET(0)].id AS page_view_id FROM events",
+   "right": "SELECT event_id, (SELECT MIN(c.id) FROM UNNEST(contexts_web_page) AS c) AS page_view_id FROM events",
+   "note": "Trap: the first element is not the smallest."
+  },
+  {
+   "id": "sp-ua-offset-vs-unnest",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT event_id, (SELECT ua.useragent_family FROM UNNEST(contexts_ua) AS ua WITH OFFSET AS o WHERE o = 0) AS family FROM events",
+   "right": "SELECT event_id, contexts_ua[SAFE_OFFSET(0)].useragent_family AS family FROM events",
+   "note": "The first user-agent context, two ways."
+  },
+  {
+   "id": "sp-first-element-exists",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT event_id FROM events WHERE ARRAY_LENGTH(contexts_web_page) > 0",
+   "right": "SELECT event_id FROM events WHERE contexts_web_page[SAFE_OFFSET(0)] IS NOT NULL",
+   "note": "A stored array holds no NULL element, so a first element exists exactly when the array is not empty."
+  },
+  {
+   "id": "sp-first-field-not-null",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "different",
+   "left": "SELECT event_id FROM events WHERE ARRAY_LENGTH(contexts_web_page) > 0",
+   "right": "SELECT event_id FROM events WHERE contexts_web_page[SAFE_OFFSET(0)].id IS NOT NULL",
+   "note": "Trap: the first element can have a NULL id."
+  },
+  {
+   "id": "sp-two-context-lengths",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "different",
+   "left": "SELECT event_id, ARRAY_LENGTH(contexts_web_page) AS n FROM events",
+   "right": "SELECT event_id, ARRAY_LENGTH(contexts_ua) AS n FROM events",
+   "note": "Trap: another context."
+  },
+  {
+   "id": "sp-distinct-vs-group",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT DISTINCT s.domain_userid, c.id FROM events AS s, UNNEST(s.contexts_web_page) AS c",
+   "right": "SELECT s.domain_userid, c.id FROM events AS s, UNNEST(s.contexts_web_page) AS c GROUP BY 1, 2",
+   "note": "DISTINCT is GROUP BY on every output."
+  },
+  {
+   "id": "sp-in-subquery-vs-exists",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT event_id FROM events WHERE 'Chrome' IN (SELECT useragent_family FROM UNNEST(contexts_ua))",
+   "right": "SELECT event_id FROM events AS s WHERE EXISTS (SELECT 1 FROM UNNEST(s.contexts_ua) AS u WHERE u.useragent_family = 'Chrome')",
+   "note": "IN over a field of the elements is EXISTS."
+  },
+  {
+   "id": "sp-struct-not-null-redundant",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT event_id FROM events WHERE unstruct_link_click IS NOT NULL AND unstruct_link_click.target_url = 'https://example.com'",
+   "right": "SELECT event_id FROM events WHERE unstruct_link_click.target_url = 'https://example.com'",
+   "note": "A field of a NULL struct is NULL, so the IS NOT NULL test adds nothing."
+  },
+  {
+   "id": "sp-struct-not-null-vs-field",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "different",
+   "left": "SELECT event_id FROM events WHERE unstruct_link_click IS NOT NULL",
+   "right": "SELECT event_id FROM events WHERE unstruct_link_click.target_url IS NOT NULL",
+   "note": "Trap: a click struct with a NULL URL."
+  },
+  {
+   "id": "sp-struct-field-alias",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT unstruct_link_click.element_id AS element FROM events",
+   "right": "SELECT s.unstruct_link_click.element_id AS element FROM events AS s",
+   "note": "A struct field with and without the table's name."
+  },
+  {
+   "id": "sp-unnest-filter-moved",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "equivalent",
+   "left": "SELECT s.event_id, u.os_family FROM events AS s, UNNEST(s.contexts_ua) AS u WHERE u.useragent_family = 'Chrome'",
+   "right": "SELECT s.event_id, u.os_family FROM events AS s JOIN UNNEST(s.contexts_ua) AS u ON u.useragent_family = 'Chrome'",
+   "note": "A filter on the element in WHERE or in the join's ON."
+  },
+  {
+   "id": "sp-unnest-filter-left-on",
+   "family": "snowplow",
+   "schema": "snowplow",
+   "label": "different",
+   "left": "SELECT s.event_id, u.os_family FROM events AS s, UNNEST(s.contexts_ua) AS u WHERE u.useragent_family = 'Chrome'",
+   "right": "SELECT s.event_id, u.os_family FROM events AS s LEFT JOIN UNNEST(s.contexts_ua) AS u ON u.useragent_family = 'Chrome'",
+   "note": "Trap: a LEFT JOIN's ON keeps events without a Chrome context."
+  },
+  {
+   "id": "shop-in-unnest-vs-exists",
+   "family": "membership",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT order_id FROM orders WHERE 'gift' IN UNNEST(tags)",
+   "right": "SELECT order_id FROM orders AS o WHERE EXISTS (SELECT 1 FROM UNNEST(o.tags) AS t WHERE t = 'gift')",
+   "note": "IN UNNEST is an existence test."
+  },
+  {
+   "id": "shop-not-in-unnest-vs-not-exists",
+   "family": "membership",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT order_id FROM orders WHERE NOT 'gift' IN UNNEST(tags)",
+   "right": "SELECT order_id FROM orders AS o WHERE NOT EXISTS (SELECT 1 FROM UNNEST(o.tags) AS t WHERE t = 'gift')",
+   "note": "A stored array holds no NULL element and the constant is not NULL, so IN UNNEST is never NULL here."
+  },
+  {
+   "id": "shop-not-in-unnest-nullable",
+   "family": "membership",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT order_id FROM orders AS o WHERE NOT CAST(o.customer_id AS STRING) IN UNNEST(o.tags)",
+   "right": "SELECT order_id FROM orders AS o WHERE NOT EXISTS (SELECT 1 FROM UNNEST(o.tags) AS t WHERE t = CAST(o.customer_id AS STRING))",
+   "note": "Trap: a NULL left side makes IN UNNEST NULL for a non-empty array, so NOT IN drops the row that NOT EXISTS keeps."
+  },
+  {
+   "id": "shop-in-unnest-nullable-where",
+   "family": "membership",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT order_id FROM orders AS o WHERE CAST(o.customer_id AS STRING) IN UNNEST(o.tags)",
+   "right": "SELECT order_id FROM orders AS o WHERE EXISTS (SELECT 1 FROM UNNEST(o.tags) AS t WHERE t = CAST(o.customer_id AS STRING))",
+   "note": "In WHERE, NULL and FALSE both drop the row."
+  },
+  {
+   "id": "shop-in-unnest-value",
+   "family": "membership",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT customer_id, 90 IN UNNEST(scores) AS top FROM customers",
+   "right": "SELECT customer_id, EXISTS (SELECT 1 FROM UNNEST(scores) AS s WHERE s = 90) AS top FROM customers",
+   "note": "As a value too: the constant is not NULL and a stored array holds no NULL element."
+  },
+  {
+   "id": "shop-in-unnest-value-nullable",
+   "family": "membership",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT customer_id, customer_id IN UNNEST(scores) AS hit FROM customers",
+   "right": "SELECT customer_id, EXISTS (SELECT 1 FROM UNNEST(scores) AS s WHERE s = customer_id) AS hit FROM customers",
+   "note": "Trap: for a NULL customer_id and a non-empty array the left is NULL and the right FALSE."
+  },
+  {
+   "id": "shop-lines-cross-forms",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT o.order_id, l.sku FROM orders AS o, UNNEST(o.lines) AS l WHERE l.qty > 1",
+   "right": "SELECT o.order_id, l.sku FROM orders AS o CROSS JOIN UNNEST(o.lines) AS l WHERE l.qty > 1",
+   "note": "Comma and CROSS JOIN."
+  },
+  {
+   "id": "shop-units-keyed",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT o.order_id, SUM(l.qty) AS units FROM orders AS o LEFT JOIN UNNEST(o.lines) AS l GROUP BY o.order_id",
+   "right": "SELECT order_id, (SELECT SUM(qty) FROM UNNEST(lines)) AS units FROM orders",
+   "note": "With order_id a key, grouping the unnested lines by order is a per-order subquery (NULL for no lines on both sides).",
+   "keys": {
+    "orders": [
+     [
+      "order_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-units-unkeyed",
+   "family": "shop",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT o.order_id, SUM(l.qty) AS units FROM orders AS o LEFT JOIN UNNEST(o.lines) AS l GROUP BY o.order_id",
+   "right": "SELECT order_id, (SELECT SUM(qty) FROM UNNEST(lines)) AS units FROM orders",
+   "note": "Trap: without a key, two orders with one id merge on the left."
+  },
+  {
+   "id": "shop-line-count-keyed",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT o.order_id, COUNT(l.sku) AS n FROM orders AS o LEFT JOIN UNNEST(o.lines) AS l GROUP BY o.order_id",
+   "right": "SELECT order_id, (SELECT COUNT(sku) FROM UNNEST(lines)) AS n FROM orders",
+   "note": "COUNT of a field is 0 for an order without lines on both sides.",
+   "keys": {
+    "orders": [
+     [
+      "order_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-line-count-star-keyed",
+   "family": "shop",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT o.order_id, COUNT(*) AS n FROM orders AS o LEFT JOIN UNNEST(o.lines) AS l GROUP BY o.order_id",
+   "right": "SELECT order_id, (SELECT COUNT(*) FROM UNNEST(lines)) AS n FROM orders",
+   "note": "Trap: COUNT(*) counts the padded row of an order without lines.",
+   "keys": {
+    "orders": [
+     [
+      "order_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-array-agg-round-trip",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT o.order_id, ARRAY_AGG(t ORDER BY off) AS tags FROM orders AS o, UNNEST(o.tags) AS t WITH OFFSET AS off GROUP BY o.order_id",
+   "right": "SELECT order_id, tags FROM orders WHERE ARRAY_LENGTH(tags) > 0",
+   "note": "Unnesting and re-aggregating in offset order rebuilds each non-empty array (order_id is a key).",
+   "keys": {
+    "orders": [
+     [
+      "order_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-array-agg-round-trip-empty",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT o.order_id, ARRAY_AGG(t ORDER BY off) AS tags FROM orders AS o, UNNEST(o.tags) AS t WITH OFFSET AS off GROUP BY o.order_id",
+   "right": "SELECT order_id, tags FROM orders",
+   "note": "Trap: an order without tags has no row on the left.",
+   "keys": {
+    "orders": [
+     [
+      "order_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-array-subquery-ordered",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT order_id, ARRAY(SELECT t FROM UNNEST(tags) AS t WITH OFFSET AS off ORDER BY off) AS tags FROM orders",
+   "right": "SELECT order_id, tags FROM orders",
+   "note": "Rebuilding an array in offset order gives the array."
+  },
+  {
+   "id": "shop-array-subquery-unordered",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT order_id, ARRAY(SELECT t FROM UNNEST(tags) AS t) AS tags FROM orders",
+   "right": "SELECT order_id, tags FROM orders",
+   "note": "Trap: without ORDER BY the element order is BigQuery's to pick.",
+   "nondeterministic": true
+  },
+  {
+   "id": "shop-array-distinct-vs-all",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT order_id, ARRAY(SELECT DISTINCT t FROM UNNEST(tags) AS t ORDER BY t) AS tags FROM orders",
+   "right": "SELECT order_id, ARRAY(SELECT t FROM UNNEST(tags) AS t ORDER BY t) AS tags FROM orders",
+   "note": "Trap: a repeated tag."
+  },
+  {
+   "id": "shop-array-length-filtered",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT order_id, ARRAY_LENGTH(ARRAY(SELECT t FROM UNNEST(tags) AS t WHERE t <> 'gift')) AS n FROM orders",
+   "right": "SELECT order_id, (SELECT COUNT(*) FROM UNNEST(tags) AS t WHERE t <> 'gift') AS n FROM orders",
+   "note": "The length of a filtered array is the count of the filtered elements."
+  },
+  {
+   "id": "shop-concat-length",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT order_id, ARRAY_LENGTH(ARRAY_CONCAT(tags, ['x'])) AS n FROM orders",
+   "right": "SELECT order_id, ARRAY_LENGTH(tags) + 1 AS n FROM orders",
+   "note": "Concatenation adds lengths (a stored array is never NULL)."
+  },
+  {
+   "id": "shop-concat-order",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT order_id, ARRAY_CONCAT(tags, ['x']) AS t FROM orders",
+   "right": "SELECT order_id, ARRAY_CONCAT(['x'], tags) AS t FROM orders",
+   "note": "Trap: element order."
+  },
+  {
+   "id": "shop-struct-field-qualified",
+   "family": "struct",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT ship.city AS city FROM orders",
+   "right": "SELECT orders.ship.city AS city FROM orders",
+   "note": "A struct field with and without the table's name."
+  },
+  {
+   "id": "shop-struct-constructed-field",
+   "family": "struct",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT STRUCT(o.order_id AS id, o.customer_id AS c).c AS c FROM orders AS o",
+   "right": "SELECT o.customer_id AS c FROM orders AS o",
+   "note": "A field of a struct built in place is the expression it was built from."
+  },
+  {
+   "id": "shop-struct-constructed-wrong-field",
+   "family": "struct",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT STRUCT(o.order_id AS id, o.customer_id AS c).id AS c FROM orders AS o",
+   "right": "SELECT o.customer_id AS c FROM orders AS o",
+   "note": "Trap: the other field."
+  },
+  {
+   "id": "shop-select-as-struct-field",
+   "family": "struct",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT (SELECT AS STRUCT o.order_id AS id, o.customer_id AS c).id AS id FROM orders AS o",
+   "right": "SELECT o.order_id AS id FROM orders AS o",
+   "note": "A field of a SELECT AS STRUCT row."
+  },
+  {
+   "id": "shop-derived-struct-field",
+   "family": "struct",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT d.s.city AS city FROM (SELECT STRUCT(ship.city AS city, order_id AS id) AS s FROM orders) AS d",
+   "right": "SELECT ship.city AS city FROM orders",
+   "note": "A field of a struct built in a derived table."
+  },
+  {
+   "id": "shop-gift-join-vs-in",
+   "family": "shop",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT o.order_id, c.name FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id, UNNEST(o.tags) AS t WHERE t = 'gift'",
+   "right": "SELECT o.order_id, c.name FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id WHERE 'gift' IN UNNEST(o.tags)",
+   "note": "Trap: an order tagged gift twice gives two rows on the left."
+  },
+  {
+   "id": "shop-gift-join-vs-in-distinct",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT DISTINCT o.order_id, c.name FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id, UNNEST(o.tags) AS t WHERE t = 'gift'",
+   "right": "SELECT DISTINCT o.order_id, c.name FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id WHERE 'gift' IN UNNEST(o.tags)",
+   "note": "Under DISTINCT the repeated rows do not show."
+  },
+  {
+   "id": "shop-unnest-join-order",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT o.order_id, l.sku, c.name FROM orders AS o, UNNEST(o.lines) AS l JOIN customers AS c ON c.customer_id = o.customer_id",
+   "right": "SELECT o.order_id, l.sku, c.name FROM orders AS o JOIN customers AS c ON c.customer_id = o.customer_id, UNNEST(o.lines) AS l",
+   "note": "The UNNEST and the join in either order."
+  },
+  {
+   "id": "shop-max-score-keyed",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT c.customer_id, MAX(s) AS best FROM customers AS c, UNNEST(c.scores) AS s GROUP BY c.customer_id",
+   "right": "SELECT customer_id, (SELECT MAX(s) FROM UNNEST(scores) AS s) AS best FROM customers WHERE ARRAY_LENGTH(scores) > 0",
+   "note": "Grouping unnested scores by a key is a per-customer subquery over customers with scores.",
+   "keys": {
+    "customers": [
+     [
+      "customer_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-max-score-keyed-empty",
+   "family": "shop",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT c.customer_id, MAX(s) AS best FROM customers AS c, UNNEST(c.scores) AS s GROUP BY c.customer_id",
+   "right": "SELECT customer_id, (SELECT MAX(s) FROM UNNEST(scores) AS s) AS best FROM customers",
+   "note": "Trap: a customer without scores has a row only on the right.",
+   "keys": {
+    "customers": [
+     [
+      "customer_id"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "shop-last-element",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT customer_id, scores[SAFE_OFFSET(ARRAY_LENGTH(scores) - 1)] AS last FROM customers",
+   "right": "SELECT customer_id, ARRAY_REVERSE(scores)[SAFE_OFFSET(0)] AS last FROM customers",
+   "note": "The last element two ways."
+  },
+  {
+   "id": "shop-first-vs-last",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT customer_id, scores[SAFE_OFFSET(0)] AS last FROM customers",
+   "right": "SELECT customer_id, ARRAY_REVERSE(scores)[SAFE_OFFSET(0)] AS last FROM customers",
+   "note": "Trap: first against last."
+  },
+  {
+   "id": "shop-max-vs-top1",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT customer_id, (SELECT MAX(s) FROM UNNEST(scores) AS s) AS best FROM customers",
+   "right": "SELECT customer_id, (SELECT s FROM UNNEST(scores) AS s ORDER BY s DESC LIMIT 1) AS best FROM customers",
+   "note": "The top element of a sorted array is its MAX (stored arrays hold no NULL; ties give the same value)."
+  },
+  {
+   "id": "shop-min-vs-top1",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT customer_id, (SELECT MIN(s) FROM UNNEST(scores) AS s) AS best FROM customers",
+   "right": "SELECT customer_id, (SELECT s FROM UNNEST(scores) AS s ORDER BY s DESC LIMIT 1) AS best FROM customers",
+   "note": "Trap: MIN against the top element."
+  },
+  {
+   "id": "shop-exists-vs-max-where",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT customer_id FROM customers WHERE EXISTS (SELECT 1 FROM UNNEST(scores) AS s WHERE s > 90)",
+   "right": "SELECT customer_id FROM customers WHERE (SELECT MAX(s) FROM UNNEST(scores) AS s) > 90",
+   "note": "In WHERE, some score above 90 is a MAX above 90 (NULL for no scores drops the row like FALSE)."
+  },
+  {
+   "id": "shop-exists-vs-max-value",
+   "family": "shop",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT customer_id, EXISTS (SELECT 1 FROM UNNEST(scores) AS s WHERE s > 90) AS high FROM customers",
+   "right": "SELECT customer_id, (SELECT MAX(s) FROM UNNEST(scores) AS s) > 90 AS high FROM customers",
+   "note": "Trap: as a value, no scores is FALSE on the left and NULL on the right."
+  },
+  {
+   "id": "shop-email-filter-forms",
+   "family": "shop",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT c.customer_id, e FROM customers AS c, UNNEST(c.emails) AS e WHERE e = 'a@example.com'",
+   "right": "SELECT c.customer_id, e FROM customers AS c CROSS JOIN UNNEST(c.emails) AS e WHERE 'a@example.com' = e",
+   "note": "The same filter on the element."
+  },
+  {
+   "id": "shop-offset-filter",
+   "family": "array",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT c.customer_id, s FROM customers AS c, UNNEST(c.scores) AS s WITH OFFSET AS i WHERE i < 2",
+   "right": "SELECT c.customer_id, s FROM customers AS c, UNNEST(c.scores) AS s WITH OFFSET AS i WHERE i <= 1",
+   "note": "Offsets are whole numbers."
+  },
+  {
+   "id": "shop-offset-vs-ordinal-filter",
+   "family": "array",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT c.customer_id, s FROM customers AS c, UNNEST(c.scores) AS s WITH OFFSET AS i WHERE i < 2",
+   "right": "SELECT c.customer_id, s FROM customers AS c, UNNEST(c.scores) AS s WITH OFFSET AS i WHERE i < 1",
+   "note": "Trap: the second element."
+  },
+  {
+   "id": "shop-unnest-distinct-scores",
+   "family": "shop",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT DISTINCT c.customer_id FROM customers AS c, UNNEST(c.scores) AS s WHERE s > 50",
+   "right": "SELECT c.customer_id FROM customers AS c, UNNEST(c.scores) AS s WHERE s > 50",
+   "note": "Trap: two scores above 50 give two rows."
+  },
+  {
+   "id": "lit-unnest-vs-union",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT x FROM UNNEST([1, 2, 3]) AS x",
+   "right": "SELECT 1 AS x UNION ALL SELECT 2 UNION ALL SELECT 3",
+   "note": "UNNEST of a literal array is its elements."
+  },
+  {
+   "id": "lit-unnest-dup-vs-distinct",
+   "family": "literal",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT x FROM UNNEST([1, 2, 2]) AS x",
+   "right": "SELECT 1 AS x UNION DISTINCT SELECT 2",
+   "note": "Trap: UNNEST keeps the repeated element."
+  },
+  {
+   "id": "lit-in-unnest-vs-in-list",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT customer_id FROM customers WHERE customer_id IN UNNEST([1, 2])",
+   "right": "SELECT customer_id FROM customers WHERE customer_id IN (1, 2)",
+   "note": "IN UNNEST of a literal array is an IN list."
+  },
+  {
+   "id": "lit-not-in-unnest-vs-list",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT customer_id FROM customers WHERE customer_id NOT IN UNNEST([1, 2])",
+   "right": "SELECT customer_id FROM customers WHERE customer_id NOT IN (1, 2)",
+   "note": "NOT IN UNNEST of a literal array is a NOT IN list."
+  },
+  {
+   "id": "lit-in-unnest-other-list",
+   "family": "literal",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT customer_id FROM customers WHERE customer_id IN UNNEST([1, 2])",
+   "right": "SELECT customer_id FROM customers WHERE customer_id IN (1, 3)",
+   "note": "Trap: another list."
+  },
+  {
+   "id": "lit-length",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT ARRAY_LENGTH([1, 2, 3]) AS n",
+   "right": "SELECT 3 AS n",
+   "note": "The length of a literal array."
+  },
+  {
+   "id": "lit-offset",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT [10, 20, 30][OFFSET(1)] AS v",
+   "right": "SELECT 20 AS v",
+   "note": "An element of a literal array."
+  },
+  {
+   "id": "lit-offset-vs-ordinal",
+   "family": "literal",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT [10, 20, 30][OFFSET(1)] AS v",
+   "right": "SELECT [10, 20, 30][ORDINAL(1)] AS v",
+   "note": "Trap: offset 1 against ordinal 1."
+  },
+  {
+   "id": "lit-with-offset-rows",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT x, o FROM UNNEST(['a', 'b']) AS x WITH OFFSET AS o",
+   "right": "SELECT 'a' AS x, 0 AS o UNION ALL SELECT 'b', 1",
+   "note": "WITH OFFSET counts from 0."
+  },
+  {
+   "id": "lit-with-offset-from-one",
+   "family": "literal",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT x, o FROM UNNEST(['a', 'b']) AS x WITH OFFSET AS o",
+   "right": "SELECT 'a' AS x, 1 AS o UNION ALL SELECT 'b', 2",
+   "note": "Trap: offsets do not count from 1."
+  },
+  {
+   "id": "lit-unnest-null-array",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT (SELECT COUNT(*) FROM UNNEST(CAST(NULL AS ARRAY<INT64>))) AS n",
+   "right": "SELECT 0 AS n",
+   "note": "UNNEST of a NULL array gives no rows."
+  },
+  {
+   "id": "lit-length-null-array",
+   "family": "literal",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT ARRAY_LENGTH(CAST(NULL AS ARRAY<INT64>)) AS n",
+   "right": "SELECT 0 AS n",
+   "note": "Trap: the length of a NULL array is NULL."
+  },
+  {
+   "id": "lit-struct-field",
+   "family": "literal",
+   "schema": "shop",
+   "label": "equivalent",
+   "left": "SELECT STRUCT(1 AS a, 'x' AS b).b AS v",
+   "right": "SELECT 'x' AS v",
+   "note": "A field of a literal struct."
+  },
+  {
+   "id": "lit-concat-null",
+   "family": "literal",
+   "schema": "shop",
+   "label": "different",
+   "left": "SELECT ARRAY_LENGTH(ARRAY_CONCAT(CAST(NULL AS ARRAY<INT64>), [1])) AS n",
+   "right": "SELECT 1 AS n",
+   "note": "Trap: ARRAY_CONCAT with a NULL array is NULL."
+  }
+ ]
+}

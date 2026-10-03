@@ -320,9 +320,11 @@ def test_rows11_12_structs_compared_are_refused_and_returned_by_position(db):
     assert one(db, "SELECT STRUCT(1 AS a, 2 AS b) AS s") == (1, 2)
 
 
-def test_with_offset_is_refused(db):
+def test_with_offset_counts_from_zero(db):
     # BigQuery's offset counts from 0; sqlglot writes WITH ORDINALITY, which counts from 1
-    assert fails(db, "SELECT x FROM UNNEST([1, 2, 3]) x WITH OFFSET o WHERE o > 0")
+    assert sorted(run(db, "SELECT x, o FROM UNNEST([1, 2, 3]) x WITH OFFSET o WHERE o > 0")) == [(2, 1), (3, 2)]
+    # an offset whose element has no name cannot be read back
+    assert fails(db, "SELECT COUNT(*) FROM UNNEST([1, 2, 3]) WITH OFFSET o")
 
 
 def test_rows30_31_approximate_aggregates_are_refused(db):
