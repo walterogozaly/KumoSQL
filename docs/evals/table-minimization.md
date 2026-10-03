@@ -3,8 +3,8 @@
 Given a pipeline of tables (say tables 1 to 20) and the tables that must stay, how simple can the pipeline get? A **protected** table must still exist under the same name and give exactly the same output: the same column names in the same order and the same bag of rows, on every database. Every other table may be dropped, merged, inlined or rewritten. The answer is scored by complexity: the repo's sqlfluff score summed over the pipeline, plus one per table.
 
 ```
-python tools/minimization_bench.py                     # dev split, KumoSQL's Refactor search
-python tools/minimization_bench.py --minimizer kumosql.table_minimizer:minimize_case
+python tools/minimization_bench.py                     # dev split, KumoSQL's table minimizer
+python tools/minimization_bench.py --minimizer refactor   # the Refactor search, for comparison
 python tools/minimization_bench.py --minimizer reference   # the stored references (sanity check)
 python tools/minimization_bench.py --split held_out    # final evaluation only
 python tools/minimization_bench.py --verify benchmarks/table_minimization/generated.jsonl
@@ -78,7 +78,18 @@ Results: `benchmarks/results/table-minimization.json`.
 
 Cases: 334 (300 generated, 34 hand-written), 270 dev and 64 held out, 3 to 20 tables each, 711 traps. Every reference agrees with its original on DuckDB; KumoSQL's prover proves 170 of the 334 references in full (the rest are admitted on DuckDB agreement; the most common gaps are removing a LEFT JOIN on a declared key and folding joined per-customer aggregates).
 
-KumoSQL's Refactor search (`kumosql.refactor.search`, protected tables protected and every other table editable, 60 s per case), measured 2026-10-03:
+KumoSQL's table minimizer (`kumosql.table_minimizer`, see [table minimization](../table-minimization.md); 60 s search limit per case), measured 2026-10-03 on master after #398. It was written without looking at the cases, and the held-out split was run once:
+
+| Split | Cases | Wrong | Proved | Agreed | Same | Improved | Quality | Beats reference | Complexity (original / output / reference) | Median / max seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| dev | 270 | 0 | 249 | 4 | 17 | 255 (94.4%) | 0.80 | 51 | 4,831.5 / 3,164.5 / 2,682.5 | 4.6 / 74 |
+| held out (run once) | 64 | 0 | 60 | 2 | 2 | 63 (98.4%) | 0.75 | 11 | 1,083.5 / 739.0 / 589.5 | 4.3 / 63 |
+
+By family on dev (cases improved / cases, quality): dead tables 94/94, 0.84; duplicated logic 78/78, 0.98; unused columns and joins 80/80, 0.77; pass-through chains 92/93, 0.81; redundant filters 69/70, 0.75; CTE repeats a table 73/80, 0.71; mergeable tables 94/104, 0.56; cases with irreducible tables 51/59, 0.75. "Agreed" outputs were proved by the minimizer's own check (inlined down to the tables both sides share) but not by the harness's `prove_models`. The weakest family is mergeable tables: folds of joined per-key aggregates and LEFT JOINs that the prover cannot prove are rejected. The minimizer does not add shared tables, so a reference that factors common logic into a new table can stay ahead.
+
+`tests/test_minimization_bench.py` holds floors for both minimizers on every other dev case of 6 to 8 tables (27 cases): the table minimizer improves 23 and proves 22 there.
+
+For comparison, the Refactor search (`--minimizer refactor`, `kumosql.refactor.search`, protected tables protected and every other table editable, 60 s per case), measured 2026-10-03:
 
 | Split | Cases | Wrong | Proved | Improved | Quality | Complexity (original / output / reference) | Median / max seconds |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
