@@ -37,7 +37,7 @@ Profiles and match reports include reasons and unknowns. Check whether the match
 
 ## Why missing schemas matter
 
-`SELECT *` over an external table needs that table's column list. Without it, KumoSQL cannot reliably trace the columns. Saved catalog data or an explicitly requested schema lookup can fill the gap.
+`SELECT *` over an external table needs that table's column list. Without it, KumoSQL cannot reliably trace the columns. Saved catalog data can fill the gap. A live lookup in BigQuery can too, but it is off by default so that nothing reaches the network unless you ask: tick the checkbox in Settings, pass `--fetch-schema` to the pipeline report command, or set `KUMOSQL_SCHEMA_FETCH=1`. Without it, those columns simply stay unknown. The log says only that a lookup ran and how many tables it answered, never their names. See the [full reference](../docs/pipeline-analysis.md) for the details.
 
 An unresolved Dataform template can also hide a dependency. The report marks analysis gaps; it does not silently treat them as no dependency.
 
