@@ -555,6 +555,24 @@ def cte_dependency_errors(statement: exp.Expression) -> list[str]:
     return list(dict.fromkeys(errors))
 
 
+_EXTENDED_GROUPING = tuple(getattr(exp, name) for name in ("Rollup", "Cube", "GroupingSets") if hasattr(exp, name))
+
+
+def extended_grouping(group: exp.Expression | None) -> bool:
+    """``GROUP BY`` with ``ROLLUP``, ``CUBE``, ``GROUPING SETS`` or ``WITH TOTALS``: more than one grouping.
+
+    Recent sqlglot keeps ``ROLLUP (x)`` as an item of ``group.expressions``, older versions (and MySQL's
+    ``WITH ROLLUP``) in ``group.args``, so both are checked. Such a grouping can add a grand-total row
+    that exists even over no input rows.
+    """
+
+    if group is None:
+        return False
+    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        return True
+    return any(isinstance(e, _EXTENDED_GROUPING) for e in group.expressions)
+
+
 def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set[str]:
     """Names of the WITH tables in scope at ``node``, looking up to ``top`` (its own WITH included; default: the root).
 
