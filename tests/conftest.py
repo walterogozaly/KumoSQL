@@ -141,6 +141,7 @@ EVAL_FILES = {
     "test_constraint_dependence.py",
     "test_join_rewrite_bench.py",
     "test_cosette_benchmarks.py",
+    "test_dbgpt_rules_bench.py",
     "test_dlbench_bench.py",
     "test_dup_bench.py",
     "test_incremental.py",
