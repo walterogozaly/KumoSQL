@@ -1228,14 +1228,18 @@ class _Analysis:
                     located = [u for u in analysis.unknown if u.error or u.degraded]
                     if located:
                         diagnostics.append(PipelineDiagnostic(key, "parse_error", _degraded_message(analysis, located[0])))
-                    unread = len(analysis.unknown) - len(located)
+                    unread = [u for u in analysis.unknown if not (u.error or u.degraded)]
+                    inside = sum(1 for u in unread if u.nested)  # read from a called procedure's body, not counted in `considered`
                     if unread:
+                        counted = len(unread) - inside
+                        what = f"{counted} of {considered} {model.kind} statements" if counted else ""
+                        if inside:
+                            what += f"{' and ' if what else ''}{inside} statements inside procedures they call"
                         diagnostics.append(
                             PipelineDiagnostic(
                                 key,
                                 "unparsed_operation",
-                                f"{unread} of {considered} {model.kind} statements could not be read; "
-                                "tables they read or write may have no edges here",
+                                f"{what} could not be read; tables they read or write may have no edges here",
                             )
                         )
                 if sum(analysis.counts().values()) > 1:

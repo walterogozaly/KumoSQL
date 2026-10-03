@@ -1,0 +1,43 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.TARGET_DATA,
+  dependencies: ["stg_table_storage", "bigquery_pricing"],
+  uniqueKey: ["bq_region", "project_id", "table_schema", "table_name", "table_type", "snapshot_date"],
+  bigquery: {
+    partitionBy: "snapshot_date",
+    clusterBy: ["project_id"],
+    updatePartitionFilter: `snapshot_date = DATE "${ dataform.projectConfig.vars.SNAPSHOT_DATE }"`
+  },
+  assertions: {
+    uniqueKey: ["bq_region", "project_id", "table_schema", "table_name", "table_type", "snapshot_date"]
+  },
+  tags: ["MERGE_DATA"]
+}
+
+
+SELECT
+    bq_region
+  , project_id
+  , table_schema
+  , table_name
+  , table_type
+  , snapshot_date
+  , total_rows
+  , total_logical_bytes
+  , active_logical_bytes
+  , long_term_logical_bytes
+  , total_physical_bytes
+  , active_physical_bytes
+  , long_term_physical_bytes
+  , time_travel_physical_bytes
+  , fail_safe_physical_bytes
+  , total_logical_gib
+  , active_logical_gib
+  , long_term_logical_gib
+  , total_physical_gib
+  , active_physical_gib
+  , long_term_physical_gib
+  , time_travel_physical_gib
+  , fail_safe_physical_gib
+FROM ${ ref({ schema: dataform.projectConfig.vars.STAGING_DATA, name: "stg_table_storage" }) }
+${ when(incremental(), `WHERE snapshot_date = DATE "${ dataform.projectConfig.vars.SNAPSHOT_DATE }"`) }

@@ -1,0 +1,34 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.TARGET_DATA,
+  dependencies: ["stg_jobs_timeline"],
+  uniqueKey: ["bq_region", "project_id", "period_start", "job_id"],
+  bigquery: {
+    partitionBy: "DATE(period_start)",
+    clusterBy: ["project_id"],
+    updatePartitionFilter: `period_start >= "${ dataform.projectConfig.vars.START_DATE }"`
+  },
+  assertions: {
+    uniqueKey: ["bq_region", "project_id", "period_start", "job_id"]
+  },
+  tags: ["MERGE_DATA"]
+}
+
+
+SELECT
+    bq_region
+  , project_id
+  , period_start
+  , job_id
+  , period_slot_ms
+  , total_bytes_processed
+  , total_bytes_billed
+  , job_type
+  , statement_type
+  , job_creation_time
+  , job_start_time
+  , job_end_time
+  , job_state
+  , reservation_id
+FROM ${ ref({ schema: dataform.projectConfig.vars.STAGING_DATA, name: "stg_jobs_timeline" }) }
+${ when(incremental(), `WHERE period_start >= "${ dataform.projectConfig.vars.START_DATE }"`) }
