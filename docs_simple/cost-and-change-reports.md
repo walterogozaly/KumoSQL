@@ -40,6 +40,8 @@ python -m kumosql ci-check report.json --comment-out comment.md
 
 The first command compares the two project folders. It reports changed models, evidence, downstream consumers, and existing work that may be reused. The second turns the report into a CI conclusion and a Markdown comment file; writing that file does not post it to GitHub.
 
+A model can change without its file changing. If a model says `SELECT *` and the table it reads gains a column, the model's text is the same but its output has a new column that flows on to every reader. When you give the report the table columns for each side (`--base-source-schema` and `--head-source-schema`, the same JSON as for `pipeline-report`), it compares what each model resolves to, not only its text. A model whose output columns, column lineage or tables read differ is listed as unproven with a `contract` entry saying what moved, so the CI conclusion is `neutral` instead of `success`. A text edit that would otherwise be proven is also downgraded when the output moved. Without those files the report only sees what the project files can tell it, so a `success` means "no change the files reveal", not "outputs unchanged". Column types are not compared yet.
+
 In the app, Change reports can compare the connected git project with another branch.
 
 Read a proposal's proof, consumer coverage, assumptions, and readiness together. An incomplete consumer list or unknown cost rationale is still incomplete, even when part of the SQL has a proof. The [UI roadmap](ui-roadmap.md) explains the API payloads behind the views.

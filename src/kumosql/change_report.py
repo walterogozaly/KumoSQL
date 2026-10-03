@@ -107,6 +107,63 @@ class _Consumers:
         return {"models": sorted(self.names.get(s, s) for s in seen), "complete": complete}
 
 
+class _Contracts:
+    """Each model's resolved output contract in one pipeline: columns, one-hop column lineage and tables read.
+
+    Two snapshots can hold identical model text yet resolve differently, because a supplied source schema
+    changed under a ``SELECT *``. The text comparison cannot see that; this one can.
+    """
+
+    def __init__(self, pipeline: Pipeline):
+        self.pipeline = pipeline
+        self.reads = pipeline.table_reads()
+        self.lineage: dict[str, dict[str, tuple[str, tuple[str, ...]]]] = {}
+        for ref, record in pipeline.explain_lineage().items():
+            sources = tuple(sorted(f"{s.table}.{s.column}" for s in record.sources))
+            self.lineage.setdefault(ref.table, {})[ref.column] = (record.status, sources)
+
+    def of(self, key: str) -> dict[str, object]:
+        return {
+            "columns": list(self.pipeline.output_columns(key)),
+            "lineage": self.lineage.get(key, {}),
+            "reads": sorted(self.reads.get(key, ())),
+        }
+
+
+def contract_delta(old: Mapping[str, object], new: Mapping[str, object]) -> dict[str, object]:
+    """What differs between two models' resolved contracts; empty when nothing does."""
+
+    delta: dict[str, object] = {}
+    old_cols, new_cols = list(old["columns"]), list(new["columns"])
+    if old_cols != new_cols:
+        delta["columns_added"] = [c for c in new_cols if c not in old_cols]
+        delta["columns_removed"] = [c for c in old_cols if c not in new_cols]
+        if not delta["columns_added"] and not delta["columns_removed"]:
+            delta["columns_reordered"] = True
+    old_lin, new_lin = old["lineage"], new["lineage"]
+    moved = sorted(c for c in set(old_lin) & set(new_lin) if old_lin[c] != new_lin[c])
+    if moved:
+        delta["lineage_changed"] = moved
+    old_reads, new_reads = set(old["reads"]), set(new["reads"])
+    if old_reads != new_reads:
+        delta["reads_added"], delta["reads_removed"] = sorted(new_reads - old_reads), sorted(old_reads - new_reads)
+    # Columns that appeared or vanished carry their lineage with them; the column lists already say so.
+    return delta
+
+
+def _delta_reason(delta: Mapping[str, object]) -> str:
+    parts = []
+    for key, text in (
+        ("columns_added", "output columns added"), ("columns_removed", "output columns removed"),
+        ("lineage_changed", "column lineage changed for"), ("reads_added", "now reads"), ("reads_removed", "no longer reads"),
+    ):
+        if delta.get(key):
+            parts.append(f"{text} {', '.join(map(str, delta[key]))}")
+    if delta.get("columns_reordered"):
+        parts.append("output column order changed")
+    return "; ".join(parts)
+
+
 def load_snapshot(root: Path, source_schema=None) -> tuple[Pipeline, Path | None]:
     """Load a project folder or compiled graph file; also return the raw-text root."""
 
@@ -147,6 +204,7 @@ def build_change_report(
     diagnostics: list[dict[str, str]] = []
     changes: list[dict[str, object]] = []
     cache: dict[str, _Consumers] = {}
+    contracts: dict[str, _Contracts] = {}
     compare: list[tuple[dict[str, object], str]] = []
 
     def consumers(side: str) -> _Consumers:
@@ -154,16 +212,31 @@ def build_change_report(
             cache[side] = _Consumers(head if side == "head" else base)
         return cache[side]
 
+    def contract(side: str, pipeline: Pipeline, key: str) -> dict[str, object]:
+        if side not in contracts:
+            contracts[side] = _Contracts(pipeline)
+        return contracts[side].of(key)
+
     for key in sorted(set(base.models) | set(head.models)):
         old, new = base.models.get(key), head.models.get(key)
         name = _display(new or old)
         kind = "modified"
+        delta: dict[str, object] = {}
         try:
             if old and new:
                 before, after = _raw_text(base_root, old), _raw_text(head_root, new)
-                if before == after:
+                # Identical text is not identical output: a changed source schema reshapes a SELECT *, and
+                # so its lineage, with no change to any file. Compare what each snapshot resolves the model to.
+                delta = contract_delta(contract("base", base, key), contract("head", head, key))
+                if before == after and not delta:
                     continue
-                if old.is_query and new.is_query:
+                if before == after:
+                    verification = {
+                        "label": "unproven",
+                        "reason": "model text is unchanged but its resolved output changed: " + _delta_reason(delta),
+                        "checks": [],
+                    }
+                elif old.is_query and new.is_query:
                     v = verify_rewrite(before, after)
                     verification = {
                         "label": v.status.value,
@@ -172,6 +245,12 @@ def build_change_report(
                     }
                 else:
                     verification = {"label": "unproven", "reason": "not analyzed: not a query model", "checks": []}
+                if delta and before != after and verification["label"] in ("proven", "planner_checked"):
+                    # The proof compares the two texts over one schema; here the schema the texts resolve against moved too.
+                    verification = {
+                        **verification, "label": "unproven",
+                        "reason": "resolved output changed between the snapshots: " + _delta_reason(delta),
+                    }
                 readers = consumers("head").of(key)
             elif new:
                 kind = "added"
@@ -187,7 +266,10 @@ def build_change_report(
             verification = {"label": "failed", "reason": "analysis of this model failed", "checks": []}
             readers = {"models": [], "complete": False}
             cost = {"basis": "unavailable"}
+            delta = {}
         change = {"model": name, "kind": kind, "verification": verification, "cost": cost, "consumers": readers}
+        if delta:
+            change["contract"] = delta
         if owned is not None:  # (base, head) catalogs.owned(): a removed model is owned by what owned it before
             change["owned"] = key in owned[0 if kind == "removed" else 1]
         changes.append(change)
@@ -263,6 +345,11 @@ def change_report_main(argv: list[str] | None = None) -> int:
         "--cost", type=Path,
         help='JSON mapping "schema.name" to {"basis", "before", "after"}; omitted means unknown',
     )
+    parser.add_argument(
+        "--base-source-schema", type=Path, metavar="FILE",
+        help="Source schema JSON for the base snapshot, as for pipeline-report (changes under SELECT * are reported)",
+    )
+    parser.add_argument("--head-source-schema", type=Path, metavar="FILE", help="Source schema JSON for the head snapshot")
     parser.add_argument("--scope", metavar="NAME", help="Saved scope that limits which existing tables are compared")
     parser.add_argument("--no-overlaps", action="store_true", help="Skip the already-done-elsewhere section")
     parser.add_argument("--title", default="Change report")
@@ -277,8 +364,14 @@ def change_report_main(argv: list[str] | None = None) -> int:
             scope = get_scope(args.scope)
             if scope is None:
                 raise ValueError(f"no saved scope named {args.scope!r}")
-        base, base_root = load_snapshot(args.base)
-        head, head_root = load_snapshot(args.head)
+        schemas = []
+        for path in (args.base_source_schema, args.head_source_schema):
+            schema = json.loads(path.read_text(encoding="utf-8")) if path else None
+            if schema is not None and not isinstance(schema, dict):
+                raise ValueError("source schema file must be a JSON object")
+            schemas.append(schema)
+        base, base_root = load_snapshot(args.base, schemas[0])
+        head, head_root = load_snapshot(args.head, schemas[1])
     except (OSError, ValueError, AttributeError) as exc:
         parser.error(str(exc))
     report = build_change_report(
