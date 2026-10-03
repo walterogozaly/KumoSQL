@@ -70,3 +70,15 @@ def test_an_order_by_without_limit_is_compared_as_a_list():
     asc, desc = "SELECT id FROM t ORDER BY id", "SELECT id FROM t ORDER BY id DESC"
     assert bench.differs_on_random_databases(case, asc, desc) == "differs"
     assert bench.differs_on_random_databases(case, "SELECT id FROM t", desc) == "agree"  # bags when the first query has no order
+
+
+def test_development_runs_read_the_dev_split_and_results_score_every_pair():
+    assert bench.choose_split(None, write=False) == "dev"
+    assert bench.choose_split(None, write=True) == "all"  # the results files' command: --write-results
+    assert bench.choose_split("held-out", write=False) == "held-out"
+    with pytest.raises(ValueError):
+        bench.choose_split("dev", write=True)
+    cases = bench.load_cases()
+    dev, held = bench.split_cases(cases, "dev"), bench.split_cases(cases, "held-out")
+    assert not any(c.held_out for c in dev) and all(c.held_out for c in held)
+    assert (len(dev), len(held), len(bench.split_cases(cases, "all"))) == (193, 57, 250)

@@ -4,7 +4,7 @@
 
 Give KumoSQL several table-defining queries and choose protected outputs. It searches for a simpler set while keeping those protected names, column order, and results.
 
-Unprotected tables may be dropped, folded into readers, merged with equal tables, pruned of unused columns, or simplified. A change is kept only when the pipeline prover accepts the protected outputs against the original definitions.
+Unprotected tables may be dropped, folded into readers, merged with equal tables, pruned of unused columns, or simplified. With factoring on, a query repeated in several tables can move into one new table. A change is kept only when the pipeline prover accepts the protected outputs against the original definitions.
 
 ## A small input file
 

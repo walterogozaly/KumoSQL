@@ -225,10 +225,14 @@ def _assertion_dataset(root: Path) -> str:
 
     try:
         settings = root / "workflow_settings.yaml"
+        if settings.is_symlink():
+            return "dataform_assertions"
         if settings.is_file():
             match = re.search(r"(?m)^\s*defaultAssertionDataset\s*:\s*['\"]?([^'\"\s#]+)", settings.read_text(encoding="utf-8-sig"))
             return match.group(1) if match else "dataform_assertions"
         legacy = root / "dataform.json"
+        if legacy.is_symlink():
+            return "dataform_assertions"
         if legacy.is_file():
             value = json.loads(legacy.read_text(encoding="utf-8-sig")).get("assertionSchema")
             return value if isinstance(value, str) and value else "dataform_assertions"
@@ -239,6 +243,8 @@ def _assertion_dataset(root: Path) -> str:
 
 def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
     settings = root / "workflow_settings.yaml"
+    if settings.is_symlink():
+        raise OSError("symbolic links are not read")
     if settings.is_file():
         text = settings.read_text(encoding="utf-8-sig")
 
@@ -248,6 +254,8 @@ def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
 
         return value("defaultProject"), value("defaultDataset")
     legacy = root / "dataform.json"
+    if legacy.is_symlink():
+        raise OSError("symbolic links are not read")
     if legacy.is_file():
         data = json.loads(legacy.read_text(encoding="utf-8-sig"))
         return data.get("defaultDatabase", ""), data.get("defaultSchema", "")
@@ -527,7 +535,12 @@ def load_sqlx_project(
     diagnostics: list[PipelineDiagnostic] = []
     database, dataset = _read_project_defaults(root, diagnostics)
     assertion_dataset = _assertion_dataset(root)
-    search_root = root / "definitions" if (root / "definitions").is_dir() else root
+    definitions = root / "definitions"
+    # A definitions junction must be pruned relative to the selected project root,
+    # including on Python versions without Path.is_junction().
+    use_definitions = (definitions.is_dir() and not definitions.is_symlink()
+                       and definitions.resolve().is_relative_to(root.resolve()))
+    search_root = definitions if use_definitions else root
     models: dict[str, Model] = {}
     sources: dict[str, Target] = {}
 
@@ -536,9 +549,10 @@ def load_sqlx_project(
             label = str(directory.relative_to(root))
         except ValueError:
             label = "."
-        diagnostics.append(
-            PipelineDiagnostic(label, "unreadable_directory", f"{reason}; files inside were not analyzed")
-        )
+        file_link = directory.is_symlink() and not directory.is_dir()
+        code = "read_error" if file_link else "unreadable_directory"
+        effect = "asset was skipped" if file_link else "files inside were not analyzed"
+        diagnostics.append(PipelineDiagnostic(label, code, f"{reason}; {effect}"))
 
     def add_model(model: Model) -> None:
         if model.key in models:
@@ -814,6 +828,7 @@ def load_compiled_graph(
                     operations_sql=tuple(
                         text for key_ in ("preOps", "postOps") for text in (item.get(key_) or []) if isinstance(text, str) and text.strip()
                     ),
+                    pre_operations=sum(1 for text in (item.get("preOps") or []) if isinstance(text, str) and text.strip()),
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(

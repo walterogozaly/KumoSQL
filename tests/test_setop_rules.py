@@ -6,6 +6,7 @@ import pytest
 import sqlglot
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows
 from kumosql.setop_rules import distinct_rows, normalize_set_operations
 
 SCHEMA = {"t": ["a", "b", "c"], "u": ["a", "b", "c"]}
@@ -17,14 +18,14 @@ def _prove(left, right):
 
 def _same_on_random_data(left, right, trials=40):
     rng = random.Random(7)
+    db = duckdb.connect()  # one connection, new tables each trial
+    queries = [sqlglot.transpile(sql, read="mysql", write="duckdb")[0] for sql in (left, right)]
     for _ in range(trials):
-        db = duckdb.connect()
         for table in SCHEMA:
-            db.execute(f"CREATE TABLE {table} (a INTEGER, b INTEGER, c INTEGER)")
+            db.execute(f"CREATE OR REPLACE TABLE {table} (a INTEGER, b INTEGER, c INTEGER)")
             rows = [tuple(rng.choice([None, 1, 2, 3]) for _ in range(3)) for _ in range(rng.randint(0, 6))]
-            if rows:
-                db.executemany(f"INSERT INTO {table} VALUES (?, ?, ?)", rows)
-        bags = [Counter(db.execute(sqlglot.transpile(sql, read="mysql", write="duckdb")[0]).fetchall()) for sql in (left, right)]
+            insert_rows(db, table, rows)
+        bags = [Counter(db.execute(sql).fetchall()) for sql in queries]
         if bags[0] != bags[1]:
             return False
     return True

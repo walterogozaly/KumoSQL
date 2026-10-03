@@ -464,7 +464,7 @@ def test_a_candidate_script_is_not_checked_as_its_first_select():
 def test_a_protected_script_gets_a_result_instead_of_none():
     tables = {"out": "SELECT 1 AS x; SELECT 2 AS x"}
     assert _min(tables, ["out"]).proofs["out"].status == "unchanged"
-    assert table_minimizer.verify_tables(tables, {}, ["out"], sources=RAW)["out"].status == "missing"
+    assert table_minimizer.verify_tables(tables, {}, ["out"], sources=RAW)["out"].status == "unknown"
     assert table_minimizer.verify_tables(tables, tables, ["out"], sources=RAW)["out"].status == "unchanged"
     assert table_minimizer.verify_tables(tables, {"out": "SELECT 2 AS x"}, ["out"], sources=RAW)["out"].status == "unknown"
 
@@ -544,3 +544,92 @@ def test_an_answer_never_reads_a_table_it_removed():
     out = {"out": "SELECT x FROM stage"}
     assert not table_minimizer._holds_together(setup, state, out, names, back, "bigquery")
     assert single_query(out["out"], "bigquery") is not None
+
+
+SHARED = {
+    "rpt_a": "SELECT p.customer_id, SUM(p.amount) AS total FROM (SELECT o.customer_id, o.amount FROM orders AS o "
+    "JOIN customers AS c ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') AS p GROUP BY p.customer_id",
+    "rpt_b": "SELECT q.customer_id, COUNT(*) AS n FROM (SELECT o.customer_id, o.amount FROM orders AS o "
+    "JOIN customers AS c ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') AS q GROUP BY q.customer_id",
+    "rpt_c": "WITH paid_eu AS (SELECT o.customer_id, o.amount FROM orders AS o JOIN customers AS c "
+    "ON o.customer_id = c.id WHERE c.region = 'eu' AND o.status = 'paid') SELECT MAX(amount) AS biggest FROM paid_eu",
+}
+
+
+def test_factoring_moves_a_repeated_query_into_one_new_table():
+    protected = ["rpt_a", "rpt_b", "rpt_c"]
+    plain = minimize_tables(SHARED, protected, sources=SOURCES)
+    assert plain.added == []
+    result = minimize_tables(SHARED, protected, sources=SOURCES, factor=True)
+    assert result.added == ["paid_eu"]  # named after the CTE it replaces
+    assert set(result.tables) == {*protected, "paid_eu"}
+    assert result.score < plain.score
+    assert all("JOIN" not in result.tables[name].upper() and "paid_eu" in result.tables[name] for name in protected)
+    assert {proof.status for proof in result.proofs.values()} == {"proved"}
+    assert result.to_json()["added"] == ["paid_eu"]
+    _assert_same(SHARED, result.tables, protected)
+
+
+def test_checked_tables_keep_their_rows_and_fixed_tables_their_sql():
+    tables = {
+        "stage": "SELECT id, customer_id, amount, status FROM orders WHERE status = 'paid'",
+        "report": "SELECT customer_id, SUM(amount) AS total FROM stage GROUP BY customer_id",
+    }
+    moved = {  # the filter moved downstream: the report is the same, the stage is not
+        "stage": "SELECT id, customer_id, amount, status FROM orders",
+        "report": "SELECT customer_id, SUM(amount) AS total FROM stage WHERE status = 'paid' GROUP BY customer_id",
+    }
+    verify = table_minimizer.verify_tables
+    assert set(verify(tables, moved, ["report"], sources=SOURCES)) == {"report"}
+    found = verify(tables, moved, ["report"], sources=SOURCES, checked=["stage"])
+    assert found["report"].status == "proved" and found["stage"].status == "unknown"
+    narrowed = {**tables, "stage": "SELECT id, customer_id, amount FROM orders WHERE status = 'paid'"}
+    assert verify(tables, narrowed, ["report"], sources=SOURCES, checked=["stage"])["stage"].status == "proved"
+    # a fixed table is read as given: a candidate that changes it proves nothing
+    found = verify(tables, moved, ["report"], sources=SOURCES, fixed={"stage": ["id", "customer_id", "amount", "status"]})
+    assert found["report"].status == "unknown"
+
+    shared = {
+        "stage": "SELECT id, customer_id, CASE WHEN amount > 10 THEN 'big' WHEN amount > 0 THEN 'small' ELSE 'none' END AS size, "
+        "CASE WHEN status = 'open' THEN 1 ELSE 0 END AS is_open FROM orders WHERE status <> 'void' AND amount IS NOT NULL",
+        "a": "SELECT customer_id, size FROM stage WHERE id > 3",
+        "b": "SELECT size, COUNT(*) AS n FROM stage GROUP BY size",
+        "c": "SELECT id FROM stage WHERE size = 'big'",
+    }
+    pruned = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, checked=["stage"])
+    assert pruned.moves == ["prune unused columns of stage"] and "is_open" not in pruned.tables["stage"]
+    kept = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, checked=["stage"], keep_columns={"stage": ["is_open"]})
+    assert kept.tables == shared  # a column its assertions name is never pruned
+    fixed = minimize_tables(shared, ["a", "b", "c"], sources=SOURCES, fixed={"stage": None})
+    assert fixed.tables["stage"] == shared["stage"]
+    _assert_same(shared, pruned.tables, ["a", "b", "c"])
+
+
+def test_lower_score_only_skips_rewrites_that_do_not_lower_the_score():
+    tables = {"report": "SELECT customer_id AS c, SUM(amount) AS total FROM orders GROUP BY customer_id"}
+    result = minimize_tables(tables, ["report"], sources=SOURCES, lower_score_only=True)
+    assert result.tables == tables and result.moves == []
+
+
+def test_tables_that_reuse_with_names_can_be_folded_together():
+    # the dbt style: every staging table is WITH source AS (...), renamed AS (...) SELECT * FROM renamed
+    tables = {
+        "stg_orders": "WITH source AS (SELECT * FROM orders), renamed AS (SELECT id AS order_id, customer_id, amount "
+        "FROM source WHERE amount > 0) SELECT * FROM renamed",
+        "stg_customers": "WITH source AS (SELECT * FROM customers), renamed AS (SELECT id AS customer_id, region FROM source) "
+        "SELECT * FROM renamed",
+        "report": "SELECT c.region, SUM(o.amount) AS total FROM stg_orders AS o JOIN stg_customers AS c "
+        "ON o.customer_id = c.customer_id GROUP BY c.region",
+    }
+    result = minimize_tables(tables, ["report"], sources=SOURCES)
+    assert set(result.tables) == {"report"} and result.proofs["report"].status == "proved"
+    _assert_same(tables, result.tables, ["report"])
+    # the renaming for the proof follows scopes: a WITH name read in its own body is the pipeline's table
+    sql = "WITH orders AS (SELECT * FROM orders), b AS (SELECT * FROM orders) SELECT * FROM b JOIN (WITH b AS (SELECT 1 AS x) SELECT * FROM b) AS q ON TRUE"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    counter = [0]
+    for clause in reversed(list(tree.find_all(sqlglot.exp.With))):
+        table_minimizer._unique_ctes(clause.parent, counter)
+    assert tree.sql(dialect="bigquery") == (
+        "WITH orders__kumo2 AS (SELECT * FROM orders), b__kumo3 AS (SELECT * FROM orders__kumo2 AS orders) "
+        "SELECT * FROM b__kumo3 AS b JOIN (WITH b__kumo1 AS (SELECT 1 AS x) SELECT * FROM b__kumo1 AS b) AS q ON TRUE")

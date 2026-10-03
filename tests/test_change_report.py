@@ -141,3 +141,141 @@ def test_changes_are_flagged_when_the_active_catalogs_do_not_own_them(tmp_path):
     flags = {c["model"]: c["owned"] for c in r["changes"]}
     assert flags["analytics.stg"] is True and flags["analytics.totals"] is False
     assert all("owned" not in c for c in report(a, b)["changes"])
+
+
+STAR_FILES = {
+    "workflow_settings.yaml": SETTINGS,
+    "definitions/src.sqlx": 'config { type: "declaration", schema: "raw", name: "src" }\n',
+    "definitions/model.sqlx": 'config { type: "table" }\nSELECT * FROM ${ref("raw", "src")}\n',
+    "definitions/reader.sqlx": 'config { type: "table" }\nSELECT * FROM ${ref("model")}\n',
+}
+SRC_BASE = {"proj.raw.src": {"x": "INT64"}}
+SRC_HEAD = {"proj.raw.src": {"x": "INT64", "y": "STRING"}}
+
+
+def star_project(root, files=None):
+    for rel, text in {**STAR_FILES, **(files or {})}.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def star_report(tmp_path, base_schema, head_schema, head_files=None):
+    base, br = load_snapshot(star_project(tmp_path / "a"), base_schema)
+    head, hr = load_snapshot(star_project(tmp_path / "b", head_files), head_schema)
+    return build_change_report(base, head, base_root=br, head_root=hr, generated_at="t", overlaps=False)
+
+
+def test_source_schema_change_under_select_star_is_reported_unproven(tmp_path):
+    # Model text is byte-identical in both snapshots; only the supplied source schema moved.
+    from kumosql.ci_check import conclude
+
+    r = star_report(tmp_path, SRC_BASE, SRC_HEAD)
+    m = by_model(r)
+    assert set(m) == {"analytics.model", "analytics.reader"}
+    for c in m.values():
+        assert c["kind"] == "modified"
+        assert c["verification"]["label"] == "unproven"
+        assert "text is unchanged" in c["verification"]["reason"]
+        assert c["contract"] == {"columns_added": ["y"], "columns_removed": []}
+    assert m["analytics.model"]["consumers"]["models"] == ["analytics.reader"]
+    assert conclude(r) == "neutral"
+
+
+def test_dropped_source_column_is_reported(tmp_path):
+    c = by_model(star_report(tmp_path, SRC_HEAD, SRC_BASE))["analytics.reader"]
+    assert c["contract"]["columns_removed"] == ["y"]
+    assert c["verification"]["label"] == "unproven"
+
+
+def test_same_source_schema_reports_nothing(tmp_path):
+    assert star_report(tmp_path, SRC_HEAD, SRC_HEAD)["changes"] == []
+    assert star_report(tmp_path / "n", None, None)["changes"] == []
+
+
+def test_proven_text_change_is_not_proven_when_the_resolved_output_moved(tmp_path):
+    edited = {"definitions/model.sqlx": 'config { type: "table" }\nSELECT * FROM ${ref("raw", "src")} WHERE TRUE\n'}
+    moved = by_model(star_report(tmp_path / "m", SRC_BASE, SRC_HEAD, edited))["analytics.model"]
+    assert moved["verification"]["label"] == "unproven"
+    assert "resolved output changed" in moved["verification"]["reason"]
+    # With the schema held still, the same text edit is still proven.
+    still = by_model(star_report(tmp_path / "s", SRC_BASE, SRC_BASE, edited))["analytics.model"]
+    assert still["verification"]["label"] == "proven"
+    assert "contract" not in still
+
+
+def test_cli_takes_a_source_schema_per_snapshot(tmp_path):
+    a, b = star_project(tmp_path / "a"), star_project(tmp_path / "b")
+    sa, sb, out = tmp_path / "sa.json", tmp_path / "sb.json", tmp_path / "out.json"
+    sa.write_text(json.dumps(SRC_BASE))
+    sb.write_text(json.dumps(SRC_HEAD))
+    args = [str(a), str(b), "--no-overlaps", "-o", str(out)]
+    assert change_report_main(args) == 0
+    assert json.loads(out.read_text())["report"]["changes"] == []
+    assert change_report_main(args + ["--base-source-schema", str(sa), "--head-source-schema", str(sb)]) == 0
+    changes = json.loads(out.read_text())["report"]["changes"]
+    assert {c["model"] for c in changes} == {"analytics.model", "analytics.reader"}
+    sb.write_text("[1]")
+    with pytest.raises(SystemExit):
+        change_report_main(args + ["--head-source-schema", str(sb)])
+
+
+# Compiled graphs carry operations, kind, dependencies and constraints as fields next to the query text.
+def compiled(post=(), pre=(), kind="table", deps=(), non_null=()):
+    def target(name):
+        return {"database": "p", "schema": "d", "name": name}
+
+    entry = {
+        "target": target("model"), "type": kind, "query": "SELECT x FROM p.d.src",
+        "preOps": list(pre), "postOps": list(post), "dependencyTargets": [target(n) for n in deps],
+    }
+    if non_null:
+        entry["assertions"] = {"nonNull": list(non_null)}
+    return {"tables": [entry], "declarations": [target("src"), target("other")]}
+
+
+def compiled_report(base, head):
+    from kumosql.pipeline import load_compiled_graph
+
+    return build_change_report(load_compiled_graph(base), load_compiled_graph(head), overlaps=False, generated_at="t")
+
+
+@pytest.mark.parametrize(
+    "head, part",
+    [
+        (compiled(post=["DELETE FROM `p.d.model` WHERE x = 1"]), "post_operations"),
+        (compiled(pre=["DELETE FROM `p.d.model` WHERE x = 1"]), "pre_operations"),
+        (compiled(kind="view"), "kind"),
+        (compiled(deps=["other"]), "dependencies"),
+        (compiled(non_null=["x"]), "constraints"),
+    ],
+)
+def test_compiled_graph_change_beyond_the_query_is_reported_unproven(head, part):
+    from kumosql.ci_check import conclude
+
+    r = compiled_report(compiled(), head)
+    assert [c["model"] for c in r["changes"]] == ["d.model"]
+    ver = r["changes"][0]["verification"]
+    assert ver["label"] == "unproven" and part in ver["reason"]
+    assert conclude({"changes": r["changes"], "diagnostics": r["diagnostics"]}) != "success"
+
+
+def test_moving_an_operation_from_before_to_after_the_query_is_a_change():
+    op = "DELETE FROM `p.d.model` WHERE x = 1"
+    r = compiled_report(compiled(pre=[op]), compiled(post=[op]))
+    reason = r["changes"][0]["verification"]["reason"]
+    assert "pre_operations" in reason and "post_operations" in reason
+
+
+def test_identical_compiled_graphs_have_no_changes():
+    op = "DELETE FROM `p.d.model` WHERE x = 1"
+    r = compiled_report(compiled(post=[op], deps=["src", "other"]), compiled(post=[f" {op} "], deps=["other", "src"]))
+    assert r["changes"] == []
+
+
+def test_proven_query_rewrite_with_a_new_operation_is_not_proven():
+    base, head = compiled(), compiled(post=["DELETE FROM `p.d.model` WHERE x = 1"])
+    head["tables"][0]["query"] = "SELECT x FROM p.d.src WHERE TRUE"
+    ver = compiled_report(base, head)["changes"][0]["verification"]
+    assert ver["label"] == "unproven" and "post_operations" in ver["reason"]

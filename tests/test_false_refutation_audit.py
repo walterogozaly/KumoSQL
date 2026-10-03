@@ -138,3 +138,12 @@ def test_direct_executed_search_does_not_refute(label):
 
     left, right = EQUAL_IN_BIGQUERY[label]
     assert search_counterexample(left, right, schema=COLUMNS, types=TYPES) is None
+
+
+def test_countif_over_no_rows_is_not_a_difference():
+    # DuckDB's count_if is NULL on an empty table, BigQuery's COUNTIF is 0 like the COUNT(CASE ..) spelling
+    from kumosql.executed_refutation import search_counterexample
+
+    left, right = "SELECT COUNTIF(x > 1) AS c FROM t", "SELECT COUNT(CASE WHEN x > 1 THEN 1 END) AS c FROM t"
+    assert search_counterexample(left, right, schema=COLUMNS, types=TYPES) is None
+    assert endpoint(left, right, COLUMNS, {}, TYPES)["status"] != "not_equivalent"
