@@ -219,12 +219,11 @@ def expand_alias_columns(tree: exp.Expression, schema: dict[str, list[str]] | No
     resolved (unknown table, star select, more names than columns) is declined.
     """
 
+    from .canonical import visible_ctes
+
     lowered = {k.lower(): v for k, v in (schema or {}).items()}
-    ctes = {}
-    for cte in tree.find_all(exp.CTE):
-        if cte.alias:
-            ctes[cte.alias.lower()] = cte.this
-    for alias in list(tree.find_all(exp.TableAlias)):
+    # Innermost lists first, so a derived table copied into an outer expansion carries its own expanded.
+    for alias in reversed(list(tree.find_all(exp.TableAlias))):
         renamed = [c.name for c in alias.args.get("columns") or []]
         source = alias.parent
         if not renamed or isinstance(source, exp.CTE):
@@ -235,6 +234,9 @@ def expand_alias_columns(tree: exp.Expression, schema: dict[str, list[str]] | No
             if not isinstance(source.this, exp.Identifier):
                 raise UnmodeledConstruct("a column list on a table function alias is not modeled")
             key = ".".join(p.name for p in source.parts).lower()
+            ctes: dict[str, exp.Expression] = {}
+            for name, body in visible_ctes(source).items():  # the nearest WITH that defines the name
+                ctes.setdefault(name.lower(), body)
             if not source.db and key in ctes:
                 columns = _output_names(ctes[key])
             else:

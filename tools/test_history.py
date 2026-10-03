@@ -5,7 +5,8 @@ shared history directory when it can find one: ``$KUMOSQL_TEST_HISTORY``, else `
 when ``/mnt/project-files`` exists (``KUMOSQL_TEST_HISTORY=off`` turns recording off). A record is one JSON line in its
 own file under ``runs/``, so threads running at the same time never collide. It holds the commit, branch, a task
 label, the tests the run was aiming at (the *targets*), the tests that failed and which of those were outside the
-targets, per-file test counts and the slow tests' durations.
+targets, per-file test counts, and the times: the run's wall and CPU time, the machine it ran on, per-file wall and CPU
+time and the slow tests' durations.
 
 ``tests/conftest.py`` installs the recorder, so nothing else needs to change in a test file.
 
@@ -13,6 +14,8 @@ Commands (``python tools/test_history.py <command>``):
 
 * ``report``: rank tests by how often they broke a change that otherwise worked (failures outside the targets, in a
   run whose targets all passed), then by failures overall; list flaky candidates and slow tests.
+* ``trend``: test times over time: whole runs (wall and CPU, machine, workers), the files whose time changed most, and
+  one test's or file's history with ``--test``.
 * ``order``: write ``tests/order.json`` (slow tests with their durations, tests that fail often) from the history.
   ``tests/conftest.py`` uses it to run likely failures first, then the fast tests, then the slow tests longest-first.
 * ``import-junit``: add an existing JUnit file to the history (used to seed it).
@@ -25,6 +28,7 @@ import collections
 import datetime as dt
 import json
 import os
+import platform
 import statistics
 import subprocess
 import sys
@@ -36,7 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SHARED_DIR = Path("/mnt/project-files/test-history")
 ORDER_FILE = ROOT / "tests" / "order.json"
-SCHEMA = 1
+SCHEMA = 2  # 2 added the times: cpu_seconds, test_seconds, test_cpu_seconds, file_seconds, slow_cpu, machine
 SLOW_SECONDS = 3.0  # a test at least this slow is recorded with its duration and runs in the slow tier
 MASS_FAILURE = 20  # a run with this many failures is an environment problem, not a test that broke
 MESSAGE_CHARS = 200
@@ -161,6 +165,96 @@ def _versions() -> dict:
     return found
 
 
+def process_cpu(children: bool = True) -> float:
+    """CPU seconds used so far by this process (every thread, DuckDB's included) and, unless ``children`` is False,
+    its finished child processes.
+
+    Windows has no ``resource`` module; there only this process's own time is counted."""
+
+    try:
+        import resource
+    except ImportError:
+        return time.process_time()
+    own = resource.getrusage(resource.RUSAGE_SELF)
+    total = own.ru_utime + own.ru_stime
+    if children:
+        finished = resource.getrusage(resource.RUSAGE_CHILDREN)
+        total += finished.ru_utime + finished.ru_stime
+    return total
+
+
+def _machine() -> dict:
+    """What the run's times depend on: cores, processor, memory and the sqlglot build (no host or user names)."""
+
+    import importlib.util
+
+    found: dict = {"cpus": os.cpu_count() or 0, "system": platform.system(), "arch": platform.machine()}
+    model = platform.processor()
+    try:
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("model name"):
+                model = line.split(":", 1)[1].strip()
+                break
+    except OSError:
+        pass
+    if model:
+        found["cpu_model"] = model[:80]
+    try:
+        found["memory_gb"] = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30, 1)
+    except (AttributeError, ValueError, OSError):
+        pass
+    try:
+        origin = importlib.util.find_spec("sqlglot.parser").origin or ""
+        found["sqlglot_build"] = "compiled" if origin.endswith((".so", ".pyd")) else "pure"
+    except (ImportError, AttributeError, ValueError):
+        pass
+    return found
+
+
+try:
+    import pytest
+
+    _runs_first = pytest.hookimpl(tryfirst=True)
+    _optional = pytest.hookimpl(optionalhook=True)  # a pytest-xdist hook, absent when xdist is not installed
+except ImportError:  # the report commands do not need pytest
+    def _runs_first(function):
+        return function
+
+    _optional = _runs_first
+
+
+class Clock:
+    """Runs where the tests run (each pytest-xdist worker, or the only process of a serial run): stamps each test's
+    CPU seconds, setup to teardown, on its teardown report, which pytest-xdist forwards to the controller with the
+    report's other fields; and hands the worker's total CPU to the controller when the worker finishes."""
+
+    def __init__(self, config):
+        self.config = config
+        self.started: dict[str, float] = {}
+
+    def pytest_runtest_logstart(self, nodeid, location) -> None:
+        self.started[nodeid] = process_cpu()
+
+    @_runs_first  # before pytest-xdist sends the report on, and before the Recorder reads it in a serial run
+    def pytest_runtest_logreport(self, report) -> None:
+        started = self.started.pop(report.nodeid, None) if report.when == "teardown" else None
+        if started is not None and not hasattr(report, "cpu_seconds"):  # a pytest-xdist controller keeps its worker's stamp
+            report.cpu_seconds = round(process_cpu() - started, 3)
+
+    def pytest_sessionfinish(self) -> None:
+        output = getattr(self.config, "workeroutput", None)
+        if output is not None:
+            output["kumosql_cpu_seconds"] = process_cpu()
+
+
+def _duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    minutes, rest = divmod(int(round(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m" if hours else (f"{minutes}m{rest:02d}s" if minutes else f"{rest}s")
+
+
 def _first_line(text: object) -> str:
     for line in str(text).splitlines():
         if line.strip():
@@ -178,11 +272,17 @@ class Recorder:
         self.counts: collections.Counter = collections.Counter()
         self.failed: dict[str, dict] = {}
         self.slow: dict[str, float] = {}
+        self.slow_cpu: dict[str, float] = {}
         self.files: collections.Counter = collections.Counter()
+        self.wall: collections.Counter = collections.Counter()  # per test: setup + call + teardown seconds
+        self.file_times: dict[str, list[float]] = collections.defaultdict(lambda: [0.0, 0.0])  # per file: wall, CPU
+        self.test_seconds = self.test_cpu_seconds = 0.0
+        self.worker_cpu: list[float] = []
         self.written: Path | None = None
 
     # -- outcomes
     def pytest_runtest_logreport(self, report) -> None:
+        self._time(report)
         outcome = None
         wasxfail = hasattr(report, "wasxfail")
         if report.when == "call":
@@ -208,6 +308,38 @@ class Recorder:
             self.failed.setdefault(nodeid, {"id": nodeid, "kind": outcome, "seconds": round(report.duration, 2), "msg": message})
         if report.when == "call" and report.duration >= SLOW_SECONDS:
             self.slow[nodeid] = round(report.duration, 1)
+
+    def _time(self, report) -> None:
+        nodeid = report.nodeid
+        self.wall[nodeid] += report.duration
+        if report.when != "teardown":
+            return
+        wall, cpu = self.wall.pop(nodeid), getattr(report, "cpu_seconds", None)
+        times = self.file_times[nodeid.split("::", 1)[0]]
+        times[0] += wall
+        self.test_seconds += wall
+        if cpu is not None:
+            times[1] += cpu
+            self.test_cpu_seconds += cpu
+            if nodeid in self.slow:
+                self.slow_cpu[nodeid] = round(cpu, 1)
+
+    @_optional
+    def pytest_testnodedown(self, node, error) -> None:
+        """A pytest-xdist worker finished; its total CPU comes back with it (see Clock)."""
+
+        seconds = getattr(node, "workeroutput", {}).get("kumosql_cpu_seconds")
+        if isinstance(seconds, (int, float)):
+            self.worker_cpu.append(seconds)
+
+    def cpu_seconds(self) -> float:
+        """The run's CPU from start-up (imports and collection included): this process plus every worker's total, or
+        in a serial run this process and its children. The workers are this process's children too, so with workers
+        only their own reports count (each includes the processes the worker started)."""
+
+        if self.worker_cpu:
+            return process_cpu(children=False) + sum(self.worker_cpu)
+        return process_cpu()
 
     # -- the record
     def mode(self) -> tuple[str, list[str]]:
@@ -249,11 +381,17 @@ class Recorder:
             "workers": workers if isinstance(workers, int) else 1,
             "versions": _versions(),
             "seconds": round(time.time() - self.started, 1),
+            "cpu_seconds": round(self.cpu_seconds(), 1),
+            "test_seconds": round(self.test_seconds, 1),
+            "test_cpu_seconds": round(self.test_cpu_seconds, 1),
+            "machine": _machine(),
             "exit": int(exitstatus),
             "counts": dict(self.counts),
             "failed": failed,
             "slow": dict(sorted(self.slow.items())),
+            "slow_cpu": dict(sorted(self.slow_cpu.items())),
             "files": dict(sorted(self.files.items())),
+            "file_seconds": {name: [round(wall, 1), round(cpu, 1)] for name, (wall, cpu) in sorted(self.file_times.items())},
         }
 
     def pytest_terminal_summary(self, terminalreporter, exitstatus) -> None:
@@ -276,18 +414,21 @@ class Recorder:
             for nodeid in outside[:12]:
                 times = earlier.get(nodeid, {}).get("runs", 0)
                 terminalreporter.write_line(f"  outside the targets: {nodeid}" + (f" (broke {times} earlier change{'s' if times != 1 else ''} that otherwise worked)" if times else ""))
-        terminalreporter.write_line(f"test history: recorded to {self.written}")
+        terminalreporter.write_line(
+            f"test history: recorded to {self.written} (wall {_duration(record['seconds'])}, CPU {_duration(record['cpu_seconds'])}, {record['workers']} worker{'s' if record['workers'] != 1 else ''})"
+        )
 
 
 def install(config) -> None:
-    """Called from tests/conftest.py; only the controller records, and only when a history directory exists."""
+    """Called from tests/conftest.py, only when a history directory exists: every process that runs tests times them,
+    and only the controller records."""
 
-    if hasattr(config, "workerinput"):
-        return
     directory = history_dir()
     if directory is None:
         return
-    config.pluginmanager.register(Recorder(config, directory), "kumosql-test-history")
+    config.pluginmanager.register(Clock(config), "kumosql-test-clock")
+    if not hasattr(config, "workerinput"):
+        config.pluginmanager.register(Recorder(config, directory), "kumosql-test-history")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -443,6 +584,92 @@ def command_report(args) -> int:
     return 0
 
 
+WHOLE_RUNS = ("full", "evals", "no-evals")
+
+
+def _cores(record: dict) -> str:
+    return str(record.get("machine", {}).get("cpus") or "-")
+
+
+def file_times(record: dict) -> dict[str, tuple[float, float | None]]:
+    """Per file (wall, CPU) seconds; records from before the times were kept give the slow tests' sum, no CPU."""
+
+    if "file_seconds" in record:
+        return {name: (wall, cpu) for name, (wall, cpu) in record["file_seconds"].items()}
+    found: dict[str, float] = collections.Counter()
+    for nodeid, seconds in record.get("slow", {}).items():
+        found[nodeid.split("::", 1)[0]] += seconds
+    return {name: (seconds, None) for name, seconds in found.items()}
+
+
+def file_changes(records: list[dict]) -> list[tuple[str, float, float, int]]:
+    """Files whose wall time moved between the earliest and the latest whole runs on the same core count and mode as
+    the latest one: (file, then, now, runs that timed it)."""
+
+    whole = [r for r in records if r.get("mode") in WHOLE_RUNS and "file_seconds" in r and not mass_failure(r)]
+    if not whole:
+        return []
+    latest = whole[-1]
+    alike = [r for r in whole if r.get("mode") == latest.get("mode") and _cores(r) == _cores(latest)]
+    seen: dict[str, list[float]] = collections.defaultdict(list)
+    for record in alike:
+        for name, (wall, _) in file_times(record).items():
+            seen[name].append(wall)
+    return [(name, values[0], values[-1], len(values)) for name, values in seen.items() if len(values) >= 2]
+
+
+def history_of(records: list[dict], pattern: str) -> list[tuple[dict, str, float, float | None]]:
+    """Every recorded time of the tests or files whose id contains ``pattern``: (record, id, wall, CPU)."""
+
+    found = []
+    for record in records:
+        if "::" in pattern or "[" in pattern:
+            cpu = record.get("slow_cpu", {})
+            found += [(record, nodeid, seconds, cpu.get(nodeid)) for nodeid, seconds in sorted(record.get("slow", {}).items()) if pattern in nodeid]
+        else:
+            found += [(record, name, wall, cpu) for name, (wall, cpu) in sorted(file_times(record).items()) if pattern in name]
+    return found
+
+
+def command_trend(args) -> int:
+    records = load_records(Path(args.dir) if args.dir else None, args.since)
+    if not records:
+        print("No test history yet. Run tests with a shared folder at /mnt/project-files or set KUMOSQL_TEST_HISTORY.")
+        return 0
+    if args.test:
+        rows = [
+            [r["ts"][:16].replace("T", " "), (r.get("commit") or "")[:8], r.get("mode", "?"), r.get("workers", "-"), _cores(r), name, f"{wall:.1f}", "-" if cpu is None else f"{cpu:.1f}"]
+            for r, name, wall, cpu in history_of(records, args.test)
+        ]
+        print(_table(rows[-args.top * 4 :], ["when", "commit", "mode", "workers", "cores", "test or file", "wall s", "CPU s"]) if rows else f"  nothing recorded for {args.test!r}")
+        return 0
+    whole = [r for r in records if r.get("mode") in WHOLE_RUNS]
+    # an imported JUnit file (workers 0) knows each test's time, not the run's wall time
+    print("Whole runs (newest last; wall is what you wait for, CPU is the work done across every worker)")
+    rows = [
+        [
+            r["ts"][:16].replace("T", " "), (r.get("commit") or "")[:8], r.get("mode", "?"), r.get("workers", "-"), _cores(r),
+            r.get("machine", {}).get("sqlglot_build", "-"), _duration(r.get("seconds") if r.get("workers") else None), _duration(r.get("cpu_seconds")),
+            sum(r.get("counts", {}).values()), len(r.get("failed", [])), (r.get("label") or "")[:40],
+        ]
+        for r in whole[-args.top :]
+    ]
+    print(_table(rows, ["when", "commit", "mode", "workers", "cores", "sqlglot", "wall", "CPU", "tests", "failed", "label"]) if rows else "  none yet")
+    changes = file_changes(records)
+    print("\nFiles whose time changed most (wall seconds, earliest and latest whole runs like the newest one)")
+    changes.sort(key=lambda c: -abs(c[2] - c[1]))
+    rows = [[name, f"{then:.1f}", f"{now:.1f}", f"{now - then:+.1f}", runs] for name, then, now, runs in changes[: args.top]]
+    print(_table(rows, ["file", "then", "now", "change", "runs"]) if rows else "  needs two whole runs with per-file times on the same core count")
+    latest = next((r for r in reversed(whole) if "file_seconds" in r), None)
+    if latest is not None:
+        print(f"\nWhere the time goes in the newest whole run ({latest['ts'][:16].replace('T', ' ')}, {(latest.get('commit') or '')[:8]})")
+        times = sorted(file_times(latest).items(), key=lambda kv: -(kv[1][1] if kv[1][1] is not None else kv[1][0]))
+        total = latest.get("test_cpu_seconds") or 1
+        rows = [[name, f"{wall:.1f}", f"{cpu:.1f}", f"{100 * cpu / total:.0f}%"] for name, (wall, cpu) in times[: args.top]]
+        print(_table(rows, ["file", "wall s", "CPU s", "of CPU"]))
+    return 0
+
+
 def command_order(args) -> int:
     records = load_records(Path(args.dir) if args.dir else None, args.since)
     if not records:
@@ -493,7 +720,7 @@ def record_from_junit(path: Path, *, commit: str, branch: str, label: str, base:
     return {
         "v": SCHEMA, "ts": ts, "commit": commit, "branch": branch, "base": base, "dirty": False, "label": label,
         "targets": [], "targets_source": "none", "mode": "full", "workers": 0, "versions": _versions(),
-        "seconds": round(total, 1), "exit": 1 if failed else 0, "counts": dict(counts),
+        "seconds": round(total, 1), "test_seconds": round(total, 1), "exit": 1 if failed else 0, "counts": dict(counts),
         "failed": sorted(failed, key=lambda e: e["id"]), "slow": dict(sorted(slow.items())), "files": dict(sorted(files.items())),
     }
 
@@ -512,13 +739,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     report = sub.add_parser("report", help="rank tests by how often they break")
+    trend = sub.add_parser("trend", help="test times over time")
     order = sub.add_parser("order", help="write tests/order.json from the history")
     imp = sub.add_parser("import-junit", help="add a JUnit file to the history")
-    for p in (report, order, imp):
+    for p in (report, trend, order, imp):
         p.add_argument("--dir", help="history directory (default: the shared one)")
-    for p in (report, order):
+    for p in (report, trend, order):
         p.add_argument("--since", type=float, help="only runs from the last N days")
-    report.add_argument("--top", type=int, default=15, help="rows per table")
+    for p in (report, trend):
+        p.add_argument("--top", type=int, default=15, help="rows per table")
+    trend.add_argument("--test", help="the recorded times of every test (an id containing :: or [) or file matching this text")
     order.add_argument("--write", action="store_true", help="write the file instead of printing it")
     order.add_argument("--output", default=str(ORDER_FILE))
     imp.add_argument("junit")
@@ -526,7 +756,7 @@ def main(argv: list[str] | None = None) -> int:
     imp.add_argument("--branch", default="master")
     imp.add_argument("--label", default="imported")
     args = parser.parse_args(argv)
-    return {"report": command_report, "order": command_order, "import-junit": command_import}[args.command](args)
+    return {"report": command_report, "trend": command_trend, "order": command_order, "import-junit": command_import}[args.command](args)
 
 
 if __name__ == "__main__":

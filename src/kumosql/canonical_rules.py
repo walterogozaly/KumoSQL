@@ -197,6 +197,8 @@ def merge_projection_over_derived(tree: exp.Expression) -> bool:
                 continue  # HAVING over a global aggregate: leave it
             merged = inner.copy()
             merged.set("expressions", projections)
+            if inner.args.get("group") is None and _is_aggregate(inner) and not _is_aggregate(merged):
+                continue  # dropping every aggregate of a global aggregate loses its one row
             if condition is not None:
                 key = "having" if grouped else "where"
                 old = merged.args.get(key)

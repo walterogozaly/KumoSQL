@@ -1,0 +1,20 @@
+{
+  "suite": "Table minimization (Refactor search)",
+  "order": 112,
+  "size": 270,
+  "score": "163/270 simplified with every protected table proved, 0 wrong; 39% of the reference reduction",
+  "metric": "Pipelines of 3 to 20 tables with protected tables that must keep their names and exact output: KumoSQL's Refactor search returns its simplest pipeline, scored by sqlfluff complexity plus one per table (kumosql.formatting.pipeline_complexity). Quality is (original - output) / (original - reference), averaged.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every output's protected tables agree with the original on 100 random and targeted DuckDB databases (optimizer off) plus every trap witness, and 269/270 are proved by prove_models (1 agrees but is not re-proved by the harness). Negative control: the first trap of 24 dev cases is fed to the checker and each is counted wrong; the cases hold 711 traps, each with a stored witness.",
+  "coverage": {
+    "proven": 269,
+    "unknown": 1
+  },
+  "held_out": "64 cases (59 generated, 5 hand-written), run once: 22/64 simplified and proved, 23 improved, 0 wrong, quality 0.24",
+  "docs": "docs/evals/table-minimization.md",
+  "command": "python tools/minimization_bench.py --jobs 4",
+  "date": "2026-10-03",
+  "caveats": "Cases written for this eval with Claude (241 generated from templates, 29 hand-written dev cases), each reference verified on 300 DuckDB databases; KumoSQL proves 170 of the 334 references in full. References are targets, not optima: the search beats 5 of them. Inlining into readers counts as more complex, so the search rarely removes pass-through chains (quality 0.14 on that family).",
+  "usefulness": "164/270 dev cases improved (60.7%); total complexity 4,831.5 -> 3,848.5 against 2,682.5 for the references; by family: dead tables 94/94, duplicated logic 77/78, unused columns and joins 59/80, mergeable tables 66/104, redundant filters 44/70, CTE repeats 36/80, pass-through chains 40/93",
+  "performance": "Search: median 3.5 s per case, max 67 s, 1,530 s in total on the dev split (4 workers; search limit 60 s per case). Checking: 831 s."
+}
