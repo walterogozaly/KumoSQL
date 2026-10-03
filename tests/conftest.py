@@ -70,6 +70,7 @@ EVAL_FILES = {
     "test_engine_suites.py",
     "test_bq_behavior_eval.py",
     "test_calcite_mined_benchmarks.py",
+    "test_conditional_benchmark.py",
     "test_constraint_dependence.py",
     "test_cosette_benchmarks.py",
     "test_dup_bench.py",

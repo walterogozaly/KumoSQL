@@ -58,4 +58,4 @@ The check names the table as the query spells it. BigQuery does not enforce keys
 
 ## Measured
 
-See [the eval page](evals/conditional-equivalence.md) for the Singh and Bedathur and VeriEQL LeetCode measurements. The verdict is off by default in the Python API, so no existing score moves.
+On Singh and Bedathur's 2,800 LeetCode pairs (no keys, no NOT NULL facts) 557 pairs that the prover cannot prove outright are proved under a minimal set of conditions, 0 wrong; on a 3,000-case sample of VeriEQL's LeetCode set, where keys are already declared, 239 more are proved under conditions beyond the declared ones, 0 wrong. Three hand-checked suites cover the shape of each verdict. See [the eval page](evals/conditional-equivalence.md). The verdict is off by default in the Python API, so no existing score moves.
