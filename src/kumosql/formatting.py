@@ -9,7 +9,9 @@ sqlfluff parse tree.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+from functools import lru_cache
 import re
+from typing import Mapping
 
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, register_rule
 from .layout_equivalence import layout_only_change, restore_function_case, tokenize_exactly
@@ -409,6 +411,23 @@ def subqueries(tree) -> int:
 
     walk(tree, ())
     return total
+
+
+@lru_cache(maxsize=4096)
+def _table_score(sql: str) -> float:
+    return complexity(sql).score
+
+
+def pipeline_complexity(tables: Mapping[str, str]) -> dict:
+    """Complexity of a pipeline of tables: ``complexity`` summed over its queries, plus one per table.
+
+    The per-table term makes a pass-through table count (a bare ``SELECT *`` scores 0 on its own).
+    Returns ``{"score", "structural", "tables"}``; lower is better. Raises ``ValueError`` if a query
+    cannot be parsed.
+    """
+
+    structural = round(sum(_table_score(sql) for sql in tables.values()), 1)
+    return {"score": round(structural + len(tables), 1), "structural": structural, "tables": len(tables)}
 
 
 def complexity(sql: str) -> Complexity:
