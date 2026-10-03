@@ -35,7 +35,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 
 | Page | What it scores | Results files |
 | --- | --- | --- |
-| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `clickbench-rewrites`, `cost-recommendation-validity` |
+| [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, QueryBooster's experiment rewrites, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `querybooster`, `clickbench-rewrites`, `cost-recommendation-validity` |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data | `transformation-workloads`, `job-alternative-forms` |
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on 11,353 queries, test files held out | `llm-r2-scale` |
 | [MV-based rewriting](mv-benchmark.md) | View mining and rewriting on JOB, SCALE, STATS and TPC-DS | `mv-benchmark` |
