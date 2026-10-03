@@ -139,6 +139,7 @@ EVAL_FILES = {
     "test_bq_behavior_eval.py",
     "test_bq_corpus_bench.py",
     "test_calcite_mined_benchmarks.py",
+    "test_conditional_benchmark.py",
     "test_constraint_dependence.py",
     "test_join_rewrite_bench.py",
     "test_cosette_benchmarks.py",
