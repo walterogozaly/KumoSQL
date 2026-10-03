@@ -443,13 +443,14 @@ def test_every_fixture_query_lifts_all_relational_subqueries():
     assert not problems, "\n".join(problems[:50]) + "\n\n" + summary
     if fixture.resolve() == DEFAULT_FIXTURE.resolve():
         # The labels already pin every row; these keep the headline numbers in view.
-        # 28 credited on current sqlglot; 27 before sqlglot 28, where q20 is unproven.
+        # 27 credited on current sqlglot; 26 before sqlglot 28, where q20 is unproven. q28 holds a dynamic
+        # ${when(...)} expression and stays unproven until the SQLX is compiled (docs/proof-safeguards.md).
         assert len(outcomes) == 32
-        assert sum(outcome.credited for outcome in outcomes) >= 27
+        assert sum(outcome.credited for outcome in outcomes) >= 26
         assert [o.id for o in outcomes if o.valid_input is False] == ["q09", "q21"]
         assert [o.id for o in outcomes if not o.changed] == ["q16", "q17"]
         assert [o.id for o in outcomes if not o.structural] == ["q17"]
-        assert {o.id for o in outcomes if o.verification != "proven"} <= {"q16", "q17", "q20"}
+        assert {o.id for o in outcomes if o.verification != "proven"} <= {"q16", "q17", "q20", "q28"}
 
 
 # --- the gate's own guards --------------------------------------------------------------------

@@ -63,7 +63,7 @@
     {"id": "q25", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "proven"},
     {"id": "q26", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "proven"},
     {"id": "q27", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "proven"},
-    {"id": "q28", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "proven"},
+    {"id": "q28", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "unproven", "verification_reason": "the WHERE holds ${when(incremental(), ...)}, which can expand to any SQL (including a reference to the alias or CTE the lift renames), so the change stays unproven until the SQLX is compiled"},
     {"id": "q29", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "proven"},
     {"id": "q30", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 2, "verification": "proven"},
     {"id": "q31", "strict_parse": true, "valid_input": true, "expect_change": true, "lifted": 1, "verification": "proven"},

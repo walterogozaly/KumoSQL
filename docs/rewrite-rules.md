@@ -128,8 +128,8 @@ Every row stays in the denominator. A row is credited only when it parses strict
 | Valid input / invalid | 30 / 2: `q09` selects `customer_id` from a CTE that only outputs `region`; `q21` has `HAVING` on an outer query with no grouping or aggregate |
 | Changed / unchanged | 30 / 2: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are); `q17`'s subquery sits directly in `UPDATE ... FROM`, and BigQuery rejects `WITH` before `UPDATE` |
 | No relational subquery left | 31 (40 subqueries lifted); `q17` leaves 1 and is reported as a failure |
-| Proven / unchanged / failed | 30 / 1 (`q16`) / 1 (`q17`) |
-| Credited | 28 of 32 (27 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
+| Proven / unproven / unchanged / failed | 29 / 1 (`q28`: `WHERE ${when(incremental(), ...)}` can expand to any SQL, so the lift needs compiled SQL) / 1 (`q16`) / 1 (`q17`) |
+| Credited | 27 of 32 (26 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
 
 `q09` and `q21` are still lifted and proven (the rewrite preserves whatever the query means) but are counted as invalid inputs, not credited.
 
