@@ -7,7 +7,7 @@
   "docs": "docs/evals/sqlsolver.md#r-bots-calcite-pairs",
   "command": "python tools/rbot_bench.py",
   "date": "2026-10-02",
-  "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test). Measured on master 03cc717, after the structural aggregate rules (src/kumosql/aggregate_rules.py, #371). The 2 pairs shown different by a counterexample stay in the suite as guards (must never be proved) and are not in the denominator.",
+  "caveats": "R-Bot's TPC-H and DSB folders hold no rewrite pairs, so are not scored. Key-based rules were developed with these pairs in view (tuned on test). The outer-join flattening rules (src/kumosql/outer_join_flatten.py) were written with this suite's failing pairs in view (tuned on test). Measured on master fa78ff9, after the structural aggregate rules (src/kumosql/aggregate_rules.py, #371). The 2 pairs shown different by a counterexample stay in the suite as guards (must never be proved) and are not in the denominator.",
   "evidence": "proof",
   "correctness": "0 false proofs; 2 counterexamples, each re-run in DuckDB",
   "coverage": {
