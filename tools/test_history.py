@@ -165,8 +165,9 @@ def _versions() -> dict:
     return found
 
 
-def process_cpu() -> float:
-    """CPU seconds used so far by this process (every thread, DuckDB's included) and its finished child processes.
+def process_cpu(children: bool = True) -> float:
+    """CPU seconds used so far by this process (every thread, DuckDB's included) and, unless ``children`` is False,
+    its finished child processes.
 
     Windows has no ``resource`` module; there only this process's own time is counted."""
 
@@ -174,8 +175,12 @@ def process_cpu() -> float:
         import resource
     except ImportError:
         return time.process_time()
-    own, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
-    return own.ru_utime + own.ru_stime + children.ru_utime + children.ru_stime
+    own = resource.getrusage(resource.RUSAGE_SELF)
+    total = own.ru_utime + own.ru_stime
+    if children:
+        finished = resource.getrusage(resource.RUSAGE_CHILDREN)
+        total += finished.ru_utime + finished.ru_stime
+    return total
 
 
 def _machine() -> dict:
@@ -328,10 +333,13 @@ class Recorder:
             self.worker_cpu.append(seconds)
 
     def cpu_seconds(self) -> float:
-        """The run's CPU from start-up (imports and collection included): this process (and, in a serial run, its
-        children) plus every worker's total."""
+        """The run's CPU from start-up (imports and collection included): this process plus every worker's total, or
+        in a serial run this process and its children. The workers are this process's children too, so with workers
+        only their own reports count (each includes the processes the worker started)."""
 
-        return process_cpu() + sum(self.worker_cpu)
+        if self.worker_cpu:
+            return process_cpu(children=False) + sum(self.worker_cpu)
+        return process_cpu()
 
     # -- the record
     def mode(self) -> tuple[str, list[str]]:

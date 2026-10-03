@@ -127,6 +127,15 @@ def test_a_junit_file_becomes_a_record(tmp_path):
     assert result["ts"] == "2026-10-02T20:00:00Z"
 
 
+def children_cpu() -> float | None:
+    try:
+        import resource
+    except ImportError:  # Windows
+        return None
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
 @pytest.mark.parametrize("workers", [1, 2])
 def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, workers):
     project = tmp_path / "project"
@@ -140,7 +149,9 @@ def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, work
     history = tmp_path / "history"
     env = {**os.environ, "KUMOSQL_TEST_HISTORY": str(history), "KUMOSQL_TEST_TARGETS": "tests/test_mine.py", "KUMOSQL_TASK": "my task"}
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *(["-n", str(workers), "--dist", "loadgroup"] if workers > 1 else [])]
+    before = children_cpu()
     done = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
+    spent = None if before is None else children_cpu() - before  # the pytest run and every process it started
     assert done.returncode == 1, done.stdout + done.stderr
     assert "outside the targets: tests/test_other.py::test_query_12" in done.stdout
     (path,) = list((history / "runs").glob("*.jsonl"))
@@ -155,6 +166,8 @@ def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, work
     assert all(wall >= 0 and cpu >= 0 for wall, cpu in saved["file_seconds"].values())
     assert saved["cpu_seconds"] >= saved["test_cpu_seconds"] >= 0 and saved["test_seconds"] >= 0
     assert saved["cpu_seconds"] > 0  # start-up and collection count too
+    # every process of the run counted once: the workers are also finished children of the controller
+    assert spent is None or spent * 0.5 <= saved["cpu_seconds"] <= spent * 1.1 + 0.2, (saved["cpu_seconds"], spent)
     assert saved["machine"]["cpus"] == os.cpu_count() and saved["v"] == 2
     assert any(line.startswith("test history: recorded to") and ", CPU " in line for line in done.stdout.splitlines())
 
