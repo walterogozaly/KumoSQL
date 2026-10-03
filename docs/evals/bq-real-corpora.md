@@ -26,7 +26,9 @@ The dbt projects (ga4-bigquery-starter, bigquery-dbt-user-dimension, dbt-ga4) ar
 | Coverage | Statements read and columns traced in query models; files read with no blocking gap and also cleaned up and formatted without one; the gaps the loader reports, by kind |
 | Performance | Seconds for every project and stage |
 
-**Score: 202 files in 8 projects, 0 failures. All 217 literal dependencies are found. 120/121 statements are read and 1,358/1,371 columns traced. 131/202 files are handled with no blocking gap.** Cleanup: 197 pass, 5 unsupported. Format: 202 pass. The run takes about 90 s.
+**Score: 202 files in 8 projects, 0 failures. All 217 literal dependencies are found. 120/121 statements are read and 1,359/1,371 columns traced. 129/202 files are handled with no blocking gap.** Cleanup: 199 pass, 3 unsupported. Format: 202 pass. The run takes about 60 to 90 s.
+
+A cleanup rule leaves a statement that holds a JavaScript constant such as `${sp.output_schema}` or `${sp.entropy}` as written, and when a rule or override changes one anyway, the [proof safeguards](../proof-safeguards.md#dataform-expressions) keep the change `unproven` until the SQLX is compiled, because the constant can expand to any SQL. The two wintermi `template_columns` gaps, which take the handled count from 131 to 129, came from a loader change on master, not from the safeguards.
 
 ## Bugs found and fixed
 
