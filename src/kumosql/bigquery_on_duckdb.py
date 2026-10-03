@@ -5,8 +5,8 @@ random and targeted databases) runs BigQuery SQL on DuckDB after sqlglot transla
 two engines disagree on the same SQL, a DuckDB difference can be a false BigQuery refutation, which
 is a wrong answer. This module is the one place that closes those gaps, in three ways:
 
-* **session settings** (:func:`configure`): ``NULL`` sorts first ascending and last descending, as
-  in BigQuery, and timestamps are read in UTC;
+* **session settings** (:func:`configure`): timestamps are read in UTC (sqlglot already spells out
+  BigQuery's NULL order, ``NULLS FIRST`` ascending, against DuckDB's default);
 * **translation fixes** (:func:`faithful`), each checked against BigQuery itself:
   ``NUMERIC`` is ``DECIMAL(38, 9)`` (sqlglot writes a bare ``DECIMAL``, which is ``DECIMAL(18, 3)``),
   ``EXTRACT(DAYOFWEEK)`` counts Sunday as 1, ``EXTRACT(WEEK)`` is Sunday-based (DuckDB's is ISO),
@@ -45,10 +45,9 @@ from sqlglot import exp
 
 MARKER = "BigQuery semantics"
 
-SETTINGS = (
-    "SET default_null_order = 'NULLS_FIRST_ON_ASC_LAST_ON_DESC'",
-    "SET TimeZone = 'UTC'",
-)
+# No NULL-order setting: sqlglot writes BigQuery's order against DuckDB's default (``NULLS FIRST`` on an
+# ascending key, nothing on ``ASC NULLS LAST``), so a session default would flip the keys it leaves bare.
+SETTINGS = ("SET TimeZone = 'UTC'",)
 
 
 def _fail(reason: str) -> str:
@@ -120,7 +119,7 @@ class UnfaithfulOutput(ValueError):
 
 
 def configure(connection) -> None:
-    """BigQuery's NULL order and UTC on ``connection``, and the macros :func:`faithful` calls."""
+    """UTC on ``connection``, and the macros :func:`faithful` calls."""
 
     for statement in SETTINGS:
         try:
@@ -156,12 +155,37 @@ _APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLA
 _STRUCT_COMPARISONS = _class("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "NullSafeEQ", "NullSafeNEQ", "In", "Is")
 
 
+def _fields(node: exp.Struct) -> list[str] | None:
+    """The field names of ``STRUCT(.. AS a, .. AS b)``, or ``None`` when a field is unnamed."""
+
+    if not all(isinstance(field, (exp.PropertyEQ, exp.Alias)) for field in node.expressions):
+        return None
+    return [field.alias_or_name for field in node.expressions]
+
+
+def _table_row(node: exp.Struct) -> bool:
+    """A row of ``FROM UNNEST([STRUCT(.. AS a), STRUCT(.. AS a)])``, an inline table. DuckDB reads the
+    rows by field name and BigQuery by position, so every row must name its fields as the first does
+    (sqlglot 26 names an unnamed field ``_0``, which DuckDB reads as a new column)."""
+
+    array, unnest = node.parent, node.parent and node.parent.parent
+    if not (isinstance(array, exp.Array) and isinstance(unnest, exp.Unnest) and isinstance(unnest.parent, (exp.From, exp.Join))):
+        return False
+    if len(unnest.expressions) != 1 or unnest.args.get("offset"):
+        return False
+    rows = [_fields(row) if isinstance(row, exp.Struct) else None for row in array.expressions]
+    first = rows[0]
+    return bool(first) and len({name.lower() for name in first}) == len(first) and all(row == first for row in rows)
+
+
 def struct_refusal(tree: exp.Expression) -> str | None:
     """A STRUCT may only be read field by field: DuckDB compares and groups whole structs by field
     name (BigQuery by position) and treats NULL fields differently."""
 
     names = set()
     for node in tree.find_all(exp.Struct):
+        if _table_row(node):
+            continue
         if not (isinstance(node.parent, exp.Alias) and isinstance(node.parent.parent, exp.Select)):
             return "STRUCT outside a select list"
         names.add(node.parent.alias.lower())
@@ -334,6 +358,8 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         return exp.DataType.build("DECIMAL(38, 9)", dialect="duckdb")
     if isinstance(node, exp.Div) and not node.args.get("safe"):
         return _call("kumo_bq_div", node.this, node.expression)
+    if isinstance(node, exp.CountIf):  # DuckDB's count_if is NULL over no rows or only NULLs, BigQuery's 0
+        return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this, true=exp.Literal.number(1))]))
     if isinstance(node, exp.SafeDivide):
         return _call("kumo_bq_safe_div", node.this, node.expression)
     if isinstance(node, exp.Mul):
