@@ -747,8 +747,15 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     keep.sort(key=lambda i: names[i])  # the enclosing query reads by name, so the order is free
     if keep == list(range(width)):
         return False
-    for branch in branches:
-        branch.set("expressions", [branch.expressions[i].copy() for i in keep])
+    pruned = [[branch.expressions[i].copy() for i in keep] for branch in branches]
+    for branch, items in zip(branches, pruned):
+        if _global_aggregate(branch):
+            kept = branch.copy()
+            kept.set("expressions", [item.copy() for item in items])
+            if not _global_aggregate(kept):
+                return False  # its only aggregate would go, and its one row would become a row per input row
+    for branch, items in zip(branches, pruned):
+        branch.set("expressions", items)
     return True
 
 
