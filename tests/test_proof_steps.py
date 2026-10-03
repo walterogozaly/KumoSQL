@@ -225,7 +225,30 @@ def test_a_later_step_cannot_rescue_a_refused_step():
     assert result.sql == result.input_sql
     assert not result.success
     assert result.verification.status is VerificationStatus.UNPROVEN
-    assert "refused" in result.verification.reason
+    assert "safeguarded step was not accepted" in result.verification.reason
+
+
+def test_a_safeguarded_step_the_prover_cannot_parse_is_not_rescued_either():
+    class Garbage(RewriteRule):
+        name = "remove_trivial_predicates"
+        summary = "Fault injection: output that does not parse"
+
+        def apply(self, sql):
+            return RuleOutput("SELECT x FROM t WHERE", 1, 1, 1, 0, ())
+
+    class Restore(RewriteRule):
+        name = "restore"
+        summary = "Fault injection: puts the original SQL back"
+
+        def apply(self, sql):
+            return RuleOutput("SELECT x FROM t WHERE x", 1, 1, 1, 0, ())
+
+    result = apply_rules(
+        ["remove_trivial_predicates", "restore"], "SELECT x FROM t WHERE x",
+        overrides={"remove_trivial_predicates": Garbage(), "restore": Restore()},
+    )
+    assert result.sql == result.input_sql
+    assert not result.success
 
 
 def test_every_change_the_rule_makes_on_a_random_corpus_is_accepted():

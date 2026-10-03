@@ -594,11 +594,17 @@ def apply_rules(
         if not step.rule_success
     )
 
+    # A safeguarded rule's step must be accepted on its own: a failed independent check anywhere, or any
+    # untrusted change by a rule in INDEPENDENT_CHECK_FAMILIES, cannot be rescued later in the pipeline.
     refused = tuple(
         f"{step.rule}: {check.detail}"
         for step in steps
         for check in step.verification.checks
         if check.kind == INDEPENDENT_CHECK and check.outcome == "failed"
+    ) or tuple(
+        f"{step.rule}: {step.verification.reason}"
+        for step in steps
+        if step.rule in INDEPENDENT_CHECK_FAMILIES and step.rule_success and not step.verification.trusted
     )
     proof_checks = tuple(check for step in steps for check in step.verification.proof_checks)
     if not rule_succeeded:
@@ -616,11 +622,11 @@ def apply_rules(
             proof_checks,
         )
     elif refused:
-        # A refused step means a rule produced something the independent checker could not accept. Neither a
-        # later step that undoes it nor an end-to-end proof (by the same prover the checker guards) can rescue it.
+        # Neither a later step that undoes the change nor an end-to-end proof (by the same prover the checker
+        # guards) can rescue a safeguarded step that was not accepted.
         verification = Verification(
             VerificationStatus.UNPROVEN,
-            "an independent check refused a step, so the pipeline is not trusted even if later steps undo it",
+            "a safeguarded step was not accepted, so the pipeline is not trusted even if later steps undo it",
             refused,
             step_checks,
             proof_checks,
