@@ -61,6 +61,10 @@ Without `tests/order.json` data it falls back to starting the files in `HEAVY_FI
 
 Regenerate `tests/order.json` now and then, in a small PR of its own, once the history has more runs; a test missing from it counts as fast.
 
+## DuckDB on one thread
+
+Tests open thousands of tiny in-memory DuckDB databases (a few rows per table). `tests/conftest.py` wraps `duckdb.connect` for the whole test process, and the pool workers its tests fork, so a connection gets `threads=1` unless the caller passes `threads` itself; every other argument and config key goes through unchanged. By default DuckDB starts a thread per core for every database, and under pytest-xdist those threads only compete with the other workers for the same cores. When pandas is not installed the same hook also puts `None` under `pandas` in `sys.modules`: DuckDB otherwise tries `import pandas` for every bound parameter of `execute` and `executemany`, and each try searches all of `sys.path` before it fails. `import pandas` still fails and `importlib.util.find_spec("pandas")` still returns None; an installed pandas is left alone. `tests/test_duckdb_defaults.py` checks both. On nine DuckDB-heavy test files (the VeriEQL, Singh and Bedathur, targeted-data, behaviour, incremental and fuzzing floors, the quantified-rules and result-equivalence tests), run serially before and after on a shared 4-CPU machine, the two together cut CPU time by 22% (2,379 to 1,853 seconds; 3% to 35% per file) and every eval verdict stayed the same. A caller that passes `threads` keeps its own setting: a test or benchmark that needs more threads passes `threads` (or runs `SET threads`), and a helper that already opens its databases with `threads=1` works the same with or without this default.
+
 ## Seeding and reuse
 
 `python tools/test_history.py import-junit junit.xml --commit SHA --branch master --label NOTE` adds an existing JUnit file to the history. Records are plain JSON lines, so other tools can read `runs/*.jsonl` directly.
