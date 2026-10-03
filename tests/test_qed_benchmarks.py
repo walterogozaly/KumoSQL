@@ -22,3 +22,4 @@ def test_qed_calcite_cases():
     result = bench.run()
     assert result["wrong"] == [], f"wrong proofs: {result['wrong']}"
     assert result["proved"] >= FLOOR, f"proved {result['proved']}, floor {FLOOR}"
+    assert result["scored"] == result["total"] - len(result["different"])

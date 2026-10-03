@@ -163,6 +163,12 @@ NOT_PROVEN = [
         "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM t AS g WHERE g.a = g.b * 2)",
         id="correlated-unqualified-column-keeps-its-scope",
     ),
+    pytest.param(
+        # The same capture through a plain derived table, with no deduplication to drop.
+        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT b * 2 AS f FROM t) AS g WHERE a = g.f)",
+        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM t AS g WHERE g.a = g.b * 2)",
+        id="correlated-column-not-captured-by-merged-derived-table",
+    ),
 ]
 
 
