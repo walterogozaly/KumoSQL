@@ -33,7 +33,7 @@ from .layout_equivalence import created_function_calls, layout_only_change, touc
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
-from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
+from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment, unknown_string_constants
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
 
 # Import built-in rules so they are registered.
@@ -352,9 +352,10 @@ def _verify_sqlx(
         if old == new or (not old.strip() and not new.strip()):
             continue
         try:
+            # A masked expression inside a string makes the literal an unknown value, not a fixed string.
             ok, section_problems = _verify_sql(
-                mask_sqlx_by_content(old),
-                mask_sqlx_by_content(new),
+                unknown_string_constants(mask_sqlx_by_content(old)),
+                unknown_string_constants(mask_sqlx_by_content(new)),
                 smt_checks,
                 smt_timeout_ms,
                 dynamic_sentinels(old) | dynamic_sentinels(new),

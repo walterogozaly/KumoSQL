@@ -67,6 +67,7 @@ from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
 from .set_operations import positional_sql_pair
 from .string_literals import canonical_literals
+from .sqlx_fragments import masked_template_problem
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -3879,6 +3880,9 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     """
 
     dialect = kwargs.get("dialect", "bigquery")
+    masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
+    if masked:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
     if dialect == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
