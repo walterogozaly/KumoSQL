@@ -304,7 +304,15 @@ def _pin_clock(tree: exp.Expression, clock: dt.datetime, read: str) -> exp.Expre
             return exp.cast(exp.Literal.string(literal[:10]), "date")
         return node
 
-    return tree.transform(pin)
+    tree = tree.transform(pin)
+    if read == "bigquery":
+        from .bigquery_on_duckdb import faithful
+
+        try:
+            tree = faithful(tree)
+        except sqlglot.errors.SqlglotError as exc:
+            raise IncrementalError(f"cannot run as BigQuery does: {exc}") from exc
+    return tree
 
 
 def _norm(value: Any) -> Any:
@@ -346,6 +354,10 @@ class Simulation:
         self.model = model
         self.sources = sources
         self.con = _connect()
+        if model.dialect == "bigquery":
+            from .bigquery_on_duckdb import configure
+
+            configure(self.con)
         self.clock = dt.datetime(2030, 1, 1)
         self.runs = 0
         self.failed: str | None = None

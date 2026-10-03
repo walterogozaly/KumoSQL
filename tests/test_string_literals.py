@@ -47,6 +47,17 @@ def test_bytes_are_compared_by_value():
     assert prove_equivalent(r"SELECT rb'a\d' AS v FROM t", r"SELECT b'a\\d' AS v FROM t").proven
 
 
+def test_a_string_broken_over_two_lines_is_not_proven_equal_to_its_escaped_form():
+    # BigQuery rejects 'a<line break>b' (unclosed string literal); only a triple-quoted string may span lines.
+    pytest.importorskip("z3")
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    broken, escaped = "SELECT 'a\nb' AS v FROM t", r"SELECT 'a\nb' AS v FROM t"
+    assert not prove_equivalent(broken, escaped).proven
+    assert not prove_equivalent_algebraic(broken, escaped, schema={"t": ["s"]}).proven
+    assert prove_equivalent("SELECT '''a\nb''' AS v FROM t", escaped).proven
+
+
 def test_the_prover_agrees_with_bigquery_on_escaped_strings():
     pytest.importorskip("z3")
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic

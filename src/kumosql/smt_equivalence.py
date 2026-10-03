@@ -206,6 +206,24 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
+    """A bare column in ``select``'s ORDER BY, GROUP BY, HAVING or QUALIFY that may name one of its output
+    aliases rather than a source column (``SELECT y AS v FROM u ORDER BY v`` sorts by ``y``)."""
+
+    node = column
+    while node.parent is not None and node.parent is not select:
+        node = node.parent
+    if node.parent is not select or node.arg_key not in ("order", "group", "having", "qualify"):
+        return False
+    name = column.name.lower()
+    for item in select.expressions:
+        if isinstance(item, exp.Alias) and item.alias.lower() == name:
+            value = item.this
+            if not (isinstance(value, exp.Column) and value.name.lower() == name and not value.table):
+                return True
+    return False
+
+
 def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
@@ -241,7 +259,7 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
         if not qualifier and schema:
             scope = column.find_ancestor(exp.Select)
             sources = declared(scope) if scope is not None else []
-            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star):
+            if len(sources) == 1 and isinstance(sources[0], exp.Table) and not isinstance(column.this, exp.Star) and not _names_output_alias(column, scope):
                 key = ".".join(p.name for p in sources[0].parts).lower()
                 known = schema.get(key)
                 if known is not None and column.name.lower() in [c.lower() for c in known]:
@@ -2100,7 +2118,7 @@ class _Prover:
                 if value is not None and kind in ("count", "count*"):
                     facts.append(z3.And(V.is_Num(value.val), z3.IsInt(V.num(value.val)), V.num(value.val) >= (1 if kind == "count*" else 0)))
             for s in occs:
-                if s.opaque or s.table.lower() != table:
+                if s.opaque or s.table != table:
                     continue
                 pairs = [(s.cols.get(k), d.cols.get(f"c{i}")) for k, i in keys]
                 if any(a is None or b is None for a, b in pairs):
@@ -2821,7 +2839,7 @@ class _Prover:
                 continue
             inner = sub.occs[0]
             for occ in block.occs:
-                if occ.table.lower() != inner.table.lower() or occ.columns != inner.columns:
+                if occ.table != inner.table or occ.columns != inner.columns:  # BigQuery: ds.T is not ds.t
                     continue
                 extra.append(z3.Implies(_subst(sub.guard, _occ_pairs(inner, occ)), sub.atom))
         if extra:
@@ -3541,7 +3559,7 @@ def _group_shape(key: str):
             else:
                 outputs.append((None, None))
         if {k for k, _ in keys} == group_names:
-            shape = (_Compiler._table_key(from_.this).lower(), keys, outputs)
+            shape = (_Compiler._table_key(from_.this), keys, outputs)
     _GROUP_SHAPES[key] = shape
     return shape
 

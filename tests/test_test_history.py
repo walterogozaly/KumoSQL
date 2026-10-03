@@ -75,6 +75,14 @@ def test_order_lists_slow_tests_with_medians_and_often_failing_tests():
     assert order["risky"][0] == "tests/test_b.py::flaky"
 
 
+def test_order_leaves_out_tests_whose_files_are_not_in_this_checkout(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_b.py").write_text("")
+    records = [record("a", [("tests/test_new.py::t", False), ("tests/test_b.py::t", False)], slow={"tests/test_new.py::big": 9.0, "tests/test_b.py::big": 5.0})]
+    order = th.build_order(records, root=tmp_path)
+    assert order["slow"] == {"tests/test_b.py::big": 5.0} and order["risky"] == ["tests/test_b.py::t"]
+
+
 def timed(label, ts, mode="full", cores=4, files=None, **extra):
     return record(label, [], ts=ts, mode=mode, workers=4, machine={"cpus": cores}, seconds=600.0, cpu_seconds=2000.0, file_seconds=files or {}, **extra)
 

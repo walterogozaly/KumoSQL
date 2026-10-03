@@ -16,9 +16,9 @@ Derivability, per target attribute and candidate table:
 * ``derivable_with_conditions``: decomposes only if something further holds: an
   average needs the count and the sum, a ratio needs both parts (the missing
   pieces are named), or the mapping between grains changes over time.
-* ``not_derivable``: distinct counts, medians, percentiles and any other
-  aggregate that needs the raw rows. Informational: the table still shows where
-  the raw data lives.
+* ``not_derivable``: distinct aggregates (a value can recur across finer groups),
+  medians, percentiles and any other aggregate that needs the raw rows.
+  Informational: the table still shows where the raw data lives.
 * ``unknown``: the mapping between the two grains is not known, or the row
   scope of the finer table cannot be lined up with the target's. The missing
   piece is named.
@@ -401,7 +401,9 @@ def _availability(
         if cols and all(c in raw for c in cols):
             relevant = used_raw = True
             columns.update(raw[c].column for c in cols)
-        elif fn == "AVG":
+        elif fn == "AVG" and not args.startswith("DISTINCT "):
+            # an AVG(DISTINCT) is not SUM(DISTINCT)/COUNT(DISTINCT) of the finer groups: a value
+            # held by two finer groups is counted twice; it falls through as uncombinable
             has_sum, has_count = hold("SUM", args), hold("COUNT", args)
             relevant = relevant or hold("AVG", args) or has_sum or has_count
             if not has_sum:

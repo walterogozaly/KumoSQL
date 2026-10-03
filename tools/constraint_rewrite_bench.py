@@ -129,7 +129,10 @@ def literal(value) -> str:
 def connection(schema: dict):
     import duckdb
 
+    from kumosql.bigquery_on_duckdb import configure
+
     db = duckdb.connect(":memory:")
+    configure(db)  # the cases are BigQuery: run them as BigQuery does, or fail where it fails
     for table, spec in schema["tables"].items():
         db.execute(f'CREATE TABLE "{table}" (' + ", ".join(f'"{c}" {DUCK[t]}' for c, t in spec["columns"].items()) + ")")
     return db
@@ -143,13 +146,30 @@ def load(db, data: dict) -> None:
 
 
 def to_duck(sql: str) -> str:
-    return sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]
+    from kumosql.bigquery_on_duckdb import faithful
+
+    return faithful(sqlglot.parse_one(sql, read="bigquery")).sql(dialect="duckdb")
 
 
 def bag(db, sql: str):
     from collections import Counter
 
-    return Counter(db.execute(sql).fetchall())
+    from kumosql.bigquery_on_duckdb import bigquery_rows
+
+    return Counter(bigquery_rows(db.execute(sql).fetchall()))
+
+
+def differ(db, left: str, right: str) -> bool:
+    """The bags differ; a database BigQuery fails on separates nothing."""
+
+    from kumosql.bigquery_on_duckdb import is_bigquery_failure
+
+    try:
+        return bag(db, left) != bag(db, right)
+    except Exception as error:
+        if is_bigquery_failure(error):
+            return False
+        raise
 
 
 def satisfies(schema: dict, data: dict, facts: list[Guarantee]) -> bool:
@@ -179,7 +199,7 @@ def find_difference(schema, db, left, right, facts, rng, trials) -> bool:
     left, right = to_duck(left), to_duck(right)
     for _ in range(trials):
         load(db, random_database(schema, facts, rng))
-        if bag(db, left) != bag(db, right):
+        if differ(db, left, right):
             return True
     return False
 
@@ -224,7 +244,7 @@ def counterexample_ok(schema, db, case, result, facts) -> bool:
     if not satisfies(schema, data, facts):
         return False
     load(db, data)
-    return bag(db, to_duck(case["original"])) != bag(db, to_duck(case["rewritten"]))
+    return differ(db, to_duck(case["original"]), to_duck(case["rewritten"]))
 
 
 def kind_of(result) -> str:
