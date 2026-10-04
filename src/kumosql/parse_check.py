@@ -1816,6 +1816,7 @@ def _start(node, alias: dict[int, int]) -> int | None:
     return None
 
 
+_WEEK_START = getattr(exp, "WeekStart", None)  # sqlglot 26.0.0 has no such node
 _VALUE_WORDS = frozenset(("NULL", "TRUE", "FALSE"))
 
 
@@ -2086,7 +2087,7 @@ def _dropped(leaves: set[int], toks: list[_Tok], positioned: set[int], trees: li
             placed = bool(node._meta and "start" in node._meta)
             if isinstance(node, (exp.Identifier, exp.Var)) and isinstance(node.this, str):
                 theirs.update(_name_parts(node.this))
-            elif isinstance(node, exp.WeekStart):
+            elif _WEEK_START is not None and isinstance(node, _WEEK_START):
                 theirs["WEEK"] += 1  # WEEK is read as WEEK(SUNDAY)
             elif isinstance(node, exp.Literal) and not placed and re.fullmatch(r"[A-Za-z_]\w*", str(node.this)):
                 theirs[str(node.this).upper()] += 1  # a date part kept as a string, such as ISOWEEK
@@ -2116,6 +2117,39 @@ def check_query(sql: str, dialect: str = "bigquery") -> ParseCheck:
     return _check(sql, dialect)
 
 
+def _positioned_parser(engine):
+    """``engine``'s parser, made to record where each name and literal starts when sqlglot does not.
+
+    sqlglot 30 puts the token's offsets in ``_meta`` of every identifier and literal; sqlglot 26 records none, so
+    the independent reading would have nothing to line up with and every query would "agree". For such a release
+    the parser class is subclassed (never an expression class) to do the same as each node is made: the token it
+    was made from is the one the parser has just consumed.
+    """
+
+    parser = engine.parser()
+    cls = type(parser)
+    if cls not in _POSITIONED:
+        probe = sqlglot.parse_one("SELECT 1", read=None)
+        literal = probe.find(exp.Literal)
+        if literal is not None and literal._meta and "start" in literal._meta:
+            _POSITIONED[cls] = cls
+        else:
+
+            class Positioned(cls):  # type: ignore[misc, valid-type]
+                def expression(self, exp_class, comments=None, **kwargs):
+                    instance = super().expression(exp_class, comments=comments, **kwargs)
+                    if isinstance(instance, (exp.Identifier, exp.Literal)) and self._prev is not None and not instance._meta:
+                        token = self._prev
+                        instance.meta.update(line=token.line, col=token.col, start=token.start, end=token.end)
+                    return instance
+
+            _POSITIONED[cls] = Positioned
+    return _POSITIONED[cls]()
+
+
+_POSITIONED: dict[type, type] = {}
+
+
 def _check(sql: str, dialect: str, mutate=None) -> ParseCheck:
     """:func:`check_query` without the cache. ``mutate`` (fault injection, ``tests/test_parse_check_faults.py``)
     receives the trees sqlglot read and returns the trees to compare, standing in for a misreading parser."""
@@ -2142,7 +2176,7 @@ def _check(sql: str, dialect: str, mutate=None) -> ParseCheck:
         engine = Dialect.get_or_raise(dialect)
         with quiet_parser():
             theirs = engine.tokenize(sql)
-            trees = [canonical_negation(t) for t in engine.parser().parse(theirs, sql) if t is not None]
+            trees = [canonical_negation(t) for t in _positioned_parser(engine).parse(theirs, sql) if t is not None]
         if mutate is not None:
             trees = mutate(trees)
     except Exception as error:  # sqlglot raises more than its own errors on some inputs
@@ -2317,7 +2351,7 @@ def round_trip(sql: str, dialect: str = "bigquery") -> str | None:
     for tree in trees:
         tree = canonical_negation(tree)
         if family(dialect) == "mysql" and (
-            any(j.args.get("side") == "FULL" for j in tree.find_all(exp.Join))
+            any(str(j.args.get("side") or "").upper() == "FULL" for j in tree.find_all(exp.Join))
             or any(o.args.get("nulls_first") is not None and o.args.get("nulls_first") == bool(o.args.get("desc")) for o in tree.find_all(exp.Ordered))
         ):
             continue  # MySQL has no FULL JOIN and no NULLS FIRST on DESC: sqlglot prints an emulation, a different tree by design

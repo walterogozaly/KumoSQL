@@ -61,6 +61,17 @@ def generate(rng: random.Random, dialect: str, depth: int = 0) -> str:
         roll = rng.random()
         if roll < 0.12 and depth < 2:
             return "(" + generate(rng, dialect, depth + 1) + ")"
+        if roll < 0.24:  # BETWEEN, IN and CASE take their operands from the text around them
+            a, b, c = (rng.choice(ATOMS) for _ in range(3))
+            negated = "NOT " if rng.random() < 0.3 else ""
+            form = rng.choice(["between", "in", "case"] + (["like"] if dialect == "mysql" else []))
+            if form == "between":
+                return f"{a} {negated}BETWEEN {b} AND {c}"
+            if form == "in":
+                return f"{a} {negated}IN ({b}, {c})"
+            if form == "like":
+                return f"{a} {negated}LIKE {b}"
+            return f"CASE WHEN {a} THEN {b} ELSE {c} END"
         text = rng.choice(ATOMS)
         if rng.random() < 0.25:
             text = rng.choice(PREFIX[dialect]) + text
@@ -208,14 +219,121 @@ def survey(engine: Engine, dialect: str, count: int, seed: int) -> dict:
     return stats
 
 
+# ---- BigQuery: no local engine, so the cases are written to a file, run there, and read back ---------------------
+# A typed random tree (integers and booleans, so every text is valid GoogleSQL) printed with the fewest
+# parentheses GoogleSQL's precedence allows. ``emit_bigquery`` builds one query holding, for every tree, the answer
+# of the text, of sqlglot's reading, of the independent reading and of the tree itself (fully parenthesized);
+# ``check_bigquery`` reads the rows the engine returned.
+
+_BQ_LEVELS = {"OR": 1, "AND": 2, "NOT": 3, "CMP": 4, "|": 5, "^": 6, "&": 7, "SHIFT": 8, "+": 9, "-": 9, "*": 10, "UNARY": 11}
+
+
+def _bq_tree(rng: random.Random, depth: int = 0, boolean: bool = False):
+    if boolean:
+        roll = rng.random()
+        if roll < 0.35 and depth < 3:
+            return (rng.choice(["AND", "OR"]), _bq_tree(rng, depth + 1, True), _bq_tree(rng, depth + 1, True))
+        if roll < 0.5 and depth < 3:
+            return ("NOT", _bq_tree(rng, depth + 1, True))
+        return (rng.choice(["=", "<", ">", "<=", ">=", "<>"]), _bq_tree(rng, depth + 1), _bq_tree(rng, depth + 1))
+    roll = rng.random()
+    if roll < 0.2 or depth >= 4:
+        return ("LIT", rng.choice([0, 1, 2, 3, 5, 6]))
+    if roll < 0.28:
+        return (rng.choice(["-", "~"]) + "U", _bq_tree(rng, depth + 1))
+    if roll < 0.42:
+        return (rng.choice(["<<", ">>"]), _bq_tree(rng, depth + 1), ("LIT", rng.choice([0, 1, 2])))
+    return (rng.choice(["+", "-", "*", "|", "&", "^", "|", "&", "^"]), _bq_tree(rng, depth + 1), _bq_tree(rng, depth + 1))
+
+
+def _bq_print(node, minimal: bool, need: int = 0) -> str:
+    kind = node[0]
+    if kind == "LIT":
+        return str(node[1])
+    if kind in ("-U", "~U"):
+        text = kind[0] + _bq_print(node[1], minimal, _BQ_LEVELS["UNARY"])
+        return text if (not minimal or _BQ_LEVELS["UNARY"] >= need) else f"({text})"
+    if kind == "NOT":
+        text = "NOT " + _bq_print(node[1], minimal, _BQ_LEVELS["NOT"])
+        level = _BQ_LEVELS["NOT"]
+    elif kind in ("AND", "OR"):
+        level = _BQ_LEVELS[kind]
+        text = f"{_bq_print(node[1], minimal, level)} {kind} {_bq_print(node[2], minimal, level + 1)}"
+    elif kind in ("=", "<", ">", "<=", ">=", "<>"):
+        level = _BQ_LEVELS["CMP"]
+        text = f"{_bq_print(node[1], minimal, level + 1)} {kind} {_bq_print(node[2], minimal, level + 1)}"
+    else:
+        level = _BQ_LEVELS.get(kind, _BQ_LEVELS["SHIFT"])
+        text = f"{_bq_print(node[1], minimal, level)} {kind} {_bq_print(node[2], minimal, level + 1)}"
+    if not minimal:
+        return f"({text})"
+    return text if level >= need else f"({text})"
+
+
+def emit_bigquery(count: int, seed: int) -> tuple[str, list[dict]]:
+    rng = random.Random(seed)
+    cases, rows = [], []
+    while len(cases) < count:
+        tree = _bq_tree(rng, boolean=rng.random() < 0.5)
+        text = _bq_print(tree, True)
+        if text in {c["text"] for c in cases} or text.startswith("(") and text.endswith(")") and tree[0] == "LIT":
+            continue
+        sql = "SELECT " + text
+        if parse_check.check_query(sql, "bigquery").status == "unchecked":
+            continue
+        theirs = sqlglot_reading(sql, "bigquery")
+        mine = parse_check.reading(sql, "bigquery")
+        truth = "SELECT " + _bq_print(tree, False)
+        if theirs is None or mine is None:
+            continue
+        cases.append(dict(id=len(cases), text=text, sqlglot=theirs, independent=mine, tree=truth,
+                          verdict=parse_check.check_query(sql, "bigquery").status))
+    for case in cases:
+        fields = ", ".join(f"{case[key][len('SELECT '):]} AS {key if key != 'independent' else 'indep'}" for key in ("sqlglot", "independent", "tree"))
+        rows.append(f"SELECT {case['id']} AS id, TO_JSON_STRING(STRUCT({case['text']} AS text, {fields})) AS j")
+    return "\nUNION ALL\n".join(rows) + "\nORDER BY id", cases
+
+
+def check_bigquery(cases: list[dict], returned: dict[int, dict]) -> dict:
+    """``returned`` maps a case id to the JSON the engine gave (keys text, sqlglot, indep, tree)."""
+
+    out = dict(cases=len(cases), misreads=0, caught=0, missed=[], table_errors=[], harmless_disagreements=0)
+    for case in cases:
+        got = returned[case["id"]]
+        if got["indep"] != got["text"] or got["tree"] != got["text"]:
+            out["table_errors"].append(case["text"])
+        if got["sqlglot"] != got["text"]:
+            out["misreads"] += 1
+            if case["verdict"] == "disagree":
+                out["caught"] += 1
+            else:
+                out["missed"].append(case["text"])
+        elif case["verdict"] == "disagree":
+            out["harmless_disagreements"] += 1
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("engine", choices=["duckdb", "mysql"])
+    parser.add_argument("engine", choices=["duckdb", "mysql", "bigquery-emit", "bigquery-check"])
     parser.add_argument("--count", type=int, default=2000, help="expressions the parse check can read (default 2000)")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--show", type=int, default=5, help="examples to print of each list")
     parser.add_argument("--json", help="write the full result here")
+    parser.add_argument("--cases", help="bigquery-emit writes the cases here; bigquery-check reads them")
+    parser.add_argument("--results", help="bigquery-check: JSON rows the engine returned ([{id, j}, ...])")
     args = parser.parse_args(argv)
+    if args.engine == "bigquery-emit":
+        query, cases = emit_bigquery(args.count, args.seed)
+        Path(args.cases).write_text(json.dumps(cases, indent=1), encoding="utf-8")
+        print(query)
+        return 0
+    if args.engine == "bigquery-check":
+        cases = json.loads(Path(args.cases).read_text(encoding="utf-8"))
+        returned = {int(r["id"]): json.loads(r["j"]) for r in json.loads(Path(args.results).read_text(encoding="utf-8"))}
+        result = check_bigquery(cases, returned)
+        print(json.dumps(result, indent=1))
+        return 1 if result["missed"] or result["table_errors"] else 0
     engine = DuckDB() if args.engine == "duckdb" else MySQL()
     dialect = args.engine
     stats = survey(engine, dialect, args.count, args.seed)
