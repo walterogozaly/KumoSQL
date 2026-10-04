@@ -34,7 +34,15 @@ from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
-from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
+from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
+from .proof_steps import (
+    PREDICATE_ASSUMPTIONS,
+    PREDICATE_FAMILY,
+    RewriteStep,
+    StepCheck,
+    check_predicate_transition,
+    same_tree,
+)
 
 # Import built-in rules so they are registered.
 from . import cleanup as _cleanup  # noqa: F401
@@ -49,7 +57,17 @@ from . import qualify_columns as _qualify_columns  # noqa: F401
 #: prover (``proof_steps``). The table belongs to this acceptance layer, keyed by rule name, so a rule (or an
 #: override passed to ``apply_rule``) cannot opt out. Such a step is accepted only if both the prover and the
 #: independent checker accept it.
-INDEPENDENT_CHECK_FAMILIES = {"remove_trivial_predicates": PREDICATE_FAMILY}
+INDEPENDENT_CHECK_FAMILIES = {
+    "remove_trivial_predicates": PREDICATE_FAMILY,
+    "remove_unused_ctes": CTE_FAMILY,
+    "inline_single_use_ctes": CTE_FAMILY,
+    "deduplicate_ctes": CTE_FAMILY,
+}
+#: Each family's assumptions and the checker that re-derives them.
+_FAMILY_CHECKERS = {
+    PREDICATE_FAMILY: (PREDICATE_ASSUMPTIONS, check_predicate_transition, "predicate"),
+    CTE_FAMILY: (CTE_ASSUMPTIONS, check_cte_transition, "CTE"),
+}
 INDEPENDENT_CHECK = "independent_check"
 
 
@@ -202,17 +220,19 @@ def _independent_checks(
 ) -> list[str]:
     """Run the independent checker on every changed statement pair; the problems it found."""
 
+    assumptions, checker, label = _FAMILY_CHECKERS[family]
     problems: list[str] = []
     for index, (old, new) in enumerate(zip(left, right)):
         if same_tree(old, new):
             continue
         step = RewriteStep(
-            rule, family, index, old.sql(dialect="bigquery"), new.sql(dialect="bigquery"), section_index=section_index
+            rule, family, index, old.sql(dialect="bigquery"), new.sql(dialect="bigquery"),
+            assumptions, section_index,
         )
-        check = check_predicate_transition(step, old.copy(), new.copy())
+        check = checker(step, old.copy(), new.copy())
         step_checks.append(check)
         if not check.accepted:
-            problems.append(f"statement {index}: the independent predicate check refused the change: {check.reason}")
+            problems.append(f"statement {index}: the independent {label} check refused the change: {check.reason}")
     return problems
 
 
