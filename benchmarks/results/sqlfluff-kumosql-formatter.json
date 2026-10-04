@@ -2,21 +2,21 @@
   "suite": "KumoSQL formatter on SQLFluff fixtures",
   "order": 332,
   "size": 453,
-  "score": "format_sql reproduces sqlfluff's fix on 167/169 supported layout fixtures and verifies 161 of its outputs, 0 wrong",
+  "score": "format_sql reproduces sqlfluff's fix on 167/169 supported layout fixtures and verifies 159 of its outputs, 0 wrong",
   "metric": "Each layout fixture that KumoSQL's formatting preferences can express (ANSI or BigQuery, no Jinja) is run through KumoSQL's verified format_sql with only that fixture's rule on: does it reproduce sqlfluff's fix, and does KumoSQL's own verification accept the output?",
   "evidence": "proof",
-  "correctness": "0 wrong: no output that changes the parse tree, comments or literals was verified. The 8 unverified runs are 7 identifier renames (CP02) and a BigQuery WEEK(monday) keyword. The 2 fixtures where sqlfluff's fixer turns `- - -5` into the comment `--5` are left unchanged by format_sql, which is why they differ from the fixture's fix (issue #313).",
+  "correctness": "0 wrong: no output that changes the parse tree, comments or literals was verified. The 10 unverified runs are 7 identifier renames (CP02), a BigQuery WEEK(monday) keyword, and 2 that the independent layout check (proof_format) refuses on held-out fixtures that were not examined, so they may be false refusals. The 2 fixtures where sqlfluff's fixer turns `- - -5` into the comment `--5` are left unchanged by format_sql, which is why they differ from the fixture's fix (issue #313).",
   "coverage": {
-    "proven": 161,
-    "unknown": 8,
+    "proven": 159,
+    "unknown": 10,
     "unsupported": 284,
     "refuted": 0,
     "timeout": 0,
     "error": 0
   },
-  "held_out": "33/35 reproduced, 2 of the 35 unverified, 0 wrong (the rules held out for the layout eval)",
+  "held_out": "33/35 reproduced, 4 of the 35 unverified, 0 wrong (the rules held out for the layout eval)",
   "docs": "docs/evals/sqlfluff-fixtures.md#kumosql-on-the-fixtures",
   "command": "python tools/sqlfluff_fixtures_bench.py kumosql",
-  "date": "2026-10-02",
-  "caveats": "format_sql is sqlfluff behind KumoSQL's wrapper, so reproducing the fix mostly tests the wrapper (BigQuery dialect, repeat-until-stable passes, quoted names restored). 284 fixtures are unsupported: other dialects, Jinja, or configurations KumoSQL's preferences cannot express. The structural rewrite rules over the semantic fixtures are reported in the docs only."
+  "date": "2026-10-04",
+  "caveats": "format_sql is sqlfluff behind KumoSQL's wrapper, so reproducing the fix mostly tests the wrapper (BigQuery dialect, repeat-until-stable passes, quoted names restored). 284 fixtures are unsupported: other dialects, Jinja, or configurations KumoSQL's preferences cannot express. The structural rewrite rules over the semantic fixtures are reported in the docs only. Since format_sql was moved onto an independent layout check (docs/proof-safeguards.md), 2 more runs than before are unverified (was 161 verified); both are held-out fixtures."
 }
