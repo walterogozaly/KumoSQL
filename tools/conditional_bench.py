@@ -58,6 +58,8 @@ from kumosql.smt_equivalence import SmtStatus  # noqa: E402
 
 VALIDATION_DATABASES = 900  # random databases per conditional proof (the Singh eval re-checks its proofs on 900)
 WITHOUT_DATABASES = 300  # random databases without the conditions, to show they are needed
+SEARCH_SECONDS = 600.0  # the condition search's wall clock: the library's 30 s default cuts it short on a loaded machine and the set is then not minimal
+RAN_OUT_OF_TIME = "ran out of time"  # what the verdict's reason says when the search was cut short
 
 
 @dataclass
@@ -142,7 +144,7 @@ def legalize(data: dict[str, list[list]], conditions: list[Condition], pair: sin
 
 
 def _prove_options(pair: singh.Pair) -> dict:
-    return dict(schema=pair.tables, compare_names=False, dialect="mysql", timeout_ms=4000)
+    return dict(schema=pair.tables, compare_names=False, dialect="mysql", timeout_ms=4000, conditional_seconds=SEARCH_SECONDS)
 
 
 def _singh_prove(pair: singh.Pair):
@@ -269,7 +271,22 @@ def _decide_singh_job(pair: singh.Pair) -> Outcome:
 # --- VeriEQL LeetCode ---------------------------------------------------------------------------------------
 
 
-def decide_verieql(case: dict) -> Outcome:
+def _without_declared(spec):
+    """``spec`` with every constraint it declares removed: columns, types and foreign-key-free tables only."""
+
+    for table in spec.tables.values():
+        table.primary_key, table.unique, table.sequential = (), [], ()
+        for column in table.columns:
+            column.not_null = False
+    spec.foreign_keys.clear()
+    spec.checks.clear()
+    return spec
+
+
+def decide_verieql(case: dict, declared: bool = True) -> Outcome:
+    """The conditional verdict for one VeriEQL case. ``declared=False`` keeps the schema's names and types but none of its
+    constraints, so the verdict names the facts a proof needs instead of taking them as given."""
+
     import verieql_bench as veri
     from kumosql import counterexample as cx
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
@@ -280,6 +297,8 @@ def decide_verieql(case: dict) -> Outcome:
     base = dict(key=str(index))
     try:
         spec = veri.build_spec(case)
+        if not declared:
+            _without_declared(spec)
         left, right, predicates = veri.repaired_pair(case, spec)
     except Exception as error:
         return Outcome("unknown", f"constraints: {type(error).__name__}", seconds=time.time() - start, **base)
@@ -300,7 +319,7 @@ def decide_verieql(case: dict) -> Outcome:
         )
         for n, t in lower.items()
     }
-    options = dict(schema=schema, types=types, compare_names=False, dialect="mysql", exact_arithmetic=True, timeout_ms=3000)
+    options = dict(schema=schema, types=types, compare_names=False, dialect="mysql", exact_arithmetic=True, timeout_ms=3000, conditional_seconds=SEARCH_SECONDS)
     try:
         result = prove_equivalent_algebraic(left, right, constraints=constraints, conditional=True, **options)
     except Exception as error:
@@ -314,6 +333,8 @@ def decide_verieql(case: dict) -> Outcome:
         # the executed check has no composite foreign key to impose, so the proof cannot be re-checked: not scored as conditional
         return Outcome("unchecked", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
     stricter = veri.build_spec(case)  # the spec again, with the conditions as extra constraints
+    if not declared:
+        _without_declared(stricter)
     names = {t.name.lower(): t for t in stricter.tables.values()}
     def actual(table, name):  # the spec keeps each column's own case; the prover works in lower case
         return next(col.name for col in table.columns if col.name.lower() == name.lower())

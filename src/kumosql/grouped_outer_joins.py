@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import select_sources
+from .ast_utils import extended_grouping, select_sources
 
 _EXTRAS = ("order", "limit", "offset", "qualify", "windows", "with_", "with", "into", "locks", "sample", "connect", "prewhere")
 
@@ -92,7 +92,7 @@ def _distinct_outputs(source: exp.Expression) -> list[str] | None:
         if distinct.args.get("on") is not None or group is not None:
             return None
         return names
-    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or extended_grouping(group):
         return None
     keys = group.expressions
     if not keys or any(not isinstance(k, exp.Column) for k in keys):
@@ -262,7 +262,7 @@ def null_extend_anti_joined(select: exp.Select) -> exp.Expression | None:
     group = copy.args.get("group")
     if group is not None:
         keys = [k for k in group.expressions if not isinstance(k, exp.Null)]
-        if not keys or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+        if not keys or extended_grouping(group):
             return None
         group.set("expressions", keys)
     return copy

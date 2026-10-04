@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+from collections import Counter
 import hashlib
 import re
 
@@ -28,9 +29,11 @@ from .ast_utils import (
     with_clause as _with_clause,
 )
 from .distinct_safety import distinct_is_redundant
+from .input_validity import invalid_input_reason
 from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
+from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
@@ -149,6 +152,9 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     with_clause = _root_with(query)
     if not with_clause:
+        return
+    if with_clause.args.get("recursive"):
+        # The independent CTE check does not expand a recursive WITH, so the prover leaves its names alone.
         return
     if any(
         isinstance(node, exp.With) and node is not with_clause
@@ -547,9 +553,19 @@ def _parenthesize_operators(query: exp.Expression) -> exp.Expression:
 
 
 def _remove_comments(query: exp.Expression) -> None:
+    """Drop SQL comments, which cannot change a result.
+
+    sqlglot keeps parsed comments on ``node.comments``, not in ``node.args``. A comment
+    holding a SQLX interpolation stays: Dataform expands ``${...}`` inside SQL comments
+    too, so dropping one can change the SQL.
+    """
+
     for node in query.walk():
-        if node.args.get("comments") is not None:
-            node.set("comments", None)
+        comments = node.comments
+        if not comments:
+            continue
+        kept = [text for text in comments if "${" in text or "__sqlx_" in text]
+        node.comments = kept or None
 
 
 def _remove_unordered_result_order(query: exp.Expression) -> None:
@@ -644,10 +660,10 @@ _ROUTINE_PREFIX = "KUMOSQL_ROUTINE_"
 _ROUTINE_SENTINEL = _ROUTINE_PREFIX + "{}_"
 
 
-def _render(node: exp.Expression, *, pretty: bool = False) -> str:
+def _render(node: exp.Expression, *, pretty: bool = False, comments: bool = False) -> str:
     """BigQuery SQL with built-in function names upper-cased and every other call name as written."""
 
-    options = {"dialect": "bigquery", "pretty": pretty, "normalize_functions": "upper", "identify": False, "comments": False}
+    options = {"dialect": "bigquery", "pretty": pretty, "normalize_functions": "upper", "identify": False, "comments": comments}
     if all(_is_builtin_call(call) for call in node.find_all(*_ANONYMOUS_CALLS)):
         return node.sql(**options)
     copy = node.copy()
@@ -751,7 +767,10 @@ def _has_row_selection_nondeterminism(query: exp.Expression) -> bool:
 def _canonical_sql(query: exp.Expression) -> str:
     # Built-in function names have no case in BigQuery; user-defined function names do,
     # so ``Foo(x)`` and ``foo(x)`` must not render alike.
-    return _render(_parenthesize_operators(query))
+    # Only comments that may hold SQLX survive _remove_comments; they stay in the key.
+    stripped = query.copy()
+    _remove_comments(stripped)
+    return _render(_parenthesize_operators(stripped), comments=True)
 
 
 def _fingerprint(sql: str) -> str:
@@ -829,6 +848,24 @@ def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
     return check
 
 
+def _checked_cte_normalization(before: exp.Expression, after: exp.Expression) -> StepCheck | None:
+    """Have ``proof_ctes`` re-derive the renaming, reordering, merging and dropping of CTEs from scratch.
+
+    The normalizer and the CTE rewrite rules each decide which names are CTE references. A mistake they
+    share would make both sides of a proof agree. ``None`` when nothing changed; raises ``_StepRejected``
+    when the checker refuses the change.
+    """
+
+    if same_tree(before, after):
+        return None
+    rendered = lambda q: q.sql(dialect="bigquery", comments=False)
+    step = RewriteStep("normalize_ctes", CTE_FAMILY, 0, rendered(before), rendered(after), CTE_ASSUMPTIONS)
+    check = check_cte_transition(step, before, after)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
 _GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
 
 
@@ -856,6 +893,10 @@ def _prepare_query(
         raise ValueError("the query reads a table named like a CTE the normalizer generates")
     if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
+    invalid = invalid_input_reason(parsed)
+    if invalid:
+        # Matching trees say nothing about results when BigQuery would reject the query.
+        raise ValueError(f"the query would not run on BigQuery: {invalid}")
     if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):
         # BigQuery rejects CAST(x AS NUMERIC(10, 2)), and the printed form drops the
         # parameters, so the query would compare equal to its valid unparameterized twin.
@@ -876,10 +917,14 @@ def _prepare_query(
     check = _checked_predicate_normalization(query)
     if check is not None and checks is not None:
         checks.append(check)
+    before_ctes = query.copy()
     unambiguous = _cte_references_are_unambiguous(query)
     _canonicalize_cte_names(query)
     if unambiguous and _merge_duplicate_ctes(query):
         _canonicalize_cte_names(query)
+    cte_check = _checked_cte_normalization(before_ctes, query)
+    if cte_check is not None and checks is not None:
+        checks.append(cte_check)
     _remove_comments(query)
     canonical = _canonical_sql(query)
     reasons = tuple(_nondeterminism_reasons(query, allow_unchanged_values=True))
@@ -1063,6 +1108,9 @@ def prove_equivalent(
     return _prove_equivalent(left_sql, right_sql, ignore_row_order=ignore_row_order)
 
 
+_SQLX_MARKER = re.compile(r"\$\{|__sqlx_\w*?__")
+
+
 def _prove_equivalent(
     left_sql: str,
     right_sql: str,
@@ -1082,7 +1130,7 @@ def _prove_equivalent(
     except _StepRejected as exc:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
-            reason="the independent check of predicate normalization refused a step",
+            reason="the independent check of a normalization step refused it",
             diagnostics=(exc.check.reason,),
             proof_checks=(*checks, exc.check),
         )
@@ -1091,6 +1139,18 @@ def _prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="input could not be normalized conservatively",
             diagnostics=(str(exc),),
+        )
+
+    lost_left, lost_right = (
+        Counter(_SQLX_MARKER.findall(text)) - Counter(_SQLX_MARKER.findall(canonical))
+        for text, canonical in ((left_sql, left_canonical), (right_sql, right_canonical))
+    )
+    if lost_left != lost_right:
+        # sqlglot 26 drops a comment at the end of a BigQuery statement, taking a SQLX expression with it
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="a SQLX expression in a comment could not be read from one of the queries",
+            diagnostics=("sqlx expression lost with a comment",),
         )
 
     diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))

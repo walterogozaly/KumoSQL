@@ -12,6 +12,10 @@ For example, BigQuery NUMERIC keeps more decimal precision than DuckDB's default
 
 The layer applies to BigQuery-dialect execution paths, including counterexample replay, random checks, synthetic comparisons, and incremental simulation. Other input dialects retain their own execution handling.
 
+## Picks that are not the same twice
+
+Some queries may return any one value from a group (`ANY_VALUE`) or any one of several tied rows (`LIMIT`). BigQuery can choose differently from DuckDB, and even two copies of the same pick can differ in DuckDB. When a pair only differs through such a pick, the search no longer calls it different. It reruns the candidate with the pick guarded: if a group holds more than one value, or a `LIMIT` cuts through ties, the run fails and the pair stays unknown. A pick over a group that holds one value, such as a column the grouping already fixes, still counts.
+
 ## Read the limits
 
 Compatibility fixes do not turn DuckDB into BigQuery. Unsupported or unfaithful shapes must not become accepted BigQuery counterexamples just because local results differ.

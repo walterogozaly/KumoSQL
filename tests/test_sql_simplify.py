@@ -202,3 +202,10 @@ def test_garbage_gives_nothing(sql):
 
 def test_already_simple_query_gives_nothing():
     assert simpler_forms("SELECT id FROM m.orders WHERE amount > 0", COLUMNS) == []
+
+
+def test_a_star_except_source_is_not_folded_into_its_table():
+    # current sqlglot keeps EXCEPT under "except_"; reading only "except" folded the subquery away
+    for sql in ("SELECT * FROM (SELECT * EXCEPT (b) FROM p.d.t) AS d", "WITH c AS (SELECT * EXCEPT (b) FROM p.d.t) SELECT * FROM c"):
+        assert all("EXCEPT" in form for form in simpler_forms(sql)), simpler_forms(sql)
+        assert "EXCEPT" in tidy(sql)

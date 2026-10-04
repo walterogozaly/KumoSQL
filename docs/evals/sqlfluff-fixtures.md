@@ -160,14 +160,14 @@ All 167 reproductions are exact, and the 8 unverified runs are right to be: seve
 
 | Rule | Fired | Verified | Same as sqlfluff's fix |
 | --- | ---: | ---: | ---: |
-| `lift_subqueries` (ST05's fix) | 37 | 32 | 17 |
-| `inline_single_use_ctes` | 18 | 18 | 10 |
-| `remove_redundant_parentheses` | 20 | 20 | 7 |
+| `lift_subqueries` (ST05's fix) | 37 | 30 | 17 |
+| `inline_single_use_ctes` | 18 | 18 | 11 |
+| `remove_redundant_parentheses` | 20 | 20 | 8 |
 | `remove_trivial_predicates` | 6 | 6 | – |
 | `remove_unused_ctes` | 4 | 4 | 1 |
 | `deduplicate_ctes`, `remove_redundant_distinct` | 0 | – | – |
 
-None is wrong. The five unverified `lift_subqueries` results (four ST05 fixtures with set operations or a `WITH` inside the subquery, and one CV07 query) are ones KumoSQL's verification could not prove and refused. Differing from sqlfluff's fix is not an error: the two tools name lifted CTEs differently and flatten different parts.
+None is wrong. The seven unverified `lift_subqueries` results are ones KumoSQL's verification could not prove and refused: four ST05 fixtures with set operations or a `WITH` inside the subquery, one CV07 query, and two fixtures whose input BigQuery would reject (`select foo.bar from (select 1 as bar) AS bar, (select 1 as foo) AS foo` and a query reading `a.y` from a derived table that outputs only `a` and `x`), which the input check refuses to prove (see [Rewrite rules](../rewrite-rules.md#inputs-bigquery-would-reject)). Before that check they counted as 32 verified. Differing from sqlfluff's fix is not an error: the two tools name lifted CTEs differently and flatten different parts.
 
 ## Refusal cases
 

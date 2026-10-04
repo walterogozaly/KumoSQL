@@ -22,6 +22,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -44,7 +45,22 @@ COLUMNS = [
 
 
 class WorkflowConfigError(RuntimeError):
-    """Dataform could not be queried; the message is for the user."""
+    """Dataform could not be queried; the message is for the user. ``status`` is the HTTP status when Dataform answered."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class CompiledGraphUnavailable(WorkflowConfigError):
+    """The compilation behind a repository could not be read. ``reason`` is one of ``no_projects``, ``no_credentials``,
+    ``no_repository``, ``no_compilation`` and ``api_error``; ``attempted`` says whether Dataform was contacted at all.
+    The message names no project, repository or action, so it is safe to show and to log."""
+
+    def __init__(self, reason: str, message: str, attempted: bool = True) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.attempted = attempted
 
 
 # --- URL matching ---------------------------------------------------------------
@@ -92,7 +108,7 @@ def _get(url: str) -> dict:
             message = json.loads(exc.read() or b"{}")["error"]["message"]
         except (ValueError, KeyError, TypeError):
             message = ""
-        raise WorkflowConfigError(f"Dataform returned HTTP {exc.code}{': ' + message if message else ''}") from exc
+        raise WorkflowConfigError(f"Dataform returned HTTP {exc.code}{': ' + message if message else ''}", exc.code) from exc
     except URLError as exc:
         raise WorkflowConfigError(f"Could not connect to Dataform: {exc.reason}") from exc
 
@@ -111,24 +127,56 @@ def _list_all(url: str, key: str) -> list[dict]:
             return items
 
 
-def find_repositories(github_url: str, projects: list[str], location: str) -> tuple[list[str], list[str]]:
-    """Dataform repositories whose remote matches ``github_url``, plus a warning per project that failed."""
+# Locations a Dataform repository can live in. A repository in a region other than the configured one is found by
+# searching these, so the default region does not have to be right.
+LOCATIONS = (
+    "africa-south1", "asia-east1", "asia-east2", "asia-northeast1", "asia-northeast2", "asia-northeast3", "asia-south1",
+    "asia-south2", "asia-southeast1", "asia-southeast2", "australia-southeast1", "australia-southeast2", "europe-central2",
+    "europe-north1", "europe-southwest1", "europe-west1", "europe-west2", "europe-west3", "europe-west4", "europe-west6",
+    "europe-west8", "europe-west9", "europe-west10", "europe-west12", "me-central1", "me-central2", "me-west1",
+    "northamerica-northeast1", "northamerica-northeast2", "southamerica-east1", "southamerica-west1", "us-central1",
+    "us-east1", "us-east4", "us-east5", "us-south1", "us-west1", "us-west2", "us-west3", "us-west4",
+)
+_found_location: dict[str, str] = {}  # normalized remote -> the location its Dataform repository was found in
 
+
+def _search_other_locations(github_url: str, projects: list[str], skip: str) -> tuple[list[str], int]:
+    """Repositories matching ``github_url`` in every known location but ``skip``, and how many locations were searched.
+    A location that errors (not offered to the project, no permission) counts as having none."""
+
+    others = [location for location in LOCATIONS if location != skip]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for location, (matches, _failures) in zip(others, pool.map(
+                lambda place: _search_repositories(github_url, projects, place), others)):
+            if matches:
+                _found_location[norm_git_url(github_url)] = location
+                return matches, len(others)
+    return [], len(others)
+
+
+def _search_repositories(github_url: str, projects: list[str], location: str) -> tuple[list[str], list[tuple[str, WorkflowConfigError]]]:
     want = norm_git_url(github_url)
     matches: list[str] = []
-    warnings: list[str] = []
+    failures: list[tuple[str, WorkflowConfigError]] = []
     for project in projects:
         parent = f"{_API}/projects/{quote(project, safe='')}/locations/{quote(location, safe='')}/repositories"
         try:
             repos = _list_all(parent, "repositories")
         except WorkflowConfigError as exc:
-            warnings.append(f"{project}: {exc}")
+            failures.append((project, exc))
             continue
         for repo in repos:
             remote = (repo.get("gitRemoteSettings") or {}).get("url")
             if remote and norm_git_url(remote) == want and isinstance(repo.get("name"), str):
                 matches.append(repo["name"])
-    return matches, warnings
+    return matches, failures
+
+
+def find_repositories(github_url: str, projects: list[str], location: str) -> tuple[list[str], list[str]]:
+    """Dataform repositories whose remote matches ``github_url``, plus a warning per project that failed."""
+
+    matches, failures = _search_repositories(github_url, projects, location)
+    return matches, [f"{project}: {exc}" for project, exc in failures]
 
 
 def config_rows(repo_name: str, updated_ts: str) -> list[dict]:
@@ -164,19 +212,54 @@ def config_rows(repo_name: str, updated_ts: str) -> list[dict]:
     return rows
 
 
+def _failure(exc: WorkflowConfigError) -> str:
+    """What went wrong without Dataform's own message, which can name a project."""
+
+    return f"Dataform returned HTTP {exc.status}" if exc.status else "Dataform could not be reached"
+
+
 def compiled_targets(github_url: str) -> list[tuple[tuple[str, str, str], bool]]:
     """Every action Dataform compiled for a repository: ``((database, schema, name), is_declaration)``.
 
     Uses the newest release compilation (else the newest compilation) of the first Dataform repository whose
-    remote matches ``github_url``. Raises :class:`WorkflowConfigError` when none can be read, for example
-    without credentials.
+    remote matches ``github_url``. Raises :class:`CompiledGraphUnavailable` (a :class:`WorkflowConfigError`) when none
+    can be read, with the reason: no projects to search, no credentials, no matching repository, no compilation, or an API error.
     """
 
     search = search_for(github_url)
-    repos, warnings = find_repositories(github_url, search["projects"], search["location"])
+    projects, location = search["projects"], search["location"]
+    if not projects:
+        raise CompiledGraphUnavailable(
+            "no_projects", "no Google Cloud project is selected to search for the Dataform repository (choose projects in "
+            "the BigQuery settings, or set an override for this repository)", attempted=False)
+    try:
+        _bearer()
+    except RuntimeError as exc:
+        raise CompiledGraphUnavailable("no_credentials", str(exc), attempted=False) from exc
+    remembered = _found_location.get(norm_git_url(github_url))
+    if remembered:
+        location = remembered
+    repos, failures = _search_repositories(github_url, projects, location)
+    searched_elsewhere = 0
+    if not repos and not failures:
+        repos, searched_elsewhere = _search_other_locations(github_url, projects, location)
     if not repos:
-        raise WorkflowConfigError("; ".join(warnings) or "no Dataform repository matches this remote")
+        if failures:
+            raise CompiledGraphUnavailable(
+                "api_error", f"{_failure(failures[0][1])} for {len(failures)} of {len(projects)} searched project(s) in {location}")
+        raise CompiledGraphUnavailable(
+            "no_repository", f"none of the {len(projects)} searched project(s) has a Dataform repository whose git remote "
+            f"matches this repository, in {location} or in the {searched_elsewhere} other Dataform locations")
     repo = repos[0]
+    try:
+        return _compiled_actions(repo)
+    except CompiledGraphUnavailable:
+        raise
+    except WorkflowConfigError as exc:
+        raise CompiledGraphUnavailable("api_error", f"{_failure(exc)} while reading the compilation") from exc
+
+
+def _compiled_actions(repo: str) -> list[tuple[tuple[str, str, str], bool]]:
     result = ""
     for config in _list_all(f"{_API}/{repo}/releaseConfigs", "releaseConfigs"):
         if isinstance(config.get("releaseCompilationResult"), str):
@@ -187,7 +270,7 @@ def compiled_targets(github_url: str) -> list[tuple[tuple[str, str, str], bool]]
         found = _get(query).get("compilationResults") or []
         result = found[0].get("name", "") if found else ""
     if not result:
-        raise WorkflowConfigError("the Dataform repository has no compilation result")
+        raise CompiledGraphUnavailable("no_compilation", "the matching Dataform repository has no compilation result")
     actions = _list_all(f"{_API}/{result}:query", "compilationResultActions")
     targets: list[tuple[tuple[str, str, str], bool]] = []
     for action in actions:

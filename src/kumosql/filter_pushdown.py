@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _flatten
+from .ast_utils import binding_cte, conjuncts as _flatten, star_modified
 from .equivalence import _normalize_predicate
 from .graph import ObservedRead, build_query_graph
 from .near_duplicates import _filters_safe_downstream
@@ -256,11 +256,10 @@ def _implied(text: str, node: exp.Expression, conjuncts: list[exp.Expression]) -
 def _occurrence_conjuncts(pipeline, query: exp.Expression, target: str) -> list[list[exp.Expression]]:
     """Filter conjuncts that apply to each read of ``target`` inside ``query``."""
 
-    cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
     result: list[list[exp.Expression]] = []
     for table in query.find_all(exp.Table):
-        if not table.db and table.name.lower() in cte_names:
-            continue
+        if binding_cte(table) is not None:
+            continue  # a WITH table in scope here; a nested ``WITH t`` does not hide a read of the model t elsewhere
         if pipeline.resolve(table) != target:
             continue
         select = table.find_ancestor(exp.Select)
@@ -305,9 +304,8 @@ def _map_to_sources(pipeline, key: str, select: exp.Select, predicate: exp.Expre
         elif isinstance(projection, exp.Star) or (
             isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star)
         ):
-            star = projection if isinstance(projection, exp.Star) else projection.this
-            if star.args.get("except") or star.args.get("replace") or star.args.get("rename"):
-                raise _Refuse("unmappable_filter", "the model's star projection has EXCEPT or REPLACE")
+            if star_modified(projection):
+                raise _Refuse("unmappable_filter", "the model's star projection has EXCEPT, REPLACE, RENAME or ILIKE")
             stars.append(projection.table or None if isinstance(projection, exp.Column) else None)
         else:
             name = projection.alias_or_name.lower()

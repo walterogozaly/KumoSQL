@@ -22,4 +22,16 @@ Some procedural and newer BigQuery forms are kept as opaque text. Preserving the
 
 The fixture folder holds a manifest, examples, dry-run records, and known gaps. A dry-run failure can also mean an example names an object absent from the test project. The full guide explains which gaps belong to KumoSQL, its parser, or the external environment.
 
+## Newly read constructs
+
+Five BigQuery constructs that real queries use were either rejected or misread, and are now handled inside KumoSQL (never by waiting for the parser library):
+
+- `name LIKE ALL UNNEST(['a%', '%b'])`, where every pattern has to match.
+- An aggregate with its own filter, such as `COUNT(* WHERE age > 30)`.
+- `WITH(a AS 1, a + 1)`, which names a value and uses it. The `a` inside it is not counted as a column of any table.
+- `FROM t, t.tags tag WITH OFFSET pos`, which numbers the items of an array column.
+- `STRUCT<>()`, which the parser used to read as a "not equal" comparison. BigQuery rejects it, so KumoSQL now refuses it too.
+
+Where BigQuery itself refuses a form (a filtered aggregate inside a window, or next to `ORDER BY`), KumoSQL declines it as well. The provers say "unknown" for the new forms rather than guess. Each example was first checked with a free BigQuery dry run. The evidence is a handful of small queries, not a broad measurement. The full guide lists the details and the two operator-precedence misreads that another workstream owns.
+
 Syntax coverage does not establish equivalence on every dataset. See [BigQuery behavior](bigquery-behavior-eval.md) for execution checks.

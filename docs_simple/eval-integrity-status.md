@@ -11,6 +11,7 @@ The fixes that are in place:
 - **Name clashes.** Generated names never collide with real tables. A name inside a helper query's own definition refers to a real table, not to the helper being defined, and is left alone.
 - **Invalid SQL.** The lifter no longer writes a `WITH` before `UPDATE` or `DELETE`, which BigQuery rejects.
 - **The sample-query check.** Each sample has a written expectation, so a sample that cannot run, or that the lifter leaves unchanged, no longer counts as a success. A sample earns credit only when it was actually run against a declared set of tables and worked; a check with no table list earns none.
+- **Broken input.** A rewrite that leaves a cut-off query untouched is no longer labelled trusted, and a rewrite of a query BigQuery would reject (a column its subquery does not have, or `HAVING` with no grouping) is no longer called proven. The check only catches those two cases.
 - **Random testing.** The pairs are fixed before any proof is tried, and a proof of a query against an identical copy of itself no longer counts toward the floors.
 
-Limits: some fixes are still in progress, and a few things were found but left to the evals that own them. The full page lists each finding and its state. No benchmark score changed because of these fixes.
+Limits: a few things were found but left to the evals that own them. The full page lists each finding and its state. No benchmark score changed because of these fixes.
