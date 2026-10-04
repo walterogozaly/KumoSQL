@@ -324,3 +324,14 @@ def test_dates_and_timestamps_are_not_mixed_in_one_proof():
     )
     assert result.status is not SmtStatus.PROVEN_EQUIVALENT
     assert "timestamps" in result.reason or "unsupported" in result.reason
+
+
+def test_snapshot_read_is_not_proved_equal_to_current_read():
+    # Eval-integrity audit 2026-10-02: FOR SYSTEM_TIME AS OF reads a past version of t.
+    result = prove_equivalent_smt(
+        "SELECT a FROM t FOR SYSTEM_TIME AS OF TIMESTAMP '2026-10-01 00:00:00+00'",
+        "SELECT a FROM t",
+        schema={"t": {"a": "INT64"}},
+    )
+
+    assert result.status is not SmtStatus.PROVEN_EQUIVALENT

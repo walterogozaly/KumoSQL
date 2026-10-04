@@ -2,19 +2,19 @@
   "suite": "BigQuery real-code corpora",
   "order": 225,
   "size": 202,
-  "score": "202 files in 8 projects: 0 failures; statements read 120/121; columns traced 1358/1371",
+  "score": "202 files in 8 projects: 0 failures; statements read 120/121; columns traced 1359/1371",
   "metric": "Open-source Dataform projects and BigQuery SQL, copied at pinned commits. Each project is loaded whole; every file goes through the cleanup rules and the formatter. A failure is a crash, a change accepted without a proof, a changed backticked name, or a literal ref() that is not a graph edge.",
   "evidence": "executed",
   "correctness": "0 failures; dependencies 217/217 literal ref() and config dependencies found",
   "coverage": {
-    "proven": 131,
-    "unsupported": 71
+    "proven": 129,
+    "unsupported": 73
   },
   "docs": "docs/evals/bq-real-corpora.md",
   "command": "python tools/bq_corpus_bench.py --write-results",
   "date": "2026-10-03",
-  "performance": "87.9 s for every project and stage",
-  "caveats": "Eight projects only, chosen for licence and feature spread, not at random. dbt projects (Jinja) are left out because KumoSQL does not render Jinja. basedosdados is a 40-file sample of 536 near-identical view definitions, renamed after their folders because every file is called publish.sql. Statement and column counts cover query models; operations and generated SQL that only running JavaScript can produce are counted as gaps, not failures. No results are compared against BigQuery.",
+  "performance": "63.7 s for every project and stage",
+  "caveats": "Eight projects only, chosen for licence and feature spread, not at random. dbt projects (Jinja) are left out because KumoSQL does not render Jinja. basedosdados is a 40-file sample of 536 near-identical view definitions, renamed after their folders because every file is called publish.sql. Statement and column counts cover query models; operations and generated SQL that only running JavaScript can produce are counted as gaps, not failures. No results are compared against BigQuery. A changed statement that holds a JavaScript constant (${sp.entropy}) stays unproven until the SQLX is compiled (docs/proof-safeguards.md).",
   "held_out": "First run: two bugs found and fixed on this corpus (a long header comment hid a statement's kind, so all 40 basedosdados views were unread; a wrong count in the unparsed-operations message). The corpus is not held out.",
-  "analysis": "Files read with no blocking gap, cleaned up and formatted: 131/202. Cleanup: 197 pass, 5 unsupported; format: 202 pass. Gaps the loader reports: 59 unresolved_template, 41 external_tables, 7 parse_error, 7 unexpanded_star, 5 unparsed_operation, 1 no_query, 1 unknown_reads."
+  "analysis": "Files read with no blocking gap, cleaned up and formatted: 129/202. Cleanup: 199 pass, 3 unsupported; format: 202 pass. Gaps the loader reports: 59 unresolved_template, 41 external_tables, 7 parse_error, 7 unexpanded_star, 5 unparsed_operation, 2 template_columns, 1 no_query, 1 unknown_reads."
 }

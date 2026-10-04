@@ -52,6 +52,12 @@ A replayed counterexample does establish a difference: the report includes a dat
 
 Two details of the structural check: it drops a result ordering only when no sort key could raise an error (a `LIMIT` that cannot cut any row does not change that), and it treats a function that might be a user-defined one as a different function when its spelling differs, because BigQuery reads those names case-sensitively.
 
+## Strings compared with numbers
+
+`WHERE '2' <> 2` looks like a condition that is never true, but engines disagree: MySQL turns the string into a number and finds them equal, DuckDB and PostgreSQL cast it the same way, and BigQuery refuses the query. Treating the two as always different once led the checker to say this query matches one with no filter, when real engines return different rows.
+
+The checkers no longer guess: they treat the result of a string-versus-number comparison as unknown, so that query is "not proven" equal to the one without the filter, while two queries that make the same such comparison in the same way can still match. A few other forms (for example `IN` lists, or one column compared with both a string and a number) are simply declined. Comparing two numbers or two strings is unaffected. The limit is that only comparisons the checker can see are caught: a string reaching a number through a join or a `COALESCE` is not covered. See the [full reference](../docs/provers.md) for the exact list.
+
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
 ## Example: a DISTINCT that can move outward

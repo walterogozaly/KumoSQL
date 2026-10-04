@@ -236,6 +236,82 @@ def test_parameterized_cast_types_are_not_proven():
         assert "parameterized types in CAST" in result.diagnostics[0]
 
 
+def test_lifting_does_not_prove_a_rewrite_that_shadows_a_table():
+    # Eval-integrity audit 2026-10-02: with one table row x = 7 the original returns
+    # (1, 7), and a lift that reuses the table's name as its CTE name returns (1, 1).
+    original = "SELECT a.x AS ax, b.x AS bx FROM (SELECT 1 AS x) a JOIN __lifted_subquery_001 b ON TRUE"
+    shadowed = (
+        "WITH __lifted_subquery_001 AS (SELECT 1 AS x) "
+        "SELECT a.x AS ax, b.x AS bx FROM __lifted_subquery_001 AS a JOIN __lifted_subquery_001 AS b ON TRUE"
+    )
+
+    assert prove_equivalent(original, shadowed).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_canonical_cte_names_do_not_capture_a_table():
+    # Renaming CTE `a` to __canonical_cte_001 made it indistinguishable from the table
+    # of that name, so a CTE self-join was "proved" equal to a join with the table.
+    left = "WITH a AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM a CROSS JOIN __canonical_cte_001 AS z"
+    right = "WITH b AS (SELECT 1 AS x) SELECT a.x AS p, z.x AS q FROM b AS a CROSS JOIN b AS z"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_canonical_cte_name_does_not_match_a_physical_table():
+    # With t = {1, 1} and a physical __canonical_cte_001 = {9}, these return [1, 1] and [9].
+    left = "WITH x AS (SELECT a FROM t) SELECT a FROM x AS z"
+    right = "WITH x AS (SELECT a FROM t) SELECT a FROM __canonical_cte_001 AS z"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_cte_references_resolve_case_insensitively():
+    # BigQuery reads CTE `a` for `FROM A` (confirmed on BigQuery): the left query returns 1, the right 2.
+    left = "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS x) SELECT x FROM A"
+    right = "WITH b AS (SELECT 1 AS x), a AS (SELECT 2 AS x) SELECT x FROM A"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_physical_table_named_like_the_cte_being_defined_is_not_renamed():
+    # A non-recursive CTE is not visible inside its own body, so `FROM A` there reads the
+    # physical table A (an outside review reproduced this with A = [7, 7, NULL] and
+    # B = [9, 9, NULL]: the two queries return different bags). Renaming it to the CTE
+    # made both bodies self-references and the queries compared equal.
+    pairs = [
+        ("SELECT s.x FROM A s", "SELECT s.x FROM B s", "SELECT q.x"),
+        ("SELECT s.x FROM `A` s", "SELECT s.x FROM `B` s", "SELECT q.x"),
+        (
+            "SELECT s.x FROM A s WHERE s.x IS NOT NULL",
+            "SELECT s.x FROM B s WHERE s.x IS NOT NULL",
+            "SELECT q.x",
+        ),
+        ("SELECT DISTINCT s.x FROM A s", "SELECT DISTINCT s.x FROM B s", "SELECT q.x"),
+        ("SELECT s.x FROM A s", "SELECT s.x FROM B s", "SELECT SUM(q.x) AS t"),
+    ]
+    for left_body, right_body, projection in pairs:
+        left = f"WITH a AS ({left_body}) {projection} FROM a q"
+        right = f"WITH b AS ({right_body}) {projection} FROM b q"
+        assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT, left
+
+
+def test_physical_table_named_like_a_later_cte_is_not_renamed():
+    # CTE `b` is defined after `a`, so `FROM B` inside `a` reads the physical table B.
+    # Renaming both made them the same self-describing query although B and b differ.
+    left = "WITH a AS (SELECT s.x FROM B s), b AS (SELECT 1 AS x) SELECT q.x FROM a q"
+    right = "WITH a AS (SELECT s.x FROM b s), b AS (SELECT 1 AS x) SELECT q.x FROM a q"
+
+    assert prove_equivalent(left, right).status is not EquivalenceStatus.PROVEN_EQUIVALENT
+
+
+def test_mixed_case_cte_alpha_renaming_is_still_proven():
+    # Control: a visible CTE read with different case, and a CTE renamed, is the same query.
+    left = "WITH a AS (SELECT 1 AS x) SELECT q.x FROM A q"
+    right = "WITH b AS (SELECT 1 AS x) SELECT q.x FROM b q"
+
+    assert prove_equivalent(left, right).status is EquivalenceStatus.PROVEN_EQUIVALENT
+
+
 def test_user_defined_function_names_keep_their_case():
     # BigQuery reads UDF names case-sensitively; built-in names in any case.
     for left, right in (

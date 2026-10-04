@@ -45,7 +45,7 @@ print(result.sql)
 
 When the structural prover cannot canonicalize a change that touches only WHERE, HAVING, QUALIFY or JOIN ON conditions (for example a redundant or subsumed conjunct), `verify_rewrite` tries the SMT prover described below. A proof is reported as `proven` with an `smt_proof` check listing its assumptions (no NaN, runtime errors not modeled, result column types not compared). A counterexample, an unsupported construct such as an outer join, or a missing `z3-solver` install leaves the result `unproven` and the reason appears in `verification.details`. Other changes never reach SMT unless the equivalence solver below is on. Pass `smt_timeout_ms` to `verify_rewrite` to change the 5000 ms solver limit.
 
-Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text.
+Verification is per statement. For `CREATE ... AS` and `INSERT ... SELECT`, the text around the query must be unchanged and the queries must be proven equivalent; any change to a final `ORDER BY` is unproven. Other statements must render identically. For SQLX, config/js/operations blocks must be identical and each interpolation is treated as an opaque fragment identified by its text; a changed statement holding a `${...}` other than `ref()`, `resolve()` or `self()`, including one inside a string literal, is unproven until the SQLX is compiled. Every change `remove_trivial_predicates` makes must also pass an independent checker, and a pipeline with a refused step is unproven ([proof safeguards](proof-safeguards.md)).
 
 A change to layout only is proven for any statement, including ones sqlglot cannot parse (`LOAD DATA`, `REPEAT ... UNTIL`) or keeps as an opaque command (`ALTER SCHEMA`, `CALL`, `CREATE ROW ACCESS POLICY`). Both texts are tokenized completely and must have the same tokens and comments in the same order; strings, quoted names and numbers must match exactly, and only reserved keywords and calls to built-in functions may change case. Unreserved keywords such as `DATE` can be table names and user-defined function names are case sensitive, so their case must match (`layout_equivalence.py`); a function the script creates keeps its case even when its name is quoted or a comment precedes it (a script may create both `abs` and `ABS`), and the statement-by-statement check also refuses a change to the case of such a call. Adjacent string or bytes literals must be separated in both texts or in neither (`'a' 'b'` is one literal; `'a''b'` is not valid GoogleSQL). For the same reason `format_sql` puts back the original case of every call to a function that is not built in (`myUdf(x)` stays `myUdf(x)`). When sqlfluff cannot parse a file as a whole (a `GRANT` or `EXPORT MODEL` among queries), `format_sql` formats each statement it can parse and leaves the others as written (`statements_not_formatted`); a file with no statement it can parse still reports `parse_error`. KumoSQL needs sqlfluff 4.3 or later (`pyproject.toml`): older releases cannot parse some BigQuery statements the syntax-coverage eval formats (pipe syntax with a CTE, `CREATE AGGREGATE FUNCTION`, some comparison operators), so `pip install -e .` upgrades an older copy.
 
@@ -82,13 +82,13 @@ python -m kumosql rewrite-sql input.sqlx --rule inline_single_use_ctes --output 
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
 
-Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
+Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. BigQuery does not allow `WITH` in front of `UPDATE`, `DELETE` or `MERGE`, so in those statements subqueries are lifted only inside a nested query (for example `DELETE ... WHERE id IN (WITH ... SELECT ...)`); a subquery directly in `UPDATE ... FROM` stays inline and is reported as remaining, so the result is not a success. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 
-Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. If there is nothing to lift, the input is returned byte-for-byte unchanged.
+Existing CTE dependencies are respected: a lift from inside an existing CTE is placed immediately before that CTE, while a lift from the main query is appended after the existing CTEs. The lifter supports the `WITH` AST slot used by both older and newer supported `sqlglot` releases, checks for undefined or forward CTE references, and uses four-space formatting for transformed SQL. Generated names (`__lifted_subquery_001`, ...) skip every table and CTE name the statement already uses, in any case, so a lifted CTE never hides a table the query reads; the structural prover also declines a query that reads a real table with one of its generated CTE names (`__lifted_subquery_*`, `__canonical_cte_*`). If there is nothing to lift, the input is returned byte-for-byte unchanged.
 
 Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
-For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers.
+For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers. Recovery also accepts broken input (`SELECT 1 FROM t WHERE 1 =`, or trailing text after the last clause) and `success` stays true for it, so check `result.recovered` as well when broken SQL must not count as success.
 
 ```python
 from kumosql import lift_subqueries
@@ -107,3 +107,30 @@ SELECT *
 FROM (SELECT id FROM ${ref("customers")}) AS c''')
 assert result.success
 ```
+
+### Authored fixture gate
+
+`tests/test_workbook_fixture.py` scores the 32 hand-written samples in `tests/fixtures/sql_subquery_samples.json` (nested relations, joins, CTE placement, DML, DDL and Dataform SQLX; each entry is only an `id` and `sql_text`). It runs in the default suite, `tools/run_tests.py` and CI (`python -m pytest tests/test_workbook_fixture.py -s` prints the outcome table). Each sample is labelled in `tests/fixtures/sql_subquery_samples.expected.json`, which pins the fixture by sha256 (CRLF read as LF) and case count and gives every id an expected outcome:
+
+| Outcome | How it is observed |
+| --- | --- |
+| `strict_parse` | the lifter parsed the input without `sqlglot` recovery mode (`LiftResult.recovered` is false) |
+| `valid_input` | DuckDB binds and runs the input, transpiled from BigQuery, on empty tables of the manifest's `duckdb_schema` (SQLX: blocks skipped, `ref("x")` read as `demo.dataform.x`, `when(incremental(), a, b)` as `b`). This can refute an input; it does not show BigQuery accepts it |
+| `expect_change`, `lifted`, `remaining` | `lift_subqueries` returns different SQL, how many subqueries it reports lifting, and how many are left (a label that expects one left needs a reason) |
+| structural | `LiftResult.success`: no FROM/JOIN subquery left and no fatal diagnostic |
+| `verification` | `apply_rule("lift_subqueries", sql).verification.status`; `verification_before_sqlglot` gives the status expected on older `sqlglot` releases |
+
+Every row stays in the denominator. A row is credited only when it parses strictly, is a valid input, changes, leaves no relational subquery and is proven; the test fails when any row differs from its label or reports a fatal diagnostic other than a labelled leftover subquery, when a valid input's lifted output no longer runs in DuckDB, or when the labels do not match the fixture. On the current fixture:
+
+| Outcome | Count |
+| --- | --- |
+| Strict parse / recovered | 32 / 0 |
+| Valid input / invalid | 30 / 2: `q09` selects `customer_id` from a CTE that only outputs `region`; `q21` has `HAVING` on an outer query with no grouping or aggregate |
+| Changed / unchanged | 30 / 2: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are); `q17`'s subquery sits directly in `UPDATE ... FROM`, and BigQuery rejects `WITH` before `UPDATE` |
+| No relational subquery left | 31 (40 subqueries lifted); `q17` leaves 1 and is reported as a failure |
+| Proven / unproven / unchanged / failed | 29 / 1 (`q28`: `WHERE ${when(incremental(), ...)}` can expand to any SQL, so the lift needs compiled SQL) / 1 (`q16`) / 1 (`q17`) |
+| Credited | 27 of 32 (26 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
+
+`q09` and `q21` are still lifted and proven (the rewrite preserves whatever the query means) but are counted as invalid inputs, not credited.
+
+Set `KUMOSQL_TEST_FIXTURE` to score another CSV or JSON fixture. A requested path that does not exist fails the test instead of skipping it, and the fixture must be a non-empty list of rows with unique non-empty ids (`id`, or `record_id` in a CSV) and non-empty `sql_text` strings. Labels for it come from `KUMOSQL_TEST_FIXTURE_EXPECTED` or a sibling `<name>.expected.json` in the same format; without labels every row must still parse strictly and leave no relational subquery, and the other outcomes are only reported. `tests/test_generic_fixture.py` separately checks the sample file's shape.

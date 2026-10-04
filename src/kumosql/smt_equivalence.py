@@ -68,6 +68,8 @@ from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, dr
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
 from .string_literals import canonical_literals
+from .sqlx_fragments import masked_template_problem
+from . import string_number_compare
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -388,6 +390,19 @@ def _string_rank():
     if _STRING_RANK is None:
         _STRING_RANK = z3.Function("string_rank", z3.StringSort(), z3.RealSort())
     return _STRING_RANK
+
+
+_CONVERTED = None
+
+
+def _converted_functions():
+    """Uninterpreted ``eq`` and ``lt`` over values, for a string compared with a number."""
+
+    global _CONVERTED
+    if _CONVERTED is None:
+        value = _value_sort()
+        _CONVERTED = (z3.Function("converted_eq", value, value, z3.BoolSort()), z3.Function("converted_lt", value, value, z3.BoolSort()))
+    return _CONVERTED
 
 
 def _value_sort():
@@ -1530,6 +1545,8 @@ class _Compiler:
         comparisons = {exp.EQ: "=", exp.NEQ: "<>", exp.LT: "<", exp.LTE: "<=", exp.GT: ">", exp.GTE: ">="}
         for cls, op in comparisons.items():
             if type(e) is cls:
+                if string_number_compare.mismatched(e, self.types):
+                    return self._converted_compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
                 return self._compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
         if isinstance(e, (exp.NullSafeEQ, exp.NullSafeNEQ)):
             eq = _null_eq(self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
@@ -1639,6 +1656,31 @@ class _Compiler:
         true_atom = self._existence(query, env, lambda scope, node: compare(scope, node).t)
         unknown_or_true = self._existence(query, env, lambda scope, node: z3.Not(compare(scope, node).f))
         return _Pred(true_atom, z3.Not(unknown_or_true))
+
+    def _converted_compare(self, op: str, a: _Val, b: _Val) -> _Pred:
+        """A string compared with a number: an engine converts one side, so the result is an unknown function of the two values.
+
+        ``'2' = 2`` is true on MySQL, DuckDB and PostgreSQL and a type error on BigQuery; calling the kinds unequal
+        is wrong. ``converted_eq`` and ``converted_lt`` are uninterpreted, so only a pair that compares the same
+        values the same way on both sides is proven through them.
+        """
+
+        self.uses_uf = True  # a model of the unknown conversion is not a counterexample
+        eq, lt = _converted_functions()
+        if op == "=":
+            r = eq(a.val, b.val)
+        elif op == "<>":
+            r = z3.Not(eq(a.val, b.val))
+        elif op == "<":
+            r = lt(a.val, b.val)
+        elif op == ">":
+            r = lt(b.val, a.val)
+        elif op == "<=":
+            r = z3.Not(lt(b.val, a.val))
+        else:
+            r = z3.Not(lt(a.val, b.val))
+        known = z3.And(z3.Not(a.null), z3.Not(b.null))
+        return _Pred(z3.And(known, r), z3.And(known, z3.Not(r)))
 
     def _compare(self, op: str, a: _Val, b: _Val) -> _Pred:
         if op not in ("=", "<>"):
@@ -3728,6 +3770,9 @@ def _prove_core(
     """
 
     assumptions = BASE_ASSUMPTIONS + ((EXACT_ARITHMETIC_ASSUMPTION,) if exact_arithmetic else ())
+    compared = string_number_compare.problem(left_sql, dialect, types, plain_ok=True) or string_number_compare.problem(right_sql, dialect, types, plain_ok=True)
+    if compared:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {compared}", assumptions=assumptions)
     if z3 is None:
         return SmtEquivalenceResult(
             SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install kumosql[smt])"
@@ -4045,6 +4090,9 @@ def _prove_with_limit(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalence
 
 def _prove_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
+    masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
+    if masked:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
     if dialect == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)

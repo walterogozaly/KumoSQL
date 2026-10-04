@@ -38,6 +38,7 @@ from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .solver_lock import serialized
 from .string_literals import canonical_literals, invalid_literal
+from .sqlx_fragments import masked_template_problem
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
 from .fk_rules import drop_fk_join
@@ -91,6 +92,7 @@ from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types
 from .grouped_join_facts import propagate_grouped_join_facts
 from .correlated_key_groups import expose_correlated_key_groups
 from .lateral_boolean_groups import nullable_lateral_boolean_group
+from . import string_number_compare
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -4930,6 +4932,9 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     try:
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
+        if masked:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
         result = _prove_equivalent_algebraic(left_sql, right_sql, **kwargs)
         if result.proven and (unchecked_types(left_sql, kwargs.get("types"), dialect) or unchecked_types(right_sql, kwargs.get("types"), dialect)):
             result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys(tuple(result.assumptions) + (SET_TYPES_ASSUMPTION,))))
@@ -4976,6 +4981,11 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
     )
     if mixed:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {mixed} (the rules do not model the conversion)")
+    compared = string_number_compare.problem(
+        original[0], kwargs.get("dialect", "bigquery"), kwargs.get("types"), plain_ok=True
+    ) or string_number_compare.problem(original[1], kwargs.get("dialect", "bigquery"), kwargs.get("types"), plain_ok=True)
+    if compared:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {compared}")
     result = _prove_algebraic(left_sql, right_sql, 0, **kwargs)
     for level in (1, 2):
         if result.proven or (level == 1 and not (kwargs.get("constraints") or {})):
