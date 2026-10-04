@@ -45,7 +45,15 @@ Three more things it handles the way Dataform does:
 - Built-in assertions such as `rowConditions: ["status > 0"]`, and a table's `partitionBy` and `clusterBy`, use that table's columns. A column named there is never reported as unused, even when no query reads it. If the setting is computed by JavaScript and cannot be read, KumoSQL reports no unused columns for that table.
 - A table with such settings and nothing reading it is still treated as a final output.
 
-Limits: these checks come from small synthetic projects compared with Dataform's compiler, not from a benchmark. Computed table names, schema prefixes and projects the compiler would reject are not handled yet. The [full guide](../docs/dataform-repositories.md#what-the-static-reader-does-not-guess) lists them.
+More of the same, from the second round of the audit:
+
+- If a table's name, schema or database is computed, KumoSQL does not pretend to know which table it is. The same goes for a `ref("f" + "eed")` that is built from pieces: it stays unresolved instead of being read as two separate names.
+- Settings such as a table-name prefix or a dataset suffix rename every table Dataform builds (not the declared source tables). KumoSQL applies them, so the names in lineage and impact match what Dataform creates. For example, with a prefix `t` and a suffix `sbx`, a table `a` in dataset `ds` is `ds_sbx.t_a`. Your `ref("a")` still finds it.
+- A reference to something that does not exist, or that is spelled with the wrong capital letters, is reported, because Dataform would refuse the project. KumoSQL still loads it so the rest can be analysed.
+- A compiled graph that Dataform rejected shows its errors instead of looking like an empty project. The query that an incremental table runs on later runs is read too, so a column only that query uses is not called unused.
+- Windows line endings in `---` separators, and a stray `${` inside a comment, no longer break loading.
+
+Limits: these checks come from small synthetic projects compared with Dataform's compiler, not from a benchmark. A hook that writes into a table it also references is still reported as a cycle, which is cautious rather than exact. Projects with invalid top-level settings, and values that need JavaScript or `vars`, are still not fully handled. The [full guide](../docs/dataform-repositories.md#what-the-static-reader-does-not-guess) lists them.
 
 ## If loading fails
 
