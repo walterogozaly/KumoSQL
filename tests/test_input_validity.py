@@ -40,6 +40,7 @@ VALID = {
     "union outputs": "SELECT x FROM (SELECT 1 AS x UNION ALL SELECT 2) AS q",
     "unpivot adds columns": "SELECT * FROM (SELECT id, a, b FROM t) UNPIVOT (v FOR k IN (a, b)) ORDER BY id, k",
     "pivot adds columns": "SELECT * FROM (SELECT id, a, b FROM t) PIVOT (SUM(b) FOR a IN ('x', 'y')) ORDER BY id, x",
+    "literal projection is anonymous, so the names are unknown": "WITH bar AS (SELECT 1 FROM foo) SELECT a FROM bar",
     "case differs": "SELECT Q.X FROM (SELECT 1 AS x) AS q",
 }
 

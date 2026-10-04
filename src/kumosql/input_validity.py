@@ -71,7 +71,8 @@ def _output_names(expression: exp.Expression) -> set[str] | None:
         return None
     names: set[str] = set()
     for projection in expression.expressions:
-        if projection.find(exp.Star) is not None or not projection.alias_or_name:
+        # Only a bare column or an explicit alias names an output; a literal or an expression is anonymous.
+        if projection.find(exp.Star) is not None or not isinstance(projection, (exp.Alias, exp.Column)):
             return None
         names.add(projection.alias_or_name.lower())
     return names
