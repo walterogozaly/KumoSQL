@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping, plain_distinct
+
 # Aggregates that ignore duplicates whether or not they are written with DISTINCT.
 # sqlglot 26.0.0 has no BitwiseAndAgg/BitwiseOrAgg classes (BIT_AND is an unknown function there), so they are optional.
 _SET_FUNCTIONS = {
@@ -58,10 +60,10 @@ def _unique_column(select: exp.Select, column: exp.Column) -> bool:
     value = item.this if isinstance(item, exp.Alias) else item
     if any(isinstance(n, exp.AggFunc) for n in value.walk()):
         return False
-    if inner.args.get("distinct") is not None and not inner.args["distinct"].args.get("on"):
+    if plain_distinct(inner):
         return True
     group = inner.args.get("group")
-    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or extended_grouping(group):
         return False
     return [g.sql() for g in group.expressions] == [value.sql()]
 

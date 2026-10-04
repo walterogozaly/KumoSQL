@@ -72,7 +72,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails, star_modified
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
 from .set_operations import positional_sql_pair
 from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
@@ -1336,9 +1336,8 @@ class _Compiler:
 
         keys: list[_Val] = []
         if group is not None:
-            for key in ("rollup", "cube", "grouping_sets", "totals"):
-                if group.args.get(key):
-                    raise Unsupported(f"GROUP BY {key.upper()}")
+            if extended_grouping(group):
+                raise Unsupported("GROUP BY ROLLUP / CUBE / GROUPING SETS / ()")
             for key_expr in group.expressions:
                 if isinstance(key_expr, exp.Literal) and not key_expr.is_string:
                     if not key_expr.this.isdigit():
@@ -2187,7 +2186,18 @@ class _Compiler:
 
 
 def _subst(term, pairs):
-    return z3.substitute(term, *pairs) if pairs else term
+    """``z3.substitute(term, *pairs)``: the same call into Z3, without z3py's per-pair checks (which
+    took most of a proof's time; Z3 itself still rejects a pair of different sorts)."""
+
+    if not pairs:
+        return term
+    if not isinstance(term, z3.ExprRef):
+        return z3.substitute(term, *pairs)
+    count = len(pairs)
+    old, new = (z3.Ast * count)(), (z3.Ast * count)()
+    for i, (x, y) in enumerate(pairs):
+        old[i], new[i] = x.as_ast(), y.as_ast()
+    return z3.z3._to_expr_ref(z3.Z3_substitute(term.ctx.ref(), term.as_ast(), count, old, new), term.ctx)
 
 
 def _subst_val(v: _Val, pairs) -> _Val:
@@ -2240,6 +2250,62 @@ def _occ_pairs(src: _Occ, dst: _Occ) -> list:
         pairs.append((v.null, target.null))
         pairs.append((v.val, target.val))
     return pairs
+
+
+class _CaseSearch:
+    """The answers of one ``set_contained_by_cases`` search, so that no check is made twice.
+
+    ``targets`` holds ``(block, parent)`` pairs. A case of a target whose tables and tests are
+    those of ``parent`` only adds a filter to it, so it holds no row ``parent`` lacks: ``parent`` is
+    the target's index, or ``("joined", index)`` for the target with the tests its own condition
+    requires made joins (``joined`` holds those blocks; every case of the target makes the same
+    joins), else ``None``. ``known`` maps ``(case key, target index or parent)`` to
+    ``(contained, decided)``, decided meaning no check timed out. ``kept`` holds every split, so
+    no id in a key is reused while the search runs.
+    """
+
+    def __init__(self, targets: list):
+        self.targets = targets
+        self.joined: dict = {}
+        self.known: dict = {}
+        self.kept: list = []
+
+    @staticmethod
+    def key(parts: frozenset, block) -> tuple:
+        """A case by the disjuncts it adds (z3 ids), its tables and its tests. Two cases with one
+        key differ only in the order of their conjuncts (``a AND p AND q`` split in either order,
+        or ``a AND p AND p`` and ``a AND p`` when no test became a join), so they have the same
+        rows and the same answers."""
+
+        return parts, _CaseSearch.shape(block)
+
+    @staticmethod
+    def shape(block) -> tuple:
+        return tuple(map(id, block.occs)), tuple(map(id, block.subs))
+
+    def answer(self, key, index: int, block, probe=None):
+        """Whether target ``index`` contains the case, when that is already known, else ``None``
+        (a refutation in which a check timed out is asked again, as before).
+
+        A target ``b AND q`` that only adds a filter to ``b`` needs ``b``'s condition and ``q``
+        under the same mappings, so a model refuting ``b`` refutes it too. ``probe(b)`` checks a
+        case against a joined target that is not itself a target (only to skip its cases).
+        """
+
+        contained, decided = self.known.get((key, index), (None, False))
+        if contained or decided:
+            return contained
+        parent = self.targets[index][1]
+        if parent is None or not isinstance(block, _Spj):
+            return None
+        if (key, parent) not in self.known and probe is not None and parent in self.joined:
+            self.known[key, parent] = probe(self.joined[parent])
+        return False if self.known.get((key, parent)) == (False, True) else None
+
+    def outside(self, key, block) -> bool:
+        """No target contains the case, as far as is already known."""
+
+        return all(self.answer(key, i, block) is False for i in range(len(self.targets)))
 
 
 class _Prover:
@@ -3305,25 +3371,76 @@ class _Prover:
         (a row passes the filter only if one disjunct is TRUE, so the cases cover
         every row). Each case of ``a`` may land in a different target, and a case
         of a target is part of that target. Up to two disjunctions of ``a`` are split.
+
+        No check is made twice (see ``_CaseSearch``), and a case of a target that only adds a
+        filter is not tried for a case its target was refuted for.
         """
 
-        if any(self.branch_set_contained(a, b) for b in targets):
+        search = _CaseSearch([(b, None) for b in targets])
+        key = _CaseSearch.key(frozenset(), a)
+        if self._in_some_target(a, key, search):
             return True
-        targets = list(targets) + [case for b in targets for cases in self._disjunctive_cases(b) for case in cases]
-        return self._contained_by_cases(a, targets, 2)
+        for i, b in enumerate(targets):
+            joined = None
+            for split in self._disjunctive_cases(b):
+                for _, case in split:
+                    shape = _CaseSearch.shape(case)
+                    if shape != _CaseSearch.shape(b) and joined is None:
+                        joined = self._quietly(lambda: self.inline_unique_subs(dataclasses.replace(b), require_unique=False))[0]
+                        search.joined["joined", i] = joined
+                    parent = i if shape == _CaseSearch.shape(b) else ("joined", i) if shape == _CaseSearch.shape(joined) else None
+                    search.targets.append((case, parent))
+        return self._contained_by_cases(a, key, search, 2)
 
-    def _contained_by_cases(self, a, targets, depth: int) -> bool:
-        if any(self.branch_set_contained(a, b) for b in targets):
+    def _contained_by_cases(self, a, key, search: "_CaseSearch", depth: int) -> bool:
+        if self._in_some_target(a, key, search):
             return True
         if depth <= 0:
             return False
-        return any(all(self._contained_by_cases(case, targets, depth - 1) for case in cases) for cases in self._disjunctive_cases(a))
+        for split in self._disjunctive_cases(a):
+            search.kept.append(split)
+            cases = [(_CaseSearch.key(key[0] | {part.get_id()}, case), case) for part, case in split]
+            if depth == 1 and any(search.outside(k, case) for k, case in cases):
+                continue  # a case no target holds: this split cannot cover ``a``
+            if all(self._contained_by_cases(case, k, search, depth - 1) for k, case in cases):
+                return True
+        return False
 
-    def _disjunctive_cases(self, block) -> list:
-        """For each disjunction among the conjuncts of a block's filter, the block split by its disjuncts."""
+    def _in_some_target(self, a, key, search: "_CaseSearch") -> bool:
+        def probe(joined):
+            return self._quietly(lambda: self.branch_set_contained(a, joined))
+
+        for index, (b, _) in enumerate(search.targets):
+            contained = search.answer(key, index, a, probe)
+            if contained is None:
+                outer, self.unknown = self.unknown, False
+                try:
+                    contained = self.branch_set_contained(a, b)
+                    search.known[key, index] = (contained, not self.unknown)
+                finally:
+                    self.unknown = outer or self.unknown
+            if contained:
+                return True
+        return False
+
+    def _quietly(self, check) -> tuple:
+        """``(check(), whether no check timed out)`` for work the case search adds only to skip
+        checks: it leaves no candidate model and no timeout behind."""
+
+        saved, outer = len(self.candidates), self.unknown
+        self.unknown = False
+        try:
+            return check(), not self.unknown
+        finally:
+            del self.candidates[saved:]
+            self.unknown = outer
+
+    def _disjunctive_cases(self, block):
+        """For each disjunction among the conjuncts of a block's filter, the block split by its
+        disjuncts, as ``(disjunct, case)`` pairs (one disjunction at a time, when asked for)."""
 
         if not isinstance(block, _Spj) or any(o.opaque for o in block.occs):
-            return []
+            return
         disjunctions, stack = [], [block.cond.t]
         while stack:
             term = stack.pop()
@@ -3340,13 +3457,11 @@ class _Prover:
                     disjunctions.append(parts)
                 del self.candidates[saved:]
         # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
-        return [
-            [
-                self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
+        for parts in disjunctions:
+            yield [
+                (part, self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False))
                 for part in parts
             ]
-            for parts in disjunctions
-        ]
 
     def groups_unique(self, block) -> bool:
         """No two groups of a ``GROUP BY`` give the same row: equal outputs force equal group keys,
@@ -3437,12 +3552,15 @@ def _constant_global(block):
 
 
 def _selects_a_set(select: exp.Select) -> bool:
-    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row."""
+    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row.
 
-    if select.args.get("distinct") and not select.args.get("group"):
+    Not a ``DISTINCT ON (k)`` select: it keeps one row per ``k``, and two of them can be equal.
+    """
+
+    if plain_distinct(select) and not select.args.get("group"):
         return not any(select.find_all(exp.Window))
     group = select.args.get("group")
-    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or extended_grouping(group):
         return False
     outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in select.expressions]
     if any(isinstance(n, (exp.AggFunc, exp.Window)) for o in outputs for n in o.walk()):
@@ -3761,7 +3879,7 @@ def _group_shape(key: str):
         and isinstance(from_.this, exp.Table)
         and not from_.this.args.get("joins")
         and not any(tree.args.get(k) for k in ("joins", "where", "having", "distinct", "limit", "offset", "qualify", "laterals", "pivots", "with", "with_"))
-        and not any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals"))
+        and not extended_grouping(group)
         and all(isinstance(g, exp.Column) for g in group.expressions)
     ):
         group_names = {g.name.lower() for g in group.expressions}

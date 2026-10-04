@@ -132,6 +132,20 @@ def test_bounded_numeric_stays_in_range_and_scale():
     assert result.status is be.BoundedStatus.DIFFERENT
 
 
+def test_bounded_declared_numeric_precision_and_scale_are_kept():
+    schema = be.BoundedSchema({"t": be.BTable("t", [be.BColumn("x", "NUMERIC(10, 2)")])})
+    # a NUMERIC(10, 2) column holds no third decimal digit, so a tenth-of-a-cent difference is no counterexample
+    result = be.check_bounded("SELECT x FROM t WHERE x * 100 <> FLOOR(x * 100)", "SELECT x FROM t WHERE FALSE", schema, rows=2, dialect="bigquery", timeout_ms=2000)
+    assert result.status is not be.BoundedStatus.DIFFERENT, result.counterexample
+    # nor reaches 1e8 (10 digits, 2 after the point)
+    result = be.check_bounded("SELECT x FROM t WHERE x >= 100000000", "SELECT x FROM t WHERE FALSE", schema, rows=2, dialect="bigquery", timeout_ms=2000)
+    assert result.status is not be.BoundedStatus.DIFFERENT, result.counterexample
+    # a difference inside the declared range is still found
+    result = be.check_bounded("SELECT x FROM t WHERE x > 0.5", "SELECT x FROM t WHERE x > 1", schema, rows=2, dialect="bigquery", timeout_ms=2000)
+    assert result.status is be.BoundedStatus.DIFFERENT
+    assert result.counterexample is not None
+
+
 @pytest.mark.parametrize("label", ["nan_eq", "nan_gt", "safe_overflow"])
 def test_direct_executed_search_does_not_refute(label):
     from kumosql.executed_refutation import search_counterexample

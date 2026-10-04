@@ -79,6 +79,13 @@ WRONG_PROOFS = [
     pytest.param("SELECT 'US' AS c FROM t", "SELECT 'US' AS c FROM (SELECT COUNT(*) AS seed FROM t) g", WITNESS, id="R019-constant-over-count"),
     pytest.param("SELECT 'US' AS c FROM t", "SELECT 'US' AS c FROM (SELECT COUNT(*) AS seed FROM t) g", EMPTY, id="R019-empty-input"),
     pytest.param("SELECT 1 AS a FROM (SELECT MAX(x) AS m FROM t) g", "SELECT 1 AS a FROM t", WITNESS, id="R019-constant-over-max"),
+    # pruning an unread column of a UNION ALL by position took a branch's only aggregate
+    pytest.param(
+        "SELECT q.c FROM (SELECT MIN(t.x) AS k, 1 AS c FROM t UNION ALL SELECT MIN(t.x) AS k, 0 AS c FROM t GROUP BY t.y) AS q",
+        "SELECT q.c FROM (SELECT t.x AS k, 1 AS c FROM t UNION ALL SELECT MIN(t.x) AS k, 0 AS c FROM t GROUP BY t.y) AS q",
+        WITNESS,
+        id="union-all-branch-aggregate-pruned",
+    ),
 ]
 
 
@@ -106,6 +113,11 @@ STILL_PROVEN = [
         "SELECT d.c FROM (SELECT COUNT(*) AS n, 7 AS c FROM t) d WHERE d.n > 0",
         "SELECT 7 AS c FROM t HAVING COUNT(*) > 0",
         id="filter-on-the-aggregate-becomes-having",
+    ),
+    pytest.param(
+        "SELECT q.c FROM (SELECT MIN(t.x) AS k, 1 AS c FROM t GROUP BY t.y UNION ALL SELECT MIN(t.x) AS k, 0 AS c FROM t GROUP BY t.y) AS q",
+        "SELECT q.c FROM (SELECT MAX(t.x) AS k, 1 AS c FROM t GROUP BY t.y UNION ALL SELECT MAX(t.x) AS k, 0 AS c FROM t GROUP BY t.y) AS q",
+        id="union-all-grouped-branches-pruned",
     ),
 ]
 
