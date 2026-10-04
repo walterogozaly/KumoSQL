@@ -296,14 +296,15 @@ def _value_table_as_table(node: exp.Select) -> bool:
 
 
 def _group_by_all_without_keys(node: exp.Select) -> bool:
-    """``GROUP BY ALL`` where no select item is a grouping key: BigQuery aggregates to one group, DuckDB
-    drops the grouping."""
+    """``GROUP BY ALL`` with no grouping key and nothing to aggregate (``SELECT 1 ... GROUP BY ALL``): BigQuery
+    makes one group, DuckDB drops the grouping and returns every row. With an aggregate in the select list both
+    make one group, so that query is translated as written."""
 
     group = node.args.get("group")
     if group is None or not group.args.get("all"):
         return False
     for item in node.expressions:
-        if item.find(exp.AggFunc, exp.Window) is None and item.find(exp.Column) is not None:
+        if item.find(exp.AggFunc, exp.Window) is not None or item.find(exp.Column) is not None:
             return False
     return True
 
