@@ -377,6 +377,10 @@ def _paren_is_semantic(paren: exp.Paren) -> bool:
     # ``(a).b`` reads field b of a; ``a.b`` reads column b of table a.
     if isinstance(parent, (exp.Dot, exp.Bracket)):
         return True
+    # ``(a = 1) IS TRUE`` printed as ``a = 1 IS TRUE`` reads as ``a = (1 IS TRUE)``: comparison operators
+    # share one precedence level, so a comparison inside a comparison keeps its parentheses.
+    if isinstance(paren.this, exp.Predicate) and isinstance(parent, exp.Predicate):
+        return True
     return isinstance(parent, (exp.Select, exp.Union)) and paren.arg_key == "expressions"
 
 

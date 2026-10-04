@@ -216,3 +216,12 @@ def test_a_later_step_cannot_rescue_a_refused_distinct_step():
     assert result.sql == result.input_sql
     assert result.verification.status is VerificationStatus.UNPROVEN
     assert "safeguarded step was not accepted" in result.verification.reason
+
+
+def test_a_comparison_inside_a_comparison_keeps_its_parentheses_in_the_prover():
+    from kumosql.equivalence import prove_equivalent
+
+    sql = "SELECT (a = 1) IS TRUE AS m FROM t"
+    assert prove_equivalent(sql, sql).proven
+    # the printed text of the second query reads as a = (1 IS TRUE), so the two must not be called equal
+    assert not prove_equivalent(sql, "SELECT a = 1 IS TRUE AS m FROM t").proven
