@@ -34,6 +34,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(catalog, "_disk_loaded", False)
     catalog._memory.clear()
     monkeypatch.setattr(wf, "_token", None)
+    wf._found_location.clear()
     yield
     catalog._memory.clear()
 
@@ -96,7 +97,8 @@ def test_a_repository_that_does_not_match_names_what_was_searched(monkeypatch):
     error = reason_of(monkeypatch, _bearer=lambda: "t", _list_all=lambda url, key: [
         {"name": f"{REPO}", "gitRemoteSettings": {"url": "https://github.com/example-org/other"}}])
     assert (error.reason, error.attempted) == ("no_repository", True)
-    assert "2 searched project" in str(error) and "us-central1" in str(error) and SECRET not in str(error)
+    assert "2 searched project" in str(error) and "us-central1" in str(error) and "other Dataform locations" in str(error)
+    assert SECRET not in str(error)
 
 
 def test_an_api_error_gives_the_status_and_never_dataforms_own_message(monkeypatch):
@@ -235,13 +237,24 @@ def test_computed_declarations_resolve_through_the_api_and_the_load_says_so(tmp_
     assert api.requests[-1] == f"/v1beta1/{RESULT}:query"
 
 
-def test_the_same_project_without_a_matching_repository_says_where_it_looked(tmp_path, api):
+def test_a_repository_in_another_region_than_the_configured_one_is_found(tmp_path, api):
     select([SECRET])
-    api.location = "europe-west1"  # the repository lives in another region than the one searched
+    api.location = "asia-east1"  # not the default region
+    pl = live_graph.pipeline_from_files(synthetic_project(tmp_path), URL)
+    assert {f"proj.{schema}.{name}" for schema, name in COMPUTED} <= set(pl.sources)
+    assert "read 3 compiled actions" in diagnostic(pl, "compiled_graph_read")
+    api.requests.clear()
+    wf.compiled_targets(URL)  # the location found is tried first next time
+    assert api.requests[0] == f"/v1beta1/projects/{SECRET}/locations/asia-east1/repositories"
+
+
+def test_no_repository_in_any_region_says_where_it_looked(tmp_path, api):
+    select([SECRET])
+    api.location = "nowhere"  # no real location holds it
     pl = live_graph.pipeline_from_files(synthetic_project(tmp_path), URL)
     assert not any("computed_declared" in key for key in pl.sources)
     message = diagnostic(pl, "compiled_graph_unavailable")
-    assert "no_repository" in message and "us-central1" in message
+    assert "no_repository" in message and "us-central1" in message and f"{len(wf.LOCATIONS) - 1} other" in message
     assert SECRET not in message
 
 

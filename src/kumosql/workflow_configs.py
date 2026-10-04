@@ -22,6 +22,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -126,6 +127,33 @@ def _list_all(url: str, key: str) -> list[dict]:
             return items
 
 
+# Locations a Dataform repository can live in. A repository in a region other than the configured one is found by
+# searching these, so the default region does not have to be right.
+LOCATIONS = (
+    "africa-south1", "asia-east1", "asia-east2", "asia-northeast1", "asia-northeast2", "asia-northeast3", "asia-south1",
+    "asia-south2", "asia-southeast1", "asia-southeast2", "australia-southeast1", "australia-southeast2", "europe-central2",
+    "europe-north1", "europe-southwest1", "europe-west1", "europe-west2", "europe-west3", "europe-west4", "europe-west6",
+    "europe-west8", "europe-west9", "europe-west10", "europe-west12", "me-central1", "me-central2", "me-west1",
+    "northamerica-northeast1", "northamerica-northeast2", "southamerica-east1", "southamerica-west1", "us-central1",
+    "us-east1", "us-east4", "us-east5", "us-south1", "us-west1", "us-west2", "us-west3", "us-west4",
+)
+_found_location: dict[str, str] = {}  # normalized remote -> the location its Dataform repository was found in
+
+
+def _search_other_locations(github_url: str, projects: list[str], skip: str) -> tuple[list[str], int]:
+    """Repositories matching ``github_url`` in every known location but ``skip``, and how many locations were searched.
+    A location that errors (not offered to the project, no permission) counts as having none."""
+
+    others = [location for location in LOCATIONS if location != skip]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for location, (matches, _failures) in zip(others, pool.map(
+                lambda place: _search_repositories(github_url, projects, place), others)):
+            if matches:
+                _found_location[norm_git_url(github_url)] = location
+                return matches, len(others)
+    return [], len(others)
+
+
 def _search_repositories(github_url: str, projects: list[str], location: str) -> tuple[list[str], list[tuple[str, WorkflowConfigError]]]:
     want = norm_git_url(github_url)
     matches: list[str] = []
@@ -208,14 +236,20 @@ def compiled_targets(github_url: str) -> list[tuple[tuple[str, str, str], bool]]
         _bearer()
     except RuntimeError as exc:
         raise CompiledGraphUnavailable("no_credentials", str(exc), attempted=False) from exc
+    remembered = _found_location.get(norm_git_url(github_url))
+    if remembered:
+        location = remembered
     repos, failures = _search_repositories(github_url, projects, location)
+    searched_elsewhere = 0
+    if not repos and not failures:
+        repos, searched_elsewhere = _search_other_locations(github_url, projects, location)
     if not repos:
         if failures:
             raise CompiledGraphUnavailable(
                 "api_error", f"{_failure(failures[0][1])} for {len(failures)} of {len(projects)} searched project(s) in {location}")
         raise CompiledGraphUnavailable(
-            "no_repository", f"none of the {len(projects)} searched project(s) has a Dataform repository in {location} whose "
-            "git remote matches this repository (a repository in another location needs that location set)")
+            "no_repository", f"none of the {len(projects)} searched project(s) has a Dataform repository whose git remote "
+            f"matches this repository, in {location} or in the {searched_elsewhere} other Dataform locations")
     repo = repos[0]
     try:
         return _compiled_actions(repo)
