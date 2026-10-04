@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import decimal
 import logging
 
 import sqlglot
@@ -348,6 +349,8 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
         if not literal.is_string and len(literal.this) > 100:
             # No FLOAT64, INT64 or NUMERIC needs this many characters; int() and Fraction() on it can take minutes.
             raise UnmodeledConstruct("a numeric literal longer than 100 characters is not modeled")
+        if not literal.is_string and exponent_out_of_range(literal.this):
+            raise UnmodeledConstruct(f"numeric literal {literal.this[:40]!r} is outside FLOAT64's exponent range")
     if expanded_reads(tree) > MAX_EXPANDED_READS:
         raise UnmodeledConstruct(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
     check_distinct_from_grouping(tree)
@@ -367,6 +370,20 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
+
+
+def exponent_out_of_range(text: str) -> bool:
+    """Whether the numeric literal ``text`` is a nonzero number outside FLOAT64's exponent range (``1e100000000``).
+
+    Every prover declines these (``Fraction(Decimal('1e100000000'))`` would build a hundred-million-digit integer);
+    checking here makes the algebraic and structural paths decline them too, not only the SMT and bounded compilers.
+    """
+
+    try:
+        value = decimal.Decimal(text)
+    except decimal.InvalidOperation:
+        return False
+    return value.is_finite() and bool(value) and not -400 <= value.adjusted() <= 400
 
 
 def drop_case_conflicts(tables: dict | None) -> dict | None:
@@ -634,6 +651,33 @@ def distinct_on(select: exp.Expression) -> bool:
     return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
 
 
+def star_of(item: exp.Expression) -> exp.Star | None:
+    """The Star of a select item ``*`` or ``t.*`` (``t.*`` keeps its EXCEPT, REPLACE .. on that Star), else ``None``."""
+
+    if isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
+        return item.this
+    return item if isinstance(item, exp.Star) else None
+
+
+def star_modifier(item: exp.Expression, key: str):
+    """The ``"except"``, ``"replace"``, ``"rename"`` or ``"ilike"`` modifier of ``*`` or ``t.*`` (``None`` without one).
+
+    sqlglot 30 calls EXCEPT ``except_`` where 26 calls it ``except``: both spellings are read.
+    """
+
+    star = star_of(item)
+    if star is None:
+        return None
+    return star.args.get(key) or star.args.get(f"{key}_")
+
+
+def star_modified(item: exp.Expression) -> bool:
+    """Whether ``*`` or ``t.*`` carries any modifier: EXCEPT, REPLACE, RENAME, ILIKE or one a later sqlglot adds."""
+
+    star = star_of(item)
+    return star is not None and any(star.args.values())
+
+
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 
@@ -882,6 +926,36 @@ def is_cte_reference(table: exp.Table) -> bool:
     """
 
     return is_cte_reference_candidate(table) and bool(table.name) and table.name.lower() in visible_ctes(table)
+
+
+def binding_cte(table: exp.Expression) -> exp.CTE | None:
+    """The WITH table a one-part table reference reads, or ``None`` when it names a real table (or is not a table).
+
+    Only a WITH in a scope enclosing ``table`` binds it, the nearest one first, with the visibility of
+    :func:`visible_ctes`: a non-recursive WITH table's body sees only the ones listed before it, so
+    ``WITH t AS (SELECT * FROM t)`` reads the real ``t``. Names collected from the whole statement would let a nested
+    ``WITH t AS (...)`` hide a read of the real table ``t`` elsewhere in the statement.
+    """
+
+    if not isinstance(table, exp.Table) or not table.name or table.args.get("db") or table.args.get("catalog"):
+        return None
+    name = table.name.casefold()
+    child, parent = table, table.parent
+    while parent is not None:
+        ctes: list = []
+        if isinstance(parent, exp.With):
+            ctes = list(parent.expressions)
+            if not parent.args.get("recursive"):
+                ctes = ctes[: next((i for i, c in enumerate(ctes) if c is child), len(ctes))]
+        else:
+            clause = parent.args.get("with_") or parent.args.get("with")
+            if isinstance(clause, exp.With) and child is not clause:
+                ctes = list(clause.expressions)
+        for cte in reversed(ctes):
+            if isinstance(cte, exp.CTE) and cte.alias_or_name.casefold() == name:
+                return cte
+        child, parent = parent, parent.parent
+    return None
 
 
 def free_reads(body: exp.Expression) -> set[str]:

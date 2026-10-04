@@ -5,9 +5,10 @@ primary key, ``customer_id`` is never NULL, every order has a customer. When the
 a pair outright, :func:`add_conditions` asks whether such facts would settle it. It collects *candidate
 conditions* from the queries (every column they read may be NOT NULL; the columns they join, group,
 order and project may be unique; two joined tables may be linked by a foreign key), assumes them all,
-and runs the prover again. If that proves the pair, it removes conditions one at a time (chunks first)
-while the proof survives, so what is reported is minimal: drop any one condition and the prover can no
-longer prove the pair.
+and runs the prover again. If that proves the pair, it removes conditions (chunks first) while the proof
+survives, until every single condition has been tried and removing it loses the proof. The reported set is
+therefore minimal *for the prover*: it is a set the prover can prove the pair under and cannot shrink by one
+condition. A prover that fell silent without a condition does not show the condition is semantically needed.
 
 The result is a real proof under exactly the listed conditions, together with everything the prover
 already assumes about declared keys and NOT NULL columns. Each condition carries a SQL check (a query
@@ -411,15 +412,16 @@ def broken_by(condition: Condition, tables: Mapping[str, list]) -> bool:
 
 
 def minimal_conditions(candidates: list[Condition], proves: Callable[[list[Condition]], bool], deadline: float | None = None) -> tuple[list[Condition], bool]:
-    """A subset of ``candidates`` that still proves, from which no single condition can be dropped.
+    """A subset of ``candidates`` that still proves, from which the prover let no single condition be dropped.
 
     Chunks are dropped first (delta debugging), so a handful of provers calls handle dozens of
-    candidates. The flag is ``False`` when the deadline cut the search short (still a proof, not minimal).
+    candidates. The last condition is tried too: the result may be empty when the prover proves without any.
+    The flag is ``False`` when the deadline cut the search short (still a proof, not minimal).
     """
 
     keep = list(candidates)
     parts = 2
-    while len(keep) >= 2:
+    while keep:
         if deadline is not None and time.monotonic() > deadline:
             return keep, False
         size = max(1, -(-len(keep) // parts))
@@ -453,7 +455,10 @@ def always_empty(left_sql: str, prove: Callable[..., SmtEquivalenceResult], cons
     return counted.status is SmtStatus.PROVEN_EQUIVALENT
 
 
-def data_independent(
+_TEXT_TYPES = {"VARCHAR": "STRING", "CHAR": "STRING", "TEXT": "STRING"}  # SQL names the synthetic databases do not know
+
+
+def _independence(
     left_sql: str,
     right_sql: str,
     constraints: Mapping[str, TableConstraints],
@@ -461,23 +466,37 @@ def data_independent(
     schema: Mapping[str, list[str]] | None = None,
     types: Mapping[str, Mapping[str, str]] | None = None,
     dialect: str = "bigquery",
-) -> bool | None:
-    """Whether each query returns one and the same result on every test database that meets ``constraints``.
+) -> str:
+    """``"independent"`` when each query returns one and the same result on every test database that meets ``constraints``,
+    ``"dependent"`` when they do not, ``"not_run"`` when no test database ran on both queries (the engine rejects them) and
+    ``"error"`` when the check itself failed.
 
     Conditions that make both queries constant (a unique key under ``HAVING COUNT(*) > 1``, a self join on a
     key that asks for two different rows) prove the pair for the wrong reason: the proof is real, but the
-    queries no longer ask anything of the data. ``None`` when the queries could not be run to find out.
+    queries no longer ask anything of the data.
     """
 
     from .refute import ExecutionError, infer_schema, repair_foreign_keys
-    from .result_equivalence import DataRules, DatasetRunner
+    from .result_equivalence import DataRules, DatasetRunner, _normalize_type
     from .targeted_data import database_suite
 
     def short(name: str) -> str:
         return name.lower().split(".")[-1]
 
+    def known_types(declared: Mapping[str, Mapping[str, str]] | None) -> dict[str, dict[str, str]]:
+        # A declared type the synthetic databases cannot build (TIME, ENUM) is left out and the column's type is inferred;
+        # without this one such column would stop the check from running at all, and a check that cannot run fails closed.
+        usable: dict[str, dict[str, str]] = {}
+        for table, columns in (declared or {}).items():
+            for column, kind in columns.items():
+                try:
+                    usable.setdefault(table, {})[column] = _normalize_type(_TEXT_TYPES.get(kind.strip().upper(), kind))
+                except ValueError:
+                    continue
+        return usable
+
     try:
-        shaped = infer_schema([left_sql, right_sql], schema, types, dialect)
+        shaped = infer_schema([left_sql, right_sql], schema, known_types(types), dialect)
         rules = {
             short(name): DataRules(not_null=frozenset(c.not_null), keys=tuple(tuple(k) for k in c.keys))
             for name, c in constraints.items() if short(name) in shaped
@@ -501,11 +520,18 @@ def data_independent(
                     ran += 1
                     seen["left"].add(tuple(sorted(repr(r) for r in a.rows)))
                     seen["right"].add(tuple(sorted(repr(r) for r in b.rows)))
-    except Exception:  # noqa: BLE001 - a quality check: when it cannot run, the verdict stands
-        return None
+    except Exception:  # noqa: BLE001 - reported as "error"; the caller decides what a failed check means
+        return "error"
     if ran == 0:
-        return None
-    return len(seen["left"]) <= 1 and len(seen["right"]) <= 1
+        return "not_run"
+    return "independent" if len(seen["left"]) <= 1 and len(seen["right"]) <= 1 else "dependent"
+
+
+def data_independent(left_sql: str, right_sql: str, constraints: Mapping[str, TableConstraints], **options) -> bool | None:
+    """Whether each query returns one and the same result on every test database that meets ``constraints``; ``None`` when
+    the queries could not be run to find out (see :func:`_independence`)."""
+
+    return {"independent": True, "dependent": False}.get(_independence(left_sql, right_sql, constraints, **options))
 
 
 def jointly_satisfiable(conditions: Iterable[Condition], constraints: Mapping[str, TableConstraints] | None = None) -> bool:
@@ -552,7 +578,8 @@ def add_conditions(
     ``prove(constraints, pair=None)`` runs the prover on the pair (or on another pair, names ignored) with the given
     constraints. A set of conditions is passed over for another set when no database meets it, when the prover then
     shows the query is always empty (a prover given contradictory facts proves that and everything else), or when it
-    makes both queries return one result on every test database (see :func:`data_independent`).
+    makes both queries return one result on every test database (see :func:`data_independent`; when that check
+    fails, the conditions are not cleared, and when the engine rejects the queries the verdict says it was not checked).
     """
 
     if result.status is SmtStatus.PROVEN_EQUIVALENT:
@@ -562,15 +589,23 @@ def add_conditions(
         return result
     deadline = time.monotonic() + wall_seconds
 
+    proofs: dict[frozenset, SmtEquivalenceResult] = {}
+
+    def attempt(chosen: Iterable[Condition]) -> SmtEquivalenceResult:
+        chosen = list(chosen)
+        key = frozenset(c.key for c in chosen)
+        if key not in proofs:
+            proofs[key] = prove(with_conditions(constraints, chosen))
+        return proofs[key]
+
     def proves(chosen: list[Condition]) -> bool:
-        return prove(with_conditions(constraints, chosen)).status is SmtStatus.PROVEN_EQUIVALENT
+        return attempt(chosen).status is SmtStatus.PROVEN_EQUIVALENT
 
     # Foreign keys come second: their rules can rewrite one side out of the shape the other side's proof needs, so a
     # pair the other facts prove is never lost to them.
     without_keys = [c for c in candidates if c.kind != "foreign_key"]
     for universe in dict.fromkeys([tuple(without_keys), tuple(candidates)]):
-        full = prove(with_conditions(constraints, universe))
-        if universe and full.status is SmtStatus.PROVEN_EQUIVALENT:
+        if universe and proves(list(universe)):
             candidates = list(universe)
             break
     else:
@@ -578,6 +613,7 @@ def add_conditions(
     pool, blocked = candidates, []
     needed: list[Condition] = []
     minimal = True
+    unchecked = False
     for _ in range(MAX_ALTERNATIVES):
         if time.monotonic() > deadline:
             return result
@@ -589,14 +625,20 @@ def add_conditions(
         merged = with_conditions(constraints, chosen)
 
         def vacuous() -> bool:
-            if not (always_empty(left_sql, prove, merged) or data_independent(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect)):
+            nonlocal unchecked
+            unchecked = False
+            same = _independence(left_sql, right_sql, merged, schema=schema, types=types, dialect=dialect)
+            # A check that failed does not clear the conditions. Queries the engine rejects outright (a MySQL-only GROUP BY)
+            # leave the guard with nothing to run: the verdict stands, and says so.
+            unchecked = same == "not_run"
+            if not (always_empty(left_sql, prove, merged) or same in ("independent", "error")):
                 return False
             # A query written to be empty or constant (WHERE 1 = 0, SELECT 0) is what the other side is meant to equal.
             declared = {k.lower(): v for k, v in (constraints or {}).items()}
             return not (
                 always_empty(left_sql, prove, declared) or always_empty(right_sql, prove, declared)
-                or data_independent(left_sql, left_sql, declared, schema=schema, types=types, dialect=dialect)
-                or data_independent(right_sql, right_sql, declared, schema=schema, types=types, dialect=dialect)
+                or data_independent(left_sql, left_sql, declared, schema=schema, types=types, dialect=dialect) is True
+                or data_independent(right_sql, right_sql, declared, schema=schema, types=types, dialect=dialect) is True
             )
 
         constant = not jointly_satisfiable(chosen, constraints) or vacuous()
@@ -610,14 +652,19 @@ def add_conditions(
         return result
     if result.counterexample is not None and not any(broken_by(c, result.counterexample.tables) for c in needed):
         return result  # refuted on a database that meets every condition: nothing is conditional about it
+    final = attempt(needed)  # the proof the verdict stands on: its own assumptions, not those of the full set
+    if final.status is not SmtStatus.PROVEN_EQUIVALENT:
+        return result
     reason = "equivalent whenever: " + describe(needed)
     if not minimal:
         reason += " (the search for fewer conditions ran out of time)"
+    if unchecked:
+        reason += " (not checked for conditions that make both queries constant: the queries cannot run on test databases)"
     return SmtEquivalenceResult(
         SmtStatus.PROVEN_CONDITIONALLY,
         reason,
         counterexample=result.counterexample,
-        assumptions=tuple(full.assumptions),
+        assumptions=tuple(final.assumptions),
         conditions=tuple(needed),
     )
 

@@ -7,7 +7,7 @@ import pytest
 
 duckdb = pytest.importorskip("duckdb")
 
-from kumosql.duckdb_load import TableLoader, insert_rows, rows_key  # noqa: E402
+from kumosql.duckdb_load import TableLoader, insert_rows, rows_key, small_database  # noqa: E402
 
 TABLES = {'"t"': "a BIGINT, b VARCHAR, c DOUBLE", '"u"': "x VARCHAR"}
 # Values that compare equal in Python but load differently (1, True and 1.0 into VARCHAR; -0.0 and 0.0 into
@@ -93,3 +93,10 @@ def test_rows_key_tells_values_apart_and_marks_values_without_a_literal():
     assert len({rows_key({"t": [[value]]}) for value in (1, True, 1.0, "1", None)}) == 5
     assert rows_key({"t": [[0.0]]}) != rows_key({"t": [[-0.0]]})
     assert rows_key({"t": [], "u": [[float("nan")]]}) == ("", None)
+
+
+def test_small_database_uses_one_thread_unless_the_caller_chooses():
+    one = small_database()
+    two = small_database(threads=2)
+    assert one.execute("SELECT current_setting('threads')").fetchone()[0] == 1
+    assert two.execute("SELECT current_setting('threads')").fetchone()[0] == 2

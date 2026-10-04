@@ -30,6 +30,10 @@ lists both written tables, and a rename connects the old name to the new one. Th
 that every assigned column can be traced. Nested fields of a stored STRUCT still trace to the containing column.
 A partition name such as `events$__UNPARTITIONED__` uses the schema of `events` when it is available.
 
+## A query's own WITH table is not the model
+
+A `WITH` table only exists inside the query that defines it. If model `read_secret` reads the model `t`, and a subquery further along declares its own `WITH t AS (SELECT 1 AS id) ...`, that inner `t` is a different, private table. Reading `t` outside it, or inside a `WITH t AS (SELECT * FROM t)` body, still reads the real model. KumoSQL follows this rule, so the dependency on `t` is kept and `t.secret` is not called unused just because a nested `WITH` reused the name. This tracks name scope only; it does not check that the data matches. The exact rule is in the [full reference](../docs/pipeline-analysis.md).
+
 ## Find work already done elsewhere
 
 A table profile describes its sources, attributes, and grain. Grain means what one row represents: one sale, one customer, or one customer per day.
@@ -43,7 +47,9 @@ Profiles and match reports include reasons and unknowns. Check whether the match
 
 ## Why missing schemas matter
 
-`SELECT *` over an external table needs that table's column list. Without it, KumoSQL cannot reliably trace the columns. Saved catalog data can fill the gap. A live lookup in BigQuery can too, but it is off by default so that nothing reaches the network unless you ask: tick the checkbox in Settings, pass `--fetch-schema` to the pipeline report command, or set `KUMOSQL_SCHEMA_FETCH=1`. Without it, those columns simply stay unknown. The log says only that a lookup ran and how many tables it answered, never their names. See the [full reference](../docs/pipeline-analysis.md) for the details.
+`SELECT *` over an external table needs that table's column list. Without it, KumoSQL cannot reliably trace the columns. Saved catalog data can fill the gap. A live lookup in BigQuery can too, but it is off by default so that nothing reaches the network unless you ask: tick the checkbox in Settings, pass `--fetch-schema` to the pipeline report command, or set `KUMOSQL_SCHEMA_FETCH=1`. Without it, those columns simply stay unknown. The lookup covers tables the project reads but does not define, and also sources the project declares without listing their columns. When you pass `--fetch-schema`, the command prints one line saying how many tables it fetched, how many failed and why (no credentials, no access, not found, no project in the name), so a lookup that did nothing is never silent.
+
+A `SELECT *` over such a table inside a `UNION` no longer turns the whole model unknown. Each output column is matched by position, so only the columns the starred branch may fill are marked unknown (with the sources the other branches give), and columns the star cannot reach keep their lineage. For example, in `SELECT a, b + c AS x FROM t UNION ALL SELECT * FROM mystery`, both `a` and `x` can really come from `mystery`, so both are unknown but still list `t`'s columns; in `SELECT a, b + c AS x, d FROM t UNION ALL SELECT 1, 2, * FROM mystery`, only `d` is unknown. When every branch has a star, or the star union sits in a CTE, the model's columns all stay unknown. The evidence is a handful of constructed cases in `tests/test_star_branch_lineage.py`, not a benchmark score. The log says only that a lookup ran and how many tables it answered, never their names. See the [full reference](../docs/pipeline-analysis.md) for the details.
 
 An unresolved Dataform template can also hide a dependency. The report marks analysis gaps; it does not silently treat them as no dependency.
 
