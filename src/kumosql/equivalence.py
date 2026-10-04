@@ -33,6 +33,7 @@ from .input_validity import invalid_input_reason
 from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
+from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
@@ -151,6 +152,9 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     with_clause = _root_with(query)
     if not with_clause:
+        return
+    if with_clause.args.get("recursive"):
+        # The independent CTE check does not expand a recursive WITH, so the prover leaves its names alone.
         return
     if any(
         isinstance(node, exp.With) and node is not with_clause
@@ -844,6 +848,24 @@ def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
     return check
 
 
+def _checked_cte_normalization(before: exp.Expression, after: exp.Expression) -> StepCheck | None:
+    """Have ``proof_ctes`` re-derive the renaming, reordering, merging and dropping of CTEs from scratch.
+
+    The normalizer and the CTE rewrite rules each decide which names are CTE references. A mistake they
+    share would make both sides of a proof agree. ``None`` when nothing changed; raises ``_StepRejected``
+    when the checker refuses the change.
+    """
+
+    if same_tree(before, after):
+        return None
+    rendered = lambda q: q.sql(dialect="bigquery", comments=False)
+    step = RewriteStep("normalize_ctes", CTE_FAMILY, 0, rendered(before), rendered(after), CTE_ASSUMPTIONS)
+    check = check_cte_transition(step, before, after)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
 _GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
 
 
@@ -895,10 +917,14 @@ def _prepare_query(
     check = _checked_predicate_normalization(query)
     if check is not None and checks is not None:
         checks.append(check)
+    before_ctes = query.copy()
     unambiguous = _cte_references_are_unambiguous(query)
     _canonicalize_cte_names(query)
     if unambiguous and _merge_duplicate_ctes(query):
         _canonicalize_cte_names(query)
+    cte_check = _checked_cte_normalization(before_ctes, query)
+    if cte_check is not None and checks is not None:
+        checks.append(cte_check)
     _remove_comments(query)
     canonical = _canonical_sql(query)
     reasons = tuple(_nondeterminism_reasons(query, allow_unchanged_values=True))
@@ -1104,7 +1130,7 @@ def _prove_equivalent(
     except _StepRejected as exc:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
-            reason="the independent check of predicate normalization refused a step",
+            reason="the independent check of a normalization step refused it",
             diagnostics=(exc.check.reason,),
             proof_checks=(*checks, exc.check),
         )
