@@ -725,6 +725,29 @@ def _union_all_branches(node: exp.Expression) -> list[exp.Select] | None:
     return None
 
 
+def _keep_branch_aggregates(branches: list[exp.Select], keep: list[int], width: int) -> list[int] | None:
+    """``keep`` widened so every global-aggregate branch still holds one of its aggregates, or ``None``.
+
+    A branch such as ``SELECT MIN(x) AS k, 1 AS c FROM t`` returns one row over an empty ``t``; without its
+    aggregate the branch is ``SELECT 1 AS c FROM t`` and returns a row per input row. The columns are pruned
+    by position in every branch, so one position must hold an aggregate in each of those branches.
+    """
+
+    def stays_global(branch: exp.Select, columns: list[int]) -> bool:
+        if not _global_aggregate(branch):
+            return True
+        pruned = branch.copy()
+        pruned.set("expressions", [branch.expressions[i].copy() for i in columns])
+        return _global_aggregate(pruned)
+
+    if all(stays_global(b, keep) for b in branches):
+        return keep
+    for extra in range(width):
+        if extra not in keep and all(stays_global(b, keep + [extra]) for b in branches):
+            return keep + [extra]
+    return None
+
+
 def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     """Drop, in every branch of a UNION ALL, the columns (by position) nothing reads."""
 
@@ -744,6 +767,9 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     if len(set(names)) != width:
         return False
     keep = [i for i in range(width) if names[i] in used] or [0]
+    keep = _keep_branch_aggregates(branches, keep, width)
+    if keep is None:
+        return False
     keep.sort(key=lambda i: names[i])  # the enclosing query reads by name, so the order is free
     if keep == list(range(width)):
         return False
