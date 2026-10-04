@@ -792,6 +792,42 @@ def _type_is_float(declared: str) -> bool | None:
     return name in _FLOAT_TYPES if name else None
 
 
+def _type_is_integer(declared: str) -> bool:
+    """Whether a declared column type holds whole numbers only."""
+
+    name = re.sub(r"\(.*", "", declared).strip().upper()
+    return name in _INTEGER_TYPE_NAMES
+
+
+def _breaks_declared_type(types: dict, table: str, row: dict) -> bool:
+    """Whether one value of a candidate row is one the column's declared type cannot hold.
+
+    The model gives a column any value of its kind, so an ``INT64`` column can be handed ``1.5``. A
+    witness that separates the queries only through such a value reports a difference no real table
+    could show: replayed with the declared type, the row rounds to the next integer and the two
+    queries agree again. Only integer columns are checked, where rounding can move a comparison's
+    answer; a string or a decimal keeps whatever value the model gave it.
+    """
+
+    columns = types.get(table.lower()) or {}
+    for name, value in row.items():
+        declared = columns.get(name.lower())
+        if declared is None or not _type_is_integer(declared) or value is None:
+            continue
+        if isinstance(value, Fraction):
+            if value.denominator != 1:
+                return True
+        elif not isinstance(value, int) or isinstance(value, bool):
+            return True
+    return False
+
+
+_INTEGER_TYPE_NAMES = {
+    "INT", "INT2", "INT4", "INT8", "INT16", "INT32", "INT64", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
+    "MEDIUMINT", "SERIAL", "BIGSERIAL", "SMALLSERIAL", "LONG", "SHORT", "SIGNED", "BYTEINT",
+}
+
+
 def _plain_literal(node: exp.Expression, dialect: str) -> bool:
     """A literal (or literal arithmetic folded exactly): its model value stands for it in every numeric type."""
 
@@ -2148,9 +2184,16 @@ def _occ_pairs(src: _Occ, dst: _Occ) -> list:
 
 
 class _Prover:
-    def __init__(self, timeout_ms: int, constraints: dict[str, TableConstraints] | None = None):
+    def __init__(
+        self,
+        timeout_ms: int,
+        constraints: dict[str, TableConstraints] | None = None,
+        types: dict[str, dict[str, str]] | None = None,
+    ):
         self.timeout_ms = timeout_ms
         self.constraints = {k.lower(): v for k, v in (constraints or {}).items()}
+        # Declared column types, by lower-cased table and column name: they bound what a counterexample row may hold.
+        self.types = {k.lower(): {c.lower(): t for c, t in cols.items()} for k, cols in (types or {}).items()}
         # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
@@ -2479,8 +2522,14 @@ class _Prover:
                 block.having = _Pred(_subst(block.having.t, pairs), _subst(block.having.f, pairs))
 
     def legal_database(self, db: dict[str, list[dict]]) -> dict[str, list[dict]] | None:
-        """Respect declared constraints: ``None`` if the database cannot satisfy them."""
+        """Respect declared constraints and column types: ``None`` if the database cannot hold them.
 
+        A candidate row whose value no column of the declared type can hold is dropped here, like one
+        that breaks a declared NOT NULL column or key, so the pair stays ``not_proven``.
+        """
+
+        if any(_breaks_declared_type(self.types, table, row) for table, rows in db.items() for row in rows):
+            return None
         if not self.constraints:
             return db
         legal = {}
@@ -3843,7 +3892,7 @@ def _prove_core(
                     assumptions=assumed,
                 )
 
-        prover = _Prover(timeout_ms, constraints)
+        prover = _Prover(timeout_ms, constraints, types)
         prover.opaque_sets = compiler.opaque_sets
         used[0] = compiler.used_setsrc
         try:

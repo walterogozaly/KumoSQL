@@ -64,6 +64,8 @@ Some writes cannot be compared faithfully, so the check answers `error` instead 
 
 Repeating the same comparison should find the same counterexample regardless of earlier comparisons or unrelated imports. For example, removing a lookup join can lose its treatment of a user whose plan is NULL: the join drops that user, while reading the users table keeps them. The solver isolates its candidate search to avoid changing this witness with process history. The search can still miss a difference or run out of time; returned examples must respect the declared data guarantees and make the query results differ.
 
+A returned example must also hold values the declared column types allow. The solver's model can put `1.5` in a column declared `INT64`, and such an example is dropped: replayed, the row rounds to the next integer and the queries agree again. A comparison that only a fraction could separate now comes back unproven instead of refuted.
+
 ## Strings compared with numbers
 
 `WHERE '2' <> 2` looks like a condition that is never true, but engines disagree: MySQL turns the string into a number and finds them equal, DuckDB and PostgreSQL cast it the same way, and BigQuery refuses the query. Treating the two as always different once led the checker to say this query matches one with no filter, when real engines return different rows.
