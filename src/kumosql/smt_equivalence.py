@@ -646,6 +646,50 @@ class _Source:
         return [(name, self.occ.col(name)) for name in self.occ.columns]
 
 
+def _star_columns(star: exp.Star, columns: list[tuple[str, _Val]]) -> list[tuple[str, _Val | exp.Expression]]:
+    """What ``*`` or ``t.*`` lists, given what it would list bare (``columns``), after its EXCEPT, REPLACE and RENAME.
+
+    They apply in that order, the order sqlglot reads them in. sqlglot 30 calls EXCEPT ``except_`` and 26
+    ``except``: both are read. A REPLACE value comes back as its expression, for the select to compile in its
+    FROM scope. A name the star lacks or lists twice (the query fails, or engines differ on the column it
+    means), a RENAME onto a name the star has, and any other modifier (``ILIKE``) are declined.
+    """
+
+    modifiers = {key.rstrip("_"): value for key, value in star.args.items() if value}
+    if set(modifiers) - {"except", "replace", "rename"}:
+        raise Unsupported(f"SELECT * {' '.join(sorted(m.upper() for m in modifiers))}")
+    out: list = list(columns)
+
+    def position(name: str) -> int:
+        found = [i for i, (n, _) in enumerate(out) if n == name]
+        if len(found) != 1:
+            raise Unsupported(f"SELECT * modifier naming {name}, which the star lists {len(found)} times")
+        return found[0]
+
+    def named(node) -> str:
+        if isinstance(node, exp.Column) and not node.table and isinstance(node.this, exp.Identifier):
+            return node.name.lower()
+        raise Unsupported(f"SELECT * modifier naming {node.sql(dialect='bigquery')}")
+
+    for column in modifiers.get("except", ()):
+        del out[position(named(column))]
+    for key in ("replace", "rename"):
+        if any(not isinstance(a, exp.Alias) or not a.alias for a in modifiers.get(key, ())):
+            raise Unsupported(f"SELECT * {key.upper()} of this shape")
+    replace = [(position(a.alias.lower()), a.this) for a in modifiers.get("replace", ())]
+    rename = [(position(named(a.this)), a.alias.lower()) for a in modifiers.get("rename", ())]
+    if len({i for i, _ in replace}) != len(replace) or len({i for i, _ in rename}) != len(rename):
+        raise Unsupported("SELECT * modifier naming a column twice")
+    # Renames read the names before any of them applies; one onto a name the star has (a swap, say) is declined.
+    if len({n for _, n in rename}) != len(rename) or any(out[j][0] == n for i, n in rename for j in range(len(out)) if j != i):
+        raise Unsupported("SELECT * RENAME onto a name the star has")
+    for i, value in replace:
+        out[i] = (out[i][0], value)
+    for i, name in rename:
+        out[i] = (name, out[i][1])
+    return out
+
+
 # --------------------------------------------------------------------------
 # Compiler: sqlglot AST -> normal form
 # --------------------------------------------------------------------------
@@ -1230,8 +1274,6 @@ class _Compiler:
         aliases: dict[str, exp.Expression] = {}
         for item in node.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
-                if item.args.get("except") or item.args.get("replace"):
-                    raise Unsupported("SELECT * EXCEPT/REPLACE")
                 if isinstance(item, exp.Star):
                     sources = list(env.values())
                 else:
@@ -1239,10 +1281,14 @@ class _Compiler:
                     if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
-                for source in sources:
-                    for name, val in source.star():
-                        names.append(name)
-                        outputs.append(val)
+                # ``t.*`` keeps its EXCEPT/REPLACE/RENAME on the Star under the column.
+                star = item if isinstance(item, exp.Star) else item.this
+                for name, val in _star_columns(star, [pair for source in sources for pair in source.star()]):
+                    if isinstance(val, exp.Expression):
+                        aliases[name] = val  # ``* REPLACE (e AS a)`` names ``e`` as ``e AS a`` does
+                        val = self._val(val, env, agg_ctx, None)
+                    names.append(name)
+                    outputs.append(val)
                 continue
             expr = item.this if isinstance(item, exp.Alias) else item
             name = item.alias_or_name.lower() if isinstance(item, (exp.Alias, exp.Column)) else ""
