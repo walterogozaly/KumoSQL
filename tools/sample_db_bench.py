@@ -600,6 +600,15 @@ class Adapter:
 
     # -- prover inputs
 
+    def declared_types(self) -> dict:
+        """Column types as declared (``NUMERIC(10, 2)`` keeps its precision), lower-case names: what the bounded checker
+        reads so its counterexamples fit the real columns."""
+
+        return {
+            t.name.lower(): {c.lower(): k for c, k in t.columns.items()}
+            for t in self.schema().values()
+        }
+
     def prover_schema(self) -> tuple[dict, dict]:
         schema = self.schema()
         columns = {t.name: list(t.columns) for t in schema.values()}
@@ -1569,7 +1578,7 @@ def decide_pair(name: str, pair: dict, con) -> dict:
                 bounded = check_bounded(
                     left,
                     right,
-                    schema_from_prover(lower, constraints, types),
+                    schema_from_prover(lower, constraints, adapter.declared_types()),
                     rows=BOUNDED_ROWS,
                     dialect="bigquery",
                     timeout_ms=PROVER_TIMEOUT_MS,
