@@ -12,10 +12,18 @@ A `WITH` name can mean a CTE, or a table that happens to have the same name (a C
 
 On its first run the checker caught a real mistake: `inline_single_use_ctes` replaced a table with a CTE that was defined after the query that read it. That rule is fixed.
 
+## Parentheses and DISTINCT
+
+Two more cleanups are checked the same way. Removing parentheses is accepted only if the query still groups every operator exactly as before, so `(a OR b) AND c` can never quietly become `a OR b AND c`. Removing `DISTINCT` is accepted only if the query already has a plain `GROUP BY` and every grouping column is in the output, so every row is already unique.
+
+## One list of checked rules
+
+KumoSQL keeps a single reviewed list of which cleanup rules have a separate checker and which do not yet, with the reason for each one that does not. A test fails if someone adds a rule and forgets to put it on the list, so a new rule has to choose between getting a checker and saying what it relies on instead.
+
 ## Dataform expressions
 
 A Dataform file can hold `${...}` expressions. KumoSQL can treat `${ref("orders")}` as a table name, but anything else (`${when(incremental(), "AND ts > 1")}`, or a value inside quotes such as `'${vars.status}'`) may expand to whole clauses, operators, a comment, or even a quote that ends a string early. A change to a statement holding one, including only moving a line break next to it, is `unproven` until the SQLX is compiled. The provers also refuse text where Dataform expressions were replaced by placeholder names, because the same placeholder can stand for different expressions in different models.
 
 ## What this does not cover
 
-Only predicate cleanup and CTE rewrites are checked independently so far. The step that turns subqueries into CTEs is not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).
+Predicate cleanup, CTE rewrites, parentheses and removing `DISTINCT` are checked independently so far. The step that turns subqueries into CTEs, and the rules that format SQL or qualify columns, are not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity or the parser. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).
