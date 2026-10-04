@@ -163,6 +163,7 @@ EVAL_FILES = {
     "test_bq_behavior_eval.py",
     "test_googlesql_results_eval.py",
     "test_bq_utils_udf_eval.py",
+    "test_arcwise_bench.py",
     "test_bq_corpus_bench.py",
     "test_calcite_mined_benchmarks.py",
     "test_conditional_benchmark.py",

@@ -3,9 +3,9 @@
 Each database is an *adapter* (``ADAPTERS``): the pinned upstream script, committed unchanged with
 its licence under ``tests/fixtures/sample_databases/<name>/upstream/``, and the adapted BigQuery DDL
 (``adapted/schema.sql``, labelled ADAPTED) that says how the upstream tables become BigQuery tables.
-Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two and
-Pagila (devrimgunduz/pagila) the third; Sakila, AdventureWorks and Employees plug in as further adapters
-(subclass ``Adapter``, give the pins, the type conversions and the expected row counts).
+Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two and Sakila (datacharmer/test_db) the third;
+Pagila (devrimgunduz/pagila) the fourth; AdventureWorks and Employees plug in as further adapters (subclass ``Adapter``, give
+the pins, the type conversions and the expected row counts).
 
 For every database the harness
 
@@ -45,7 +45,6 @@ One case in five (by SHA-1 of its id) is held out and reported apart.
     python tools/sample_db_bench.py --part rewrites    # (a)
     python tools/sample_db_bench.py --part pairs       # (b)
     python tools/sample_db_bench.py --write-results    # both parts, write benchmarks/results/*.json
-    python tools/sample_db_bench.py --database pagila --write-results   # just Pagila's own pair of results files
 """
 
 from __future__ import annotations
@@ -308,6 +307,8 @@ def _constraint(table: TableDef, item: list[Token]) -> bool:
         "UNIQUE",
         "INDEX",
         "KEY",
+        "FULLTEXT",
+        "SPATIAL",
         "ADD",
     ):
         return False  # a column definition (an inline PRIMARY KEY or REFERENCES is read with the column)
@@ -327,7 +328,15 @@ def _constraint(table: TableDef, item: list[Token]) -> bool:
             (_names(item[start + 1 : end]), parent, _names(item[pstart + 1 : pend]))
         )
         return True
-    return words[:1] in (["CONSTRAINT"], ["CHECK"], ["UNIQUE"], ["INDEX"], ["KEY"])
+    return words[:1] in (
+        ["CONSTRAINT"],
+        ["CHECK"],
+        ["UNIQUE"],
+        ["INDEX"],
+        ["KEY"],
+        ["FULLTEXT"],
+        ["SPATIAL"],
+    )
 
 
 def read_ddl(text: str) -> dict[str, TableDef]:
@@ -490,6 +499,8 @@ class Adapter:
     title: str = ""
     upstream: tuple[Upstream, ...] = ()
     data_file: str = ""  # the upstream file holding the DDL and the INSERT statements
+    #: upstream file holding the DDL when it is not ``data_file`` (empty: the same file as ``upstream_text``)
+    ddl_file: str = ""
     #: row counts upstream publishes, and where (checked in addition to the rows the script inserts)
     published_counts: dict[str, int] = {}
     published_counts_source: str = ""
@@ -500,46 +511,49 @@ class Adapter:
     renames: dict[str, str] = {}
     #: (BigQuery SQL, expected rows) that upstream asserts about its data
     assertions: tuple[tuple[str, list[tuple]], ...] = ()
+    #: ``order`` of this database's own results files (0: its rows are in the combined Chinook/Northwind files)
+    results_order: int = 0
+    #: what the upstream workload queries are, for the caveats of the results files
+    workload_note: str = ""
+    #: what the first (baseline) pairs run showed, for the caveats of the pairs results file
+    baseline_note: str = ""
+    #: the docs page of the database's results files
+    docs_page: str = "docs/evals/sample-databases.md"
+    #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
+    #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
+    fresh_foreign_key_values: bool = False
 
     @property
     def folder(self) -> Path:
         return FIXTURES / self.name
 
-    #: upstream file holding the DDL when it is not ``data_file`` (empty: the same file)
-    ddl_file: str = ""
-    #: results files this database is scored in (``<group>-rewrites`` and ``<group>-pairs``); the first two
-    #: databases share one pair of files, each later database has its own
-    results_group: str = "sample-databases"
-    #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
-    #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
-    fresh_foreign_key_values: bool = False
-    results_order: int = (
-        340  # scoreboard position of the group's rewrites row (pairs: one more)
-    )
-    docs_page: str = "docs/evals/sample-databases.md"
-    #: extra sentences for the results files' caveats: ``rewrites`` and ``pairs`` (not for the first two databases)
-    results_notes: dict = {}
-
     def upstream_text(self) -> str:
         return (self.folder / self.data_file).read_text(encoding="utf-8")
 
     def ddl_text(self) -> str:
-        return (self.folder / (self.ddl_file or self.data_file)).read_text(
-            encoding="utf-8"
-        )
+        if not self.ddl_file:
+            return self.upstream_text()
+        return (self.folder / self.ddl_file).read_text(encoding="utf-8")
 
     def upstream_tables(self) -> dict[str, TableDef]:
         """The tables of the upstream DDL under their adapted names."""
 
         return {self.renames.get(n, n): t for n, t in read_ddl(self.ddl_text()).items()}
 
-    def upstream_views(self) -> dict[str, str]:
-        return read_views(self.ddl_text())
-
     def upstream_rows(self) -> dict[str, list]:
         """Every upstream data row by upstream table name, as ``read_inserts`` returns them."""
 
         return read_inserts(self.upstream_text())
+
+    def upstream_views(self) -> dict[str, str]:
+        """The views the upstream script creates, by name (a database whose script reads differently overrides this)."""
+
+        return read_views(self.upstream_text())
+
+    def trigger_rows(self, rows: dict[str, list[tuple]]) -> dict[str, list[tuple]]:
+        """Rows an upstream trigger would have added while loading, from the converted rows (none by default)."""
+
+        return {}
 
     def schema(self) -> dict[str, TableDef]:
         """The adapted BigQuery DDL."""
@@ -590,7 +604,15 @@ class Adapter:
         return raw.text
 
     def rows(self) -> dict[str, list[tuple]]:
-        """Every upstream row, converted to the adapted column order and types."""
+        """Every upstream row, converted to the adapted column order and types (plus the rows its triggers add)."""
+
+        out = self.inserted_rows()
+        for table, added in self.trigger_rows(out).items():
+            out[table] += added
+        return out
+
+    def inserted_rows(self) -> dict[str, list[tuple]]:
+        """The rows the upstream script's INSERT statements give, converted."""
 
         schema = self.schema()
         out: dict[str, list[tuple]] = {name: [] for name in schema}
@@ -878,6 +900,119 @@ class Northwind(Adapter):
         return value
 
 
+class Sakila(Adapter):
+    """Sakila (MySQL): the DDL and the INSERTs are two upstream files, read together."""
+
+    name = "sakila"
+    title = "Sakila"
+    data_file = "upstream/sakila-mv-data.sql"
+    schema_file = "upstream/sakila-mv-schema.sql"
+    _COMMIT = "e324b56193ca506ab7cc1ab143a9153d8c4535d7"
+    _LICENCE = (
+        "New BSD, Copyright (c) 2014, Oracle Corporation (the header of each file)"
+    )
+    upstream = (
+        Upstream(
+            "upstream/sakila-mv-schema.sql",
+            "datacharmer/test_db",
+            _COMMIT,
+            "sakila/sakila-mv-schema.sql",
+            "61c30abd47a0126e9e901a911b8a115e1920f0910ce1b11ff3abc764ad65df53",
+            _LICENCE,
+        ),
+        Upstream(
+            "upstream/sakila-mv-data.sql",
+            "datacharmer/test_db",
+            _COMMIT,
+            "sakila/sakila-mv-data.sql",
+            "cf9328c055ed43c6862332438670fdad68c6236d051fa090c6bcb56cf5895bc2",
+            _LICENCE,
+        ),
+        Upstream(
+            "upstream/README.md",
+            "datacharmer/test_db",
+            _COMMIT,
+            "sakila/README.md",
+            "05fe520851c87f662d5cbd8a50655d361e08b2ad56bedf495ed4d3b3bc1fb3e0",
+            "the mirror's note on what it changed",
+        ),
+    )
+    # The row counts usually published for Sakila (written down from those listings: the MySQL site is not
+    # reachable from here); they equal the INSERT statements of the pinned data file (plus film_text, which the
+    # trigger ins_film fills from film), checked separately.
+    published_counts = {
+        "actor": 200,
+        "address": 603,
+        "category": 16,
+        "city": 600,
+        "country": 109,
+        "customer": 599,
+        "film": 1000,
+        "film_actor": 5462,
+        "film_category": 1000,
+        "film_text": 1000,
+        "inventory": 4581,
+        "language": 6,
+        "payment": 16049,
+        "rental": 16044,
+        "staff": 2,
+        "store": 2,
+    }
+    published_counts_source = "the counts usually published for Sakila (1,000 films, 16,044 rentals, 16,049 payments, ...)"
+    results_order = 342
+    baseline_note = (
+        "Baseline (the first run, nothing tuned): 23/27 proved, 14/37 refuted and 23 counterexamples that did not replay, 22 of them because the bounded "
+        "checker has no BYTES domain and reports NULL for the NOT NULL column address.location, which the harness read as a violated declaration; "
+        "the harness now leaves a NULL that the bounded checker reports for a BYTES column to its completion (a NOT NULL BYTES column gets an empty value), "
+        "after which 37/37 are refuted and the Chinook/Northwind rows are unchanged. The 23rd case, a store/staff pair whose algebraic counterexample "
+        "(a store with no staff row) cannot be completed legally to a database that separates the pair, is listed under not_scored in pairs.json, not scored. "
+        "These were seen in the printed output of the baseline run, which included held-out pairs; no rule or prover was tuned on them (recorded as tuned on test only for the harness change)"
+    )
+    workload_note = (
+        "Sakila's 7 views and the SELECTs of its 6 stored procedures and functions (parameters bound) are adapted from MySQL to BigQuery "
+        "(each adaptation recorded in the workload file)"
+    )
+    # What the schema script's triggers and the data script's own rows promise (checked on the loaded rows)
+    assertions = (
+        (
+            "SELECT COUNT(*) FROM film AS f JOIN film_text AS t ON t.film_id = f.film_id "
+            "AND t.title = f.title AND t.description IS NOT DISTINCT FROM f.description",
+            [(1000,)],
+        ),
+    )
+
+    def upstream_text(self) -> str:
+        """The schema script (without its trigger, procedure and function bodies) followed by the data script.
+
+        MySQL executes a ``/*!50705 ... */`` comment from 5.7.5 on, so address.location and its SPATIAL key are read
+        as live text; the ``DELIMITER`` blocks (triggers, procedures, functions) are not tables or rows.
+        """
+
+        schema = (self.folder / self.schema_file).read_text(encoding="utf-8")
+        schema = re.sub(r"(?ms)^DELIMITER (?!;$)\S+\n.*?^DELIMITER ;$", "", schema)
+        return re.sub(
+            r"(?s)/\*!50705\s+(.*?)\*/", r"\1", schema + "\n" + super().upstream_text()
+        )
+
+    def upstream_views(self) -> dict[str, str]:
+        return {
+            m.group(1): m.group(2).strip()
+            for m in re.finditer(
+                r"(?ims)^create\s+(?:definer=\S+\s+sql\s+security\s+\w+\s+)?view\s+(\w+)\s+as\s*\n(.*?);\s*$",
+                self.upstream_text(),
+            )
+        }
+
+    def parse_datetime(self, text: str) -> _dt.datetime:
+        return _dt.datetime.fromisoformat(text)
+
+    def trigger_rows(self, rows):
+        # ins_film: AFTER INSERT ON film, INSERT INTO film_text (film_id, title, description) VALUES (new.film_id, ...)
+        names = list(self.schema()["film"].columns)
+        i, t, d = (names.index(c) for c in ("film_id", "title", "description"))
+        return {"film_text": [(r[i], r[t], r[d]) for r in rows["film"]]}
+
+
 def read_copy(
     text: str,
 ) -> dict[str, list[tuple[tuple[str, ...] | None, tuple[Raw, ...]]]]:
@@ -929,29 +1064,26 @@ def read_copy(
 class Pagila(Adapter):
     name = "pagila"
     title = "Pagila"
-    results_group = "sample-databases-pagila"
     results_order = 350
     docs_page = "docs/evals/sample-databases-pagila.md"
     fresh_foreign_key_values = True
-    results_notes = {
-        "rewrites": (
-            "Pagila's 8 views (rental_by_category is a materialized view created WITH NO DATA upstream) and the SELECT statements of its functions "
-            "(parameters bound) are adapted from PostgreSQL to BigQuery, the README's portable example queries are included, and the other queries "
-            "were written for this eval (each adaptation recorded in the workload file). timestamptz columns are loaded as DATETIME holding the UTC time; "
-            "the enum, array, tsvector, uuid and vector columns as STRING text; the 55 payment partitions as one table. The two README queries that "
-            "read CURRENT_DATE or a uuid are skipped by the plain pipeline run as non-deterministic or environment-reading."
-        ),
-        "pairs": (
-            "No prover was changed for this eval; the first run is the baseline: 22/27 proved, 30/33 refuted and 3 counterexamples that did not replay. "
-            "One was the harness's completion of a counterexample (a NOT NULL foreign key column the counterexample leaves out got the type default 0, "
-            "which coincided with the original_language_id the counterexample uses; this adapter now completes it with a fresh value and its parent row), "
-            "and two are a bounded-checker bug: it clamps a DATETIME model value to 0001-01-01 when it extracts the counterexample "
-            "(bounded_equivalence._model_value), so two payments with different payment_date come out with the same value and the counterexample "
-            "violates payment's composite key (pg-distinct-payment-composite-key-id-alone and pg-count-distinct-key-payment-id). The replay gate catches "
-            "them: the two pairs stay unknown, are listed as prover bugs and are not counted wrong. Pagila declares no foreign key on payment "
-            "(upstream declares them on 6 of the 55 partitions), so payment's joins cannot be eliminated and its pairs are different under the declarations."
-        ),
-    }
+    workload_note = (
+        "Pagila's 8 views (rental_by_category is a materialized view created WITH NO DATA upstream) and the SELECT statements of its functions "
+        "(parameters bound) are adapted from PostgreSQL to BigQuery, and the README's portable example queries are included "
+        "(each adaptation recorded in the workload file). timestamptz columns are loaded as DATETIME holding the UTC time; "
+        "the enum, array, tsvector, uuid and vector columns as STRING text; the 55 payment partitions as one table. The two README queries that "
+        "read CURRENT_DATE or a uuid are skipped by the plain pipeline run as non-deterministic or environment-reading"
+    )
+    baseline_note = (
+        "The first run is the baseline: 22/27 proved, 30/33 refuted and 3 counterexamples that did not replay. "
+        "One was the harness's completion of a counterexample (a NOT NULL foreign key column the counterexample leaves out got the type default 0, "
+        "which coincided with the original_language_id the counterexample uses; this adapter now completes it with a fresh value and its parent row, giving 31/33 refuted), "
+        "and two are a bounded-checker bug: it clamps a DATETIME model value to 0001-01-01 when it extracts the counterexample "
+        "(bounded_equivalence._model_value), so two payments with different payment_date come out with the same value and the counterexample "
+        "violates payment's composite key (pg-distinct-payment-composite-key-id-alone and pg-count-distinct-key-payment-id). The replay gate catches "
+        "them: the two pairs stay unknown, are listed as prover bugs and are not counted wrong. Pagila declares no foreign key on payment "
+        "(upstream declares them on 6 of the 55 partitions), so payment's joins cannot be eliminated and its pairs are different under the declarations"
+    )
     ddl_file = "upstream/pagila-schema.sql"
     data_file = "upstream/pagila-data.sql"
     upstream = (
@@ -1112,7 +1244,9 @@ class Pagila(Adapter):
         return out
 
 
-ADAPTERS: dict[str, Adapter] = {a.name: a for a in (Chinook(), Northwind(), Pagila())}
+ADAPTERS: dict[str, Adapter] = {
+    a.name: a for a in (Chinook(), Northwind(), Sakila(), Pagila())
+}
 
 
 # ---------------------------------------------------------------- load checks
@@ -1164,6 +1298,8 @@ def check_database(adapter: Adapter, con=None) -> dict:
     inserted = Counter()
     for upstream_table, rows in adapter.upstream_rows().items():
         inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
+    for table, added in adapter.trigger_rows(adapter.inserted_rows()).items():
+        inserted[table] += len(added)  # rows an upstream trigger adds while loading
     upstream_views = adapter.upstream_views()
     for query in adapter.workload():
         if query["origin"] == "upstream-view" and query["name"] not in upstream_views:
@@ -1743,7 +1879,16 @@ def _bounded_rows(adapter: Adapter, data: dict[str, list[tuple]]) -> dict:
     out = {}
     for table, rows in data.items():
         spec = schema[table.lower()]
-        out[spec.name] = [dict(zip(spec.columns, row)) for row in rows]
+        # the bounded checker has no BYTES domain and reports NULL there, whatever the column declares: that is no
+        # value, so the completion chooses one (a NOT NULL BYTES column gets an empty value)
+        out[spec.name] = [
+            {
+                c: v
+                for c, v in zip(spec.columns, row)
+                if v is not None or prover_type(spec.columns[c]) != "BYTES"
+            }
+            for row in rows
+        ]
     return out
 
 
@@ -1993,29 +2138,7 @@ def _pins_text(adapters: list[Adapter]) -> str:
 def results_rows(
     adapters: list[Adapter], reports: list[dict], rewrites: dict, pairs: dict
 ) -> dict[str, dict]:
-    """The two results rows of one group of databases (``Adapter.results_group``: the first two databases
-    share one pair of files, each later database has its own)."""
-
     from bench_common import today
-
-    group = adapters[0].results_group
-    legacy = group == "sample-databases"
-    titles = ", ".join(a.title for a in adapters)
-    titles_and = " and ".join(a.title for a in adapters)
-    schemas = (
-        "the two schemas"
-        if len(adapters) == 2
-        else f"the {titles_and} schema" + ("s" if len(adapters) > 1 else "")
-    )
-    docs_page = adapters[0].docs_page
-    command = (
-        COMMAND
-        if legacy
-        else "python tools/sample_db_bench.py "
-        + " ".join(f"--database {a.name}" for a in adapters)
-        + " --write-results"
-    )
-    notes = adapters[0].results_notes
 
     loaded = ", ".join(
         f"{r['database']} {r['tables']} tables / {r['rows']:,} rows" for r in reports
@@ -2030,9 +2153,9 @@ def results_rows(
     plain = rewrites["plain"]
     stages = rewrites["by_stage"]
     rows = {
-        f"{group}-rewrites": {
-            "suite": f"Sample databases ({titles}): workload rewrites",
-            "order": adapters[0].results_order,
+        "sample-databases-rewrites": {
+            "suite": "Sample databases (Chinook, Northwind): workload rewrites",
+            "order": 340,
             "size": a["cases"],
             "score": f"{a['wrong']} wrong in {a['executed']} executed; {a['verified']} rewrites verified on the real data",
             "metric": (
@@ -2044,7 +2167,7 @@ def results_rows(
             "evidence": "executed",
             "correctness": (
                 f"{a['wrong']} behaviour-changing rewrites ({a['wrong_but_proven']} of them labelled proven); every rewrite is compared with an "
-                f"unrewritten control on the real {titles_and} data, a difference confirmed with DuckDB's optimizer off"
+                "unrewritten control on the real Chinook and Northwind data, a difference confirmed with DuckDB's optimizer off"
             ),
             "coverage": {
                 "proven": a["verified"],
@@ -2059,30 +2182,126 @@ def results_rows(
                 f"upstream queries {up['wrong']} wrong / {up['transformed']} changed, authored {au['wrong']} wrong / {au['transformed']} changed"
             ),
             "held_out": f"dev {dev['wrong']} wrong / {dev['transformed']} changed; held out (a fifth of the queries by SHA-1 of their id) {ho['wrong']} wrong / {ho['transformed']} changed of {ho['executed']} executed",
-            "docs": docs_page,
-            "command": command,
+            "docs": "docs/evals/sample-databases.md",
+            "command": COMMAND,
             "date": today(),
             "caveats": (
                 f"Pinned: {_pins_text(adapters)}. Loaded and checked against upstream: {loaded}, {keys[0]} primary and {keys[1]} foreign keys. "
-                + (
-                    "Northwind's 16 views and 7 stored procedures (parameters bound) and Chinook's 2 test-fixture queries are adapted from T-SQL/SQLite "
-                    "to BigQuery (each adaptation recorded in the workload file); the authored queries were written for this eval."
-                    if legacy
-                    else notes.get("rewrites", "")
-                )
-                + " In coverage, 'proven' "
+                "Northwind's 16 views and 7 stored procedures (parameters bound) and Chinook's 2 test-fixture queries are adapted from T-SQL/SQLite "
+                "to BigQuery (each adaptation recorded in the workload file); the authored queries were written for this eval. In coverage, 'proven' "
                 "counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval."
             ),
         },
     }
     p, pdev, pho = pairs["all"], pairs["dev"], pairs["held_out"]
-    rows[f"{group}-pairs"] = {
-        "suite": f"Sample databases ({titles}): equivalent pairs and siblings",
-        "order": adapters[0].results_order + 1,
+    rows["sample-databases-pairs"] = {
+        "suite": "Sample databases (Chinook, Northwind): equivalent pairs and siblings",
+        "order": 341,
         "size": p["pairs"],
         "score": f"{p['proven']}/{p['equivalent']} equivalent proved, {p['refuted']}/{p['different']} different refuted (replayed), {p['wrong']} wrong",
         "metric": (
-            f"Authored pairs on {schemas} under their declared keys, labelled equivalent or different (each 'different' label has a witness "
+            "Authored pairs on the two schemas under their declared keys, labelled equivalent or different (each 'different' label has a witness "
+            f"database); {p['constraint_siblings']} siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, "
+            "algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample."
+        ),
+        "evidence": "proof",
+        "correctness": (
+            f"{p['wrong']} wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every "
+            "refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB"
+        ),
+        "coverage": {
+            "proven": p["proven"],
+            "refuted": p["refuted"],
+            "unknown": p["unknown"],
+            "unsupported": p["unsupported"],
+        },
+        "held_out": f"{pho['proven']}/{pho['equivalent']} proved, {pho['refuted']}/{pho['different']} refuted, {pho['wrong']} wrong (a fifth of the pairs by SHA-1 of their id)",
+        "docs": "docs/evals/sample-databases.md",
+        "command": COMMAND,
+        "date": today(),
+        "caveats": (
+            f"Authored pairs ({p['pairs']}; dev {pdev['pairs']}, held out {pho['pairs']}), not from upstream. "
+            f"Constraint siblings refuted: {p['constraint_siblings_refuted']}/{p['constraint_siblings']}. The algebraic prover's executed counterexample search "
+            "is time-limited, so on a loaded machine a refutation can fall back to unknown (ch-filter-vs-conditional-count: refuted on an idle "
+            "machine, unknown in the recorded run). No prover was changed for this eval; the first run is the baseline."
+        ),
+    }
+    return rows
+
+
+#: the databases whose rows are in the combined ``sample-databases-rewrites`` and ``-pairs`` files; every other
+#: database has files of its own, so that adding one never moves the numbers of another
+COMBINED = ("chinook", "northwind")
+
+
+def database_results_rows(
+    adapter: Adapter, report: dict, rewrites: dict, pairs: dict
+) -> dict[str, dict]:
+    """The results files of one database outside the combined ones: ``sample-databases-<name>-rewrites`` and ``-pairs``."""
+
+    from bench_common import today
+
+    a, up, au, dev, ho = (
+        rewrites[k] for k in ("all", "upstream", "authored", "dev", "held_out")
+    )
+    stages = rewrites["by_stage"]
+    origins = ", ".join(
+        f"{block['queries']} {origin}"
+        for origin, block in rewrites["by_origin"].items()
+    )
+    pins = _pins_text([adapter])
+    keys = f"{report['declared']['primary_keys']} primary and {report['declared']['foreign_keys']} foreign keys"
+    slug = f"sample-databases-{adapter.name}"
+    title = f"Sample databases ({adapter.title})"
+    docs = adapter.docs_page
+    rows = {
+        f"{slug}-rewrites": {
+            "suite": f"{title}: workload rewrites",
+            "order": adapter.results_order,
+            "size": a["cases"],
+            "score": f"{a['wrong']} wrong in {a['executed']} executed; {a['verified']} rewrites verified on the real data",
+            "metric": (
+                f"{rewrites['plain']['queries']} {adapter.title} workload queries ({up['queries']} upstream, adapted to BigQuery; {au['queries']} authored), each through "
+                "KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the "
+                "proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the "
+                "result multiset or stops running is wrong."
+            ),
+            "evidence": "executed",
+            "correctness": (
+                f"{a['wrong']} behaviour-changing rewrites ({a['wrong_but_proven']} of them labelled proven); every rewrite is compared with an "
+                f"unrewritten control on the real {adapter.title} data, a difference confirmed with DuckDB's optimizer off"
+            ),
+            "coverage": {
+                "proven": a["verified"],
+                "unknown": a["declined"],
+                "unsupported": a["unsupported"],
+                "timeout": a["timeout"],
+                "error": a["error"],
+            },
+            "usefulness": (
+                f"{a['transformed']} of {a['executed']} executed cases changed by a rewrite: pipeline {stages.get('pipeline', {}).get('transformed', 0)}, "
+                f"lift_subqueries {stages.get('lift_subqueries', {}).get('transformed', 0)}, optimizer {stages.get('optimizer', {}).get('transformed', 0)}; "
+                f"upstream queries {up['wrong']} wrong / {up['transformed']} changed, authored {au['wrong']} wrong / {au['transformed']} changed"
+            ),
+            "held_out": f"dev {dev['wrong']} wrong / {dev['transformed']} changed; held out (a fifth of the queries by SHA-1 of their id) {ho['wrong']} wrong / {ho['transformed']} changed of {ho['executed']} executed",
+            "docs": docs,
+            "command": f"python tools/sample_db_bench.py --database {adapter.name} --write-results",
+            "date": today(),
+            "caveats": (
+                f"Pinned: {pins}. Loaded and checked against upstream: {report['tables']} tables / {report['rows']:,} rows, {keys}. "
+                f"Workload origins: {origins}. {adapter.workload_note}; the authored queries were written for this eval. In coverage, 'proven' "
+                "counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval."
+            ),
+        }
+    }
+    p, pdev, pho = pairs["all"], pairs["dev"], pairs["held_out"]
+    rows[f"{slug}-pairs"] = {
+        "suite": f"{title}: equivalent pairs and siblings",
+        "order": adapter.results_order + 1,
+        "size": p["pairs"],
+        "score": f"{p['proven']}/{p['equivalent']} equivalent proved, {p['refuted']}/{p['different']} different refuted (replayed), {p['wrong']} wrong",
+        "metric": (
+            f"Authored pairs on the {adapter.title} schema under its declared keys, labelled equivalent or different (each 'different' label has a witness "
             f"database); {p['constraint_siblings']} siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, "
             "algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample."
         ),
@@ -2091,7 +2310,7 @@ def results_rows(
             f"{p['wrong']} wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every "
             "refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB"
             + (
-                f"; {p['prover_bugs']} counterexamples that violated a declared key were caught by the replay and are unknown, not wrong (see caveats)"
+                f"; {p['prover_bugs']} counterexamples that violated a declared key were caught by the replay and stay unknown, not wrong (see caveats)"
                 if p.get("prover_bugs")
                 else ""
             )
@@ -2103,19 +2322,13 @@ def results_rows(
             "unsupported": p["unsupported"],
         },
         "held_out": f"{pho['proven']}/{pho['equivalent']} proved, {pho['refuted']}/{pho['different']} refuted, {pho['wrong']} wrong (a fifth of the pairs by SHA-1 of their id)",
-        "docs": docs_page,
-        "command": command,
+        "docs": docs,
+        "command": f"python tools/sample_db_bench.py --database {adapter.name} --write-results",
         "date": today(),
         "caveats": (
             f"Authored pairs ({p['pairs']}; dev {pdev['pairs']}, held out {pho['pairs']}), not from upstream. "
             f"Constraint siblings refuted: {p['constraint_siblings_refuted']}/{p['constraint_siblings']}. The algebraic prover's executed counterexample search "
-            "is time-limited, so on a loaded machine a refutation can fall back to unknown"
-            + (
-                " (ch-filter-vs-conditional-count: refuted on an idle "
-                "machine, unknown in the recorded run). No prover was changed for this eval; the first run is the baseline."
-                if legacy
-                else ". " + notes.get("pairs", "")
-            )
+            f"is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval. {adapter.baseline_note}."
         ),
     }
     return rows
@@ -2147,7 +2360,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write-results",
         action="store_true",
-        help="write the results files of the selected databases' groups, both parts (all databases by default)",
+        help="write benchmarks/results/sample-databases-*.json (every database, both parts)",
     )
     args = parser.parse_args(argv)
     if args.write_results and (
@@ -2156,19 +2369,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "--write-results needs the full run: both parts, no --query/--pair/--no-optimizer"
         )
-    if args.write_results and args.database:
-        # one results pair per group of databases: a group is written whole or not at all
-        chosen = set(args.database)
-        for name in chosen:
-            partial = {
-                a.name
-                for a in ADAPTERS.values()
-                if a.results_group == ADAPTERS[name].results_group
-            } - chosen
-            if partial:
-                parser.error(
-                    f"--write-results with --database needs every database of the group of {name}: also {sorted(partial)}"
-                )
+    if (
+        args.write_results
+        and args.database
+        and 0 < len(set(args.database) & set(COMBINED)) < len(COMBINED)
+    ):
+        parser.error(
+            f"--write-results writes the combined files for {' and '.join(COMBINED)} together: name both or neither"
+        )
     from bench_common import quiet
 
     quiet()
@@ -2249,24 +2457,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_results:
         from bench_common import write_results
 
-        groups: dict[str, list[Adapter]] = {}
-        for adapter in adapters:
-            groups.setdefault(adapter.results_group, []).append(adapter)
-        written: dict[str, dict] = {}
-        for members in groups.values():
-            names = {a.name for a in members}
-            written.update(
-                results_rows(
-                    members,
-                    [r for r in reports if r["database"] in names],
-                    summarize_rewrites(
-                        [r for r in dump["rewrites"]["cases"] if r["database"] in names]
-                    ),
-                    summarize_pairs(
-                        [r for r in dump["pairs"]["cases"] if r["database"] in names]
-                    ),
+        written = {}
+        for group in (
+            list(COMBINED),
+            *([a.name] for a in adapters if a.name not in COMBINED),
+        ):
+            chosen = [a for a in adapters if a.name in group]
+            if len(chosen) != len(group):
+                continue
+            rewrite_rows = [
+                r for r in dump["rewrites"]["cases"] if r["database"] in group
+            ]
+            pair_rows = [r for r in dump["pairs"]["cases"] if r["database"] in group]
+            reported = [r for r in reports if r["database"] in group]
+            if group == list(COMBINED):
+                written.update(
+                    results_rows(
+                        chosen,
+                        reported,
+                        summarize_rewrites(rewrite_rows),
+                        summarize_pairs(pair_rows),
+                    )
                 )
-            )
+            else:
+                written.update(
+                    database_results_rows(
+                        chosen[0],
+                        reported[0],
+                        summarize_rewrites(rewrite_rows),
+                        summarize_pairs(pair_rows),
+                    )
+                )
         for index, (name, row) in enumerate(written.items()):
             write_results(name, row, scoreboard=index == len(written) - 1)
     return 1 if failed else 0

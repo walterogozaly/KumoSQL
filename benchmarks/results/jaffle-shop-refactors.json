@@ -5,7 +5,7 @@
   "score": "4/8 proved, 0 wrong",
   "metric": "Equivalent refactors of the Jaffle Shop project written for this eval (staging inlined, a model extracted, a measure taken from another mart, CASE forms, an outer join that changes nothing) whose every model output is proved equal by prove_models.",
   "evidence": "proof",
-  "correctness": "0 false proofs: none of the 7 breaking refactors is proved. Every label is checked by running both pipelines on the seeds and 30 random databases.",
+  "correctness": "0 false proofs: none of the 7 breaking refactors is proved. Every label is checked by running both pipelines on the seeds, 30 random databases and a hand-written edge database.",
   "coverage": {
     "proven": 4,
     "unknown": 4

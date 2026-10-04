@@ -3,7 +3,7 @@
   "order": 350,
   "size": 438,
   "score": "0 wrong in 436 executed; 192 rewrites verified on the real data",
-  "metric": "65 workload queries (21 upstream, adapted to BigQuery; 44 authored), each through KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the result multiset or stops running is wrong.",
+  "metric": "65 Pagila workload queries (21 upstream, adapted to BigQuery; 44 authored), each through KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the result multiset or stops running is wrong.",
   "evidence": "executed",
   "correctness": "0 behaviour-changing rewrites (0 of them labelled proven); every rewrite is compared with an unrewritten control on the real Pagila data, a difference confirmed with DuckDB's optimizer off",
   "coverage": {
@@ -18,13 +18,13 @@
   "docs": "docs/evals/sample-databases-pagila.md",
   "command": "python tools/sample_db_bench.py --database pagila --write-results",
   "date": "2026-10-04",
-  "caveats": "Pinned: Pagila devrimgunduz/pagila@9baf49c414 pagila-schema.sql (SHA-256 071ee940a73c) and pagila-data.sql (SHA-256 a88efa94c7ae), PostgreSQL licence, Copyright (c) Devrim G\u00fcnd\u00fcz. Loaded and checked against upstream: pagila 16 tables / 122,209 rows, 16 primary and 19 foreign keys. Pagila's 8 views (rental_by_category is a materialized view created WITH NO DATA upstream) and the SELECT statements of its functions (parameters bound) are adapted from PostgreSQL to BigQuery, the README's portable example queries are included, and the other queries were written for this eval (each adaptation recorded in the workload file). timestamptz columns are loaded as DATETIME holding the UTC time; the enum, array, tsvector, uuid and vector columns as STRING text; the 55 payment partitions as one table. The two README queries that read CURRENT_DATE or a uuid are skipped by the plain pipeline run as non-deterministic or environment-reading. In coverage, 'proven' counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval.",
+  "caveats": "Pinned: Pagila devrimgunduz/pagila@9baf49c414 pagila-schema.sql (SHA-256 071ee940a73c) and pagila-data.sql (SHA-256 a88efa94c7ae), PostgreSQL licence, Copyright (c) Devrim G\u00fcnd\u00fcz. Loaded and checked against upstream: 16 tables / 122,209 rows, 16 primary and 19 foreign keys. Workload origins: 44 authored, 9 upstream-procedure, 4 upstream-readme, 8 upstream-view. Pagila's 8 views (rental_by_category is a materialized view created WITH NO DATA upstream) and the SELECT statements of its functions (parameters bound) are adapted from PostgreSQL to BigQuery, and the README's portable example queries are included (each adaptation recorded in the workload file). timestamptz columns are loaded as DATETIME holding the UTC time; the enum, array, tsvector, uuid and vector columns as STRING text; the 55 payment partitions as one table. The two README queries that read CURRENT_DATE or a uuid are skipped by the plain pipeline run as non-deterministic or environment-reading; the authored queries were written for this eval. In coverage, 'proven' counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval.",
   "environment": {
     "python": "3.11.15",
     "sqlglot": "30.21.0",
     "duckdb": "1.5.6",
     "z3-solver": "5.1.0.0",
     "sqlfluff": "4.4.0",
-    "commit": "8afdccdf+changes"
+    "commit": "960842f2+changes"
   }
 }
