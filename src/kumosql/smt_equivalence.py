@@ -75,6 +75,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
 from .parse_check import refuse_misread_proofs
+from . import proof_columns
 from .set_operations import positional_sql_pair
 from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
@@ -270,11 +271,12 @@ def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
     return False
 
 
-def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
+def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None, reader=None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
     nearest enclosing SELECT that declares its qualifier, so an alias reused in a nested scope is fine.
-    With a schema, a bare column of a select over one known table is qualified first."""
+    With a schema, a bare column of a select over one known table is qualified first; given the independent
+    ``reader`` of the statement (``proof_columns``), each such qualifier must name the owner it finds."""
 
     body = body.copy()
     ctes = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
@@ -309,6 +311,10 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
                 key = ".".join(p.name for p in sources[0].parts).lower()
                 known = schema.get(key)
                 if known is not None and column.name.lower() in [c.lower() for c in known]:
+                    if reader is not None:
+                        verdict = reader.judge_tagged(column, proof_columns.Claim(source=proof_columns.source_tag(sources[0])), "smt_schema_qualification")
+                        if verdict.refused:
+                            raise Unsupported(f"independent check of column resolution: {verdict.reason}")
                     qualifier = (sources[0].alias_or_name or "").lower()
                     column.set("table", exp.to_identifier(sources[0].alias_or_name))
         if not qualifier:
@@ -1014,6 +1020,10 @@ class _Compiler:
         self.sums = Ledger()  # SUM and AVG calls, for the row-order assumption (float_sum_order.py)
         self.string_literals: set[str] = set()
         self.timestamp_literals: set[str] = set()
+        # The independent reader of the statement being compiled (``proof_columns``) and the FROM-item number of each
+        # source it has seen, to compare a bare column's owner with the one the text names.
+        self.column_reader = None
+        self.source_tags: dict[int, tuple] = {}
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -1022,9 +1032,12 @@ class _Compiler:
 
     def compile(self, sql: str) -> _Union:
         try:
-            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+            self.column_reader = proof_columns.reader_for(sql, self.schema, self.dialect)
+            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in proof_columns.parse_tagged(sql, self.dialect, self.column_reader)]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
+        except proof_columns.ColumnResolutionRefused as refusal:
+            raise Unsupported(f"independent check of column resolution: {refusal}") from None
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
@@ -1241,6 +1254,7 @@ class _Compiler:
                 if offset:
                     cols[offset] = occ.col("offset")
                 source = _Source(cols=cols, order=list(cols), value_table=alias == element)
+                self._tag_source(source, source_node)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -1266,6 +1280,7 @@ class _Compiler:
                 alias, source = self._source(source_node, ctes, b_occs, b_conds)
             finally:
                 self.collector = saved
+            self._tag_source(source, source_node)
             on = join.args.get("on") if join is not None else None
             new_states: list[_State] = []
             for st in states:
@@ -1316,7 +1331,22 @@ class _Compiler:
                     self.collector = saved
         return states
 
+    def _tag_source(self, source: "_Source", node: exp.Expression, of: "_Source | None" = None) -> None:
+        """Remember which FROM item of the statement ``source`` stands for (``proof_columns.source_tag``)."""
+
+        if self.column_reader is None:
+            return
+        number = proof_columns.source_tag(node) if of is None else self.source_tags.get(id(of), (None, None))[1]
+        previous = self.source_tags.get(id(source))
+        self.source_tags[id(source)] = (source, number if previous is None or previous[1] == number else None)
+
     def _null_source(self, source: "_Source") -> "_Source":
+        result = self._null_source_of(source)
+        if result is not source:
+            self._tag_source(result, None, of=source)
+        return result
+
+    def _null_source_of(self, source: "_Source") -> "_Source":
         V = _value_sort()
         null = _Val(z3.BoolVal(True), V.Num(0))
         if source.all_null is not None:
@@ -1325,6 +1355,19 @@ class _Compiler:
             return _Source(all_null=null)
         names = [name for name, _ in source.star()]
         return _Source(cols={name: null for name in names}, order=list(names))
+
+    def _judge_column(self, col: exp.Column, claim: "proof_columns.Claim") -> None:
+        """Have the independent reader confirm the owner the compiler chose for a bare column."""
+
+        if self.column_reader is None:
+            return
+        verdict = self.column_reader.judge_tagged(col, claim, "smt")
+        if verdict.refused:
+            raise Unsupported(f"independent check of column resolution: {verdict.reason}")
+
+    def _chosen(self, source: "_Source") -> "proof_columns.Claim":
+        entry = self.source_tags.get(id(source))
+        return proof_columns.Claim(source=entry[1] if entry is not None and entry[0] is source else None)
 
     def _null_env(self, env: "_Env") -> "_Env":
         """The scope with every source's columns replaced by NULL (the unmatched side of an outer join)."""
@@ -1511,7 +1554,7 @@ class _Compiler:
         expanded = self._expand_ctes(body.copy(), ctes)
         self._check_nondeterminism(expanded)
         self.uses_uf = True  # the values are free: a model is not a database, so no counterexample
-        key = _canonical_aliases(expanded, self.schema).sql(dialect="bigquery", normalize_functions="upper")
+        key = _canonical_aliases(expanded, self.schema, self.column_reader).sql(dialect="bigquery", normalize_functions="upper")
         tag = hashlib.sha1(key.encode()).hexdigest()[:16]
         V = _value_sort()
         counts = {id(call.var): call for call in block.aggs if call.func in ("COUNT", "COUNTIF")}
@@ -1583,7 +1626,7 @@ class _Compiler:
             names.append(item.alias_or_name.lower())
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
-        canonical = _canonical_aliases(body, self.schema)
+        canonical = _canonical_aliases(body, self.schema, self.column_reader)
         position = {i: i for i in range(len(names))}
         root = canonical
         while isinstance(root, exp.Subquery):
@@ -1663,10 +1706,13 @@ class _Compiler:
             if not same_column:
                 if definite or maybe:
                     raise Unsupported(f"{name} is both a SELECT alias and a possible column")
+                self._judge_column(col, proof_columns.Claim(alias=True))
                 return alias_expr
         if len(definite) == 1 and not maybe:
+            self._judge_column(col, self._chosen(definite[0]))
             return definite[0].lookup(name)
         if not definite and len(maybe) == 1 and len(env) == 1:
+            self._judge_column(col, self._chosen(maybe[0]))
             return maybe[0].lookup(name)
         raise Unsupported(f"cannot resolve column {name} without a schema")
 
