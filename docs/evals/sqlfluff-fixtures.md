@@ -147,12 +147,12 @@ The one flagged layout-only pair is CP05 `test_fail_postgres_create_type`: `CREA
 | Supported by KumoSQL's preferences | 169 |
 | Output equal to sqlfluff's fix | **167** |
 | Output differs | 2 |
-| Verified by KumoSQL (proven equal, or unchanged) | **161** |
-| Unverified (refused as unproven) | 8 |
+| Verified by KumoSQL (proven equal, or unchanged) | **159** |
+| Unverified (refused as unproven) | 10 |
 | Verified but the output changes the tree, a comment or a literal | **0** |
 | Unsupported (another dialect 105, configuration KumoSQL cannot express 121, Jinja 49, sqlfluff cannot parse 9) | 284 |
 
-All 167 reproductions are exact, and the 8 unverified runs are right to be: seven rename identifiers (CP02) and one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column.
+All 167 reproductions are exact. Eight of the 10 unverified runs are right to be: seven rename identifiers (CP02) and one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column. The other two are refused by the independent layout check ([`proof_format`](../proof-safeguards.md#layout-only-formatting), added 2026-10-04; they were verified before, 161 then): both are held-out fixtures that were not examined, so they may be false refusals. Every run that changes the tree, a comment or a literal is still unverified, so the score is unchanged at 0 wrong.
 
 - **Finding, fixed ([#313](https://github.com/walterogozaly/KumoSQL/issues/313)): sqlfluff's fixer can turn spaced unary signs into a comment.** LT01 on `SELECT 1 * - - - 5` returns `SELECT 1 * ---5` (the fixture expects `- - -5`), and `--5` starts a comment; the second fixture lost `AS c, 2 AS d` the same way. KumoSQL's verification marked both runs unproven, so nothing wrongly passed, but `format_sql` still produced the text. It now keeps the text from before any pass that creates or removes a comment, so these two fixtures come back unchanged: they differ from the fixture's fix on purpose and count as verified (unchanged). With sqlfluff 4.4 installed (what `pip install` picks today), the fixer spaces the signs correctly (`- - -5`), so `format_sql` reproduces both fixtures' fixes and they are proven; the scoreboard numbers are measured with sqlfluff 4.3.0.
 
@@ -191,29 +191,29 @@ Measured 2026-10-03 over all 212 cases.
 | | Declined | Proven | Refused | Unsupported | Caught | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Baseline (before the rule fixes) | 135 | 51 | 7 | 11 | 2 | **6** |
-| Now | 139 | 51 | 7 | 14 | 1 | **0** |
+| Now | 142 | 47 | 8 | 14 | 1 | **0** |
 
-**190/212 refusal cases are left alone or changed with a proof (190/198 that KumoSQL can read), 0 wrong.** The baseline scored 186/212 with 6 wrong. Held out (39 cases): 37/39, all 37 readable ones, 0 wrong; the baseline held-out score was 36/37 with 1 wrong, the PostgreSQL data-modifying CTE, which was read and fixed, so that one case is tuned on test. Every case was visible while the rules were fixed; the fixes are general, not case by case.
+**189/212 refusal cases are left alone or changed with a proof (189/198 that KumoSQL can read), 0 wrong.** The baseline scored 186/212 with 6 wrong. Held out (39 cases): 36/39, 36 of the 37 readable ones, 0 wrong (the earlier 37/39 was stale: master already measured 36/39, with CTE inlining refused on `ST03/test_pass_cte_defined_and_used_2`); the baseline held-out score was 36/37 with 1 wrong, the PostgreSQL data-modifying CTE, which was read and fixed, so that one case is tuned on test. Every case was visible while the rules were fixed; the fixes are general, not case by case.
 
 | Rule | Proven changes | Refused | Caught | Wrong (baseline) |
 | --- | ---: | ---: | ---: | ---: |
 | `lift_subqueries` | 9 | 0 | 0 | 0 (5) |
-| `inline_single_use_ctes` | 19 | 5 | 0 | 0 |
-| `remove_redundant_parentheses` | 16 | 1 | 0 | 0 |
+| `inline_single_use_ctes` | 15 | 6 | 0 | 0 |
+| `remove_redundant_parentheses` | 17 | 0 | 0 | 0 |
 | `remove_trivial_predicates` | 7 | 0 | 0 | 0 |
-| `remove_unused_ctes` | 7 | 1 | 1 | 0 (1) |
+| `remove_unused_ctes` | 6 | 2 | 1 | 0 (1) |
 | `deduplicate_ctes`, `remove_redundant_distinct` | 0 | 0 | 0 | 0 |
 
 The hazards sqlfluff names: the four correlated derived tables and the data-modifying CTEs are now declined, the seven queries with Jinja tags in the SQL text are unsupported and left exactly as written (an eighth has its tag inside a quoted table name and is simply left alone), and `with_recursive_fail_no_fix` is lifted and proved (a non-recursive CTE added to a `WITH RECURSIVE` list reads the same tables; DuckDB cannot run the fixture, whose CTE has no columns `x` and `z`, so only the proof and the syntactic checks apply). The proven changes elsewhere are KumoSQL doing what sqlfluff's rule does not try: inlining a CTE used once, dropping redundant parentheses or `AND TRUE`, removing a CTE nothing reads.
 
-Unsupported (14): Exasol and Spark `VALUES ... AS t (id)` CTEs, PostgreSQL `~` operators and a T-SQL bracketed name, which KumoSQL's BigQuery parser cannot read, and 7 Jinja-templated queries. Refused (7): CTE inlining around a CTE that reads a table of its own name (3) and around a nested derived table (1), inlining or removal around PostgreSQL `UPDATE ... FROM cte` (2; DML rewrites are not proved), and a parenthesis removal around a bracketed join (1).
+Unsupported (14): Exasol and Spark `VALUES ... AS t (id)` CTEs, PostgreSQL `~` operators and a T-SQL bracketed name, which KumoSQL's BigQuery parser cannot read, and 7 Jinja-templated queries. Refused (8): CTE inlining (6 cases, among them a CTE that reads a table of its own name, a nested derived table and PostgreSQL `UPDATE ... FROM cte`) and CTE removal (2, one of them `UPDATE ... FROM cte`; DML rewrites are not proved). A parenthesis removal around a bracketed join, refused before, is proved now: the prover turned the bracketed join into a CTE, which is not SQL, and no longer does ([proof safeguards](../proof-safeguards.md#subquery-lifting)).
 
 ### Findings
 
 - **`lift_subqueries` lifted correlated derived tables (fixed).** `FROM person_dates AS pd JOIN (SELECT * FROM events AS ce WHERE ce.name = pd.name)` became a top-level CTE whose `pd.name` names nothing (DuckDB: binder error), and so did the PR 8169 shape, where only the second `UNION ALL` branch is correlated. KumoSQL's verification marked all four *proven*. The lifter now leaves in place any FROM or JOIN subquery with a qualified column, in any branch or nested predicate subquery, that names a relation of an enclosing query and none of its own (diagnostic `correlated_subquery_kept`). The same check found that it also lifted a subquery out of a nested `WITH` that defines a name it reads: `SELECT * FROM (WITH c AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM c) AS d) AS e` read the base table `c` after lifting (with `c = {5}`: 1 row `1` becomes `5`), also marked proven; such subqueries stay in place too. Unqualified correlated columns cannot be told apart without a schema and are not checked.
 - **The CTE rules dropped data-modifying CTEs (fixed).** `remove_unused_ctes` turned PostgreSQL's `WITH cte_insert AS (INSERT ...), cte_update AS (UPDATE ...), cte_delete AS (DELETE ...) SELECT 1` into `SELECT 1`, proved (the result is the same; the writes are gone). `remove_unused_ctes`, `deduplicate_ctes` and `inline_single_use_ctes` now leave a WITH clause alone when any CTE body is not a query.
 - **Jinja was rewritten as struct literals (fixed).** sqlglot reads `{{"mrgn"}}` as a nested BigQuery struct, so `lift_subqueries` printed it as `STRUCT(STRUCT('mrgn'))`, proved, and `remove_unused_ctes` turned `FROM {{ ref('issue_2235') }}` into `FROM STRUCT(STRUCT(ref('issue_2235')))` (unproven). Every rule (not `format_sql`, which formats templates with sqlfluff) now leaves SQL with a `{{`, `{%` or `{#` tag outside strings and comments exactly as written (diagnostic `templated_sql_kept`).
-- **Prover false proofs on lifted forms (fixed).** The structural prover used to normalize both sides by lifting every FROM subquery into a CTE, correlated or not, so it proved the lifted forms above equivalent to their inputs (`verify_rewrite`). Its normalization now keeps a correlated or captured derived table in place, as the rule does, and refuses to inline a WITH table whose body reads a name a nested WITH redefines. The two pairs are regression tests in `tests/test_sqlfluff_refusals_bench.py` (`KNOWN_PROVER_FALSE_PROOFS`, no longer expected failures). An unqualified column over a real table inside a subquery may still be correlated; without a schema the lifter cannot tell, and treats it as the subquery's own.
+- **Prover false proofs on lifted forms (fixed).** The structural prover used to normalize both sides by lifting every FROM subquery into a CTE, correlated or not, so it proved the lifted forms above equivalent to their inputs (`verify_rewrite`). Its normalization now keeps a correlated or captured derived table in place, as the rule does, and refuses to inline a WITH table whose body reads a name a nested WITH redefines. The independent lift check ([proof safeguards](../proof-safeguards.md#subquery-lifting)) refuses a lift that moves such a body out of its scope as well, so a lifter regression could not slip through. The two pairs are regression tests in `tests/test_sqlfluff_refusals_bench.py` (`PROVER_LIFT_OUT_OF_SCOPE`). An unqualified column over a real table inside a subquery may still be correlated; without a schema the lifter cannot tell, and treats it as the subquery's own.
 - **Caught (1).** `ST03/test_pass_oracle_select_into_record_fields` is a PL/SQL block that sqlglot only reads in recovery mode, which loses the `INTO` targets and the `FROM cte1` that uses the CTE; `remove_unused_ctes` then prints a garbled statement. KumoSQL marks it unproven, so it never reaches a user as trusted, but rewriting a recovered parse is the underlying weakness.
 
 ## Caveats

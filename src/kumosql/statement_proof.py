@@ -20,6 +20,7 @@ from sqlglot import exp
 
 from .equivalence import EquivalenceResult, EquivalenceStatus, prove_equivalent
 from .string_literals import canonical_literals
+from .type_names import invalid_type_name
 
 _OBJECTS = {"TABLE", "VIEW"}
 
@@ -75,6 +76,9 @@ def _smt_available() -> bool:
 def prove_statements(left_sql: str, right_sql: str, *, ignore_row_order: bool = True) -> EquivalenceResult:
     """Structural proof first, then the SMT-based prover when row order does not matter."""
 
+    unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+    if unknown_type:  # the whole statements: a column list of a CREATE TABLE names types the query alone does not
+        return EquivalenceResult(EquivalenceStatus.NOT_PROVEN, f"BigQuery would reject the query: {unknown_type}")
     left_query, right_query, description, mismatch = _unwrap(left_sql, right_sql)
     if mismatch:
         return EquivalenceResult(EquivalenceStatus.NOT_PROVEN, mismatch)
@@ -104,6 +108,9 @@ def prove_statements_smt(left_sql: str, right_sql: str, **kwargs):
     from .algebraic_equivalence import prove_equivalent_algebraic
     from .smt_equivalence import SmtEquivalenceResult, SmtStatus
 
+    unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+    if unknown_type:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     left_query, right_query, description, mismatch = _unwrap(left_sql, right_sql)
     if mismatch:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, mismatch)
