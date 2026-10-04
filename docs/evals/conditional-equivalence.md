@@ -23,18 +23,18 @@ Every conditional proof is checked three ways, and a failure of the first or the
 
 ## Singh and Bedathur LeetCode pairs
 
-All 2,800 pairs, MySQL dialect, table and column names only (the [Singh page](singh-bedathur.md) has the data and its licence note). Measured 2026-10-03 on the branch merged with master (the Singh eval then proves 846 of these pairs outright).
+All 2,800 pairs, MySQL dialect, table and column names only (the [Singh page](singh-bedathur.md) has the data and its licence note). Measured 2026-10-04 on master plus this follow-up (the Singh eval then proves 854 of these pairs outright).
 
 | Count | Pairs |
 | --- | ---: |
-| Proved outright | 846 |
+| Proved outright | 854 |
 | **Proved under named conditions** | **610** |
 | Refuted with every candidate holding | 357 |
-| Unknown | 987 |
+| Unknown | 979 |
 | Wrong | 0 |
 | Harness crashes | 0 |
 
-- The 610 conditional proofs use 1,189 conditions: 811 NOT NULL, 330 unique keys, 48 single-column foreign keys. One condition alone suffices for 205 pairs, two for 274, three for 99, and four to six for 32.
+- The 610 conditional proofs use 1,193 conditions: 815 NOT NULL, 330 unique keys, 48 single-column foreign keys. One condition alone suffices for 201 pairs, two for 278, three for 99, and four to six for 32.
 - All 610 were re-checked on 900 databases each (about 547,000 in total) with 0 differences, and each is minimal for the prover. For 553 of them a random database that breaks the conditions separates the queries; for the other 57 no separating database turned up in 300 tries, which does not mean there is none.
 - Against the files' labels: 175 conditional pairs are labelled equivalent (the published answer assumed a key or NOT NULL rule the file does not state), 435 are labelled different (the labelled difference is a NULL or a duplicate; the pair is equal once it is excluded).
 - Held-out fifth (hash of the pair divisible by 5, 580 pairs): **131 conditional, 0 wrong**, run once at the end; development used `--split dev` (479 of 2,220 conditional).
@@ -51,15 +51,15 @@ The same problems as VeriEQL ships them, with types, primary keys, NOT NULL colu
 
 | Count | Cases |
 | --- | ---: |
-| Proved outright | 861 |
-| **Proved under named conditions** | **316** |
+| Proved outright | 866 |
+| **Proved under named conditions** | **297** |
 | Refuted with every candidate holding | 0 |
-| Unknown | 1,818 |
+| Unknown | 1,832 |
 | Conditional but not re-checkable | 5 |
 | Wrong | 0 |
 | Harness crashes | 0 |
 
-The 316 use 471 conditions (224 NOT NULL, 187 unique keys, 60 foreign keys). All 316 pass the 900-database re-check and the executed counterexample search with the conditions in the spec; 119 are separated by a database that breaks them. Five more conditional proofs rest on a composite foreign key that the executed check cannot impose, so they are not re-checked and not scored. Fewer conditionals per case than Singh is expected: the declared keys already carry what the prover can use. No held-out split is reserved for this sample. The harness was developed against Singh dev pairs and an early 80-case VeriEQL sample (tuned on test); the full sample was run afterwards.
+The 297 use 454 conditions (225 NOT NULL, 169 unique keys, 60 foreign keys). All 297 pass the 900-database re-check and the executed counterexample search with the conditions in the spec; 70 are separated by a database that breaks them. Against master on the same sample this is 23 fewer conditional proofs (320 there): the constant-result check could not run on VeriEQL type names before, and now rejects 24 proofs that hold only because the returned conditions make both queries return one result on every test database (a unique key on a self join that asks for two different rows); one proof was gained. Five more conditional proofs rest on a composite foreign key that the executed check cannot impose, so they are not re-checked and not scored. Fewer conditionals per case than Singh is expected: the declared keys already carry what the prover can use. No held-out split is reserved for this sample. The harness was developed against Singh dev pairs and an early 80-case VeriEQL sample (tuned on test); the full sample was run afterwards.
 
 ```bash
 python tools/conditional_bench.py verieql --every 8 --workers 4   # about 15 minutes on 4 cores

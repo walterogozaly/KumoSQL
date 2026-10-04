@@ -455,6 +455,9 @@ def always_empty(left_sql: str, prove: Callable[..., SmtEquivalenceResult], cons
     return counted.status is SmtStatus.PROVEN_EQUIVALENT
 
 
+_TEXT_TYPES = {"VARCHAR": "STRING", "CHAR": "STRING", "TEXT": "STRING"}  # SQL names the synthetic databases do not know
+
+
 def _independence(
     left_sql: str,
     right_sql: str,
@@ -487,7 +490,7 @@ def _independence(
         for table, columns in (declared or {}).items():
             for column, kind in columns.items():
                 try:
-                    usable.setdefault(table, {})[column] = _normalize_type(kind)
+                    usable.setdefault(table, {})[column] = _normalize_type(_TEXT_TYPES.get(kind.strip().upper(), kind))
                 except ValueError:
                     continue
         return usable
