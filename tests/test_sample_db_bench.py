@@ -57,7 +57,11 @@ def test_database_loads_as_upstream_declares_it(name):
     adapter = bench.ADAPTERS[name]
     report = bench.check_database(adapter)
     assert report["problems"] == []
-    assert report["counts"] == adapter.published_counts
+    counts = report["counts"]
+    # an adapter whose upstream publishes only some counts (Pagila) is checked on those
+    if not adapter.published_counts_complete:
+        counts = {table: counts[table] for table in adapter.published_counts}
+    assert counts == adapter.published_counts
     assert report["declared"]["primary_keys"] == report["tables"]
 
 
@@ -75,6 +79,7 @@ def test_the_upstream_workload_is_upstream():
                 "upstream-view",
                 "upstream-procedure",
                 "upstream-test",
+                "upstream-readme",
                 "authored",
             )
             assert query["origin"] == "authored" or query["adaptation"], query["id"]
