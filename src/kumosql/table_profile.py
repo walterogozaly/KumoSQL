@@ -23,7 +23,7 @@ from typing import Any, Mapping, Sequence
 
 from sqlglot import exp
 
-from .ast_utils import is_aggregate, star_modifier
+from .ast_utils import extended_grouping, is_aggregate, star_modifier
 from .output_properties import set_returning_item
 from .pipeline import ColumnRef, Model, Pipeline, Target, _parse_script, _table_name_for_schema
 from .set_operations import is_by_name
@@ -871,7 +871,7 @@ class _Profiler:
         distinct = select.args.get("distinct") is not None and not select.args["distinct"].args.get("on")
         group = select.args.get("group")
         if group is not None:
-            if any(group.args.get(k) for k in ("grouping_sets", "rollup", "cube", "totals")):
+            if extended_grouping(group):
                 return Grain(reason="grouping_sets")
             if group.args.get("all"):
                 exprs = [e for _, e in ctx.projs if not _has_aggregate(e) and not _is_star(e)]
