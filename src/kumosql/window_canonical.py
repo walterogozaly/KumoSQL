@@ -38,6 +38,8 @@ import itertools
 
 from sqlglot import exp
 
+from .ast_utils import FROM_KEY
+
 _ORDER_BLIND = (exp.Sum, exp.Count, exp.Min, exp.Max, exp.Avg)
 _NAVIGATION = (exp.FirstValue, exp.LastValue, exp.NthValue)
 _INTEGER_TYPES = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "INT64", "INT32", "INT16", "INT8", "INT4", "INT2"}
@@ -295,7 +297,7 @@ def merge_grouped_source(select: exp.Select) -> exp.Select | None:
         if top and not (isinstance(replacement, exp.Column) and replacement.name.lower() == column.name.lower()):
             replacement = exp.alias_(replacement, column.name)
         column.replace(replacement)
-    result.set("from_", (inner.args.get("from_") or inner.args.get("from")).copy())
+    result.set(FROM_KEY, (inner.args.get("from_") or inner.args.get("from")).copy())
     for key in ("joins", "where", "group", "having"):
         value = inner.args.get(key)
         result.set(key, [j.copy() for j in value] if isinstance(value, list) else value.copy() if value is not None else None)
@@ -355,7 +357,7 @@ def isolate_grouped_windows(select: exp.Select) -> exp.Select | None:
         expressions=[exp.alias_(atoms[sql].copy(), name) for sql, name in sorted(atom_names.items())]
         + [exp.alias_(calls[sql].copy(), name) for sql, name in sorted(window_names.items())]
     )
-    inner.set("from_", (select.args.get("from_") or select.args.get("from")).copy())
+    inner.set(FROM_KEY, (select.args.get("from_") or select.args.get("from")).copy())
     for key in ("joins", "where", "group", "having"):
         value = select.args.get(key)
         if value is not None:
@@ -370,7 +372,7 @@ def isolate_grouped_windows(select: exp.Select) -> exp.Select | None:
             new = exp.alias_(new, item.name)
         items.append(new)
     outer = exp.Select(expressions=items)
-    outer.set("from_", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+    outer.set(FROM_KEY, exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
     return outer
 
 

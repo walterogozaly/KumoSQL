@@ -4,6 +4,7 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
+from kumosql.ast_utils import FROM_KEY
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
 from kumosql.duckdb_load import run_unoptimized
 from kumosql.projected_in_rules import normalize_projected_in
@@ -123,12 +124,12 @@ def test_identity_column_aliases_unlock_cte_membership_without_capture():
 @pytest.mark.parametrize("item", ["x AS other", "x AS X", "`x` AS x", "x AS `x`"])
 def test_nonidentity_or_differently_quoted_alias_is_kept(item):
     tree = sqlglot.parse_one(f"SELECT d.x FROM (SELECT {item} FROM t) AS d", read="mysql")
-    assert normalize_projected_in(tree.args["from_"].this.this, NN) is None
+    assert normalize_projected_in(tree.args[FROM_KEY].this.this, NN) is None
 
 
 def test_identity_alias_cleanup_preserves_output_names_and_hidden_column_capture():
     tree = sqlglot.parse_one("SELECT d.x FROM (SELECT x AS x FROM t) AS d", read="mysql")
-    inner = tree.args["from_"].this.this
+    inner = tree.args[FROM_KEY].this.this
     assert normalize_projected_in(inner, NN) is inner
     assert inner.expressions[0].sql() == "x"
     # Existing inlining must still refuse to expose the base table's hidden y

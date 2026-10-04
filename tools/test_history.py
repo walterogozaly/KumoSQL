@@ -374,6 +374,7 @@ class Recorder:
         failed.sort(key=lambda e: e["id"])
         label = os.environ.get("KUMOSQL_TASK", "").strip() or state["branch"]
         workers = getattr(self.config.option, "numprocesses", None)
+        machine, versions = _machine(), _versions()  # before the CPU is read: finding sqlglot's build can import it
         return {
             "v": SCHEMA,
             "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -383,12 +384,12 @@ class Recorder:
             "targets_source": source,
             "mode": mode,
             "workers": workers if isinstance(workers, int) else 1,
-            "versions": _versions(),
+            "versions": versions,
             "seconds": round(time.time() - self.started, 1),
             "cpu_seconds": round(self.cpu_seconds(), 1),
             "test_seconds": round(self.test_seconds, 1),
             "test_cpu_seconds": round(self.test_cpu_seconds, 1),
-            "machine": _machine(),
+            "machine": machine,
             "exit": int(exitstatus),
             "counts": dict(self.counts),
             "failed": failed,

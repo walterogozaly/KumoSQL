@@ -15,6 +15,8 @@ import sqlglot
 pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
+from sqlglot_support import skip_if_unparseable
+
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.ast_utils import merge_wrapper_tails
 from kumosql.duckdb_load import run_unoptimized
@@ -88,6 +90,7 @@ WRONG_PROOFS = [
 
 @pytest.mark.parametrize("left, right", WRONG_PROOFS)
 def test_a_tail_on_the_parentheses_is_never_dropped(left, right):
+    skip_if_unparseable(left, right)
     assert _differ(left, right), "the database must separate the pair"
     assert _verdicts(left, right) == [False, False]
 

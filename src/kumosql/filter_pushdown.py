@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _flatten
+from .ast_utils import conjuncts as _flatten, star_modified
 from .equivalence import _normalize_predicate
 from .graph import ObservedRead, build_query_graph
 from .near_duplicates import _filters_safe_downstream
@@ -306,7 +306,7 @@ def _map_to_sources(pipeline, key: str, select: exp.Select, predicate: exp.Expre
             isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star)
         ):
             star = projection if isinstance(projection, exp.Star) else projection.this
-            if star.args.get("except") or star.args.get("replace") or star.args.get("rename"):
+            if star_modified(star):
                 raise _Refuse("unmappable_filter", "the model's star projection has EXCEPT or REPLACE")
             stars.append(projection.table or None if isinstance(projection, exp.Column) else None)
         else:

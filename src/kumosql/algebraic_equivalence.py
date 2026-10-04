@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
+from .ast_utils import FROM_KEY, UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .solver_lock import serialized
@@ -1016,7 +1016,7 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
                 conditions.append(join.args["on"].copy())
         if select.args.get("where") is not None:
             conditions.append(select.args["where"].this.copy())
-        select.set("from_", exp.From(this=all_items[0]))
+        select.set(FROM_KEY, exp.From(this=all_items[0]))
         select.set("joins", [exp.Join(this=i) for i in all_items[1:]] or None)
         where = _and_all([part for condition in conditions for part in _conjuncts(condition)])
         select.set("where", exp.Where(this=where) if where is not None else None)
@@ -1224,7 +1224,7 @@ def _decorrelated(inner: exp.Select, table_columns, outer_resolves):
     derived = exp.Select(
         expressions=[exp.alias_(inner_key.copy(), f"kqk{i}") for i, (inner_key, _) in enumerate(keys)] + [exp.alias_(value.copy(), "kqv")]
     )
-    derived.set("from_", exp.From(this=sources[0].copy()))
+    derived.set(FROM_KEY, exp.From(this=sources[0].copy()))
     derived.set("joins", [exp.Join(this=s.copy()) for s in sources[1:]] or None)
     if local:
         derived.set("where", exp.Where(this=_and_all([c.copy() for c in local])))
@@ -1435,7 +1435,7 @@ def _flatten_join_source(select: exp.Select) -> exp.Expression | None:
             return None
         column.replace(origin.copy() if not isinstance(origin, exp.Alias) else origin.this.copy())
     new_inner = inner.copy()
-    copy.set("from_" if "from_" in copy.args else "from", new_inner.args.get("from_") or new_inner.args.get("from"))
+    copy.set(FROM_KEY, new_inner.args.get("from_") or new_inner.args.get("from"))
     copy.set("joins", new_inner.args.get("joins"))
     return copy
 
@@ -2060,7 +2060,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
             exp.alias_(exp.column(name, table=spelled[table]), f"c{index}") for (table, name), index in positions.items()
         ]
     )
-    inner.set("from_" if "from_" in select.args else "from", from_.copy())
+    inner.set(FROM_KEY, from_.copy())
     inner.set("joins", [j.copy() for j in joins])
     # An output that is a bare column keeps its name once the column is renamed to kqj.cN.
     select.set(
@@ -2071,7 +2071,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
         column.set("table", exp.to_identifier("kqj"))
         column.set("this", exp.to_identifier(f"c{positions[key]}"))
     select.set("joins", None)
-    select.set("from_" if "from_" in select.args else "from", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier("kqj")))))
+    select.set(FROM_KEY, exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier("kqj")))))
     return select
 
 
@@ -2773,7 +2773,7 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
             expressions=[exp.alias_(k.copy(), key_names[k.sql()]) for k in group.expressions]
             + [exp.alias_(calls[sql].copy(), name) for sql, name in aggregates.items()]
         )
-        derived.set("from_", (inner.args.get("from_") or inner.args.get("from")).copy())
+        derived.set(FROM_KEY, (inner.args.get("from_") or inner.args.get("from")).copy())
         if inner.args.get("joins"):
             derived.set("joins", [j.copy() for j in inner.args["joins"]])
         if inner.args.get("where") is not None:
@@ -2811,7 +2811,7 @@ def _wrap_window_select(select: exp.Select) -> exp.Select | None:
         return None
     alias = f"kqw{next(_WINDOW_COUNTER)}"
     outer = exp.Select(expressions=[exp.alias_(exp.column(n, table=alias), n) for n in names])
-    outer.set("from_", exp.From(this=exp.Subquery(this=select.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+    outer.set(FROM_KEY, exp.From(this=exp.Subquery(this=select.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))))
     return outer
 
 
@@ -2880,7 +2880,7 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
             expressions=[exp.alias_(columns[sql].copy(), name) for sql, name in sorted(column_names.items())]
             + [exp.alias_(calls[sql].copy(), name) for sql, name in sorted(window_names.items())]
         )
-        inner.set("from_", from_.copy())
+        inner.set(FROM_KEY, from_.copy())
         if select.args.get("joins"):
             inner.set("joins", [j.copy() for j in select.args["joins"]])
         if select.args.get("where") is not None:
@@ -2891,7 +2891,7 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
             if isinstance(old, exp.Column) and not isinstance(new, exp.Alias):
                 outer_items[outer_items.index(new)] = exp.alias_(new, old.name)
         outer = exp.Select(expressions=outer_items)
-        outer.set("from_", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+        outer.set(FROM_KEY, exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
         if qualify is not None:
             named = {
                 i.alias.lower(): outer_items[n].this.copy()
@@ -3042,7 +3042,7 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
         if from_ is None or any(k is None for k in known) or "" in aliases or len(set(aliases)) != len(aliases):
             continue
         stars = [i for i in select.expressions if isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star))]
-        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or stars[0].args.get("except_") or stars[0].args.get("replace") or stars[0].args.get("rename")):
+        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or star_modified(stars[0])):
             continue
         # The columns of the running result, as (name, expression) pairs, to expand a bare star.
         running = [(c, exp.column(c, table=exp.to_identifier(aliases[0]))) for c in known[0]]
@@ -4138,11 +4138,11 @@ def _inline_constant_source(select: exp.Select) -> exp.Expression | None:
             extra = [on] if on is not None else []
         elif new_joins:
             first = new_joins.pop(0)
-            copy.set("from_", exp.From(this=first.this))
+            copy.set(FROM_KEY, exp.From(this=first.this))
             on = first.args.get("on")
             extra = [on] if on is not None else []
         else:
-            copy.set("from_", None)
+            copy.set(FROM_KEY, None)
             extra = []
         copy.set("joins", new_joins or None)
         if extra:
@@ -4287,7 +4287,7 @@ def _drop_empty_null_extended_side(select: exp.Select) -> exp.Expression | None:
             column.replace(exp.alias_(exp.Null(), column.name) if column.parent is copy else exp.Null())
     if not isinstance(kept, (exp.Table, exp.Subquery)):
         return None
-    copy.set("from_", exp.From(this=copy.args.get("from_", copy.args.get("from")).this if side == "LEFT" else copy.args["joins"][0].this))
+    copy.set(FROM_KEY, exp.From(this=copy.args.get("from_", copy.args.get("from")).this if side == "LEFT" else copy.args["joins"][0].this))
     copy.set("joins", None)
     return copy
 

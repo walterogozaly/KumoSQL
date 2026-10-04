@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import logging
+import re
 
 import sqlglot
 from sqlglot import ErrorLevel, exp
@@ -28,6 +29,101 @@ class _UnknownSubqueryScope(logging.Filter):
 
 _scope_filter = _UnknownSubqueryScope()
 logging.getLogger("sqlglot.lineage").addFilter(_scope_filter)
+
+
+# The FROM argument's name: sqlglot 28 renamed it from "from" to "from_".
+FROM_KEY = "from_" if "from_" in exp.Select.arg_types else "from"
+
+
+def is_call(node: object, kind: str) -> bool:
+    """``node`` calls the sqlglot function class named ``kind``, e.g. ``"DenseRank"``.
+
+    Older sqlglot versions lack some classes (sqlglot 26 has no ``Rank``, ``DenseRank`` or ``Grouping``)
+    and parse such a call as an anonymous function, matched here by its SQL name (``DENSE_RANK``).
+    """
+
+    cls = getattr(exp, kind, None)
+    if cls is not None:
+        return isinstance(node, cls)
+    return isinstance(node, exp.Anonymous) and str(node.this).upper() == re.sub(r"(?<!^)(?=[A-Z])", "_", kind).upper()
+
+
+def _duckdb_printing() -> tuple[bool, bool, bool]:
+    with quiet_parser():
+        division = sqlglot.parse_one("SELECT a / b", read="mysql").sql(dialect="duckdb")
+        concat = sqlglot.parse_one("SELECT CONCAT(a, b)", read="mysql").sql(dialect="duckdb")
+        stamp = sqlglot.parse_one("SELECT TIMESTAMP_SUB(a, INTERVAL 1 HOUR)", read="bigquery").sql(dialect="duckdb")
+    return "NULLIF" in division, "||" in concat, "INTERVAL" in stamp
+
+
+def spell_for_duckdb(tree: exp.Expression) -> exp.Expression:
+    """Spell what DuckDB would read differently from the query's own engine, in place, where sqlglot does not.
+
+    A division that is NULL on a zero divisor (MySQL's ``/``) becomes ``a / NULLIF(b, 0)``, and a
+    ``CONCAT`` that is NULL when an argument is NULL becomes ``a || b``. ``TIMESTAMP_ADD`` and
+    ``TIMESTAMP_SUB`` become ``a + INTERVAL ...``. Current sqlglot prints all of these that way itself;
+    sqlglot 26 prints a plain ``/`` (infinity in DuckDB), ``CONCAT`` (which skips NULLs in DuckDB) and
+    ``TIMESTAMP_SUB(a, '1', HOUR)`` (no such DuckDB function), so a query run there for a check would
+    answer differently or not run.
+    """
+
+    global _DUCKDB_PRINTING
+    if _DUCKDB_PRINTING is None:
+        _DUCKDB_PRINTING = _duckdb_printing()
+    division, concat, stamp = _DUCKDB_PRINTING
+    if not division:
+        for div in list(tree.find_all(exp.Div)):
+            if div.args.get("safe"):
+                div.set("expression", exp.Nullif(this=div.expression, expression=exp.Literal.number(0)))
+                div.set("safe", None)
+    if not concat:
+        for node in list(tree.find_all(exp.Concat)):
+            parts = list(node.expressions)
+            if node.args.get("coalesce") or len(parts) < 2:
+                continue
+            chain = parts[0]
+            for part in parts[1:]:
+                chain = exp.DPipe(this=chain, expression=part)
+            node.replace(exp.Paren(this=chain))
+    if not stamp:
+        for node in list(tree.find_all(exp.TimestampAdd, exp.TimestampSub)):
+            amount = node.expression
+            amount = exp.Literal.string(str(amount.name)) if isinstance(amount, exp.Literal) else exp.Paren(this=amount.copy())
+            interval = exp.Interval(this=amount, unit=exp.var(str(node.args["unit"].name).upper())) if node.args.get("unit") is not None else None
+            if interval is not None:
+                operator = exp.Add if isinstance(node, exp.TimestampAdd) else exp.Sub
+                replacement = operator(this=node.this.copy(), expression=interval)
+                if node is tree:
+                    tree = replacement
+                else:
+                    node.replace(replacement)
+    return tree
+
+
+_DUCKDB_PRINTING: tuple[bool, bool, bool] | None = None
+
+
+def grouping_elements(group: exp.Group | None) -> list[exp.Expression]:
+    """The elements of a ``GROUP BY``: plain keys and any ``ROLLUP``, ``CUBE`` or ``GROUPING SETS``.
+
+    sqlglot 26 keeps ``ROLLUP(...)``, ``CUBE(...)`` and ``GROUPING SETS (...)`` under their own arguments
+    of the Group node, where later versions list them with the plain keys. MySQL's ``GROUP BY a WITH
+    ROLLUP`` stays under its argument in every version, as a ROLLUP with no keys of its own.
+    """
+
+    if group is None:
+        return []
+    return list(group.expressions) + [node for key in ("grouping_sets", "cube", "rollup") for node in group.args.get(key) or []]
+
+
+# The EXCEPT list of ``SELECT * EXCEPT (...)``: sqlglot 30 renamed the argument from "except" to "except_".
+EXCEPT_KEY = "except_" if "except_" in exp.Star.arg_types else "except"
+
+
+def star_modified(star: exp.Star) -> bool:
+    """Whether ``*`` carries an ``EXCEPT``, ``REPLACE``, ``RENAME`` or ``ILIKE``, under either version's argument names."""
+
+    return any(star.args.get(k) for k in ("except", "except_", "replace", "replace_", "rename", "ilike"))
 
 
 def is_function_table(table: exp.Table) -> bool:
@@ -193,6 +289,28 @@ def table_function_reads_cte(tree: exp.Expression) -> bool:
             if isinstance(node, exp.Table) and not node.db and node.name.lower() in names:
                 return True
     return False
+
+
+# Aggregates that older sqlglot versions parse as anonymous functions (sqlglot 26 knows none of these).
+# The provers would read such a call as a row-level function, so a global one over no rows would seem
+# to return no rows instead of one; a query that calls one outside a window is refused instead.
+_NEWER_AGGREGATES = {
+    "BitwiseAndAgg": ("BIT_AND", "BITWISE_AND_AGG"), "BitwiseOrAgg": ("BIT_OR", "BITWISE_OR_AGG"),
+    "BitwiseXorAgg": ("BIT_XOR", "BITWISE_XOR_AGG"), "BoolxorAgg": ("BOOLXOR_AGG",), "GroupingId": ("GROUPING_ID",),
+    "Mode": ("MODE",), "Kurtosis": ("KURTOSIS",), "Skewness": ("SKEWNESS",), "ArrayConcatAgg": ("ARRAY_CONCAT_AGG",),
+    "ObjectAgg": ("OBJECT_AGG",), "ApproxQuantiles": ("APPROX_QUANTILES",), "ApproxTopSum": ("APPROX_TOP_SUM",),
+    "HashAgg": ("HASH_AGG",), "Minhash": ("MINHASH",), "BitmapOrAgg": ("BITMAP_OR_AGG",),
+    "BitmapConstructAgg": ("BITMAP_CONSTRUCT_AGG",), "RegrCount": ("REGR_COUNT",), "RegrAvgx": ("REGR_AVGX",),
+    "RegrAvgy": ("REGR_AVGY",), "RegrIntercept": ("REGR_INTERCEPT",), "RegrR2": ("REGR_R2",), "RegrSlope": ("REGR_SLOPE",),
+    "RegrSxx": ("REGR_SXX",), "RegrSxy": ("REGR_SXY",), "RegrSyy": ("REGR_SYY",),
+}
+_UNCLASSED_AGGREGATES = frozenset(name for cls, names in _NEWER_AGGREGATES.items() if not hasattr(exp, cls) for name in names)
+
+
+def is_aggregate(node: object) -> bool:
+    """An aggregate call, including one an older sqlglot version parses as an anonymous function."""
+
+    return isinstance(node, exp.AggFunc) or (isinstance(node, exp.Anonymous) and str(node.this).upper() in _UNCLASSED_AGGREGATES)
 
 
 # sqlglot parses IS [NOT] DISTINCT FROM (NullSafeEQ, NullSafeNEQ) beside LIKE, IN and BETWEEN: tighter than ``=`` and ``<``,
@@ -363,6 +481,8 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
+        if isinstance(node, exp.Anonymous) and str(node.this).upper() in _UNCLASSED_AGGREGATES and not isinstance(node.parent, exp.Window):
+            raise UnmodeledConstruct(f"{str(node.this).upper()} is an aggregate this sqlglot version does not know")
     tree = read_is_after_comparison(tree)
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
