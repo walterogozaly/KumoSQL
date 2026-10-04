@@ -275,7 +275,8 @@ def _fresh(kind: str, number: int):
     return None
 
 
-_INT_RANGES = {"TINYINT": 2**7, "SMALLINT": 2**15, "INTEGER": 2**31, "INT": 2**31, "INT4": 2**31, "MEDIUMINT": 2**23, "UTINYINT": 2**8}
+_INT_RANGES = {"TINYINT": 2**7, "SMALLINT": 2**15, "INTEGER": 2**31, "INT": 2**31, "INT4": 2**31, "MEDIUMINT": 2**23,
+              "UTINYINT": 2**8, "USMALLINT": 2**16, "UINTEGER": 2**32, "UBIGINT": 2**64}
 
 
 def fits(column: Column, value) -> bool:
@@ -925,6 +926,10 @@ def confirm(runner: Runner, data: Database, outcome: Outcome, rng: random.Random
         again = compare(runner, order)
         if again.kind != "differs" or view(again.left, mode, digits) != left or view(again.right, mode, digits) != right:
             return "nondeterministic"
+    from .ties import tie_dependent  # imported here: ties reads the engine's own helpers
+
+    if tie_dependent(runner, data):  # an engine's pick among tied rows under LIMIT, stable under reordering
+        return "nondeterministic"
     return "differs"
 
 

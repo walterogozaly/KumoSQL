@@ -42,7 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, drop_case_conflicts, expand_group_by_all, expanded_reads
+from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, drop_case_conflicts, expand_group_by_all, expanded_reads, is_call, spell_for_duckdb, star_modified
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
 
@@ -1022,6 +1022,8 @@ class Compiler:
     def _output_names(self, items, source: Rel) -> list[tuple[str | None, str]]:
         names = []
         for position, item in enumerate(items):
+            if star_modified(item):
+                raise Unsupported("SELECT * with EXCEPT, REPLACE, RENAME or ILIKE")  # not expanded below
             if isinstance(item, exp.Star):
                 names.extend(source.cols[i] for i in self._star_order(source))
             elif isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
@@ -1692,10 +1694,10 @@ class Compiler:
             for j, row in enumerate(context.rows)
         ]
         before = [self._precedes(Row(None, [], keyed[j][1]), Row(None, [], keyed[index][1])) if order is not None else _false() for j in range(len(context.rows))]
-        if isinstance(function, (exp.RowNumber, exp.Rank, exp.DenseRank)):
+        if isinstance(function, exp.RowNumber) or is_call(function, "Rank") or is_call(function, "DenseRank"):
             if order is None:
                 raise Unsupported("ranking function without ORDER BY")
-            if isinstance(function, exp.DenseRank):
+            if is_call(function, "DenseRank"):
                 total = []
                 for j in range(len(context.rows)):
                     first = z3.Not(z3.Or(*[
@@ -2030,7 +2032,7 @@ class DuckDBReplay:
             from .bigquery_on_duckdb import faithful
 
             tree = faithful(tree)
-        return tree.sql(dialect="duckdb")
+        return spell_for_duckdb(tree).sql(dialect="duckdb")
 
     def _run(self, data: dict[str, list[tuple]]):
         for name, table in self.schema.tables.items():

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import conjuncts
+from .ast_utils import FROM_KEY, conjuncts
 from .null_rejecting_joins import _OPAQUE, _sources, _strict_tables, rejected_tables
 
 _EMPTY_NULL = (exp.Sum, exp.Min, exp.Max, exp.Avg)  # NULL over no row; COUNT is 0
@@ -246,7 +246,7 @@ def _nested_join_to_derived(select: exp.Select, schema) -> exp.Expression | None
         if key in used:
             column.replace(exp.column(used[key], table=alias))
     inner = exp.Select(expressions=[exp.alias_(exp.column(c, table=t), out) for (t, c), out in used.items()])
-    inner.set("from_", exp.From(this=_strip_joins(copy_group)))
+    inner.set(FROM_KEY, exp.From(this=_strip_joins(copy_group)))
     inner.set("joins", [j.copy() for j in copy_group.args["joins"]])
     copy_holders[index].set("this", exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias))))
     copy.set("expressions", [exp.alias_(item, name) if name and item.output_name != name else item for item, name in zip(copy.expressions, output_names)])
