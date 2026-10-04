@@ -97,10 +97,26 @@ class Model:
     config_reads: tuple[str, ...] = ()
     # Config keys that read columns but whose value could not be read without running the project (a variable, a call).
     config_reads_unread: tuple[str, ...] = ()
+    # database, schema and name as the config wrote them, before the project's prefix and suffix settings; empty when
+    # no setting changed the target. A ``ref()`` names an action by these.
+    logical: tuple[str, ...] = ()
+    # ``disabled: true``: Dataform compiles the action (it stays in the graph) but does not run it.
+    disabled: bool = False
+    # An operations action that ``hasOutput``: it defines a table other actions can ``ref()``.
+    has_output: bool = False
+    # Compiled incremental tables: the query that runs after the first run, and its pre and post operations. The loaded
+    # ``sql`` is the full-refresh query; these read tables and columns too.
+    incremental_sql: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
         return self.target.key
+
+    @property
+    def scripts(self) -> tuple[str, ...]:
+        """Every statement besides ``sql`` that reads tables: pre and post operations and the incremental branch."""
+
+        return (*self.operations_sql, *self.incremental_sql)
 
     @property
     def identity(self) -> NodeIdentity | None:
