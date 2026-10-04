@@ -67,6 +67,27 @@ A struct field with no source column of that name, and a correlated reference to
 
 **What it found.** Working out what the check must refuse found cases the rule had wrong, now fixed in `qualify_columns.py`: a column of a later source qualified in an earlier `ON` or in an earlier `UNNEST`; a `SELECT AS VALUE` derived table treated as having columns; `ORDER BY f` rewritten to another source's `f` when the select outputs the field `s.f` (checked on BigQuery: `ORDER BY f DESC` sorted by the output `s.f`, not by the other source's `f`); a date part read as a column in `FOO(d, MONTH)`; a column of a `SEMI` or `ANTI` join's right side treated as readable. Tests (`tests/test_proof_qualify.py`) cover accepted and refused qualifications, an extra change hiding in the step, the corpus (about 1,700 queries from the fixtures and the repository's tests, each with three invented schemas: the rule's output is accepted, and re-qualifying any added qualifier with another source is refused), fault injection (the rule picking the wrong table, ignoring aliases, ignoring ON visibility, reading a value table's columns, or seeing one owner for a shared name, each with the prover's verdict forced to "proven"), an override that cannot opt out and a later step that cannot rescue a refused step.
 
+## Type names BigQuery rejects
+
+sqlglot reads other engines' type names and prints them as BigQuery types (`FLOAT` as `FLOAT64`, `INT32` as `INT64`, `VARCHAR` and `UUID` as `STRING`), so two queries that differ only in such a name parse to one tree, and a proof would credit a pair that BigQuery rejects ("Type not found"). `type_names.invalid_type_name(sql)` reads the source text, which still has the names, and returns the reason for a name BigQuery does not have. The accepted names were confirmed by BigQuery dry run (2026-10-04).
+
+**Where a type is read.** Only places where a type keyword cannot be a column name or an alias (`SELECT a float FROM t` is valid, so a bare keyword elsewhere is not read): the target of `CAST`, `SAFE_CAST`, `TRY_CAST` and `::`; any `ARRAY<...>` or `STRUCT<...>`, including nested ones and typed literals (a struct field named like a type, `STRUCT<text STRING>`, is a name, not a type); `RANGE<...>` inside a cast; a typed literal (`FLOAT '1'`); and, in `CREATE TABLE`, `CREATE FUNCTION` and `CREATE PROCEDURE`, the column and parameter list (`ANY TYPE` is valid there) and the `RETURNS` type, plus `DECLARE`. The first statement of a `BEGIN` block is read too, since the tokenizer keeps it as one string. Before this check, `SELECT ARRAY<FLOAT>[1]`, `STRUCT<x INT32>(1)`, `FLOAT '1'` and `CREATE TABLE d.x (a FLOAT) AS SELECT 1` were each proven equal to their `FLOAT64` and `INT64` spellings by every prover.
+
+**Entry points.** Each refuses before it proves, bounds or searches, and only for the BigQuery dialect (another dialect's names are its own):
+
+| Entry point | Refusal |
+| --- | --- |
+| `equivalence.prove_equivalent`, `smt_equivalence.prove_equivalent_smt`, `algebraic_equivalence.prove_equivalent_algebraic` | `not_proven` |
+| `statement_proof.prove_statements`, `prove_statements_smt` (they read the whole statements, so a `CREATE TABLE` column list is seen) | `not_proven` |
+| `sqlsolver_backend.prove_equivalent_sqlsolver` (`prove_equivalent` reaches it, or the others, on every backend) | `not_proven`; the solver is never started |
+| `rewrite` acceptance (`_verify_sql`) | `unproven`; a layout-only change (same tokens) is still accepted, since nothing but whitespace and case moved |
+| `bounded_equivalence.check_bounded` (and `prover_context.bounded` through it) | `unknown`, no bound reported |
+| `counterexample.find_counterexample`, `executed_refutation.search_counterexample` | no search (`False`, `None`): DuckDB would run the query BigQuery rejects |
+
+`prover_context.prove`, the pipeline, model-reuse, containment, optimizer, constraint-dependence and table-minimizer entry points call the algebraic prover and inherit its refusal. Each entry point has a test that the invalid name is refused, the valid spelling still gets its verdict, and the entry point certifies the invalid query again once the check is switched off (`tests/test_type_names.py`).
+
+**Not covered.** `result_equivalence.check_result_equivalence`, `random_check` and the synthetic-data comparison run both queries on generated data and report agreement, not a proof (the evidence labels say so); they do not read type names. A bare type keyword in an unlisted place (`ALTER TABLE ... ADD COLUMN`, a column definition in a statement that is not a `CREATE`) is not read. A function BigQuery does not have (`CONVERT(x, FLOAT)`) is the parser's to refuse, not this check's.
+
 ## Acceptance registry
 
 `kumosql.proof_registry` holds `FAMILIES` (each family's name, assumptions, checker and summary), `RULE_FAMILIES` (rule name to family; the acceptance layer reads it, so a rule or an override cannot opt out) and `LEGACY_BASIS` (every rule with no independent checker yet, and what its proof rests on: `format_sql` and `lift_subqueries`). `tests/test_proof_registry.py` fails when a rewrite rule is registered but is in neither table, so adding a rule forces a choice between an independent checker and a named legacy basis, and when a family accepts a step with foreign assumptions. A rule moves from legacy to independent only after the checker has its corpus and fault-injection tests; moving one back is a regression.
@@ -101,6 +122,7 @@ Before this check, these rewrites were labeled `proven`:
 - An unread CTE is assumed to have no effect, as BigQuery never evaluates one (checked 2026-10-03); the checker does not look for errors that dropping it would hide.
 - sqlglot's parse is checked separately, not by this checker: every proof is refused when an independent reading of its text disagrees with sqlglot's ([parser checks](parser-checks.md)). This checker still does not establish BigQuery validity or schemas.
 - SQLite is used only for the Boolean and literal model, never to run BigQuery SQL.
+- The type-name check is a refusal list for the places listed under [Type names](#type-names-bigquery-rejects); it does not validate types, and data-comparison evidence (`check_result_equivalence`, `random_check`) does not read them.
 
 ## Extending it
 
@@ -135,7 +157,7 @@ The audit was written against an older checkout. Each finding was re-run on mast
 | A step that fails mid-mutation is returned as if unchanged | Already fixed on master: the driver restores the statement it copied before the rule ran |
 | SQLX restoration reads backslashes in an expression as regex escapes | Reproduced; tracked as a separate fix |
 | SMT proves `SELECT * EXCEPT (b) FROM t` equal to `SELECT * FROM t` | Reproduced; tracked as a separate fix |
-| The provers treat type names BigQuery rejects as aliases: `CAST(x AS FLOAT)`, `INT32` and `UUID` were proven equal to `FLOAT64`, `INT64` and `STRING` | Fixed: `type_names.py` refuses casts to names BigQuery does not have in the structural, SMT and algebraic provers and in rewrite acceptance (see [Rewrite rules](rewrite-rules.md#inputs-bigquery-would-reject)) |
+| The provers treat type names BigQuery rejects as aliases: `CAST(x AS FLOAT)`, `INT32` and `UUID` were proven equal to `FLOAT64`, `INT64` and `STRING` | Fixed: `type_names.py` refuses them in the structural, SMT, algebraic and SQLSolver provers, the statement proofs, the bounded check, the counterexample searches and rewrite acceptance; it also reads `ARRAY<...>`, `STRUCT<...>`, typed literals and a script's column lists, not only casts ([Type names](#type-names-bigquery-rejects), [Rewrite rules](rewrite-rules.md#inputs-bigquery-would-reject)) |
 | SMT and the algebraic prover read `1e-324 < 2e-324` as exact reals (BigQuery: FALSE) | Reproduced; tracked as a separate fix |
 | SMT drops `FOR SYSTEM_TIME AS OF` | Already refused on master ("Table.version is not modeled") |
 | The synthetic-data comparison treats `TRUE` and `1` as equal | Reproduced; tracked as a separate fix |

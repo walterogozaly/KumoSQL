@@ -46,6 +46,7 @@ from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop
 from .duckdb_load import small_database
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
+from .type_names import invalid_type_name
 
 try:  # pragma: no cover - exercised through the tests
     import z3
@@ -2318,6 +2319,12 @@ def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs
     """See :func:`_check_bounded`. For SQLite only a counterexample is offered: the encoding's LIKE (case-sensitive)
     and ``/`` (exact) differ from SQLite's, so "no counterexample" would not carry over."""
 
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+        if unknown_type:
+            # The compiler reads FLOAT, INT32 and VARCHAR as FLOAT64, INT64 and STRING, so a bound "checked" for
+            # such a query would be a claim about a query BigQuery rejects.
+            return BoundedResult(BoundedStatus.UNKNOWN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     result = _check_bounded(left_sql, right_sql, schema, **kwargs)
     if kwargs.get("dialect") == "sqlite" and result.bounded_equivalent:
         return BoundedResult(BoundedStatus.UNKNOWN, "SQLite: no equivalence claim (its LIKE and integer division differ from the encoding)", result.bound, None, result.seconds)
