@@ -20,6 +20,8 @@ Almost all of a run is DuckDB answering both queries on many tiny databases. The
 
 ## Constraints matter
 
+On Windows, each query-pair check runs in a separate process so the harness can stop it at its time limit. A timeout means unknown if the initial data search did not finish, or agreement on the tried data if it did; it never means proof. A crashed process also means unknown. Synthetic tests cover these outcomes and parallel operation. Starting a process takes part of the budget, so timings can differ between platforms. See the [full reference](../../docs/evals/verieql.md).
+
 The input can declare keys, non-NULL columns, and other restrictions. A database violating those restrictions is not a valid counterexample to a conditional claim. Read which constraints the prover models and which the execution generator enforces.
 
 The full guide documents translation, constraint handling, known non-equivalent pairs, commands, and separate proof/executed score rows. [Bounded verification](bounded-verification.md) covers KumoSQL's separate row-limited checker, inspired by the bounded approach used in VeriEQL's research.

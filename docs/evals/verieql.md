@@ -55,6 +55,8 @@ Left unknown on purpose: 5 pairs whose Calcite text lost a correlated column (`W
 
 ## Running
 
+Each case has a 30-second execution budget by default. On platforms with `SIGALRM`, the harness retains its signal-based budget. Where that signal is unavailable (including Windows), an importable spawn worker runs the case and its parent enforces the deadline, including process startup. A timeout before the initial search completes is `unknown`; after it completes it is only `agrees`, never a proof. A child crash is `unknown`. Pipes and processes are closed or killed after every case. Windows parallel runs use non-daemonic executor workers so each can start its budget process. `tests/test_verieql_budget.py` checks synthetic proofs/refutations, both timeout phases, a crash and nested pool execution; these tests do not establish corpus scores or equal cross-platform timings.
+
 ```
 python tools/verieql_bench.py literature
 python tools/verieql_bench.py calcite --jobs 4

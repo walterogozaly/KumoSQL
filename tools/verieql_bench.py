@@ -38,6 +38,7 @@ import sys
 import time
 import urllib.request
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -341,7 +342,7 @@ class Verdict:
     seconds: float = 0.0
 
 
-def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, wide_trials: int = 400, timeout_ms: int = 3000, budget: int = 30) -> Verdict:
+def _decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_trials: int = 400, wide_trials: int = 400, timeout_ms: int = 3000, budget: int = 30, _searched=None) -> Verdict:
     """The program's verdict for one case: search for a counterexample, else try to prove, else unknown."""
 
     start = time.time()
@@ -351,8 +352,10 @@ def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_tr
     except Exception as error:  # unreadable constraints: no verdict
         return Verdict(index, UNKNOWN, f"constraints: {type(error).__name__}", time.time() - start)
     left, right, predicates = repaired_pair(case, spec)
-    signal.signal(signal.SIGALRM, _alarm)
-    signal.alarm(budget)
+    use_alarm = hasattr(signal, "SIGALRM")
+    if use_alarm:
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(budget)
     searched = False
     try:
         try:
@@ -363,6 +366,8 @@ def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_tr
             return Verdict(index, UNKNOWN, "a query DuckDB rejects", time.time() - start)
         found = searcher.search(trials, seed=index)
         searched = True
+        if _searched is not None:
+            _searched()
         if found is not None:
             return Verdict(index, DIFFERENT, "counterexample", time.time() - start)
         try:
@@ -396,7 +401,63 @@ def decide(case: dict, *, trials: int = 200, recheck_trials: int = 1000, more_tr
     except _Timeout:
         return Verdict(index, AGREES if searched else UNKNOWN, "time budget", time.time() - start)
     finally:
-        signal.alarm(0)
+        if use_alarm:
+            signal.alarm(0)
+
+
+def _budget_worker(case, options, sender):
+    """Importable spawn target; publish whether the first search completed."""
+    try:
+        verdict = _decide(case, _searched=lambda: sender.send(("searched", None)), **options)
+        sender.send(("verdict", verdict))
+    except Exception as error:
+        sender.send(("verdict", Verdict(case["index"], UNKNOWN, f"crash: {type(error).__name__}")))
+    finally:
+        sender.close()
+
+
+def _budgeted_case(case: dict, options: dict) -> Verdict:
+    """Enforce the case budget from a parent when SIGALRM is unavailable."""
+    start = time.monotonic()
+    budget = options.get("budget", 30)
+    deadline = start + budget if budget > 0 else None
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    child = context.Process(target=_budget_worker, args=(case, options, sender))
+    searched = False
+    try:
+        child.start()
+        sender.close()
+        while True:
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            if not receiver.poll(remaining):
+                return Verdict(case["index"], AGREES if searched else UNKNOWN, "time budget", time.monotonic() - start)
+            kind, payload = receiver.recv()
+            if kind == "searched":
+                searched = True
+                continue
+            child.join(None if deadline is None else max(0, deadline - time.monotonic()))
+            if kind == "verdict" and child.exitcode == 0:
+                return payload
+            if child.exitcode is None:
+                return Verdict(case["index"], AGREES if searched else UNKNOWN, "time budget", time.monotonic() - start)
+            return Verdict(case["index"], UNKNOWN, "worker failed", time.monotonic() - start)
+    except (EOFError, OSError):
+        return Verdict(case["index"], UNKNOWN, "worker failed", time.monotonic() - start)
+    finally:
+        if child.pid is not None:
+            if child.is_alive():
+                child.kill()
+            child.join()
+            child.close()
+        receiver.close()
+        sender.close()
+
+
+def decide(case: dict, **options) -> Verdict:
+    if hasattr(signal, "SIGALRM"):
+        return _decide(case, **options)
+    return _budgeted_case(case, options)
 
 
 def _work(args):
@@ -451,8 +512,13 @@ def run_suite(suite: str, *, limit: int | None = None, offset: int = 0, every: i
     start = time.time()
     work = [(case, options) for case in cases]
     if jobs > 1:
-        with multiprocessing.Pool(jobs) as pool:
-            verdicts = list(pool.imap(_work, work, chunksize=8))
+        if hasattr(signal, "SIGALRM"):
+            with multiprocessing.Pool(jobs) as pool:
+                verdicts = list(pool.imap(_work, work, chunksize=8))
+        else:
+            # Pool workers are daemonic and cannot start a per-case budget process.
+            with ProcessPoolExecutor(max_workers=jobs) as pool:
+                verdicts = list(pool.map(_work, work, chunksize=8))
     else:
         verdicts = [_work(item) for item in work]
     result.verdicts = verdicts
