@@ -29,6 +29,7 @@ import sys
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import binding_cte
 from .incremental import (
     IncrementalError,
     SourceTable,
@@ -78,11 +79,10 @@ def infer_sources(model, overrides: dict[str, dict[str, str]] | None = None) -> 
     """Source tables read by the full query, with the columns it uses."""
 
     tree = sqlglot.parse_one(model.full_sql, read="bigquery")
-    ctes = {c.alias.lower() for c in tree.find_all(exp.CTE)}
     aliases: dict[str, str] = {}
     for table in tree.find_all(exp.Table):
         name = table.name
-        if name.lower() in ctes or name.lower() == model.target.lower():
+        if binding_cte(table) is not None or name.lower() == model.target.lower():
             continue
         aliases[(table.alias or name).lower()] = name
     columns: dict[str, dict[str, str]] = {name: {} for name in aliases.values()}

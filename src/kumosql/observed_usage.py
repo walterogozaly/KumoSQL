@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import binding_cte
 from .graph import ObservedRead
 from .scripts import split_statements
 
@@ -358,23 +359,11 @@ def _own(select: exp.Select, node: exp.Expression) -> bool:
     return node.find_ancestor(exp.Select) is select
 
 
-def _cte_names(node: exp.Expression) -> set[str]:
-    names: set[str] = set()
-    current: exp.Expression | None = node
-    while current is not None:
-        with_ = current.args.get("with_") or current.args.get("with")
-        if with_ is not None:
-            names.update(cte.alias_or_name.casefold() for cte in with_.expressions)
-        current = current.parent
-    return names
-
-
 def _scan_select(pipeline: "Pipeline", select: exp.Select, outcome: _Outcome, temp_names: set[str]) -> None:
-    ctes = _cte_names(select)
     aliases: dict[str, str] = {}  # alias -> table key
     nodes: dict[str, exp.Table] = {}
     for table in select.find_all(exp.Table):
-        if not _own(select, table) or (not table.db and table.name.casefold() in ctes):
+        if not _own(select, table) or binding_cte(table) is not None:
             continue
         if _is_temporary(table, temp_names):
             outcome.temporary += 1
