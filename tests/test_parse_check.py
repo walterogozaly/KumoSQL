@@ -295,3 +295,10 @@ def test_a_failing_check_never_fails_the_prover(monkeypatch):
         return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, "ok")
 
     assert prover(*MISREAD_PAIR).status is SmtStatus.PROVEN_EQUIVALENT
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "bigquery", "postgres", "duckdb"])
+def test_a_number_with_a_leading_dot_is_one_token(dialect):
+    # sqlglot's MySQL tokenizer reads ``.49`` as a dot and a number and the parser joins them; that is not a misread
+    for sql in ("SELECT 1 - .49", "SELECT ROUND(SALARY * (1 - .49), 0) FROM s", "SELECT x * .5 FROM t"):
+        assert pc.check_query(sql, dialect).status == "agree", (dialect, sql)

@@ -2034,9 +2034,20 @@ def _token_mismatch(sql: str, toks: list[_Tok], theirs: list, label: str) -> str
 
     spans: list[tuple[int, int]] = []
     pending: int | None = None
-    for tok in theirs:
+    # sqlglot's MySQL tokenizer reads ``.49`` as a dot and a number and the parser joins them; the independent
+    # reader has one number token, so a dot the reader starts a number with is joined to the number after it
+    leading_dots = {tok.start for tok in toks if tok.kind == "number" and sql[tok.start] == "."}
+    joined: set[int] = set()
+    for index, tok in enumerate(theirs):
         lo, hi = tok.start, tok.end + 1
         name = tok.token_type.name
+        if id(tok) in joined:
+            continue
+        if name == "DOT" and lo in leading_dots and index + 1 < len(theirs) and theirs[index + 1].token_type.name == "NUMBER" and theirs[index + 1].start == hi:
+            joined.add(id(theirs[index + 1]))
+            hi = theirs[index + 1].end + 1
+            spans.append((lo, hi))
+            continue
         if name == "INTRODUCER":
             pending = lo
             continue
