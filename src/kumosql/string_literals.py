@@ -5,7 +5,8 @@ which differs from ``'a"b'`` although BigQuery gives both the same string (and s
 ``'a\\\\"b'``, a different string). It also reads two adjacent quoted names, ``col``col``, as one name containing a
 backtick. ``canonical_literals`` rewrites the source text before it is parsed: every plain string whose escapes
 are all among ``\\\\ \\' \\" \\` \\? \\n \\r \\t`` becomes a single-quoted literal using only ``\\\\``, ``\\'``, ``\\n``,
-``\\r`` and ``\\t``, and a space goes between adjacent backtick names. Raw strings (``r'..'``), strings with other
+``\\r`` and ``\\t``, and a space goes between adjacent backtick names. Raw strings (``r'..'``) use the same spelling
+but preserve every character in their body, including a backslash before a quote. Strings with other
 escapes (``\\x41``, ``\\u0041``, octal) and everything else are left as written, so equal values written with those
 escapes stay unproven rather than being called different by a wrong reading.
 
@@ -80,6 +81,10 @@ def _bytes_literal(value: bytes) -> str:
     """
 
     return "b'" + "".join(chr(b) if 32 <= b < 127 and b not in (39, 92) else f"\\x{b:02X}" for b in value) + "'"
+
+
+def _string_literal(value: str) -> str:
+    return "'" + "".join(_OUT.get(c, c) for c in value) + "'"
 
 
 def _string_end(sql: str, start: int) -> tuple[int, str, str]:
@@ -172,8 +177,13 @@ def canonical_literals(sql: str) -> str:
             word = sql[i:j]
             if word.lower() in ("r", "b", "rb", "br") and j < size and sql[j] in "'\"":
                 end, quote, body = _string_end(sql, j)
-                value = None if _invalid(quote, body) or word.lower() == "r" else _decode_bytes(body, raw=len(word) == 2)
-                out.append(sql[i:end] if value is None else _bytes_literal(value))  # a raw string: copied as written
+                if _invalid(quote, body):
+                    out.append(sql[i:end])
+                elif word.lower() == "r":
+                    out.append(_string_literal(body))
+                else:
+                    value = _decode_bytes(body, raw=len(word) == 2)
+                    out.append(sql[i:end] if value is None else _bytes_literal(value))
                 i = end
             else:
                 out.append(word)
@@ -181,7 +191,7 @@ def canonical_literals(sql: str) -> str:
         elif char in "'\"":
             end, quote, body = _string_end(sql, i)
             value = None if _invalid(quote, body) else _decode(body)
-            out.append(sql[i:end] if value is None else "'" + "".join(_OUT.get(c, c) for c in value) + "'")
+            out.append(sql[i:end] if value is None else _string_literal(value))
             i = end
         else:
             out.append(char)

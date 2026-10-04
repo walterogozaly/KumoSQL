@@ -29,3 +29,5 @@ Original fixtures are scored separately from adapted statements. A script or tem
 Inferred schemas can include placeholder columns to make `SELECT *` well defined. A proof about that inferred schema is not a proof about every possible table width.
 
 The reference describes deliberate semantic changes, unsupported features, licensing, and what each score counts. See [rewrite rules](../rewrite-rules.md) for normal formatting behavior.
+
+A raw string keeps its backslashes, including one before a quote. Changing the surrounding quote style must keep that value. The parser used to drop a backslash in one quote style, producing a false difference when the queries were run. KumoSQL now preserves the raw body before parsing it. Tests check both quote styles and the resulting values with DuckDB's optimizer disabled; they are not a live BigQuery check. See the [full reference](../../docs/evals/sqlfluff-fixtures.md).

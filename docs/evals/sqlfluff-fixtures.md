@@ -185,3 +185,5 @@ python -m pytest tests/test_sqlfluff_fixtures_bench.py
 ```
 
 The scoreboard rows are `benchmarks/results/sqlfluff-semantic-fixes.json`, `sqlfluff-layout-fixes.json` and `sqlfluff-kumosql-formatter.json`.
+
+Raw strings preserve backslashes even before a quote ([GoogleSQL lexical reference](https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/lexical#string_and_bytes_literals)). sqlglot 28.10.0 drops that backslash when the quote matches the delimiter of a single-quoted raw literal, so changing `r'a\"b'` to `r"a\"b"` could create a false executed refutation. `canonical_literals` now encodes the unchanged raw body as an ordinary escaped string before the prover and DuckDB translation read it. Synthetic regressions cover both quote characters, triple quotes, both prefix cases, idempotence and predicates; execution values are also checked with DuckDB optimization disabled. Invalid literals are left as written, and undecoded escapes in ordinary strings remain outside this normalization's coverage. These checks are not a live BigQuery execution oracle.

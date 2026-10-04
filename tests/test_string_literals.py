@@ -14,8 +14,8 @@ from kumosql.string_literals import canonical_literals
         (r"SELECT '''x\'y\"z'''", r"SELECT 'x\'y" + '"z' + "'"),
         (r"SELECT 'a\\b', 'c\nd'", r"SELECT 'a\\b', 'c\nd'"),
         ("SELECT `col``col` FROM t", "SELECT `col` `col` FROM t"),
-        # left as written: raw strings, escapes this module does not decode, comments
-        (r"SELECT r'a\"b'", r"SELECT r'a\"b'"),
+        # raw strings keep every backslash; undecoded plain escapes and comments stay as written
+        (r"SELECT r'a\"b'", r"SELECT 'a\\" + '"b' + "'"),
         # bytes: printable ASCII as is, every other byte (quote and backslash too) as \xHH
         (r"SELECT b'x\n', Rb'q\"', B'\x41', b'\101', b'it\'s', b'é'", r"SELECT b'x\x0A', b'q\x5C" + '"' + r"', b'A', b'A', b'it\x27s', b'\xC3\xA9'"),
         (r"SELECT b'\\x41', b'\u0041'", r"SELECT b'\x5Cx41', b'\u0041'"),
