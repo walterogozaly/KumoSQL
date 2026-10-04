@@ -49,7 +49,7 @@ Limits: it needs to know each table's columns, which come from the loaded projec
 | `unproven` | Review it; the checker could not establish equivalence |
 | `failed` | The rewrite failed; its output is not accepted |
 
-Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL in general, but a change to a query BigQuery would plainly reject (a column that its subquery does not have, or `HAVING` with no grouping or aggregate) is never `proven`. The check only catches those two cases, so it can miss other invalid SQL. Fatal rule failures exit 2 without writing the result.
+Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL in general, but a change to a query BigQuery would plainly reject (a column that its subquery does not have, `HAVING` with no grouping or aggregate, or a cast to a type name BigQuery does not have such as `FLOAT` or `VARCHAR`) is never `proven`. The check only catches those cases, so it can miss other invalid SQL. Fatal rule failures exit 2 without writing the result.
 
 ## Rule order matters
 

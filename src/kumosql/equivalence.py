@@ -31,6 +31,7 @@ from .ast_utils import (
 from .distinct_safety import distinct_is_redundant
 from .input_validity import invalid_input_reason
 from .layout_equivalence import _builtin_functions
+from .parse_check import refuse_misread_proofs
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
 from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
@@ -45,6 +46,7 @@ from .proof_syntax import (
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, _key, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
+from .type_names import invalid_type_name
 
 
 class EquivalenceStatus(str, Enum):
@@ -1125,6 +1127,7 @@ def _peel_root_limit(left_sql: str, right_sql: str) -> tuple[str, str, str] | No
     return left.sql(dialect="bigquery"), right.sql(dialect="bigquery"), tail
 
 
+@refuse_misread_proofs
 def prove_equivalent(
     left_sql: str,
     right_sql: str,
@@ -1147,6 +1150,9 @@ def prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
         )
+    unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+    if unknown_type:
+        return EquivalenceResult(status=EquivalenceStatus.NOT_PROVEN, reason=f"BigQuery would reject the query: {unknown_type}")
     masked = masked_template_problem(left_sql, right_sql)
     if masked:
         return EquivalenceResult(status=EquivalenceStatus.NOT_PROVEN, reason=masked)
