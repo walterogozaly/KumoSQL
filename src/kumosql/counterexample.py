@@ -909,6 +909,11 @@ class Searcher:
     def _stable(self, data, a, b, rng) -> bool:
         """The difference must not depend on row order or on an arbitrary pick: shuffle and compare again."""
 
+        from .counterexample_stability import guard_arbitrary_picks
+
+        stable_queries = tuple(guard_arbitrary_picks(sql) for sql in (self.left_sql, self.right_sql))
+        if any(sql is None for sql in stable_queries):
+            return False
         expected = (_bag(a), _bag(b))
         try:
             # DuckDB's optimizer has returned wrong rows for some correlated subqueries: the same rows must
@@ -916,13 +921,18 @@ class Searcher:
             self._load(data)
             if tuple(_bag(self._read(rows)) for rows in run_unoptimized(self.db, self.left_sql, self.right_sql)) != expected:
                 return False
+            if stable_queries != (self.left_sql, self.right_sql):
+                if tuple(_bag(self._read(rows)) for rows in run_unoptimized(self.db, *stable_queries)) != expected:
+                    return False
+                if tuple(_bag(self._rows(sql)) for sql in stable_queries) != expected:
+                    return False
             # reversed and rotated first: three random shuffles of a two-row table keep its order 1 time in 8
             orders = [{name: list(reversed(data[name])) for name in self.used}]
             orders.append({name: list(data[name][1:]) + list(data[name][:1]) for name in self.used})
             orders += [{name: rng.sample(data[name], len(data[name])) for name in self.used} for _ in range(3)]
             for shuffled in orders:
                 self._load(shuffled)
-                if (_bag(self._rows(self.left_sql)), _bag(self._rows(self.right_sql))) != expected:
+                if tuple(_bag(self._rows(sql)) for sql in stable_queries) != expected:
                     return False
         except duckdb.Error:
             return False
