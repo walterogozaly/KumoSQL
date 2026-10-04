@@ -366,7 +366,7 @@ class RewriteRule:
     #: as standard SQL, so only analysis that never shows its output (the prover) turns this on.
     rewrite_pipe_syntax: ClassVar[bool] = False
     #: Only the prover's normalization reads the output, never a user: templated SQL is read the way sqlglot
-    #: reads it, and ``lift_subqueries`` lifts correlated derived tables too, as it always has for the prover.
+    #: reads it.
     analysis_only: ClassVar[bool] = False
     #: Leave a SQLX statement alone when it holds a ``${...}`` expression other than ``ref()``/``self()``. The rule
     #: sees only a placeholder name there, but the expression can compile to a looser-binding predicate, a whole
