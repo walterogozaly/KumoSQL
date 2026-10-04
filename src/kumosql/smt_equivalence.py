@@ -81,7 +81,7 @@ from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
-from . import smt_errors, smt_values, string_number_compare
+from . import smt_errors, smt_numeric, smt_values, string_number_compare
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -1944,6 +1944,8 @@ class _Compiler:
                 if typed[0] == "int":
                     self._note_integer(typed[1])
                 return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{typed[1].numerator}/{typed[1].denominator}")))
+        if self.dialect == "bigquery" and (scaled := smt_numeric.compile_node(self, e, env, agg, aliases)) is not None:
+            return _Val(*scaled)  # NUMERIC and BIGNUMERIC values of known scale: the rounded result (smt_numeric)
         if isinstance(e, (exp.Add, exp.Sub, exp.Mul)) and not self.exact:
             folded = _literal_arithmetic(e, self.dialect)
             if folded is not None:
@@ -2396,10 +2398,9 @@ class _Compiler:
                 x = V.num(v.val)
                 if cls == S.INT64:
                     typed = z3.And(V.is_Num(v.val), z3.IsInt(x), x >= S.INT64_MIN, x <= S.INT64_MAX)
-                elif cls == S.NUMERIC:
-                    limit = 10 ** (S.NUMERIC_DIGITS - S.NUMERIC_SCALE)
-                    typed = z3.And(V.is_Num(v.val), z3.IsInt(x * 10**S.NUMERIC_SCALE), x < limit, x > -limit)
-                elif cls in (S.BIGNUMERIC, S.FLOAT64):
+                elif cls in (S.NUMERIC, S.BIGNUMERIC):
+                    typed = smt_numeric.typed_fact(cls, V, v)
+                elif cls == S.FLOAT64:
                     typed = V.is_Num(v.val)
                 elif cls == S.STRING:
                     typed = V.is_Str(v.val)

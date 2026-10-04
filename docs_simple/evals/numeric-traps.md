@@ -8,6 +8,8 @@ This suite is a set of hand-written query pairs built around exactly these traps
 
 ## What it checks
 
+Decimal (`NUMERIC`) numbers have their own trap: they keep nine digits after the point, so a product or a quotient is rounded back to nine digits. `n / 3 * 3` is not `n` (with `n = 0.000000001` the quotient rounds to 0), `ROUND(n * m, 9)` is the same number as `n * m`, and `NUMERIC '1.50'` is the same value as `NUMERIC '1.5'`. The prover now works these out exactly, as long as it knows how many decimal places each value has (a column declared `NUMERIC`, a quoted decimal cast to it, and `+ - * /`, `CAST` and `ROUND` over those). A sum, a `CASE` or a floating-point value has no known number of places, so those pairs stay unknown.
+
 A concrete example: `SELECT IF(y = 0, 0, x / y) FROM t WHERE y <> 0` and `SELECT x / y FROM t WHERE y <> 0` return the same rows on every database where neither fails, but only the first keeps the division away from a zero `y`. BigQuery may evaluate the division before the filter, so the second can fail on a row the filter would drop, and a rewrite from the first to the second is not safe. The prover now says so, instead of proving the pair equal while quietly assuming errors never happen.
 
 The score is how many sound pairs the prover proves, how many trap pairs it refuses to prove, and whether each rewrite that adds or removes an error is described correctly. A wrong answer is a proof or a refutation that contradicts what BigQuery's documentation says.
@@ -19,8 +21,8 @@ python tools/numeric_traps_bench.py
 ## What to keep in mind
 
 - The pairs were written by the person who changed the prover, from the issue's list of traps. They were fixed before the change and a quarter was held out, but this is a safety net, not an independent test.
-- The held-out quarter has no pair about errors, so error handling is checked only on the development pairs.
-- A few labels rest on behaviour the author could not confirm in the documentation (for example how a decimal literal is rounded). Those cases say so, and "unknown" is an acceptable answer for them.
-- The prover still assumes no `NaN` appears in floating-point columns and does not do exact decimal rounding. Those pairs stay unknown or are proved with the assumption listed.
+- A few labels rest on behaviour the author could not confirm in the documentation (for example how a decimal literal is rounded, and that multiplying or dividing two `NUMERIC` values rounds half away from zero). Those cases say so, and "unknown" is an acceptable answer for them. The prover assumes that rounding rule, so an answer that depends on it is only as good as the rule.
+- The sixteen decimal cases were added with the rounding model; four are held out, but their answers were seen during development, so treat the held-out score for them as "tuned on test".
+- The prover still assumes no `NaN` appears in floating-point columns, and it does not model the double that a floating-point `/` returns. Those pairs stay unknown or are proved with the assumption listed.
 
 See the full reference for the recorded scores and the list of cases.
