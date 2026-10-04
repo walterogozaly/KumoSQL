@@ -24,6 +24,12 @@ The separate checker looks at the query before and after and asks two things. Fi
 
 The checker is given a table's column list by the part of KumoSQL that accepts rewrites, from the same project and catalog facts the rule reads, because the query alone does not say what columns a plain table has. It trusts that list, and it trusts that the original query runs on BigQuery. While working out what the checker must refuse, five cases the rule itself had wrong turned up, and the rule was fixed (see the [full reference](../docs/proof-safeguards.md#column-qualification)). The checker can also refuse a valid qualification, for example in a query that reads a table function; the rule leaves those queries alone.
 
+## Formatting
+
+`format_sql` is supposed to change only layout: spaces, line breaks and the case of keywords. The tool it uses (sqlfluff) can do more than that, and the older check shared some of its reading code with the formatter. A separate checker now compares the text before and after word by word. `select a,b from t where x=1` may become the same words laid out over several lines with `SELECT`, `FROM` and `WHERE` in capitals. A different number, a table written `Orders` instead of `orders`, a dropped or edited comment, or a changed `${...}` template is refused, because each of those could be a real change dressed up as formatting. It also parses both texts and requires the same tree.
+
+It is strict on purpose. Case is accepted only for words BigQuery never uses as names (reserved keywords, built-in functions, and other keywords the parser confirms are only syntax). A word that could be a table, column or user-defined function keeps its case, even where BigQuery would have accepted a change. As a result, if you switch on sqlfluff rules that change more than layout (adding `AS`, turning `!=` into `<>`, changing quote style), the result is reported as `unproven`. On the repository's own SQL no output that was verified before was refused, and a few more unusual statements were refused for being too hard to tell from a name. The evidence is the repository's own test SQL and sqlfluff's development examples, all used while building the checker, and nothing was run on BigQuery. Details and numbers are in the [full reference](../docs/proof-safeguards.md#layout-only-formatting).
+
 ## Turning subqueries into CTEs
 
 `lift_subqueries` rewrites `SELECT * FROM (SELECT x FROM t WHERE x > 1) AS s` as `WITH __lifted_subquery_001 AS (SELECT x FROM t WHERE x > 1) SELECT * FROM __lifted_subquery_001 AS s`. The prover used the same lifter on both sides of a proof, so a lifter that dropped the `WHERE`, gave the new CTE the name of a real table, or moved a subquery somewhere it reads something else would still make both sides look alike.
@@ -34,7 +40,7 @@ Running it over about 2,900 test queries found real problems, now fixed: the pro
 
 ## One list of checked rules
 
-KumoSQL keeps a single reviewed list of which cleanup rules have a separate checker and which do not yet, with the reason for each one that does not. A test fails if someone adds a rule and forgets to put it on the list, so a new rule has to choose between getting a checker and saying what it relies on instead.
+KumoSQL keeps a single reviewed list of which cleanup rules have a separate checker and which, if any, do not yet, with the reason for each one that does not (today every rule has one). A test fails if someone adds a rule and forgets to put it on the list, so a new rule has to choose between getting a checker and saying what it relies on instead.
 
 ## Dataform expressions
 
@@ -42,4 +48,4 @@ A Dataform file can hold `${...}` expressions. KumoSQL can treat `${ref("orders"
 
 ## What this does not cover
 
-Predicate cleanup, CTE rewrites, parentheses, removing `DISTINCT`, qualifying columns and turning subqueries into CTEs are checked independently so far. The rule that formats SQL is not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).
+Predicate cleanup, CTE rewrites, parentheses, removing `DISTINCT`, qualifying columns, formatting and turning subqueries into CTEs are checked independently, so every rewrite rule now has a separate check. The solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).

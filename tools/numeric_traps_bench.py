@@ -27,7 +27,7 @@ The prover decides each pair without the label:
 * **proven**: ``prove_equivalent_smt`` proves the pair (with the error verdict it reports, if any); a rewrite that
   can fail where the original succeeds is not proven: the verdict ``introduces`` withholds the proof;
 * **refuted**: it finds a database on which the rows differ;
-* **assumed**: proven, but only under an assumption the case violates and the result still lists;
+* **assumed**: proven, but only under an assumption the case violates (or says does not apply, field ``discharged``) and the result still lists;
 * **unknown**: neither.
 
 ``wrong`` is a proof or refutation that contradicts the label (an ``equivalent`` case refuted, a
@@ -77,6 +77,7 @@ class Case:
     witness: dict | None = None
     violates: list = field(default_factory=list)  # assumption labels the case breaks: a proof that lists one is disclosed
     unverified: str | None = None  # what the label rests on that the author could not confirm in the documentation
+    discharged: list = field(default_factory=list)  # assumption labels that do not apply here: a proof that still lists one is not clean
 
 
 def load_cases(split: str = "all") -> list[Case]:
@@ -144,7 +145,7 @@ def decide(case: Case) -> dict:
     result = prove_equivalent_smt(case.left, case.right, schema=SCHEMA, types=TYPES, timeout_ms=TIMEOUT_MS)
     report = getattr(result, "errors", None)
     verdict = report.verdict if report is not None else None
-    listed = [a for a in result.assumptions if any(a.startswith(v) for v in case.violates)]
+    listed = [a for a in result.assumptions if any(a.startswith(v) for v in case.violates + case.discharged)]
     if result.status is SmtStatus.NOT_EQUIVALENT:
         outcome = "refuted"
     elif result.status in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
@@ -197,7 +198,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "order": 39,
         "size": len(results),
         "score": score(results),
-        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
+        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions, the order a FLOAT64 SUM adds in): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
         "evidence": "proof",
         "correctness": "Labels follow the GoogleSQL documentation (the case file names the page; the ones it could not confirm say so); the cases DuckDB can run faithfully are replayed on a witness database by the test suite. Wrong is a proof or refutation that contradicts the label, or an error verdict that claims safety where the label says the rewrite can fail.",
         "coverage": {k: counts[k] for k in ("proven", "refuted", "unknown") if counts[k]},
@@ -205,7 +206,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "docs": "docs/evals/numeric-traps.md",
         "command": "python tools/numeric_traps_bench.py --write-results",
         "date": today(),
-        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed.",
+        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed. Twenty float-sum-order cases were added in a later pass (15 development, 5 held out, fixed before the rule was run); their labels rest on the repo's own note that a FLOAT64 sum has no fixed order, which is unverified against the GoogleSQL aggregate page, and the INT64 ones on the unverified rule that a partial INT64 sum cannot overflow when the total fits. A proof that still lists the row-order assumption on a case that says it does not apply, or on one that violates it, counts as unknown, not as a proof.",
     }
 
 

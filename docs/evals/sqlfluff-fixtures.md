@@ -147,12 +147,12 @@ The one flagged layout-only pair is CP05 `test_fail_postgres_create_type`: `CREA
 | Supported by KumoSQL's preferences | 169 |
 | Output equal to sqlfluff's fix | **167** |
 | Output differs | 2 |
-| Verified by KumoSQL (proven equal, or unchanged) | **161** |
-| Unverified (refused as unproven) | 8 |
+| Verified by KumoSQL (proven equal, or unchanged) | **159** |
+| Unverified (refused as unproven) | 10 |
 | Verified but the output changes the tree, a comment or a literal | **0** |
 | Unsupported (another dialect 105, configuration KumoSQL cannot express 121, Jinja 49, sqlfluff cannot parse 9) | 284 |
 
-All 167 reproductions are exact, and the 8 unverified runs are right to be: seven rename identifiers (CP02) and one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column.
+All 167 reproductions are exact. Eight of the 10 unverified runs are right to be: seven rename identifiers (CP02) and one is a BigQuery `WEEK(monday)` whose keyword sqlglot reads as a column. The other two are refused by the independent layout check ([`proof_format`](../proof-safeguards.md#layout-only-formatting), added 2026-10-04; they were verified before, 161 then): both are held-out fixtures that were not examined, so they may be false refusals. Every run that changes the tree, a comment or a literal is still unverified, so the score is unchanged at 0 wrong.
 
 - **Finding, fixed ([#313](https://github.com/walterogozaly/KumoSQL/issues/313)): sqlfluff's fixer can turn spaced unary signs into a comment.** LT01 on `SELECT 1 * - - - 5` returns `SELECT 1 * ---5` (the fixture expects `- - -5`), and `--5` starts a comment; the second fixture lost `AS c, 2 AS d` the same way. KumoSQL's verification marked both runs unproven, so nothing wrongly passed, but `format_sql` still produced the text. It now keeps the text from before any pass that creates or removes a comment, so these two fixtures come back unchanged: they differ from the fixture's fix on purpose and count as verified (unchanged). With sqlfluff 4.4 installed (what `pip install` picks today), the fixer spaces the signs correctly (`- - -5`), so `format_sql` reproduces both fixtures' fixes and they are proven; the scoreboard numbers are measured with sqlfluff 4.3.0.
 
