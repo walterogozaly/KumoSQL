@@ -80,6 +80,8 @@ The suites carry no labels, but four pairs are known to differ and `tests/test_v
 | Calcite-397 | 397 | 335 | 29 | 24 | 9 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,793 | 5,676 | 12,454 | 1,071 | 0 |
 
+The LeetCode row was measured before the lifter began keeping a subquery in place when its body reads a column no relation binds ([rewrite rules](../rewrite-rules.md#subquery-lifting); a bare column over a table with no known schema could belong to an enclosing query). Of the 117 pairs whose lifted text changed, 3 lost their proof (13460, 13516, 13580, each an `x IN (SELECT .. FROM (derived) WHERE ..)`), none gained one, and 0 are wrong, so about 4,790 is the current figure until the full corpus is rerun.
+
 The [harness translation](#harness-translation), with the bare-word and `$` fixes from the full LeetCode rerun, took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks five of our Calcite refutations equivalent (pairs 80, 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows, and pair 80 returns `'TABLE'` against `'TABLE '` because Calcite pads CHAR literals and DuckDB's VARCHAR does not).
 
 The ORDER BY, LIMIT and OFFSET rules ([sqlsolver.md](sqlsolver.md#order-by-limit-and-offset)) added 5 Calcite-397 proofs (measured against master when they were merged), among them `ORDER BY 2 OFFSET 1` against `ORDER BY DEPTNO OFFSET 1` over a duplicated column, `ORDER BY CAST(DEPTNO AS DOUBLE)`, and a top-k pushed into `UNION ALL` branches.

@@ -52,7 +52,7 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 | Corpus | Pipeline | Cases | Rewritten and identical | Wrong | Declined | Unsupported | Not executable |
 |---|---|---:|---:|---:|---:|---:|---:|
 | GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 31 | 0 | 6,674 | 946 | 219 |
-| GoogleSQL compliance | lift | 7,870 | 259 | 0 | 6,050 | 946 | 615 |
+| GoogleSQL compliance | lift | 7,870 | 259 | 0 | 6,052 | 946 | 613 |
 | Edge cases (967 custom: 379 hand-written, 588 seeded fuzz) | semantic | 967 | 428 | 0 | 539 | 0 | 0 |
 | Edge cases | lift | 967 | 435 | 0 | 531 | 0 | 1 |
 | Held-out fuzz (662, seeds 101 and 103, not used while fixing) | semantic / lift | 662 | 421 | 0 | 241 | 0 | 0 |

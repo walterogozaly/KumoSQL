@@ -7,16 +7,16 @@
   "docs": "docs/evals/bigquery-behavior-eval.md",
   "command": "python tools/bq_behavior_eval.py --corpus googlesql --pipeline lift",
   "date": "2026-10-04",
-  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0), 7,870 original queries, none adapted. proven = rewritten and identical in DuckDB; unknown = left unchanged or rewrite not accepted (6,050); unsupported = neither sqlglot nor KumoSQL's BigQuery additions parse (946); 615 not executable in DuckDB so unverified. The 81 pipe-syntax (|>) queries are left as written: sqlglot parses pipe syntax into nested CTEs, and the 7 that used to count were rewrites of that translation printed as standard SQL. Without lifting: 31 rewritten, 0 wrong. Baseline before fixes: 3 wrong (FLOAT and UUID types printed as FLOAT64 and STRING). DuckDB is a differential oracle, not BigQuery; no held-out split.",
+  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0), 7,870 original queries, none adapted. proven = rewritten and identical in DuckDB; unknown = left unchanged or rewrite not accepted (6,052); unsupported = neither sqlglot nor KumoSQL's BigQuery additions parse (946); 613 not executable in DuckDB so unverified. The 81 pipe-syntax (|>) queries are left as written: sqlglot parses pipe syntax into nested CTEs, and the 7 that used to count were rewrites of that translation printed as standard SQL. Without lifting: 31 rewritten, 0 wrong. Baseline before fixes: 3 wrong (FLOAT and UUID types printed as FLOAT64 and STRING). DuckDB is a differential oracle, not BigQuery; no held-out split.",
   "evidence": "executed",
   "correctness": "0 behaviour-changing accepted rewrites; checked by executing both versions in DuckDB",
   "coverage": {
     "proven": 259,
-    "unknown": 6050,
+    "unknown": 6052,
     "unsupported": 946,
     "error": 0
   },
-  "coverage_of": "The 7,255 of the 7,870 queries with a coverage outcome; the other 615 are not executable in DuckDB, so they get no verdict.",
+  "coverage_of": "The 7,257 of the 7,870 queries with a coverage outcome; the other 613 are not executable in DuckDB, so they get no verdict.",
   "held_out": "none",
   "performance": "7,870 queries in 306 s (lifting pipeline), 145 s without"
 }
