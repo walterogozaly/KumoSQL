@@ -65,7 +65,15 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - `SELECT WITH DIFFERENTIAL_PRIVACY` stays unparsed on purpose: read as a plain query, its noisy aggregates would look exact to every prover. Its table reads still come from the token fallback.
 - `DROP TABLE FUNCTION` did not parse; `bigquery_syntax.py` now reads it as a drop of kind `TABLE FUNCTION`. Script cleanup gaps closed by [the script reader](../scripts.md) are no longer listed.
 - Raw bytes literals (`br'a\d'`, `rb".."`) did not parse; they are read as the `b'..'` literal with the same bytes. Pipe `|> WITH y AS (...)` did not parse; it is read as a `WITH` at the front of its query, but only when nothing before it spells a name it defines and the query has no `WITH` of its own (otherwise moving it could change what a name means).
-- An outside GoogleSQL feature checklist (287 entries from the BigQuery reference and release notes, 2026-10-02) was checked against BigQuery: 31 of its 154 single-statement query examples were not valid GoogleSQL. The 119 distinct valid queries are kept in `tests/fixtures/googlesql_checklist.json` (source noted there), and `tests/test_googlesql_checklist.py` checks on every sqlglot build that each parses and prints back to SQL that reads the same. Four are recorded as not read yet: `MATCH_RECOGNIZE` (sqlglot's BigQuery tokenizer lacks the keyword, and reading it needs column lineage for `MEASURES` first), a parenthesized join that starts with `UNNEST`, the `WITH(a AS 1, a + 1)` expression, and pipe `RENAME` (on purpose, above). The same check found two false proofs, now fixed ([provers.md](../provers.md)): bytes literals that differ only in backslash escapes, and `CAST` to a parameterized type.
+- An outside GoogleSQL feature checklist (287 entries from the BigQuery reference and release notes, 2026-10-02) was checked against BigQuery: 31 of its 154 single-statement query examples were not valid GoogleSQL. The 119 distinct valid queries are kept in `tests/fixtures/googlesql_checklist.json` (source noted there), and `tests/test_googlesql_checklist.py` checks on every sqlglot build that each parses and prints back to SQL that reads the same. Three are recorded as not read yet: `MATCH_RECOGNIZE` (sqlglot's BigQuery tokenizer lacks the keyword, and reading it needs column lineage for `MEASURES` first), a parenthesized join that starts with `UNNEST`, and pipe `RENAME` (on purpose, above). The same check found two false proofs, now fixed ([provers.md](../provers.md)): bytes literals that differ only in backslash escapes, and `CAST` to a parameterized type.
+- Five constructs from the GoogleSQL compliance tests ([#520](https://github.com/walterogozaly/KumoSQL/issues/520)) were not read, or were misread, and are now handled in `bigquery_syntax.py` the same way on sqlglot 26.0.0, 30.20, 30.21 and compiled 30.21 (each was first checked with a BigQuery dry run):
+  - `x LIKE ALL UNNEST(array)` did not parse (`LIKE ANY UNNEST` did). It is read as `All` over an `Unnest` and prints back as written; `LIKE SOME` is read as `LIKE ANY`, which prints that way.
+  - An aggregate with a `WHERE` inside its call (`COUNT(* WHERE c)`, `SUM(DISTINCT x WHERE c)`, `ARRAY_AGG(x IGNORE NULLS WHERE c)`) is read as the standard `AGG(...) FILTER (WHERE c)` (`exp.Filter`) and printed back inside the call. BigQuery rejects the filter inside a window call and next to `ORDER BY`, `LIMIT` or `HAVING`; those stay unparsed, never read as something else. Provers treat the filtered aggregate as they treat `FILTER` from other dialects.
+  - `WITH(a AS 1, a + 1)` is read as a marker call that holds each definition and the result, and prints back as written. A bare `a` in a later definition or in the result is the variable, not a column, so it becomes a variable node and counts as no column read. A name defined twice, or a variable name used inside a subquery of the expression (which could mean a column of the subquery), is refused. The SMT prover answers unknown for it.
+  - `FROM t, t.arr elem WITH OFFSET off` did not parse; the array path is read as `UNNEST(t.arr)` with its offset, which is what BigQuery defines the path to mean. A plain table with `WITH OFFSET` is not guessed at.
+  - `STRUCT<>()` was read as the comparison `STRUCT <> ()`. BigQuery parses it as an empty struct type and then rejects it ("Unsupported empty struct type"), so it is now refused instead of misread.
+  `ROUNDING_MODE` was on the list too, but `ROUND(x, 0, 'ROUND_HALF_EVEN')` already parses on every build, and the cast form `CAST(x AS NUMERIC ROUNDING_MODE ...)` is a syntax error in BigQuery. The bitwise operator precedence (`2 | 1 & 0`) and non-associative comparison (`a > 10 IS TRUE`) misreads are left to the parser trust boundary work ([#500](https://github.com/walterogozaly/KumoSQL/issues/500)), which declines them when it lands instead of re-associating the tree, because re-associating would change the printed SQL everywhere. Until then a prover can equate `a > 10 IS TRUE` with `(a > 10) IS TRUE`, which BigQuery rejects.
+  The new cases are `query/like_all_any_unnest`, `query/aggregate_where_filter`, `query/with_expression` and `query/unnest_path_with_offset` in the manifest (all four dry-run valid; sqlfluff cannot format the first three, listed as `format` gaps), plus four entries in the checklist file and `tests/test_bigquery_grammar.py`.
 - sqlglot read a string, bytes literal or backticked name that runs onto a second line without triple quotes (`'a<line break>b'`), which BigQuery rejects as an unclosed literal, so the provers equated it with `'a\nb'`. `bigquery_syntax.py` now rejects it as BigQuery does; triple-quoted literals still span lines.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
 
@@ -87,10 +95,10 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 5 ✅ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
 | ddl | 74 | 45 ✅ 29 ⚪ | 74 ✅ | 74 ✅ | n/a | 74 ✅ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
 | dml | 16 | 16 ✅ | 16 ✅ | 16 ✅ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 134 | 132 ✅ 2 ⚪ | 134 ✅ | 134 ✅ | 131 ✅ | 134 ✅ | 131 ✅ 3 ⚪ | 109 ✅ 22 ⚪ | 115 ✅ 16 ⚠ 3 – |
+| query | 138 | 136 ✅ 2 ⚪ | 138 ✅ | 138 ✅ | 135 ✅ | 138 ✅ | 132 ✅ 6 ⚪ | 112 ✅ 23 ⚪ | 119 ✅ 16 ⚠ 3 – |
 | script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 261 | 209 ✅ 52 ⚪ | 261 ✅ | 260 ✅ 1 ⚪ | 131 ✅ | 261 ✅ | 242 ✅ 19 ⚪ | 109 ✅ 22 ⚪ | 202 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 265 | 213 ✅ 52 ⚪ | 265 ✅ | 264 ✅ 1 ⚪ | 135 ✅ | 265 ✅ | 243 ✅ 22 ⚪ | 112 ✅ 23 ⚪ | 206 ✅ 45 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
@@ -124,12 +132,13 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
 | cleanup | kumosql | equivalence could not be proven for every changed statement | 1 | `dataform/table_with_qualify_cte` |
-| format | sqlfluff | parse_error | 19 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
+| format | sqlfluff | parse_error | 22 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
 | prover | prover | unsupported: LIMIT is not modeled | 9 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
 | prover | prover | unsupported: WINDOW is not modeled | 7 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pseudo_columns_row_number` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT) | 2 | `query/pipe_call_tablesample`, `query/tablesample` |
 | prover | prover | unsupported: nondeterministic: ARRAY_AGG(DISTINCT state) | 1 | `query/aggregate_filter_modifiers` |
 | prover | prover | unsupported: nondeterministic: ANY_VALUE(city) | 1 | `query/aggregate_functions` |
+| prover | prover | unsupported: nondeterministic: ARRAY_AGG(first_name IGNORE NULLS) | 1 | `query/aggregate_where_filter` |
 | prover | prover | unsupported: unaliased subquery in FROM | 1 | `query/pipe_pivot_unpivot` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (50 PERCENT) | 1 | `query/tablesample_with_join` |
 | refs | kumosql | ref() inside a js block is not resolved: raw_users | 1 | `dataform/js_block_with_ref_in_helper` |
