@@ -37,7 +37,7 @@ ALLOWED: dict[type, frozenset[str]] = {
     exp.Subquery: _SUBQUERY,
     exp.Join: frozenset({"this", "on", "side", "kind", "method", "using"}),
     exp.Table: frozenset({"this", "db", "catalog", "alias", "pivots", "laterals"}),
-    exp.Star: frozenset(),
+    exp.Star: frozenset({"except", "except_", "replace", "rename"}),  # what smt_equivalence._star_columns models; ILIKE is declined
     exp.Column: frozenset({"this", "table", "db", "catalog"}),
     exp.Ordered: frozenset({"this", "desc", "nulls_first"}),
     exp.Distinct: frozenset({"expressions", "on"}),

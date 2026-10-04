@@ -56,9 +56,10 @@ def test_modeled_arguments_stay_proven(prove, left, right):
     assert prove(left, right, dialect="bigquery").status.name == "PROVEN_EQUIVALENT"
 
 
-def test_star_modifiers_are_never_allowed():
-    # F6: * EXCEPT / REPLACE changes the column list; whoever models them adds them here
-    assert ALLOWED[sqlglot.exp.Star] == frozenset()
+def test_only_the_modeled_star_modifiers_are_allowed():
+    # _star_columns models EXCEPT, REPLACE and RENAME; any other star argument (ILIKE) must be declined
+    assert ALLOWED[sqlglot.exp.Star] == {"except", "except_", "replace", "rename"}
     for sql in ("SELECT * EXCEPT (y) FROM t", "SELECT t.* REPLACE (x + 1 AS x) FROM t"):
-        with pytest.raises(UnmodeledConstruct):
-            check_args(sqlglot.parse_one(sql, read="bigquery"))
+        check_args(sqlglot.parse_one(sql, read="bigquery"))
+    with pytest.raises(UnmodeledConstruct):
+        check_args(sqlglot.parse_one("SELECT * ILIKE 'x%' FROM t", read="snowflake"))
