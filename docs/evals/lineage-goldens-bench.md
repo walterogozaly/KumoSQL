@@ -65,6 +65,11 @@ The other-dialect cases (109: Snowflake, MySQL, T-SQL and so on, read as BigQuer
 shape the adapter, so they are an unseen generalisation check; their wrong and missed counts are dialect differences and stay out of
 the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.
 
+Current other-dialect run: DataHub 40/81 exact, 2 coarse, 15 unknown, 16 missed, 8 wrong; OpenLineage 14/46 exact,
+0 unknown, 11 missed, 21 wrong. Scoping WITH names per reference (audit 1002 F11, `ast_utils.binding_cte`) moved one
+OpenLineage case here from unknown to exact (13/46 before). It was not tuned on and not looked at while fixing; the
+headline above does not change.
+
 Table inputs and explicit outputs are checked for DELETE, UPDATE, MERGE (including a UNION source), ALTER, DROP,
 TRUNCATE, CREATE LIKE/CLONE, and INSERT VALUES containing a scalar subquery. Every script write target is checked,
 instead of inferring outputs from the final model name. A rename reads the old name and writes the new name; a DML
