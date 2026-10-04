@@ -148,5 +148,5 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 | A-G05 | `bq-bench` TPC-DS | Apache-2.0, TPC terms | yes | 99 queries | covered by the TPC-DS evals; needs a billed project to run natively |
 | A-G08 | Dataform deployment sample | no licence | — | — | not added |
 | A-G09 | Google patents public data examples | Apache-2.0 (archived) | yes | — | **new** (batch 2): real-projects corpus |
-| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **new** (batch 2): the typed expected rows become an oracle for KumoSQL's BigQuery-to-DuckDB execution |
+| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **covered** (batch 2): the typed expected rows are an oracle for KumoSQL's BigQuery-to-DuckDB execution: 1,609/4,633 supported cases agree, 0 wrong ([page](googlesql-expected-results.md)) |
 | — | BIRD-CRITIC BigQuery, SQLShare, Fashion Dataform, NHANES-GCP, SQLRight, DQETool, AMOEBA, SlabCity, CODDTest | — | — | — | not added: empty, unlicensed or not a released corpus (as the research says) |
