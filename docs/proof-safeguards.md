@@ -49,7 +49,7 @@ Before this check, these rewrites were labeled `proven`:
 ## Limits
 
 - Only predicate cleanup is independently checked. Other rules (CTE movement and deduplication, parentheses, lifting, formatting) and the SMT-based prover keep their existing basis: the normalized-AST comparison, the layout comparison and the solver.
-- sqlglot's parser stays inside the trusted boundary. The checker does not establish BigQuery validity, schemas or parser correctness.
+- sqlglot's parse is checked separately, not by this checker: every proof is refused when an independent reading of its text disagrees with sqlglot's ([parser checks](parser-checks.md)). This checker still does not establish BigQuery validity or schemas.
 - SQLite is used only for the Boolean and literal model, never to run BigQuery SQL.
 
 ## Extending it
@@ -83,3 +83,4 @@ The audit was written against an older checkout. Each finding was re-run on mast
 | SMT and the algebraic prover read `1e-324 < 2e-324` as exact reals (BigQuery: FALSE) | Reproduced; tracked as a separate fix |
 | SMT drops `FOR SYSTEM_TIME AS OF` | Already refused on master ("Table.version is not modeled") |
 | The synthetic-data comparison treats `TRUE` and `1` as equal | Reproduced; tracked as a separate fix |
+| sqlglot's parse is trusted: bitwise operator precedence in BigQuery, comparison chains and `XOR` in MySQL, `~`, `IS` and `INTERSECT` in DuckDB and PostgreSQL, or a dropped `NOT`, give the provers a query nobody wrote | Fixed: every proof is refused when an independent reading of its text disagrees ([parser checks](parser-checks.md)) |

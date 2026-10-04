@@ -39,6 +39,7 @@ import sqlglot
 from sqlglot import exp
 
 from .algebraic_equivalence import prove_equivalent_algebraic
+from .parse_check import refuse_misread_proofs
 from .sqlx_fragments import masked_template_problem
 from .smt_equivalence import (
     SmtEquivalenceResult,
@@ -287,6 +288,7 @@ def run_sqlsolver(
     return lines
 
 
+@refuse_misread_proofs
 def prove_equivalent_sqlsolver(
     left_sql: str,
     right_sql: str,
@@ -341,6 +343,7 @@ def prove_equivalent_sqlsolver(
     return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"SQLSolver result: {main}")
 
 
+@refuse_misread_proofs
 def prove_equivalent(
     left_sql: str,
     right_sql: str,
