@@ -2,7 +2,9 @@
 
 * A select whose FROM source, an inner or cross joined source, or the left
   side of a LEFT JOIN can never hold a row returns no rows (unless it is a
-  global aggregate, which always returns one row): its WHERE becomes FALSE.
+  global aggregate, which always returns one row, or groups by ROLLUP, CUBE,
+  GROUPING SETS, () or ALL, whose grand-total row can exist over no input): its
+  WHERE becomes FALSE.
 * A LEFT JOIN whose right side can never hold a row pads every left row with
   NULLs: the join is dropped and the right side's columns read as NULL.
 * ``EXISTS`` over such a relation is FALSE, ``x IN (...)`` over it is FALSE.
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import distinct_on
+from .ast_utils import distinct_on, extended_grouping
 
 
 def _false(node: exp.Expression | None) -> bool:
@@ -32,10 +34,25 @@ def _false(node: exp.Expression | None) -> bool:
 
 
 def _global_aggregate(select: exp.Select) -> bool:
-    if select.args.get("group"):
+    """Whether the select can return a row over no input: an aggregate without ``GROUP BY`` (in the
+    select list, ``HAVING``, ``QUALIFY`` or ``ORDER BY``), or ``ROLLUP``/``CUBE``/``GROUPING SETS``,
+    ``GROUP BY ()`` or ``GROUP BY ALL``, whose grand-total row can exist when no row reaches the grouping."""
+
+    group = select.args.get("group")
+    if group is not None and (
+        extended_grouping(group)
+        or group.args.get("all")  # GROUP BY ALL over a select list of aggregates only groups by nothing
+        or not group.expressions
+        or any(isinstance(e, exp.Tuple) for e in group.expressions)  # GROUP BY () is the grand total
+    ):
+        return True
+    if group is not None:
         return False
-    for projection in select.expressions:
-        for agg in projection.find_all(exp.AggFunc):
+    if select.args.get("having") is not None:
+        return True  # HAVING without GROUP BY aggregates the whole input into one group
+    clauses = list(select.expressions) + [select.args.get(k) for k in ("qualify", "order")]
+    for clause in clauses:
+        for agg in clause.find_all(exp.AggFunc) if clause is not None else ():
             if agg.find_ancestor(exp.Select) is select and agg.find_ancestor(exp.Window) is None:
                 return True
     return False
