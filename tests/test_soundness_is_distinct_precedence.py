@@ -13,6 +13,8 @@ import sqlglot
 
 pytest.importorskip("z3")
 
+from sqlglot_support import OLD_SQLGLOT
+
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.ast_utils import UnmodeledConstruct, canonical_negation, check_modeled
 from kumosql.duckdb_load import run_unoptimized
@@ -85,6 +87,10 @@ def _declined(condition: str, dialect: str) -> bool:
         check_modeled(canonical_negation(sqlglot.parse_one(_where(condition), read=dialect)))
     except UnmodeledConstruct:
         return True
+    except sqlglot.errors.ParseError:
+        if OLD_SQLGLOT:  # sqlglot 26 cannot read the shape at all, which no prover models either
+            return True
+        raise
     return False
 
 

@@ -27,6 +27,7 @@ from typing import Callable
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import EXCEPT_KEY, spell_for_duckdb
 from .duckdb_load import run_unoptimized, small_database
 from .result_equivalence import DataRules
 
@@ -499,8 +500,7 @@ def _fill_empty_select_lists(tree: exp.Expression) -> exp.Expression:
         if isinstance(outer, exp.Select):
             for star in outer.expressions:
                 if isinstance(star, exp.Star):
-                    key = "except_" if "except_" in exp.Star.arg_types else "except"  # renamed in sqlglot 30
-                    star.set(key, [*(star.args.get(key) or []), exp.column(filler, quoted=True)])
+                    star.set(EXCEPT_KEY, [*(star.args.get(EXCEPT_KEY) or []), exp.column(filler, quoted=True)])
     return tree
 
 
@@ -569,7 +569,7 @@ def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -
         from .bigquery_on_duckdb import faithful
 
         tree = faithful(tree)
-    return _quote_unusual_names(tree).sql(dialect="duckdb")
+    return spell_for_duckdb(_quote_unusual_names(tree)).sql(dialect="duckdb")
 
 
 _TARGETED_TYPES = {"INT": "INT64", "VARCHAR": "STRING", "ENUM": "STRING", "TIME": "STRING", "DATE": "DATE", "NUMERIC": "FLOAT64", "BOOL": "BOOL"}

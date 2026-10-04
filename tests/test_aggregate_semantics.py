@@ -7,11 +7,15 @@ import pytest
 
 pytest.importorskip("z3")
 
+from sqlglot import exp
+
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.duckdb_load import insert_rows
 from kumosql.set_aggregates import reduce
 
 SCHEMA = {"t": ["k", "x", "y"], "u": ["num"]}
+# sqlglot 26 parses BIT_AND as an unknown function, so the provers refuse a query that calls it there
+BIT_AGGREGATES = hasattr(exp, "BitwiseAndAgg")
 
 
 def _proven(left: str, right: str, **kwargs) -> bool:
@@ -47,8 +51,9 @@ EQUIVALENT = [
     ("SELECT MAX(num) FROM (SELECT num FROM u GROUP BY num HAVING COUNT(num) = 1) AS a",
      "SELECT MAX(num) FROM (SELECT num FROM u GROUP BY num HAVING COUNT(*) < 2) AS b"),
     # DISTINCT aggregates and BIT_AND read the set of values; SUM over a GROUP BY x source is SUM(DISTINCT x).
-    ("SELECT SUM(DISTINCT x), COUNT(DISTINCT x), BIT_AND(x) FROM t",
-     "SELECT SUM(x), COUNT(x), BIT_AND(x) FROM (SELECT x FROM t GROUP BY x) AS d"),
+    pytest.param("SELECT SUM(DISTINCT x), COUNT(DISTINCT x), BIT_AND(x) FROM t",
+                 "SELECT SUM(x), COUNT(x), BIT_AND(x) FROM (SELECT x FROM t GROUP BY x) AS d",
+                 marks=pytest.mark.skipif(not BIT_AGGREGATES, reason="this sqlglot version does not know BIT_AND")),
     # COUNT only sees whether its argument is NULL.
     ("SELECT k, COUNT(CASE WHEN x = 1 THEN 'a' END) FROM t GROUP BY k",
      "SELECT k, COUNT(CASE WHEN x = 1 THEN 1 END) FROM t GROUP BY k"),
@@ -140,4 +145,4 @@ def test_bit_aggregate_of_a_null_group_key_stays_unknown():
     assert not _proven("SELECT k, BIT_AND(k) FROM t GROUP BY k", "SELECT k, k FROM t GROUP BY k", dialect="mysql")
     assert _proven(
         "SELECT k, CASE WHEN k IS NULL THEN NULL ELSE BIT_AND(k) END FROM t GROUP BY k", "SELECT k, k FROM t GROUP BY k", dialect="mysql"
-    )
+    ) == BIT_AGGREGATES

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from sqlglot_support import skip_if_unparseable
 from kumosql.graph import build_query_graph
 from kumosql.pipeline import Pipeline
 from kumosql.pipeline_loading import load_sqlx_project
@@ -66,6 +67,7 @@ def split(ref: str) -> tuple[str, str]:
 @pytest.mark.parametrize("case_id", sorted(CASES))
 def test_lineage_and_impact_never_confidently_miss(case_id, tmp_path):
     case = CASES[case_id]
+    skip_if_unparseable(case["sql"])  # pipe syntax and outer BY NAME need sqlglot 27 or later
     pl, key, final = build(case, tmp_path)
     tolerant = case.get("allow_unknown") or case.get("require_unknown")
     records = {ref.column: record for ref, record in pl.explain_lineage().items() if ref.table == key}
