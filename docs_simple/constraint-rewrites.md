@@ -24,9 +24,9 @@ Without a matching customer, the join drops an order. With two matching customer
 
 ## Find which facts the proof needs
 
-The Python helper `kumosql.constraint_dependence.needed_guarantees` starts with the declared facts, removes them one at a time, and checks which ones are needed for a sufficient proof. Its output can say “customer_id is NOT NULL” or “id is unique in customers.”
+The Python helper `kumosql.constraint_dependence.needed_guarantees` starts with the declared facts, removes them one at a time (repeating until nothing more can go), and checks which ones are needed for a sufficient proof. The proof it keeps is the one for the final list, not the one for the full list. Its output can say “customer_id is NOT NULL” or “id is unique in customers.”
 
-The result describes the assumptions supporting this proof method. It does not discover or enforce those guarantees in live data, or establish the only possible set of assumptions.
+The result describes the assumptions supporting this proof method. It does not discover or enforce those guarantees in live data, or establish the only possible set of assumptions. A fact it keeps is one this prover could not do without, not a fact proven necessary.
 
 The catalog and Dataform assertions can supply declarations. Verify that your real data satisfies them before relying on a conditional proof.
 

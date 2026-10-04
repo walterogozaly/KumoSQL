@@ -61,6 +61,43 @@ def test_counterexamples_respect_foreign_keys():
         assert all(r.get("customer_id") in parents for r in result.counterexample.tables.get("orders", []) if r.get("customer_id") is not None)
 
 
+def partial_prover(proving_sets, reports=None):
+    """A sound but partial prover: proves only when the NOT NULL columns it is given are one of ``proving_sets``."""
+
+    from kumosql.smt_equivalence import SmtEquivalenceResult, SmtStatus
+
+    def prove(left, right, schema=None, constraints=None, dialect=None, **options):
+        facts = (constraints or {}).get("t")
+        columns = frozenset(facts.not_null) if facts else frozenset()
+        if columns in proving_sets:
+            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, "ok", assumptions=tuple((reports or {}).get(columns, ())))
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "abstains")
+
+    return prove
+
+
+PARTIAL = {"t": TableConstraints(not_null=frozenset({"x", "y"}))}
+
+
+def test_the_deletion_pass_repeats_until_no_single_fact_can_be_dropped():
+    # Proves under {x, y}, {x} and {} but abstains under {y}: one pass drops y, keeps x, and never tries x against {x}.
+    prove = partial_prover({frozenset({"x", "y"}), frozenset({"x"}), frozenset()})
+    report = needed_guarantees("SELECT x FROM t", "SELECT x AS x FROM t", schema={"t": ["x", "y"]}, constraints=PARTIAL, prove=prove)
+    assert report.status == "proven" and report.needed == ()
+    for fact in report.needed:  # nothing left to delete; the claim holds for every retained fact
+        trial = [g for g in report.needed if g != fact]
+        assert not prove("", "", constraints=constraints_with(trial)).proven
+
+
+def test_the_stored_proof_is_the_one_for_the_final_set():
+    full, final = frozenset({"x", "y"}), frozenset({"x"})
+    prove = partial_prover({full, final}, {full: ("proof under every fact",), final: ("proof under x alone",)})
+    report = needed_guarantees("SELECT x FROM t", "SELECT x AS x FROM t", schema={"t": ["x", "y"]}, constraints=PARTIAL, prove=prove)
+    assert report.labels == ("t.x is NOT NULL",)
+    assert report.result.assumptions == ("proof under x alone",)
+    assert report.offered_result.assumptions == ("proof under every fact",)
+
+
 _path = Path(__file__).resolve().parent.parent / "tools" / "constraint_rewrite_bench.py"
 _spec = importlib.util.spec_from_file_location("constraint_rewrite_bench", _path)
 bench = importlib.util.module_from_spec(_spec)

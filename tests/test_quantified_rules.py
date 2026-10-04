@@ -275,3 +275,34 @@ def test_row_identity_keeps_table_arguments_and_deeper_readers():
     nested = _canonical(sqlglot.parse_one("SELECT r.b FROM (SELECT u.c AS b FROM u) AS r WHERE EXISTS (SELECT 1 FROM w WHERE w.b = r.b)", read="bigquery"))
     assert nested != _canonical(sqlglot.parse_one("SELECT u.c FROM u WHERE EXISTS (SELECT 1 FROM w WHERE w.b = u.b)", read="bigquery"))
     assert "AS b" in nested
+
+
+def test_a_stored_model_settles_a_fold_check_as_the_solver_would(monkeypatch):
+    """``_same`` skips the solver when a model kept from an earlier check already tells the two readings apart."""
+
+    import z3
+
+    from kumosql import quantified_rules
+
+    encoder = quantified_rules._Encoder({}, set())
+    x = (z3.Bool("x_null"), z3.Real("x"))
+    facts = quantified_rules._state_facts(encoder, False)
+    condition = quantified_rules._quantified_semantics(encoder, x, ">", False)
+    witnesses: list = []
+    verdicts = []
+    for quantifier_all in (False, True):
+        for op in (">", ">=", "<", "<=", "=" if quantifier_all else "<>"):
+            semantics = quantified_rules._quantified_semantics(encoder, x, op, quantifier_all)
+            for mode in ("pos", "neg", "both"):
+                alone = quantified_rules._same(encoder, condition, semantics, mode, facts)
+                assert quantified_rules._same(encoder, condition, semantics, mode, facts, witnesses) == alone
+                verdicts.append(alone)
+    assert verdicts.count(True) == 3  # x > ANY (q) only reads the same as itself, in each mode
+    assert 0 < len(witnesses) <= quantified_rules._WITNESSES
+
+    solvers = []
+    real = z3.Solver
+    monkeypatch.setattr(z3, "Solver", lambda *args, **kwargs: solvers.append(1) or real(*args, **kwargs))
+    semantics = quantified_rules._quantified_semantics(encoder, x, "<", True)
+    assert not quantified_rules._same(encoder, condition, semantics, "both", facts, witnesses)
+    assert solvers == []

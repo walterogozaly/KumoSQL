@@ -37,16 +37,20 @@ def test_deeply_nested_folders_are_found():
     assert "nested" in load_sqlx_project(PROJECTS / "subfolders").models
 
 
-@pytest.mark.xfail(reason="projectSuffix, datasetSuffix and namePrefix are ignored, so node names differ from the deployed tables", strict=True)
 def test_workflow_settings_suffixes_and_prefix_are_applied():
     pipeline = load_sqlx_project(PROJECTS / "workflow_settings_full")
-    assert "kumosql_dev.kumosql_messy_staging.dev_users" in pipeline.models
+    # @dataform/cli 3.0.71 joins with an underscore even when the setting starts or ends with one (`_dev` -> `kumosql__dev`)
+    assert list(pipeline.models) == ["kumosql__dev.kumosql_messy__staging.dev__users"]
+    assert pipeline.models["kumosql__dev.kumosql_messy__staging.dev__users"].logical == ("kumosql", "kumosql_messy", "users")
 
 
-@pytest.mark.xfail(reason="the Dataform JavaScript API (publish, operate, assert, declare in .js files) is not read", strict=True)
 def test_javascript_api_actions_are_loaded():
+    # publish() with a literal name, config and query is read; operate(), assert() and a publish in a loop are not yet
     pipeline = load_sqlx_project(PROJECTS / "js_api")
-    assert pipeline.models
+    assert set(pipeline.models) == {"kumosql.kumosql_messy.users_copy", "kumosql.kumosql_messy.users_view_js"}
+    assert pipeline.models["kumosql.kumosql_messy.users_view_js"].kind == "view"
+    assert [t.key for t in pipeline.models["kumosql.kumosql_messy.users_view_js"].declared_dependencies] == [
+        "kumosql.kumosql_messy.users_copy"]
 
 
 @pytest.mark.xfail(reason="actions.yaml (types, dependencyTargets, file mapping) is not read; its SQL files load as untyped models", strict=True)

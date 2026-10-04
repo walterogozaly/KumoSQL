@@ -1,0 +1,21 @@
+{
+  "suite": "Table minimization, adapted cases",
+  "order": 113,
+  "size": 100,
+  "score": "58/100 simplified, 0 wrong; 52% of the reference reduction; 6 Fivetran pipelines hit the 300 s limit",
+  "metric": "Pipelines adapted from public projects, with protected tables that must keep their names and exact output: KumoSQL's table minimizer (kumosql.table_minimizer) returns its simplest pipeline, scored by kumosql.formatting.pipeline_complexity. 55 sqlglot optimizer fixtures split into 2 to 4 tables (reference: sqlglot's own simplified query, or a hand-simplified pipeline), 43 Fivetran dbt packages of 18 to 49 tables and 2 jaffle_shop cases (reference: dead and pass-through tables removed, or hand-simplified). Quality is (original - output) / (original - reference), averaged over the 89 cases whose reference is simpler; a run that hit its limit counts 0.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every output's protected tables agree with the original on 100 random and targeted DuckDB databases (optimizer off), the project's own seed rows and every trap witness. 43 outputs are proved by prove_models, 4 agree (the minimizer's own check proved them, the harness's prover did not), 47 leave each protected table and everything it reads unchanged, and 6 Fivetran runs hit the 300 s limit and count as not improved. The 55 dev sqlglot cases carry 24 traps, each with a witness.",
+  "coverage": {
+    "proven": 90,
+    "unknown": 4,
+    "error": 6
+  },
+  "held_out": "28 cases (21 sqlglot, 1 jaffle_shop, 6 Fivetran), run once: 15/28 simplified, 0 wrong, quality 0.52 (sqlglot 14/21, jaffle_shop 1/1, Fivetran 0/6). An earlier partial run of the minimizer on the sqlglot and jaffle_shop held-out cases, under the previous score and references, preceded it; nothing was tuned on held-out cases",
+  "docs": "docs/evals/table-minimization.md",
+  "command": "python tools/minimization_isolated.py --cases sourced --jobs 3 --memory-gb 5 --timeout 300",
+  "date": "2026-10-04",
+  "caveats": "Adapted, not original, cases: sqlglot (MIT, commit bffcdefc16b0) and dbt-labs/jaffle_shop_duckdb and seven Fivetran packages (Apache-2.0, pinned commits); licences in benchmarks/table_minimization/licenses. References are targets, not optima: 36 of the 128 were hand-simplified and checked (23 sqlglot, 3 jaffle_shop, 6 klaviyo, 4 recurly) and 39 Fivetran references are still mechanical (dead and pass-through tables removed), so Fivetran quality measures progress toward a weaker target than the sqlglot and hand ones. The minimizer never beats a hand reference here. It finds none of the hand rewrites that need a new proof rule (joins that can never match, GROUP BY on a constant column, LEFT JOIN to an unread DISTINCT table). Each case ran in its own process with a 5 GB memory cap and a 300 s limit (3 at once on 4 cores, so times are rough); asana-all, asana__daily_metrics and four github models hit the 300 s limit. Fivetran SQL was adapted: current_timestamp fixed, unordered STRING_AGG/ARRAY_AGG given an order, CTEs that shadow their own table renamed. The previous numbers (Refactor search, 33/100) were measured under the earlier complexity score and are replaced.",
+  "usefulness": "58/100 dev cases improved: sqlglot 38/55 (quality 0.70; 43 proved), jaffle_shop 2/2 (quality 0.41, agreed not proved), Fivetran 18/43 (quality 0.29; 18 improved by dropping unread tables or simplifying, 6 timeouts); complexity 11,982.0 -> 10,122.0 against 5,952.0 for the references (sqlglot 198.5 -> 141.0 vs 107.0; Fivetran 11,717.5 -> 9,935.0 vs 5,826.0); quality by reference kind: sqlglot's own 0.91, hand 0.33, mechanical 0.26",
+  "performance": "sqlglot: median 0.6 s per case, max 3 s, 39 s in total. jaffle_shop: 53 s per case. Fivetran: median 101 s per case, max 300 s, 6,070 s in total (3 at once); checking 459 s."
+}

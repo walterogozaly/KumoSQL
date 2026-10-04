@@ -45,7 +45,12 @@ def bounded_solver(timeout_ms: int):
     Z3 reports ``reason_unknown()`` ``"canceled"`` for the cap and ``"timeout"`` for the wall clock.
     """
 
-    solver = z3.Solver()
+    return bound(z3.Solver(), timeout_ms)
+
+
+def bound(solver, timeout_ms: int):
+    """Apply the work cap and the wall-clock limit to ``solver``; ``Solver.translate`` drops both."""
+
     solver.set("rlimit", timeout_ms * WORK_PER_MS)
     solver.set("timeout", timeout_ms)
     return solver

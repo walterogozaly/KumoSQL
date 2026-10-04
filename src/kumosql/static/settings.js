@@ -715,6 +715,8 @@
     const conditionsOf = (conditions) => h("details", { class: "ev-assumptions", open: "" },
       h("summary", { text: `Conditions (${conditions.length})` }),
       h("ul", {}, ...conditions.map((item) => h("li", {}, h("details", {}, h("summary", { text: item.text }), h("pre", { class: "sp-pre", text: item.check_sql }))))));
+    const assumptionsOf = (assumptions) => h("details", { class: "ev-assumptions" }, h("summary", { text: `Assumptions (${assumptions.length})` }),
+      h("ul", {}, ...assumptions.map((item) => h("li", { text: item }))));
     const compare = async () => {
       verdict.textContent = "Comparing…";
       verdictDetail.replaceChildren();
@@ -724,7 +726,10 @@
           ? `Equivalent (${result.method}${result.lemmas.length ? `, ${result.lemmas.length} layers matched` : ""}). ${result.assumptions.filter((a) => a.startsWith("declared")).join(" ")}`
           : result.status === "conditional" ? `Equivalent under ${result.conditions.length} ${result.conditions.length === 1 ? "condition" : "conditions"} (${result.method}).`
           : `Not proven: ${result.reason}${boundedLine(result.bounded)}`;
-        if (result.status === "conditional") verdictDetail.append(conditionsOf(result.conditions));
+        if (result.status === "conditional") {
+          verdictDetail.append(conditionsOf(result.conditions));
+          if (result.assumptions.length) verdictDetail.append(assumptionsOf(result.assumptions));
+        }
       } catch (error) { verdict.textContent = error.message; }
     };
     body.append(
@@ -762,10 +767,7 @@
           const tables = Object.entries(result.counterexample.tables).map(([name, items]) => `${name}: ${items.length ? items.map((row) => JSON.stringify(row)).join(" ") : "empty"}`);
           queryDetail.append(h("pre", { class: "sp-pre", text: [...tables, `A returns: ${rows(result.counterexample.left_rows)}`, `B returns: ${rows(result.counterexample.right_rows)}`].join("\n") }));
         }
-        if (result.assumptions.length) {
-          queryDetail.append(h("details", { class: "ev-assumptions" }, h("summary", { text: `Assumptions (${result.assumptions.length})` }),
-            h("ul", {}, ...result.assumptions.map((item) => h("li", { text: item })))));
-        }
+        if (result.assumptions.length) queryDetail.append(assumptionsOf(result.assumptions));
       } catch (error) { queryVerdict.textContent = error.message; }
     };
     body.append(
