@@ -142,6 +142,8 @@ def test_null_operands_are_anchored():
 def test_round_trip_ignores_printing_idioms_that_leave_the_grouping_alone():
     # MySQL has no FULL JOIN and no DESC NULLS FIRST; sqlglot prints emulations. DIV is printed as a CAST.
     assert pc.round_trip("SELECT a FROM t FULL JOIN u ON t.x = u.x", "mysql") is None
+    # nor an ANTI or SEMI JOIN (the SQLSolver TPC-H rewrites use them): printed as NOT EXISTS / EXISTS
+    assert pc.round_trip("SELECT a FROM t LEFT ANTI JOIN u ON t.x = u.x WHERE NOT a IS NULL", "mysql") is None
     assert pc.round_trip("SELECT a FROM t ORDER BY a DESC NULLS FIRST", "mysql") is None
     assert pc.round_trip("SELECT a DIV b + c DIV d FROM t", "mysql") is None
     assert pc.round_trip("SELECT a - (b - c), NOT (a AND b), (a OR b) AND c FROM t", "bigquery") is None

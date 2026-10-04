@@ -2353,10 +2353,10 @@ def round_trip(sql: str, dialect: str = "bigquery") -> str | None:
     for tree in trees:
         tree = canonical_negation(tree)
         if family(dialect) == "mysql" and (
-            any(str(j.args.get("side") or "").upper() == "FULL" for j in tree.find_all(exp.Join))
+            any(str(j.args.get("side") or "").upper() == "FULL" or str(j.args.get("kind") or "").upper() in ("ANTI", "SEMI") for j in tree.find_all(exp.Join))
             or any(o.args.get("nulls_first") is not None and o.args.get("nulls_first") == bool(o.args.get("desc")) for o in tree.find_all(exp.Ordered))
         ):
-            continue  # MySQL has no FULL JOIN and no NULLS FIRST on DESC: sqlglot prints an emulation, a different tree by design
+            continue  # MySQL has no FULL, ANTI or SEMI JOIN and no NULLS FIRST on DESC: sqlglot prints an emulation, a different tree by design
         try:
             with quiet_parser():
                 text = tree.sql(dialect=dialect)
