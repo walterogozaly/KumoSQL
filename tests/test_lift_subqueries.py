@@ -166,6 +166,38 @@ def test_parse_failure_is_not_reported_as_success():
     assert result.diagnostics
 
 
+def test_correlated_derived_tables_stay_in_place():
+    # sqlfluff ST05's refusal cases: a derived table that reads the relation before it (in any branch of a set
+    # operation, or inside a nested predicate) would lose that relation in a top-level CTE
+    for source in (
+        "SELECT pd.* FROM person_dates AS pd JOIN (SELECT * FROM events AS ce WHERE ce.name = pd.name) AS e ON TRUE",
+        "SELECT pd.* FROM person_dates AS pd JOIN (SELECT name FROM events AS ce UNION ALL "
+        "SELECT name FROM events2 AS ce2 WHERE ce2.name = pd.name) AS e ON TRUE",
+        "SELECT * FROM a JOIN (SELECT * FROM b WHERE EXISTS (SELECT 1 FROM c WHERE c.y = a.y)) AS s ON TRUE",
+    ):
+        result = lift_subqueries(source)
+        assert result.sql == source
+        assert result.success and result.lifted_subqueries == 0
+        assert [d.code for d in result.diagnostics] == ["correlated_subquery_kept"]
+        assert count_inline_subqueries(source) == 0
+
+
+def test_correlated_inner_subquery_moves_with_its_uncorrelated_parent():
+    source = "SELECT * FROM (SELECT * FROM a, (SELECT * FROM b WHERE b.x = a.x) AS s) AS t"
+    result = lift_subqueries(source)
+    assert result.lifted_subqueries == 1
+    assert "(SELECT * FROM b WHERE b.x = a.x) AS s" in result.sql  # still next to `a`
+    # a name that only shadows an outer alias is not a correlation
+    assert lift_subqueries("SELECT * FROM a AS b JOIN (SELECT * FROM b WHERE b.x = 1) AS s ON TRUE").lifted_subqueries == 1
+
+
+def test_subquery_reading_a_nested_with_name_stays_in_place():
+    source = "SELECT * FROM (WITH c AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM c) AS d) AS e"
+    result = lift_subqueries(source)
+    assert result.lifted_subqueries == 1  # only the outer one: at the top level `c` would be the base table
+    assert "(SELECT x FROM c) AS d" in result.sql
+
+
 def test_lifted_cte_never_shadows_a_table_the_query_reads():
     # Eval-integrity audit 2026-10-02: naming the CTE __lifted_subquery_001 hid the
     # physical table of that name, turning (1, 7) into (1, 1).

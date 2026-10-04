@@ -34,6 +34,20 @@ def _bags_differ(left: str, right: str, rows: list[tuple]) -> bool:
     return Counter(a) != Counter(b)
 
 
+def _parses(sql: str) -> bool:
+    try:
+        sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.ParseError:
+        return False
+    return True
+
+
+# sqlglot 26 cannot parse outer (FULL, LEFT, INNER) BY NAME or CORRESPONDING set operations
+OUTER_BY_NAME = pytest.mark.skipif(
+    not _parses("SELECT 1 AS a FULL UNION ALL BY NAME SELECT 1 AS a"), reason="this sqlglot version cannot parse outer BY NAME"
+)
+
+
 # (left, right, DuckDB stand-in for left or None, rows of t on which they differ). DuckDB has no
 # INTERSECT/EXCEPT BY NAME, so those cases spell out the BigQuery meaning positionally for the check.
 WRONG = [
@@ -71,6 +85,7 @@ WRONG = [
         None,
         [(1, 2)],
         id="union-all-strict-corresponding",
+        marks=OUTER_BY_NAME,
     ),
     pytest.param(
         "SELECT x FROM t UNION ALL SELECT y FROM t LIMIT 1",
@@ -145,6 +160,7 @@ def test_by_name_difference_is_found(left, right):
             "SELECT x AS a, y AS b FROM t FULL UNION ALL BY NAME SELECT x AS a FROM t",
             "SELECT x AS a, y AS b FROM t UNION ALL SELECT x, NULL FROM t",
             id="full-union-by-name-pads-with-null",
+            marks=OUTER_BY_NAME,
         ),
     ],
 )
@@ -174,8 +190,8 @@ def test_positional_near_miss_stays_bounded_equivalent(left, right):
     "sql",
     [
         "SELECT x AS a, y AS b FROM t UNION ALL BY NAME SELECT y AS b, x AS a FROM t",
-        "SELECT x AS a FROM t LEFT UNION ALL BY NAME SELECT x AS a FROM t",
-        "SELECT x AS a, y AS b FROM t UNION ALL CORRESPONDING BY (b) SELECT y AS b, x AS a FROM t",
+        pytest.param("SELECT x AS a FROM t LEFT UNION ALL BY NAME SELECT x AS a FROM t", marks=OUTER_BY_NAME),
+        pytest.param("SELECT x AS a, y AS b FROM t UNION ALL CORRESPONDING BY (b) SELECT y AS b, x AS a FROM t", marks=OUTER_BY_NAME),
         "SELECT x FROM t UNION ALL SELECT y FROM t LIMIT 1",
     ],
 )

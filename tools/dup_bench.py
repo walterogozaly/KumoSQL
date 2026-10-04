@@ -43,6 +43,9 @@ import random
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from kumosql.duckdb_load import small_database  # noqa: E402
+
 logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 HOLDOUT_EVERY = 5
@@ -453,7 +456,7 @@ def make_database(tables: list[str], seed: int, rows: int = 150):
     import duckdb
 
     rng = random.Random(seed)
-    con = duckdb.connect()
+    con = small_database()
 
     def value(kind: str, column: str):
         if rng.random() < 0.12 and column not in ("id",):

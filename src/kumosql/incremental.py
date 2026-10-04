@@ -36,6 +36,8 @@ from typing import Any, Iterable
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import spell_for_duckdb
+from .duckdb_load import small_database
 from .sqlx import _find_interpolation_end, split_sqlx_sections
 
 
@@ -278,7 +280,7 @@ def _connect():
         import duckdb
     except ImportError as exc:  # pragma: no cover
         raise IncrementalError("duckdb is required; install kumosql[execution]") from exc
-    return duckdb.connect(database=":memory:")
+    return small_database()
 
 
 def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
@@ -312,7 +314,7 @@ def _pin_clock(tree: exp.Expression, clock: dt.datetime, read: str) -> exp.Expre
             tree = faithful(tree)
         except sqlglot.errors.SqlglotError as exc:
             raise IncrementalError(f"cannot run as BigQuery does: {exc}") from exc
-    return tree
+    return spell_for_duckdb(tree)
 
 
 def _norm(value: Any) -> Any:

@@ -12,7 +12,7 @@ The corpora include LeetCode solutions, pairs from equivalence research, and Cal
 - **Different** includes a database satisfying the applicable constraints on which the queries return different results.
 - **Unknown** means neither answer was established.
 
-Candidate counterexamples are replayed and shuffled to avoid differences caused only by arbitrary row order or tied LIMIT choices. Some engine-sensitive cases receive additional checks with the optimizer disabled.
+Candidate counterexamples are replayed and shuffled to avoid differences caused only by arbitrary row order or tied LIMIT choices. Some engine-sensitive cases receive additional checks with the optimizer disabled. Picks the shuffle cannot move (`ANY_VALUE` over several values, a `LIMIT` that cuts through ties) get a further check, so a difference through such a pick stays unknown. The full reference has the details.
 
 ## Why the test run is cheaper
 

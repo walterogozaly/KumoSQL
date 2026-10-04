@@ -29,6 +29,9 @@ import sqlglot
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import calcite_corpora as cc  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from kumosql.duckdb_load import small_database  # noqa: E402
+
 OUT = cc.FIXTURES / "spes"
 SCHEMA = cc.FIXTURES / "sqlsolver" / "calcite.schema.sql"
 STRINGS = ["a", "b", "foo", "abc", "Charlie", "Bill", "SALES", "Clerk"]
@@ -111,7 +114,7 @@ def check(ddl: list[str], tables: list[dict], q1: str, q2: str, trials: int = 40
     rng = random.Random(0)
     bad = 0
     for trial in range(trials + 1):
-        con = duckdb.connect()
+        con = small_database()
         for s in ddl:
             con.execute(s)
         if trial:

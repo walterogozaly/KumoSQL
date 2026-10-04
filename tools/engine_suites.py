@@ -268,7 +268,8 @@ def parse_slt(text: str) -> tuple[list[Record], str | None]:
 def _connect():
     import duckdb
 
-    connection = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    connection = small_database()
     for pragma in ("SET threads=1", "SET autoinstall_known_extensions=false", "SET autoload_known_extensions=false"):
         try:
             connection.execute(pragma)
@@ -492,10 +493,14 @@ def _unparenthesised_original_fails(connection, original: str) -> bool:
     return False
 
 
-def _treat(connection, case: CaseResult, label: str, bigquery_sql: str, control_set: Counter, ncols: int) -> CaseResult:
+def _treat(
+    connection, case: CaseResult, label: str, bigquery_sql: str, control_set: Counter, ncols: int, rules: tuple[str, ...] | None = None
+) -> CaseResult:
+    """Run ``rules`` (KumoSQL's canonical order by default) on the query and compare the result with the control."""
+
     started = time.perf_counter()
     try:
-        result = apply_rules(canonical_rule_order(), bigquery_sql)
+        result = apply_rules(rules or canonical_rule_order(), bigquery_sql)
     except Exception as exc:
         case.status = "error"
         case.detail = f"{type(exc).__name__}: {str(exc)[:80]}"

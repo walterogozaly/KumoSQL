@@ -305,7 +305,8 @@ def normalise(rows: list[tuple]) -> Counter:
 def new_database(tables: dict[str, list[str]], kinds: dict[tuple[str, str], str]):
     import duckdb
 
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     db.execute("SET default_null_order = 'nulls_first_on_asc_last_on_desc'")  # MySQL sorts NULL as the smallest value
     db.execute("SET default_collation = 'nocase'")  # and compares strings without case
     for table, columns in tables.items():

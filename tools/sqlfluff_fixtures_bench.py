@@ -28,6 +28,7 @@ held out of development runs.
     python tools/sqlfluff_fixtures_bench.py semantic              # prover over the semantic fixes
     python tools/sqlfluff_fixtures_bench.py layout                # parse-tree, comment and literal checks
     python tools/sqlfluff_fixtures_bench.py kumosql               # format_sql and rewrite rules vs the fixtures
+    python tools/sqlfluff_fixtures_bench.py refusals              # rewrite rules on the queries sqlfluff leaves alone
     python tools/sqlfluff_fixtures_bench.py semantic --split dev  # development rules only
     python tools/sqlfluff_fixtures_bench.py extract CHECKOUT      # rebuild the data file
 """
@@ -815,6 +816,272 @@ def kumosql_summary(result: dict) -> str:
     return "\n".join(lines)
 
 
+# --- refusal cases: what sqlfluff declines to change ---------------------------------
+#
+# The structure rules' fixtures also hold queries sqlfluff deliberately leaves alone: a ``pass_str`` (nothing to
+# flag) or a ``fail_str`` with no ``fix_str`` (flagged but not fixable safely). Many name the hazard in their id: a
+# subquery correlated to its neighbour in FROM (in any branch of a set operation), a recursive WITH, a CTE that
+# modifies data, Jinja templating. KumoSQL's own structural rules (``lift_subqueries`` for ST05, the CTE rules for
+# ST03, the predicate rules for CV12, and the rest) must either leave each one alone or make a change they prove,
+# and that change must keep the meaning: checked by proof, by three syntactic checks that do not use the prover
+# (no qualified column loses its source, no data-modifying CTE disappears, every Jinja tag survives), and by running
+# input and output on random DuckDB databases where DuckDB can run them.
+
+REFUSAL_DATA = DATA.parent / "refusal-cases.json"
+REFUSAL_FILES = ("ST", "CV12")  # the structure rules, and CV12 (join conditions written in WHERE)
+REFUSAL_OUTCOMES = ("declined", "proven", "refused", "unsupported", "error", "caught", "wrong")
+
+# The cases whose name or rule documentation says why sqlfluff declines: the hazard a rewrite must respect.
+# Written from the fixture names and sqlfluff's rule docs, never from a KumoSQL verdict; they are reported
+# apart, and the scored check is the same for every case.
+REFUSAL_HAZARDS = {
+    "ST05/issue_3572_correlated_subquery_1": "the JOIN subquery reads a column of the table before it (a correlated derived table)",
+    "ST05/issue_3572_correlated_subquery_2": "the JOIN subquery reads a column of the table before it (a correlated derived table)",
+    "ST05/issue_3572_correlated_subquery_3": "the JOIN subquery reads a column of the table before it (a correlated derived table)",
+    "ST05/correlated_subquery_in_later_set_expression_branch": "the second UNION ALL branch of the JOIN subquery is correlated",
+    "ST05/with_recursive_fail_no_fix": "a lifted CTE would join a RECURSIVE WITH clause",
+    "ST05/uses_templating": "Jinja inside the subquery",
+    "ST03/test_fail_postgres_dml_ctes_not_flagged": "PostgreSQL runs a data-modifying CTE even when nothing reads it",
+    "ST03/test_fail_query_uses_templating": "Jinja in the FROM clause",
+    "CV12/test_pass_templated_join_clause_not_fixed": "Jinja names the joined table",
+    "CV12/test_pass_templated_join_clause_keeps_other_filters": "Jinja names the joined table",
+}
+
+
+def extract_refusals(checkout: Path, out: Path = REFUSAL_DATA) -> int:
+    """Rebuild the refusal data file (every case with no ``fix_str``) from a checkout of the pinned commit."""
+
+    import yaml
+
+    cases = []
+    for path in sorted((checkout / SOURCE["path"].rsplit("/", 1)[0]).glob("*.yml")):
+        if not path.stem.startswith(REFUSAL_FILES):
+            continue
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, case in data.items():
+            if name == "rule" or not isinstance(case, dict) or "fix_str" in case:
+                continue
+            configs = case.get("configs") or {}
+            cases.append({
+                "id": f"{path.stem}/{name}",
+                "rule": str(data.get("rule") or case.get("rules") or path.stem),
+                "kind": "pass" if "pass_str" in case else "fail_no_fix",
+                "dialect": (configs.get("core") or {}).get("dialect", "ansi"),
+                "sql": case.get("pass_str") if "pass_str" in case else case["fail_str"],
+                "configs": configs,
+            })
+    out.write_text(json.dumps({"source": SOURCE, "cases": cases}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return len(cases)
+
+
+@dataclass
+class RefusalCase:
+    id: str
+    rule: str
+    kind: str  # "pass" (nothing flagged) or "fail_no_fix" (flagged, no fix offered)
+    dialect: str
+    sql: str
+    configs: dict
+
+    @property
+    def held_out(self) -> bool:
+        return int(hashlib.sha1(f"sqlfluff-refusal:{self.id}".encode()).hexdigest(), 16) % 5 == 0
+
+    @property
+    def hazard(self) -> str:
+        return REFUSAL_HAZARDS.get(self.id, "")
+
+
+def load_refusals() -> list[RefusalCase]:
+    data = json.loads(REFUSAL_DATA.read_text(encoding="utf-8"))
+    if data["source"]["commit"] != SOURCE["commit"]:
+        raise SystemExit("the refusal data file is not from the pinned commit")
+    return [RefusalCase(**c) for c in data["cases"]]
+
+
+def unbound_references(trees: list[exp.Expression]) -> Counter:
+    """Qualified columns whose qualifier names no relation in scope, by qualifier.
+
+    A column may name a FROM or JOIN relation of its own SELECT or of any enclosing one (which covers correlated
+    predicate subqueries and correlated derived tables alike), but a CTE body sees nothing of the query that uses
+    it. Written without the prover: a rewrite whose output has more of these than its input moved a reference
+    out of the scope that defines it.
+    """
+
+    unbound: Counter = Counter()
+    for tree in trees:
+        for column in tree.find_all(exp.Column):
+            parts = [p.lower() for p in (column.text("catalog"), column.text("db"), column.table) if p]
+            if not parts or isinstance(column.this, exp.Star):
+                continue
+            visible: set[str] = set()
+            node = column.parent
+            while node is not None:
+                if isinstance(node, exp.Select):
+                    for source in _sources(node) + list(node.args.get("laterals") or []):
+                        visible.add((source.alias_or_name or "").lower())
+                        if isinstance(source, exp.Table) and source.name:
+                            visible.add(source.name.lower())
+                if isinstance(node, exp.CTE):
+                    break
+                node = node.parent
+            if not visible.intersection(parts):
+                unbound[parts[0]] += 1
+    return unbound
+
+
+_DML = (exp.Insert, exp.Update, exp.Delete, exp.Merge)
+
+
+def data_modifications(trees: list[exp.Expression]) -> int:
+    """Data-modifying statements nested inside a statement (a PostgreSQL ``WITH x AS (DELETE ...)``)."""
+
+    return sum(1 for tree in trees for node in tree.walk() if isinstance(node, _DML) and node is not tree)
+
+
+def jinja_tags(sql: str) -> Counter:
+    return Counter(re.sub(r"\s+", " ", m.group(0)) for m in _JINJA.finditer(sql))
+
+
+def _runs_on_duckdb(sql: str, schema: dict, kinds: dict) -> bool | None:
+    """Whether DuckDB runs ``sql`` (read as BigQuery) on an empty database of ``schema``; ``None`` if it cannot be translated."""
+
+    from kumosql.random_check import CheckError, _connect, _duck
+
+    try:
+        query = _duck(sql, "bigquery")
+    except (CheckError, sqlglot.errors.SqlglotError, ValueError, KeyError):
+        return None
+    db = _connect(_check_schema(schema, kinds), "bigquery")
+    try:
+        db.execute(query).fetchall()
+    except Exception:  # noqa: BLE001 - any failure to run is the answer
+        return False
+    return True
+
+
+def rewrite_harms(before: str, after: str, dialect: str, trials: int = 120) -> list[str]:
+    """Why the rewrite ``before`` -> ``after`` changes behaviour, ``[]`` when no check finds a difference.
+
+    ``scope``: a qualified column lost its source. ``side effects``: a data-modifying CTE disappeared. ``template``:
+    a Jinja tag was changed or dropped. ``execution``: a random DuckDB database separates the two (counted only
+    when DuckDB's unoptimized plan agrees), or the input runs and the output does not.
+    """
+
+    harms = []
+    if jinja_tags(before) != jinja_tags(after):
+        harms.append("template")
+    left = None
+    for reading in (dialect, "bigquery"):  # the case's dialect, else BigQuery as KumoSQL read it
+        try:
+            left = parse_all(before, reading)
+            break
+        except Unsupported:
+            continue
+    try:
+        right = parse_all(after, "bigquery")
+    except Unsupported:
+        return harms + ["unreadable output"]
+    if left is None:
+        return harms
+    if unbound_references(right) - unbound_references(left):
+        harms.append("scope")
+    if data_modifications(right) < data_modifications(left):
+        harms.append("side effects")
+    if "template" in harms or len(left) != 1 or len(right) != 1 or not isinstance(right[0], exp.Query):
+        return harms
+    schema, kinds = infer_schema(left + right)
+    ran = _isolated(_runs_pair, before, after, schema, kinds)
+    if ran == (True, False):
+        harms.append("execution: the output fails where the input runs")
+    elif ran == (True, True) and execute_difference(before, after, "bigquery", schema, kinds, trials):
+        harms.append("execution: a database separates input and output")
+    return harms
+
+
+def _runs_pair(before: str, after: str, schema: dict, kinds: dict):
+    return _runs_on_duckdb(before, schema, kinds), _runs_on_duckdb(after, schema, kinds)
+
+
+_TRUSTED = ("proven", "unchanged")
+_UNREADABLE = ("parse_error", "recovered_parse", "templated_sql_kept", "sqlx_parse_error")
+
+
+def decide_refusal(case: RefusalCase, rules: tuple[str, ...] = STRUCTURAL_RULES) -> tuple[str, list[dict]]:
+    """Run every structural rule on the case: the case's outcome and one record per rule.
+
+    Per rule: ``declined`` (no change), ``unsupported`` (no change, and KumoSQL could not read the SQL strictly),
+    ``proven`` (a change KumoSQL proved, no check finds a difference), ``refused`` (a change KumoSQL's verification
+    did not accept, no check finds a difference), ``caught`` (a change that does alter behaviour, which the
+    verification refused: a rule bug, no wrong output reaches a user), ``wrong`` (a change that alters behaviour,
+    verified anyway) and ``error``. The case gets the worst of its rules' outcomes.
+    """
+
+    from kumosql.rewrite import apply_rule
+
+    records = []
+    for name in rules:
+        try:
+            result = apply_rule(name, case.sql)
+        except Exception as error:  # noqa: BLE001 - a crash is a failure, never a pass
+            records.append({"rule": name, "outcome": "error", "detail": f"{type(error).__name__}: {str(error)[:80]}"})
+            continue
+        codes = {d.code for d in result.diagnostics}
+        if result.sql.strip() == case.sql.strip():
+            outcome = "unsupported" if codes & set(_UNREADABLE) else "declined"
+            records.append({"rule": name, "outcome": outcome, "detail": ", ".join(sorted(codes & set(_UNREADABLE)))})
+            continue
+        status = result.verification.status.value
+        harms = rewrite_harms(case.sql, result.sql, case.dialect)
+        if status in _TRUSTED:
+            outcome = "wrong" if harms else "proven"
+        else:
+            outcome = "caught" if harms else "refused"
+        records.append({"rule": name, "outcome": outcome, "status": status, "harms": harms, "sql": result.sql})
+    rank = {o: i for i, o in enumerate(REFUSAL_OUTCOMES)}
+    outcome = max((r["outcome"] for r in records), key=rank.__getitem__, default="declined")
+    return outcome, records
+
+
+def _decide_refusal_job(args):
+    position, case = args
+    return position, decide_refusal(case)
+
+
+def run_refusals(cases: list[RefusalCase], workers: int | None = None) -> dict:
+    """``{"verdicts": {case id: (outcome, records)}, "seconds": ...}``."""
+
+    out = {"verdicts": {}, "seconds": 0.0}
+    start = time.time()
+    with ProcessPoolExecutor(max_workers=workers or os.cpu_count()) as pool:
+        for position, verdict in pool.map(_decide_refusal_job, list(enumerate(cases)), chunksize=4):
+            out["verdicts"][cases[position].id] = verdict
+    out["seconds"] = time.time() - start
+    return out
+
+
+def refusal_summary(cases: list[RefusalCase], result: dict) -> str:
+    verdicts = result["verdicts"]
+    outcomes = Counter(outcome for outcome, _ in verdicts.values())
+    correct = outcomes["declined"] + outcomes["proven"]
+    supported = len(cases) - outcomes["unsupported"]
+    hazards = [c for c in cases if c.hazard]
+    by_rule: dict[str, Counter] = {}
+    for _, records in verdicts.values():
+        for r in records:
+            by_rule.setdefault(r["rule"], Counter())[r["outcome"]] += 1
+    lines = [
+        f"{len(cases)} refusal cases ({result['seconds']:.0f} s): declined or proved {correct}/{len(cases)} ({correct}/{supported} readable), "
+        + ", ".join(f"{o} {outcomes[o]}" for o in REFUSAL_OUTCOMES if outcomes[o]),
+        "hazard cases: " + ", ".join(f"{c.id} {verdicts[c.id][0]}" for c in hazards if c.id in verdicts),
+    ]
+    for name in STRUCTURAL_RULES:
+        counts_ = by_rule.get(name, Counter())
+        changed = {o: n for o, n in counts_.items() if o not in ("declined", "unsupported")}
+        lines.append(f"  {name}: " + (", ".join(f"{o} {n}" for o, n in sorted(changed.items())) or "no change"))
+    return "\n".join(lines)
+
+
 def semantic_cases(cases: list[Case]) -> list[Case]:
     return [c for c in cases if c.family in SEMANTIC_FAMILIES or c.family in ("TQ", "OR")]
 
@@ -919,18 +1186,32 @@ def semantic_summary(cases: list[Case], report: Report) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("part", choices=("semantic", "layout", "kumosql", "extract"))
+    parser.add_argument("part", choices=("semantic", "layout", "kumosql", "refusals", "extract"))
     parser.add_argument("checkout", nargs="?", type=Path, help="extract: a checkout of the pinned sqlfluff commit")
     parser.add_argument("--split", choices=("all", "dev", "held-out"), default="all", help="held-out rules are for final scoring only")
     parser.add_argument("--workers", type=int)
     parser.add_argument("--trials", type=int, default=120)
     parser.add_argument("--rule", help="only cases of this rule code")
     parser.add_argument("--json", type=Path, help="write per-case verdicts here")
-    parser.add_argument("--show", choices=("unknown", "unsupported", "refuted", "wrong", "different", "reproduced", "all"), help="print the cases with this outcome")
+    parser.add_argument("--show", choices=("unknown", "unsupported", "refuted", "wrong", "different", "reproduced", "declined", "proven", "refused", "caught", "error", "all"), help="print the cases with this outcome")
     args = parser.parse_args(argv)
     if args.part == "extract":
         print(f"{extract(args.checkout)} cases written to {DATA}")
+        print(f"{extract_refusals(args.checkout)} refusal cases written to {REFUSAL_DATA}")
         return 0
+    if args.part == "refusals":
+        refusals = split(load_refusals(), args.split)
+        if args.rule:
+            refusals = [c for c in refusals if c.id.split("/")[0].startswith(args.rule)]
+        result = run_refusals(refusals, args.workers)
+        print(refusal_summary(refusals, result))
+        for case_id, (outcome, records) in sorted(result["verdicts"].items()):
+            if args.show and args.show in ("all", outcome):
+                changed = [r for r in records if r["outcome"] != "declined"]
+                print(f"{outcome:11} {case_id}: " + "; ".join(f"{r['rule']} {r['outcome']}" + (f" ({', '.join(r['harms'])})" if r.get("harms") else "") for r in changed))
+        if args.json:
+            args.json.write_text(json.dumps({k: {"outcome": o, "rules": rs} for k, (o, rs) in result["verdicts"].items()}, indent=1))
+        return 1 if any(o == "wrong" for o, _ in result["verdicts"].values()) else 0
     cases = split(load_cases(), args.split)
     if args.rule:
         cases = [c for c in cases if args.rule in c.codes]

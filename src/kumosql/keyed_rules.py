@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping, plain_distinct
+
 _VALUE_AGGREGATES = (exp.Sum, exp.Min, exp.Max, exp.Avg)
 _VALUE_CLASSES = ("BitwiseAndAgg", "BitwiseOrAgg", "BitwiseXorAgg", "AnyValue")
 _VALUE_NAMES = {"BIT_AND", "BIT_OR", "BIT_XOR", "ANY_VALUE", "SINGLE_VALUE"}
@@ -62,7 +64,7 @@ def remove_keyed_grouping(
     group = select.args.get("group")
     if not group or not keys or any(select.args.get(k) for k in ("qualify", "distinct")):
         return None
-    if any(group.args.get(k) for k in ("grouping_sets", "cube", "rollup", "totals")):
+    if extended_grouping(group):
         return None
     table = _single_table(select)
     if table is None:
@@ -146,7 +148,7 @@ def drop_keyed_distinct(
 ) -> exp.Expression | None:
     """``SELECT DISTINCT`` over one table that outputs a NOT NULL key never sees two equal rows."""
 
-    if not select.args.get("distinct") or select.args["distinct"].args.get("on") or not keys:
+    if not plain_distinct(select) or not keys:
         return None
     if any(select.args.get(k) for k in ("group", "having", "qualify")):
         return None
