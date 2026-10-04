@@ -44,6 +44,18 @@ def _literal(value: Any) -> str:
     raise _Unsupported
 
 
+def small_database(**config):
+    """An in-memory DuckDB connection for tables of a few rows, on one thread.
+
+    With a few rows per table, extra threads only add scheduling work (about half the CPU per query, more
+    when several processes share the cores). A ``threads`` in ``config`` wins.
+    """
+
+    import duckdb
+
+    return duckdb.connect(":memory:", config={"threads": 1, **config})
+
+
 def values_sql(rows: Sequence[Sequence[Any]]) -> str | None:
     """The rows as a ``VALUES`` list of literals (``""`` for no rows), or ``None`` if a value has no plain literal."""
 
