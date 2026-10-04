@@ -78,8 +78,9 @@ def test_a_query_over_whole_numbers_drops_the_float_assumptions():
 
     whole = listed("SELECT SUM(x + 1) AS s FROM t", "SELECT SUM(1 + x) AS s FROM t")
     assert "NaN" not in whole and "SUM and AVG" not in whole
+    # A declared FLOAT64 column is modeled with NaN, so only the order assumption for its sum remains.
     floating = listed("SELECT SUM(f) AS s FROM t", "SELECT SUM(f) AS s FROM t")
-    assert "NaN" in floating and "SUM and AVG" in floating
+    assert "NaN" not in floating and "SUM and AVG" in floating
     untyped = listed("SELECT SUM(x + 1) AS s FROM t", "SELECT SUM(1 + x) AS s FROM t", types=None)
     assert "NaN" in untyped and "SUM and AVG" in untyped
 

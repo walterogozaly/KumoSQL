@@ -1,27 +1,27 @@
 {
   "suite": "Numeric traps (SMT prover)",
   "order": 39,
-  "size": 59,
-  "score": "27/33 equivalent proved, 1/16 differing refuted (0 proved, 3 assumed), 10/10 error cases classified, 0 wrong",
+  "size": 71,
+  "score": "31/38 equivalent proved, 7/23 differing refuted (0 proved, 0 assumed), 10/10 error cases classified, 0 wrong",
   "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
   "evidence": "proof",
   "correctness": "Labels follow the GoogleSQL documentation (the case file names the page; the ones it could not confirm say so); the cases DuckDB can run faithfully are replayed on a witness database by the test suite. Wrong is a proof or refutation that contradicts the label, or an error verdict that claims safety where the label says the rewrite can fail.",
   "coverage": {
-    "proven": 32,
-    "refuted": 1,
-    "unknown": 26
+    "proven": 36,
+    "refuted": 7,
+    "unknown": 28
   },
-  "held_out": "7/9 equivalent proved, 0/5 differing refuted (0 proved, 1 assumed), 0/0 error cases classified, 0 wrong (14 cases)",
+  "held_out": "8/10 equivalent proved, 2/7 differing refuted (0 proved, 0 assumed), 0/0 error cases classified, 0 wrong (17 cases)",
   "docs": "docs/evals/numeric-traps.md",
   "command": "python tools/numeric_traps_bench.py --write-results",
   "date": "2026-10-04",
-  "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed.",
+  "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. NaN is modelled for declared FLOAT64 columns (the three original NaN pairs are now refuted by a database holding a NaN; twelve more NaN cases were added, three of them held out and labelled before the prover answered). Tuned on test: the two original held-out NaN cases (nan-distinct-group, nan-not-equal-split) were the stated target of the NaN work and were run during it, so the held-out score is not independent for them. Rules of BigQuery the author could not confirm (NaN <> NaN is TRUE, IS_NAN(NULL), how MIN, MAX and set operations treat a NaN) are marked unverified in the case file and the prover.",
   "environment": {
     "python": "3.11.15",
     "sqlglot": "30.21.0",
     "duckdb": "1.5.6",
     "z3-solver": "5.1.0.0",
     "sqlfluff": "4.4.0",
-    "commit": "a08a0b0+changes"
+    "commit": "80c0720d+changes"
   }
 }

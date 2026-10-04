@@ -27,7 +27,8 @@ nondeterministic functions and the like yield ``not_proven``.
 
 Values use three-valued logic with explicit NULL flags over an untyped domain
 (an exact rational, a string or a boolean), so no schema types are needed.
-Every proof assumes ``BASE_ASSUMPTIONS``: no NaN, runtime errors not modeled,
+Every proof assumes ``BASE_ASSUMPTIONS``: no NaN where a value's type is not declared (BigQuery: a NaN is modeled
+in declared FLOAT64 columns and what is computed from them, see ``_Compiler.may_nan``), runtime errors not modeled,
 SUM/AVG independent of row order, result column types not compared; with
 ``exact_arithmetic`` also that ``+``, ``-`` and ``*`` never round or overflow.
 Numeric conversions that the query text makes visible are kept: a CASE, IF,
@@ -147,7 +148,7 @@ class TableConstraints:
 
 
 BASE_ASSUMPTIONS = (
-    "FLOAT64 values are never NaN",
+    "FLOAT64 values are never NaN, except in declared FLOAT64 columns and values computed from them (a NaN there is modeled)",
     "runtime errors (division by zero, overflow, failed casts) are not modeled",
     "SUM and AVG are treated as independent of row order",
     "result column types are not compared; confirm schemas with a BigQuery dry run",
@@ -426,6 +427,9 @@ def _value_sort():
         value.declare("Num", ("num", z3.RealSort()))
         value.declare("Str", ("str", z3.StringSort()))
         value.declare("Bool", ("bool", z3.BoolSort()))
+        # A FLOAT64 NaN: equal to itself here (the grouping equality of GROUP BY and DISTINCT), first in the sort
+        # order, and not equal to anything in an SQL comparison (``_Compiler._compare`` guards it).
+        value.declare("Nan")
         _VALUE_SORT = value.create()
     return _VALUE_SORT
 
@@ -464,12 +468,13 @@ def _rows_eq(left: list[_Val], right: list[_Val]):
 
 
 def _lt(a, b):
-    """A strict total order on values that agrees with SQL within a type."""
+    """A strict total order on values that agrees with SQL within a type (NaN sorts before every number, as in
+    ``ORDER BY``; an SQL ``<`` is false on a NaN, which ``_Compiler._compare`` adds)."""
 
     V = _value_sort()
 
     def rank(v):
-        return z3.If(V.is_Num(v), 0, z3.If(V.is_Str(v), 1, 2))
+        return z3.If(V.is_Nan(v), -1, z3.If(V.is_Num(v), 0, z3.If(V.is_Str(v), 1, 2)))
 
     return z3.If(
         z3.And(V.is_Num(a), V.is_Num(b)),
@@ -757,6 +762,12 @@ _INTEGER_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.
 # Functions that read the sign of a zero (``IEEE_DIVIDE(1, -0.0)`` is -inf, ``SIGN(-0.0)`` is -0.0).
 _SIGN_OBSERVERS = ("IEEE_DIVIDE", "Atan2", "Sign")
 _NOT_FLOAT = ("INT64", "NUMERIC", "BIGNUMERIC", "STRING", "BOOL", "NULL", "OTHER")
+# Text that can make a NaN without a declared FLOAT64 column: a cast to FLOAT64 (of the string 'NaN'), IEEE_DIVIDE(0, 0).
+_NAN_SOURCES = re.compile(r"FLOAT|DOUBLE|IEEE_DIVIDE|IS_NAN|\bNAN\b", re.IGNORECASE)
+# Functions whose result is text or a Boolean, so never a NaN whatever the arguments.
+_NAN_FREE_RESULT = frozenset((
+    "Upper", "Lower", "Length", "Trim", "Concat", "DPipe", "Like", "ILike", "StartsWith", "EndsWith", "Contains", "Is", "Not", "IsNan", "IsInf",
+))
 # Calls that never raise an error in BigQuery, whatever their arguments.
 _NEVER_FAILS = frozenset((
     "Upper", "Lower", "Length", "Trim", "Concat", "DPipe", "Like", "ILike", "Greatest", "Least", "Coalesce", "Nullif", "If",
@@ -1010,6 +1021,16 @@ class _Compiler:
         self.untyped_sources = False  # an UNNEST or opaque source, whose columns have no declared type
         self.big_literals: list[str] = []  # INT64 literals past 2**53, which need an all-INT64 context
         self.float_capable = False  # a literal, cast or function in the queries that may produce a FLOAT64
+        # NaN (BigQuery): a value may be NaN only where it comes from a declared FLOAT64 column or is computed from one
+        # (``may_nan``); every other value is read as never NaN (a fact), and where its type is not known that is
+        # recorded in the result's assumptions (``nan_assumed``).
+        self.model_nan = dialect == "bigquery"
+        self.nan_terms: set[int] = set()
+        self.nan_assumed = False
+        # Whether the queries mention anything that makes a NaN (FLOAT64, IEEE_DIVIDE, IS_NAN): set by ``_prove_core``.
+        # Without that and without a declared FLOAT64 column no value can be one, so no fact about NaN is stated and
+        # the proof is the one made without the model (NaN is then just another value, which a proof holds for too).
+        self.nan_text = False
         self.string_literals: set[str] = set()
         self.timestamp_literals: set[str] = set()
 
@@ -1149,6 +1170,9 @@ class _Compiler:
             raise Unsupported("set operation branches have different widths")
         if any(not isinstance(b, _Spj) for b in left.branches + right.branches):
             raise Unsupported("set operation over an aggregate")
+        if any(self.may_nan(o.val) for b in left.branches + right.branches for o in b.outputs):
+            # Whether INTERSECT and EXCEPT match a NaN with a NaN (as DISTINCT does) is not confirmed (unverified).
+            raise Unsupported(f"{type(node).__name__.upper()} over a FLOAT64 that can be NaN (how a set operation compares NaN is unverified)")
         blocks = []
         for a in left.branches:
             subs = list(a.subs)
@@ -1516,6 +1540,7 @@ class _Compiler:
         for index, (name, output) in enumerate(zip(names, block.outputs)):
             call = next((c for c in counts.values() if c.var.val.eq(output.val) and c.var.null.eq(output.null)), None)
             val = z3.Const(f"one{tag}.{index}", V)
+            self._tag(val, call is None and self.may_nan(output.val))
             if call is not None:
                 self.facts.append(z3.And(V.is_Num(val), V.num(val) >= 0))
                 cols[name] = _Val(z3.BoolVal(False), val)
@@ -1536,6 +1561,8 @@ class _Compiler:
         uid = self.fresh("set")
         # Not ``#null``: ``resolve_set_sources`` reads that suffix as an outer column's NULL flag.
         columns = [_Val(z3.Bool(f"{uid}.{i}#setnull"), z3.Const(f"{uid}.{i}", V)) for i in range(len(names))]
+        for output, column in zip(branch.outputs, columns):
+            self._tag(column.val, self.may_nan(output.val))  # equal to the row's value, so a NaN where that one may be
         match = [_null_eq(o, c) for o, c in zip(branch.outputs, columns)]
         atom = z3.Bool(f"{self.fresh('ex')}#exists")
         guard = z3.And(branch.cond.t, *match)
@@ -1694,7 +1721,10 @@ class _Compiler:
                     return self._converted_compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
                 return self._compare(op, *self._compared_vals([e.this, e.expression], env, agg, aliases))
         if isinstance(e, (exp.NullSafeEQ, exp.NullSafeNEQ)):
-            eq = _null_eq(*self._compared_vals([e.this, e.expression], env, agg, aliases))
+            pair = self._compared_vals([e.this, e.expression], env, agg, aliases)
+            if any(self.may_nan(v.val) for v in pair):
+                raise Unsupported("IS [NOT] DISTINCT FROM on a FLOAT64 that can be NaN (unverified)")
+            eq = _null_eq(*pair)
             eq = eq if isinstance(e, exp.NullSafeEQ) else z3.Not(eq)
             return _Pred(eq, z3.Not(eq))
         if isinstance(e, exp.Is):
@@ -1847,6 +1877,11 @@ class _Compiler:
             r = z3.Or(_lt(a.val, b.val), a.val == b.val)
         else:
             r = z3.Or(_lt(b.val, a.val), a.val == b.val)
+        nan_a, nan_b = self._isnan(a), self._isnan(b)
+        if not (z3.is_false(nan_a) and z3.is_false(nan_b)):
+            # IEEE: every comparison with a NaN is FALSE, except <>, which is TRUE (NaN = NaN included).
+            either = z3.Or(nan_a, nan_b)
+            r = z3.Or(r, either) if op == "<>" else z3.And(r, z3.Not(either))
         known = z3.And(z3.Not(a.null), z3.Not(b.null))
         return _Pred(z3.And(known, r), z3.And(known, z3.Not(r)))
 
@@ -1861,6 +1896,10 @@ class _Compiler:
             return resolved
         if isinstance(e, exp.Literal):
             return self._literal(e, negate=False)
+        if isinstance(e, exp.IsNan) and self.dialect == "bigquery":
+            # IS_NAN(x) is TRUE for a NaN, FALSE for any other number, NULL for NULL (the NULL case is unverified).
+            v = self._val(e.this, env, agg, aliases)
+            return _Val(v.null, V.Bool(self._isnan(v)))
         if isinstance(e, exp.Exists):
             # EXISTS is never UNKNOWN: a Boolean value built on the existence atom
             atom = self._existence(e.this, env)
@@ -1969,12 +2008,12 @@ class _Compiler:
             self._arithmetic_site(e, a, b, env, agg, aliases)
             x, y = V.num(a.val), V.num(b.val)
             r = x + y if isinstance(e, exp.Add) else x - y if isinstance(e, exp.Sub) else x * y
-            return _Val(z3.Or(a.null, b.null), V.Num(r))
+            return _Val(z3.Or(a.null, b.null), self._nan_in(V.Num(r), a, b))
         if isinstance(e, exp.Neg) and self.exact:
             a = self._val(e.this, env, agg, aliases)
             self._numeric(a)
             self._negation_site(e, a, e.this, env, agg, aliases)
-            return _Val(a.null, V.Num(-V.num(a.val)))
+            return _Val(a.null, self._nan_in(V.Num(-V.num(a.val)), a))
         if isinstance(e, (exp.Add, exp.Mul)):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
             self._arithmetic_site(e, a, b, env, agg, aliases)
@@ -1986,7 +2025,7 @@ class _Compiler:
             second = _Val(z3.If(swap, a.null, b.null), z3.If(swap, a.val, b.val))
             null_fn, val_fn = self._function(type(e).__name__, 2)
             args = self._uf_args([first, second])
-            return _Val(z3.Or(a.null, b.null), val_fn(*args))
+            return _Val(z3.Or(a.null, b.null), self._tag(val_fn(*args), self.may_nan(a.val) or self.may_nan(b.val)))
         if isinstance(e, (exp.Sub, exp.Neg, exp.Div, exp.Mod, exp.DPipe)):
             parts = [e.this] + ([e.expression] if isinstance(e, exp.Binary) else [])
             if isinstance(e, exp.Div) and isinstance(e.expression, exp.Nullif) and e.expression.expression.sql() == "0":
@@ -2005,13 +2044,13 @@ class _Compiler:
             nulls = z3.Or(*[v.null for v in vals])
             if isinstance(e, exp.Div):
                 nulls = z3.Or(nulls, null_fn(*args))  # SAFE_DIVIDE-like shapes stay possible
-            return _Val(nulls, val_fn(*args))
+            return _Val(nulls, self._tag(val_fn(*args), any(self.may_nan(v.val) for v in vals)))
         if isinstance(e, exp.Abs) and self.exact:
             a = self._val(e.this, env, agg, aliases)
             self._numeric(a)
             self._negation_site(e, a, e.this, env, agg, aliases)
             x = V.num(a.val)
-            return _Val(a.null, V.Num(z3.If(x < 0, -x, x)))
+            return _Val(a.null, self._nan_in(V.Num(z3.If(x < 0, -x, x)), a))
         if isinstance(e, exp.Abs) and isinstance(e.this.unnest() if isinstance(e.this, exp.Paren) else e.this, exp.Sub):
             return self._abs_difference(e, env, agg, aliases)
         if isinstance(e, exp.SafeDivide):
@@ -2020,7 +2059,7 @@ class _Compiler:
             null_fn, val_fn = self._function("Div", 2)
             args = self._uf_args([a, b])
             zero = z3.And(V.is_Num(b.val), V.num(b.val) == 0)
-            return _Val(z3.Or(a.null, b.null, zero, null_fn(*args)), val_fn(*args))
+            return _Val(z3.Or(a.null, b.null, zero, null_fn(*args)), self._tag(val_fn(*args), self.may_nan(a.val) or self.may_nan(b.val)))
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
             inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
@@ -2044,14 +2083,15 @@ class _Compiler:
             if failing is not None:
                 self._site("failed cast", e, z3.And(z3.Not(v.null), failing[0]), under=failing[1])
             _, val_fn = self._function(f"CAST:{to.sql(dialect='bigquery')}", 1)
-            return _Val(v.null, val_fn(*self._uf_args([v])))
+            return _Val(v.null, self._cast_value(val_fn(*self._uf_args([v])), e, to, source, v))
         if isinstance(e, exp.TryCast):
             # SAFE_CAST is the cast, and NULL where the cast fails.
             to = e.args["to"]
             v = self._val(e.this, env, agg, aliases)
             failing = self._cast_sites(e, to, self._class_of(e.this, env, agg, aliases), v)
             _, val_fn = self._function(f"CAST:{to.sql(dialect='bigquery')}", 1)
-            return _Val(v.null if failing is None else z3.Or(v.null, failing[0]), val_fn(*self._uf_args([v])))
+            source = self._class_of(e.this, env, agg, aliases)
+            return _Val(v.null if failing is None else z3.Or(v.null, failing[0]), self._cast_value(val_fn(*self._uf_args([v])), e, to, source, v))
         if isinstance(e, (exp.Func, exp.Binary, exp.Unary)):
             return self._generic(e, env, agg, aliases)
         if isinstance(e, exp.Interval) and all(isinstance(n, (exp.Interval, exp.Literal, exp.Var)) for n in e.walk()):
@@ -2083,7 +2123,7 @@ class _Compiler:
         value = result.val
         self.facts.append(
             z3.Implies(
-                z3.And(z3.Not(a.null), z3.Not(b.null)),
+                z3.And(z3.Not(a.null), z3.Not(b.null), z3.Not(self._isnan(a)), z3.Not(self._isnan(b))),
                 z3.And(
                     z3.Not(result.null),
                     z3.Not(mirror.null),
@@ -2135,7 +2175,8 @@ class _Compiler:
         for kind, (_, literal, v) in zip(kinds, entries):
             if not kind and not literal:
                 _, val_fn = self._function("CAST:FLOAT64", 1)
-                v = _Val(v.null, val_fn(*self._uf_args([v])))
+                # An INT64 or NUMERIC value converts to a number; a value that may be a NaN converts to one.
+                v = _Val(v.null, self._tag(val_fn(*self._uf_args([v])), self.may_nan(v.val)))
             result.append(v)
         return result
 
@@ -2165,8 +2206,97 @@ class _Compiler:
     def _compared_vals(self, exprs: list, env, agg, aliases) -> list[_Val]:
         return self._compared(exprs, [self._val(e, env, agg, aliases) for e in exprs])
 
+    def _cast_value(self, term, e, to, source: str | None, v: _Val):
+        """The value of ``CAST(v AS to)``, tagged for NaN: a FLOAT64 result is a NaN where the argument is one, or may be one
+        when the argument is a string (``CAST('NaN' AS FLOAT64)``); any other target type is never NaN (``CAST`` of a NaN
+        to INT64 or NUMERIC is an error, and a string, a boolean or a date is not a number)."""
+
+        S = smt_values
+        if S.type_class(to.sql(dialect="bigquery")) != S.FLOAT64:
+            return self._tag(term, False)
+        literal = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+        if isinstance(literal, exp.Literal) and literal.is_string:
+            return self._tag(term, literal.this.strip().lower().lstrip("+-") in ("nan", "inf", "infinity"))
+        if source in (S.INT64, S.NUMERIC, S.BIGNUMERIC, "BOOL"):
+            return self._tag(term, False)
+        return self._tag(term, source == "STRING" or self.may_nan(v.val), assumed=source is None)
+
+    def _nan_in(self, result, *operands: _Val):
+        """``result`` of an operation on numbers, or NaN when an operand that can be one is."""
+
+        nans = [self._isnan(v) for v in operands]
+        nans = [n for n in nans if not z3.is_false(n)]
+        return z3.If(z3.Or(*nans), _value_sort().Nan, result) if nans else result
+
     def _numeric(self, v: _Val) -> None:
-        self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
+        V = _value_sort()
+        self.facts.append(z3.Implies(z3.Not(v.null), z3.Or(V.is_Num(v.val), V.is_Nan(v.val)) if self.may_nan(v.val) else V.is_Num(v.val)))
+
+    # ---- NaN (BigQuery FLOAT64) -------------------------------------------------------------
+
+    def may_nan(self, term) -> bool:
+        """Whether the value ``term`` can be a NaN: a declared FLOAT64 column, the NaN constant, a value marked by
+        ``_tag`` (a function of such a value, ``CAST('NaN' AS FLOAT64)``, ``IEEE_DIVIDE(0, 0)``), or a CASE/IF/COALESCE
+        choosing among them. Every other value is never NaN (``_tag`` and the column typing assert it)."""
+
+        if not self.model_nan:
+            return False
+        if term.get_id() in self.nan_terms:
+            return True
+        if not z3.is_app(term):
+            return False
+        kind = term.decl().kind()
+        if kind == z3.Z3_OP_ITE:
+            return self.may_nan(term.arg(1)) or self.may_nan(term.arg(2))
+        if kind == z3.Z3_OP_DT_CONSTRUCTOR:
+            return term.decl().name() == "Nan"
+        if kind == z3.Z3_OP_UNINTERPRETED and term.num_args() == 0:
+            return self._declared_float_const(term)
+        return False
+
+    def _declared_float_const(self, term) -> bool:
+        uid, _, name = str(term).partition(".")
+        declared = self.types.get(self.occ_tables.get(uid, ""), {}).get(name)
+        return bool(declared) and _type_is_float(declared) is True
+
+    def _isnan(self, v: _Val):
+        """The condition that ``v`` is a NaN: ``False`` (as a constant) for a value that cannot be one."""
+
+        return _value_sort().is_Nan(v.val) if self.may_nan(v.val) else z3.BoolVal(False)
+
+    def _tag(self, term, capable: bool, assumed: bool = False):
+        """Record whether the free value ``term`` can be a NaN: if it can, ``may_nan`` says so; if not, it is a fact that
+        it is not (and ``assumed`` notes that the claim rests on the NaN assumption, because its type is not known)."""
+
+        if capable and self.model_nan:
+            self.nan_terms.add(term.get_id())
+        else:
+            if self.nan_in_play:
+                self.facts.append(z3.Not(_value_sort().is_Nan(term)))
+            self.nan_assumed = self.nan_assumed or assumed
+        return term
+
+    @property
+    def nan_in_play(self) -> bool:
+        return self.model_nan and (self.nan_text or bool(self.float_columns()))
+
+    def float_columns(self) -> frozenset:
+        """``(table, column)`` of every declared FLOAT64 column: the only base-table values that can be a NaN."""
+
+        if not self.model_nan:
+            return frozenset()
+        return frozenset((table, name) for table, columns in self.types.items() for name, declared in columns.items() if _type_is_float(declared) is True)
+
+    def columns_untyped(self) -> bool:
+        """Whether a column of the queries has no declared type (it may be FLOAT64, read as never NaN), or a source has none."""
+
+        if self.untyped_sources:
+            return True
+        for occ in self.occs_seen:
+            declared = self.types.get(self.occ_tables.get(occ.uid, ""), {})
+            if any(declared.get(name) is None for name in occ.cols):
+                return True
+        return False
 
     # ---- types and runtime errors (BigQuery) -----------------------------------------------
 
@@ -2340,6 +2470,10 @@ class _Compiler:
             under = z3.And(z3.Not(v.null), V.is_Str(v.val), V.str(v.val) == z3.StringVal("x"))
         elif source == S.FLOAT64 and name in ("INT64", "INT", "BIGINT"):
             under = z3.And(z3.Not(v.null), V.is_Num(v.val), V.num(v.val) >= 2**63)
+            if self.may_nan(v.val):
+                # CAST of a NaN to INT64 is an error (smt_values.float64_to_int64).
+                nan = z3.And(z3.Not(v.null), V.is_Nan(v.val))
+                return z3.Or(self._may_fail(f"CAST:{name}", [v]), nan), z3.Or(under, nan)
         return self._may_fail(f"CAST:{name}", [v]), under
 
     def _literal(self, e: exp.Literal, negate: bool) -> _Val:
@@ -2399,7 +2533,9 @@ class _Compiler:
                 elif cls == S.NUMERIC:
                     limit = 10 ** (S.NUMERIC_DIGITS - S.NUMERIC_SCALE)
                     typed = z3.And(V.is_Num(v.val), z3.IsInt(x * 10**S.NUMERIC_SCALE), x < limit, x > -limit)
-                elif cls in (S.BIGNUMERIC, S.FLOAT64):
+                elif cls == S.FLOAT64:
+                    typed = z3.Or(V.is_Num(v.val), V.is_Nan(v.val))
+                elif cls == S.BIGNUMERIC:
                     typed = V.is_Num(v.val)
                 elif cls == S.STRING:
                     typed = V.is_Str(v.val)
@@ -2490,12 +2626,34 @@ class _Compiler:
         self._function_sites(e, name_parts[0], vals, env, agg, aliases)
         null_fn, val_fn = self._function("|".join(name_parts), len(vals))
         if not vals:
-            return _Val(null_fn, val_fn)
+            return _Val(null_fn, self._call_value(val_fn, name_parts[0], e, vals, env, agg, aliases))
         args = self._uf_args(vals)
+        value = self._call_value(val_fn(*args), name_parts[0], e, vals, env, agg, aliases)
         if isinstance(e, _STRICT_FUNCTIONS):
             # NULL in, NULL out (and possibly NULL for some non-NULL inputs, such as SQRT(-1) in MySQL).
-            return _Val(z3.Or(*[v.null for v in vals], null_fn(*args)), val_fn(*args))
-        return _Val(null_fn(*args), val_fn(*args))
+            return _Val(z3.Or(*[v.null for v in vals], null_fn(*args)), value)
+        return _Val(null_fn(*args), value)
+
+    def _call_value(self, term, name: str, e, vals: list[_Val], env, agg, aliases):
+        """The result of a function call, tagged for NaN. A function of a value that can be a NaN may return one (it is
+        free); ``IEEE_DIVIDE`` returns one exactly for ``0 / 0``; a function that returns text or a Boolean never does.
+        Any other function of values that cannot be NaN is read as returning none (BigQuery raises an error on a
+        domain error such as ``SQRT(-1)`` rather than returning NaN: unverified for every function), which is the NaN
+        assumption unless the result is known not to be FLOAT64."""
+
+        V = _value_sort()
+        if name in _NAN_FREE_RESULT:
+            return self._tag(term, False)
+        if name == "IEEE_DIVIDE" and len(vals) == 2:
+            a, b = vals
+            zero = z3.And(V.is_Num(a.val), V.num(a.val) == 0, V.is_Num(b.val), V.num(b.val) == 0)
+            self.facts.append(z3.Implies(z3.And(z3.Not(a.null), z3.Not(b.null)), V.is_Nan(term) == zero))
+            self.nan_terms.add(term.get_id())
+            return term
+        if any(self.may_nan(v.val) for v in vals):
+            return self._tag(term, True)
+        known = self._class_of(e, env, agg, aliases) if isinstance(e, exp.Expression) else None
+        return self._tag(term, False, assumed=known is None or known == smt_values.FLOAT64)
 
     def _aggregate(self, func: str, e, env, agg: _AggCtx | None) -> _Val:
         if agg is None:
@@ -2506,7 +2664,7 @@ class _Compiler:
             count = self._aggregate("COUNT", exp.Count(this=e.this.copy()), env, agg)
             null_fn, val_fn = self._function("Div", 2)
             args = self._uf_args([total, count])
-            return _Val(z3.Or(total.null, null_fn(*args)), val_fn(*args))
+            return _Val(z3.Or(total.null, null_fn(*args)), self._tag(val_fn(*args), self.may_nan(total.val)))
         V = _value_sort()
         target = e.this
         distinct = False
@@ -2559,6 +2717,9 @@ class _Compiler:
         uid = self.fresh("agg")
         never_null = func in ("COUNT", "COUNTIF")
         var = _Val(z3.BoolVal(False) if never_null else z3.Bool(f"{uid}#null"), z3.Const(uid, V))
+        # An aggregate of values that may be NaN may be one (SUM, MIN, MAX, AVG: NaN in, NaN out is not assumed for
+        # MIN and MAX, which BigQuery documents differently from the sort order: unverified); otherwise it is not.
+        self._tag(var.val, arg is not None and not never_null and self.may_nan(arg.val))
         agg.calls.append(_AggCall(func, distinct, arg, var))
         if func == "SUM" and self.dialect == "bigquery":
             # A sum can overflow (INT64, NUMERIC) whichever order the rows are added in; which groups do is not modeled,
@@ -2707,13 +2868,16 @@ class _Prover:
         # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
+        # Declared FLOAT64 columns, ``(table, column)`` in lower case: the only base-table columns that can hold a NaN.
+        self.float_columns: frozenset = frozenset()
+        self.nan_in_play = False  # a NaN can occur (``_Compiler.nan_in_play``); otherwise no fact about NaN is added
         self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
         self.candidates: list[tuple[object, object, list[_Occ], list[_Val]]] = []
 
-    @staticmethod
-    def _typing(occs: list[_Occ]):
-        """Every non-NULL value in one table column has the same type."""
+    def _typing(self, occs: list[_Occ]):
+        """Every non-NULL value in one table column has the same type, and only a declared FLOAT64 column
+        (``float_columns``) holds NaN."""
 
         V = _value_sort()
         by_column: dict[tuple[str, str], list[_Val]] = {}
@@ -2721,12 +2885,19 @@ class _Prover:
             for name, v in occ.cols.items():
                 by_column.setdefault((occ.table, name), []).append(v)
         facts = []
-        for vals in by_column.values():
+        for (table, name), vals in by_column.items():
+            floating = (table.lower(), name) in self.float_columns
+
+            def number(v):
+                return z3.Or(V.is_Num(v.val), V.is_Nan(v.val)) if floating else V.is_Num(v.val)
+
+            if not floating and self.nan_in_play:
+                facts.extend(z3.Not(V.is_Nan(v.val)) for v in vals)
             for a, b in zip(vals, vals[1:]):
                 facts.append(
                     z3.Implies(
                         z3.And(z3.Not(a.null), z3.Not(b.null)),
-                        z3.And(V.is_Num(a.val) == V.is_Num(b.val), V.is_Str(a.val) == V.is_Str(b.val)),
+                        z3.And(number(a) == number(b), V.is_Str(a.val) == V.is_Str(b.val)),
                     )
                 )
         return facts
@@ -2795,10 +2966,15 @@ class _Prover:
                     if value is None or row is None:
                         continue
                     present = z3.And(member, z3.Not(row.null))
+                    # A NaN row says nothing (how MIN and MAX treat a NaN is unverified), and a NaN result (free when
+                    # the column is FLOAT64) is not below or above anything it is compared with here.
+                    solid = z3.And(present, z3.Not(V.is_Nan(row.val)))
                     if kind == "max":
-                        facts.append(z3.Implies(present, z3.And(z3.Not(value.null), z3.Not(_lt(value.val, row.val)))))
+                        facts.append(z3.Implies(present, z3.Not(value.null)))
+                        facts.append(z3.Implies(solid, z3.Or(V.is_Nan(value.val), z3.Not(_lt(value.val, row.val)))))
                     elif kind == "min":
-                        facts.append(z3.Implies(present, z3.And(z3.Not(value.null), z3.Not(_lt(row.val, value.val)))))
+                        facts.append(z3.Implies(present, z3.Not(value.null)))
+                        facts.append(z3.Implies(solid, z3.Or(V.is_Nan(value.val), z3.Not(_lt(row.val, value.val)))))
                     elif kind == "sum":
                         facts.append(z3.Implies(present, z3.Not(value.null)))
                     elif kind == "count":
@@ -4047,9 +4223,21 @@ def _prove(prover: _Prover, left: _Union, right: _Union) -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 
 
+class _NanType:
+    """A NaN cell of a counterexample database (one object, so that all NaNs group together)."""
+
+    def __repr__(self) -> str:
+        return "NaN"
+
+
+_NAN = _NanType()
+
+
 def _py(model, term):
     V = _value_sort()
     value = model.eval(term, model_completion=True)
+    if z3.is_true(model.eval(V.is_Nan(value), model_completion=True)):
+        return _NAN
     if z3.is_true(model.eval(V.is_Num(value), model_completion=True)):
         num = model.eval(V.num(value), model_completion=True)
         return Fraction(num.as_fraction()) if z3.is_rational_value(num) else Fraction(num.as_decimal(20).rstrip("?"))
@@ -4062,6 +4250,8 @@ def _z3_value(value):
     V = _value_sort()
     if isinstance(value, bool):
         return V.Bool(z3.BoolVal(value))
+    if value is _NAN:
+        return V.Nan
     if isinstance(value, Fraction):
         return V.Num(z3.RealVal(f"{value.numerator}/{value.denominator}"))
     return V.Str(z3.StringVal(value))
@@ -4174,8 +4364,8 @@ def _aggregate(call: _AggCall, values: list):
     if not present:
         return None
     kinds = {type(v) for v in present}
-    if len(kinds) != 1:
-        raise _NoCandidate()
+    if len(kinds) != 1 or _NanType in kinds:
+        raise _NoCandidate()  # mixed kinds, or a NaN (whose sum, minimum and maximum this evaluator does not compute)
     kind = kinds.pop()
     if call.func in ("SUM", "AVG"):
         if kind is not Fraction:
@@ -4194,6 +4384,8 @@ def _aggregate(call: _AggCall, values: list):
 
 
 def _export(value):
+    if value is _NAN:
+        return float("nan")
     if isinstance(value, Fraction):
         return int(value) if value.denominator == 1 else float(value)
     return value
@@ -4209,6 +4401,12 @@ def _block_occs(block) -> list:
         found.extend(sub.occs)
         stack.extend(sub.nested)
     return found
+
+
+def _has_nan(db: dict, *bags: Counter) -> bool:
+    cells = [v for rows in db.values() for row in rows for v in row.values()]
+    cells.extend(v for bag in bags for row in bag for v in row)
+    return any(v is _NAN for v in cells)
 
 
 def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counterexample | None:
@@ -4244,6 +4442,8 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
             right_rows = _eval_union(right, db, model)
         except _NoCandidate:
             continue
+        if not prover.nan_in_play and _has_nan(db, left_rows, right_rows):
+            continue  # a NaN here would be a value of an unknown type, assumed not to exist
         if left_rows != right_rows:
             tables = {
                 table: [{k: _export(v) for k, v in row.items()} for row in rows] for table, rows in db.items()
@@ -4414,6 +4614,7 @@ def _prove_core(
 
     def attempt(semijoin: bool, blind: bool = False) -> SmtEquivalenceResult:
         compiler = _Compiler(schema, exact_arithmetic, dialect, types)
+        compiler.nan_text = bool(_NAN_SOURCES.search(left_sql) or _NAN_SOURCES.search(right_sql))
         compiler.semijoin = semijoin
         compiler.blind_sets = blind
         try:
@@ -4454,6 +4655,10 @@ def _prove_core(
             # Every column is declared INT64, NUMERIC, STRING, BOOL or another non-floating type and no expression can produce a
             # FLOAT64: there is no NaN, a SUM is exact in any order, and + - * are exact (an overflow is an error, reported below).
             assumed = tuple(a for a in assumed if a not in (BASE_ASSUMPTIONS[0], BASE_ASSUMPTIONS[2], EXACT_ARITHMETIC_ASSUMPTION))
+        elif dialect == "bigquery" and not compiler.nan_assumed and not compiler.columns_untyped():
+            # Every column has a declared type and every value of unknown type was avoided: each value that can be a
+            # NaN (a declared FLOAT64 column, what is computed from one) is modeled as one, so nothing is assumed away.
+            assumed = tuple(a for a in assumed if a != BASE_ASSUMPTIONS[0])
         order = compiler.order_facts()
         for union in (left, right):
             for block in union.branches:
@@ -4476,6 +4681,8 @@ def _prove_core(
                 )
 
         prover = _Prover(timeout_ms, constraints)
+        prover.float_columns = compiler.float_columns()
+        prover.nan_in_play = compiler.nan_in_play
         prover.opaque_sets = compiler.opaque_sets
         used[0] = compiler.used_setsrc
         try:
@@ -4597,10 +4804,11 @@ def main(argv: list[str] | None = None) -> int:
     if result.conditions:
         payload["conditions"] = [c.to_json() for c in result.conditions]
     if result.counterexample is not None:
+        nan_text = lambda v: "NaN" if isinstance(v, float) and v != v else v  # JSON has no NaN
         payload["counterexample"] = {
-            "tables": result.counterexample.tables,
-            "left_rows": [list(r) for r in result.counterexample.left_rows],
-            "right_rows": [list(r) for r in result.counterexample.right_rows],
+            "tables": {t: [{k: nan_text(v) for k, v in row.items()} for row in rows] for t, rows in result.counterexample.tables.items()},
+            "left_rows": [[nan_text(v) for v in r] for r in result.counterexample.left_rows],
+            "right_rows": [[nan_text(v) for v in r] for r in result.counterexample.right_rows],
         }
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")

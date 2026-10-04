@@ -390,9 +390,9 @@ def prove_queries(left: object, right: object) -> dict:
     if result.status in (SmtStatus.NOT_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY) and result.counterexample is not None:
         example = result.counterexample
         data["counterexample"] = {
-            "tables": {name: [dict(row) for row in rows] for name, rows in example.tables.items()},
-            "left_rows": [list(row) for row in example.left_rows],
-            "right_rows": [list(row) for row in example.right_rows],
+            "tables": {name: [{k: _json_cell(v) for k, v in row.items()} for row in rows] for name, rows in example.tables.items()},
+            "left_rows": [[_json_cell(v) for v in row] for row in example.left_rows],
+            "right_rows": [[_json_cell(v) for v in row] for row in example.right_rows],
         }
     if result.status not in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
         from .refute import counterexample_from_search
@@ -415,6 +415,12 @@ def prove_queries(left: object, right: object) -> dict:
             data["reason"] = "the queries return different rows on a small database"
             data["counterexample"] = found
     return data
+
+
+def _json_cell(value):
+    """A counterexample cell as JSON allows it: a NaN (the SMT prover models one in FLOAT64 columns) has no JSON number, so it is the text ``NaN``."""
+
+    return "NaN" if isinstance(value, float) and value != value else value
 
 
 def main(argv: list[str] | None = None) -> int:

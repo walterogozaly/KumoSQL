@@ -21,6 +21,9 @@ python tools/numeric_traps_bench.py
 - The pairs were written by the person who changed the prover, from the issue's list of traps. They were fixed before the change and a quarter was held out, but this is a safety net, not an independent test.
 - The held-out quarter has no pair about errors, so error handling is checked only on the development pairs.
 - A few labels rest on behaviour the author could not confirm in the documentation (for example how a decimal literal is rounded). Those cases say so, and "unknown" is an acceptable answer for them.
-- The prover still assumes no `NaN` appears in floating-point columns and does not do exact decimal rounding. Those pairs stay unknown or are proved with the assumption listed.
+- `NaN` ("not a number", what `IEEE_DIVIDE(0, 0)` returns) is now part of the model for columns declared `FLOAT64`: it is not equal to anything, not even itself, every ordering comparison with it is false, and `GROUP BY` puts all of them in one group. The three pairs that used to be "proved with a no-NaN assumption" are now refuted by a small database with a `NaN` in it. For example, `WHERE f = f` and `WHERE f IS NOT NULL` look the same, but a row whose `f` is `NaN` passes only the second.
+- A few `NaN` rules could not be confirmed in the documentation (that `NaN <> NaN` is true, what `IS_NAN(NULL)` returns, how `MIN`, `MAX` and set operations treat a `NaN`). Where the answer depends on one of them the prover says it cannot tell instead of guessing, and a column without a declared type is still assumed never to hold a `NaN` (the result lists that).
+- Two of the original held-out pairs were the target of the `NaN` work and were run while it was being built, so the held-out score is not independent for them.
+- The prover does not do exact decimal rounding; those pairs stay unknown.
 
 See the full reference for the recorded scores and the list of cases.
