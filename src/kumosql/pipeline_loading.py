@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
@@ -159,13 +159,15 @@ def _config_literal(config: str, key: str) -> tuple[str | None, bool]:
     return None, True
 
 
-_PROJECT_DEFAULT_RE = re.compile(r"dataform\s*\.\s*projectConfig\s*\.\s*(defaultDatabase|defaultSchema)")
+_PROJECT_DEFAULT_RE = re.compile(r"dataform\s*\.\s*projectConfig\s*\.\s*(defaultDatabase|defaultSchema|vars\s*\.\s*([A-Za-z_]\w*))")
 
 
-def _config_identity(config: str, key: str, database: str, dataset: str) -> tuple[str | None, bool]:
-    """``_config_literal`` for ``database``, ``schema`` and ``name``, also reading ``dataform.projectConfig.defaultDatabase``
-    and ``defaultSchema``: the project's own settings, which the common ``database: dataform.projectConfig.defaultDatabase``
-    spelling means. A default the project does not set stays computed."""
+def _config_identity(
+    config: str, key: str, database: str, dataset: str, variables: Mapping[str, str] | None = None
+) -> tuple[str | None, bool]:
+    """``_config_literal`` for ``database``, ``schema`` and ``name``, also reading the project's own settings:
+    ``dataform.projectConfig.defaultDatabase``, ``defaultSchema`` and ``vars.NAME`` (a string in the project's ``vars``).
+    A setting the project does not hold stays computed."""
 
     value, computed = _config_literal(config, key)
     if not computed:
@@ -173,7 +175,11 @@ def _config_identity(config: str, key: str, database: str, dataset: str) -> tupl
     match = re.search(rf"\b{key}\s*:\s*", _blank_strings(_top_level(config)))
     raw = _value_at(config, max(config.find("{"), 0) + match.end()).strip() if match else ""
     named = _PROJECT_DEFAULT_RE.fullmatch(raw)
-    if named and key in ("database", "schema") and (named.group(1) == "defaultDatabase") == (key == "database"):
+    if named and named.group(2):
+        found = (variables or {}).get(named.group(2))
+        if found:
+            return found, False
+    elif named and key in ("database", "schema") and (named.group(1) == "defaultDatabase") == (key == "database"):
         known = database if key == "database" else dataset
         if known:
             return known, False
@@ -387,6 +393,8 @@ class _Naming:
     schema_suffix: str = ""
     name_prefix: str = ""
     location: str = ""
+    # The project's ``vars`` (``dataform.projectConfig.vars.NAME``), when they are plain strings.
+    variables: dict[str, str] = field(default_factory=dict)
 
     def apply(self, target: Target) -> Target:
         """The target Dataform compiles an action to (``database_ps.schema_sandbox.prefix_name``)."""
@@ -418,16 +426,23 @@ def _read_naming(root: Path) -> _Naming:
                         return match.group(1)
                 return ""
 
+            variables: dict[str, str] = {}
+            block = re.search(r"(?m)^vars\s*:[ \t]*(?:#.*)?\r?\n((?:[ \t]+\S.*(?:\r?\n|$)|[ \t]*(?:#.*)?\r?\n)*)", text)
+            for entry in re.finditer(r"(?m)^[ \t]+([A-Za-z_]\w*)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s#'\"][^#\r\n]*?))\s*(?:#.*)?$",
+                                     block.group(1) if block else ""):
+                variables[entry.group(1)] = next(g for g in entry.groups()[1:] if g is not None)
             return _Naming(value("projectSuffix", "databaseSuffix"), value("datasetSuffix", "schemaSuffix"),
-                           value("namePrefix", "tablePrefix"), value("defaultLocation"))
+                           value("namePrefix", "tablePrefix"), value("defaultLocation"), variables)
         if legacy.is_file():
             data = json.loads(legacy.read_text(encoding="utf-8-sig"))
 
-            def field(key: str) -> str:
+            def field_(key: str) -> str:
                 found = data.get(key)
                 return found if isinstance(found, str) else ""
 
-            return _Naming(field("databaseSuffix"), field("schemaSuffix"), field("tablePrefix"), field("defaultLocation"))
+            raw_vars = data.get("vars")
+            variables = {k: v for k, v in raw_vars.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(raw_vars, dict) else {}
+            return _Naming(field_("databaseSuffix"), field_("schemaSuffix"), field_("tablePrefix"), field_("defaultLocation"), variables)
     except (OSError, UnicodeError, ValueError, AttributeError):
         pass
     return _Naming()
@@ -697,6 +712,7 @@ def _parse_ref_args(
     names_may_be_missing: bool = False,
     schema_settles: bool = False,
     logical: Mapping[Target, tuple[str, ...]] | None = None,
+    variables: Mapping[str, str] | None = None,
 ) -> Target:
     """The target a ``ref()`` names.
 
@@ -735,7 +751,7 @@ def _parse_ref_args(
     if args.lstrip().startswith("{"):
         values = {}
         for key in ("name", "schema", "database"):
-            value, computed = _config_identity(args, key, default.database, default.schema)
+            value, computed = _config_identity(args, key, default.database, default.schema, variables)
             if computed:
                 raise ValueError(f"ref() has a computed {key}, so the table it names is not known; it was left unresolved")
             values[key] = value
@@ -841,7 +857,7 @@ def load_sqlx_project(
         kind = declared_type or ("unknown" if computed_type else "table")
         identity, computed_identity = {}, []
         for key in ("database", "schema", "name"):
-            identity[key], computed = _config_identity(config, key, database, dataset)
+            identity[key], computed = _config_identity(config, key, database, dataset, naming.variables)
             if computed:
                 computed_identity.append(key)
         logical = Target(
@@ -931,7 +947,7 @@ def load_sqlx_project(
         def plain_ref(match: re.Match[str]) -> str:
             try:
                 return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js or computed_identities,
-                                       logical=renamed).sql()
+                                       logical=renamed, variables=naming.variables).sql()
             except ValueError:
                 return match.group(0)
 
@@ -986,7 +1002,7 @@ def load_sqlx_project(
 
     def unknown_names() -> dict:
         return {"names_may_be_missing": incomplete_js or computed_identities, "schema_settles": not js_sets_database,
-                "logical": renamed}
+                "logical": renamed, "variables": naming.variables}
 
     js_files: dict[str, str] = {}
     for path in find_assets(root, (".js",), unlistable):

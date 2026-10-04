@@ -84,6 +84,23 @@ def test_the_projects_own_default_settings_are_not_computed(tmp_path):
     assert not codes(pl, "dynamic_config") and not codes(pl, "unsupported_ref")
 
 
+def test_project_vars_that_are_strings_name_the_dataset(tmp_path):
+    settings = 'defaultProject: p\ndefaultDataset: ds\nvars:\n  RAW: raw_data  # where sources land\n  OUT: "out_data"\nother: x\n'
+    pl = project(tmp_path, {
+        "a.sqlx": 'config { type: "table", schema: dataform.projectConfig.vars.OUT }\nSELECT 1 AS id\n',
+        "r.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref({ schema: dataform.projectConfig.vars.OUT, name: "a" })} '
+                  'JOIN ${ref({ schema: dataform.projectConfig.vars.RAW, name: "x" })} USING (id)\n',
+    }, settings)
+    assert set(pl.models) == {"p.out_data.a", "p.ds.r"}
+    assert {t.key for t in pl.models["p.ds.r"].declared_dependencies} == {"p.out_data.a", "p.raw_data.x"}
+    assert not codes(pl, "dynamic_config")
+
+
+def test_a_var_the_project_does_not_define_stays_computed(tmp_path):
+    pl = project(tmp_path, {"a.sqlx": 'config { type: "table", schema: dataform.projectConfig.vars.NOPE }\nSELECT 1 AS id\n'})
+    assert codes(pl, "dynamic_config") and pl.models["p.ds.a"].kind == "unknown"
+
+
 # ------------------------------------------------------------- prefixes and suffixes
 
 SUFFIXED = {
