@@ -152,6 +152,9 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
     with_clause = _root_with(query)
     if not with_clause:
         return
+    if with_clause.args.get("recursive"):
+        # The independent CTE check does not expand a recursive WITH, so the prover leaves its names alone.
+        return
     if any(
         isinstance(node, exp.With) and node is not with_clause
         for node in query.walk()

@@ -298,3 +298,29 @@ def test_sqlx_sections_are_checked_too():
     result = apply_rule("remove_unused_ctes", source)
     assert result.success, result.verification
     assert all(check.accepted and check.step.section_index == 1 for check in result.verification.proof_checks)
+
+
+PIVOT_SQL = "SELECT * FROM {src} PIVOT (SUM(q) FOR k IN ('a', 'b'))"
+
+
+def test_a_pivot_on_a_cte_reference_moves_onto_the_inlined_subquery():
+    before = "WITH s AS (SELECT k, q FROM t) " + PIVOT_SQL.format(src="s")
+    after = PIVOT_SQL.format(src="(SELECT k, q FROM t) AS s")
+    assert check(before, after).accepted
+
+
+def test_dropping_or_changing_a_pivot_is_refused():
+    before = "WITH s AS (SELECT k, q FROM t) " + PIVOT_SQL.format(src="s")
+    assert not check(before, "SELECT * FROM (SELECT k, q FROM t) AS s").accepted
+    assert not check(before, PIVOT_SQL.format(src="(SELECT k, q FROM t) AS s").replace("'b'", "'c'")).accepted
+
+
+@pytest.mark.parametrize("sql", [
+    "WITH RECURSIVE t AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM t WHERE n < 5) SELECT n FROM t",
+    "SELECT * FROM (SELECT 1 AS id, 10 AS q1, 20 AS q2) UNPIVOT (v FOR q IN (q1, q2))",
+    PIVOT_SQL.format(src="(SELECT k, q FROM t)"),
+])
+def test_the_prover_still_proves_a_query_equal_to_itself(sql):
+    from kumosql.equivalence import prove_equivalent
+
+    assert prove_equivalent(sql, sql).proven

@@ -34,7 +34,7 @@ A CTE rule is only as good as its answer to one question: which relation does th
 Assumptions recorded on each step: `cte_scope_resolution`, `reference_equals_inline_subquery`, `volatile_bodies_refused`, `unreferenced_ctes_have_no_effect`, `expanded_statements_identical`. A step is **refused, never guessed**, when:
 
 - a WITH is recursive, repeats a name (up to case), or carries a MATERIALIZED hint;
-- a name that matches a visible CTE appears anywhere other than as a FROM or JOIN relation, or that relation carries more than an alias (a snapshot, a sample, a pivot);
+- a name that matches a visible CTE appears anywhere other than as a FROM or JOIN relation, or that relation carries more than an alias or a PIVOT/UNPIVOT (a snapshot, a sample); a PIVOT or UNPIVOT on a reference moves onto the substituted subquery, since it applies to whatever relation the name stands for;
 - a volatile call (`RAND()`, `GENERATE_UUID()`, the current time) sits in a CTE that the expansion copies more than once, because merging, inlining or splitting its readers changes how many values are drawn;
 - a CTE name disappears while a bare identifier spelled like it is still an argument of a function (a table passed by name), because that read cannot be tracked;
 - the expansion would copy more than `MAX_EXPANDED_NODES` (50,000) nodes.
