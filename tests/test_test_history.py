@@ -75,6 +75,21 @@ def test_order_lists_slow_tests_with_medians_and_often_failing_tests():
     assert order["risky"][0] == "tests/test_b.py::flaky"
 
 
+def test_a_test_that_was_slow_in_a_few_runs_of_its_file_stays_in_the_quick_tier():
+    # recorded only when slow: 'spike' was 4 s on a loaded machine in 2 of 10 runs; 'usual' is slow in 6 of 10; 'rare_big' is
+    # 40 s in 2 of 10 (a long test never counts as fast); 'new' was slow in the only run that has it
+    records = [
+        record(f"r{i}", [], slow={
+            **({"tests/test_b.py::spike": 4.0} if i < 2 else {}),
+            **({"tests/test_b.py::usual": 5.0} if i < 6 else {}),
+            **({"tests/test_b.py::rare_big": 40.0} if i < 2 else {}),
+        })
+        for i in range(10)
+    ]
+    records.append(record("n", [], files={"tests/test_c.py": 1}, slow={"tests/test_c.py::new": 4.0}))
+    assert th.slow_tests(records) == {"tests/test_b.py::rare_big": 40.0, "tests/test_b.py::usual": 5.0, "tests/test_c.py::new": 4.0}
+
+
 def test_order_leaves_out_tests_whose_files_are_not_in_this_checkout(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_b.py").write_text("")
