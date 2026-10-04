@@ -62,6 +62,10 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
+## Example: a query cut into pieces
+
+A test can split one query into three pieces by a condition `p`: the rows where `p` is true, where it is false, and where it is unknown because of a NULL. Put back together with `UNION DISTINCT`, the pieces are the same as `SELECT DISTINCT` of the whole query, because every row falls into one of the three. Leave the NULL piece out and a row can be lost, so the prover refuses that pair. Join the pieces with `UNION ALL` instead and duplicates stay, so they are not the same as the `DISTINCT` query either. The prover has a small rule for this shape and refuses the near misses; other recent narrow rules cover always-empty queries, a few BigQuery shapes and sums computed per group. They are listed with their limits in the [full reference](../docs/provers.md), and a proof only covers the shapes a rule recognises.
+
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
