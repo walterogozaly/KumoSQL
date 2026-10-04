@@ -166,6 +166,15 @@ def test_operator_operands_keep_sqlglots_reading_in_duckdb():
     assert rows(case, "SELECT NOT (x = 1) IS NULL AS b FROM t") == [(True,), (False,), (True,)]
 
 
+def test_unparenthesized_comparison_chains_are_refused():
+    # sqlglot reads t.x = 1 IS NULL as t.x = (1 IS NULL); the engines read (t.x = 1) IS NULL
+    case = basic_case()
+    for sql in ("SELECT x = 1 IS NULL AS b FROM t", "SELECT x <> 1 IS NOT NULL AS b FROM t", "SELECT x = NOT x IS NULL AS b FROM t"):
+        with pytest.raises(fuzz.UnsupportedConversion, match="comparison chain"):
+            fuzz.convert_sql(sql, case)
+    assert rows(case, "SELECT (x = 1) IS NULL AS b FROM t") == [(False,), (True,), (False,)]
+
+
 def test_large_integer_arithmetic_is_refused_but_float_coercion_is_measured():
     case = basic_case("SELECT x*1e0 AS v FROM t", "SELECT x AS v FROM t", None)
     case["tables"]["t"] = [[0, 9007199254740993, None]]
