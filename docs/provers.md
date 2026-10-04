@@ -51,6 +51,7 @@ The static prover only accepts rewrites whose normalized ASTs match. To test rew
 - Every run gets a fresh in-memory connection. Tables written by a script (`CREATE TABLE ... AS`, `INSERT`) are renamed to run-unique local names, and the final written table is compared when the script does not end in a query.
 - Dataform SQLX is supported: blocks are dropped and `${ref(...)}` becomes a table name. Any other interpolation, unknown table, or execution failure is reported as `error`, never as equivalent.
 - A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof, and it is weaker than BigQuery agreement: the queries run on DuckDB after translation, floats are compared to 12 significant digits, column names are compared without case, and result column types are not compared (`SELECT 1` and `SELECT 1.0` agree).
+- Values keep their kind: `TRUE` never equals `1`, NaN never equals the string or array `"NaN"`, and a struct never equals an array of key/value pairs, at any nesting depth. Integers, floats and decimals still compare by value, since DuckDB's result types differ from BigQuery's (and between equivalent queries). Floats are rounded to 12 significant digits by default; `float_digits=None` compares them exactly and `float_digits=N` sets another precision. `booleans_are_integers=True` (on `compare_outputs` and `find_targeted_difference`) reads `TRUE` as `1` for corpora written for MySQL or Calcite, which have no boolean type; the SQLSolver, QED and Cosette benchmarks use it. The policy used is recorded on the result (`result.float_digits`) and printed by `describe()`.
 - Data generation is seeded and repeatable: the same schema and seed always produce the same rows (a test pins a digest of a small dataset, so a change to the value domains or draw order fails loudly). Column order in the schema mapping is part of the input.
 - Each side is executed twice per seed on identical data. A side that differs from itself (for example `RAND()` or `GENERATE_UUID()`) makes the result `inconclusive`, naming the side and seed, instead of a false `different` or `equivalent`. Failures while fetching results are reported as `error`.
 
@@ -75,7 +76,7 @@ assert_result_equivalent(original, lift_subqueries(original).sql, schema)
 
 Every outcome records `seeds`, `seeds_checked`, `failing_seed`, `rows_per_table`, `null_rate` and the engine version, so a failure reproduces with `generate_synthetic_dataset(schema, seed=<failing_seed>)`. Attaching again replaces the earlier synthetic check.
 
-Install the engine with `pip install -e ".[execution]"` (it is included in `.[dev]`). `tests/test_result_equivalence.py` runs every lifted query in its corpus through the harness and checks that deliberately broken rewrites are caught.
+Install the engine with `pip install -e ".[execution]"` (it is included in `.[dev]`). `tests/test_result_equivalence.py` runs every lifted query in its corpus through the harness (and fails if fewer than 9 of the corpus's proven lifts were executed, so a prover that declines everything cannot pass it) and checks that deliberately broken rewrites are caught.
 
 ## SMT equivalence prover
 

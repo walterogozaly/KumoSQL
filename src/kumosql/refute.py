@@ -193,6 +193,7 @@ def find_targeted_difference(
     timeout: float = 5.0,
     budget: float = 60.0,
     settings: Sequence[str] = (),
+    booleans_are_integers: bool = False,
 ) -> Refutation | None:
     """The first database on which ``left`` and ``right`` differ, or ``None``.
 
@@ -201,9 +202,15 @@ def find_targeted_difference(
     suite built around ``right``, then a few random ones. A database where either
     query errors is skipped; a difference that does not repeat is not reported.
     ``ordered`` compares the rows in order (queries with ``ORDER BY ... LIMIT``).
+    ``booleans_are_integers`` reads ``TRUE`` as ``1`` (see ``compare_outputs``), for queries written in a
+    dialect without a boolean type.
     """
 
-    compare = {"check_column_names": False, "ignore_row_order": not ordered}
+    compare = {
+        "check_column_names": False,
+        "ignore_row_order": not ordered,
+        "booleans_are_integers": booleans_are_integers,
+    }
     started = time.monotonic()
     runner_class = SqliteRunner if engine == "sqlite" else DatasetRunner
     seen: set[int] = set()
