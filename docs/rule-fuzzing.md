@@ -48,7 +48,7 @@ false proofs: shadowed aliases and scopes, global aggregates, ROLLUP/CUBE/GROUPI
 windows and QUALIFY, set operations with ORDER/LIMIT tails, correlated subqueries, CTEs that shadow tables, USING
 joins), `fuzz` (both sides of `tools/soundness_fuzz.py` template pairs), `evals` (the non-held-out queries of the
 SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are never read) and `target:<module>`
-(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
+(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations), `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding), `regroup` (a regrouping of an already-grouped subquery, and arithmetic over the aggregates it folds), `partitions` (UNION ALL branches that are one query split by a filter), `keyed_sets` (lifting a derived `DISTINCT` through a keyed inner join), `intersections` (counted intersections) and `constant_correlations` (a correlated column pinned to an integer constant). The last five cover rules the earlier modules rarely reached; each pairs its firing shapes with near misses that a guard has to decline. A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`); groups do not nest, so a template whose choices must agree spells them out. A query
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one
@@ -71,4 +71,8 @@ a dropped left join replaced a same-named column in a nested query), one in UNIO
 branch lost its only aggregate and went from one row to a row per input row) and one in `_drop_group_in_membership_tests`
 (`EXISTS (SELECT 1 FROM u GROUP BY ())` lost its grand-total row). All four are fixed with regression tests.
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
-generators fired about 70 rules and found nothing else.
+generators fired about 70 rules and found nothing else. A 600-case run over the five later generators
+(`regroup`, `partitions`, `keyed_sets`, `intersections`, `constant_correlations`) fired their six rules 366 times
+(`_collapse_aggregate` 62, `regroup_arithmetic` 36, `recombine_partitions` 46, `lift_keyed_set_join` 72,
+`collapse_counted_intersection` 20, `collapse_named_counted_intersection` 50,
+`propagate_constant_correlations` 80) and found nothing either.
