@@ -36,6 +36,7 @@ from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
+from .proof_qualify import QUALIFY_FAMILY
 from .proof_registry import FAMILIES, RULE_FAMILIES
 from .proof_steps import RewriteStep, StepCheck, same_tree
 
@@ -195,6 +196,26 @@ def _lossy_types(query: exp.Expression) -> str | None:
     return None
 
 
+def _known_columns(statement: exp.Expression) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The columns the loaded project and saved catalog give the physical tables a statement reads.
+
+    The qualification check cannot learn a table's columns from the SQL, so the acceptance layer supplies them
+    (catalog data, not decision code): each table the statement names, under its lower-case dotted name.
+    """
+
+    try:
+        columns = prover_context.current_schema().columns
+    except Exception:  # noqa: BLE001 - no schema means no known tables, and the check then refuses plain tables
+        return ()
+    found: dict[str, tuple[str, ...]] = {}
+    for table in statement.find_all(exp.Table):
+        parts = [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
+        key = ".".join(parts)
+        if key in columns:
+            found[key] = tuple(str(column).lower() for column in columns[key])
+    return tuple(sorted(found.items()))
+
+
 def _independent_checks(
     left: list[exp.Expression],
     right: list[exp.Expression],
@@ -213,6 +234,7 @@ def _independent_checks(
         step = RewriteStep(
             rule, family, index, old.sql(dialect="bigquery"), new.sql(dialect="bigquery"),
             registered.assumptions, section_index,
+            _known_columns(old) if family == QUALIFY_FAMILY else (),
         )
         check = registered.check(step, old.copy(), new.copy())
         step_checks.append(check)
