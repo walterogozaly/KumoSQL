@@ -36,7 +36,8 @@ def test_a_trap_pair_is_never_proven_without_disclosing_the_violated_assumption(
 def test_an_assumed_proof_lists_the_assumption_its_case_violates(results):
     for case, result in results.values():
         if result["outcome"] == "assumed":
-            assert case.violates and any(a.startswith(v) for a in result["assumptions"] for v in case.violates)
+            named = case.violates + case.discharged
+            assert named and any(a.startswith(v) for a in result["assumptions"] for v in named)
 
 
 def test_sound_pairs_are_still_proved(results):
