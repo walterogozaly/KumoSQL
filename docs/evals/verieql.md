@@ -77,10 +77,10 @@ The suites carry no labels, but four pairs are known to differ and `tests/test_v
 | Suite | Pairs | Proven equivalent | Refuted (executed) | Agree on random databases | Not run | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Literature | 64 | 28 | 25 | 9 | 2 | 0 |
-| Calcite-397 | 397 | 331 | 29 | 28 | 9 | 0 |
+| Calcite-397 | 397 | 335 | 29 | 24 | 9 | 0 |
 | LeetCode (all pairs) | 23,994 | 4,787 | 5,676 | 12,460 | 1,071 | 0 |
 
-LeetCode lost 6 proofs (4,793 to 4,787) to the same check: 6 of the 17 pairs it refuses had been proved, because they use `||` as OR (MySQL's default) where sqlglot reads concatenation. That was measured by re-running those 17 pairs, not the whole suite. Calcite-397 was re-measured on 2026-10-04. Master gave 335 proved, 29 refuted and 24 agree; the parser check ([parser checks](../parser-checks.md)) refuses 4 of those proofs, whose Calcite text holds `a = b IS TRUE` (MySQL reads `(a = b) IS TRUE`, sqlglot `a = (b IS TRUE)`), so 331 proved and 28 agree; refuted and wrong are unchanged.
+LeetCode lost 6 proofs (4,793 to 4,787) to the parser check: 6 of the 17 pairs it refuses had been proved, because they use `||` as OR (MySQL's default) where sqlglot reads concatenation. That was measured by re-running those 17 pairs, not the whole suite.
 
 The [harness translation](#harness-translation), with the bare-word and `$` fixes from the full LeetCode rerun, took Calcite-397 from 197 proved, 15 refuted and 96 not run to these numbers, and Literature from 10 proved and 11 not run. VeriEQL marks five of our Calcite refutations equivalent (pairs 80, 120, 126, 257 and 367); each counterexample was executed and read by hand, and the queries do differ (for example pair 120's rewrite counts `DISTINCT ENAME` once per `JOB` in the ROLLUP subtotal rows, and pair 80 returns `'TABLE'` against `'TABLE '` because Calcite pads CHAR literals and DuckDB's VARCHAR does not).
 

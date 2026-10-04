@@ -1,13 +1,13 @@
 {
   "suite": "VeriEQL Calcite-397 (counterexamples)",
   "order": 43,
-  "score": "29/397 refuted, 28 agree, 0 wrong",
+  "score": "29/397 refuted, 24 agree, 0 wrong",
   "metric": "Pairs shown different by a constraint-respecting database on which both queries were run (DuckDB), and pairs on which 600 random databases (400 wider ones when a query has HAVING, and every database of at most 2 rows per table) showed no difference (not a proof, not bounded verification).",
   "evidence": "executed",
   "correctness": "Every refutation was executed on both queries, is stable under row-order shuffles, and returns the same rows with DuckDB's optimizer off; none are claimed without a database",
   "coverage": {
     "refuted": 29,
-    "unknown": 28,
+    "unknown": 24,
     "unsupported": 9
   },
   "coverage_of": "The 82 pairs the prover leaves unknown in verieql-calcite-proof (the other 315 of 397 are proved there): refuted, unknown (agree on every database tried) or unsupported (not run).",
