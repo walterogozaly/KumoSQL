@@ -42,6 +42,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Reuse an existing summary table | [Model reuse](model-reuse.md) |
 | Search harder for wrong proofs | [Proof re-check](proof-recheck.md) |
 | Test each rewrite on its own | [Rule-level fuzzing](rule-fuzzing.md) |
+| See how many proofs now need fewer number assumptions | [Numeric assumption report](numeric-assumption-report.md) |
 | Run tests and understand their history | [Test history](test-history.md) |
 | Continue a workstream someone else started | [Picking up a workstream](handoff.md) |
 | See what an outside audit of the checks found | [Eval integrity audit status](eval-integrity-status.md), [the audit itself](eval-integrity-audit-2026-10-02.md) |
