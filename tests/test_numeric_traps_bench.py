@@ -41,7 +41,7 @@ def test_an_assumed_proof_lists_the_assumption_its_case_violates(results):
 
 def test_sound_pairs_are_still_proved(results):
     equivalent = [r for c, r in results.values() if c.label == "equivalent"]
-    assert sum(r["outcome"] == "proven" for r in equivalent) >= 26
+    assert sum(r["outcome"] == "proven" for r in equivalent) >= 27
     assert not any(r["outcome"] == "refuted" for r in equivalent)
 
 

@@ -15,6 +15,20 @@ SCHEMA = {
 A, B = "`p.raw.src_a`", "`p.raw.src_b`"
 
 
+def _parses(sql: str) -> bool:
+    try:
+        sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.ParseError:
+        return False
+    return True
+
+
+# sqlglot 26 cannot parse outer (FULL, LEFT, INNER) BY NAME or CORRESPONDING set operations
+OUTER_BY_NAME = pytest.mark.skipif(
+    not _parses("SELECT 1 AS a FULL UNION ALL BY NAME SELECT 1 AS a"), reason="this sqlglot version cannot parse outer BY NAME"
+)
+
+
 @pytest.fixture(autouse=True)
 def quiet_timing(monkeypatch):
     monkeypatch.setenv("KUMOSQL_TIMING", "0")
@@ -40,6 +54,7 @@ def test_branches_are_matched_by_name_not_position():
     assert leaves(records["x"]) == {"p.raw.src_a.x"}
 
 
+@OUTER_BY_NAME
 def test_full_outer_missing_column_is_null_not_another_column():
     records, _ = trace(f"SELECT k, x, y FROM {A} FULL OUTER UNION ALL BY NAME SELECT k, y FROM {B}")
     assert [r.status for r in records.values()] == ["traced"] * 3
@@ -47,6 +62,7 @@ def test_full_outer_missing_column_is_null_not_another_column():
     assert leaves(records["y"]) == {"p.raw.src_a.y", "p.raw.src_b.y"}
 
 
+@OUTER_BY_NAME
 def test_full_outer_adds_columns_only_the_right_branch_has():
     records, _ = trace(f"SELECT k, y FROM {B} FULL OUTER UNION DISTINCT BY NAME SELECT x, k FROM {A}")
     assert list(records) == ["k", "y", "x"]
@@ -54,24 +70,28 @@ def test_full_outer_adds_columns_only_the_right_branch_has():
     assert leaves(records["k"]) == {"p.raw.src_a.k", "p.raw.src_b.k"}
 
 
+@OUTER_BY_NAME
 def test_left_outer_keeps_left_columns_but_still_reads_the_dropped_ones():
     records, pipeline = trace(f"SELECT k, x FROM {A} LEFT OUTER UNION ALL BY NAME SELECT y, k, x FROM {A}")
     assert list(records) == ["k", "x"]
     assert {c.column for c in pipeline.consumed_columns()["p.m.t"]} == {"k", "x", "y"}
 
 
+@OUTER_BY_NAME
 def test_inner_corresponding_keeps_common_columns_only():
     records, _ = trace(f"SELECT k, x, y FROM {A} INNER UNION ALL CORRESPONDING SELECT y, k FROM {B}")
     assert list(records) == ["k", "y"]
     assert leaves(records["k"]) == {"p.raw.src_a.k", "p.raw.src_b.k"}
 
 
+@OUTER_BY_NAME
 def test_strict_corresponding_and_star_expansion_follow_names():
     records, _ = trace(f"SELECT * FROM {B} UNION ALL STRICT CORRESPONDING SELECT y, k FROM {A}")
     assert leaves(records["k"]) == {"p.raw.src_a.k", "p.raw.src_b.k"}
     assert leaves(records["y"]) == {"p.raw.src_a.y", "p.raw.src_b.y"}
 
 
+@OUTER_BY_NAME
 def test_chained_by_name_operations():
     records, _ = trace(
         f"SELECT k FROM {B} FULL OUTER UNION ALL BY NAME SELECT x, k FROM {A} FULL OUTER UNION ALL BY NAME SELECT y FROM {B}"
@@ -134,6 +154,7 @@ def _chain():
     return load_compiled_graph(graph, source_schema=SCHEMA)
 
 
+@OUTER_BY_NAME
 def test_impact_through_a_by_name_model_follows_names():
     from kumosql.impact import assess_change
 

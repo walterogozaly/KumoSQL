@@ -42,7 +42,7 @@ The prover decides each pair without its label:
 
 | | master (before) | this change |
 | --- | --- | --- |
-| equivalent pairs proved | 18/33 | 26/33 |
+| equivalent pairs proved | 18/33 | 27/33 |
 | differing pairs refuted | 0/16 (2 proved, 3 assumed) | 1/16 (0 proved, 3 assumed) |
 | error cases classified | 0/10 | 10/10 |
 | wrong | 3 | 0 |

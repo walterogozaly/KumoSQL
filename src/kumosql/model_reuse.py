@@ -33,7 +33,7 @@ from sqlglot import exp
 from sqlglot.optimizer.merge_subqueries import merge_subqueries
 from sqlglot.optimizer.qualify import qualify
 
-from .ast_utils import captured_names, inside as _inside
+from .ast_utils import captured_names, grouping_elements, inside as _inside
 from .smt_equivalence import SmtStatus, TableConstraints
 
 
@@ -267,7 +267,9 @@ def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None)
         tables.append((table.alias_or_name, table.name))
     conjuncts += _split_and(tree.args.get("where"))
     outputs = list(tree.expressions)
-    group = list(tree.args["group"].expressions) if tree.args.get("group") else []
+    group = grouping_elements(tree.args.get("group"))
+    if tree.args.get("group") and tree.args["group"].args.get("totals") or any(isinstance(g, (exp.Rollup, exp.Cube)) and not g.expressions for g in group):
+        raise _Unsupported("WITH ROLLUP, WITH CUBE or WITH TOTALS")
     having = tree.args["having"].this if tree.args.get("having") else None
     parts = [*conjuncts, *outputs, *group] + ([having] if having is not None else [])
     for part in parts:

@@ -2,16 +2,16 @@
   "suite": "Numeric traps (SMT prover)",
   "order": 39,
   "size": 59,
-  "score": "26/33 equivalent proved, 1/16 differing refuted (0 proved, 3 assumed), 10/10 error cases classified, 0 wrong",
+  "score": "27/33 equivalent proved, 1/16 differing refuted (0 proved, 3 assumed), 10/10 error cases classified, 0 wrong",
   "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
   "evidence": "proof",
   "correctness": "Labels follow the GoogleSQL documentation (the case file names the page; the ones it could not confirm say so); the cases DuckDB can run faithfully are replayed on a witness database by the test suite. Wrong is a proof or refutation that contradicts the label, or an error verdict that claims safety where the label says the rewrite can fail.",
   "coverage": {
-    "proven": 31,
+    "proven": 32,
     "refuted": 1,
-    "unknown": 27
+    "unknown": 26
   },
-  "held_out": "6/9 equivalent proved, 0/5 differing refuted (0 proved, 1 assumed), 0/0 error cases classified, 0 wrong (14 cases)",
+  "held_out": "7/9 equivalent proved, 0/5 differing refuted (0 proved, 1 assumed), 0/0 error cases classified, 0 wrong (14 cases)",
   "docs": "docs/evals/numeric-traps.md",
   "command": "python tools/numeric_traps_bench.py --write-results",
   "date": "2026-10-04",
@@ -22,6 +22,6 @@
     "duckdb": "1.5.6",
     "z3-solver": "5.1.0.0",
     "sqlfluff": "4.4.0",
-    "commit": "a77614a+changes"
+    "commit": "a08a0b0+changes"
   }
 }

@@ -33,10 +33,18 @@ SUM/AVG independent of row order, result column types not compared; with
 Numeric conversions that the query text makes visible are kept: a CASE, IF,
 COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
 cast, or arithmetic over one) reads each other non-literal branch as
-``CAST(.. AS FLOAT64)``, and ``x * 1`` is ``x`` only for an integer (or exact
+``CAST(.. AS FLOAT64)``, a comparison (``=``, ``<``, ``IN``, ``BETWEEN``, a
+simple ``CASE``) with a FLOAT64 operand reads each other one the same way (a
+FLOAT64 literal below 2**53 converts nothing: an integer and its rounding
+compare alike with it), and ``x * 1`` is ``x`` only for an integer (or exact
 decimal) ``1``; declared column types (``types``) count as visible. Values
 from different sources whose types are not known (two undeclared columns) are
-combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``.
+compared and combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``. A
+decimal or exponent literal is its exact value, which keeps its order against
+every FLOAT64 value only with at most 15 significant digits and inside the
+normal FLOAT64 range; other literals (``1e-324`` is 0, ``1e400`` overflows)
+are not modeled. FLOAT64 arithmetic is never computed on its literals (BigQuery's
+``0.1 + 0.2`` is not ``0.3``), except under ``exact_arithmetic``.
 
 When a proof fails the prover looks for a small concrete database on which
 the two queries return different rows; if it finds one the result is
@@ -65,7 +73,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails, star_modified
 from .set_operations import positional_sql_pair
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
@@ -143,7 +151,7 @@ BASE_ASSUMPTIONS = (
 )
 EXACT_ARITHMETIC_ASSUMPTION = "+, - and * are exact (no FLOAT64 rounding or INT64 overflow)"
 MIXED_NUMERIC_ASSUMPTION = (
-    "values combined by CASE, IF, COALESCE or a set operation have the same numeric type (no INT64 to FLOAT64 conversion)"
+    "values compared, or combined by CASE, IF, COALESCE or a set operation, have the same numeric type (no INT64 to FLOAT64 conversion)"
 )
 
 _NONDETERMINISTIC_NAMES = {
@@ -730,7 +738,15 @@ def _parse_number(text: str) -> Fraction:
     # and rounding preserves its order against every other FLOAT64 value.
     if len(dec.normalize().as_tuple().digits) > 15:
         raise Unsupported(f"numeric literal {text} has more than 15 significant digits")
+    # Only in the normal FLOAT64 range: below it a literal rounds to a subnormal with fewer digits or to
+    # 0 (1e-324 and 2e-324 are both 0), above it to infinity.
+    if value and not _FLOAT64_MIN_NORMAL <= abs(value) <= _FLOAT64_MAX:
+        raise Unsupported(f"numeric literal {text} is outside the normal FLOAT64 range")
     return value
+
+
+_FLOAT64_MIN_NORMAL = Fraction(sys.float_info.min)
+_FLOAT64_MAX = Fraction(sys.float_info.max)
 
 
 _INTEGER_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.Type.SMALLINT, exp.DataType.Type.TINYINT}
@@ -789,7 +805,8 @@ def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
             value = _parse_number(node.this)
         except Unsupported:
             return None
-        if value.denominator != 1 and dialect not in _EXACT_DECIMAL_LITERALS:
+        # An exponent literal is FLOAT64/DOUBLE even where decimals are exact (NUMERIC only in PostgreSQL).
+        if value.denominator != 1 and (dialect not in _EXACT_DECIMAL_LITERALS or ("e" in node.this.lower() and dialect != "postgres")):
             return None
         return value
     if isinstance(node, exp.Neg):
@@ -880,6 +897,26 @@ def _plain_literal(node: exp.Expression, dialect: str) -> bool:
     return _literal_arithmetic(node, dialect) is not None
 
 
+def _literal_value(node: exp.Expression, dialect: str) -> Fraction:
+    """The model value of a numeric ``_plain_literal`` (0 for NULL and booleans)."""
+
+    def number(text: str, negate: bool) -> Fraction:
+        if dialect != "bigquery":
+            value = _parse_number(text)
+            return -value if negate else value
+        try:
+            return smt_values.literal_value(text, negate)  # the FLOAT64 nearest a decimal, not its exact text
+        except smt_values.NotModeled as error:
+            raise Unsupported(str(error)) from error
+
+    node = node.unnest() if isinstance(node, exp.Paren) else node
+    if isinstance(node, exp.Literal) and not node.is_string:
+        return number(node.this, False)
+    if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal) and not node.this.is_string:
+        return number(node.this.this, True)
+    return _literal_arithmetic(node, dialect) or Fraction(0)
+
+
 def _branch_values(node: exp.Expression, dialect: str) -> list[exp.Expression]:
     """The expressions whose common type is the type of a CASE, COALESCE, IF or NULLIF."""
 
@@ -928,8 +965,8 @@ class _Compiler:
         # Declared column types by table key, and the table of each base-table occurrence.
         self.types = {key.lower(): {c.lower(): t for c, t in cols.items()} for key, cols in (types or {}).items()}
         self.occ_tables: dict[str, str] = {}
-        # A CASE/COALESCE/IF/NULLIF or set-operation column combined values whose numeric types are not known
-        # to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
+        # A comparison, or a CASE/COALESCE/IF/NULLIF or set-operation column, met values whose numeric types are
+        # not known to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
         self.mixed_numeric = False
         self.schema = {
             key.lower(): [c.lower() for c in cols] for key, cols in (schema or {}).items()
@@ -1653,9 +1690,9 @@ class _Compiler:
                         raise Unsupported("a number compared with a BOOL (a type error in BigQuery)")
                 if string_number_compare.mismatched(e, self.types):
                     return self._converted_compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
-                return self._compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+                return self._compare(op, *self._compared_vals([e.this, e.expression], env, agg, aliases))
         if isinstance(e, (exp.NullSafeEQ, exp.NullSafeNEQ)):
-            eq = _null_eq(self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+            eq = _null_eq(*self._compared_vals([e.this, e.expression], env, agg, aliases))
             eq = eq if isinstance(e, exp.NullSafeEQ) else z3.Not(eq)
             return _Pred(eq, z3.Not(eq))
         if isinstance(e, exp.Is):
@@ -1673,16 +1710,16 @@ class _Compiler:
                 return self._in_subquery(e, env, agg, aliases)
             if e.args.get("query") is not None or e.args.get("unnest") is not None or e.args.get("field") is not None:
                 raise Unsupported("IN subquery/UNNEST")
-            left = self._val(e.this, env, agg, aliases)
+            left, *items = self._compared_vals([e.this, *e.expressions], env, agg, aliases)
             result = _const_pred(False)
-            for item in e.expressions:
-                c = self._compare("=", left, self._val(item, env, agg, aliases))
+            for item in items:
+                c = self._compare("=", left, item)
                 result = _Pred(z3.Or(result.t, c.t), z3.And(result.f, c.f))
             return result
         if isinstance(e, exp.Between):
-            v = self._val(e.this, env, agg, aliases)
-            lo = self._compare(">=", v, self._val(e.args["low"], env, agg, aliases))
-            hi = self._compare("<=", v, self._val(e.args["high"], env, agg, aliases))
+            v, low, high = self._compared_vals([e.this, e.args["low"], e.args["high"]], env, agg, aliases)
+            lo = self._compare(">=", v, low)
+            hi = self._compare("<=", v, high)
             return _Pred(z3.And(lo.t, hi.t), z3.Or(lo.f, hi.f))
         if isinstance(e, exp.Exists):
             atom = self._existence(e.this, env)
@@ -1755,8 +1792,9 @@ class _Compiler:
 
         def compare(scope, node):
             tests = []
-            for left, item in zip(left_values, node.expressions):
-                right = self._val(item.this if isinstance(item, exp.Alias) else item, scope, None, None)
+            for left_expr, left, item in zip(lefts, left_values, node.expressions):
+                item = item.this if isinstance(item, exp.Alias) else item
+                left, right = self._compared([left_expr, item], [left, self._val(item, scope, None, None)])
                 tests.append(self._compare("=", left, right))
             # A row value equals another when every pair is equal; it differs when some pair differs.
             return _Pred(z3.And(*[t.t for t in tests]), z3.Or(*[t.f for t in tests]))
@@ -1866,16 +1904,18 @@ class _Compiler:
             return _Val(z3.If(cond.t, then.null, other.null), z3.If(cond.t, then.val, other.val))
         if isinstance(e, exp.Case):
             operand = e.args.get("this")
-            operand_val = self._val(operand, env, agg, aliases) if operand is not None else None
             default = e.args.get("default")
             ifs = e.args.get("ifs") or []
+            operand_val, whens = None, []
+            if operand is not None:
+                operand_val, *whens = self._compared_vals([operand, *[b.this for b in ifs]], env, agg, aliases)
             branches = [b.args["true"] for b in ifs] + ([default] if default is not None else [])
             # WHEN conditions run in order, and only the chosen THEN (or ELSE) is evaluated.
             conds = []
-            for branch in ifs:
+            for k, branch in enumerate(ifs):
                 with self._guarded(*[z3.Not(c.t) for c in conds]):
                     if operand_val is not None:
-                        conds.append(self._compare("=", operand_val, self._val(branch.this, env, agg, aliases)))
+                        conds.append(self._compare("=", operand_val, whens[k]))
                     else:
                         conds.append(self._pred(branch.this, env, agg, aliases))
             raw = []
@@ -1890,7 +1930,7 @@ class _Compiler:
             return result
         if isinstance(e, exp.Nullif):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
-            eq = self._compare("=", a, b)
+            eq = self._compare("=", *self._compared([e.this, e.expression], [a, b]))
             if self.dialect in _NULLIF_SUPERTYPE:
                 a = self._common_type([e.this, e.expression], [a, b])[0]
             elif self.dialect not in _NULLIF_FIRST_TYPE and _float64_kind(e.expression, self.dialect):
@@ -2104,6 +2144,24 @@ class _Compiler:
         return self._coerce([
             (_float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null), v) for e, v in zip(exprs, vals)
         ])
+
+    def _compared(self, exprs: list, vals: list[_Val]) -> list[_Val]:
+        """``vals`` of the operands ``exprs`` of one comparison (``=``, ``<``, ``IN``, ``BETWEEN``, a simple
+        CASE) in the type they are compared in, as ``_common_type`` does for branches: an INT64 operand
+        compared with a FLOAT64 one is converted first, so ``a = b AND b = c`` over INT64 ``a``, ``c`` and
+        FLOAT64 ``b`` does not give ``a = c``. A FLOAT64 literal below 2**53 in magnitude converts nothing:
+        an integer and its FLOAT64 rounding compare alike with it."""
+
+        entries = []
+        for e, v in zip(exprs, vals):
+            kind, literal = _float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null)
+            if literal and kind and abs(_literal_value(e, self.dialect)) < 2**53:
+                kind = False
+            entries.append((kind, literal, v))
+        return self._coerce(entries)
+
+    def _compared_vals(self, exprs: list, env, agg, aliases) -> list[_Val]:
+        return self._compared(exprs, [self._val(e, env, agg, aliases) for e in exprs])
 
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
