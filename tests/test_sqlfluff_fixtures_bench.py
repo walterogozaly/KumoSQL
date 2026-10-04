@@ -5,7 +5,6 @@ these tests need no download. ``FLOORS`` only ever goes up. Every case that is n
 regression case: it may improve, but it must never turn into a wrong verdict.
 """
 
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -14,11 +13,9 @@ import pytest
 pytest.importorskip("z3")
 pytest.importorskip("duckdb")
 
-_path = Path(__file__).resolve().parent.parent / "tools" / "sqlfluff_fixtures_bench.py"
-_spec = importlib.util.spec_from_file_location("sqlfluff_fixtures_bench", _path)
-bench = importlib.util.module_from_spec(_spec)
-sys.modules["sqlfluff_fixtures_bench"] = bench
-_spec.loader.exec_module(bench)
+# Spawn workers must be able to import the module named in their pickled jobs.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import sqlfluff_fixtures_bench as bench  # noqa: E402
 
 # measured 2026-10-02 over the whole corpus; a little room for solver timeouts under load
 FLOORS = {

@@ -40,6 +40,11 @@ Credit for the cases belongs to the sqlfluff authors; KumoSQL only reads them.
 
 `python tools/sqlfluff_fixtures_bench.py semantic` (about a minute on 4 cores).
 
+Execution checks use `fork` where available and `spawn` on Windows. The child entry point is
+importable under either method, and results are read before joining the process so a large witness
+cannot fill its pipe and appear to time out. A child crash or timeout still means the pair could not
+be checked; neither is a refutation. Spawn startup counts toward the execution-check timeout.
+
 The fixtures have no schema, so one is read off the queries: every column a query mentions (qualified by a table or alias, or unqualified in a select over one table, or read through a `SELECT *` derived table or CTE) belongs to its table, and every table gets two placeholder columns so that `SELECT *` has a width. A verdict therefore holds for tables with those columns, which is a weaker claim than "for every schema".
 
 For each pair `prove_equivalent_algebraic` runs on the two queries as written (output names compared), in the case's dialect. A proof is then re-run on 360 random DuckDB databases built from that schema; a database that separates the pair would make it **wrong**. When there is no proof, 120 random databases look for a counterexample, and one that separates the pair makes it **refuted**. A database that comes up twice (every ninth seed gives the all-empty one) is run once, and two queries that translate to the same DuckDB text run once per database (`kumosql.random_check.run_all`). DuckDB can crash on odd joins, so each execution check runs in a child process; a crash only means the proof is not re-checkable.

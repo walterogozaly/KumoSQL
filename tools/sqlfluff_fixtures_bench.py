@@ -346,6 +346,18 @@ def _check_schema(schema: dict[str, list[str]], kinds: dict[str, str]):
     ])
 
 
+def _isolation_worker(fn, args, sender):
+    """A module-level target so the execution oracle can also use spawn."""
+
+    import faulthandler
+
+    faulthandler.disable()  # a DuckDB crash is handled by the parent
+    try:
+        sender.send(fn(*args))
+    finally:
+        sender.close()
+
+
 def _isolated(fn, *args, timeout: float = 90.0):
     """Run ``fn`` in a child process: DuckDB can crash the interpreter on odd joins, and that must not end the run.
 
@@ -353,26 +365,32 @@ def _isolated(fn, *args, timeout: float = 90.0):
     """
 
     import multiprocessing
+    import time
 
-    context = multiprocessing.get_context("fork")
-    queue = context.SimpleQueue()
-
-    def target():
-        import faulthandler
-
-        faulthandler.disable()  # a DuckDB crash is expected and handled; keep the traceback out of the output
-        queue.put(fn(*args))
-
-    child = context.Process(target=target)
-    child.start()
-    child.join(timeout)
-    if child.is_alive():
-        child.kill()
-        child.join()
+    context = multiprocessing.get_context("fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    child = context.Process(target=_isolation_worker, args=(fn, args, sender))
+    deadline = time.monotonic() + timeout
+    try:
+        child.start()
+        sender.close()
+        # Read before joining: a large witness can fill the pipe and block a child
+        # whose parent is waiting for it to exit.
+        if not receiver.poll(max(0.0, deadline - time.monotonic())):
+            return False
+        result = receiver.recv()
+        child.join(max(0.0, deadline - time.monotonic()))
+        return result if child.exitcode == 0 else False
+    except (EOFError, OSError):
         return False
-    if child.exitcode != 0 or queue.empty():
-        return False
-    return queue.get()
+    finally:
+        if child.pid is not None:
+            if child.is_alive():
+                child.kill()
+            child.join()
+            child.close()
+        receiver.close()
+        sender.close()
 
 
 def execute_difference(left: str, right: str, dialect: str, schema: dict, kinds: dict, trials: int):

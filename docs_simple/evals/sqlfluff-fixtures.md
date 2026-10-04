@@ -24,6 +24,10 @@ python tools/sqlfluff_fixtures_bench.py kumosql
 
 The full guide lists source/version setup and recorded scores.
 
+Execution checks run in a separate process on Windows as well as Unix. If that process crashes or
+runs out of time, the pair stays unchecked. A large returned example is read before the parent
+waits for the child to finish, so its size alone does not look like a timeout.
+
 Original fixtures are scored separately from adapted statements. A script or template may need adaptation before its query can be checked, which does not establish the original file was fully supported.
 
 Inferred schemas can include placeholder columns to make `SELECT *` well defined. A proof about that inferred schema is not a proof about every possible table width.
