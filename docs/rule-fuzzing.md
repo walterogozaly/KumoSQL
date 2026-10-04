@@ -48,7 +48,7 @@ false proofs: shadowed aliases and scopes, global aggregates, ROLLUP/CUBE/GROUPI
 windows and QUALIFY, set operations with ORDER/LIMIT tails, correlated subqueries, CTEs that shadow tables, USING
 joins), `fuzz` (both sides of `tools/soundness_fuzz.py` template pairs), `evals` (the non-held-out queries of the
 SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are never read) and `target:<module>`
-(`tools/rule_fuzz_targets/<module>.py`, generators for one rule module that expose `cases(seed, count)`). A query
+(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one
@@ -67,6 +67,8 @@ among ties, and finds nothing on a small seeded generated run.
 
 See the workstream issue ([#496](https://github.com/walterogozaly/KumoSQL/issues/496)) for the running list. The
 first runs found two bugs in the empty-relation rules (a grouping with a grand total called empty over empty input;
-a dropped left join replaced a same-named column in a nested query) and one in UNION ALL column pruning (a
-branch lost its only aggregate and went from one row to a row per input row). All three are fixed with regression
-tests.
+a dropped left join replaced a same-named column in a nested query), one in UNION ALL column pruning (a
+branch lost its only aggregate and went from one row to a row per input row) and one in `_drop_group_in_membership_tests`
+(`EXISTS (SELECT 1 FROM u GROUP BY ())` lost its grand-total row). All four are fixed with regression tests.
+About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
+generators fired about 70 rules and found nothing else.

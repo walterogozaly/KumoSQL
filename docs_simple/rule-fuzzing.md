@@ -12,7 +12,7 @@ Before it reports anything, the tool rules out noise: the same difference must a
 
 ## What it has found so far
 
-Three wrong rewrites on the first runs: two in the rules that handle provably empty tables, and one in the rule that drops unread columns of a `UNION ALL`. All three are fixed and kept as tests. The running list is on the workstream issue linked from the full reference.
+Four wrong rewrites on the first runs: two in the rules that handle provably empty tables, one in the rule that drops unread columns of a `UNION ALL`, and one that dropped a grand-total grouping inside `EXISTS`. All three are fixed and kept as tests. The running list is on the workstream issue linked from the full reference.
 
 ## Limits
 
