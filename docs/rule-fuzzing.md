@@ -20,7 +20,7 @@ runs, each rewrite that fires is checked on its own, on the exact query it saw.
 3. A difference counts only if all of these hold:
    - `kumosql.duckdb_load.run_unoptimized` gives the same bags (DuckDB's optimizer bug, #347);
    - the bags stay the same with every table's rows reversed (no dependence on row order);
-   - every `LIMIT` is stable when its `ORDER BY` is extended by all output columns, ascending and descending (a cut
+   - every `LIMIT` is stable: the rows equal those with its `ORDER BY` extended by all output columns, ascending and descending (a cut
      among tied rows is unspecified, not a bug);
    - both queries return the same column types (DuckDB coerces a mixed-type `UNION` that BigQuery rejects, and the
      prover does not compare result types).

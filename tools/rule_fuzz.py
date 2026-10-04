@@ -530,11 +530,12 @@ class Oracle:
         except Exception:  # noqa: BLE001
             return None
 
-    def _tie_free(self, schema_name: str, sql: str) -> bool:
+    def _tie_free(self, schema_name: str, sql: str, rows) -> bool:
         """Whether the rows ``sql`` returns do not depend on how its LIMITs break ties.
 
         Every ORDER BY that feeds a LIMIT or OFFSET is extended by all output columns, ascending and then
-        descending; ties among whole rows then no longer matter, so a different bag means the cut depended on them.
+        descending; ties among whole rows then no longer matter. The query's own rows must equal both, or its
+        cut depended on how ties were broken.
         """
 
         variants = _tie_variants(sql)
@@ -543,7 +544,7 @@ class Oracle:
         ran = [self._run(schema_name, variant) for variant in variants]
         if any(isinstance(r, Exception) for r in ran):
             return False
-        return bag(ran[0]) == bag(ran[1])
+        return bag(ran[0]) == bag(ran[1]) == bag(rows)
 
     def compare(self, before_sql: str, after_sql: str, stop_at_first: bool = True) -> dict:
         """Run both queries on every database. ``status``: equal, differs, unchecked."""
@@ -580,7 +581,7 @@ class Oracle:
                 continue
             if bag(again[0]) != bag(a) or bag(again[1]) != bag(b):
                 continue  # depends on row order (LIMIT without a total order, ties, ANY_VALUE): not evidence
-            if not all(self._tie_free(schema_name, sql) for sql in (before_sql, after_sql)):
+            if not (self._tie_free(schema_name, before_sql, a) and self._tie_free(schema_name, after_sql, b)):
                 continue  # which rows a LIMIT keeps among ties is unspecified: not evidence
             if self._column_types(schema_name, before_sql) != self._column_types(schema_name, after_sql):
                 continue  # the prover does not compare result types, and DuckDB coerces a mixed-type UNION BigQuery rejects
