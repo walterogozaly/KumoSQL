@@ -43,6 +43,6 @@ def same_scoped_query(left, right, *, schema, dialect, compare_names):
                     if isinstance(item, exp.Subquery):
                         item.set("alias", None)
             shapes.append(_canonical_aliases(tree, schema))
-    except (sqlglot.errors.SqlglotError, Unsupported, ValueError):
+    except (sqlglot.errors.SqlglotError, Unsupported, ValueError, proof_columns.ColumnResolutionRefused):
         return False
     return shapes[0] == shapes[1]

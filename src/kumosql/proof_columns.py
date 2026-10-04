@@ -35,8 +35,10 @@ Three ways the provers use it, all of which can only remove a proof:
 * **a qualified tree** (:meth:`StatementReader.judge_qualified`): sqlglot's qualifier ran on a tagged tree and
   every tagged column that gained a qualifier is compared with the independent owner.
 
-A column the check cannot decide is ``unchecked``: the proof stands, because turning a proof the prover reached
-into a refusal on missing knowledge would lose correct proofs (the check is evidence, not a second prover).
+A column the text cannot decide (a source whose columns nobody listed, a name that is also a source's name) is
+``unchecked``: the proof stands, because turning a proof the prover reached into a refusal on missing knowledge
+would lose correct proofs (the check is evidence, not a second prover). An error inside the check is not a column
+it could not decide: it is a refusal, so a broken checker never certifies anything.
 :func:`recording` collects every verdict, so the share of decided columns can be measured.
 """
 
@@ -467,8 +469,8 @@ class StatementReader:
                     verdict = Verdict(UNCHECKED, "the column does not line up with the text")
                 else:
                     verdict = self.judge(mine, claim)
-        except Exception as exc:  # noqa: BLE001 - an error in this check leaves the column unchecked, never refused
-            verdict = Verdict(UNCHECKED, f"the check failed: {exc}")
+        except Exception as exc:  # noqa: BLE001 - a checker that fails refuses; it never guesses that the prover was right
+            verdict = Verdict(DISAGREE, f"the independent check failed ({type(exc).__name__}: {exc}), so the owner is not confirmed")
         _note(site, verdict)
         return verdict
 
@@ -505,7 +507,10 @@ def reader_for(sql: str, known: dict | None, dialect: str = "bigquery") -> State
         return None
     if len(nodes) != 1:
         return None
-    return StatementReader(nodes[0], known)
+    try:
+        return StatementReader(nodes[0], known)
+    except Exception as exc:  # noqa: BLE001 - a reader that cannot be built refuses, it does not skip the check
+        raise ColumnResolutionRefused(f"the independent reader could not be built ({type(exc).__name__}: {exc})") from None
 
 
 def parse_tagged(sql: str, dialect: str, reader: StatementReader | None) -> list[exp.Expression]:
@@ -513,8 +518,11 @@ def parse_tagged(sql: str, dialect: str, reader: StatementReader | None) -> list
 
     statements = [n for n in sqlglot.parse(sql, read=dialect) if n is not None]
     if reader is not None:
-        for statement in statements:
-            tag(statement)
+        try:
+            for statement in statements:
+                tag(statement)
+        except Exception as exc:  # noqa: BLE001 - numbering that fails refuses
+            raise ColumnResolutionRefused(f"the statement could not be numbered for the check ({type(exc).__name__}: {exc})") from None
     return statements
 
 
@@ -529,13 +537,17 @@ def check_added_qualifiers(before_sql: str, after_sql: str, known: dict | None, 
     """
 
     try:
-        nodes = [
-            [n for n in sqlglot.parse(sql, read="bigquery", error_level=sqlglot.ErrorLevel.RAISE) if n is not None]
-            for sql in (before_sql, after_sql)
-        ]
-        if len(nodes[0]) != 1 or len(nodes[1]) != 1:
+        try:  # the statement the prover was given is text this reader may not read (left unchecked, as ``reader_for`` does)
+            first = [n for n in sqlglot.parse(before_sql, read="bigquery", error_level=sqlglot.ErrorLevel.RAISE) if n is not None]
+        except Exception:  # noqa: BLE001
+            return _noted(site, Verdict(UNCHECKED, "the statement is not one this reader parses"))
+        try:  # the prover's own output that cannot be read back is not confirmed
+            second = [n for n in sqlglot.parse(after_sql, read="bigquery", error_level=sqlglot.ErrorLevel.RAISE) if n is not None]
+        except Exception as exc:  # noqa: BLE001
+            return _noted(site, Verdict(DISAGREE, f"the prover's output cannot be read back ({type(exc).__name__}), so its qualifiers are not confirmed"))
+        if len(first) != 1 or len(second) != 1:
             return _noted(site, Verdict(UNCHECKED, "not one statement on each side"))
-        before, after = nodes[0][0], nodes[1][0]
+        before, after = first[0], second[0]
         gained: list = []
         try:
             _walk(before, after, gained, "statement")
@@ -556,8 +568,8 @@ def check_added_qualifiers(before_sql: str, after_sql: str, known: dict | None, 
         if first is not None:
             return Verdict(DISAGREE, first, agreed, unchecked)
         return Verdict(AGREE if agreed else UNCHECKED, "", agreed, unchecked)
-    except Exception as exc:  # noqa: BLE001 - an error in this check leaves the pass unchecked, never refused
-        return _noted(site, Verdict(UNCHECKED, f"the check failed: {exc}"))
+    except Exception as exc:  # noqa: BLE001 - a checker that fails refuses; it never guesses that the prover was right
+        return _noted(site, Verdict(DISAGREE, f"the independent check failed ({type(exc).__name__}: {exc}), so the qualifiers are not confirmed"))
 
 
 def _noted(site: str, verdict: Verdict) -> Verdict:
@@ -589,8 +601,8 @@ def guarded_qualification(tree: exp.Expression, apply, known: dict | None, diale
         finally:
             for c, qualifier in saved:
                 c.set("table", qualifier)
-    except Exception:  # noqa: BLE001 - a tree that cannot print is left unchecked
-        return result
+    except Exception as exc:  # noqa: BLE001 - a pass whose result cannot be printed for the check is not confirmed
+        raise ColumnResolutionRefused(f"the independent check could not print the tree ({type(exc).__name__}: {exc})") from None
     verdict = check_added_qualifiers(before, after, known, site)
     if verdict.refused:
         raise ColumnResolutionRefused(verdict.reason)

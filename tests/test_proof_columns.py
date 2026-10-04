@@ -19,6 +19,9 @@ import sqlglot
 from sqlglot import exp
 
 from kumosql import algebraic_equivalence as alg
+from kumosql import apply_rule, apply_rules
+from kumosql.engine import RewriteRule, RuleOutput
+from kumosql.rewrite import VerificationStatus
 from kumosql import proof_columns, smt_equivalence as smt, structural_identity
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.proof_columns import (
@@ -271,7 +274,18 @@ def test_what_cannot_be_decided_stays_unchecked_and_adds_no_refusal(before, afte
 
 
 def test_text_that_does_not_parse_is_unchecked():
-    assert not check_added_qualifiers("SELECT FROM WHERE (", "SELECT a.x FROM a", TABLES).refused
+    # the statement the prover was given is not text the reader reads; the prover's own output that cannot be read back is
+    assert check_added_qualifiers("SELECT FROM WHERE (", "SELECT a.x FROM a", TABLES).kind == UNCHECKED
+    assert check_added_qualifiers("SELECT x FROM a", "SELECT a.x FROM a WHERE (", TABLES).refused
+
+
+def test_an_error_inside_the_checker_is_a_refusal_not_a_pass(monkeypatch):
+    def broken(self, column):
+        raise RuntimeError("scope analysis unavailable")
+
+    monkeypatch.setattr(StatementReader, "_bare", broken)
+    verdict = check_added_qualifiers("SELECT x FROM a JOIN b ON a.k = b.k", "SELECT a.x FROM a JOIN b ON a.k = b.k", TABLES)
+    assert verdict.refused and "check failed" in verdict.reason
 
 
 # --- the registry family --------------------------------------------------------------------------------------
@@ -396,13 +410,74 @@ def test_a_proof_with_no_bare_column_records_nothing():
     assert log == []
 
 
-def test_an_error_inside_the_check_does_not_fail_the_prover(monkeypatch):
+def test_an_error_inside_the_check_refuses_the_proof(monkeypatch):
     def broken(self, column):
         raise RuntimeError("scope analysis unavailable")
 
     monkeypatch.setattr(StatementReader, "_bare", broken)
     result = prove_equivalent_smt(INNER_WINS, INNER_WINS_QUALIFIED, schema=SCHEMA)
-    assert result.status is SmtStatus.PROVEN_EQUIVALENT
+    assert result.status is SmtStatus.NOT_PROVEN
+    assert "independent check" in result.reason
+    with proof_columns.disabled():
+        assert prove_equivalent_smt(INNER_WINS, INNER_WINS_QUALIFIED, schema=SCHEMA).status is SmtStatus.PROVEN_EQUIVALENT
+
+
+def test_a_reader_that_cannot_be_built_refuses_the_proof(monkeypatch):
+    def broken(self, statement, known):
+        raise RuntimeError("no scopes")
+
+    monkeypatch.setattr(StatementReader, "__init__", broken)
+    result = prove_equivalent_smt(INNER_WINS, INNER_WINS_QUALIFIED, schema=SCHEMA)
+    assert result.status is SmtStatus.NOT_PROVEN and "independent reader could not be built" in result.reason
+
+
+# --- through the rewrite pipeline: a rule's own override cannot opt out, and a later step cannot rescue --------------
+
+class _SwapsTheOwner(RewriteRule):
+    """Fault injection: a rule whose output reads the outer ``t.a`` where the input read the inner ``u.a``."""
+
+    name = "swap_owner"
+    summary = "Fault injection: changes which source a shared name reads"
+
+    def apply(self, sql):
+        return RuleOutput(OUTER_COLUMN, 1, 1, 1, 0, ())
+
+
+class _Tidies(RewriteRule):
+    name = "tidy"
+    summary = "Fault injection: a harmless later step"
+
+    def apply(self, sql):
+        return RuleOutput(sql.replace("SELECT t.b", "SELECT t.b AS b", 1), 1, 1, 1, 0, ())
+
+
+def test_a_rewrite_certified_only_by_a_prover_that_picks_the_wrong_owner_is_refused_with_the_check_on(monkeypatch):
+    _resolve_the_shared_name_to_the_outer_source(monkeypatch)
+    overrides = {"swap_owner": _SwapsTheOwner()}
+    with proof_columns.disabled(), use_columns(SCHEMA):
+        certified = apply_rule("swap_owner", INNER_WINS, overrides=overrides)
+    assert certified.verification.status is VerificationStatus.PROVEN  # the false proof the check removes
+    with use_columns(SCHEMA):
+        refused = apply_rule("swap_owner", INNER_WINS, overrides=overrides)
+    assert refused.verification.status is not VerificationStatus.PROVEN
+
+
+def test_an_override_cannot_opt_out_of_the_column_resolution_check(monkeypatch):
+    # the check lives in the provers, so a differently configured rule instance has nothing to switch off
+    _resolve_the_shared_name_to_the_outer_source(monkeypatch)
+    with use_columns(SCHEMA):
+        result = apply_rule("swap_owner", INNER_WINS, overrides={"swap_owner": _SwapsTheOwner()})
+    assert not result.success or result.verification.status is not VerificationStatus.PROVEN
+
+
+def test_a_later_step_cannot_rescue_a_step_the_check_refused(monkeypatch):
+    _resolve_the_shared_name_to_the_outer_source(monkeypatch)
+    overrides = {"swap_owner": _SwapsTheOwner(), "tidy": _Tidies()}
+    with use_columns(SCHEMA):
+        result = apply_rules(["swap_owner", "tidy"], INNER_WINS, overrides=overrides)
+    assert result.verification.status is not VerificationStatus.PROVEN
+    with proof_columns.disabled(), use_columns(SCHEMA):
+        assert apply_rules(["swap_owner", "tidy"], INNER_WINS, overrides=overrides).verification.status is VerificationStatus.PROVEN
 
 
 # --- the SMT compiler's own qualification of a bare column over one known table ----------------------------------

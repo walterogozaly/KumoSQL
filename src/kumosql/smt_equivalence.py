@@ -1029,11 +1029,13 @@ class _Compiler:
     # ---- queries -------------------------------------------------------
 
     def compile(self, sql: str) -> _Union:
-        self.column_reader = proof_columns.reader_for(sql, self.schema, self.dialect)
         try:
+            self.column_reader = proof_columns.reader_for(sql, self.schema, self.dialect)
             statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in proof_columns.parse_tagged(sql, self.dialect, self.column_reader)]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
+        except proof_columns.ColumnResolutionRefused as refusal:
+            raise Unsupported(f"independent check of column resolution: {refusal}") from None
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
