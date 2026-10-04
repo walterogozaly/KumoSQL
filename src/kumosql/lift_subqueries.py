@@ -25,6 +25,7 @@ from .ast_utils import (
     nearest_parent_cte,
     nearest_root_cte,
     parse_statements,
+    select_sources,
     relation_names,
     scope_relations,
     set_with_clause,
@@ -174,7 +175,96 @@ def _in_pivot(node: exp.Expression, top: exp.Expression) -> bool:
     return False
 
 
-def _escapes_scope(subquery: exp.Subquery, query: exp.Expression) -> bool:
+# sqlglot before 27 has no SetOperation; its Union is the base of Except and Intersect.
+_SET_OPERATION = getattr(exp, "SetOperation", exp.Union)
+
+
+def _declaring_cte(table: exp.Table) -> exp.CTE | None:
+    """The WITH table a one-part table name reads, looking outward from it (nearest first), or None."""
+
+    name = table.name.lower()
+    child = table
+    while child.parent is not None:
+        parent = child.parent
+        if isinstance(parent, exp.With):
+            ctes = list(parent.expressions)
+            seen = ctes if parent.args.get("recursive") else ctes[: next((i for i, c in enumerate(ctes) if c is child), len(ctes))]
+            for cte in reversed(seen):
+                if cte.alias_or_name.lower() == name:
+                    return cte
+        else:
+            clause = parent.args.get("with_") or parent.args.get("with")
+            if isinstance(clause, exp.With) and child is not clause:
+                for cte in clause.expressions:
+                    if cte.alias_or_name.lower() == name:
+                        return cte
+        child = parent
+    return None
+
+
+def _output_names(source: exp.Expression, lifted: dict[str, exp.Expression]) -> set[str] | None:
+    """Lower-case column names a FROM/JOIN item is statically known to output, or None when they are not known.
+
+    Known: a derived table or a WITH table whose query lists its columns without a star. A real table, an
+    UNNEST and the like are not known without a schema.
+    """
+
+    alias = source.args.get("alias")
+    if isinstance(alias, exp.TableAlias) and alias.columns:
+        return {column.name.lower() for column in alias.columns}
+    if isinstance(source, exp.Subquery):
+        query = source.this
+    elif isinstance(source, exp.Table) and not source.args.get("db") and not source.args.get("catalog") and source.name:
+        if source.name in lifted:  # a lifted subquery whose WITH table is not placed yet
+            query = lifted[source.name]
+        else:
+            cte = _declaring_cte(source)
+            if cte is None:
+                return None
+            cte_alias = cte.args.get("alias")
+            if isinstance(cte_alias, exp.TableAlias) and cte_alias.columns:
+                return {column.name.lower() for column in cte_alias.columns}
+            query = cte.this
+    else:
+        return None
+    while isinstance(query, _SET_OPERATION):
+        query = query.this
+    if not isinstance(query, exp.Select):
+        return None
+    if any(isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)) for item in query.expressions):
+        return None
+    return {name.lower() for name in query.named_selects if name}
+
+
+def _bound_inside(column: exp.Column, body: exp.Expression, lifted: dict[str, exp.Expression]) -> bool:
+    """Whether an unqualified column is bound by a relation (or a select alias) inside ``body``.
+
+    The nearest SELECT whose relations are all known decides when it names the column; one with a relation
+    whose columns are unknown (a real table) may bind it or leave it to an enclosing query, so it stays
+    undecided; a SELECT without the column among known relations passes it outward to the next SELECT.
+    """
+
+    name = column.name.lower()
+    child: exp.Expression = column
+    node = column.parent
+    while node is not None:
+        if isinstance(node, exp.Select):
+            key = child.arg_key
+            sources = select_sources(node)
+            known = [_output_names(source, lifted) for source in sources]
+            if any(names is not None and name in names for names in known):
+                return True
+            if key in ("group", "having", "qualify", "order") and name in {n.lower() for n in node.named_selects if n}:
+                return True
+            if any(names is None for names in known):
+                return False
+        if node is body:
+            return False
+        child, node = node, node.parent
+    return False
+
+
+def _escapes_scope(subquery: exp.Subquery, query: exp.Expression, lifted: dict[str, exp.Expression]) -> bool:
     """Whether the subquery's body reads a name bound around it, which ``query``'s WITH clause cannot see.
 
     Only a closed body keeps its meaning as a top-level CTE. It must not read a table by a name that a WITH
@@ -204,7 +294,7 @@ def _escapes_scope(subquery: exp.Subquery, query: exp.Expression) -> bool:
         if qualifier:
             if qualifier not in scope_relations(column, body) and (correlated or qualifier in around):
                 return True
-        elif correlated or not scope_relations(column, body):
+        elif (correlated or not scope_relations(column, body)) and not _bound_inside(column, body, lifted):
             return True
     for table in body.find_all(exp.Table):
         qualifier = leading_qualifier(table)
@@ -244,7 +334,7 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
         subquery = max(candidates, key=_tree_depth)
         if not subquery.parent:
             break
-        if _escapes_scope(subquery, query):
+        if _escapes_scope(subquery, query, {item.cte.alias_or_name: item.cte.this for item in pending}):
             kept.append(subquery)
             continue
         body = subquery.this.copy()

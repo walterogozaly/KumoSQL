@@ -248,3 +248,35 @@ def test_pivot_columns_do_not_keep_a_closed_subquery_in_place(sql):
     # The columns named inside PIVOT/UNPIVOT belong to the table they apply to, not to an enclosing query.
     result = lift_subqueries(sql)
     assert result.success and result.lifted_subqueries >= 1
+
+
+@pytest.mark.parametrize(
+    "sql, lifted",
+    [
+        # The bare column is an output of a WITH table or derived table that the body reads: bound inside.
+        ("WITH c AS (SELECT a FROM t) SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM c) AS s) AS x FROM u", 1),
+        ("SELECT a FROM t WHERE a IN (SELECT m FROM (SELECT x AS m FROM (SELECT 1 AS x UNION ALL SELECT 2) AS d) AS s)", 2),
+        ("SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT p FROM (SELECT 1 AS p) AS d GROUP BY p HAVING p > 0) AS s)", 2),
+    ],
+)
+def test_bare_columns_bound_by_a_known_relation_do_not_keep_a_subquery(sql, lifted):
+    result = lift_subqueries(sql)
+    assert result.lifted_subqueries == lifted and result.success
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # ``b`` is not an output of the derived table, so it reads the enclosing ``t``.
+        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT b FROM (SELECT 1 AS p) AS d) AS s)",
+        # ``t`` is a real table, whose columns are unknown without a schema: ``a`` may belong to the outer ``u``.
+        "SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM (SELECT a FROM t) AS d) AS s) AS x FROM u",
+        "WITH c AS (SELECT a FROM t) SELECT (SELECT m FROM (SELECT MAX(b) AS m FROM c) AS s) AS x FROM u",
+        # A star hides the outputs: not known.
+        "WITH c AS (SELECT * FROM t) SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM c) AS s) AS x FROM u",
+        # A real table next to the known one may hold the column.
+        "SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM (SELECT 1 AS p) AS d, w) AS s) AS x FROM u",
+    ],
+)
+def test_bare_columns_not_bound_by_a_known_relation_keep_the_subquery(sql):
+    assert lift_subqueries(sql).remaining_inline_subqueries >= 1
