@@ -69,7 +69,7 @@ from .set_operations import positional_sql_pair
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .sqlx_fragments import masked_template_problem
-from . import string_number_compare
+from . import string_number_compare, string_number_literals
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -4113,6 +4113,7 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     conditional = kwargs.pop("conditional", False)
     wall = kwargs.pop("conditional_seconds", None)
     _check_options(kwargs)
+    left_sql, right_sql = (string_number_literals.normalize(sql, kwargs.get("dialect", "bigquery"), kwargs.get("types")) for sql in (left_sql, right_sql))
     result = _prove_with_limit(left_sql, right_sql, **kwargs)
     if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
         return result
