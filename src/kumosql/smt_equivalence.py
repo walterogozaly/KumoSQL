@@ -81,7 +81,7 @@ from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
-from . import smt_errors, smt_values, string_number_compare
+from . import smt_errors, smt_group_sums, smt_values, string_number_compare
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -1362,6 +1362,7 @@ class _Compiler:
         group = node.args.get("group")
         having = node.args.get("having")
         agg_ctx = _AggCtx(self)
+        sites_start = len(self.sites)
         names: list[str] = []
         outputs: list[_Val] = []
         aliases: dict[str, exp.Expression] = {}
@@ -1414,7 +1415,7 @@ class _Compiler:
                 else:
                     keys.append(self._val(key_expr, env, None, aliases))
         having_pred = self._pred(having.this, env, agg_ctx, aliases) if having is not None else None
-        return _Agg(
+        block = _Agg(
             occs,
             cond,
             keys,
@@ -1427,6 +1428,8 @@ class _Compiler:
             facts=self.facts[facts_start:],
             subs=state.subs,
         )
+        smt_group_sums.attach(self, sites_start, block)
+        return block
 
     def _source(self, node, ctes, occs, conds) -> tuple[str, _Source]:
         if isinstance(node, exp.Table):
@@ -1457,14 +1460,16 @@ class _Compiler:
         return ".".join(parts)
 
     def _derived(self, body, ctes, occs, conds) -> _Source:
-        saved = len(self.facts)
+        saved, saved_sites = len(self.facts), len(self.sites)
         try:
             sub = self._query(body, ctes)
         except _Exhausted:
             raise
         except Unsupported:
             del self.facts[saved:]
-            return self._opaque(body, ctes, occs)
+            dropped = len(self.sites) > saved_sites
+            del self.sites[saved_sites:]  # what the failed read recorded is not scoped: the relation kept whole stands for it
+            return self._opaque(body, ctes, occs, read=False, dropped=dropped)
         one_row = self._one_row_source(sub, body, ctes)
         if one_row is not None:
             return one_row
@@ -1544,7 +1549,7 @@ class _Compiler:
         self.used_setsrc = True
         return _Source(cols=dict(zip(names, columns)), order=list(names))
 
-    def _opaque(self, body, ctes, occs) -> _Source:
+    def _opaque(self, body, ctes, occs, read: bool = True, dropped: bool = False) -> _Source:
         """A derived relation kept whole: identified by its CTE-expanded SQL."""
 
         body = self._expand_ctes(body.copy(), ctes)
@@ -1606,6 +1611,8 @@ class _Compiler:
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         self.untyped_sources = True
         occs.append(occ)
+        if not read and (dropped or any(body.find_all(exp.Sum))):
+            smt_group_sums.opaque_site(self, occ, any(body.find_all(exp.Sum)))  # what the compiler did not read can still fail
         if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
             self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
@@ -2497,12 +2504,12 @@ class _Compiler:
             return _Val(z3.Or(*[v.null for v in vals], null_fn(*args)), val_fn(*args))
         return _Val(null_fn(*args), val_fn(*args))
 
-    def _aggregate(self, func: str, e, env, agg: _AggCtx | None) -> _Val:
+    def _aggregate(self, func: str, e, env, agg: _AggCtx | None, from_avg: bool = False) -> _Val:
         if agg is None:
             raise Unsupported(f"aggregate in a non-aggregate position: {e.sql(dialect='bigquery')}")
         if func == "AVG" and e.this is not None and not any(e.args.get(k) for k in ("having_max", "ignore_nulls", "order", "limit", "separator")):
             # AVG(x) is SUM(x) / COUNT(x): NULL when no value is present, and shared with a spelled-out quotient.
-            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg)
+            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg, from_avg=True)
             count = self._aggregate("COUNT", exp.Count(this=e.this.copy()), env, agg)
             null_fn, val_fn = self._function("Div", 2)
             args = self._uf_args([total, count])
@@ -2561,14 +2568,18 @@ class _Compiler:
         var = _Val(z3.BoolVal(False) if never_null else z3.Bool(f"{uid}#null"), z3.Const(uid, V))
         agg.calls.append(_AggCall(func, distinct, arg, var))
         if func == "SUM" and self.dialect == "bigquery":
-            # A sum can overflow (INT64, NUMERIC) whichever order the rows are added in; which groups do is not modeled,
-            # so the failing condition is one unknown fact per call (the same for equal arguments).
-            before = self.uses_uf
-            fails = self._may_fail("SUMD" if distinct else "SUM", [arg])  # equal arguments overflow alike
+            # A sum can overflow (INT64, NUMERIC) whichever order the rows are added in: a site per call, completed with
+            # the rows of its group when its select is (``smt_group_sums``). A counterexample database must not hold a
+            # sum that can overflow: a plain column of small values cannot, anything else is not known.
+            try:
+                cls = self._class_of(target, env, None, None)
+            except Unsupported:
+                cls = None
+            smt_group_sums.note(self, e, arg, distinct, cls, maybe=from_avg)
             if isinstance(target, exp.Column):
-                self.uses_uf = before
-                self.bounded_sums = True  # a small counterexample cannot overflow a sum of column values
-            self._site("overflow in SUM", e, fails)
+                self.bounded_sums = True
+            else:
+                self.uses_uf = True
         return var
 
 

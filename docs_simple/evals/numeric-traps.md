@@ -16,10 +16,13 @@ The score is how many sound pairs the prover proves, how many trap pairs it refu
 python tools/numeric_traps_bench.py
 ```
 
+A second example is about sums. `SELECT y, SUM(x) FROM t GROUP BY y HAVING y > 0` and `SELECT y, SUM(x) FROM t WHERE y > 0 GROUP BY y` return the same rows, but the first also adds up the group `y = 0` before throwing it away, and two huge values in that group overflow a 64-bit integer. So the rewrite is safer, and the reverse is not. The pairs check that the prover tells these apart group by group, and that it stays unknown when a sum is split into partial sums and added up again.
+
 ## What to keep in mind
 
 - The pairs were written by the person who changed the prover, from the issue's list of traps. They were fixed before the change and a quarter was held out, but this is a safety net, not an independent test.
-- The held-out quarter has no pair about errors, so error handling is checked only on the development pairs.
+- The first batch of pairs has no held-out pair about errors. The 17 pairs about adding up groups (a `HAVING` moved into `WHERE` and back, a filter spelled another way, `SUM(DISTINCT)`, a join, a window) were added later with five held out, but they were written by the person who wrote the check they test.
+- The sum pairs assume that BigQuery adds up a group that `HAVING` then drops (an optimizer may skip it) and that `SUM(DISTINCT)` and window sums fail on overflow like `SUM`. Neither is confirmed in the documentation, and the cases say so. The window pairs stay unknown because the prover does not prove a filter moved across a window.
 - A few labels rest on behaviour the author could not confirm in the documentation (for example how a decimal literal is rounded). Those cases say so, and "unknown" is an acceptable answer for them.
 - The prover still assumes no `NaN` appears in floating-point columns and does not do exact decimal rounding. Those pairs stay unknown or are proved with the assumption listed.
 

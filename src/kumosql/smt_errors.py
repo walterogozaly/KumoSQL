@@ -26,6 +26,9 @@ same table, as the prover maps occurrences for a bag proof) under which the cove
 the covering site's: if the rewrite fails on a row tuple, the original fails on the tuple the map picks from the
 same database. A map needs every table of the original's ``FROM`` to appear in the rewrite site's ``FROM``,
 since the original only fails where every one of its tables has a row.
+
+A ``SUM`` fails on a group of rows, not on one row tuple: it is a site with a :class:`~kumosql.smt_group_sums.GroupSum`,
+matched with another by the groups' rows and values (``smt_group_sums``), never by a map of single rows.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import itertools
 
+from . import smt_group_sums
 from .solver_lock import bounded_solver
 
 try:  # pragma: no cover
@@ -59,6 +63,7 @@ class Site:
     scope: dict = field(default_factory=dict)
     certain: bool = False
     under: object = None  # implies the failure for a concrete database (``fire`` itself when ``certain``)
+    group: object = None  # a SUM over a group of rows (``smt_group_sums.GroupSum``): ``fire`` then only says the group is not empty
 
     def describe(self) -> str:
         return f"{self.kind}: {self.text}"
@@ -144,12 +149,16 @@ class _Comparison:
 
         terms = []
         for other in others:
+            if other.group is not None:  # a sum over a group fails on the group, not on one row tuple
+                continue
             for mapping in _maps(other.scope, site.scope):
                 pairs = [p for src, dst in mapping for p in _occ_pairs(src, dst)]
                 terms.append(z3.substitute(other.fire, *pairs) if pairs else other.fire)
         return terms
 
     def covered(self, site: Site, others: list[Site]) -> bool:
+        if site.group is not None:
+            return smt_group_sums.covered(self, site, others)
         try:
             terms = self.coverers(site, others)
         except _TooMany:
@@ -167,7 +176,9 @@ class _Comparison:
     def witness(self, site: Site, others: list[Site]) -> bool:
         """A database on which ``site`` fails and no operation of ``others`` does."""
 
-        if site.under is None or not all(o.certain for o in others):
+        if site.group is not None:
+            return smt_group_sums.witness(self, site, others)
+        if site.under is None or not all(o.certain for o in others) or any(o.group is not None for o in others):
             return False
         try:
             terms = self.coverers(site, others)

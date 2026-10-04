@@ -4,7 +4,7 @@ Each case in ``tests/fixtures/numeric_traps/cases.jsonl`` is a query pair writte
 dialect, one fixed schema with declared INT64, FLOAT64, NUMERIC, STRING and BOOL columns) around a trap:
 integers past 2**53, INT64 overflow in a pushed-down expression, NaN grouping and ordering, ``-0.0``,
 NUMERIC rounding, INT64 to FLOAT64 conversion in CASE and UNION, ``DIV`` against ``/``, a division moved
-ahead of a filter, ``SAFE_CAST`` and ``SAFE_DIVIDE``, and the literals of the October 2 audit.
+ahead of a filter, a ``SUM`` over a group that ``HAVING`` or ``WHERE`` keeps or drops, ``SAFE_CAST`` and ``SAFE_DIVIDE``, and the literals of the October 2 audit.
 
 Labels follow BigQuery's documented rules (``source`` names the GoogleSQL page; ``unverified`` says what
 the author could not confirm), not DuckDB's. A case that DuckDB can run faithfully
@@ -197,7 +197,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "order": 39,
         "size": len(results),
         "score": score(results),
-        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
+        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions, a SUM over a group that a HAVING or a WHERE keeps or drops): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
         "evidence": "proof",
         "correctness": "Labels follow the GoogleSQL documentation (the case file names the page; the ones it could not confirm say so); the cases DuckDB can run faithfully are replayed on a witness database by the test suite. Wrong is a proof or refutation that contradicts the label, or an error verdict that claims safety where the label says the rewrite can fail.",
         "coverage": {k: counts[k] for k in ("proven", "refuted", "unknown") if counts[k]},
@@ -205,7 +205,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "docs": "docs/evals/numeric-traps.md",
         "command": "python tools/numeric_traps_bench.py --write-results",
         "date": today(),
-        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed.",
+        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed. The 17 group-SUM cases (12 development, 5 held out) were written, with their labels, before the prover compared sums group by group; the held-out five were run only after it was written and nothing was changed in response. Two of them are window pairs the prover does not prove equal, so they stay unknown. Their labels rest on BigQuery adding up a group that HAVING then drops (unverified: an optimizer may push a key filter below the aggregation) and on SUM(DISTINCT) and window sums failing on INT64 overflow as SUM does (unverified); a regrouped or pre-aggregated sum has no case because BigQuery's rule for partial sums that overflow while the total does not is unverified.",
     }
 
 
