@@ -4,7 +4,7 @@ Each database is an *adapter* (``ADAPTERS``): the pinned upstream script, commit
 its licence under ``tests/fixtures/sample_databases/<name>/upstream/``, and the adapted BigQuery DDL
 (``adapted/schema.sql``, labelled ADAPTED) that says how the upstream tables become BigQuery tables.
 Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two and Sakila (datacharmer/test_db) the third;
-Pagila (devrimgunduz/pagila) the fourth; AdventureWorks and Employees plug in as further adapters (subclass ``Adapter``, give
+Pagila (devrimgunduz/pagila) the fourth; the Oracle HR and Customer Orders schemas (oracle-samples/db-sample-schemas, ``OracleSample``: SQL*Plus scripts, the DDL and the rows in separate files) the fifth and sixth; AdventureWorks and Employees plug in as further adapters (subclass ``Adapter``, give
 the pins, the type conversions and the expected row counts).
 
 For every database the harness
@@ -150,14 +150,29 @@ def tokenize(text: str) -> list[Token]:
 
 @dataclass(frozen=True)
 class Raw:
-    """A literal as the upstream script wrote it: kind ``string``, ``number``, ``hex`` or ``null``."""
+    """A literal as the upstream script wrote it: kind ``string``, ``number``, ``hex``, ``null`` or ``call``."""
 
     kind: str
     text: str | None
+    args: tuple = ()  # kind ``call``: ``text`` is the function name (upper case), ``args`` its literals
 
 
 def _literal(tokens: list[Token], i: int) -> tuple[Raw, int]:
     token = tokens[i]
+    if token.kind == "word" and not token.is_word("NULL", "TRUE", "FALSE"):
+        # a function call on literals: TO_DATE('17-06-2013', 'dd-MM-yyyy'), UTL_RAW.CAST_TO_RAW('...')
+        name, j = token.text, i + 1
+        while tokens[j].text == "." and tokens[j + 1].kind == "word":
+            name, j = name + "." + tokens[j + 1].text, j + 2
+        if tokens[j].text == "(":
+            args, j = [], j + 1
+            while tokens[j].text != ")":
+                if tokens[j].text == ",":
+                    j += 1
+                    continue
+                value, j = _literal(tokens, j)
+                args.append(value)
+            return Raw("call", name.upper(), tuple(args)), j + 1
     if token.kind == "string":
         body = token.text[2:-1] if token.text[0] in "Nn" else token.text[1:-1]
         return Raw("string", body.replace("''", "'")), i + 1
@@ -550,6 +565,11 @@ class Adapter:
 
         return read_views(self.upstream_text())
 
+    def omitted(self, table: str, column: str, index: int) -> Raw:
+        """The value of a column an INSERT leaves out (``index``: the row's place among the table's rows): NULL by default."""
+
+        return Raw("null", None)
+
     def trigger_rows(self, rows: dict[str, list[tuple]]) -> dict[str, list[tuple]]:
         """Rows an upstream trigger would have added while loading, from the converted rows (none by default)."""
 
@@ -629,7 +649,9 @@ class Adapter:
                 given = dict(zip(names, values))
                 row = []
                 for column in order:
-                    raw = given.get(column, Raw("null", None))
+                    raw = given.get(column)
+                    if raw is None:
+                        raw = self.omitted(table, column, len(out[table]))
                     row.append(self.convert(table, column, spec.columns[column], raw))
                 out[table].append(tuple(row))
         return out
@@ -1244,8 +1266,221 @@ class Pagila(Adapter):
         return out
 
 
+_MONTHS = {m: i for i, m in enumerate("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), 1)}
+
+
+class OracleSample(Adapter):
+    """One schema of oracle-samples/db-sample-schemas: SQL*Plus scripts, the DDL in ``*_create.sql`` and the
+    rows in ``*_populate.sql`` (INSERTs inside PL/SQL blocks, dates as ``TO_DATE``/``TO_TIMESTAMP``).
+
+    The scripts are read as they are: ``REM`` and ``PROMPT`` lines are dropped, ``ALTER TABLE t ADD (a, b)`` is
+    read as one ADD per constraint, a ``REFERENCES parent`` without columns names the parent's primary key, and
+    a PL/SQL variable assigned by ``:=`` (one product's JSON, split over two strings) is inlined where it is used.
+    """
+
+    _SQLPLUS_LINE = re.compile(r"(?im)^[ \t]*(?:rem|prompt)\b.*$")
+
+    def _read(self, local: str) -> str:
+        return self._SQLPLUS_LINE.sub("", (self.folder / local).read_text(encoding="utf-8"))
+
+    def ddl_text(self) -> str:
+        text = self._read(self.ddl_file)
+        out, pos = [], 0
+        for match in re.finditer(r"(?is)ALTER\s+TABLE\s+(\w+)\s+ADD\s*\(", text):
+            if match.start() < pos:
+                continue
+            depth, i, start, items = 1, match.end(), match.end(), []
+            while depth:
+                char = text[i]
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                elif char == "," and depth == 1:
+                    items.append(text[start:i])
+                    start = i + 1
+                i += 1
+            items.append(text[start : i - 1])
+            out += [text[pos : match.start()]] + [
+                f"ALTER TABLE {match.group(1)} ADD {item.strip()};\n" for item in items
+            ]
+            pos = i
+        text = "".join(out) + text[pos:]
+        # REFERENCES parent (no column list): the parent's primary key, filled in by upstream_ddl
+        return re.sub(
+            r"(?i)(FOREIGN\s+KEY\s*\([^)]*\)\s*REFERENCES\s+\w+)\b(?!\s*\()", r"\1 (__pk__)", text
+        )
+
+    def upstream_tables(self) -> dict[str, TableDef]:
+        tables = read_ddl(self.ddl_text())
+        for table in tables.values():
+            table.foreign_keys = [
+                (cols, parent, tables[parent].primary_key if pcols == ("__pk__",) else pcols)
+                for cols, parent, pcols in table.foreign_keys
+            ]
+        return {self.renames.get(n, n): t for n, t in tables.items()}
+
+    def upstream_views(self) -> dict[str, str]:
+        """``CREATE [OR REPLACE] VIEW name [(columns)] AS body;`` by name (body as written)."""
+
+        return {
+            m.group(1): m.group(2).strip()
+            for m in re.finditer(
+                r"(?is)create\s+or\s+replace\s+view\s+(\w+)\s*(?:\([^)]*\))?\s*as\s+(.*?);",
+                self._read(self.ddl_file),
+            )
+        }
+
+    def data_text(self) -> str:
+        text = self._read(self.data_file)
+        while True:  # PL/SQL: name := 'a' || chr(10) || 'b';  (the INSERT that uses the variable names it)
+            match = re.search(r"(?m)^\s*(\w+)\s*:=\s*", text)
+            if match is None:
+                break
+            i, value = match.end(), ""
+            while text[i] != ";":
+                if text[i] == "'":
+                    j = i + 1
+                    while text[j] != "'" or text[j : j + 2] == "''":
+                        j += 2 if text[j : j + 2] == "''" else 1
+                    value += text[i + 1 : j].replace("''", "'")
+                    i = j + 1
+                elif text.startswith("chr(", i):
+                    j = text.index(")", i)
+                    value += chr(int(text[i + 4 : j]))
+                    i = j + 1
+                elif text[i].isspace() or text.startswith("||", i):
+                    i += 2 if text.startswith("||", i) else 1
+                else:
+                    raise ValueError(f"unexpected {text[i:i + 20]!r} in an assignment")
+            literal = "'" + value.replace("'", "''") + "'"
+            name = match.group(1)
+            rest = re.sub(rf"\b{name}\b", lambda _: literal, text[i + 1 :])
+            text = re.sub(rf"(?m)^\s*{name}\s+VARCHAR2\(\d+\);\s*$", "", text[: match.start()]) + rest
+        return text
+
+    def upstream_rows(self) -> dict[str, list]:
+        return read_inserts(self.data_text())
+
+    def evaluate(self, raw: Raw) -> Raw:
+        """The literal an Oracle function call on literals stands for."""
+
+        args = [a.text for a in raw.args]
+        if raw.text == "TO_DATE" and args[1].lower() == "dd-mm-yyyy":
+            day, month, year = (int(x) for x in args[0].split("-"))
+            return Raw("string", _dt.date(year, month, day).isoformat())
+        if raw.text == "TO_TIMESTAMP" and args[1] == "DD-MON-YYYY HH24.MI.SS.FF":
+            date, clock = args[0].split(" ")
+            day, month, year = date.split("-")
+            hour, minute, second, fraction = clock.split(".")
+            micro = int(fraction[:6].ljust(6, "0"))  # Oracle keeps nine digits, BigQuery DATETIME six
+            return Raw(
+                "string",
+                f"{int(year):04d}-{_MONTHS[month.upper()]:02d}-{int(day):02d} {hour}:{minute}:{second}.{micro:06d}",
+            )
+        if raw.text == "UTL_RAW.CAST_TO_RAW":  # the JSON text of products.product_details, kept as a STRING column
+            return Raw("string", args[0])
+        raise ValueError(f"unsupported Oracle function {raw.text}")
+
+    #: identity columns the INSERTs leave out: Oracle numbers the rows 1, 2, ... in script order
+    identity: dict[str, str] = {}
+
+    def omitted(self, table, column, index):
+        if self.identity.get(table) == column:
+            return Raw("number", str(index + 1))
+        return super().omitted(table, column, index)
+
+    def convert(self, table, column, kind, raw):
+        if raw.kind == "call":
+            raw = self.evaluate(raw)
+        return super().convert(table, column, kind, raw)
+
+    def upstream_text(self) -> str:
+        return self.data_text()
+
+
+class OracleHR(OracleSample):
+    name = "oracle_hr"
+    title = "Oracle HR"
+    results_order = 352
+    workload_note = (
+        "HR's one view (emp_details_view) is adapted from Oracle SQL to BigQuery (recorded in the workload file); hr_code.sql holds procedures and triggers, no query. "
+        "Oracle's UNIQUE constraints, CHECKs, sequences, identity columns and indexes are dropped from the BigQuery DDL (BigQuery declares only primary and foreign keys). "
+        "Oracle Sales History is not included: its data is 91 MB of CSV (918,843 sales rows), too large to commit, and a download at run time would make the eval depend on the network; FIBEN is not included either"
+    )
+    baseline_note = (
+        "The first run is the baseline (nothing tuned): 18/22 proved, 29/32 refuted and 3 counterexamples that did not replay, all one bounded-checker bug: "
+        "it clamped a DATE model value to 0001-01-01 when it extracted the counterexample (bounded_equivalence, the max(1, ...) clamp), so two job_history rows "
+        "that differ in the DATE key column start_date came out equal and the counterexample repeated the primary key (employee_id, start_date) "
+        "(hr-left-join-elimination-not-unique, hr-self-join-on-part-of-key, hr-distinct-on-part-of-key; the replay gate counted them wrong). "
+        "The checker was fixed on master by a separate change, not for this eval; the pairs were then rerun unchanged and the three are refuted by "
+        "counterexamples that replay (32/32 refuted, 0 wrong). Nothing in the harness, the pairs or a prover was changed by this eval in between. "
+        "One label was corrected before the baseline: hr-window-filter-on-other-column filtered on the ranked column, which keeps the ranks, so it now filters on employee_id"
+    )
+    ddl_file = "upstream/hr_create.sql"
+    data_file = "upstream/hr_populate.sql"
+    _REPO, _COMMIT = "oracle-samples/db-sample-schemas", "6660bad68c07bd143430ace58565b3f727e17263"
+    _LICENCE = "MIT text, Copyright (c) 2023 Oracle and/or its affiliates (upstream/LICENSE.txt)"
+    upstream = (
+        Upstream("upstream/hr_create.sql", _REPO, _COMMIT, "human_resources/hr_create.sql", "19bb40fdad9ff31b66aad4bb2eff1a13b730fec2f39eb13f25bd157c980e023f", _LICENCE),
+        Upstream("upstream/hr_populate.sql", _REPO, _COMMIT, "human_resources/hr_populate.sql", "420375c58700178b74949ccfc1a7b22bc2fd305c486fc558fca43f8ce3ddc4df", _LICENCE),
+        Upstream("upstream/hr_code.sql", _REPO, _COMMIT, "human_resources/hr_code.sql", "5604aae0d47585bba996a90eecc43f494d4c63de19b2b9db7afe5007d6f669f5", _LICENCE),
+        Upstream("upstream/LICENSE.txt", _REPO, _COMMIT, "LICENSE.txt", "2da4f8e1f04662e5db9b224a20dfd13db8bc396398271d607bda0343212fbce3", "the licence itself"),
+    )
+    # Oracle publishes no row counts for HR: these are the rows of the pinned script's INSERT statements,
+    # pinned here so a change in how the script is read shows up as a difference.
+    published_counts = {
+        "regions": 5,
+        "countries": 25,
+        "locations": 23,
+        "departments": 27,
+        "jobs": 19,
+        "employees": 107,
+        "job_history": 10,
+    }
+    published_counts_source = "counted from the INSERT statements of the pinned hr_populate.sql (Oracle publishes no counts); they are the counts every HR installation shows"
+
+
+class OracleCO(OracleSample):
+    name = "oracle_co"
+    title = "Oracle CO"
+    results_order = 354
+    workload_note = (
+        "Customer Orders' 4 views are adapted from Oracle SQL to BigQuery (LISTAGG becomes STRING_AGG, GROUPING_ID becomes GROUPING arithmetic, "
+        "JSON_TABLE becomes a LEFT JOIN UNNEST over JSON_QUERY_ARRAY; each adaptation recorded in the workload file). "
+        "Oracle's UNIQUE constraints, CHECKs, sequences, the identity column and indexes are dropped from the BigQuery DDL; "
+        "products.product_details (a BLOB holding JSON text) is a STRING column"
+    )
+    baseline_note = (
+        "The first run is the baseline (nothing tuned): 18/21 proved, 28/31 refuted, 0 wrong. After the bounded checker's DATE/DATETIME fix reached master the pairs were rerun unchanged: "
+        "29/31 refuted, 0 wrong; the one pair that moved is co-window-filter-on-other-column, unknown in the baseline and refuted with a replayed database now "
+        "(not isolated whether that is the fix or the search's time limit)"
+    )
+    ddl_file = "upstream/co_create.sql"
+    data_file = "upstream/co_populate.sql"
+    _REPO, _COMMIT = "oracle-samples/db-sample-schemas", "6660bad68c07bd143430ace58565b3f727e17263"
+    _LICENCE = "MIT text, Copyright (c) 2023 Oracle and/or its affiliates (upstream/LICENSE.txt)"
+    upstream = (
+        Upstream("upstream/co_create.sql", _REPO, _COMMIT, "customer_orders/co_create.sql", "8ce42790ec255840bcaf22ff8bc4f53e53996ccecb318410a0b3a36a4c3d6cc1", _LICENCE),
+        Upstream("upstream/co_populate.sql", _REPO, _COMMIT, "customer_orders/co_populate.sql", "e636942e49d9f7cb586f779122ffa2b4da95b07cc7f314c0ef1dae60a5f0cefa", _LICENCE),
+        Upstream("upstream/LICENSE.txt", _REPO, _COMMIT, "LICENSE.txt", "2da4f8e1f04662e5db9b224a20dfd13db8bc396398271d607bda0343212fbce3", "the licence itself"),
+    )
+    published_counts = {
+        "customers": 392,
+        "stores": 23,
+        "products": 46,
+        "orders": 1950,
+        "shipments": 1892,
+        "order_items": 3914,
+        "inventory": 566,
+    }
+    published_counts_source = "counted from the INSERT statements of the pinned co_populate.sql (Oracle publishes no counts)"
+    identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
+
+
 ADAPTERS: dict[str, Adapter] = {
-    a.name: a for a in (Chinook(), Northwind(), Sakila(), Pagila())
+    a.name: a
+    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
 }
 
 

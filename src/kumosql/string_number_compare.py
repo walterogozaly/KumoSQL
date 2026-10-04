@@ -43,6 +43,7 @@ _ARITHMETIC = (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.IntDiv)
 _NUMBER_NODES = _ARITHMETIC + (exp.Count, exp.Sum, exp.Avg, exp.Abs, exp.Round, exp.Floor, exp.Ceil, exp.Length, exp.Sqrt, exp.Pow, exp.Stddev, exp.Variance)
 _STRING_NODES = tuple(getattr(exp, name) for name in ("Lower", "Upper", "Concat", "ConcatWs", "Substring", "Trim", "Initcap", "Replace", "Repeat", "Reverse"))
 _MIXING = (exp.Coalesce, exp.Greatest, exp.Least, exp.If, exp.Case, exp.Nullif)
+_SET_OPERATION = getattr(exp, "SetOperation", exp.Union)  # sqlglot before 25 has only Union
 _COMPARISONS = (exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.NullSafeEQ, exp.NullSafeNEQ)
 
 
@@ -105,10 +106,9 @@ def _pairs(tree: exp.Expression):
                 for item in node.expressions:
                     yield node.this, item
             else:
-                inner = node.args["query"]
-                inner = inner.this if isinstance(inner, exp.Subquery) else inner
-                if isinstance(inner, exp.Query) and inner.selects:
-                    yield node.this, inner.selects[0]
+                for branch in _branches(node.args["query"]):
+                    if branch.selects and not _is_star(branch.selects[0]):
+                        yield node.this, branch.selects[0]
         elif isinstance(node, exp.Case) and node.args.get("this") is not None:
             for branch in node.args.get("ifs") or []:
                 yield node.args["this"], branch.this
@@ -135,6 +135,21 @@ def mysql_number(text: str) -> float:
         return 0.0
 
 
+def _is_star(node: exp.Expression) -> bool:
+    node = _unwrap(node)
+    return isinstance(node, exp.Star) or (isinstance(node, exp.Column) and isinstance(node.this, exp.Star))
+
+
+def _branches(query: exp.Expression) -> list[exp.Select]:
+    """The ``SELECT`` blocks of a query, every side of a ``UNION``, ``INTERSECT`` or ``EXCEPT`` included."""
+
+    if isinstance(query, exp.Subquery):
+        return _branches(query.this)
+    if isinstance(query, _SET_OPERATION):
+        return _branches(query.this) + _branches(query.expression)
+    return [query] if isinstance(query, exp.Select) else []
+
+
 def _unwrap(node: exp.Expression) -> exp.Expression:
     while isinstance(node, (exp.Paren, exp.Alias)):
         node = node.this
@@ -159,6 +174,7 @@ class _Kinds:
         self.evidence: dict[tuple[str, str], set[str]] = {}
         self.literals: dict[tuple[str, str], set[str]] = {}
         self.members: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        self.names: dict[str, set[str]] = {}
         self.tables: dict[str, set[str]] = {}
         self.derived: dict[str, exp.Query] = {}
         self._collect_sources()
@@ -172,6 +188,8 @@ class _Kinds:
                 self.derived[node.alias.lower()] = node.this
             elif isinstance(node, exp.Subquery) and node.alias and isinstance(node.this, exp.Query):
                 self.derived[node.alias.lower()] = node.this
+            elif isinstance(node, exp.Column) and node.name:
+                self.names.setdefault(node.name.lower(), set()).add(node.table.lower())
 
     def key(self, column: exp.Column) -> tuple[str, str]:
         return (column.table.lower(), column.name.lower())
@@ -221,9 +239,12 @@ class _Kinds:
             return {"string"}
         if isinstance(node, exp.Column):
             key = self.key(node)
-            found = set(self.evidence.get(self.find(key), set()))
-            kind = self.declared(key)
-            return found | ({kind} if kind else set())
+            root = self.find(key)
+            found = set(self.evidence.get(root, set()))
+            members = self.members.get(root, {key})
+            if all(self.declared(m) for m in members):
+                members = {key}  # every column the schema types: declared kinds do not join what the text shows
+            return found | {kind for kind in (self.declared(m) for m in members) if kind}
         if isinstance(node, (exp.Coalesce, exp.Greatest, exp.Least)):
             return set().union(*(self.kinds(a, depth + 1) for a in [node.this, *node.expressions]))
         if isinstance(node, exp.If) and node.args.get("true") is not None:
@@ -235,25 +256,54 @@ class _Kinds:
             return set().union(*(self.kinds(b, depth + 1) for b in branches))
         if isinstance(node, (exp.Nullif, exp.Max, exp.Min, exp.AnyValue)):
             return self.kinds(node.this, depth + 1)
-        if isinstance(node, (exp.Subquery, exp.Select)):
+        if isinstance(node, (exp.Subquery, exp.Select, _SET_OPERATION)):
             inner = node.this if isinstance(node, exp.Subquery) else node
-            return self.kinds(inner.selects[0], depth + 1) if isinstance(inner, exp.Query) and len(inner.selects) == 1 else set()
+            branches = _branches(inner) if isinstance(inner, exp.Query) else []
+            if branches and all(len(b.selects) == 1 and not _is_star(b.selects[0]) for b in branches):
+                return set().union(*(self.kinds(b.selects[0], depth + 1) for b in branches))
         return set()
 
     def _build(self) -> None:
-        for _ in range(3):  # a kind found late flows to the expressions built on it
+        for _ in range(4):  # a kind found late flows to the expressions built on it
+            self._unqualified()
             self._projections()
             self._comparisons()
             self._using()
 
+    def _unqualified(self) -> None:
+        """A column written without its table is one of the columns of that name the query qualifies elsewhere."""
+
+        for name, qualifiers in self.names.items():
+            if "" in qualifiers:
+                for qualifier in qualifiers - {""}:
+                    self.union(("", name), (qualifier, name))
+
+    def _sources(self, select: exp.Select) -> list[str]:
+        source = select.args.get("from_") or select.args.get("from")
+        nodes = ([source.this] if source else []) + [join.this for join in select.args.get("joins") or []]
+        return [(n.alias or n.name).lower() for n in nodes if isinstance(n, (exp.Table, exp.Subquery)) and (n.alias or n.name)]
+
     def _projections(self) -> None:
+        """Each output column of a derived table or CTE is the column or expression in that position of every branch."""
+
         for alias, query in self.derived.items():
-            for name, expr in zip(query.named_selects, query.selects):
-                inner = _unwrap(expr)
-                if isinstance(inner, exp.Column):
-                    self.union((alias, name.lower()), self.key(inner))
-                else:
-                    self.add((alias, name.lower()), self.kinds(inner))
+            names = [name.lower() for name in query.named_selects]
+            for branch in _branches(query):
+                sources = self._sources(branch)
+                for position, expr in enumerate(branch.selects):
+                    inner = _unwrap(expr)
+                    if _is_star(inner):
+                        stars = [inner.table.lower()] if isinstance(inner, exp.Column) and inner.table else sources
+                        for name, qualifiers in self.names.items():
+                            if alias in qualifiers:
+                                for source in stars:
+                                    self.union((alias, name), (source, name))
+                    elif "*" not in names and position < len(names):
+                        node = (alias, names[position])
+                        if isinstance(inner, exp.Column):
+                            self.union(node, self.key(inner))
+                        else:
+                            self.add(node, self.kinds(inner))
 
     def _comparisons(self) -> None:
         for left, right in _pairs(self.tree):
