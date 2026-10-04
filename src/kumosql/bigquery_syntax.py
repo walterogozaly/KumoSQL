@@ -8,6 +8,10 @@ function sqlglot does not know are kept as their own text.
 ``TABLE`` ("Expecting )"), so the model was reported unparseable and everything it read was lost. Here the argument becomes a
 :data:`TABLE_ARGUMENT` call holding the table, so the table is read like any other and the SQL prints back unchanged.
 
+``x LIKE ALL UNNEST(array)`` (and ``LIKE SOME``), an aggregate with a ``WHERE`` filter inside its parentheses (``COUNT(* WHERE c)``),
+the ``WITH(a AS 1, a + 1)`` expression and ``t.arr elem WITH OFFSET off`` are read the same way, each into nodes sqlglot already
+has or a marker call that prints back as written. ``STRUCT<>()``, which sqlglot reads as the comparison ``STRUCT <> ()``, is refused.
+
 It works the same on pure and compiled sqlglot: a compiled build ignores parser methods assigned after the fact and refuses
 subclasses of its expressions, so SQL sqlglot rejects is parsed again with the dialect's tokens rewritten and the marker call is resolved after.
 """
@@ -31,12 +35,47 @@ VERBATIM = "__KUMO_VERBATIM__"
 _VERBATIM_CALLS = ("GRAPH_TABLE",)
 
 
+WITH_EXPRESSION = "__KUMO_WITH__"
+WITH_VARIABLE = "__KUMO_WITH_VARIABLE__"
+LIKE_ALL = "__KUMO_LIKE_ALL__"
+
+
 def _generate(self: Generator, expression: exp.Anonymous) -> str:
+    if expression.name == WITH_EXPRESSION and len(expression.expressions) >= 2:
+        return f"WITH({', '.join(self.sql(item) for item in expression.expressions)})"
+    if expression.name == WITH_VARIABLE and len(expression.expressions) == 2 and expression.expressions[0].is_string:
+        return f"{expression.expressions[0].this} AS {self.sql(expression.expressions[1])}"
     if expression.name == TABLE_ARGUMENT and len(expression.expressions) == 1:
         return f"TABLE {self.sql(expression.expressions[0])}"
     if expression.name == VERBATIM and len(expression.expressions) == 1 and expression.expressions[0].is_string:
         return expression.expressions[0].this
     return self.anonymous_sql(expression)
+
+
+def _all_sql(self: Generator, expression: exp.All) -> str:
+    """``ALL UNNEST(array)`` as BigQuery spells ``LIKE ALL UNNEST(array)``, without the parentheses sqlglot adds."""
+
+    if isinstance(expression.this, exp.Unnest):
+        return f"ALL {self.sql(expression, 'this')}"
+    return Generator.all_sql(self, expression)
+
+
+def _filter_sql(self: Generator, expression: exp.Filter) -> str:
+    """``COUNT(x) FILTER (WHERE c)`` as BigQuery's ``COUNT(x WHERE c)``, the filter it allows inside an aggregate call.
+
+    BigQuery rejects the filter inside a window call and next to ``ORDER BY``, ``LIMIT`` or ``HAVING``; those keep the standard form.
+    """
+
+    aggregate = expression.this
+    where = expression.expression
+    if (
+        isinstance(where, exp.Where) and isinstance(aggregate, (exp.AggFunc, exp.IgnoreNulls, exp.RespectNulls))
+        and not isinstance(expression.parent, exp.Window) and not aggregate.find(exp.Order, exp.Limit, exp.HavingMax)
+    ):
+        text = self.sql(aggregate)
+        if text.endswith(")"):
+            return f"{text[:-1]} WHERE {self.sql(where, 'this')})"
+    return Generator.filter_sql(self, expression)
 
 
 _installed = False
@@ -362,6 +401,179 @@ def _move_pipe_with(sql: str, tokens: list, start: int, pipes: list[int]) -> str
     return f"{sql[:head]}WITH {', '.join(definitions)} {''.join(kept)}{sql[position:]}"
 
 
+def _call_groups(tokens: list) -> list[tuple[int, int]]:
+    """(open, close) token indexes of every parenthesis pair, innermost first."""
+
+    stack: list[int] = []
+    pairs: list[tuple[int, int]] = []
+    for index, token in enumerate(tokens):
+        if token.token_type == TokenType.L_PAREN:
+            stack.append(index)
+        elif token.token_type == TokenType.R_PAREN and stack:
+            pairs.append((stack.pop(), index))
+    return pairs
+
+
+def _top_level(tokens: list, start: int, end: int):
+    """(index, token) of the tokens between ``start`` and ``end`` that sit outside every nested bracket."""
+
+    depth = 0
+    for index in range(start, end):
+        kind = tokens[index].token_type
+        if kind in (TokenType.R_PAREN, TokenType.R_BRACKET):
+            depth -= 1
+        if depth == 0:
+            yield index, tokens[index]
+        if kind in (TokenType.L_PAREN, TokenType.L_BRACKET):
+            depth += 1
+
+
+def _apply_edits(sql: str, edits: list[tuple[int, int, str]]) -> str:
+    """``edits`` are (start, end, text) character ranges, replaced left to right; overlapping ones are dropped."""
+
+    pieces: list[str] = []
+    position = 0
+    for start, end, text in sorted(edits):
+        if start < position:
+            continue
+        pieces += [sql[position:start], text]
+        position = end
+    return "".join(pieces) + sql[position:] if pieces else sql
+
+
+def _rewrite_like_quantifiers(sql: str, tokens: list) -> str:
+    """``x LIKE ALL UNNEST(arr)`` becomes ``x LIKE ANY UNNEST(__KUMO_LIKE_ALL__(arr))``, which every build reads; the marker
+    turns the ``ANY`` back into ``ALL`` once parsed. ``LIKE SOME`` is ``LIKE ANY``."""
+
+    edits: list[tuple[int, int, str]] = []
+    for index in range(len(tokens) - 2):
+        if tokens[index].text.upper() not in ("LIKE", "ILIKE"):
+            continue
+        quantifier, after = tokens[index + 1], tokens[index + 2]
+        word = quantifier.text.upper()
+        if word == "SOME":
+            edits.append((quantifier.start, quantifier.end + 1, "ANY"))
+        elif word == "ALL" and after.text.upper() == "UNNEST" and index + 3 < len(tokens) and tokens[index + 3].token_type == TokenType.L_PAREN:
+            close = next((close for opened, close in _call_groups(tokens) if opened == index + 3), None)
+            if close is not None:
+                edits.append((quantifier.start, quantifier.end + 1, "ANY"))
+                edits.append((tokens[index + 3].end + 1, tokens[index + 3].end + 1, f"{LIKE_ALL}("))
+                edits.append((tokens[close].start, tokens[close].start, ")"))
+    return _apply_edits(sql, edits)
+
+
+_NOT_AGGREGATE_ARGUMENT = (TokenType.SELECT, TokenType.WITH, TokenType.FROM)
+
+
+def _rewrite_aggregate_where(sql: str, tokens: list) -> str:
+    """``COUNT(* WHERE c)`` becomes ``COUNT(*) FILTER (WHERE c)``, the standard filter sqlglot reads as ``exp.Filter``.
+
+    BigQuery allows the filter after the arguments (and ``IGNORE NULLS``) and rejects it next to ``ORDER BY``, ``LIMIT`` or
+    ``HAVING``, inside a window call and in a subquery, so those are left alone.
+    """
+
+    matches: list[tuple[int, int, int]] = []
+    for opened, closed in _call_groups(tokens):
+        where = None
+        for index, token in _top_level(tokens, opened + 1, closed):
+            kind, word = token.token_type, token.text.upper()
+            if kind in _NOT_AGGREGATE_ARGUMENT or word in ("ORDER", "LIMIT", "HAVING", "QUALIFY", "GROUP", "UNION"):
+                where = None
+                break
+            if kind == TokenType.WHERE and where is None:
+                where = index
+        if where is None or where == opened + 1:
+            continue
+        following = tokens[closed + 1].text.upper() if closed + 1 < len(tokens) else ""
+        if following == "OVER" or opened == 0 or tokens[opened - 1].token_type in (
+            TokenType.IN, TokenType.EXISTS, TokenType.ALIAS, TokenType.L_PAREN, TokenType.COMMA
+        ):
+            continue
+        matches.append((opened, where, closed))
+    edits = []
+    for opened, where, closed in matches:
+        if any(opened < o < closed for o, _, _ in matches):
+            continue  # the inner filter goes first; the next pass takes this one
+        condition = sql[tokens[where].end + 1 : tokens[closed].start].strip()
+        edits.append((tokens[where].start, tokens[closed].end + 1, f") FILTER (WHERE {condition})"))
+    return _apply_edits(sql, edits)
+
+
+def _rewrite_with_expressions(sql: str, tokens: list) -> str:
+    """``WITH(a AS 1, a + 1)`` becomes ``__KUMO_WITH__(__KUMO_WITH_VARIABLE__('a', 1), a + 1)``: sqlglot has no node for it."""
+
+    edits: list[tuple[int, int, str]] = []
+    pairs = {opened: closed for opened, closed in _call_groups(tokens)}
+    for index in range(1, len(tokens) - 1):
+        token = tokens[index]
+        if (
+            token.token_type != TokenType.WITH or tokens[index + 1].token_type != TokenType.L_PAREN
+            or tokens[index - 1].token_type == TokenType.SEMICOLON or index + 1 not in pairs
+        ):
+            continue
+        opened, closed = index + 1, pairs[index + 1]
+        items: list[list] = [[]]
+        for position, inner in _top_level(tokens, opened + 1, closed):
+            if inner.token_type == TokenType.COMMA:
+                items.append([])
+            else:
+                items[-1].append(position)
+        if len(items) < 2 or any(not item for item in items):
+            continue
+        parts: list[str] = []
+        for item in items[:-1]:
+            name = tokens[item[0]]
+            if (
+                len(item) < 3 or name.token_type not in (TokenType.VAR, TokenType.IDENTIFIER)
+                or tokens[item[1]].token_type != TokenType.ALIAS
+            ):
+                parts = []
+                break
+            label = f"`{name.text}`" if name.token_type == TokenType.IDENTIFIER else name.text
+            value = sql[tokens[item[2]].start : tokens[item[-1]].end + 1]
+            parts.append(f"{WITH_VARIABLE}({_quoted(label)}, {value})")
+        if parts:
+            parts.append(sql[tokens[items[-1][0]].start : tokens[items[-1][-1]].end + 1])
+            edits.append((token.start, tokens[closed].end + 1, f"{WITH_EXPRESSION}({', '.join(parts)})"))
+    # An outer expression holds the text of an inner one, so the inner goes first and the next pass takes the outer.
+    return _apply_edits(sql, [e for e in edits if not any(e[0] < o[0] < e[1] for o in edits)])
+
+
+def _rewrite_unnest_offset(sql: str, tokens: list) -> str:
+    """``FROM t, t.arr elem WITH OFFSET off`` becomes ``FROM t, UNNEST(t.arr) elem WITH OFFSET off``, which BigQuery defines
+    ``t.arr`` in a FROM clause to mean when it is a path into an earlier table."""
+
+    identifiers = (TokenType.VAR, TokenType.IDENTIFIER)
+    edits: list[tuple[int, int, str]] = []
+    for index in range(1, len(tokens) - 1):
+        if tokens[index].token_type != TokenType.WITH or tokens[index + 1].text.upper() != "OFFSET":
+            continue
+        end = index - 1
+        if end >= 1 and tokens[end].token_type in identifiers and tokens[end - 1].token_type == TokenType.ALIAS:
+            end -= 2
+        elif end >= 1 and tokens[end].token_type in identifiers and tokens[end - 1].token_type in identifiers:
+            end -= 1
+        start = end
+        while start >= 2 and tokens[start - 1].token_type == TokenType.DOT and tokens[start - 2].token_type in identifiers:
+            start -= 2
+        if (
+            end - start < 2 or start < 1 or tokens[end].token_type not in identifiers or tokens[start].token_type not in identifiers
+            or not (tokens[start - 1].token_type in (TokenType.FROM, TokenType.COMMA) or tokens[start - 1].text.upper() == "JOIN")
+        ):
+            continue
+        path = sql[tokens[start].start : tokens[end].end + 1]
+        edits.append((tokens[start].start, tokens[end].end + 1, f"UNNEST({path})"))
+    return _apply_edits(sql, edits)
+
+
+def _check_empty_struct(sql: str, tokens: list) -> None:
+    """Refuse ``STRUCT<>(...)``: sqlglot reads it as the comparison ``STRUCT <> (...)``, and BigQuery rejects an empty struct type."""
+
+    for token, after in zip(tokens, tokens[1:]):
+        if token.token_type == TokenType.STRUCT and after.token_type == TokenType.NEQ and after.start == token.end + 1:
+            raise ParseError("STRUCT<>() is an empty struct type, which BigQuery rejects; it is not read as a comparison")
+
+
 def _quoted(text: str) -> str:
     """``text`` as a BigQuery string literal that reads back as exactly ``text``."""
 
@@ -393,6 +605,61 @@ def _resolve_table_arguments(trees):
                 elif replacement is not call:
                     call.replace(replacement)
         yield tree
+
+
+def _resolve_markers(trees):
+    """Turn the marker calls the rewrites left into the nodes they stand for."""
+
+    for tree in trees:
+        if tree is not None:
+            tree = _resolve_like_all(tree)
+            tree = _resolve_with_expressions(tree)
+        yield tree
+
+
+def _resolve_like_all(tree: exp.Expression) -> exp.Expression:
+    for quantifier in list(tree.find_all(exp.Any)):
+        unnest = quantifier.this
+        if (
+            isinstance(unnest, exp.Unnest) and len(unnest.expressions) == 1
+            and isinstance(unnest.expressions[0], exp.Anonymous) and unnest.expressions[0].name == LIKE_ALL
+            and len(unnest.expressions[0].expressions) == 1
+        ):
+            unnest.expressions[0].replace(unnest.expressions[0].expressions[0])
+            replacement = exp.All(this=unnest)
+            if quantifier.parent is None:
+                return replacement
+            quantifier.replace(replacement)
+    return tree
+
+
+def _resolve_with_expressions(tree: exp.Expression) -> exp.Expression:
+    """Inside ``WITH(a AS e, ..., result)`` a bare ``a`` is the variable, not a column, so it becomes ``exp.Var``: nothing then
+    counts it as a read of a column ``a``. A name also used inside a subquery of the expression is refused, because
+    which ``a`` the subquery means is not something sqlglot can tell."""
+
+    for call in list(tree.find_all(exp.Anonymous)):
+        if call.name != WITH_EXPRESSION:
+            continue
+        *definitions, result = call.expressions
+        names: list[str] = []
+        for definition in definitions:
+            raw = definition.expressions[0].this
+            name = raw.strip("`").lower()
+            if name in names:
+                raise ParseError(f"WITH expression defines {raw} twice")
+            names.append(name)
+        scopes = [(definition.expressions[1], names[:position]) for position, definition in enumerate(definitions)]
+        scopes.append((result, names))
+        for scope, visible in scopes:
+            for column in list(scope.find_all(exp.Column)):
+                if column.table or column.name.lower() not in visible:
+                    continue
+                if column.find_ancestor(exp.Select, exp.Subquery) is not scope.find_ancestor(exp.Select, exp.Subquery):
+                    raise ParseError(f"WITH expression variable {column.name} is used inside a subquery")
+                raw = next(d.expressions[0].this for d, n in zip(definitions, names) if n == column.name.lower())
+                column.replace(exp.Var(this=raw))
+    return tree
 
 
 class UnclosedLiteral(ParseError):
@@ -434,24 +701,28 @@ def install() -> None:
         tokens = self.tokenize(sql)
         try:
             _check_literals(sql, tokens)
+            _check_empty_struct(sql, tokens)
             return self.parser(**opts).parse(tokens, sql)  # what the dialect's own parse does
         except UnclosedLiteral:
             raise
         except ParseError as error:
             rewritten = sql
             for rewrite in (
-                _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with
+                _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with,
+                _rewrite_like_quantifiers, _rewrite_aggregate_where, _rewrite_with_expressions, _rewrite_unnest_offset,
             ):
                 rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
             if rewritten != sql:
                 try:
-                    return parse_with_table_arguments(self, rewritten, **opts)
+                    return list(_resolve_markers(parse_with_table_arguments(self, rewritten, **opts)))
+                except UnclosedLiteral:
+                    raise
                 except ParseError:
                     raise error from None
             marked = _mark_table_arguments(_merge_table_function_kind(tokens))
             if len(marked) == len(tokens) and all(a is b for a, b in zip(marked, tokens)):
                 raise
-            return list(_resolve_table_arguments(self.parser(**opts).parse(marked, sql)))
+            return list(_resolve_markers(_resolve_table_arguments(self.parser(**opts).parse(marked, sql))))
 
     BigQuery.parse = parse_with_table_arguments
     # Releases differ in how a generator finds its handler (a method named after the class, a per-class table, a cache of both),
@@ -460,9 +731,11 @@ def install() -> None:
     while pending:
         generator = pending.pop()
         generator.TRANSFORMS[exp.Anonymous] = _generate
+        generator.TRANSFORMS[exp.All] = _all_sql
         pending.extend(generator.__subclasses__())
     from sqlglot import generator as generator_module
 
+    BigQuery.Generator.TRANSFORMS[exp.Filter] = _filter_sql
     getattr(generator_module, "_DISPATCH_CACHE", {}).clear()
 
 install()

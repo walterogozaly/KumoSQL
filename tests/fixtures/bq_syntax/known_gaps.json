@@ -263,6 +263,14 @@
   "owner": "prover",
   "reason": "unsupported: nondeterministic: ANY_VALUE(city)"
  },
+ "query/aggregate_where_filter::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/aggregate_where_filter::prover": {
+  "owner": "prover",
+  "reason": "unsupported: nondeterministic: ARRAY_AGG(first_name IGNORE NULLS)"
+ },
  "query/anon_differential_privacy::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
@@ -284,6 +292,10 @@
   "reason": "unsupported: LIMIT is not modeled"
  },
  "query/graph_gql::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/like_all_any_unnest::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
@@ -430,6 +442,10 @@
  "query/window_ntile_percent::prover": {
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"
+ },
+ "query/with_expression::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
  },
  "script/assert::graph": {
   "owner": "kumosql",
