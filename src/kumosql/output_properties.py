@@ -32,7 +32,7 @@ from typing import Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _conjuncts
+from .ast_utils import conjuncts as _conjuncts, star_modifier
 from .smt_equivalence import TableConstraints
 
 # A fact's provenance: the declared facts it rests on (empty = follows from the query).
@@ -520,11 +520,10 @@ class _Analyzer:
         for item in select.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
                 qualifier = item.table.lower() if isinstance(item, exp.Column) else ""
-                star = item if isinstance(item, exp.Star) else item.this
-                if star.args.get("rename") or star.args.get("ilike"):
+                if star_modifier(item, "rename") or star_modifier(item, "ilike"):
                     raise _Unsupported("SELECT * RENAME / ILIKE")
-                dropped = star.args.get("except_") or []
-                replaced = star.args.get("replace") or []
+                dropped = star_modifier(item, "except") or []
+                replaced = star_modifier(item, "replace") or []
                 if any(not isinstance(c, exp.Column) or c.table for c in dropped) or any(not isinstance(a, exp.Alias) for a in replaced):
                     raise _Unsupported("SELECT * EXCEPT / REPLACE of this shape")
                 dropped = {c.name.lower() for c in dropped}

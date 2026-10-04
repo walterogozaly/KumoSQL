@@ -1616,6 +1616,16 @@
    ]
   },
   {
+   "id": "query/aggregate_where_filter",
+   "kind": "sql",
+   "file": "sql/query/aggregate_where_filter.sql",
+   "tags": [
+    "query",
+    "function",
+    "aggregate"
+   ]
+  },
+  {
    "id": "query/ai_generate",
    "kind": "sql",
    "file": "sql/query/ai_generate.sql",
@@ -3071,6 +3081,35 @@
     "cte",
     "limit",
     "tpc-ds"
+   ]
+  },
+  {
+   "id": "query/like_all_any_unnest",
+   "kind": "sql",
+   "file": "sql/query/like_all_any_unnest.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/unnest_path_with_offset",
+   "kind": "sql",
+   "file": "sql/query/unnest_path_with_offset.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "array"
+   ]
+  },
+  {
+   "id": "query/with_expression",
+   "kind": "sql",
+   "file": "sql/query/with_expression.sql",
+   "tags": [
+    "query",
+    "function"
    ]
   }
  ]

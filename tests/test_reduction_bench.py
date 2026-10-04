@@ -27,7 +27,7 @@ def _load(name):
 mc = _load("minimization_cases")
 bench = _load("reduction_bench")
 
-CASES = mc.load_cases()
+CASES = [c for c in mc.load_cases() if not mc.sourced(c)]  # adapted cases are scored apart
 DEV = [c for c in CASES if c["split"] == "dev"]
 
 # Floors on every 18th dev case (15 cases; see floor_cases), measured at 14 reduced, 27.2% of the
