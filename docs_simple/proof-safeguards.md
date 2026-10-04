@@ -16,13 +16,21 @@ On its first run the checker caught a real mistake: `inline_single_use_ctes` rep
 
 Two more cleanups are checked the same way. Removing parentheses is accepted only if the query still groups every operator exactly as before, so `(a OR b) AND c` can never quietly become `a OR b AND c`. Removing `DISTINCT` is accepted only if the query already has a plain `GROUP BY` and every grouping column is in the output, so every row is already unique.
 
+## Qualifying columns
+
+`qualify_columns` writes `o.id` in place of a bare `id` when `id` belongs to the table `o`. Picking the owner is easy to get wrong: a name can be a column of two tables, a nickname the query gave to a column (`SELECT x AS y ... GROUP BY y` means the nickname, not some table's `y`), a field inside a struct, or a column of the outer query. If the rule and the prover made the same wrong pick, both would agree on a query that reads a different column.
+
+The separate checker looks at the query before and after and asks two things. First, did anything change except that some columns gained a table name? A changed filter, a renamed alias or a dropped clause hidden in the same step is refused. Second, for each column that gained a name, is that name the only table the column can come from? For example, with `a(x, k)` and `b(y, k)`, `SELECT x, y FROM a JOIN b ON a.k = b.k` may become `SELECT a.x, b.y ...`, but `SELECT b.x ...` is refused, and so is any qualification of `k`, which both tables have. It also refuses a name used as a nickname in `GROUP BY` or `ORDER BY`, a column of a table that is read later than the place it is used (a column in an earlier `ON`), and a query that reads a table it does not know the columns of.
+
+The checker is given a table's column list by the part of KumoSQL that accepts rewrites, from the same project and catalog facts the rule reads, because the query alone does not say what columns a plain table has. It trusts that list, and it trusts that the original query runs on BigQuery. While working out what the checker must refuse, five cases the rule itself had wrong turned up, and the rule was fixed (see the [full reference](../docs/proof-safeguards.md#column-qualification)). The checker can also refuse a valid qualification, for example in a query that reads a table function; the rule leaves those queries alone.
+
 ## Turning subqueries into CTEs
 
 `lift_subqueries` rewrites `SELECT * FROM (SELECT x FROM t WHERE x > 1) AS s` as `WITH __lifted_subquery_001 AS (SELECT x FROM t WHERE x > 1) SELECT * FROM __lifted_subquery_001 AS s`. The prover used the same lifter on both sides of a proof, so a lifter that dropped the `WHERE`, gave the new CTE the name of a real table, or moved a subquery somewhere it reads something else would still make both sides look alike.
 
 The separate checker undoes the lift: it writes each new CTE back as the subquery it replaced and requires the result to be exactly the original query. The new name must appear nowhere in the original, each new CTE must be read exactly once, the original CTEs must be untouched, and the names must still mean the same thing where the CTE now sits (a subquery that read a nested `WITH`'s name, or a column of the query around it, cannot be moved to the top). A new CTE that calls `RAND()` inside a scalar subquery is refused too, because the subquery would have been evaluated for each outer row.
 
-Running it over about 2,900 test queries found real problems, now fixed: the prover moved a correlated subquery out of the query it depends on, the lifter dropped the column names in `(...) AS t (a, b)`, and it turned `FROM (t)` into the invalid `WITH l AS (t)`. It handles `WITH RECURSIVE` cautiously, refusing a lift whose subquery reads the recursive part's names or calls `RAND()`. The checker also cannot tell when a bare, unqualified column of a subquery comes from the query around it, because that needs a table schema.
+Running it over about 2,900 test queries found real problems, now fixed: the prover moved a correlated subquery out of the query it depends on, the lifter dropped the column names in `(...) AS t (a, b)`, it turned `FROM (t)` into the invalid `WITH l AS (t)`, and it could reuse a name that an earlier step had left behind as an alias. The checker handles `WITH RECURSIVE` cautiously, refusing a lift whose subquery reads the recursive part's names or calls `RAND()`. It also cannot tell when a bare, unqualified column of a subquery comes from the query around it, because that needs a table schema.
 
 ## One list of checked rules
 
@@ -34,4 +42,4 @@ A Dataform file can hold `${...}` expressions. KumoSQL can treat `${ref("orders"
 
 ## What this does not cover
 
-Predicate cleanup, CTE rewrites, parentheses, removing `DISTINCT` and turning subqueries into CTEs are checked independently so far. The rules that format SQL or qualify columns are not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).
+Predicate cleanup, CTE rewrites, parentheses, removing `DISTINCT`, qualifying columns and turning subqueries into CTEs are checked independently so far. The rule that formats SQL is not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).

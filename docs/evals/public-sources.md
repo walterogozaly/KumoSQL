@@ -27,7 +27,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | E13 | Logos core corpus (`WindOctober/Logos`) | MIT, source families keep their terms | yes | 22 R-Bot TPC-H, 37 R-Bot DSB, 14 TPC-DS variant pairs; its VeriEQL, WeTune parts are covered | covered: `logos-core-proof`, `logos-core-executed`, the 73 TPC-H, DSB and TPC-DS pairs proved and checked on generated data ([page](logos.md)) |
 | E14 | PARROT | README says MIT, no LICENSE file | yes (1.4 GB) | 598 curated pairs not in the repository | not added: the curated pairs are leaderboard-only; the folder redistributes about 38 datasets under their own terms (see [DLBench](dlbench.md)) |
 | E15 | Feedback-driven SQL optimization artifact | GPL-3.0-or-later | yes (zipped run bundles) | PostgreSQL run data | **new** (batch 2, investigate): only if the run bundles hold original and rewritten SQL with a result check; otherwise reference only |
-| — | QUITE (`Yuyang-Song/QUITE`) | none stated | yes | 4,160 LLM rewrites of TPC-H, DSB, Calcite and SQLStorm queries, each flagged equal or not on the benchmark instance (587 not) | **new** (batch 1): downloaded at run time; a pair flagged unequal must never be proved |
+| — | QUITE (`Yuyang-Song/QUITE`) | none stated | yes | 4,160 LLM rewrites of TPC-H, DSB, Calcite and SQLStorm queries, each flagged equal or not on the benchmark instance (587 not) | covered: `quite-rewrites` (1,352/2,609 flagged-equal pairs proved), `quite-negatives` (135 of 498 flagged-unequal pairs refuted, none proved wrongly), 0 wrong ([page](quite.md)); pinned at commit `0cffd7c`, downloaded at run time |
 | — | E3-Rewrite | — | — | — | not added: no public pair release was found |
 | — | DBridge, EQUITAS | — | — | — | not added: DBridge optimizes imperative programs; EQUITAS has no released corpus beyond the Calcite families above |
 
@@ -71,10 +71,10 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 
 | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- |
-| Dataform BigQuery example (`dataform-co/dataform-example-project-bigquery`) | MIT | yes | 10 SQLX files | **new** (batch 1): added to the real-projects corpus |
-| BigQuery Utils (`GoogleCloudPlatform/bigquery-utils`) | Apache-2.0 | yes | 136 SQL UDFs with 206 test groups; 18 views and Dataform examples | covered for the UDF tests: `bigquery-utils-udfs` ([page](bigquery-behavior-eval.md#bigquery-utils-udf-tests)); **new** (batch 1) for the views and Dataform examples, still to join the real-projects corpus |
-| Marketing Analytics Jumpstart Dataform | Apache-2.0 | yes | 54 SQLX files | **new** (batch 1): real-projects corpus |
-| Security Analytics Dataform | Apache-2.0 (archived) | yes | 107 SQLX files | **new** (batch 1): real-projects corpus |
+| Dataform BigQuery example (`dataform-co/dataform-example-project-bigquery`) | MIT | yes | 10 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `dataform-stackoverflow` |
+| BigQuery Utils (`GoogleCloudPlatform/bigquery-utils`) | Apache-2.0 | yes | 136 SQL UDFs with 206 test groups; 18 views and Dataform examples | covered for the UDF tests: `bigquery-utils-udfs` ([page](bigquery-behavior-eval.md#bigquery-utils-udf-tests)); views and Dataform examples covered: `bq-real-corpora` ([page](bq-real-corpora.md)), projects `bqutils-views` (the five `.sql` files of `views/`) and `bqutils-datavault`; the other two Dataform examples hold only JavaScript |
+| Marketing Analytics Jumpstart Dataform | Apache-2.0 | yes | 54 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `marketing-jumpstart` |
+| Security Analytics Dataform | Apache-2.0 (archived) | yes | 107 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `security-analytics` |
 | ClickBench BigQuery | CC BY-NC-SA 4.0 | yes | 43 queries | covered: `clickbench-rewrites` |
 
 ## Batches

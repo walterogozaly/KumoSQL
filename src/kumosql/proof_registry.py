@@ -1,7 +1,7 @@
 """The reviewed registry of independent proof checkers, and the basis of every rewrite rule that has none.
 
 A rewrite step is ``proven`` by the equivalence prover. For some rules a second check, written without any
-code the rule or the prover uses (``proof_steps``, ``proof_ctes``, ``proof_syntax``, ``proof_lift``), must also accept it.
+code the rule or the prover uses (``proof_steps``, ``proof_ctes``, ``proof_syntax``, ``proof_qualify``, ``proof_lift``), must also accept it.
 This module is the single place that says which. Every rule in the rewrite registry is classified exactly one
 way, and ``tests/test_proof_registry.py`` fails when a rule is registered without a classification, so adding
 a rule means choosing between an independent checker and a named legacy basis. The acceptance layer
@@ -29,6 +29,7 @@ from .proof_syntax import (
     PAREN_FAMILY,
     check_syntax_transition,
 )
+from .proof_qualify import QUALIFY_ASSUMPTIONS, QUALIFY_FAMILY, check_qualify_transition
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,8 @@ FAMILIES: dict[str, Family] = {
                "parentheses: identical trees once parenthesis nodes are ignored"),
         Family(DISTINCT_FAMILY, "DISTINCT", DISTINCT_ASSUMPTIONS, check_syntax_transition,
                "DISTINCT: only cleared where a plain GROUP BY keys are all projected"),
+        Family(QUALIFY_FAMILY, "qualification", QUALIFY_ASSUMPTIONS, check_qualify_transition,
+               "qualification: only qualifiers added, each naming the one readable source that has the column"),
         Family(LIFT_FAMILY, "subquery lift", LIFT_ASSUMPTIONS, check_lift_transition,
                "subquery lifting: every lifted CTE written back as its subquery gives the original, scope-correctly"),
     )
@@ -66,13 +69,13 @@ RULE_FAMILIES: dict[str, str] = {
     "deduplicate_ctes": CTE_FAMILY,
     "remove_redundant_parentheses": PAREN_FAMILY,
     "remove_redundant_distinct": DISTINCT_FAMILY,
+    "qualify_columns": QUALIFY_FAMILY,
     "lift_subqueries": LIFT_FAMILY,
 }
 
 #: Rules with no independent checker yet, and what a proven step rests on instead.
 LEGACY_BASIS: dict[str, str] = {
     "format_sql": "layout-only comparison (whitespace and keyword case), not the prover",
-    "qualify_columns": "the prover's normalized-AST comparison; the qualifier chosen for a column is not re-derived",
 }
 
 
