@@ -39,7 +39,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | D02 | Chinook | MIT-style | yes | 11 tables, no views | **new** (batch 1, with D03): `sample-databases-rewrites`, `sample-databases-pairs` ([page](sample-databases.md)) |
 | D03 | Northwind (`instnwnd.sql`) | MIT | yes (raw file) | 13 tables, 16 views | **new** (batch 1): the 16 upstream views are original workload queries; `sample-databases-rewrites`, `sample-databases-pairs` ([page](sample-databases.md)) |
 | D04 | Pagila | PostgreSQL | yes | 15+ tables, 11 views | **new** (batch 2): adapter for the sample-database eval |
-| D05 | Sakila (`datacharmer/test_db/sakila`, the official BSD files) | New BSD | yes (the MySQL download site is blocked; the mirror holds the two official SQL files) | 16 tables, 6 views | **new** (batch 2) |
+| D05 | Sakila (`datacharmer/test_db/sakila`, Oracle's BSD scripts) | New BSD | yes (the MySQL download site is blocked; the mirror holds Sakila Spatial 0.9 as `sakila-mv-schema.sql` and `sakila-mv-data.sql`, not the 1.2 files of that site) | 16 tables, 7 views, 6 routines, 47,273 rows | covered: `sample-databases-sakila-rewrites` (0 wrong in 394 executed, 180 verified), `sample-databases-sakila-pairs` (23/27 proved, 37/37 refuted, 0 wrong) ([page](sample-databases.md#sakila)) |
 | D06 | TPC-H | Apache-2.0 generator, TPC terms | yes (`tpchgen-cli`) | 22 queries | covered: `transformation-workloads`, `sqlsolver-tpch` ([page](transformation-bench.md)) |
 | D07 | TPC-DS | TPC terms | yes | 99 queries | covered: `transformation-workloads`, `analytical-sql-coverage`, `mv-benchmark` |
 | D08 | Microsoft DSB | MIT | yes | 52 templates | covered: `analytical-sql-coverage` ([page](analytical-sql-coverage.md)) |

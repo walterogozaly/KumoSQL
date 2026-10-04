@@ -1,10 +1,11 @@
-"""Sample databases eval (Chinook, Northwind): loads checked against upstream, rewrites and pairs with 0 wrong.
+"""Sample databases eval (Chinook, Northwind, Sakila): loads checked against upstream, rewrites and pairs with 0 wrong.
 
 The full run is ``python tools/sample_db_bench.py --write-results`` (every workload query through every
 rewrite stage, including the slow proof-gated optimizer). Here every pair runs, and a pinned subset of the
 workload runs through the rewrite pipeline and lift_subqueries.
 """
 
+import datetime
 import importlib.util
 import json
 import sys
@@ -24,8 +25,10 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["sample_db_bench"] = bench
 _spec.loader.exec_module(bench)
 
-# floors only ever go up (recorded run: 20 proved, 27 refuted; 28 on an idle machine, see the docs)
+# floors only ever go up (recorded run: 20 proved, 27 refuted; 28 on an idle machine, see the docs); they cover the
+# combined Chinook and Northwind results. Every further database has floors of its own.
 FLOORS = {"proven": 20, "refuted": 27}
+DATABASE_FLOORS = {"sakila": {"proven": 23, "refuted": 36}}
 # workload queries the pipeline and lift_subqueries change; upstream and authored, both databases
 SUBSET = {
     "chinook": [
@@ -39,6 +42,12 @@ SUBSET = {
         "nw-view-category-sales-for-1997",
         "nw-a10-not-in-with-nulls",
         "nw-a21-cte-chain",
+    ],
+    "sakila": [
+        "sk-view-actor-info",
+        "sk-routine-rewards-report-rewardees",
+        "sk-a20-cte-chain-with-unused",
+        "sk-a22-derived-table-trivial",
     ],
 }
 
@@ -69,6 +78,56 @@ def test_the_upstream_workload_is_upstream():
                 "authored",
             )
             assert query["origin"] == "authored" or query["adaptation"], query["id"]
+
+
+def test_sakila_views_are_upstreams_and_film_text_is_the_trigger_output():
+    sakila = bench.ADAPTERS["sakila"]
+    views = sakila.upstream_views()
+    assert sorted(views) == sorted(
+        q["name"] for q in sakila.workload() if q["origin"] == "upstream-view"
+    )
+    assert len(views) == 7
+    rows = sakila.rows()
+    assert len(rows["film_text"]) == len(rows["film"]) == 1000
+    # nothing in the data script inserts into film_text: the ins_film trigger of the schema script does
+    assert "film_text" not in bench.read_inserts(sakila.upstream_text())
+    # the executable comment /*!50705 ... */ is read as MySQL 5.7.5 and later run it
+    assert "location" in sakila.schema()["address"].columns
+    assert (
+        sakila.schema()["address"].columns["location"] == "BYTES"
+        and len(rows["address"][0]) == 9
+    )
+
+
+def test_readers_handle_the_mysql_dump_dialect():
+    sql = """
+    CREATE TABLE t (
+      id SMALLINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      rate DECIMAL(4,2) NOT NULL DEFAULT 4.99,
+      kind ENUM('G','PG') DEFAULT 'G',
+      PRIMARY KEY  (id),
+      FULLTEXT KEY idx (kind),
+      SPATIAL KEY idx_location (rate),
+      UNIQUE KEY u (rate)
+    )ENGINE=InnoDB DEFAULT CHARSET=utf8;
+    CREATE TABLE u (id INT NOT NULL, t_id SMALLINT UNSIGNED NOT NULL, PRIMARY KEY (id),
+      CONSTRAINT `fk_u_t` FOREIGN KEY (t_id) REFERENCES t (id) ON DELETE RESTRICT ON UPDATE CASCADE);
+    INSERT INTO t VALUES (1,'2.99','PG'),(2,3,NULL);
+    """
+    tables = bench.read_ddl(sql)
+    assert list(tables["t"].columns) == ["id", "rate", "kind"]
+    assert tables["t"].columns["id"] == "SMALLINT UNSIGNED"
+    assert tables["t"].columns["rate"] == "DECIMAL(4, 2)"
+    assert tables["t"].primary_key == ("id",) and tables["t"].not_null == {"id", "rate"}
+    assert tables["u"].foreign_keys == [(("t_id",), "t", ("id",))]
+    assert [v.text for _, values in bench.read_inserts(sql)["t"] for v in values] == [
+        "1",
+        "2.99",
+        "PG",
+        "2",
+        "3",
+        None,
+    ]
 
 
 def test_a_changed_declaration_is_caught():
@@ -121,12 +180,31 @@ def test_every_pair_is_decided_without_a_wrong_answer():
     assert summary["labels_unverified"] == 0, [
         r["id"] for r in rows if r["witness_ok"] is False
     ]
-    assert (
-        summary["proven"] >= FLOORS["proven"]
-        and summary["refuted"] >= FLOORS["refuted"]
+    combined = bench.summarize_pairs(
+        [r for r in rows if r["database"] in bench.COMBINED]
     )
+    assert (
+        combined["all"]["proven"] >= FLOORS["proven"]
+        and combined["all"]["refuted"] >= FLOORS["refuted"]
+    )
+    for name, floors in DATABASE_FLOORS.items():
+        own = bench.summarize_pairs(rows)["by_database"][name]
+        assert (
+            own["proven"] >= floors["proven"] and own["refuted"] >= floors["refuted"]
+        ), own
     # every sibling that drops a guarantee is refuted on a database that keeps the other guarantees
     assert summary["constraint_siblings_refuted"] == summary["constraint_siblings"]
+
+
+def test_a_bounded_null_for_bytes_is_no_value():
+    sakila = bench.ADAPTERS["sakila"]
+    row = (1, "a", None, "d", 1, None, "p", None, datetime.datetime(2000, 1, 1))
+    given = bench._bounded_rows(sakila, {"address": [row]})["address"][0]
+    assert (
+        "location" not in given and given["address2"] is None
+    )  # NOT NULL BYTES: completed, nullable text: kept
+    data, broken = bench.complete_database(sakila, {"address": [given]})
+    assert not broken and data["address"][0][7] == b""
 
 
 def test_a_counterexample_must_respect_the_declarations():
@@ -154,10 +232,23 @@ def test_rewrites_keep_the_results_on_the_real_data(name):
 
 
 def test_results_files_report_zero_wrong():
-    for name in ("sample-databases-rewrites", "sample-databases-pairs"):
+    for name in (
+        "sample-databases-rewrites",
+        "sample-databases-pairs",
+        "sample-databases-sakila-rewrites",
+        "sample-databases-sakila-pairs",
+    ):
         row = json.loads((ROOT / "benchmarks" / "results" / f"{name}.json").read_text())
+        database = name.split("-")[2] if name.count("-") == 3 else None
+        command = (
+            bench.COMMAND
+            if database is None
+            else bench.COMMAND.replace(
+                "sample_db_bench.py", f"sample_db_bench.py --database {database}"
+            )
+        )
         assert (
-            row["command"] == bench.COMMAND
+            row["command"] == command
             and row["docs"] == "docs/evals/sample-databases.md"
         )
         assert ", 0 wrong" in row["score"] or row["score"].startswith("0 wrong")
