@@ -5,11 +5,16 @@ Each project is cloned at its pinned commit and only the listed paths (and the l
 folders (``bases/a/b/publish.sql`` becomes ``a__b.sql``), for repositories whose files all share one name.
 
     python tools/fetch_bq_corpora.py [--only NAME]
+    python tools/fetch_bq_corpora.py --check [--only NAME]
+
+``sha256`` in ``sources.json`` is the digest of the files kept (see :func:`digest`); ``--check`` recomputes it from the
+copies on disk and fails when a file was edited, added or removed, so a pinned commit and the bytes under test agree.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
@@ -18,6 +23,17 @@ import tempfile
 from pathlib import Path
 
 CORPORA = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "bq_corpora"
+
+
+def digest(folder: Path) -> str:
+    """SHA-256 over every file under ``folder``: for each, in path order, its relative path, a NUL and its own SHA-256."""
+
+    lines = [
+        f"{path.relative_to(folder).as_posix()}\0{hashlib.sha256(path.read_bytes()).hexdigest()}\n"
+        for path in sorted(folder.rglob("*"))
+        if path.is_file()
+    ]
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
 
 
 def _matches(root: Path, pattern: str) -> list[Path]:
@@ -58,8 +74,13 @@ def fetch(project: dict, workdir: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--only", help="fetch only this project")
+    parser.add_argument("--check", action="store_true", help="compare the copies on disk with the pinned SHA-256, fetch nothing")
     args = parser.parse_args(argv)
     sources = json.loads((CORPORA / "sources.json").read_text())
+    if args.check:
+        bad = [p["name"] for p in sources["projects"] if (not args.only or p["name"] == args.only) and digest(CORPORA / p["name"]) != p.get("sha256")]
+        print("changed or unpinned: " + ", ".join(bad) if bad else "every copy matches its pinned SHA-256")
+        return 1 if bad else 0
     with tempfile.TemporaryDirectory() as workdir:
         for project in sources["projects"]:
             if args.only and project["name"] != args.only:
