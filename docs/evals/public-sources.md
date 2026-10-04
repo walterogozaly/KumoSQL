@@ -39,7 +39,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | D02 | Chinook | MIT-style | yes | 11 tables, no views | **new** (batch 1, with D03): `sample-databases-rewrites`, `sample-databases-pairs` ([page](sample-databases.md)) |
 | D03 | Northwind (`instnwnd.sql`) | MIT | yes (raw file) | 13 tables, 16 views | **new** (batch 1): the 16 upstream views are original workload queries; `sample-databases-rewrites`, `sample-databases-pairs` ([page](sample-databases.md)) |
 | D04 | Pagila | PostgreSQL | yes | 15+ tables, 11 views | **new** (batch 2): adapter for the sample-database eval |
-| D05 | Sakila (`datacharmer/test_db/sakila`, the official BSD files) | New BSD | yes (the MySQL download site is blocked; the mirror holds the two official SQL files) | 16 tables, 6 views | **new** (batch 2) |
+| D05 | Sakila (`datacharmer/test_db/sakila`, Oracle's BSD scripts) | New BSD | yes (the MySQL download site is blocked; the mirror holds Sakila Spatial 0.9 as `sakila-mv-schema.sql` and `sakila-mv-data.sql`, not the 1.2 files of that site) | 16 tables, 7 views, 6 routines, 47,273 rows | covered: `sample-databases-sakila-rewrites` (0 wrong in 394 executed, 180 verified), `sample-databases-sakila-pairs` (23/27 proved, 37/37 refuted, 0 wrong) ([page](sample-databases.md#sakila)) |
 | D06 | TPC-H | Apache-2.0 generator, TPC terms | yes (`tpchgen-cli`) | 22 queries | covered: `transformation-workloads`, `sqlsolver-tpch` ([page](transformation-bench.md)) |
 | D07 | TPC-DS | TPC terms | yes | 99 queries | covered: `transformation-workloads`, `analytical-sql-coverage`, `mv-benchmark` |
 | D08 | Microsoft DSB | MIT | yes | 52 templates | covered: `analytical-sql-coverage` ([page](analytical-sql-coverage.md)) |
@@ -92,7 +92,7 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | **new** (batch 2): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time |
+| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | covered: `arcwise-corrections` ([page](arcwise-corrections.md)): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time, never committed |
 | A-E02 | Dr.Spider | Apache-2.0, CC BY 4.0 | no: `data.tar.gz` is a Git LFS pointer | 17 perturbation suites | not added |
 | A-E03 | IBM text2sql eval toolkit results | CC BY-SA 4.0 | no: results are on HuggingFace | — | not added |
 | A-E04 | SQL-IQ | MIT | yes | — | covered: `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` ([page](sql-iq.md)) |
@@ -148,5 +148,5 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 | A-G05 | `bq-bench` TPC-DS | Apache-2.0, TPC terms | yes | 99 queries | covered by the TPC-DS evals; needs a billed project to run natively |
 | A-G08 | Dataform deployment sample | no licence | — | — | not added |
 | A-G09 | Google patents public data examples | Apache-2.0 (archived) | yes | — | **new** (batch 2): real-projects corpus |
-| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **new** (batch 2): the typed expected rows become an oracle for KumoSQL's BigQuery-to-DuckDB execution |
+| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **covered** (batch 2): the typed expected rows are an oracle for KumoSQL's BigQuery-to-DuckDB execution: 1,609/4,633 supported cases agree, 0 wrong ([page](googlesql-expected-results.md)) |
 | — | BIRD-CRITIC BigQuery, SQLShare, Fashion Dataform, NHANES-GCP, SQLRight, DQETool, AMOEBA, SlabCity, CODDTest | — | — | — | not added: empty, unlicensed or not a released corpus (as the research says) |

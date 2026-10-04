@@ -122,6 +122,18 @@ def test_refactor_ids_are_unique_and_both_answers_occur():
     assert {c.label for c in cases} == {"equivalent", "different"}
 
 
+def test_every_breaking_refactor_shows_on_the_edge_database_and_no_equivalent_one_does(project):
+    """The labels do not rest on a timed solver search: the pivot COALESCE and the distinct count first show on random
+    database 14 and 17 of seed 23, past the 8 the test runs, so without the edge database the test passed only while
+    the prover's 5 s counterexample search finished in time (it failed on a loaded machine)."""
+    models, _ = project
+    edge = bench.edge_rows()
+    for case in REFACTORS.values():
+        files, rename = bench.world(models, case)
+        shown = bool(bench._outputs_differ(bench.load(files), edge, list(models), rename))
+        assert shown == (case.label == "different"), case.id
+
+
 # The quicker cases run in the fast tier; the rest (the prover takes 10-25 s on each) in the slow tier.
 FAST = {"extract_order_payments", "simple_case_pivot", "right_join_order_payments", "inner_join_order_payments",
         "pivot_coalesce", "customers_inner_join_orders"}
@@ -132,7 +144,7 @@ FAST = {"extract_order_payments", "simple_case_pivot", "right_join_order_payment
 def test_authored_refactor(project, case_id):
     models, pipeline = project
     case = REFACTORS[case_id]
-    row = bench.run_refactor(models, pipeline, case, bench.databases(8, seed=23))
+    row = bench.run_refactor(models, pipeline, case, bench.databases(8, seed=23, edge=True))
     assert row["verdict"] != "error", row["detail"]
     assert not row["wrong"], row
     assert row["ground_truth_ok"], f"the label disagrees with execution: {row}"
