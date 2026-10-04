@@ -12,7 +12,7 @@ The same declarations drop an uncorrelated `EXISTS (SELECT .. FROM parent)` from
 
 ## Which guarantees a proof needs
 
-`kumosql.constraint_dependence.needed_guarantees(left, right, schema=..., constraints=...)` proves the pair with every declared fact on the queried tables, then drops facts one at a time and keeps one out when the proof still goes through. The report holds a minimal sufficient set in words (`orders.customer_id is NOT NULL`, `(id) is unique in customers`, `orders(customer_id) references customers(id)`), so a recommendation can say what has to hold in the data. Remove any fact from that set and the proof fails or the prover abstains.
+`kumosql.constraint_dependence.needed_guarantees(left, right, schema=..., constraints=...)` proves the pair with every declared fact on the queried tables, then drops facts one at a time and keeps one out when the proof still goes through, repeating the pass until it drops nothing. The report holds a sufficient set in words (`orders.customer_id is NOT NULL`, `(id) is unique in customers`, `orders(customer_id) references customers(id)`), so a recommendation can say what has to hold in the data. The set is minimal for the prover that was passed in: each fact was tried against the final set and the proof failed or the prover abstained (an abstention does not show the fact is semantically necessary, and a prover that is not monotone in its facts can have smaller sufficient sets elsewhere). `GuaranteeReport.result` is the proof under exactly the reported set, with its own assumptions; `offered_result` is the first proof under every offered fact.
 
 ## Evaluation
 

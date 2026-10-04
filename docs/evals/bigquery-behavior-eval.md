@@ -46,16 +46,16 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 - Most GoogleSQL cases are declined because KumoSQL has nothing to rewrite in a bare `SELECT`; the handled count measures rewrites that happened and held.
 - Still wanted on real BigQuery (to run on the laptop replica): every rewritten before/after pair from the edge suite (`--failures` lists none; use `evaluate()` for the pairs), especially the CTE-inlining cases with `RAND()`, `GENERATE_UUID()` and `CURRENT_*`, and `SAFE_`/cast cases whose result a DuckDB transpile may not model.
 
-## Scores (2026-10-04; googlesql rows as of 2026-10-02)
+## Scores (2026-10-04)
 
 | Corpus | Pipeline | Cases | Rewritten and identical | Wrong | Declined | Unsupported | Not executable |
 |---|---|---:|---:|---:|---:|---:|---:|
-| GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 31 | 0 | 6,626 | 994 | 219 |
-| GoogleSQL compliance | lift | 7,870 | 253 | 0 | 6,013 | 994 | 610 |
+| GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 31 | 0 | 6,674 | 946 | 219 |
+| GoogleSQL compliance | lift | 7,870 | 259 | 0 | 6,050 | 946 | 615 |
 | Edge cases (967 custom: 379 hand-written, 588 seeded fuzz) | semantic | 967 | 410 | 0 | 556 | 0 | 1 |
 | Edge cases | lift | 967 | 417 | 0 | 549 | 0 | 1 |
 | Held-out fuzz (662, seeds 101 and 103, not used while fixing) | semantic / lift | 662 | 395 | 0 | 267 | 0 | 0 |
 
 On 2026-10-04 the edge-case numbers fell (lift 435 to 417, semantic 428 to 410, held-out 421 to 395) because every prover now refuses a text that an independent reading groups differently from sqlglot ([parser checks](../parser-checks.md)). The refused cases are seeded fuzz texts with a non-associative comparison BigQuery rejects or a bitwise chain sqlglot regroups; `wrong` stays 0 and no rewritten result differed. The held-out run was repeated only to update this count.
 
-Unsupported fell from 1,356 to 994 when KumoSQL started reading `GRAPH_TABLE`, pipe `SET`/`DROP` and `ML.` functions with a `MODEL` argument (`bigquery_syntax.py`); those queries now count as declined or not executable instead, and the rewritten count is unchanged. Baseline before the fixes above: edge cases 1 wrong with lifting (UNPIVOT), GoogleSQL 3 wrong with lifting (FLOAT and UUID types); no wrong without lifting. Each found failure stays in the corpus as a regression case. A pipeline can score 0 wrong by changing nothing, so the rewritten count is reported beside it. `heldout.json` is for final measurement only: add new bug-hunting cases to `cases.json`.
+Unsupported fell from 1,356 to 994 when KumoSQL started reading `GRAPH_TABLE`, pipe `SET`/`DROP` and `ML.` functions with a `MODEL` argument (`bigquery_syntax.py`); those queries now count as declined or not executable instead, and the rewritten count is unchanged. It fell again to 946 when `x LIKE ALL UNNEST(...)`, aggregate `WHERE` filters, the `WITH(a AS 1, a + 1)` expression and `t.arr elem WITH OFFSET off` became readable ([#520](https://github.com/walterogozaly/KumoSQL/issues/520)); again the rewritten count and the 0 wrong are unchanged. Baseline before the fixes above: edge cases 1 wrong with lifting (UNPIVOT), GoogleSQL 3 wrong with lifting (FLOAT and UUID types); no wrong without lifting. Each found failure stays in the corpus as a regression case. A pipeline can score 0 wrong by changing nothing, so the rewritten count is reported beside it. `heldout.json` is for final measurement only: add new bug-hunting cases to `cases.json`.

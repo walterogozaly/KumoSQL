@@ -120,7 +120,8 @@ def test_compiled_targets_reads_the_newest_release_compilation(monkeypatch):
     from kumosql import workflow_configs as wc
 
     monkeypatch.setattr(wc, "search_for", lambda url: {"projects": ["p"], "location": "l"})
-    monkeypatch.setattr(wc, "find_repositories", lambda *a: (["projects/p/locations/l/repositories/r"], []))
+    monkeypatch.setattr(wc, "_bearer", lambda: "token")
+    monkeypatch.setattr(wc, "_search_repositories", lambda *a: (["projects/p/locations/l/repositories/r"], []))
     seen = []
 
     def fake_list(url, key):
