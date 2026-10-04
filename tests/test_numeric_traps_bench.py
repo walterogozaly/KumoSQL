@@ -41,8 +41,19 @@ def test_an_assumed_proof_lists_the_assumption_its_case_violates(results):
 
 def test_sound_pairs_are_still_proved(results):
     equivalent = [r for c, r in results.values() if c.label == "equivalent"]
-    assert sum(r["outcome"] == "proven" for r in equivalent) >= 27
+    assert sum(r["outcome"] == "proven" for r in equivalent) >= 31
     assert not any(r["outcome"] == "refuted" for r in equivalent)
+
+
+def test_a_float_sum_is_proved_clean_only_over_an_identical_plan_or_an_exact_type(results):
+    for case_id in ("float-sum-same-text", "float-sum-grouped-same-text", "float-avg-same-text", "int-sum-with-float-filter-elsewhere"):
+        assert results[case_id][1]["outcome"] == "proven", case_id
+    for case_id, (case, result) in results.items():
+        if case_id.startswith("float-") and "-sum-" in case_id and case.label == "equivalent" and case.violates:
+            # another plan over the same rows: any proof lists the order assumption
+            assert result["outcome"] in ("assumed", "unknown"), case_id
+    for case_id in ("float-sum-pre-aggregated", "float-sum-split", "float-sum-extra-filter"):
+        assert results[case_id][1]["outcome"] in ("unknown", "refuted"), case_id
 
 
 def test_the_literals_of_the_october_audit_are_exact(results):
