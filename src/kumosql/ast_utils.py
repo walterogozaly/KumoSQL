@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import decimal
 import logging
 
 import sqlglot
@@ -348,6 +349,8 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
         if not literal.is_string and len(literal.this) > 100:
             # No FLOAT64, INT64 or NUMERIC needs this many characters; int() and Fraction() on it can take minutes.
             raise UnmodeledConstruct("a numeric literal longer than 100 characters is not modeled")
+        if not literal.is_string and exponent_out_of_range(literal.this):
+            raise UnmodeledConstruct(f"numeric literal {literal.this[:40]!r} is outside FLOAT64's exponent range")
     if expanded_reads(tree) > MAX_EXPANDED_READS:
         raise UnmodeledConstruct(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
     check_distinct_from_grouping(tree)
@@ -367,6 +370,20 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
+
+
+def exponent_out_of_range(text: str) -> bool:
+    """Whether the numeric literal ``text`` is a nonzero number outside FLOAT64's exponent range (``1e100000000``).
+
+    Every prover declines these (``Fraction(Decimal('1e100000000'))`` would build a hundred-million-digit integer);
+    checking here makes the algebraic and structural paths decline them too, not only the SMT and bounded compilers.
+    """
+
+    try:
+        value = decimal.Decimal(text)
+    except decimal.InvalidOperation:
+        return False
+    return value.is_finite() and bool(value) and not -400 <= value.adjusted() <= 400
 
 
 def drop_case_conflicts(tables: dict | None) -> dict | None:
