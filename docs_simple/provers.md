@@ -62,6 +62,10 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
+## Example: grouping with a grand total
+
+`GROUP BY ROLLUP (x)`, `CUBE` and `GROUPING SETS` can add a grand-total row, even when no input row exists, and a list that repeats a grouping set returns each group twice. A rule that assumes one row per group (summing per-group counts into one count, say) would then give a different number than the real query. KumoSQL's rules now recognise these groupings, `GROUP BY ()` and `DISTINCT ON` everywhere and decline to rewrite them, so such pairs come back unproven instead of proven. The evidence is regression pairs checked on DuckDB, so a pair that is still unproven may well be equivalent. The exact conditions are in the [full reference](../docs/provers.md).
+
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).

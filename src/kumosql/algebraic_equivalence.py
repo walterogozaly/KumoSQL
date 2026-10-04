@@ -753,8 +753,15 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     keep.sort(key=lambda i: names[i])  # the enclosing query reads by name, so the order is free
     if keep == list(range(width)):
         return False
-    for branch in branches:
-        branch.set("expressions", [branch.expressions[i].copy() for i in keep])
+    pruned = [[branch.expressions[i].copy() for i in keep] for branch in branches]
+    for branch, items in zip(branches, pruned):
+        if _global_aggregate(branch):
+            kept = branch.copy()
+            kept.set("expressions", [item.copy() for item in items])
+            if not _global_aggregate(kept):
+                return False  # its only aggregate would go, and its one row would become a row per input row
+    for branch, items in zip(branches, pruned):
+        branch.set("expressions", items)
     return True
 
 
@@ -4008,6 +4015,8 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
             walker = walker.parent
         if not in_list or walker is None or not all(isinstance(left, exp.Column) for left in lefts):
             continue
+        if _global_aggregate(walker):
+            continue  # a bare column of an aggregate without GROUP BY reads NULL over no rows (SQLite, MySQL)
         outer_known = _declared_not_null(node, declared)
         inner_known = _declared_not_null(inner.expressions[0], declared)
         values = [(item.this if isinstance(item, exp.Alias) else item) for item in inner.expressions]

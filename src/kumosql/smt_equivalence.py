@@ -64,7 +64,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct
 from .set_operations import positional_sql_pair
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
@@ -1261,9 +1261,8 @@ class _Compiler:
 
         keys: list[_Val] = []
         if group is not None:
-            for key in ("rollup", "cube", "grouping_sets", "totals"):
-                if group.args.get(key):
-                    raise Unsupported(f"GROUP BY {key.upper()}")
+            if extended_grouping(group):
+                raise Unsupported("GROUP BY ROLLUP / CUBE / GROUPING SETS / ()")
             for key_expr in group.expressions:
                 if isinstance(key_expr, exp.Literal) and not key_expr.is_string:
                     if not key_expr.this.isdigit():
@@ -3342,12 +3341,15 @@ def _constant_global(block):
 
 
 def _selects_a_set(select: exp.Select) -> bool:
-    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row."""
+    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row.
 
-    if select.args.get("distinct") and not select.args.get("group"):
+    Not a ``DISTINCT ON (k)`` select: it keeps one row per ``k``, and two of them can be equal.
+    """
+
+    if plain_distinct(select) and not select.args.get("group"):
         return not any(select.find_all(exp.Window))
     group = select.args.get("group")
-    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or extended_grouping(group):
         return False
     outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in select.expressions]
     if any(isinstance(n, (exp.AggFunc, exp.Window)) for o in outputs for n in o.walk()):
@@ -3666,7 +3668,7 @@ def _group_shape(key: str):
         and isinstance(from_.this, exp.Table)
         and not from_.this.args.get("joins")
         and not any(tree.args.get(k) for k in ("joins", "where", "having", "distinct", "limit", "offset", "qualify", "laterals", "pivots", "with", "with_"))
-        and not any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals"))
+        and not extended_grouping(group)
         and all(isinstance(g, exp.Column) for g in group.expressions)
     ):
         group_names = {g.name.lower() for g in group.expressions}
