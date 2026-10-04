@@ -72,6 +72,14 @@ def test_complexity_grows_with_structure():
     assert busy.metrics["set_operations"] == 1 and busy.metrics["window_functions"] == 1
 
 
+def test_a_comma_join_and_if_score_like_join_and_case():
+    joined = complexity("SELECT x.a FROM x JOIN y ON x.a = y.a")
+    assert complexity("SELECT x.a FROM x, y WHERE x.a = y.a").score == joined.score == 2.0
+    assert complexity("SELECT a FROM x, y, z").metrics["joins"] == 2
+    assert complexity("SELECT IF(a > 1, 1, 0) FROM x").score == complexity(
+        "SELECT CASE WHEN a > 1 THEN 1 ELSE 0 END FROM x").score == 1.0
+
+
 def test_complexity_rejects_sqlx():
     with pytest.raises(ValueError):
         complexity("config { type: 'table' }\nselect 1")
