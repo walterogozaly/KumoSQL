@@ -56,7 +56,18 @@ These 28 pairs must be refuted or left unknown; a proof would be a false proof.
 
 ### Results
 
-Measured 2026-10-02 over all 397 pairs. The first run, with no implementation change, proved 214 and refuted 4 meaning-keeping pairs; the only change since is the string-literal canonicaliser for [#314](https://github.com/walterogozaly/KumoSQL/issues/314), which moved those 4 to proved:
+Measured 2026-10-04 over all 397 pairs on master `fa387059` plus the Windows isolation and raw-string fixes (PRs #605 and #609), with sqlglot 28.10.0 and DuckDB 1.5.1, in 1398 seconds:
+
+| | Proven | Refuted | Unknown | Unsupported | Timeout | Error | Wrong |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Meaning kept (369) | **235** | 0 | 3 | 131 | 0 | 0 | 0 |
+| Changes by design (28) | 0 | **18** | 5 | 5 | 0 | 0 | 0 |
+
+**235/369 meaning-keeping fixes are proved, 235/238 on supported pairs, 0 wrong.** No meaning-keeping pair is refuted and no intentional change is proved. The 30 adapted cases produce 22 proofs, 1 refutation and 7 unsupported outcomes, outside the main score. Only aggregate results were retained; separate held-out and per-rule counts below belong to the older measurement. No held-out SQL was inspected or used to develop this fix. The increase from 218 proofs includes merged prover improvements and is not attributed solely to raw-string canonicalization. This check does not replace a live BigQuery oracle.
+
+### Earlier measurement (2026-10-02)
+
+The earlier measurement over all 397 pairs first proved 214 and refuted 4 meaning-keeping pairs; the string-literal canonicaliser for [#314](https://github.com/walterogozaly/KumoSQL/issues/314) moved those 4 to proved:
 
 | | Proven | Refuted | Unknown | Unsupported | Timeout | Error | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
