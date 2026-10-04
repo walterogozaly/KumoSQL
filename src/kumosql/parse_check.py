@@ -1658,6 +1658,10 @@ class _Postgres(_Parser):
                 return None
             if duck and text in ("->", "->>"):
                 raise _Unsupported("DuckDB -> (a lambda or a JSON path)")
+            if duck and self.peek(1).kind == "word" and self.peek(1).upper == "NOT":
+                # DuckDB keeps the PostgreSQL 13 grammar, where such an operator may also be a postfix one: it
+                # then expects NOT IN, NOT LIKE or NOT BETWEEN and fails on what follows.
+                raise _Rejected(f"DuckDB rejects NOT as the right operand of {text}")
             return self.binary(_P_OTHER.get(text), 8, 1)
         word = tok.upper
         if word == "OR":
@@ -1724,6 +1728,10 @@ _PARSERS = {"googlesql": _GoogleSQL, "mysql": _MySQL, "postgres": _Postgres, "du
 
 
 _FLAT = ("AND", "OR")
+# Operations that flip what a query returns without moving any operand: a tree that has one the text does
+# not is as wrong as one that lost one the text has. (For every other operation, sqlglot adding one that the
+# text lacks changes nothing a proof depends on: the operations the text has are all still there.)
+_NOT_INVENTED = ("NOT", "NEG", "~", "DESC", "SELECT DISTINCT", "AGG DISTINCT", "DISTINCT ON")
 
 
 def _keys(nodes: list[_N], starts: list[int], universe: frozenset[int], toks: list[_Tok]) -> tuple[Counter, dict]:
@@ -1806,6 +1814,48 @@ def _start(node, alias: dict[int, int]) -> int | None:
     if meta and "start" in meta:
         return alias.get(meta["start"], meta["start"])
     return None
+
+
+_VALUE_WORDS = frozenset(("NULL", "TRUE", "FALSE"))
+
+
+def _anchor_values(tree: exp.Expression, toks: list[_Tok], alias: dict[int, int], length: int) -> None:
+    """Give sqlglot's ``NULL``, ``TRUE`` and ``FALSE`` nodes (it records no position for them) their token.
+
+    Without a position the operand ``NULL`` of ``!2 IS NULL`` has nothing to compare, and sqlglot's ``NOT (2 IS
+    NULL)`` looks the same as the engine's ``(NOT 2) IS NULL``. The nodes are placed by order: between two
+    positioned names or literals that sqlglot's tree visits one after the other, the value tokens lying
+    between the same two offsets in the text belong to the value nodes between them, in order. A tree that
+    visits its positioned leaves out of text order, or a gap with another number of tokens, keeps no positions
+    (those operands stay unanchored, as before).
+    """
+
+    words = sorted(tok.start for tok in toks if tok.kind == "word" and tok.upper in _VALUE_WORDS)
+    if not words:
+        return
+    plan: list[tuple[list, int, int]] = []
+    pending: list = []
+    before = -1
+    for node in tree.walk(bfs=False):
+        if isinstance(node, (exp.Null, exp.Boolean)) and not (node._meta and "start" in node._meta):
+            pending.append(node)
+            continue
+        start = _start(node, alias)
+        if start is None:
+            continue
+        if start <= before:
+            return  # not in text order: leave the whole tree alone
+        if pending:
+            plan.append((pending, before, start))
+            pending = []
+        before = start
+    if pending:
+        plan.append((pending, before, length))
+    for nodes, low, high in plan:
+        inside = [pos for pos in words if low < pos < high]
+        if len(inside) == len(nodes):
+            for node, pos in zip(nodes, inside):
+                node.meta["start"] = pos
 
 
 def _positions(tree: exp.Expression, alias: dict[int, int]) -> set[int]:
@@ -2063,6 +2113,13 @@ def _dropped(leaves: set[int], toks: list[_Tok], positioned: set[int], trees: li
 def check_query(sql: str, dialect: str = "bigquery") -> ParseCheck:
     """Compare sqlglot's reading of ``sql`` (in ``dialect``) with the independent reading."""
 
+    return _check(sql, dialect)
+
+
+def _check(sql: str, dialect: str, mutate=None) -> ParseCheck:
+    """:func:`check_query` without the cache. ``mutate`` (fault injection, ``tests/test_parse_check_faults.py``)
+    receives the trees sqlglot read and returns the trees to compare, standing in for a misreading parser."""
+
     from sqlglot.dialects.dialect import Dialect
 
     from .ast_utils import canonical_negation, quiet_parser
@@ -2086,6 +2143,8 @@ def check_query(sql: str, dialect: str = "bigquery") -> ParseCheck:
         with quiet_parser():
             theirs = engine.tokenize(sql)
             trees = [canonical_negation(t) for t in engine.parser().parse(theirs, sql) if t is not None]
+        if mutate is not None:
+            trees = mutate(trees)
     except Exception as error:  # sqlglot raises more than its own errors on some inputs
         first = (str(error).splitlines() or [type(error).__name__])[0]
         return ParseCheck(dialect, "unchecked", note=f"sqlglot does not parse it: {first[:80]}")
@@ -2097,6 +2156,8 @@ def check_query(sql: str, dialect: str = "bigquery") -> ParseCheck:
     for tok in toks:
         if tok.kind == "string" and tok.text[0] not in "'\"$":
             alias[tok.start + min(tok.text.find(q) % len(tok.text) for q in "'\"")] = tok.start
+    for tree in trees:
+        _anchor_values(tree, toks, alias, len(sql))
     positioned: set[int] = set()
     for tree in trees:
         positioned |= _positions(tree, alias)
@@ -2128,17 +2189,125 @@ def check_query(sql: str, dialect: str = "bigquery") -> ParseCheck:
     missing = mine - theirs_keys
     for key in sorted(missing, key=lambda k: examples[k].lo):
         reasons.append(f"{_LABELS[fam]} reads {_describe(examples[key], toks, sql)}; sqlglot's tree does not")
+    for key in sorted((theirs_keys - mine).elements(), key=repr):
+        if key[0] in _NOT_INVENTED:
+            reasons.append(f"sqlglot's tree has {key[0]} over text that {_LABELS[fam]} reads without it")
     compared = sum(mine.values())
     if reasons:
         return ParseCheck(dialect, "disagree", tuple(reasons), compared)
     return ParseCheck(dialect, "agree", (), compared)
 
 
+def reading(sql: str, dialect: str = "bigquery") -> str | None:
+    """``sql`` with the independent reading's grouping spelled out in parentheses, or ``None`` when unchecked.
+
+    ``SELECT a | b & c`` under GoogleSQL comes back as ``SELECT (a | (b & c))``. Running that text and the
+    original on the engine itself shows whether the precedence tables are right (``tools/parser_oracle.py``).
+    """
+
+    fam = family(dialect)
+    if fam is None:
+        return None
+    try:
+        toks = _Tokenizer(sql, fam).run()
+        nodes = _PARSERS[fam](toks, fam, sql).statements()
+    except (_Unsupported, _Rejected, RecursionError):
+        return None
+
+    def render(node: _N) -> str:
+        lo, hi = toks[node.lo].start, toks[node.hi - 1].end
+        out, at = [], lo
+        for kid in sorted((k for k in node.kids if k is not None and k.lo < k.hi), key=lambda k: k.lo):
+            start, end = toks[kid.lo].start, toks[kid.hi - 1].end
+            if start < at or end > hi:
+                continue
+            out.append(sql[at:start])
+            out.append(render(kid))
+            at = end
+        out.append(sql[at:hi])
+        text = "".join(out)
+        return f"({text})" if node.kind is not None else text
+
+    if not nodes:
+        return None
+    pieces, at = [], 0
+    for node in nodes:
+        if node is None or node.lo >= node.hi:
+            continue
+        start, end = toks[node.lo].start, toks[node.hi - 1].end
+        pieces.append(sql[at:start])
+        pieces.append(render(node))
+        at = end
+    pieces.append(sql[at:])
+    return "".join(pieces)
+
+
+# The operations whose grouping the round trip compares. Everything else (a ``FULL JOIN`` that MySQL cannot
+# print, ``DIV`` printed as a cast, ``TRUE`` printed as ``1``) is a leaf: the provers read those trees, not the
+# text, and a printing idiom of one engine is not a reading of the text.
+_GROUPING = (
+    exp.Connector, exp.Not, exp.Neg, exp.BitwiseNot, exp.Binary, exp.Is, exp.In, exp.Between, exp.Like, exp.ILike,
+    exp.Case, exp.Escape,
+)
+_NOT_GROUPING = (exp.Alias, exp.Cast, exp.TryCast)
+_DIV_CASTS = ("SIGNED", "INT", "INTEGER", "BIGINT")
+
+
+def _undo_div_cast(tree: exp.Expression) -> exp.Expression:
+    """Read MySQL's ``CAST(a / b AS SIGNED)``, which is how sqlglot prints ``a DIV b``, as ``a DIV b`` again."""
+
+    for node in list(tree.find_all(exp.Cast)):
+        kind = node.to.sql(dialect="mysql").upper() if node.to is not None else ""
+        if isinstance(node.this, exp.Div) and kind in _DIV_CASTS:
+            division = exp.IntDiv(this=node.this.this, expression=node.this.expression)
+            if node is tree:
+                return division
+            node.replace(division)
+    return tree
+
+
+def _skeleton(node: object) -> object:
+    """The grouping of operators in ``node``: ``(class, (operand, ...))``, a plain operand being ``"_"``."""
+
+    if isinstance(node, exp.Paren):
+        return _skeleton(node.this)
+    if isinstance(node, _GROUPING) and not isinstance(node, _NOT_GROUPING):
+        if isinstance(node, exp.Connector):
+            kind, operands = type(node), []
+            stack = [node]
+            while stack:
+                item = stack.pop()
+                inner = item
+                while isinstance(inner, exp.Paren):
+                    inner = inner.this
+                if type(inner) is kind:
+                    stack += [inner.expression, inner.this]
+                else:
+                    operands.append(inner)
+            return (kind.__name__, tuple(_skeleton(o) for o in operands))
+        children = [
+            child for key, value in node.args.items() for child in (value if isinstance(value, list) else [value])
+            if isinstance(child, exp.Expression) and key not in ("kind",)
+        ]
+        return (type(node).__name__, tuple(_skeleton(c) for c in children))
+    found = []
+    for child in node.iter_expressions():
+        item = _skeleton(child)
+        if item != "_":
+            found += list(item) if isinstance(item, tuple) and item and isinstance(item[0], tuple) else [item]
+    return tuple(found) if found else "_"
+
+
 @lru_cache(maxsize=8192)
 def round_trip(sql: str, dialect: str = "bigquery") -> str | None:
-    """Why sqlglot does not read its own printing of ``sql`` back to the same tree, or ``None``."""
+    """Why sqlglot does not read its own printing of ``sql`` back to the same grouping, or ``None``.
 
-    from .ast_utils import _shape, canonical_negation, quiet_parser
+    The provers print trees and read them again, so a printing that regroups operators (a dropped parenthesis,
+    a ``NOT`` moved) turns one query into another between two stages. Only the grouping is compared (see
+    ``_skeleton``): sqlglot's printing idioms for what an engine cannot say are not misreads.
+    """
+
+    from .ast_utils import canonical_negation, quiet_parser
 
     try:
         with quiet_parser():
@@ -2147,14 +2316,21 @@ def round_trip(sql: str, dialect: str = "bigquery") -> str | None:
         return None
     for tree in trees:
         tree = canonical_negation(tree)
+        if family(dialect) == "mysql" and (
+            any(j.args.get("side") == "FULL" for j in tree.find_all(exp.Join))
+            or any(o.args.get("nulls_first") is not None and o.args.get("nulls_first") == bool(o.args.get("desc")) for o in tree.find_all(exp.Ordered))
+        ):
+            continue  # MySQL has no FULL JOIN and no NULLS FIRST on DESC: sqlglot prints an emulation, a different tree by design
         try:
             with quiet_parser():
                 text = tree.sql(dialect=dialect)
                 back = canonical_negation(sqlglot.parse_one(text, read=dialect))
         except Exception:
             return f"sqlglot cannot read back its own {dialect} SQL"
-        if _shape(back) != _shape(tree):
-            return f"sqlglot reads its own {dialect} SQL back as a different query"
+        if family(dialect) == "mysql":
+            tree, back = _undo_div_cast(tree), _undo_div_cast(back)
+        if _skeleton(back) != _skeleton(tree):
+            return f"sqlglot reads its own {dialect} SQL back with different operator grouping"
     return None
 
 
