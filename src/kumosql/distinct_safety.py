@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def _plain_column(node: exp.Expression) -> exp.Column | None:
     if isinstance(node, exp.Alias):
@@ -38,7 +40,7 @@ def distinct_is_redundant(select: exp.Select) -> bool:
         return False
     if group is None or not group.expressions:
         return False
-    if any(group.args.get(key) for key in ("grouping_sets", "rollup", "cube", "totals", "all")):
+    if extended_grouping(group) or group.args.get("all"):
         return False
     keys: list[exp.Column] = []
     for key in group.expressions:

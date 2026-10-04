@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import same_table
+from .ast_utils import extended_grouping, same_table
 from .decorrelation_rules import _conjuncts, _real_sources, _sources
 
 _PROJECTION_ONLY = ("where", "group", "having", "qualify", "distinct", "limit", "offset", "order", "windows", "laterals", "joins")
@@ -136,7 +136,7 @@ def _real_column(select: exp.Select, column: exp.Expression, depth: int = 0) -> 
     if inner is None:
         return None
     group = inner.args.get("group")
-    if group is not None and (group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets")):
+    if group is not None and extended_grouping(group):
         return None
     return _real_column(inner, _item(inner, column.name.lower()), depth + 1)
 
@@ -149,7 +149,7 @@ def _domain(select: exp.Select) -> tuple[exp.Table, str] | None:
     value = select.expressions[0].unalias()
     group = select.args.get("group")
     if group is not None:
-        if group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets") or [g.sql() for g in group.expressions] != [value.sql()]:
+        if extended_grouping(group) or [g.sql() for g in group.expressions] != [value.sql()]:
             return None
     elif not (isinstance(select.args.get("distinct"), exp.Distinct) and not select.args["distinct"].args.get("on")):
         return None
