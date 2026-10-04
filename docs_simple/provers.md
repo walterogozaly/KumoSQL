@@ -82,4 +82,6 @@ Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or
 
 ## Example: a DISTINCT that can move outward
 
+Some casts specify a value to return when conversion fails, such as Oracle's `DEFAULT 0 ON CONVERSION ERROR`. The SMT checker now declines these options because it does not model their behavior. It also declines newly introduced cast options until they are checked. Ordinary casts keep their existing behavior. This guard covers casts; other kinds of SQL still need their own argument audit. See the [full reference](../docs/provers.md).
+
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
