@@ -10,7 +10,7 @@ Complete public sample databases, loaded whole into DuckDB from their pinned ups
 | Score | Results file |
 | --- | --- |
 | 75 workload queries through every rewrite: **0 wrong in 510 executed cases, 242 rewrites verified on the real data** | `sample-databases-rewrites` |
-| 54 authored pairs: **20/24 equivalent proved, 27/30 different refuted (every refutation replayed), 0 wrong** | `sample-databases-pairs` |
+| 54 authored pairs: **20/24 equivalent proved, 28/30 different refuted (every refutation replayed), 0 wrong** | `sample-databases-pairs` |
 
 ```
 python tools/sample_db_bench.py --check            # load both databases and check them against upstream (seconds)
@@ -76,25 +76,25 @@ Provers, in order: the structural prover (`prove_equivalent`), the algebraic/SMT
 | Category | Pairs | Equivalent proved | Different refuted |
 | --- | ---: | ---: | ---: |
 | join elimination | 17 | 5/7 | 9/10 |
-| aggregation | 10 | 5/5 | 3/5 |
+| aggregation | 10 | 5/5 | 4/5 |
 | DISTINCT removal | 6 | 2/2 | 4/4 |
 | set operation | 6 | 2/3 | 3/3 |
 | NULL semantics | 5 | 2/2 | 3/3 |
 | outer join | 4 | 2/2 | 2/2 |
 | subquery | 4 | 2/2 | 2/2 |
 | window | 2 | 0/1 | 1/1 |
-| **all** | **54** | **20/24** | **27/30** |
+| **all** | **54** | **20/24** | **28/30** |
 
 0 wrong; all 8 siblings that drop a guarantee are refuted by a replayed database that keeps every other guarantee. Held out (13 pairs, by SHA-1 of the pair id): 7/8 proved, 5/5 refuted, 0 wrong.
 
-Unknown (7):
+Unknown (6):
 
 - not proved: the nullable-foreign-key join read as `WHERE fk IS NOT NULL` (Chinook and Northwind; "no row-preserving mapping"), the window filter on the partition column, and the UNION ALL of two complementary filters on a NOT NULL column ("UNION shapes differ");
-- not refuted: `nw-filter-vs-conditional-count` (its witness needs a category whose products are all discontinued), `nw-self-left-join-to-reports`, where the bounded checker raises `KeyError: 'unsupported'` (`Employees` has a `BYTES` column, and the LEFT JOIN's NULL padding has no default for that type; a crash is counted as unknown), and `ch-filter-vs-conditional-count`. That last pair is refuted on an idle machine (three reruns), but the executed counterexample search is time-limited and ran out in the recorded run on a machine with a load average above 20.
+- not refuted: `nw-filter-vs-conditional-count` (its witness needs a category whose products are all discontinued) and `nw-self-left-join-to-reports`, where the bounded checker raises `KeyError: 'unsupported'` (`Employees` has a `BYTES` column, and the LEFT JOIN's NULL padding has no default for that type; a crash is counted as unknown). `ch-filter-vs-conditional-count` is refuted in the latest run; the executed counterexample search is time-limited and ran out in the first recorded run on a machine with a load average above 20.
 
 ## Baseline, held-out cases and limits
 
-- **Baseline.** The first full runs are the scores above; no rule or prover was changed for this eval, so there is no tuning on test, dev or held out. The only harness change outside this eval is an optional `rules` argument to `engine_suites._treat`, so the `lift_subqueries` stage reuses it.
+- **Baseline.** The first full runs are the scores above; no rule or prover was changed for the first runs, so nothing was tuned on test, dev or held out. After the merge with master the bounded checker was changed to honour a declared `NUMERIC(p, s)`, found when the pair `ch-in-to-join` failed the replay; that pair is in the development split and the pairs were rerun (the rewrites row does not use the bounded checker). The only harness change outside this eval is an optional `rules` argument to `engine_suites._treat`, so the `lift_subqueries` stage reuses it.
 - **Held out.** A fifth of the queries and a fifth of the pairs, by SHA-1 of `<database>:<id>`, reported apart in both results files. They were seen in the printed output of the first runs; nothing was tuned on them.
 - **Constraint names.** The prover expects lower-case table and column names in `TableConstraints`; constraints keyed by `Track` instead of `track` are silently ignored (the counterexample search then returns databases that violate them). The harness lower-cases them.
 - **Overlap.** No existing eval uses Chinook or Northwind. Spider's training set has a `chinook_1` database (84 questions, the same Chinook schema) and `store_1` (112 questions, a renamed Chinook); those gold queries are Spider's to score, not this eval's. Spider 2.0's dbt task `chinook001` is not scored (the dbt archives are on Google Drive).
