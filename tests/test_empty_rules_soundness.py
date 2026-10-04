@@ -4,6 +4,7 @@ that must still hold."""
 import pytest
 import sqlglot
 
+from sqlglot_support import skip_if_unparseable
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.empty_rules import canonical_empty, is_empty, propagate_empty
 
@@ -41,6 +42,7 @@ def test_dropping_an_empty_left_join_nulls_the_columns_that_read_it():
 )
 def test_a_grand_total_grouping_returns_a_row_over_no_input(group):
     sql = f"SELECT a.x AS s FROM (SELECT t.x FROM t LIMIT 0) AS a GROUP BY {group}"
+    skip_if_unparseable(sql)  # sqlglot 26 cannot read a ROLLUP inside GROUPING SETS
     assert not is_empty(_parse(sql))
     assert canonical_empty(_parse(sql)).sql("bigquery") == _parse(sql).sql("bigquery")
 

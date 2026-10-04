@@ -58,6 +58,8 @@ from kumosql.smt_equivalence import SmtStatus  # noqa: E402
 
 VALIDATION_DATABASES = 900  # random databases per conditional proof (the Singh eval re-checks its proofs on 900)
 WITHOUT_DATABASES = 300  # random databases without the conditions, to show they are needed
+SEARCH_SECONDS = 600.0  # the condition search's wall clock: the library's 30 s default cuts it short on a loaded machine and the set is then not minimal
+RAN_OUT_OF_TIME = "ran out of time"  # what the verdict's reason says when the search was cut short
 
 
 @dataclass
@@ -142,7 +144,7 @@ def legalize(data: dict[str, list[list]], conditions: list[Condition], pair: sin
 
 
 def _prove_options(pair: singh.Pair) -> dict:
-    return dict(schema=pair.tables, compare_names=False, dialect="mysql", timeout_ms=4000)
+    return dict(schema=pair.tables, compare_names=False, dialect="mysql", timeout_ms=4000, conditional_seconds=SEARCH_SECONDS)
 
 
 def _singh_prove(pair: singh.Pair):
@@ -317,7 +319,7 @@ def decide_verieql(case: dict, declared: bool = True) -> Outcome:
         )
         for n, t in lower.items()
     }
-    options = dict(schema=schema, types=types, compare_names=False, dialect="mysql", exact_arithmetic=True, timeout_ms=3000)
+    options = dict(schema=schema, types=types, compare_names=False, dialect="mysql", exact_arithmetic=True, timeout_ms=3000, conditional_seconds=SEARCH_SECONDS)
     try:
         result = prove_equivalent_algebraic(left, right, constraints=constraints, conditional=True, **options)
     except Exception as error:

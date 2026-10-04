@@ -31,6 +31,7 @@ from typing import Any, Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import spell_for_duckdb
 from .duckdb_load import small_database
 from .sqlx import looks_like_sqlx, split_sqlx_sections
 
@@ -548,7 +549,7 @@ def prepare_statements(
                 from .bigquery_on_duckdb import faithful
 
                 statement = faithful(statement)
-            duckdb_sql.append(statement.sql(dialect="duckdb"))
+            duckdb_sql.append(spell_for_duckdb(statement).sql(dialect="duckdb"))
         except sqlglot.errors.SqlglotError as exc:
             raise ExecutionError(f"cannot translate statement {index + 1} to DuckDB: {exc}") from exc
     return duckdb_sql, last_target

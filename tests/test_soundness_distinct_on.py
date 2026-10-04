@@ -18,6 +18,8 @@ import sqlglot
 pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
+from sqlglot_support import skip_if_unparseable
+
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.canonical_rules import canonicalize
 from kumosql.duckdb_load import run_unoptimized
@@ -94,6 +96,7 @@ WRONG_PROOFS = [
 
 @pytest.mark.parametrize("left,right,options,rows", WRONG_PROOFS)
 def test_pairs_that_differ_are_never_proven(left, right, options, rows):
+    skip_if_unparseable(left, right, dialect=options.get("dialect", "bigquery"))
     assert _bags_differ(left, right, rows, options.get("dialect", "bigquery"))
     assert not prove_equivalent_algebraic(left, right, **options).proven
 
@@ -102,6 +105,7 @@ def test_a_null_guard_on_an_aggregate_stays_under_an_empty_grouping_set():
     # x is NOT NULL, yet the empty grouping set's group over no rows has MAX(x) NULL
     left = "SELECT MAX(x) AS m FROM t GROUP BY GROUPING SETS ((y + 0), ()) HAVING MAX(x) IS NOT NULL"
     right = "SELECT MAX(x) AS m FROM t GROUP BY GROUPING SETS ((y + 0), ())"
+    skip_if_unparseable(left, right)
     assert _bags_differ(left, right, {}, "bigquery", x_not_null=True)
     assert not prove_equivalent_algebraic(left, right, schema=SCHEMA, constraints=X_NOT_NULL).proven
 

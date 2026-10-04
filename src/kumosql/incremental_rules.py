@@ -30,6 +30,7 @@ from dataclasses import replace
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
 from .incremental import (
     IncrementalModel,
     SourceTable,
@@ -292,7 +293,7 @@ def prove_group_reaggregation(model: IncrementalModel, sources: dict[str, Source
         return None
     group = full.args.get("group")
     keys = group.expressions if group is not None else []
-    if len(keys) != 1 or not isinstance(keys[0], exp.Column) or group.args.get("rollup") or group.args.get("cube") or group.args.get("grouping_sets"):
+    if len(keys) != 1 or not isinstance(keys[0], exp.Column) or extended_grouping(group):
         return None
     g = keys[0].name
     table = _from_table(full)

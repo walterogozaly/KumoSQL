@@ -46,6 +46,7 @@ from .lineage_soundness import (
     mark_using_joins,
     masked_sql_words,
     pin_single_source_columns,
+    star_branch_view,
 )
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
@@ -545,6 +546,7 @@ class Pipeline:
         result = report if scope is None else self._scoped(report, scope)
         keep = None if scope is None else self.scope_keys(scope)
         result["coverage"] = guarded(None, lambda: self._coverage_of(result, verdicts, window, thresholds, keep))[0]
+        result["schema_lookup"] = dict(self._analyse().schema_lookup)
         return result
 
     def _coverage_of(self, report: dict, verdicts, window, thresholds=None, keep: set[str] | None = None) -> dict:
@@ -1209,6 +1211,9 @@ class _Analysis:
     # Per model: tables its other statements, conditions, variables or operations read, with the names those may
     # use as columns (``None``: any column). Column lineage does not see these reads.
     script_reads: dict[str, dict[str, frozenset[str] | None]] = field(default_factory=dict)
+    # Per model: tables a ``SELECT *`` branch of a set operation reads. Its unknown columns may fill columns
+    # the lineage lists with other sources, so a change to one of these tables reaches the model as unknown.
+    star_branch_tables: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1453,6 +1458,7 @@ class _Analysis:
         consumed: dict[str, frozenset[ColumnRef]] = {}
         # Per model: the read columns that decide which rows it returns (see lineage_soundness.condition_columns).
         conditions: dict[str, frozenset[ColumnRef]] = {}
+        star_branch_tables: dict[str, set[str]] = defaultdict(set)
         # Per model: tables whose columns a masked template expression may name, but whose columns are unknown.
         template_reads: dict[str, set[str]] = {}
         opaque_readers_of: set[str] = set(operation_readers)
@@ -1480,6 +1486,14 @@ class _Analysis:
             if identity is not None and identity.decorator:
                 decorated[name] = ".".join(identity.parts)
         outside = {decorated.get(name, name) for name in outside if decorated.get(name, name) not in schema}
+        # A declared source with no declared columns is read from outside the project just the same: look it up
+        # (only the ones some model reads), or ``SELECT *`` over it can never be expanded.
+        outside |= {
+            parent
+            for parents in upstream.values()
+            for parent in parents
+            if parent in pipeline.sources and parent not in pipeline.models and parent not in schema
+        }
         # An INSERT with no column list names its outputs by the target table's own columns: look those up too.
         outside |= {key for _, key in positional if key not in schema}
         found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
@@ -1558,16 +1572,33 @@ class _Analysis:
                             "columns are unknown, so columns taken from them are not traced (the tables they are given are read)",
                         )
                     )
-                if _has_unexpanded_star(qualified):
-                    diagnostics.append(
-                        PipelineDiagnostic(
-                            writer,
-                            "unexpanded_star",
-                            "SELECT * over a table function whose output columns are unknown; readers of this model treat it as opaque"
-                            if function_calls
-                            else "SELECT * over a table with unknown columns; readers of this model treat it as opaque",
+                # A set operation with a ``SELECT *`` branch: trace each column by position, and only the
+                # positions a star may fill stay unknown (with the sources the other branches give).
+                star_view = None
+                if union_star and not by_name_problems:
+                    try:
+                        star_view = star_branch_view(qualified, list(qualified.named_selects))
+                    except Exception:
+                        star_view = None
+                    if star_view is not None:
+                        star_tables = {t for t in star_view.tables if binding_cte(t) is None}
+                        if len(star_tables) != len(star_view.tables):  # a branch reads a CTE that may hold the star
+                            star_tables = {t for t in qualified.find_all(exp.Table) if binding_cte(t) is None}
+                        star_branch_tables[key].update(
+                            pipeline.resolve(t) or _table_name_for_schema(t) for t in star_tables if t.name
                         )
+                if _has_unexpanded_star(qualified):
+                    star_gap = (
+                        "SELECT * over a table function whose output columns are unknown; readers of this model treat it as opaque"
+                        if function_calls
+                        else "SELECT * over a table with unknown columns; readers of this model treat it as opaque"
                     )
+                    if star_view is not None:
+                        star_gap = (
+                            "a set operation has a SELECT * branch over a table with unknown columns; the output columns "
+                            "that branch may fill are unknown (with the sources the other branches give), the rest are traced"
+                        )
+                    diagnostics.append(PipelineDiagnostic(writer, "unexpanded_star", star_gap))
                     opaque_readers_of.update(upstream.get(key, ()))
 
                 # Drop CTE and subquery columns nothing reads (``SELECT *`` in a
@@ -1667,10 +1698,11 @@ class _Analysis:
                         _add_table(sqlglot_schema, spelled, schema[key])
                 # ``qualified`` is already qualified: hand lineage() its scope so it
                 # neither copies nor re-qualifies the query once per output column.
+                base = star_view.query if star_view is not None else qualified
                 try:
-                    traced = lineage_view(qualified) or qualified
+                    traced = lineage_view(base) or base
                 except Exception:
-                    traced = qualified
+                    traced = base
                 try:
                     lineage_scope = build_scope(traced)
                 except Exception:
@@ -1698,7 +1730,7 @@ class _Analysis:
                     if name == "*":
                         records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
                         continue
-                    if by_name_problems or union_star:
+                    if by_name_problems or (union_star and star_view is None):
                         # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
                         # an unknown table counts as one column, so every position after it is off).
                         reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
@@ -1731,7 +1763,12 @@ class _Analysis:
                         )
                         records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_error")
                         continue
-                    if reason:
+                    if star_view is not None and name in star_view.tainted:
+                        # A star branch may supply this column from a table whose columns are unknown.
+                        records[ref] = ColumnLineage(
+                            ref, frozenset(leaves), "unknown", "unknown", reason or "unexpanded_star"
+                        )
+                    elif reason:
                         records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
                     elif not leaves:
                         records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
@@ -1847,6 +1884,7 @@ class _Analysis:
             conditions=conditions,
             template_reads={key: frozenset(tables) for key, tables in template_reads.items()},
             script_reads=script_reads,
+            star_branch_tables={key: frozenset(tables) for key, tables in star_branch_tables.items()},
         )
 
 

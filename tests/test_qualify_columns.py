@@ -114,7 +114,8 @@ def test_star_derived_table_is_unknown():
 def test_unnest_value_and_offset_stay_bare():
     result = run("SELECT x, v, o FROM a, UNNEST(a.arr) AS v WITH OFFSET AS o")
 
-    assert flat(result.sql) == "SELECT a.x, v, o FROM a CROSS JOIN UNNEST(a.arr) AS v WITH OFFSET AS o"
+    # sqlglot 26 keeps the comma join as written; later releases print it as CROSS JOIN
+    assert flat(result.sql) in ("SELECT a.x, v, o FROM a CROSS JOIN UNNEST(a.arr) AS v WITH OFFSET AS o", "SELECT a.x, v, o FROM a, UNNEST(a.arr) AS v WITH OFFSET AS o")
     assert result.verification.status is VerificationStatus.PROVEN, result.verification.details
 
 
