@@ -7,7 +7,7 @@
   "docs": "docs/evals/bigquery-behavior-eval.md",
   "command": "python tools/bq_behavior_eval.py --corpus edge --pipeline lift",
   "date": "2026-10-04",
-  "caveats": "All cases are custom (379 hand-written, 588 seeded fuzz), none from a public benchmark. Held-out: 662 fresh-seed fuzz cases, 395 rewritten, 0 wrong. Baseline before fixes: 1 wrong (lifting dropped UNPIVOT, and the prover called it equivalent). A rewrite suite can pass by changing nothing; 549 declined with lifting. Literal folds spot-checked on real BigQuery. Fell from 435 on 2026-10-04 when the parser check began refusing 18 fuzz cases whose text BigQuery rejects or reads differently from sqlglot (docs/parser-checks.md).",
+  "caveats": "All cases are custom (379 hand-written, 588 seeded fuzz), none from a public benchmark. Held-out: 662 fresh-seed fuzz cases, 395 rewritten, 0 wrong. Baseline before fixes: 1 wrong (lifting dropped UNPIVOT, and the prover called it equivalent). A rewrite suite can pass by changing nothing; 539 declined (531 with lifting, plus 1 query DuckDB cannot execute, so it gets no verdict). Re-measured on master 4d294afd (sqlglot 30.21): 434 to 435 rewritten, 0 wrong; the semantic pipeline row in the docs was not re-measured. Literal folds spot-checked on real BigQuery. Fell from 435 when the parser check began refusing 18 fuzz cases whose text BigQuery rejects or reads differently from sqlglot (docs/parser-checks.md).",
   "evidence": "executed",
   "correctness": "0 behaviour-changing accepted rewrites; checked by executing both versions in DuckDB",
   "coverage": {
@@ -16,5 +16,6 @@
     "unsupported": 0,
     "error": 0
   },
+  "coverage_of": "The 966 of the 967 cases with a coverage outcome; the other one is not executable in DuckDB, so it gets no verdict.",
   "held_out": "395/662 rewritten, 0 wrong (fresh-seed fuzz)"
 }

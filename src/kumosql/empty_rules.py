@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import distinct_on, inside, select_sources
+from .ast_utils import distinct_on, grouping_elements, inside, select_sources
 
 
 def _false(node: exp.Expression | None) -> bool:
@@ -57,9 +57,10 @@ def _global_aggregate(select: exp.Select) -> bool:
 
     group = select.args.get("group")
     if group is not None:
-        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
-            return True  # older sqlglot keeps these outside group.expressions
-        return bool(group.expressions) and all(_grand_total(e) for e in group.expressions)
+        elements = grouping_elements(group)  # sqlglot 26 keeps ROLLUP, CUBE and GROUPING SETS outside group.expressions
+        if group.args.get("totals") or any(isinstance(e, exp.Rollup) and not e.expressions for e in elements):
+            return True  # MySQL's WITH TOTALS and WITH ROLLUP: not modeled, so never read as an empty result
+        return bool(elements) and all(_grand_total(e) for e in elements)
     if select.args.get("having") is not None:
         return True
     return any(

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping
+from .ast_utils import FROM_KEY, extended_grouping
 
 
 _BLIND = (exp.Min, exp.Max)
@@ -81,7 +81,7 @@ def _drop_join(select: exp.Select) -> exp.Select | None:
         return None
     copy = select.copy()
     copy.set("joins", None)
-    copy.set("from_" if "from_" in copy.args else "from", exp.From(this=near.copy()))
+    copy.set(FROM_KEY, exp.From(this=near.copy()))
     return copy
 
 

@@ -23,7 +23,7 @@ from typing import Any, Mapping, Sequence
 
 from sqlglot import exp
 
-from .ast_utils import star_modifier
+from .ast_utils import is_aggregate, star_modifier
 from .output_properties import set_returning_item
 from .pipeline import ColumnRef, Model, Pipeline, Target, _parse_script, _table_name_for_schema
 from .set_operations import is_by_name
@@ -423,7 +423,7 @@ def _has_aggregate(expr: exp.Expression) -> bool:
         node = stack.pop()
         if isinstance(node, (exp.Window, exp.Query)):
             continue
-        if isinstance(node, exp.AggFunc):
+        if is_aggregate(node):
             return True
         stack.extend(node.iter_expressions())
     return False
@@ -766,7 +766,7 @@ class _Profiler:
             if isinstance(node, exp.Window):
                 wrapped += 1
                 return exp.Var(this="window:" + _canon_sql(node))
-            if isinstance(node, exp.AggFunc):
+            if is_aggregate(node):
                 wrapped += 1
                 collapsed = _collapse_nested(node)
                 if collapsed is not None:
