@@ -126,6 +126,15 @@ def test_nested_guarded_operations_are_planned_in_time(db):
     assert run(db, f"SELECT {nested} FROM t") == [(3.0,)]
 
 
+def test_guards_over_aggregates_work_in_having_group_by_and_order_by(db):
+    # the guards bind their arguments through a lambda, which DuckDB cannot bind around an aggregate in HAVING
+    rows = "FROM UNNEST([STRUCT(1 AS g, 2 AS x), STRUCT(1 AS g, 3 AS x), STRUCT(2 AS g, 4 AS x)])"
+    assert run(db, f"SELECT g {rows} GROUP BY g HAVING SUM(x) / COUNT(*) > 3") == [(2,)]
+    assert run(db, f"SELECT g, SUM(x) {rows} GROUP BY g HAVING SUM(x) > 4") == [(1, 5)]
+    assert run(db, f"SELECT g {rows} GROUP BY g ORDER BY SUM(x) / COUNT(*) DESC") == [(2,), (1,)]
+    assert sorted(run(db, f"SELECT x * 2 {rows} GROUP BY x * 2")) == [(4,), (6,), (8,)]
+
+
 def test_integer_division_and_mod_by_zero_fail(db):
     assert fails(db, "SELECT MOD(x, 0) FROM UNNEST([1]) x")
     assert fails(db, "SELECT DIV(x, 0) FROM UNNEST([1]) x")

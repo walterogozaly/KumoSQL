@@ -124,20 +124,35 @@ def _once(statement: str) -> str:
 
     name, parameters, body = _MACRO_HEAD.match(statement).groups()
     names = [p.strip() for p in parameters.split(",")]
-    # a parameter is renamed to a field of the lambda's argument outside string literals only
+    # a parameter becomes a field of the lambda's argument (named so that no macro parameter shares its name,
+    # which DuckDB would replace inside the struct too), outside string literals only
+    fields = {n: f"_f{i}" for i, n in enumerate(names)}
+    pattern = re.compile(rf"\b({'|'.join(names)})\b")
+
+    def rename(text: str) -> str:
+        return pattern.sub(lambda m: f"_k.{fields[m.group(1)]}", text)
+
     parts, last = [], 0
     for quoted in _QUOTED.finditer(body):
-        parts.append(re.sub(rf"\b({'|'.join(names)})\b", r"_k.\1", body[last:quoted.start()]))
-        parts.append(quoted.group())
+        parts += [rename(body[last:quoted.start()]), quoted.group()]
         last = quoted.end()
-    parts.append(re.sub(rf"\b({'|'.join(names)})\b", r"_k.\1", body[last:]))
-    packed = ", ".join(f"{n} := {n}" for n in names)
+    parts.append(rename(body[last:]))
+    packed = ", ".join(f"{fields[n]} := {n}" for n in names)
     return f"CREATE OR REPLACE TEMP MACRO {name}({parameters}) AS list_transform([struct_pack({packed})], _k -> {''.join(parts)})[1]"
 
 
 # ``kumo_bq_read`` tests ``typeof(x) = 'VARCHAR'`` and a bare NULL argument turns into a VARCHAR field, so it keeps
 # the plain form (its argument is a cast's operand, rarely nested deep)
-MACROS = tuple(statement if "kumo_bq_read(" in statement else _once(statement) for statement in _MACRO_DEFINITIONS)
+# ``HAVING`` cannot bind a lambda around an aggregate (DuckDB reads the field as an ungrouped column), so there the
+# plain form is called, under the name ``<macro>_plain``.
+_PACKED = tuple(_MACRO_HEAD.match(m).group(1) for m in _MACRO_DEFINITIONS if "kumo_bq_read(" not in m)
+MACROS = tuple(
+    statement if "kumo_bq_read(" in statement else _once(statement) for statement in _MACRO_DEFINITIONS
+) + tuple(
+    statement.replace(f"MACRO {_MACRO_HEAD.match(statement).group(1)}(", f"MACRO {_MACRO_HEAD.match(statement).group(1)}_plain(", 1)
+    for statement in _MACRO_DEFINITIONS
+    if "kumo_bq_read(" not in statement
+)
 
 
 class Unfaithful(sqlglot.errors.UnsupportedError):
@@ -480,6 +495,9 @@ def faithful(tree: exp.Expression) -> exp.Expression:
         else:
             parent.args[key] = replacement
         replacement.parent, replacement.arg_key, replacement.index = parent, key, index if isinstance(slot, list) else None
+    for call in list(tree.find_all(exp.Anonymous)):
+        if str(call.this).lower() in _PACKED and call.find_ancestor(exp.Having) is not None:
+            call.set("this", f"{call.this}_plain")
     return tree
 
 
