@@ -23,6 +23,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Bounded verification](bounded-verification.md) | Do queries agree on every modeled small database? |
 | [SQL-IQ](sql-iq.md) | Equivalence, candidate choice, and error classification |
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |
+| [QUITE LLM rewrites](quite.md) | When language models rewrite a query, which rewrites can be proved right, and are any wrongly proved? |
 | [Join rewrites](join-rewrites.md) | When does changing a join type preserve results? |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Does the prover avoid accepting known faulty rewrites? |
 | [Sample databases](sample-databases.md) | Do rewrites and proofs hold on complete real databases with declared keys? |

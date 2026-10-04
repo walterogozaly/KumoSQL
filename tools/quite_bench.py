@@ -52,16 +52,11 @@ rewrites.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
 import datetime
-from decimal import Decimal
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import random
 import re
 import shutil
@@ -71,6 +66,11 @@ import sys
 import threading
 import time
 import urllib.request
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
+from decimal import Decimal
+from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
@@ -337,8 +337,8 @@ def load_schema(text: str) -> dict[str, Table]:
     """Tables, NOT NULL columns, primary keys and foreign keys of a PostgreSQL DDL file (names lower-cased)."""
 
     tables: dict[str, Table] = {}
-    alters = re.findall(r"alter\s+table\s+(\w+)\s+add\s+constraint\s+\w+\s+primary\s+key\s*\(([^)]*)\)", text, re.I)
-    text = re.sub(r"alter\s+table[^;]*;", "", text, flags=re.I)
+    alters = re.findall(r"alter\s+table\s+(\w+)\s+add\s+constraint\s+\w+\s+primary\s+key\s*\(([^)]*)\)", text, re.IGNORECASE)
+    text = re.sub(r"alter\s+table[^;]*;", "", text, flags=re.IGNORECASE)
     for statement in sqlglot.parse(text, read="postgres"):
         if not isinstance(statement, exp.Create) or not isinstance(statement.this, exp.Schema):
             continue
@@ -586,7 +586,7 @@ def repair(data: Data, tables: dict[str, Table]) -> Data:
     return {name: [tuple(row) for row in rows] for name, rows in data.items()}
 
 
-_DEFAULTS = {"BIGINT": 0, "DOUBLE": 0.0, "DATE": datetime.date(2000, 1, 1), "TIMESTAMP": datetime.datetime(2000, 1, 1), "BOOLEAN": False, "VARCHAR": ""}
+_DEFAULTS = {"BIGINT": 0, "DOUBLE": 0.0, "DATE": datetime.date(2000, 1, 1), "TIMESTAMP": datetime.datetime(2000, 1, 1), "BOOLEAN": False, "VARCHAR": ""}  # noqa: DTZ001
 
 
 def _value(value, duck_type: str):
@@ -604,7 +604,7 @@ def _value(value, duck_type: str):
         if duck_type == "TIMESTAMP" and isinstance(value, str):
             return datetime.datetime.fromisoformat(value)
         if duck_type == "TIMESTAMP" and isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
-            return datetime.datetime(value.year, value.month, value.day)
+            return datetime.datetime(value.year, value.month, value.day)  # noqa: DTZ001
         if duck_type == "VARCHAR" and not isinstance(value, str):
             return str(value)
     except (ValueError, ArithmeticError, TypeError):
@@ -768,8 +768,15 @@ def instance_differs(path: Path, left: str, right: str) -> dict | None:
                 timer.cancel()
         if results[0] == results[1]:
             return None
-        if [_bag(rows) for rows in run_unoptimized(con, left, right)] != results:
-            return None
+        # the unoptimized plan of a comma join over six tables is a cross product: give the check its own budget
+        timer = threading.Timer(QUERY_SECONDS * 3, con.interrupt)
+        timer.start()
+        try:
+            unoptimized = [_bag(rows) for rows in run_unoptimized(con, left, right)]
+        finally:
+            timer.cancel()
+        if unoptimized != results:
+            return None  # also when it ran out of time: a difference counts only once the unoptimized plan agrees
         return {"tables": "TPC-H instance, scale factor 0.01 (tpchgen-cli)", "left": sorted(map(str, (results[0] - results[1]).elements()))[:5], "right": sorted(map(str, (results[1] - results[0]).elements()))[:5]}
     except duckdb.Error:
         return None
@@ -897,7 +904,7 @@ def decide(pair: Pair, tables: dict[str, Table], instance: Path | None = None) -
                 proposed.append(("prover counterexample", data))
     except _Deadline:
         proved, reason, proposed, crash = False, "", [], "timeout"
-    except Exception as error:  # a crash is a failure to prove, never a proof
+    except Exception as error:  # noqa: BLE001 - a crash is a failure to prove, never a proof
         proved, reason, proposed, crash = False, "", [], f"{type(error).__name__}: {str(error)[:200]}"
     finally:
         signal.alarm(0)
@@ -1138,7 +1145,7 @@ def results_rows(report: Report, date: str) -> dict[str, dict]:
 
     equal = {
         "suite": "QUITE LLM rewrites, flagged equal",
-        "order": 36,
+        "order": 342,
         "size": total_eq,
         "score": f"{eq['proven']}/{total_eq - eq['refuted']} proved, {eq['wrong']} wrong",
         "metric": (
@@ -1158,13 +1165,18 @@ def results_rows(report: Report, date: str) -> dict[str, dict]:
             "Data downloaded at a pinned commit (no licence; not bundled). Flags come from one PostgreSQL instance, so a "
             "refuted pair is a label disagreement, not an error. Quoted upper-case identifiers are folded to lower case "
             "(the Calcite queries quote tables created in lower case) and FETCH FIRST n ROWS ONLY is read as LIMIT n. "
-            f"{mixed} pairs flagged both ways are not scored. No KumoSQL rule was changed for this eval."
+            f"{mixed} pairs flagged both ways are not scored. 3 pairs (TPC-H) crash the prover with a z3 error and count as error. "
+            "No KumoSQL rule was changed for this eval. Baseline before the harness read FETCH FIRST as LIMIT (the 100 development "
+            "pairs that use it, 81 flagged equal): 16/67 proved, 0 wrong; after: 7/67, 0 wrong (13 identical-text pairs the prover "
+            "no longer proves once the row cap is visible to its tie check, 4 gained). Tuned on test: no. The held-out pairs were "
+            "run once and never read one by one; the two harness changes (FETCH, and a 30 s limit on replaying a TPC-H instance "
+            "without the optimizer) came from development pairs, and the held-out TPC-H pairs were rerun after the second."
         ),
         **common,
     }
     negatives = {
         "suite": "QUITE LLM rewrites, flagged unequal",
-        "order": 37,
+        "order": 343,
         "size": total_un,
         "score": f"{un['refuted'] + un['wrong']}/{total_un} refuted, {un['proven']} proved, {un['wrong']} wrong",
         "metric": (
@@ -1185,7 +1197,8 @@ def results_rows(report: Report, date: str) -> dict[str, dict]:
         "caveats": (
             "A flag of unequal is not a semantic label: timeouts and rewrites that failed to run are flagged too, so only "
             "replayed differences count as negatives. Refutations come from KumoSQL's own databases (the authors' instances "
-            "are not public; TPC-H also runs on a generated scale-0.01 instance). Data downloaded at a pinned commit."
+            "are not public; TPC-H also runs on a generated scale-0.01 instance, and a difference there counts only if the unoptimized "
+            "plan finishes in 30 s and agrees). Data downloaded at a pinned commit. Tuned on test: no; the held-out pairs were never read one by one."
         ),
         **common,
     }
@@ -1221,6 +1234,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--split", choices=("all", "dev", "held-out"), default="all")
     parser.add_argument("--sample", type=int, help="a pinned stratified sample of this many pairs")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--contains", help="only pairs whose original or rewrite contains this text (case-folded)")
+    parser.add_argument("--no-fetch-as-limit", action="store_true", help="the baseline: do not read FETCH FIRST n ROWS ONLY as LIMIT n")
     parser.add_argument("--workers", type=int)
     parser.add_argument("--no-instance", action="store_true", help="skip the generated TPC-H instance")
     parser.add_argument("--json", type=Path, help="write per-pair verdicts here")
@@ -1237,6 +1252,11 @@ def main(argv: list[str] | None = None) -> int:
         for name, row in overlap(pairs).items():
             print(f"{name:45} {row['quite_queries']:13} {row['same_text']:10} {row['same_shape']:11} {row['their_queries']:14}")
         return 0
+    global FETCH_AS_LIMIT
+    if args.no_fetch_as_limit:
+        FETCH_AS_LIMIT = False
+    if args.contains:
+        pairs = [p for p in pairs if args.contains.lower() in (p.original + p.rewritten).lower()]
     if args.benchmark:
         pairs = [p for p in pairs if p.benchmark in args.benchmark]
     if args.split != "all":
