@@ -24,13 +24,13 @@ In SQLX, `inline_single_use_ctes`, `remove_trivial_predicates`, `remove_redundan
 
 `apply_rule` and `apply_rules` run rules and check every changed output against its input with the conservative equivalence prover. Each result has one `verification.status` and a `verification.checks` list with the individual evidence:
 
-- `unchanged`: the output text is identical to the input. This says nothing about whether the input parses or whether a rule skipped it; a skipped rule says why in its step's `diagnostics` (for example `unsupported_sqlx`).
+- `unchanged`: the output text is identical to the input. This says nothing about whether the input is valid or whether a rule skipped it; a skipped rule says why in its step's `diagnostics` (for example `unsupported_sqlx`). If the input only parsed in `sqlglot` recovery mode (a `recovered_parse` diagnostic), an identical output is reported `unproven` instead, with a failed `recovered_parse` check, because recovery accepts truncated or trailing-garbage SQL.
 - `proven`: the equivalence prover established equivalence. A planner check, when available, is reported separately.
 - `planner_checked`: a planner accepted the candidate, but equivalence was not proven. This is not trusted for automatic acceptance.
 - `unproven`: equivalence was not established and there is no successful planner-only result. A failed planner check is reported here as a failed check.
 - `failed`: a fatal rewrite error occurred, such as a parse, transform, or output validation failure.
 
-Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. Trusted means the text was left alone or a proof covers the change; it does not check that the input itself is valid SQL. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
+Each check has a `kind`, `outcome`, and human-readable `detail`. Pipeline results keep checks on each step and collect rule-prefixed step checks alongside any direct end-to-end check. Only `unchanged` and `proven` are trusted, so `result.success` is false for `planner_checked`, `unproven`, and `failed`. Trusted means the text was left alone (and was read by the strict parser) or a proof covers the change. The check does not validate the input in general, but a change to a statement BigQuery would reject is never `proven`: see *Inputs BigQuery would reject* below. The rewrite CLI prints the same label and checks; it exits with status 3 for untrusted output unless `--allow-unproven` is supplied, and exits with status 2 for a fatal rule failure without writing its output.
 
 ```python
 from kumosql import apply_rules
@@ -88,7 +88,11 @@ Existing CTE dependencies are respected: a lift from inside an existing CTE is p
 
 Run the parser compatibility regressions locally with `python tools/test_sqlglot_matrix.py`. The script creates temporary virtual environments for the minimum supported `sqlglot` release (`26.0.0`) and the current validated release (`30.20.0`), then runs the CTE-lifting, rule-registry, and SQLX tests in each. It exits unsuccessfully if setup or any test fails. Pass `--versions 26.0.0 30.20.0` to select releases explicitly; update `SUPPORTED_SQLGLOT_VERSIONS` in the script when the supported matrix changes.
 
-For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers. Recovery also accepts broken input (`SELECT 1 FROM t WHERE 1 =`, or trailing text after the last clause) and `success` stays true for it, so check `result.recovered` as well when broken SQL must not count as success.
+For valid-but-unsupported BigQuery syntax, the tool may use `sqlglot` recovery mode; those rows still report a `recovered_parse` diagnostic so the exception is visible to reviewers. Recovery also accepts broken input (`SELECT 1 FROM t WHERE 1 =`, or trailing text after the last clause) and `success` stays true for it, so check `result.recovered` as well when broken SQL must not count as success. `apply_rule` and `apply_rules` themselves do not trust an unchanged recovered parse (see the `unchanged` label above); only the lifter's `success` flag needs the extra `recovered` check.
+
+### Inputs BigQuery would reject
+
+Matching trees say nothing about results when BigQuery would refuse to run the query, so the structural prover (`prove_equivalent`) and the rewrite acceptance layer refuse to prove a change to such a statement, and `apply_rule` reports it `unproven` with the reason. `src/kumosql/input_validity.py` finds two kinds without a schema, each checked against a BigQuery dry run: a `HAVING` clause in a select with no `GROUP BY` and no aggregate call, and a column that a derived table or CTE with fully known output names does not produce (`alias.name`, or a bare `name` when every source of the select is such a table). Anything it cannot see through (real tables, `SELECT *`, unnamed projections, UNNEST, LATERAL, pivots, user-defined functions) passes, so this is a refusal list rather than a validator: it misses invalid SQL, but never rejects valid SQL. The workbook fixture's `q09` (a CTE column that does not exist) and `q21` (`HAVING` without grouping) are now `unproven` instead of `proven`; both were already outside the credited count. The solver-only provers (`prove_equivalent_smt` and the algebraic prover) still read these inputs as written, since corpora written for other dialects (MySQL allows `HAVING` without `GROUP BY`) go through them directly.
 
 ```python
 from kumosql import lift_subqueries
@@ -128,9 +132,9 @@ Every row stays in the denominator. A row is credited only when it parses strict
 | Valid input / invalid | 30 / 2: `q09` selects `customer_id` from a CTE that only outputs `region`; `q21` has `HAVING` on an outer query with no grouping or aggregate |
 | Changed / unchanged | 30 / 2: `q16`, a `MERGE ... USING (subquery)`, is not lifted (only FROM/JOIN subqueries are); `q17`'s subquery sits directly in `UPDATE ... FROM`, and BigQuery rejects `WITH` before `UPDATE` |
 | No relational subquery left | 31 (40 subqueries lifted); `q17` leaves 1 and is reported as a failure |
-| Proven / unproven / unchanged / failed | 29 / 1 (`q28`: `WHERE ${when(incremental(), ...)}` can expand to any SQL, so the lift needs compiled SQL) / 1 (`q16`) / 1 (`q17`) |
+| Proven / unproven / unchanged / failed | 27 / 3 (`q09` and `q21`: BigQuery would reject the input, so the lift is refused; `q28`: `WHERE ${when(incremental(), ...)}` can expand to any SQL, so the lift needs compiled SQL) / 1 (`q16`) / 1 (`q17`) |
 | Credited | 27 of 32 (26 on `sqlglot` older than 28, where `q20`'s `ROW_NUMBER` rewrite is unproven) |
 
-`q09` and `q21` are still lifted and proven (the rewrite preserves whatever the query means) but are counted as invalid inputs, not credited.
+`q09` and `q21` are still lifted, but the rewrite is `unproven` (see *Inputs BigQuery would reject*) and they are counted as invalid inputs, not credited.
 
 Set `KUMOSQL_TEST_FIXTURE` to score another CSV or JSON fixture. A requested path that does not exist fails the test instead of skipping it, and the fixture must be a non-empty list of rows with unique non-empty ids (`id`, or `record_id` in a CSV) and non-empty `sql_text` strings. Labels for it come from `KUMOSQL_TEST_FIXTURE_EXPECTED` or a sibling `<name>.expected.json` in the same format; without labels every row must still parse strictly and leave no relational subquery, and the other outcomes are only reported. `tests/test_generic_fixture.py` separately checks the sample file's shape.

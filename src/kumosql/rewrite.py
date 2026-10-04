@@ -29,6 +29,7 @@ from .scripts import block_statements, script_skeleton
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
+from .input_validity import invalid_input_reason
 from .layout_equivalence import created_function_calls, layout_only_change, touching_literal_chunks
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
@@ -286,6 +287,11 @@ def _verify_sql(
         new_sql = new_query.sql(dialect="bigquery")
         if old_sql == new_sql:
             continue
+        invalid = invalid_input_reason(old_query) or invalid_input_reason(new_query)
+        if invalid:
+            # Nothing to preserve: BigQuery would reject the statement, so no prover's agreement is evidence.
+            problems.append(f"statement {index}: the query would not run on BigQuery: {invalid}")
+            continue
         # The prover compares result bags; a rewrite must also keep ordering.
         if _order_sql(old_query) != _order_sql(new_query):
             problems.append(f"statement {index}: final ORDER BY changed")
@@ -525,16 +531,42 @@ def _verify_rewrite(
     )
 
 
+RECOVERED_PARSE_CHECK = "recovered_parse"
+
+
+def _without_unchanged_trust(verification: Verification, recovered: bool) -> Verification:
+    """Withdraw the ``unchanged`` label from a result whose input only parsed in recovery mode.
+
+    Recovery keeps valid BigQuery that sqlglot cannot parse strictly, but it also accepts truncated or
+    trailing-garbage input (``WHERE 1 =``). A rule that never changed such an input has not shown it is
+    SQL, so "the output is identical to the input" must not read as trusted.
+    """
+
+    if not recovered or verification.status is not VerificationStatus.UNCHANGED:
+        return verification
+    detail = "Strict BigQuery parsing failed and the statements were read in sqlglot recovery mode."
+    return Verification(
+        VerificationStatus.UNPROVEN,
+        "the output is identical to the input, but the input only parsed in recovery mode and may not be valid SQL",
+        (detail,),
+        verification.checks + (VerificationCheck(RECOVERED_PARSE_CHECK, "failed", detail),),
+        verification.proof_checks,
+    )
+
+
 def _result(rule_name: str, sql: str, output: RuleOutput) -> RewriteResult:
     failure_details = tuple(
         f"{diagnostic.code}: {diagnostic.message}" for diagnostic in output.diagnostics
     )
-    verification = _verify_rewrite(
-        sql,
-        output.sql,
-        rewrite_succeeded=output.success,
-        failure_details=failure_details,
-        rule=rule_name,
+    verification = _without_unchanged_trust(
+        _verify_rewrite(
+            sql,
+            output.sql,
+            rewrite_succeeded=output.success,
+            failure_details=failure_details,
+            rule=rule_name,
+        ),
+        any(diagnostic.code == "recovered_parse" for diagnostic in output.diagnostics),
     )
     return RewriteResult(
         rule=rule_name,
@@ -702,6 +734,10 @@ def apply_rules(
                 base.details,
                 step_checks + base.checks,
             )
+    verification = _without_unchanged_trust(
+        verification,
+        any(diagnostic.code == "recovered_parse" for step in steps for diagnostic in step.diagnostics),
+    )
     return PipelineResult(sql, current, tuple(steps), verification)
 
 

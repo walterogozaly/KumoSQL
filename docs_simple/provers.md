@@ -66,6 +66,8 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 When results are compared by running both queries, a value keeps its kind: `TRUE` is not `1`, a NaN is not the text `NaN`, and a struct is not a list of pairs. Floats are compared rounded to 12 significant digits unless you ask for an exact comparison, and each result records which one it used.
 
+The structural checker also refuses a query BigQuery would plainly reject (for example `HAVING` with no grouping, or a column that the subquery it reads does not have), because two such queries matching proves nothing about results. It only recognizes those two cases. See the [full reference](../docs/provers.md).
+
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
 ## Example: a DISTINCT that can move outward
