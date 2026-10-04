@@ -57,7 +57,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage | `analytical-sql-coverage` |
 | [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct (a checked-in manifest, run by the test suite) | none |
 | [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases | `googlesql-behavior`, `bigquery-edge-cases` |
-| [SQLFluff rule fixtures](sqlfluff-fixtures.md) | Lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them | `sqlfluff-semantic-fixes`, `sqlfluff-layout-fixes`, `sqlfluff-kumosql-formatter` |
+| [SQLFluff rule fixtures](sqlfluff-fixtures.md) | Lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them; KumoSQL's rewrite rules on the queries sqlfluff refuses to fix | `sqlfluff-semantic-fixes`, `sqlfluff-layout-fixes`, `sqlfluff-kumosql-formatter`, `sqlfluff-refusals` |
 
 ## Lineage, impact and Dataform
 

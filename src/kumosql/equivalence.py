@@ -31,6 +31,7 @@ from .ast_utils import (
 from .distinct_safety import distinct_is_redundant
 from .input_validity import invalid_input_reason
 from .layout_equivalence import _builtin_functions
+from .parse_check import refuse_misread_proofs
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
 from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
@@ -1126,6 +1127,7 @@ def _peel_root_limit(left_sql: str, right_sql: str) -> tuple[str, str, str] | No
     return left.sql(dialect="bigquery"), right.sql(dialect="bigquery"), tail
 
 
+@refuse_misread_proofs
 def prove_equivalent(
     left_sql: str,
     right_sql: str,

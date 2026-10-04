@@ -114,6 +114,8 @@ class InlineSingleUseCtesRule(RewriteRule):
             return 0, []
         if ambiguous_unnest_names(query) or cte_dependency_errors(statement):
             return 0, []
+        if not all(isinstance(cte.this, exp.Query) for cte in clause.expressions):
+            return 0, []  # a data-modifying CTE (PostgreSQL) runs once whether or not it is read
 
         inlined = 0
         while _inline_once(query, clause):
