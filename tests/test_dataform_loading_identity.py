@@ -295,3 +295,76 @@ def test_a_column_only_the_incremental_query_reads_is_not_dead():
     full_only = compiled()
     del full_only["tables"][1]["incrementalQuery"]
     assert "flag" in load_compiled_graph(full_only).dead_columns().get("proj.ds.src", ())
+
+
+# ------------------------------------------------------------------ invalid config
+
+
+def test_config_the_compiler_rejects_is_reported(tmp_path):
+    pl = project(tmp_path, {
+        "policy.sqlx": 'config { type: "table", bigqueryPolicy: { enabled: true } }\nSELECT 1 AS id\n',  # audit case: top-level object
+        "key.sqlx": 'config { type: "table", uniqueKey: ["id"] }\nSELECT 1 AS id\n',  # an incremental-only key
+        "view.sqlx": 'config { type: "view", updatePartitionFilter: "id > 0" }\nSELECT 1 AS id\n',
+        "assert.sqlx": 'config { type: "assertion", partitionBy: "id" }\nSELECT 1 AS id WHERE FALSE\n',
+        "type.sqlx": 'config { type: "inline" }\nSELECT 1 AS id\n',
+        "typo.sqlx": "config { hasoutput: true }\nSELECT 1 AS id\n",
+    })
+    found = {path: message for path, message in codes(pl, "invalid_config")}
+    assert set(found) == {f"definitions/{n}.sqlx" for n in ("policy", "key", "view", "assert", "type", "typo")}
+    assert "'bigqueryPolicy'" in found["definitions/policy.sqlx"] and "'uniqueKey'" in found["definitions/key.sqlx"]
+    assert "'inline'" in found["definitions/type.sqlx"] and "Dataform rejects the project" in found["definitions/typo.sqlx"]
+    assert "p.ds.policy" in pl.models  # still loaded, so the rest of the project can be analysed
+
+
+def test_config_the_compiler_accepts_is_not_reported(tmp_path):
+    pl = project(tmp_path, {
+        "a.sqlx": 'config { type: "incremental", uniqueKey: ["id"], onSchemaChange: "IGNORE", protected: true, tags: ["t"], '
+                  'bigquery: { partitionBy: "id", clusterBy: ["id"], updatePartitionFilter: "id > 0" }, '
+                  'assertions: { nonNull: ["id"] }, columns: { id: "the id" }, description: "d: 1", hermetic: false }\nSELECT 1 AS id\n',
+        "b.sqlx": 'config { type: "operations", hasOutput: true, dependencies: ["a"] }\nSELECT 1 AS id\n',
+        "c.sqlx": 'config { type: "declaration", schema: "raw", name: "c", columns: {} }\n',
+        "d.sqlx": "config { schema: \"x\", partitionBy: \"id\" }\nSELECT 1 AS id\n",  # no type: a table
+        "e.sqlx": "SELECT 1 AS id\n",
+        "f.sqlx": "config { type: dataform.projectConfig.vars.kind, bigqueryPolicy: {} }\nSELECT 1 AS id\n",  # computed type: not judged
+    })
+    assert not codes(pl, "invalid_config")
+
+
+# --------------------------------------------------------------- JavaScript-published actions
+
+PUBLISH = '''
+publish("generated", { type: "table", tags: ["g"] }).query(ctx => `SELECT 1 AS id, 2 AS unused`);
+publish("viewed").query((ctx) => `SELECT id FROM ${ctx.ref("generated")}`).config({ type: "view" });
+publish("plain", ctx => "SELECT 3 AS id");
+publish("block", { type: "table" }, (ctx) => { return `SELECT 4 AS id` });
+function later() { publish("inside").query("SELECT 5 AS id"); }
+["x", "y"].forEach((n) => publish(n).query("SELECT 6 AS id"));
+publish("computed").query(ctx => "SELECT " + 7 + " AS id");
+'''
+
+
+def test_literal_js_publish_actions_become_models(tmp_path):
+    pl = project(tmp_path, {
+        "gen.js": PUBLISH,
+        "r.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("viewed")} JOIN ${ref("plain")} USING (id)\n',
+    })
+    assert {"p.ds.generated", "p.ds.viewed", "p.ds.plain", "p.ds.block"} <= set(pl.models)
+    generated, viewed = pl.models["p.ds.generated"], pl.models["p.ds.viewed"]
+    assert (generated.kind, generated.tags, generated.path) == ("table", ("g",), "definitions/gen.js")
+    assert generated.sql.strip() == "SELECT 1 AS id, 2 AS unused" and viewed.kind == "view"
+    assert [t.key for t in viewed.declared_dependencies] == ["p.ds.generated"]
+    assert {t.key for t in pl.models["p.ds.r"].declared_dependencies} == {"p.ds.viewed", "p.ds.plain"}
+    # what only running the JavaScript could produce is not guessed (it is listed by the declaration scan)
+    assert not {"p.ds.inside", "p.ds.x", "p.ds.y", "p.ds.computed"} & set(pl.models)
+    assert "unused" in pl.dead_columns()["p.ds.generated"]
+
+
+def test_js_publish_follows_prefixes_and_ignores_includes(tmp_path):
+    pl = project(tmp_path, {"gen.js": 'publish("a").query("SELECT 1 AS id");\n'},
+                 "defaultProject: p\ndefaultDataset: ds\nnamePrefix: t\n")
+    assert set(pl.models) == {"p.ds.t_a"} and pl.models["p.ds.t_a"].logical == ("p", "ds", "a")
+    second = tmp_path / "second"
+    again = project(second, {"x.sqlx": "SELECT 1 AS id\n"}, "defaultProject: p\ndefaultDataset: ds\n")
+    (second / "includes").mkdir()
+    (second / "includes" / "lib.js").write_text('publish("a").query("SELECT 1 AS id");\n')
+    assert set(load_sqlx_project(second).models) == set(again.models) == {"p.ds.x"}  # includes are required, not run as definitions
