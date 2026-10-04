@@ -450,7 +450,7 @@ def test_every_fixture_query_lifts_all_relational_subqueries():
         assert [o.id for o in outcomes if o.valid_input is False] == ["q09", "q21"]
         assert [o.id for o in outcomes if not o.changed] == ["q16", "q17"]
         assert [o.id for o in outcomes if not o.structural] == ["q17"]
-        assert {o.id for o in outcomes if o.verification != "proven"} <= {"q16", "q17", "q20", "q28"}
+        assert {o.id for o in outcomes if o.verification != "proven"} <= {"q09", "q16", "q17", "q20", "q21", "q28"}
 
 
 # --- the gate's own guards --------------------------------------------------------------------
@@ -611,7 +611,9 @@ def test_declared_schema_decides_validity_credit(tmp_path):
             "id": row["id"], "strict_parse": True, "valid_input": row["id"] == "valid",
             **({} if row["id"] == "valid" else {"invalid_reason": "cannot run"}),
             "expect_change": True, "lifted": 2 if row["id"] == "ambiguous join column" else 1,
-            "verification": "proven",
+            # A column the derived table does not produce is a refused input, not a proven rewrite.
+            "verification": "unproven" if row["id"] == "outer column" else "proven",
+            **({"verification_reason": "refused: BigQuery would reject the input"} if row["id"] == "outer column" else {}),
         }
         for row in rows
     ]
