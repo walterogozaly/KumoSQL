@@ -48,26 +48,29 @@ def is_call(node: object, kind: str) -> bool:
     return isinstance(node, exp.Anonymous) and str(node.this).upper() == re.sub(r"(?<!^)(?=[A-Z])", "_", kind).upper()
 
 
-def _duckdb_printing() -> tuple[bool, bool]:
+def _duckdb_printing() -> tuple[bool, bool, bool]:
     with quiet_parser():
         division = sqlglot.parse_one("SELECT a / b", read="mysql").sql(dialect="duckdb")
         concat = sqlglot.parse_one("SELECT CONCAT(a, b)", read="mysql").sql(dialect="duckdb")
-    return "NULLIF" in division, "||" in concat
+        stamp = sqlglot.parse_one("SELECT TIMESTAMP_SUB(a, INTERVAL 1 HOUR)", read="bigquery").sql(dialect="duckdb")
+    return "NULLIF" in division, "||" in concat, "INTERVAL" in stamp
 
 
 def spell_for_duckdb(tree: exp.Expression) -> exp.Expression:
     """Spell what DuckDB would read differently from the query's own engine, in place, where sqlglot does not.
 
     A division that is NULL on a zero divisor (MySQL's ``/``) becomes ``a / NULLIF(b, 0)``, and a
-    ``CONCAT`` that is NULL when an argument is NULL becomes ``a || b``. Current sqlglot prints both
-    that way itself; sqlglot 26 prints a plain ``/`` (infinity in DuckDB) and ``CONCAT`` (which skips
-    NULLs in DuckDB), so a query run there for a check would answer differently.
+    ``CONCAT`` that is NULL when an argument is NULL becomes ``a || b``. ``TIMESTAMP_ADD`` and
+    ``TIMESTAMP_SUB`` become ``a + INTERVAL ...``. Current sqlglot prints all of these that way itself;
+    sqlglot 26 prints a plain ``/`` (infinity in DuckDB), ``CONCAT`` (which skips NULLs in DuckDB) and
+    ``TIMESTAMP_SUB(a, '1', HOUR)`` (no such DuckDB function), so a query run there for a check would
+    answer differently or not run.
     """
 
     global _DUCKDB_PRINTING
     if _DUCKDB_PRINTING is None:
         _DUCKDB_PRINTING = _duckdb_printing()
-    division, concat = _DUCKDB_PRINTING
+    division, concat, stamp = _DUCKDB_PRINTING
     if not division:
         for div in list(tree.find_all(exp.Div)):
             if div.args.get("safe"):
@@ -82,10 +85,22 @@ def spell_for_duckdb(tree: exp.Expression) -> exp.Expression:
             for part in parts[1:]:
                 chain = exp.DPipe(this=chain, expression=part)
             node.replace(exp.Paren(this=chain))
+    if not stamp:
+        for node in list(tree.find_all(exp.TimestampAdd, exp.TimestampSub)):
+            amount = node.expression
+            amount = exp.Literal.string(str(amount.name)) if isinstance(amount, exp.Literal) else exp.Paren(this=amount.copy())
+            interval = exp.Interval(this=amount, unit=exp.var(str(node.args["unit"].name).upper())) if node.args.get("unit") is not None else None
+            if interval is not None:
+                operator = exp.Add if isinstance(node, exp.TimestampAdd) else exp.Sub
+                replacement = operator(this=node.this.copy(), expression=interval)
+                if node is tree:
+                    tree = replacement
+                else:
+                    node.replace(replacement)
     return tree
 
 
-_DUCKDB_PRINTING: tuple[bool, bool] | None = None
+_DUCKDB_PRINTING: tuple[bool, bool, bool] | None = None
 
 
 def grouping_elements(group: exp.Group | None) -> list[exp.Expression]:

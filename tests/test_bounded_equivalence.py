@@ -234,3 +234,17 @@ def test_sqlite_offers_counterexamples_but_no_equivalence_claim():
     left, right = "select a from t where a > 1", "select a from t where a > 2"
     result = check_bounded(left, right, s, rows=2, dialect="sqlite", replay=be.SQLiteReplay(s, left, right))
     assert result.status is BoundedStatus.DIFFERENT
+
+
+@pytest.mark.parametrize("call, expected", [
+    ("TIMESTAMP_SUB(ts, INTERVAL 2 HOUR)", "2019-12-31 22:00:00"),
+    ("TIMESTAMP_ADD(ts, INTERVAL 1 DAY)", "2020-01-02 00:00:00"),
+    ("TIMESTAMP_SUB(ts, INTERVAL -1 HOUR)", "2020-01-01 01:00:00"),
+])
+def test_a_timestamp_shift_runs_in_duckdb_whichever_sqlglot_prints_it(call, expected):
+    # sqlglot 26 prints TIMESTAMP_SUB(ts, '2', HOUR), a function DuckDB does not have
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (ts TIMESTAMP)")
+    db.execute("INSERT INTO t VALUES (TIMESTAMP '2020-01-01 00:00:00')")
+    sql = spell_for_duckdb(sqlglot.parse_one(f"SELECT {call} AS v FROM t", read="bigquery")).sql(dialect="duckdb")
+    assert str(db.execute(sql).fetchall()[0][0]) == expected

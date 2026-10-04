@@ -11,6 +11,8 @@ import sqlglot
 
 pytest.importorskip("z3")
 
+from sqlglot_support import skip_if_unparseable
+
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
 from kumosql.ast_utils import LossySql, expand_alias_columns, faithful_sql
 from kumosql.smt_equivalence import TableConstraints, prove_equivalent_smt
@@ -503,6 +505,7 @@ def test_in_over_union_split_keeps_a_union_level_limit():
     # the sibling of S009-005: x IN (A UNION B LIMIT n) is not x IN (A) OR x IN (B)
     from kumosql.set_split_rules import _split_in_over_union
 
+    skip_if_unparseable("SELECT x FROM t WHERE x IN ((SELECT a FROM p UNION ALL SELECT b FROM q) ORDER BY 1 LIMIT 1 OFFSET 1)")
     for sub in (
         "SELECT a FROM p UNION DISTINCT SELECT b FROM q LIMIT 1",
         "(SELECT a FROM p UNION ALL SELECT b FROM q) ORDER BY 1 LIMIT 1 OFFSET 1",

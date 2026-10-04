@@ -3,6 +3,9 @@
 import duckdb
 import sqlglot
 
+import pytest
+from sqlglot_support import OLD_SQLGLOT
+
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.duckdb_load import run_unoptimized
 from kumosql.limit_rules import limit_rule
@@ -34,7 +37,12 @@ def test_a_shorter_union_cut_is_not_redundant():
     db.execute("CREATE TABLE DEPT (DEPTNO INT, NAME VARCHAR)")
     db.execute("INSERT INTO DEPT SELECT i, 'd' || i FROM range(12) AS r(i)")
     queries = [sqlglot.transpile(q, read="mysql", write="duckdb")[0] for q in (LEFT, short)]
-    left_rows, right_rows = run_unoptimized(db, *queries)
+    try:
+        left_rows, right_rows = run_unoptimized(db, *queries)
+    except duckdb.ParserException:
+        if not OLD_SQLGLOT:
+            raise
+        pytest.skip("sqlglot 26 prints the parenthesised union operand without its parentheses, which DuckDB cannot read")
     assert len(left_rows) == 10 and len(right_rows) == 5
 
 
