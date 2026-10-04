@@ -18,6 +18,10 @@ The score is how many sound pairs the prover proves, how many trap pairs it refu
 python tools/numeric_traps_bench.py
 ```
 
+## Adding decimals in a different order
+
+Adding decimal numbers is not exactly the same in every order: 10000000000000000 + 1 + 1 gives 10000000000000000, but 1 + 1 + 10000000000000000 gives 10000000000000002. BigQuery does not promise which order `SUM` uses for floating-point columns, so a rewrite that merely moves where the additions happen (summing per group first and then summing the group totals, or turning `SUM(f) + SUM(g)` into `SUM(f + g)`) can change the last digits. Twenty of the pairs test this. The prover proves `SELECT SUM(f) FROM t` equal to the same query written again and says so in a narrow assumption (the identical sum returns the same value both times). It also says nothing is assumed when every summed value is a whole number or an exact decimal. For the same rows reached a different way (a filter written differently, branches swapped) it proves at most with the full "sum does not depend on row order" assumption listed, and for regrouped sums it does not prove anything. The limits: the claim that BigQuery has no fixed order for floating-point sums comes from this repo's own notes, not from the BigQuery documentation, so those labels are marked unverified, and a column of a derived table over a `UNION` is not recognised as whole numbers.
+
 ## What to keep in mind
 
 - The pairs were written by the person who changed the prover, from the issue's list of traps. They were fixed before the change and a quarter was held out, but this is a safety net, not an independent test.

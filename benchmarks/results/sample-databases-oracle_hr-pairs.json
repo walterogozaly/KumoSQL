@@ -1,0 +1,28 @@
+{
+  "suite": "Sample databases (Oracle HR): equivalent pairs and siblings",
+  "order": 353,
+  "size": 54,
+  "score": "18/22 equivalent proved, 32/32 different refuted (replayed), 0 wrong",
+  "metric": "Authored pairs on the Oracle HR schema under its declared keys, labelled equivalent or different (each 'different' label has a witness database); 13 siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB",
+  "coverage": {
+    "proven": 18,
+    "refuted": 32,
+    "unknown": 4,
+    "unsupported": 0
+  },
+  "held_out": "4/4 proved, 2/2 refuted, 0 wrong (a fifth of the pairs by SHA-1 of their id)",
+  "docs": "docs/evals/sample-databases.md",
+  "command": "python tools/sample_db_bench.py --database oracle_hr --write-results",
+  "date": "2026-10-04",
+  "caveats": "Authored pairs (54; dev 48, held out 6), not from upstream. Constraint siblings refuted: 13/13. The algebraic prover's executed counterexample search is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval. The first run is the baseline (nothing tuned): 18/22 proved, 29/32 refuted and 3 counterexamples that did not replay, all one bounded-checker bug: it clamped a DATE model value to 0001-01-01 when it extracted the counterexample (bounded_equivalence, the max(1, ...) clamp), so two job_history rows that differ in the DATE key column start_date came out equal and the counterexample repeated the primary key (employee_id, start_date) (hr-left-join-elimination-not-unique, hr-self-join-on-part-of-key, hr-distinct-on-part-of-key; the replay gate counted them wrong). The checker was fixed on master by a separate change, not for this eval; the pairs were then rerun unchanged and the three are refuted by counterexamples that replay (32/32 refuted, 0 wrong). Nothing in the harness, the pairs or a prover was changed by this eval in between. One label was corrected before the baseline: hr-window-filter-on-other-column filtered on the ranked column, which keeps the ranks, so it now filters on employee_id.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "ab197bf0+changes"
+  }
+}

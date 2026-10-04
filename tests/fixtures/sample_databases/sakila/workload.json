@@ -1,0 +1,456 @@
+{
+ "about": "Sakila workload for tools/sample_db_bench.py. origin 'upstream-view': the 7 CREATE VIEW bodies of upstream/sakila-mv-schema.sql (name = upstream view name), adapted from MySQL to BigQuery SQL as 'adaptation' says; 'upstream-procedure': the SELECTs of the stored procedures and functions of the same script (film_in_stock, film_not_in_stock, rewards_report, get_customer_balance, inventory_held_by_customer, inventory_in_stock) with their parameters bound to the values 'adaptation' names; 'authored': written for this eval. Sakila ships no test queries. Views are also created in DuckDB (create_view), as upstream creates them.",
+ "queries": [
+  {
+   "id": "sk-view-customer-list",
+   "origin": "upstream-view",
+   "name": "customer_list",
+   "create_view": true,
+   "adaptation": "IF(cu.active, ...) becomes IF(cu.active = 1, ...) (active is INT64 holding 0 or 1, see the adapted DDL); the _utf8 character-set introducers are dropped",
+   "sql": "SELECT cu.customer_id AS ID, CONCAT(cu.first_name, ' ', cu.last_name) AS name, a.address AS address, a.postal_code AS `zip code`,\n  a.phone AS phone, city.city AS city, country.country AS country, IF(cu.active = 1, 'active', '') AS notes, cu.store_id AS SID\nFROM customer AS cu JOIN address AS a ON cu.address_id = a.address_id JOIN city ON a.city_id = city.city_id\n  JOIN country ON city.country_id = country.country_id"
+  },
+  {
+   "id": "sk-view-film-list",
+   "origin": "upstream-view",
+   "name": "film_list",
+   "create_view": true,
+   "adaptation": "GROUP_CONCAT(x SEPARATOR ', ') becomes STRING_AGG(x, ', ' ORDER BY actor.actor_id) (MySQL leaves the order unspecified; the ORDER BY makes the result deterministic); the columns MySQL accepts because they depend on film.film_id are added to GROUP BY, as BigQuery requires; _utf8 introducers dropped",
+   "sql": "SELECT film.film_id AS FID, film.title AS title, film.description AS description, category.name AS category, film.rental_rate AS price,\n  film.length AS length, film.rating AS rating, STRING_AGG(CONCAT(actor.first_name, ' ', actor.last_name), ', ' ORDER BY actor.actor_id) AS actors\nFROM category LEFT JOIN film_category ON category.category_id = film_category.category_id LEFT JOIN film ON film_category.film_id = film.film_id\n  JOIN film_actor ON film.film_id = film_actor.film_id\n  JOIN actor ON film_actor.actor_id = actor.actor_id\nGROUP BY film.film_id, category.name, film.title, film.description, film.rental_rate, film.length, film.rating"
+  },
+  {
+   "id": "sk-view-nicer-but-slower-film-list",
+   "origin": "upstream-view",
+   "name": "nicer_but_slower_film_list",
+   "create_view": true,
+   "adaptation": "as film_list: STRING_AGG with an ORDER BY, the dependent columns added to GROUP BY; UCASE and LCASE become UPPER and LOWER, _utf8 introducers dropped",
+   "sql": "SELECT film.film_id AS FID, film.title AS title, film.description AS description, category.name AS category, film.rental_rate AS price,\n  film.length AS length, film.rating AS rating, STRING_AGG(CONCAT(CONCAT(UPPER(SUBSTR(actor.first_name, 1, 1)),\n  LOWER(SUBSTR(actor.first_name, 2, LENGTH(actor.first_name))), ' ', CONCAT(UPPER(SUBSTR(actor.last_name, 1, 1)),\n  LOWER(SUBSTR(actor.last_name, 2, LENGTH(actor.last_name)))))), ', ' ORDER BY actor.actor_id) AS actors\nFROM category LEFT JOIN film_category ON category.category_id = film_category.category_id LEFT JOIN film ON film_category.film_id = film.film_id\n  JOIN film_actor ON film.film_id = film_actor.film_id\n  JOIN actor ON film_actor.actor_id = actor.actor_id\nGROUP BY film.film_id, category.name, film.title, film.description, film.rental_rate, film.length, film.rating"
+  },
+  {
+   "id": "sk-view-staff-list",
+   "origin": "upstream-view",
+   "name": "staff_list",
+   "create_view": true,
+   "adaptation": "_utf8 introducers dropped",
+   "sql": "SELECT s.staff_id AS ID, CONCAT(s.first_name, ' ', s.last_name) AS name, a.address AS address, a.postal_code AS `zip code`, a.phone AS phone,\n  city.city AS city, country.country AS country, s.store_id AS SID\nFROM staff AS s JOIN address AS a ON s.address_id = a.address_id JOIN city ON a.city_id = city.city_id\n  JOIN country ON city.country_id = country.country_id"
+  },
+  {
+   "id": "sk-view-sales-by-store",
+   "origin": "upstream-view",
+   "name": "sales_by_store",
+   "create_view": true,
+   "adaptation": "the columns that depend on s.store_id are added to GROUP BY (BigQuery needs them; MySQL groups by s.store_id alone); _utf8 introducers dropped",
+   "sql": "SELECT\nCONCAT(c.city, ',', cy.country) AS store\n, CONCAT(m.first_name, ' ', m.last_name) AS manager\n, SUM(p.amount) AS total_sales\nFROM payment AS p\nINNER JOIN rental AS r ON p.rental_id = r.rental_id\nINNER JOIN inventory AS i ON r.inventory_id = i.inventory_id\nINNER JOIN store AS s ON i.store_id = s.store_id\nINNER JOIN address AS a ON s.address_id = a.address_id\nINNER JOIN city AS c ON a.city_id = c.city_id\nINNER JOIN country AS cy ON c.country_id = cy.country_id\nINNER JOIN staff AS m ON s.manager_staff_id = m.staff_id\nGROUP BY s.store_id, c.city, cy.country, m.first_name, m.last_name\nORDER BY cy.country, c.city"
+  },
+  {
+   "id": "sk-view-sales-by-film-category",
+   "origin": "upstream-view",
+   "name": "sales_by_film_category",
+   "create_view": true,
+   "adaptation": "none",
+   "sql": "SELECT\nc.name AS category\n, SUM(p.amount) AS total_sales\nFROM payment AS p\nINNER JOIN rental AS r ON p.rental_id = r.rental_id\nINNER JOIN inventory AS i ON r.inventory_id = i.inventory_id\nINNER JOIN film AS f ON i.film_id = f.film_id\nINNER JOIN film_category AS fc ON f.film_id = fc.film_id\nINNER JOIN category AS c ON fc.category_id = c.category_id\nGROUP BY c.name\nORDER BY total_sales DESC"
+  },
+  {
+   "id": "sk-view-actor-info",
+   "origin": "upstream-view",
+   "name": "actor_info",
+   "create_view": true,
+   "adaptation": "GROUP_CONCAT(DISTINCT CONCAT(c.name, ': ', (subquery)) ORDER BY c.name SEPARATOR '; ') becomes STRING_AGG(DISTINCT x, '; ' ORDER BY x) over a derived table that computes x: BigQuery and DuckDB need the ORDER BY of a DISTINCT aggregate to be the aggregated expression (x starts with c.name, so the order is the same), and the correlated subquery moves into the derived table; the sakila. schema prefixes are dropped",
+   "sql": "SELECT t.actor_id, t.first_name, t.last_name,\n  STRING_AGG(DISTINCT t.category_films, '; ' ORDER BY t.category_films) AS film_info\nFROM (\n  SELECT\n  a.actor_id,\n  a.first_name,\n  a.last_name,\n  CONCAT(c.name, ': ',\n    (SELECT STRING_AGG(f.title, ', ' ORDER BY f.title)\n        FROM film AS f\n        INNER JOIN film_category AS fc\n          ON f.film_id = fc.film_id\n        INNER JOIN film_actor AS fa\n          ON f.film_id = fa.film_id\n        WHERE fc.category_id = c.category_id\n        AND fa.actor_id = a.actor_id\n     )) AS category_films\n  FROM actor AS a\n  LEFT JOIN film_actor AS fa\n    ON a.actor_id = fa.actor_id\n  LEFT JOIN film_category AS fc\n    ON fa.film_id = fc.film_id\n  LEFT JOIN category AS c\n    ON fc.category_id = c.category_id\n) AS t\nGROUP BY t.actor_id, t.first_name, t.last_name"
+  },
+  {
+   "id": "sk-routine-rewards-report-customers",
+   "origin": "upstream-procedure",
+   "adaptation": "rewards_report: the INSERT ... SELECT that fills tmpCustomer; parameters bound: min_monthly_purchases = 6, min_dollar_amount_purchased = 40.00, last_month_start = 2005-07-01 and last_month_end = 2005-07-31 (the procedure derives both from CURRENT_DATE, which has no rentals in this data)",
+   "sql": "SELECT p.customer_id\nFROM payment AS p\nWHERE DATE(p.payment_date) BETWEEN DATE '2005-07-01' AND DATE '2005-07-31'\nGROUP BY customer_id\nHAVING SUM(p.amount) > 40.00\nAND COUNT(customer_id) > 6"
+  },
+  {
+   "id": "sk-routine-rewards-report-rewardees",
+   "origin": "upstream-procedure",
+   "adaptation": "rewards_report: the final SELECT over tmpCustomer; the temporary table tmpCustomer is inlined as the derived table that fills it; parameters bound as in rewards-report-customers",
+   "sql": "SELECT c.*\nFROM (\n  SELECT p.customer_id\n  FROM payment AS p\n  WHERE DATE(p.payment_date) BETWEEN DATE '2005-07-01' AND DATE '2005-07-31'\n  GROUP BY customer_id\n  HAVING SUM(p.amount) > 40.00\n  AND COUNT(customer_id) > 6\n) AS t\nINNER JOIN customer AS c ON t.customer_id = c.customer_id"
+  },
+  {
+   "id": "sk-routine-film-in-stock",
+   "origin": "upstream-procedure",
+   "adaptation": "film_in_stock: the SELECT; parameters bound: p_film_id = 1, p_store_id = 1; the stored function inventory_in_stock(inventory_id) is inlined as NOT EXISTS (a rental of the item with no return_date), which is what its body computes",
+   "sql": "SELECT inventory_id\nFROM inventory\nWHERE film_id = 1\nAND store_id = 1\nAND NOT EXISTS (SELECT 1 FROM rental AS r WHERE r.inventory_id = inventory.inventory_id AND r.return_date IS NULL)"
+  },
+  {
+   "id": "sk-routine-film-not-in-stock",
+   "origin": "upstream-procedure",
+   "adaptation": "film_not_in_stock: the SELECT; parameters bound: p_film_id = 2, p_store_id = 2; NOT inventory_in_stock(inventory_id) is inlined as EXISTS (a rental of the item with no return_date)",
+   "sql": "SELECT inventory_id\nFROM inventory\nWHERE film_id = 2\nAND store_id = 2\nAND EXISTS (SELECT 1 FROM rental AS r WHERE r.inventory_id = inventory.inventory_id AND r.return_date IS NULL)"
+  },
+  {
+   "id": "sk-routine-customer-balance-rental-fees",
+   "origin": "upstream-procedure",
+   "adaptation": "get_customer_balance: rental fees; parameters bound: p_customer_id = 130, p_effective_date = 2005-08-01",
+   "sql": "SELECT IFNULL(SUM(film.rental_rate), 0)\nFROM film, inventory, rental\nWHERE film.film_id = inventory.film_id\nAND inventory.inventory_id = rental.inventory_id\nAND rental.rental_date <= DATETIME '2005-08-01 00:00:00'\nAND rental.customer_id = 130"
+  },
+  {
+   "id": "sk-routine-customer-balance-late-fees",
+   "origin": "upstream-procedure",
+   "adaptation": "get_customer_balance: late fees; parameters bound as in customer-balance-rental-fees; TO_DAYS(a) - TO_DAYS(b) becomes DATE_DIFF(DATE(a), DATE(b), DAY)",
+   "sql": "SELECT IFNULL(SUM(IF(DATE_DIFF(DATE(rental.return_date), DATE(rental.rental_date), DAY) > film.rental_duration,\n      DATE_DIFF(DATE(rental.return_date), DATE(rental.rental_date), DAY) - film.rental_duration, 0)), 0)\nFROM rental, inventory, film\nWHERE film.film_id = inventory.film_id\nAND inventory.inventory_id = rental.inventory_id\nAND rental.rental_date <= DATETIME '2005-08-01 00:00:00'\nAND rental.customer_id = 130"
+  },
+  {
+   "id": "sk-routine-customer-balance-payments",
+   "origin": "upstream-procedure",
+   "adaptation": "get_customer_balance: payments made; parameters bound as in customer-balance-rental-fees",
+   "sql": "SELECT IFNULL(SUM(payment.amount), 0)\nFROM payment\nWHERE payment.payment_date <= DATETIME '2005-08-01 00:00:00'\nAND payment.customer_id = 130"
+  },
+  {
+   "id": "sk-routine-inventory-held-by-customer",
+   "origin": "upstream-procedure",
+   "adaptation": "inventory_held_by_customer: the SELECT; parameter bound: p_inventory_id = 2047 (an item that is out)",
+   "sql": "SELECT customer_id\nFROM rental\nWHERE return_date IS NULL\nAND inventory_id = 2047"
+  },
+  {
+   "id": "sk-routine-inventory-in-stock-rentals",
+   "origin": "upstream-procedure",
+   "adaptation": "inventory_in_stock: the rental count; parameter bound: p_inventory_id = 2047",
+   "sql": "SELECT COUNT(*)\nFROM rental\nWHERE inventory_id = 2047"
+  },
+  {
+   "id": "sk-routine-inventory-in-stock-out",
+   "origin": "upstream-procedure",
+   "adaptation": "inventory_in_stock: the count of rentals still out; parameter bound: p_inventory_id = 2047",
+   "sql": "SELECT COUNT(rental_id)\nFROM inventory LEFT JOIN rental USING (inventory_id)\nWHERE inventory.inventory_id = 2047\nAND rental.return_date IS NULL"
+  },
+  {
+   "id": "sk-a01-film-language-category",
+   "origin": "authored",
+   "features": [
+    "join"
+   ],
+   "sql": "SELECT f.film_id, f.title, l.name AS language, c.name AS category\nFROM film AS f\nJOIN language AS l ON l.language_id = f.language_id\nJOIN film_category AS fc ON fc.film_id = f.film_id\nJOIN category AS c ON c.category_id = fc.category_id\nWHERE f.rating = 'PG'"
+  },
+  {
+   "id": "sk-a02-payments-without-rental",
+   "origin": "authored",
+   "features": [
+    "outer-join",
+    "null"
+   ],
+   "sql": "SELECT p.payment_id, p.amount, r.rental_id\nFROM payment AS p\nLEFT JOIN rental AS r ON r.rental_id = p.rental_id\nWHERE r.rental_id IS NULL"
+  },
+  {
+   "id": "sk-a03-actors-sharing-last-name",
+   "origin": "authored",
+   "features": [
+    "self-join"
+   ],
+   "sql": "SELECT a1.actor_id AS first_id, a2.actor_id AS second_id, a1.last_name\nFROM actor AS a1\nJOIN actor AS a2 ON a1.last_name = a2.last_name AND a1.actor_id < a2.actor_id"
+  },
+  {
+   "id": "sk-a04-heavy-renters",
+   "origin": "authored",
+   "features": [
+    "aggregation"
+   ],
+   "sql": "SELECT customer_id, COUNT(*) AS rentals\nFROM rental\nGROUP BY customer_id\nHAVING COUNT(*) > 35"
+  },
+  {
+   "id": "sk-a05-distinct-on-key",
+   "origin": "authored",
+   "features": [
+    "distinct"
+   ],
+   "sql": "SELECT DISTINCT film_id, title, rental_rate\nFROM film"
+  },
+  {
+   "id": "sk-a06-distinct-cities",
+   "origin": "authored",
+   "features": [
+    "distinct",
+    "join"
+   ],
+   "sql": "SELECT DISTINCT ci.city, co.country\nFROM customer AS c\nJOIN address AS a ON a.address_id = c.address_id\nJOIN city AS ci ON ci.city_id = a.city_id\nJOIN country AS co ON co.country_id = ci.country_id"
+  },
+  {
+   "id": "sk-a07-films-stocked-in-store-1",
+   "origin": "authored",
+   "features": [
+    "subquery"
+   ],
+   "sql": "SELECT title\nFROM film\nWHERE film_id IN (SELECT film_id FROM inventory WHERE store_id = 1)"
+  },
+  {
+   "id": "sk-a08-customers-with-large-payment",
+   "origin": "authored",
+   "features": [
+    "subquery"
+   ],
+   "sql": "SELECT c.customer_id, c.last_name\nFROM customer AS c\nWHERE EXISTS (SELECT 1 FROM payment AS p WHERE p.customer_id = c.customer_id AND p.amount > 10)"
+  },
+  {
+   "id": "sk-a09-films-never-rented",
+   "origin": "authored",
+   "features": [
+    "subquery",
+    "null"
+   ],
+   "sql": "SELECT f.film_id, f.title\nFROM film AS f\nWHERE NOT EXISTS (\n  SELECT 1 FROM inventory AS i JOIN rental AS r ON r.inventory_id = i.inventory_id WHERE i.film_id = f.film_id\n)"
+  },
+  {
+   "id": "sk-a10-not-in-with-nulls",
+   "origin": "authored",
+   "features": [
+    "subquery",
+    "null"
+   ],
+   "sql": "SELECT payment_id\nFROM payment\nWHERE rental_id NOT IN (SELECT rental_id FROM rental WHERE customer_id = 1)"
+  },
+  {
+   "id": "sk-a11-above-average-rate",
+   "origin": "authored",
+   "features": [
+    "subquery"
+   ],
+   "sql": "SELECT film_id, title, rental_rate\nFROM film\nWHERE rental_rate > (SELECT AVG(rental_rate) FROM film)"
+  },
+  {
+   "id": "sk-a12-last-rental-per-customer",
+   "origin": "authored",
+   "features": [
+    "subquery",
+    "aggregation"
+   ],
+   "sql": "SELECT c.customer_id,\n  (SELECT MAX(r.rental_date) FROM rental AS r WHERE r.customer_id = c.customer_id) AS last_rental\nFROM customer AS c"
+  },
+  {
+   "id": "sk-a13-people-emails-union-all",
+   "origin": "authored",
+   "features": [
+    "set-operation"
+   ],
+   "sql": "SELECT email FROM customer\nUNION ALL\nSELECT email FROM staff"
+  },
+  {
+   "id": "sk-a14-people-cities-union",
+   "origin": "authored",
+   "features": [
+    "set-operation"
+   ],
+   "sql": "SELECT a.city_id FROM customer AS c JOIN address AS a ON a.address_id = c.address_id\nUNION DISTINCT\nSELECT a.city_id FROM staff AS s JOIN address AS a ON a.address_id = s.address_id"
+  },
+  {
+   "id": "sk-a15-actors-in-two-films",
+   "origin": "authored",
+   "features": [
+    "set-operation"
+   ],
+   "sql": "SELECT actor_id FROM film_actor WHERE film_id = 1\nINTERSECT DISTINCT\nSELECT actor_id FROM film_actor WHERE film_id = 23"
+  },
+  {
+   "id": "sk-a16-categories-without-long-films",
+   "origin": "authored",
+   "features": [
+    "set-operation"
+   ],
+   "sql": "SELECT category_id FROM category\nEXCEPT DISTINCT\nSELECT fc.category_id FROM film_category AS fc JOIN film AS f ON f.film_id = fc.film_id WHERE f.length > 180"
+  },
+  {
+   "id": "sk-a17-length-rank-per-rating",
+   "origin": "authored",
+   "features": [
+    "window"
+   ],
+   "sql": "SELECT film_id, rating, length,\n  RANK() OVER (PARTITION BY rating ORDER BY length DESC) AS length_rank,\n  DENSE_RANK() OVER (PARTITION BY rating ORDER BY length DESC) AS length_dense_rank\nFROM film"
+  },
+  {
+   "id": "sk-a18-payment-change",
+   "origin": "authored",
+   "features": [
+    "window"
+   ],
+   "sql": "SELECT payment_id, customer_id, amount,\n  amount - LAG(amount) OVER (PARTITION BY customer_id ORDER BY payment_date, payment_id) AS change\nFROM payment"
+  },
+  {
+   "id": "sk-a19-running-spend",
+   "origin": "authored",
+   "features": [
+    "window"
+   ],
+   "sql": "SELECT payment_id, customer_id,\n  SUM(amount) OVER (PARTITION BY customer_id ORDER BY payment_date, payment_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running\nFROM payment"
+  },
+  {
+   "id": "sk-a20-cte-chain-with-unused",
+   "origin": "authored",
+   "features": [
+    "cte"
+   ],
+   "sql": "WITH per_customer AS (\n  SELECT customer_id, SUM(amount) AS total FROM payment GROUP BY customer_id\n), big AS (\n  SELECT customer_id, total FROM per_customer WHERE total > 100\n), unused AS (\n  SELECT film_id FROM film\n)\nSELECT c.last_name, b.total FROM big AS b JOIN customer AS c ON c.customer_id = b.customer_id"
+  },
+  {
+   "id": "sk-a21-trivial-predicates",
+   "origin": "authored",
+   "features": [
+    "trivial"
+   ],
+   "sql": "SELECT film_id, title\nFROM film\nWHERE (rating = 'G') AND 1 = 1 AND TRUE AND (((length > 100)))"
+  },
+  {
+   "id": "sk-a22-derived-table-trivial",
+   "origin": "authored",
+   "features": [
+    "subquery",
+    "trivial"
+   ],
+   "sql": "SELECT t.store_id, t.n\nFROM (SELECT store_id, COUNT(*) AS n FROM inventory WHERE 1 = 1 GROUP BY store_id) AS t\nWHERE t.n > 0"
+  },
+  {
+   "id": "sk-a23-category-revenue",
+   "origin": "authored",
+   "features": [
+    "join",
+    "aggregation",
+    "subquery"
+   ],
+   "sql": "SELECT c.name, totals.revenue\nFROM category AS c\nJOIN (\n  SELECT fc.category_id, SUM(p.amount) AS revenue\n  FROM payment AS p\n  JOIN rental AS r ON r.rental_id = p.rental_id\n  JOIN inventory AS i ON i.inventory_id = r.inventory_id\n  JOIN film_category AS fc ON fc.film_id = i.film_id\n  GROUP BY fc.category_id\n) AS totals ON totals.category_id = c.category_id\nWHERE totals.revenue > 4800"
+  },
+  {
+   "id": "sk-a24-unreturned-per-store",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "null"
+   ],
+   "sql": "SELECT i.store_id, COUNTIF(r.return_date IS NULL) AS unreturned, COUNT(*) AS rentals\nFROM rental AS r\nJOIN inventory AS i ON i.inventory_id = r.inventory_id\nGROUP BY i.store_id"
+  },
+  {
+   "id": "sk-a25-films-in-store-on-clause",
+   "origin": "authored",
+   "features": [
+    "outer-join"
+   ],
+   "sql": "SELECT f.film_id, i.inventory_id\nFROM film AS f\nLEFT JOIN inventory AS i ON i.film_id = f.film_id AND i.store_id = 1\nWHERE f.rating = 'G'"
+  },
+  {
+   "id": "sk-a26-right-join-actors",
+   "origin": "authored",
+   "features": [
+    "outer-join"
+   ],
+   "sql": "SELECT fa.film_id, a.actor_id\nFROM film_actor AS fa\nRIGHT JOIN actor AS a ON a.actor_id = fa.actor_id AND fa.film_id <= 10"
+  },
+  {
+   "id": "sk-a27-full-join-categories",
+   "origin": "authored",
+   "features": [
+    "outer-join"
+   ],
+   "sql": "SELECT c.category_id, fc.film_id\nFROM category AS c\nFULL OUTER JOIN film_category AS fc ON fc.category_id = c.category_id AND fc.film_id < 20"
+  },
+  {
+   "id": "sk-a28-versatile-actors",
+   "origin": "authored",
+   "features": [
+    "aggregation"
+   ],
+   "sql": "SELECT fa.actor_id, COUNT(DISTINCT fc.category_id) AS categories\nFROM film_actor AS fa\nJOIN film_category AS fc ON fc.film_id = fa.film_id\nGROUP BY fa.actor_id\nHAVING COUNT(DISTINCT fc.category_id) >= 15"
+  },
+  {
+   "id": "sk-a29-store-with-manager",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "join"
+   ],
+   "sql": "SELECT s.store_id, m.last_name, COUNT(*) AS items\nFROM store AS s\nJOIN staff AS m ON m.staff_id = s.manager_staff_id\nJOIN inventory AS i ON i.store_id = s.store_id\nGROUP BY s.store_id, m.last_name, s.manager_staff_id"
+  },
+  {
+   "id": "sk-a30-email-fallback",
+   "origin": "authored",
+   "features": [
+    "null"
+   ],
+   "sql": "SELECT customer_id, COALESCE(email, 'none') AS contact, CASE WHEN email IS NULL THEN 0 ELSE 1 END AS has_email\nFROM customer"
+  },
+  {
+   "id": "sk-a31-rentals-per-month",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "date"
+   ],
+   "sql": "SELECT EXTRACT(YEAR FROM rental_date) AS y, EXTRACT(MONTH FROM rental_date) AS m, COUNT(*) AS rentals\nFROM rental\nGROUP BY y, m"
+  },
+  {
+   "id": "sk-a32-top-spenders",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "limit"
+   ],
+   "sql": "SELECT customer_id, SUM(amount) AS spent\nFROM payment\nGROUP BY customer_id\nORDER BY spent DESC, customer_id\nLIMIT 10"
+  },
+  {
+   "id": "sk-a33-rating-and-length",
+   "origin": "authored",
+   "features": [
+    "trivial"
+   ],
+   "sql": "SELECT film_id, title\nFROM film\nWHERE rating IN ('G', 'PG') AND length BETWEEN 60 AND 90"
+  },
+  {
+   "id": "sk-a34-title-patterns",
+   "origin": "authored",
+   "features": [
+    "string"
+   ],
+   "sql": "SELECT film_id, UPPER(title) AS upper_title, LENGTH(title) AS title_length\nFROM film\nWHERE title LIKE 'A%' AND description IS NOT NULL"
+  },
+  {
+   "id": "sk-a35-rentals-with-customer-columns-unused",
+   "origin": "authored",
+   "features": [
+    "join"
+   ],
+   "sql": "SELECT r.rental_id, r.rental_date\nFROM rental AS r\nJOIN customer AS c ON c.customer_id = r.customer_id\nJOIN inventory AS i ON i.inventory_id = r.inventory_id"
+  },
+  {
+   "id": "sk-a36-redundant-not-null-filter",
+   "origin": "authored",
+   "features": [
+    "null",
+    "trivial"
+   ],
+   "sql": "SELECT customer_id, amount\nFROM payment\nWHERE customer_id IS NOT NULL AND amount IS NOT NULL"
+  },
+  {
+   "id": "sk-a37-group-by-key",
+   "origin": "authored",
+   "features": [
+    "aggregation"
+   ],
+   "sql": "SELECT c.customer_id, c.first_name, c.last_name, COUNT(*) AS payments\nFROM customer AS c\nJOIN payment AS p ON p.customer_id = c.customer_id\nGROUP BY c.customer_id, c.first_name, c.last_name"
+  },
+  {
+   "id": "sk-a38-in-with-distinct",
+   "origin": "authored",
+   "features": [
+    "subquery",
+    "distinct"
+   ],
+   "sql": "SELECT customer_id, last_name\nFROM customer\nWHERE customer_id IN (SELECT DISTINCT customer_id FROM rental WHERE staff_id = 2)"
+  },
+  {
+   "id": "sk-a39-film-text-join",
+   "origin": "authored",
+   "features": [
+    "join"
+   ],
+   "sql": "SELECT f.film_id, f.title, t.description\nFROM film AS f\nJOIN film_text AS t ON t.film_id = f.film_id\nWHERE f.length > 150"
+  },
+  {
+   "id": "sk-a40-correlated-count",
+   "origin": "authored",
+   "features": [
+    "subquery",
+    "aggregation"
+   ],
+   "sql": "SELECT f.film_id, f.title,\n  (SELECT COUNT(*) FROM inventory AS i WHERE i.film_id = f.film_id) AS copies\nFROM film AS f\nWHERE f.rental_duration = 7"
+  }
+ ]
+}

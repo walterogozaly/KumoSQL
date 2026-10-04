@@ -343,9 +343,27 @@ def random_rows(rng: random.Random) -> dict[str, list[tuple]]:
     return data
 
 
-def databases(trials: int, seed: int = 11) -> list[tuple[str, dict[str, list[tuple]]]]:
+def edge_rows() -> dict[str, list[tuple]]:
+    """A hand-written database for the NULL corners no seed row and few random rows reach, so no refactor's label rests on
+    a timed search: an order whose payments of one method all have NULL amounts, a payment of a missing order, an order
+    without a customer id and a repeated order id."""
+
+    day = DATES[0]
+    return {
+        "raw_customers": [(1, "Ann", "P."), (2, "Bo", None), (None, None, None)],
+        "raw_orders": [(1, 1, day, "placed"), (2, 1, day, "shipped"), (2, 1, day, "shipped"), (3, None, day, "returned"),
+                       (None, 2, day, None)],
+        "raw_payments": [(1, 1, "credit_card", 100), (2, 1, "credit_card", None), (3, 2, "coupon", None),
+                         (4, 2, "coupon", None), (5, 9, "cash", 250), (6, None, "gift_card", -50), (7, 3, None, 0)],
+    }
+
+
+def databases(trials: int, seed: int = 11, edge: bool = False) -> list[tuple[str, dict[str, list[tuple]]]]:
+    """The seeds, ``trials`` random databases and, with ``edge``, the hand-written corner-case database last."""
+
     rng = random.Random(seed)
-    return [("seeds", seed_rows())] + [(f"random-{i}", random_rows(rng)) for i in range(trials)]
+    dbs = [("seeds", seed_rows())] + [(f"random-{i}", random_rows(rng)) for i in range(trials)]
+    return dbs + [("edge", edge_rows())] if edge else dbs
 
 
 def connect(data: dict[str, list[tuple]]):
@@ -1055,7 +1073,7 @@ def run(trials: int = 10, refactor_trials: int = 30, tracks: tuple[str, ...] = (
     if want("comparison"):
         out["comparison"] = track_comparison(models, pipeline)
     if want("refactors"):
-        out["refactors"] = track_refactors(models, pipeline, databases(refactor_trials, seed=23), only)
+        out["refactors"] = track_refactors(models, pipeline, databases(refactor_trials, seed=23, edge=True), only)
     out["seconds"] = round(time.perf_counter() - started, 1)
     return out
 
@@ -1147,7 +1165,8 @@ def write_results(out: dict, command: str) -> None:
                    "output is proved equal by prove_models."),
         "evidence": "proof",
         "correctness": (f"0 false proofs: none of the {rf['different_cases']} breaking refactors is proved. Every label is "
-                        f"checked by running both pipelines on the seeds and {rf['databases'] - 1} random databases."),
+                        f"checked by running both pipelines on the seeds, {rf['databases'] - 2} random databases and a hand-written "
+                        "edge database."),
         "coverage": {"proven": rf["proved"], "unknown": rf["equivalent_cases"] - rf["proved"]},
         "held_out": (f"{held['proved'][0]}/{held['proved'][1]} proved (a fifth by SHA-1 of the case id)" if held["proved"][1]
                      else "none: no equivalent refactor falls in the held-out fifth (by SHA-1 of the case id)"),

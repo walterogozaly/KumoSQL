@@ -38,8 +38,8 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | D01 | Jaffle Shop DuckDB (`dbt-labs/jaffle_shop_duckdb`, `duckdb` branch) | Apache-2.0 | yes | 3 seeds, 5 models, YAML tests | covered: `jaffle-shop`, `jaffle-shop-refactors`, `jaffle-shop-refutation` ([page](pipeline-equivalence.md#jaffle-shop-a-real-dbt-project)) |
 | D02 | Chinook | MIT-style | yes | 11 tables, no views | **new** (batch 1, with D03): `sample-databases-rewrites`, `sample-databases-pairs` ([page](sample-databases.md)) |
 | D03 | Northwind (`instnwnd.sql`) | MIT | yes (raw file) | 13 tables, 16 views | **new** (batch 1): the 16 upstream views are original workload queries; `sample-databases-rewrites`, `sample-databases-pairs` ([page](sample-databases.md)) |
-| D04 | Pagila | PostgreSQL | yes | 15+ tables, 11 views | **new** (batch 2): adapter for the sample-database eval |
-| D05 | Sakila (`datacharmer/test_db/sakila`, the official BSD files) | New BSD | yes (the MySQL download site is blocked; the mirror holds the two official SQL files) | 16 tables, 6 views | **new** (batch 2) |
+| D04 | Pagila (`devrimgunduz/pagila`, release 4.1.1) | PostgreSQL | yes (the 13 MB data file is committed) | 16 tables (`payment` in 55 monthly partitions), 122,209 rows, 8 views (one materialized), 9 SQL and plpgsql functions and one aggregate | **new** (batch 2): `sample-databases-pagila-rewrites`, `sample-databases-pagila-pairs` ([page](sample-databases-pagila.md)); the 8 views and the function bodies are workload queries, the README's portable queries too |
+| D05 | Sakila (`datacharmer/test_db/sakila`, Oracle's BSD scripts) | New BSD | yes (the MySQL download site is blocked; the mirror holds Sakila Spatial 0.9 as `sakila-mv-schema.sql` and `sakila-mv-data.sql`, not the 1.2 files of that site) | 16 tables, 7 views, 6 routines, 47,273 rows | covered: `sample-databases-sakila-rewrites` (0 wrong in 394 executed, 180 verified), `sample-databases-sakila-pairs` (23/27 proved, 37/37 refuted, 0 wrong) ([page](sample-databases.md#sakila)) |
 | D06 | TPC-H | Apache-2.0 generator, TPC terms | yes (`tpchgen-cli`) | 22 queries | covered: `transformation-workloads`, `sqlsolver-tpch` ([page](transformation-bench.md)) |
 | D07 | TPC-DS | TPC terms | yes | 99 queries | covered: `transformation-workloads`, `analytical-sql-coverage`, `mv-benchmark` |
 | D08 | Microsoft DSB | MIT | yes | 52 templates | covered: `analytical-sql-coverage` ([page](analytical-sql-coverage.md)) |
@@ -92,7 +92,7 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | **new** (batch 2): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time |
+| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | covered: `arcwise-corrections` ([page](arcwise-corrections.md)): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time, never committed |
 | A-E02 | Dr.Spider | Apache-2.0, CC BY 4.0 | no: `data.tar.gz` is a Git LFS pointer | 17 perturbation suites | not added |
 | A-E03 | IBM text2sql eval toolkit results | CC BY-SA 4.0 | no: results are on HuggingFace | — | not added |
 | A-E04 | SQL-IQ | MIT | yes | — | covered: `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` ([page](sql-iq.md)) |
@@ -122,9 +122,9 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-D01–D03 | Oracle HR, Customer Orders, Sales History (`oracle-samples/db-sample-schemas`) | MIT | yes | 7 + 7 + 9 tables | **new** (batch 2): sample-database adapters |
+| A-D01–D03 | Oracle HR, Customer Orders, Sales History (`oracle-samples/db-sample-schemas`) | MIT (the licence file is an MIT permission notice, Copyright (c) 2023 Oracle) | yes | 7 + 7 + 9 tables | HR and Customer Orders **covered** (batch 2): `sample-databases-oracle_hr-rewrites`, `-pairs` and `sample-databases-oracle_co-rewrites`, `-pairs`, both databases loaded whole at commit `6660bad68c07` ([page](sample-databases.md#oracle-schemas-hr-and-customer-orders)); Sales History **not added**: 91 MB of CSV (918,843 sales rows), too large to commit |
 | A-D04 | Mondial | CC BY 3.0 | no: host blocked | — | not added |
-| A-D05 | IBM FIBEN | Apache-2.0 | yes (80 MB `data.zip`) | 152 tables, 237 distinct SQL targets | **new** (batch 2): sample-database adapter with its own query workload |
+| A-D05 | IBM FIBEN | Apache-2.0 | yes (80 MB `data.zip`) | 152 tables, 237 distinct SQL targets | **new** (batch 2), not started: 152 tables and an 80 MB archive are not feasible in the Oracle pull request (see [sample databases](sample-databases.md#oracle-schemas-hr-and-customer-orders)); it needs a run-time download from the pinned commit |
 | A-D06 | MIMIC-IV Demo | ODbL | no: `physionet.org` is blocked | — | not added; the GoogleSQL concepts (A-G03) are added without data |
 | A-D07–D13 | BenchBase SmallBank, TATP, Epinions, Twitter, SEATS, AuctionMark, Wikipedia | Apache-2.0 | yes | 3–17 tables | not added in this pass: the data comes from Java loaders that would have to be ported and frozen |
 | A-D14 | LDBC SNB SF0.003 | Apache-2.0 | no: `ldbcouncil.org` is blocked | — | not added |

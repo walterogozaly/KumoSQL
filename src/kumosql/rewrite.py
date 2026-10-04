@@ -37,6 +37,7 @@ from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
 from .proof_qualify import QUALIFY_FAMILY
+from .proof_format import FORMAT_FAMILY
 from .proof_registry import FAMILIES, RULE_FAMILIES
 from .proof_steps import RewriteStep, StepCheck, same_tree
 
@@ -243,6 +244,29 @@ def _independent_checks(
     return problems
 
 
+def _layout_check(
+    before: str,
+    after: str,
+    rule: str,
+    family: str,
+    section_index: int,
+    step_checks: list[StepCheck],
+) -> list[str]:
+    """Run the independent layout checker on the whole before and after text; the problems it found.
+
+    A formatting step is not a change of any statement's tree, so it is checked from the two texts, before any
+    layout shortcut can accept it.
+    """
+
+    registered = FAMILIES[family]
+    step = RewriteStep(rule, family, 0, before, after, registered.assumptions, section_index)
+    check = registered.check(step, exp.Placeholder(), exp.Placeholder())
+    step_checks.append(check)
+    if check.accepted:
+        return []
+    return [f"the independent {registered.label} check refused the change: {check.reason}"]
+
+
 def _verify_sql(
     before: str,
     after: str,
@@ -251,6 +275,11 @@ def _verify_sql(
     dynamic: frozenset[str] = frozenset(),
     independent: tuple[str, str, int, list[StepCheck]] | None = None,
 ) -> tuple[bool, list[str]]:
+    if independent is not None and independent[1] == FORMAT_FAMILY:
+        layout_problems = _layout_check(before, after, *independent)
+        if layout_problems:
+            return False, layout_problems
+        independent = None  # the statements are compared by the shortcuts and the prover below
     if layout_only_change(before, after):
         if before != after and any(sentinel in before or sentinel in after for sentinel in dynamic):
             # Layout in the template is not layout in the compiled SQL: an expansion can end in a line
