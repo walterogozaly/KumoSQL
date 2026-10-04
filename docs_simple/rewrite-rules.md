@@ -43,13 +43,13 @@ Limits: it needs to know each table's columns, which come from the loaded projec
 
 | Label | What to do with it |
 | --- | --- |
-| `unchanged` | The text is identical to the input; a rule may have skipped it, and its step says why |
+| `unchanged` | The text is identical to the input; a rule may have skipped it, and its step says why. Input that only parsed in the parser's recovery mode (for example a query cut off after `WHERE 1 =`) is labelled `unproven` instead |
 | `proven` | Equivalence was established; read any assumptions |
 | `planner_checked` | BigQuery could plan the query, but equal results were not proved |
 | `unproven` | Review it; the checker could not establish equivalence |
 | `failed` | The rewrite failed; its output is not accepted |
 
-Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL. Fatal rule failures exit 2 without writing the result.
+Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL in general, but a change to a query BigQuery would plainly reject (a column that its subquery does not have, `HAVING` with no grouping or aggregate, or a cast to a type name BigQuery does not have such as `FLOAT` or `VARCHAR`) is never `proven`. The check only catches those cases, so it can miss other invalid SQL. Fatal rule failures exit 2 without writing the result.
 
 ## Rule order matters
 

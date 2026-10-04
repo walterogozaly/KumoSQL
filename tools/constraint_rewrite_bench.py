@@ -131,7 +131,8 @@ def connection(schema: dict):
 
     from kumosql.bigquery_on_duckdb import configure
 
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     configure(db)  # the cases are BigQuery: run them as BigQuery does, or fail where it fails
     for table, spec in schema["tables"].items():
         db.execute(f'CREATE TABLE "{table}" (' + ", ".join(f'"{c}" {DUCK[t]}' for c, t in spec["columns"].items()) + ")")

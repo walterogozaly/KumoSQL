@@ -130,7 +130,8 @@ def new_database(tables: dict[str, Table]):
 
     import duckdb
 
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     for table in tables.values():
         columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
         db.execute(f'CREATE TABLE "{table.name}" ({columns})')

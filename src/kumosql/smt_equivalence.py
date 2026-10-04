@@ -74,9 +74,12 @@ import sys
 import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
+from .parse_check import refuse_misread_proofs
 from .set_operations import positional_sql_pair
+from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
+from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 from . import smt_errors, smt_values, string_number_compare
 
@@ -1017,7 +1020,7 @@ class _Compiler:
 
     def compile(self, sql: str) -> _Union:
         try:
-            statements = [expand_alias_columns(check_modeled(canonical_negation(s)), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
         if len(statements) != 1:
@@ -4731,6 +4734,7 @@ def _check_options(kwargs: dict) -> None:
             kwargs[name] = drop_case_conflicts(kwargs[name])
 
 
+@refuse_misread_proofs
 @serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
@@ -4746,6 +4750,10 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     conditional = kwargs.pop("conditional", False)
     wall = kwargs.pop("conditional_seconds", None)
     _check_options(kwargs)
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+        if unknown_type:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     result = _prove_with_limit(left_sql, right_sql, **kwargs)
     if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
         return result

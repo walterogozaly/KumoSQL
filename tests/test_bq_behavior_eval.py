@@ -18,8 +18,9 @@ SPEC = importlib.util.spec_from_file_location(
 ev = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ev)
 
-# Floors, raised as coverage improves. "wrong" is always 0.
-EDGE_MIN_HANDLED = {"semantic": 420, "lift": 425}
+# Floors, raised as coverage improves. "wrong" is always 0. Lowered by 18 on 2026-10-04: the parser check (docs/parser-checks.md)
+# refuses 18 seeded fuzz texts that BigQuery rejects or reads differently from sqlglot.
+EDGE_MIN_HANDLED = {"semantic": 402, "lift": 407}
 EDGE_MAX_UNSUPPORTED = 1
 
 

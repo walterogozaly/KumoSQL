@@ -3,7 +3,11 @@
 The supported transformation is deliberately narrow: subqueries used as a
 FROM or JOIN relation are moved into the statement's top-level WITH clause.
 Scalar, EXISTS, and correlated predicate subqueries are not rewritten because
-turning those into CTEs changes cardinality or correlation semantics.
+turning those into CTEs changes cardinality or correlation semantics. Neither
+is a FROM/JOIN subquery that reads a relation of the enclosing query (a
+correlated or lateral derived table, checked in every branch of a set
+operation) or a name defined by a WITH clause nested around it: a top-level
+CTE sees neither.
 
 This module is the ``lift_subqueries`` rule in the rewrite-rule registry; the
 ``lift_subqueries()`` function is kept as the stable public entry point.
@@ -16,10 +20,12 @@ from dataclasses import dataclass
 from sqlglot import exp
 
 from .ast_utils import (
+    free_reads,
     identifier_name,
     nearest_parent_cte,
     nearest_root_cte,
     parse_statements,
+    select_sources,
     set_with_clause,
     top_level_query,
     with_clause,
@@ -69,16 +75,106 @@ def _is_relation_subquery(node: exp.Expression) -> bool:
     return isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join))
 
 
+def _relation_names(select: exp.Select) -> set[str]:
+    """Names a column can use to qualify a FROM, JOIN or LATERAL relation of ``select``."""
+
+    names: set[str] = set()
+    for source in [*select_sources(select), *(select.args.get("laterals") or [])]:
+        names.add((source.alias_or_name or "").lower())
+        if isinstance(source, exp.Table) and source.name:
+            names.add(source.name.lower())
+    names.discard("")
+    return names
+
+
+def _correlated(subquery: exp.Subquery) -> bool:
+    """Whether the subquery reads a relation of an enclosing query (a correlated or lateral derived table).
+
+    Every qualified column inside it, in every branch of a set operation and in nested predicate subqueries, must
+    name a relation defined inside the subquery; one that names an outer relation instead would lose its source
+    in a top-level CTE. Unqualified columns cannot be resolved without a schema and are not checked.
+    """
+
+    outer: set[str] = set()
+    node = subquery.parent
+    while node is not None:
+        if isinstance(node, exp.Select):
+            outer |= _relation_names(node)
+        node = node.parent
+    if not outer:
+        return False
+    for column in subquery.this.find_all(exp.Column):
+        parts = {part.lower() for part in (column.text("catalog"), column.text("db"), column.table) if part}
+        if not parts & outer:
+            continue
+        inner: set[str] = set()
+        node = column.parent
+        while node is not None and node is not subquery:
+            if isinstance(node, exp.Select):
+                inner |= _relation_names(node)
+            node = node.parent
+        if not parts & inner:
+            return True
+    return False
+
+
+def _captured(subquery: exp.Subquery, query: exp.Expression) -> bool:
+    """Whether the subquery reads a name that a WITH clause nested between it and ``query`` defines.
+
+    Lifted to the top level, that name would mean a different relation (or none).
+    """
+
+    nested: set[str] = set()
+    node = subquery.parent
+    while node is not None and node is not query:
+        clause = with_clause(node)
+        if isinstance(clause, exp.With):
+            nested |= {cte.alias_or_name.lower() for cte in clause.expressions}
+        node = node.parent
+    return bool(nested and free_reads(subquery.this) & nested)
+
+
+def _liftable(subquery: exp.Subquery, query: exp.Expression, check_scope: bool = True) -> bool:
+    """Whether the subquery can move to ``query``'s top-level WITH. ``check_scope`` is off only for the prover's
+    normalization (``lift_subqueries(..., rewrite_pipe_syntax=True)``), which lifts every relation subquery as before."""
+
+    return not check_scope or (not _correlated(subquery) and not _captured(subquery, query))
+
+
 def _relation_subqueries(node: exp.Expression) -> list[exp.Subquery]:
     """Return inline FROM/JOIN subqueries in deterministic tree order."""
 
     return [candidate for candidate in node.walk() if _is_relation_subquery(candidate)]
 
 
-def count_inline_subqueries(sql: str) -> int:
-    """Count FROM/JOIN subqueries in parseable BigQuery SQL.
+def _lift_scope(subquery: exp.Subquery, statement: exp.Expression) -> exp.Expression:
+    """The query whose WITH clause would receive the subquery (see ``_transform_statement``)."""
 
-    Raises ``sqlglot.ParseError`` for invalid or unsupported input instead of
+    query = top_level_query(statement)
+    if query is not None:
+        return query
+    outermost: exp.Expression = statement
+    node = subquery.parent
+    while node is not None:
+        if isinstance(node, (exp.Select, exp.Union)):
+            outermost = node
+        if node is statement:
+            break
+        node = node.parent
+    return outermost
+
+
+def _liftable_subqueries(statement: exp.Expression, check_scope: bool = True) -> list[exp.Subquery]:
+    """The statement's relation subqueries that can move to a top-level WITH unchanged in meaning."""
+
+    return [s for s in _relation_subqueries(statement) if _liftable(s, _lift_scope(s, statement), check_scope)]
+
+
+def count_inline_subqueries(sql: str) -> int:
+    """Count the FROM/JOIN subqueries ``lift_subqueries`` would lift in parseable BigQuery SQL.
+
+    Correlated derived tables, and ones reading a name a nested WITH defines, are not counted:
+    they stay in place. Raises ``sqlglot.ParseError`` for invalid or unsupported input instead of
     silently claiming that the input is transformed.
     """
 
@@ -88,9 +184,9 @@ def count_inline_subqueries(sql: str) -> int:
             if kind == "block" or not section.strip():
                 continue
             masked, _ = mask_sqlx_interpolations(section)
-            total += sum(len(_relation_subqueries(s)) for s in parse_statements(masked))
+            total += sum(len(_liftable_subqueries(s)) for s in parse_statements(masked))
         return total
-    return sum(len(_relation_subqueries(statement)) for statement in parse_statements(sql))
+    return sum(len(_liftable_subqueries(statement)) for statement in parse_statements(sql))
 
 
 def _used_relation_names(query: exp.Expression) -> set[str]:
@@ -155,7 +251,7 @@ def _tree_depth(node: exp.Expression) -> int:
     return depth
 
 
-def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
+def _lift_query(query: exp.Expression, counter: list[int] | None = None, check_scope: bool = True) -> int:
     """Lift relation subqueries from a SELECT/UNION query, recursively."""
 
     used = _used_relation_names(query)
@@ -171,7 +267,7 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
     # lifted CTE. That gives every lifted relation one top-level name and
     # keeps dependency order (inner before outer).
     while True:
-        candidates = _relation_subqueries(query)
+        candidates = [s for s in _relation_subqueries(query) if _liftable(s, query, check_scope)]
         if not candidates:
             break
 
@@ -214,10 +310,10 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
 _NO_STATEMENT_WITH = (exp.Update, exp.Delete, exp.Merge)
 
 
-def _transform_statement(statement: exp.Expression) -> int:
+def _transform_statement(statement: exp.Expression, check_scope: bool = True) -> int:
     query = None if isinstance(statement, _NO_STATEMENT_WITH) else top_level_query(statement)
     if query is not None:
-        return _lift_query(query)
+        return _lift_query(query, check_scope=check_scope)
 
     # BigQuery scripting statements such as SET can contain a query inside a
     # scalar expression, and UPDATE, DELETE and MERGE cannot start with WITH.
@@ -232,7 +328,7 @@ def _transform_statement(statement: exp.Expression) -> int:
         if isinstance(node, (exp.Select, exp.Union)) and _relation_subqueries(node)
     ]
     for query_node in query_nodes:
-        lifted += _lift_query(query_node)
+        lifted += _lift_query(query_node, check_scope=check_scope)
     return lifted
 
 
@@ -246,9 +342,11 @@ class LiftSubqueriesRule(RewriteRule):
     def rewrite_statement(
         self, statement: exp.Expression, index: int
     ) -> tuple[int, list[RuleDiagnostic]]:
-        before = len(_relation_subqueries(statement))
-        lifted = _transform_statement(statement)
-        after = len(_relation_subqueries(statement))
+        check_scope = not self.analysis_only
+        before = len(_liftable_subqueries(statement, check_scope))
+        lifted = _transform_statement(statement, check_scope)
+        after = len(_liftable_subqueries(statement, check_scope))
+        kept = len(_relation_subqueries(statement)) - after
         diagnostics: list[RuleDiagnostic] = []
         if before and after:
             diagnostics.append(
@@ -258,10 +356,19 @@ class LiftSubqueriesRule(RewriteRule):
                     f"{after} relational subquery/subqueries remain after transformation",
                 )
             )
+        if kept:
+            diagnostics.append(
+                RuleDiagnostic(
+                    index,
+                    "correlated_subquery_kept",
+                    f"{kept} subquery/subqueries left in place: they read a relation of the enclosing query "
+                    "or a name defined by a nested WITH, which a top-level CTE cannot see",
+                )
+            )
         return lifted, diagnostics
 
     def count_remaining(self, statements: list[exp.Expression]) -> int:
-        return sum(len(_relation_subqueries(statement)) for statement in statements)
+        return sum(len(_liftable_subqueries(statement, not self.analysis_only)) for statement in statements)
 
 
 _RULE = LiftSubqueriesRule()
@@ -269,6 +376,7 @@ _RULE = LiftSubqueriesRule()
 
 class _AnalysisLiftRule(LiftSubqueriesRule):
     rewrite_pipe_syntax = True
+    analysis_only = True
 
 
 _ANALYSIS_RULE = _AnalysisLiftRule()

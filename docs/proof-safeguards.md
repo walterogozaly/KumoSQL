@@ -4,7 +4,7 @@ A proof is only worth something if it can catch the rewrite's mistake. KumoSQL's
 
 ## Independent step checks
 
-`kumosql.proof_steps` and `kumosql.proof_ctes` check a step from its before and after statements alone. They import no rule, normalizer, SMT compiler or result comparator, and re-derive every claim. Two families are covered: **predicate cleanup** (`proof_steps`) and **CTE binders** (`proof_ctes`, below). A predicate step is accepted only when all of these hold:
+`kumosql.proof_steps` and `kumosql.proof_ctes` check a step from its before and after statements alone. They import no rule, normalizer, SMT compiler or result comparator, and re-derive every claim. Four families are covered (family names `predicate_cleanup`, `cte_binders`, `parenthesization`, `redundant_distinct`): **predicate cleanup** (`proof_steps`), **CTE binders** (`proof_ctes`, below), and **parenthesization** and **redundant DISTINCT** (`proof_syntax`, below). `kumosql.proof_registry` is the one reviewed table of them (see Acceptance registry). A predicate step is accepted only when all of these hold:
 
 | Assumption recorded on the step | How the checker verifies it |
 | --- | --- |
@@ -18,8 +18,8 @@ A change nested inside an atom, such as `x IN (SELECT y FROM u WHERE TRUE)`, is 
 
 The checkers run in two places:
 
-- **Rule acceptance.** `rewrite.INDEPENDENT_CHECK_FAMILIES` maps `remove_trivial_predicates` to the predicate family and `remove_unused_ctes`, `inline_single_use_ctes` and `deduplicate_ctes` to the CTE family. The acceptance layer owns this table and keys it by rule name, so neither the rule nor an override passed to `apply_rule` can opt out. The checks come from the actual input and output: each changed statement of SQL, a script or a SQLX section is checked. They don't come from records the rule supplies, so nothing can be missing or forged. A step is `proven` only when the prover and the independent checker both accept it. Each check appears in `verification.checks` as kind `independent_check`, with its family, statement (and SQLX section), assumptions, cases checked and any counterexample. The same checks are in `verification.proof_checks` as `StepCheck` records, and the CLI and the UI's verification report show them.
-- **Inside the structural prover.** `equivalence._prepare_query` records its own `_normalize_predicates` transition and has the predicate checker re-derive it before grouping and CTE normalization run. It also records the whole CTE normalization (renaming to canonical names, reordering, merging identical bodies, dropping unreferenced CTEs) and has the CTE checker re-derive it. A refused transition makes `prove_equivalent` return `not_proven` ("the independent check of a normalization step refused it"). Accepted transitions are listed in `EquivalenceResult.proof_checks`.
+- **Rule acceptance.** `rewrite.INDEPENDENT_CHECK_FAMILIES` (the registry's `RULE_FAMILIES`) maps `remove_trivial_predicates` to the predicate family, `remove_unused_ctes`, `inline_single_use_ctes` and `deduplicate_ctes` to the CTE family, `remove_redundant_parentheses` to the parenthesization family and `remove_redundant_distinct` to the DISTINCT family. The acceptance layer owns this table and keys it by rule name, so neither the rule nor an override passed to `apply_rule` can opt out. The checks come from the actual input and output: each changed statement of SQL, a script or a SQLX section is checked. They don't come from records the rule supplies, so nothing can be missing or forged. A step is `proven` only when the prover and the independent checker both accept it. Each check appears in `verification.checks` as kind `independent_check`, with its family, statement (and SQLX section), assumptions, cases checked and any counterexample. The same checks are in `verification.proof_checks` as `StepCheck` records, and the CLI and the UI's verification report show them.
+- **Inside the structural prover.** `equivalence._prepare_query` records its own `_normalize_predicates` transition and has the predicate checker re-derive it before grouping and CTE normalization run. It also records the whole CTE normalization (renaming to canonical names, reordering, merging identical bodies, dropping unreferenced CTEs) and has the CTE checker re-derive it, and does the same for its grouping-parenthesis stripping and redundant-DISTINCT dropping (recorded as `strip_grouping_parens` and `drop_redundant_distinct`). A refused transition makes `prove_equivalent` return `not_proven` ("the independent check of a normalization step refused it"). Accepted transitions are listed in `EquivalenceResult.proof_checks`.
 
 **Pipelines.** If an independent check refuses any step of `apply_rules`, or a safeguarded rule's step is not `proven` for any other reason, the pipeline is `unproven`. This holds even when a later step restores the original text or the end-to-end result could be proven, because that end-to-end proof uses the prover the checker guards.
 
@@ -42,6 +42,17 @@ Assumptions recorded on each step: `cte_scope_resolution`, `reference_equals_inl
 A one-part name in FROM means the CTE even when it is also another FROM item's alias. This was checked on BigQuery (`FROM a CROSS JOIN a AS b`, and a subquery reading `a AS b` under an outer `FROM a`, both read the CTE `a`), so the checker does not refuse those, unlike sqlglot 26's parser, which reads a repeated name as an array path.
 
 **What it found.** On its first run over a corpus of CTE queries the checker refused `inline_single_use_ctes` on `WITH b AS (SELECT * FROM a), a AS (SELECT 1 x) SELECT * FROM b`. In that query the `a` inside `b` is a table, because `a` is defined after `b`. The rule inlined `b` first, which moved that read into the main query, where `a` is the CTE, and then inlined `a` into it. The rule now leaves a WITH clause with a forward reference alone (`cte_dependency_errors`, as the other CTE rules already did). The test is in `tests/test_proof_ctes.py`.
+
+## Parentheses and DISTINCT
+
+Two small rewrites had the same shape of risk: the rule and the prover's normalizer each decide for themselves which parentheses are meaningless (`cleanup._redundant`, `equivalence._paren_is_semantic`), and the DISTINCT rule and the normalizer share `distinct_safety.distinct_is_redundant`. `proof_syntax` re-derives both decisions from the step's SQL text (never from the caller's in-memory trees, which can print differently from how they read: `(t).x` printed as `t.x`).
+
+- **`parenthesization`** (assumptions `parse_structure_unchanged`, `parentheses_carry_no_other_meaning`). The after statement must have the same tree as the before statement once every parenthesis node is removed from both and each chain of `AND` (or of `OR`) is read left to right, because both are associative in three-valued logic and keep their operand order (`a AND (b AND c)` to `a AND b AND c` is accepted; other operators keep their grouping, since `a + (b + c)` can differ from `(a + b) + c` in floating point and on overflow). Equal stripped trees mean every operator groups the same way, so `(a OR b) AND c` to `a OR b AND c`, `-(-x)` to `--x` (a comment) and `(t).x` to `t.x` all fail. Output column names follow the expression, not its parentheses (checked on BigQuery). It trusts sqlglot to read operator precedence as BigQuery does.
+- **`redundant_distinct`** (assumptions `statement_frame_preserved`, `group_keys_are_plain_columns`, `group_keys_projected_unchanged`, `distinct_and_group_by_share_equality`). The after statement must equal the before statement with DISTINCT cleared on some SELECTs, and each cleared SELECT must have a plain GROUP BY (columns only: no ROLLUP, CUBE, GROUPING SETS, ALL or totals) whose keys are all projected unchanged. A select alias spelled like a key counts only when it projects that same column, because BigQuery's GROUP BY prefers the alias (checked on BigQuery). DISTINCT ON and DISTINCT without GROUP BY are refused.
+
+## Acceptance registry
+
+`kumosql.proof_registry` holds `FAMILIES` (each family's name, assumptions, checker and summary), `RULE_FAMILIES` (rule name to family; the acceptance layer reads it, so a rule or an override cannot opt out) and `LEGACY_BASIS` (every rule with no independent checker yet, and what its proof rests on: `format_sql`, `lift_subqueries`, `qualify_columns`). `tests/test_proof_registry.py` fails when a rewrite rule is registered but is in neither table, so adding a rule forces a choice between an independent checker and a named legacy basis, and when a family accepts a step with foreign assumptions. A rule moves from legacy to independent only after the checker has its corpus and fault-injection tests; moving one back is a regression.
 
 ## Dataform expressions
 
@@ -66,10 +77,11 @@ Before this check, these rewrites were labeled `proven`:
 
 ## Limits
 
-- Only predicate cleanup and CTE rewrites are independently checked. Other rules (parentheses, lifting, formatting) and the SMT-based prover keep their existing basis: the normalized-AST comparison, the layout comparison and the solver. The lifter that turns FROM subqueries into CTEs is not checked yet, and its `__lifted_subquery_*` name heuristic stays.
+- Predicate cleanup, CTE rewrites, parentheses and redundant DISTINCT are independently checked. The other rules (`lift_subqueries`, `qualify_columns`, `format_sql`; see `LEGACY_BASIS`) and the SMT-based prover keep their existing basis: the normalized-AST comparison, the layout comparison and the solver. The lifter that turns FROM subqueries into CTEs is not checked yet, and its `__lifted_subquery_*` name heuristic stays.
+- The DISTINCT check is a sufficient condition, not a complete one: a DISTINCT that is redundant for another reason (a unique key, a one-row table) is not accepted by this checker, so a rule that removes it is `unproven`.
 - The CTE check is exact on the expanded tree. A rewrite that changes a CTE and the query together in a way that is still equivalent (a filter moved into a CTE, say) is refused here; those rules are proven by the prover alone and are not in the CTE family.
 - An unread CTE is assumed to have no effect, as BigQuery never evaluates one (checked 2026-10-03); the checker does not look for errors that dropping it would hide.
-- sqlglot's parser stays inside the trusted boundary. The checker does not establish BigQuery validity, schemas or parser correctness.
+- sqlglot's parse is checked separately, not by this checker: every proof is refused when an independent reading of its text disagrees with sqlglot's ([parser checks](parser-checks.md)). This checker still does not establish BigQuery validity or schemas.
 - SQLite is used only for the Boolean and literal model, never to run BigQuery SQL.
 
 ## Extending it
@@ -80,7 +92,7 @@ The architecture audit (October 2026) proposes the next families, in order:
 2. **SMT compiler:** reject every AST argument the compiler does not model, so unmodeled syntax (`* EXCEPT`, a table snapshot) cannot vanish from the formula. Record typed column identities and coercions, and treat solver timeouts and checker failures as unresolved.
 3. **Typed values:** check integer bounds, values near 2^53, floating underflow and overflow, NaN, empty groups and duplicates.
 4. **Execution evidence:** compare tagged values (`TRUE` is not `1`), post-DML table state and row correlations, and keep agreement labeled as evidence.
-5. **Acceptance policy:** move each family to a reviewed checker registry, and retire its legacy path only after its corpus and fault-injection tests pass.
+5. **Acceptance policy:** done as `proof_registry` (above). Still open: moving `lift_subqueries` and `qualify_columns` out of `LEGACY_BASIS`.
 
 ## Audit findings on master
 
@@ -96,12 +108,15 @@ The audit was written against an older checkout. Each finding was re-run on mast
 | `CURRENT_DATETIME()` and `SESSION_USER()` missing from the volatile node types (sqlglot parses them as `CurrentDatetime` and `SessionUser`, not by name) | Fixed: a change that moves, adds or drops one is now refused, as for `CURRENT_DATE()` |
 | A rule and the prover's normalizer share a folding bug | Guarded by the independent predicate check (above) |
 | A rule and the prover's normalizer share a CTE reference bug | Guarded by the independent CTE check (above) |
+| A rule and the prover's normalizer share a parenthesis or redundant-DISTINCT decision | Guarded by the independent checks in `proof_syntax` (above) |
 | A pipeline is trusted after an unproven step is undone, or by an end-to-end proof | Fixed for safeguarded rules: their unaccepted steps block the pipeline. For other rules, an end-to-end proof still covers a step the prover could not prove on its own, because it proves the output that is actually returned. |
 | A `${...}` expression is read as one name | Fixed (above), including expressions inside string literals and layout-only changes next to one |
 | A masked string literal read as a fixed string (`status = "${vars.paid}" AND status = 'paid'` looks contradictory), and positional `__sqlx_token_N__` names that stand for different expressions in different models | Fixed: every prover entry point refuses them |
 | A step that fails mid-mutation is returned as if unchanged | Already fixed on master: the driver restores the statement it copied before the rule ran |
 | SQLX restoration reads backslashes in an expression as regex escapes | Reproduced; tracked as a separate fix |
 | SMT proves `SELECT * EXCEPT (b) FROM t` equal to `SELECT * FROM t` | Reproduced; tracked as a separate fix |
+| The provers treat type names BigQuery rejects as aliases: `CAST(x AS FLOAT)`, `INT32` and `UUID` were proven equal to `FLOAT64`, `INT64` and `STRING` | Fixed: `type_names.py` refuses casts to names BigQuery does not have in the structural, SMT and algebraic provers and in rewrite acceptance (see [Rewrite rules](rewrite-rules.md#inputs-bigquery-would-reject)) |
 | SMT and the algebraic prover read `1e-324 < 2e-324` as exact reals (BigQuery: FALSE) | Reproduced; tracked as a separate fix |
 | SMT drops `FOR SYSTEM_TIME AS OF` | Already refused on master ("Table.version is not modeled") |
 | The synthetic-data comparison treats `TRUE` and `1` as equal | Reproduced; tracked as a separate fix |
+| sqlglot's parse is trusted: bitwise operator precedence in BigQuery, comparison chains and `XOR` in MySQL, `~`, `IS` and `INTERSECT` in DuckDB and PostgreSQL, or a dropped `NOT`, give the provers a query nobody wrote | Fixed: every proof is refused when an independent reading of its text disagrees ([parser checks](parser-checks.md)) |

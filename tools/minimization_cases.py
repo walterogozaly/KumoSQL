@@ -328,7 +328,8 @@ class Engine:
         import duckdb
 
         self.sources = sources
-        self.con = duckdb.connect(":memory:")
+        from kumosql.duckdb_load import small_database
+        self.con = small_database()
         self.con.execute("PRAGMA disable_optimizer")  # as kumosql.duckdb_load.run_unoptimized
         # one thread: row order then depends only on the input order, which the row-order check relies on
         self.con.execute("SET threads = 1")
