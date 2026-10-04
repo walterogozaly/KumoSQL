@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, Mapping
 
 from sqlglot import exp
 
+from .ast_utils import binding_cte
+
 if TYPE_CHECKING:
     from .pipeline import Pipeline
 
@@ -209,22 +211,10 @@ def _own(select: exp.Select, node: exp.Expression) -> bool:
     return node.find_ancestor(exp.Select) is select
 
 
-def _cte_names(node: exp.Expression) -> set[str]:
-    names: set[str] = set()
-    current = node
-    while current is not None:
-        with_ = current.args.get("with_") or current.args.get("with")
-        if with_ is not None:
-            names.update(cte.alias_or_name.lower() for cte in with_.expressions)
-        current = current.parent
-    return names
-
-
 def _scan_select(pipeline: "Pipeline", facts: _Facts, model: str, select: exp.Select) -> None:
-    ctes = _cte_names(select)
     aliases: dict[str, tuple[str, exp.Table]] = {}  # alias -> (table key, node)
     for table in select.find_all(exp.Table):
-        if not _own(select, table) or (not table.db and table.name.lower() in ctes):
+        if not _own(select, table) or binding_cte(table) is not None:
             continue
         key = pipeline.resolve(table)
         if key is None:

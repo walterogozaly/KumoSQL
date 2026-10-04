@@ -884,6 +884,36 @@ def is_cte_reference(table: exp.Table) -> bool:
     return is_cte_reference_candidate(table) and bool(table.name) and table.name.lower() in visible_ctes(table)
 
 
+def binding_cte(table: exp.Expression) -> exp.CTE | None:
+    """The WITH table a one-part table reference reads, or ``None`` when it names a real table (or is not a table).
+
+    Only a WITH in a scope enclosing ``table`` binds it, the nearest one first, with the visibility of
+    :func:`visible_ctes`: a non-recursive WITH table's body sees only the ones listed before it, so
+    ``WITH t AS (SELECT * FROM t)`` reads the real ``t``. Names collected from the whole statement would let a nested
+    ``WITH t AS (...)`` hide a read of the real table ``t`` elsewhere in the statement.
+    """
+
+    if not isinstance(table, exp.Table) or not table.name or table.args.get("db") or table.args.get("catalog"):
+        return None
+    name = table.name.casefold()
+    child, parent = table, table.parent
+    while parent is not None:
+        ctes: list = []
+        if isinstance(parent, exp.With):
+            ctes = list(parent.expressions)
+            if not parent.args.get("recursive"):
+                ctes = ctes[: next((i for i, c in enumerate(ctes) if c is child), len(ctes))]
+        else:
+            clause = parent.args.get("with_") or parent.args.get("with")
+            if isinstance(clause, exp.With) and child is not clause:
+                ctes = list(clause.expressions)
+        for cte in reversed(ctes):
+            if isinstance(cte, exp.CTE) and cte.alias_or_name.casefold() == name:
+                return cte
+        child, parent = parent, parent.parent
+    return None
+
+
 def free_reads(body: exp.Expression) -> set[str]:
     """One-part table names ``body`` reads that none of its own WITH tables binds: what an outer WITH could capture."""
 
