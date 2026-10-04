@@ -68,7 +68,7 @@ _STRING_FORMS = {
     "timestamp": r"[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?)?",
 }
 
-MACROS = (
+_MACRO_DEFINITIONS = (
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_div(a, b) AS CASE WHEN b = 0 THEN {_fail('division by zero')} "
     f"WHEN (typeof(a) = {_NUMERIC} AND (typeof(b) = {_NUMERIC} OR typeof(b) IN {_INTEGERS})) "
     f"OR (typeof(b) = {_NUMERIC} AND typeof(a) IN {_INTEGERS}) THEN {_fail('NUMERIC division rounds to 9 digits')} "
@@ -107,6 +107,51 @@ MACROS = (
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_substr(s, p) AS substring(s, CASE WHEN p = 0 OR p < -length(s) THEN 1 ELSE p END)",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_substr3(s, p, n) AS CASE WHEN n < 0 THEN {_fail('negative SUBSTR length')} "
     "ELSE substring(s, CASE WHEN p = 0 OR p < -length(s) THEN 1 ELSE p END, n) END",
+)
+_MACRO_HEAD = re.compile(r"CREATE OR REPLACE TEMP MACRO (\w+)\(([^)]*)\) AS (.*)", re.DOTALL)
+_QUOTED = re.compile(r"'(?:[^']|'')*'")
+
+
+def _once(statement: str) -> str:
+    """The macro with each argument evaluated once.
+
+    DuckDB expands a macro by pasting its argument expressions in wherever the body names them, so
+    ``kumo_bq_div(a, b)`` copies ``a`` five times and ``b`` seven: nested calls grow exponentially (a
+    variance written with divisions, products and sums took 0.15 s to plan on an empty table, 20 times
+    the plain query). Packing the arguments into one struct handed to a lambda binds each once, with the
+    same values and types, and ``typeof`` of a field reads the argument's own type.
+    """
+
+    name, parameters, body = _MACRO_HEAD.match(statement).groups()
+    names = [p.strip() for p in parameters.split(",")]
+    # a parameter becomes a field of the lambda's argument (named so that no macro parameter shares its name,
+    # which DuckDB would replace inside the struct too), outside string literals only
+    fields = {n: f"_f{i}" for i, n in enumerate(names)}
+    pattern = re.compile(rf"\b({'|'.join(names)})\b")
+
+    def rename(text: str) -> str:
+        return pattern.sub(lambda m: f"_k.{fields[m.group(1)]}", text)
+
+    parts, last = [], 0
+    for quoted in _QUOTED.finditer(body):
+        parts += [rename(body[last:quoted.start()]), quoted.group()]
+        last = quoted.end()
+    parts.append(rename(body[last:]))
+    packed = ", ".join(f"{fields[n]} := {n}" for n in names)
+    return f"CREATE OR REPLACE TEMP MACRO {name}({parameters}) AS list_transform([struct_pack({packed})], _k -> {''.join(parts)})[1]"
+
+
+# ``kumo_bq_read`` tests ``typeof(x) = 'VARCHAR'`` and a bare NULL argument turns into a VARCHAR field, so it keeps
+# the plain form (its argument is a cast's operand, rarely nested deep)
+# ``HAVING`` cannot bind a lambda around an aggregate (DuckDB reads the field as an ungrouped column), so there the
+# plain form is called, under the name ``<macro>_plain``.
+_PACKED = tuple(_MACRO_HEAD.match(m).group(1) for m in _MACRO_DEFINITIONS if "kumo_bq_read(" not in m)
+MACROS = tuple(
+    statement if "kumo_bq_read(" in statement else _once(statement) for statement in _MACRO_DEFINITIONS
+) + tuple(
+    statement.replace(f"MACRO {_MACRO_HEAD.match(statement).group(1)}(", f"MACRO {_MACRO_HEAD.match(statement).group(1)}_plain(", 1)
+    for statement in _MACRO_DEFINITIONS
+    if "kumo_bq_read(" not in statement
 )
 
 
@@ -450,6 +495,9 @@ def faithful(tree: exp.Expression) -> exp.Expression:
         else:
             parent.args[key] = replacement
         replacement.parent, replacement.arg_key, replacement.index = parent, key, index if isinstance(slot, list) else None
+    for call in list(tree.find_all(exp.Anonymous)):
+        if str(call.this).lower() in _PACKED and call.find_ancestor(exp.Having) is not None:
+            call.set("this", f"{call.this}_plain")
     return tree
 
 
