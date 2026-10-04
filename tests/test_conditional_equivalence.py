@@ -238,3 +238,93 @@ def test_describe_merges_a_unique_non_null_column_into_a_primary_key():
     parts = [ce.Condition("unique", "t", ("a",)), ce.Condition("not_null", "t", ("a",)), ce.Condition("not_null", "t", ("b",), text="t.b is NOT NULL")]
     assert ce.describe(parts) == "t(a) is a primary key (unique, never NULL); t.b is NOT NULL"
     assert ce.describe([ce.Condition("unique", "t", ("a",), text="(a) is unique in t")]) == "(a) is unique in t"
+
+
+# ---- a prover that proves some sets of conditions and abstains on others (not monotone) ----------------------
+
+
+def partial_prover(proving_sets, assumptions=None):
+    """``prove(constraints, pair=None)`` that proves exactly when the NOT NULL columns it is given are one of ``proving_sets``.
+
+    ``assumptions`` maps a set of columns to the assumptions the proof under it reports. The control query
+    (``pair`` given) is never proved, so no set looks vacuous.
+    """
+
+    calls = []
+
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "control")
+        facts = constraints.get("t")
+        columns = frozenset(facts.not_null) if facts else frozenset()
+        calls.append(columns)
+        if columns in proving_sets:
+            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, "ok", assumptions=tuple((assumptions or {}).get(columns, ())))
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no")
+
+    prove.calls = calls
+    return prove
+
+
+XY = ("SELECT x, y FROM t", "SELECT x, y FROM t WHERE x IS NOT NULL")
+NOT_PROVEN = SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "not proven")
+
+
+def not_nulls(*columns):
+    return [ce.Condition("not_null", "t", (c,)) for c in columns]
+
+
+def test_the_last_condition_is_tried_too():
+    cands = not_nulls("x", "y")
+
+    def proves(chosen):  # proves under {x, y}, {x} and the empty set, abstains under {y}
+        return {c.columns[0] for c in chosen} in ({"x", "y"}, {"x"}, set())
+
+    kept, minimal = ce.minimal_conditions(cands, proves)
+    assert kept == [] and minimal  # a singleton {x} would be reported as minimal although deleting x still proves
+
+
+def test_a_set_the_prover_can_shrink_to_nothing_is_not_reported_as_conditional():
+    prove = partial_prover({frozenset({"x", "y"}), frozenset({"x"}), frozenset()})
+    out = ce.add_conditions(*XY, NOT_PROVEN, prove, dialect="duckdb")
+    assert out.status is SmtStatus.NOT_PROVEN and not out.conditions
+
+
+def test_every_returned_condition_was_tried_against_the_final_set():
+    prove = partial_prover({frozenset({"x", "y"}), frozenset({"x"})})  # {y} and {} are not proved
+    out = ce.add_conditions(*XY, NOT_PROVEN, prove, dialect="duckdb")
+    assert out.status is SmtStatus.PROVEN_CONDITIONALLY and texts(out) == {"t.x is NOT NULL"}
+    assert frozenset() in prove.calls  # deleting the last condition was tried and failed
+
+
+def test_the_assumptions_are_those_of_the_proof_under_the_returned_conditions():
+    full, final = frozenset({"x", "y"}), frozenset({"x"})
+    prove = partial_prover({full, final}, {full: ("full set premise",), final: ("t.y is read as NOT NULL by this proof",)})
+    out = ce.add_conditions(*XY, NOT_PROVEN, prove, dialect="duckdb")
+    assert out.status is SmtStatus.PROVEN_CONDITIONALLY and texts(out) == {"t.x is NOT NULL"}
+    assert out.assumptions == ("t.y is read as NOT NULL by this proof",)
+
+
+def test_a_check_that_failed_does_not_clear_the_conditions(monkeypatch):
+    left, right = SELF_JOIN, PLAIN_USERS
+    assert prove_equivalent_algebraic(left, right, conditional=True).status is SmtStatus.PROVEN_CONDITIONALLY
+    monkeypatch.setattr(ce, "_independence", lambda *args, **kwargs: "error")
+    assert prove_equivalent_algebraic(left, right, conditional=True).status is not SmtStatus.PROVEN_CONDITIONALLY
+
+
+def test_queries_the_engine_rejects_keep_the_verdict_and_say_it_was_not_checked(monkeypatch):
+    left, right = SELF_JOIN, PLAIN_USERS
+    monkeypatch.setattr(ce, "_independence", lambda *args, **kwargs: "not_run")
+    out = prove_equivalent_algebraic(left, right, conditional=True)
+    assert out.status is SmtStatus.PROVEN_CONDITIONALLY
+    assert "not checked for conditions that make both queries constant" in out.reason
+    monkeypatch.undo()
+    assert "not checked" not in prove_equivalent_algebraic(left, right, conditional=True).reason
+
+
+def test_a_declared_varchar_column_does_not_stop_the_constant_check_from_running():
+    types = {"users": {"id": "INT", "name": "VARCHAR", "at": "TIME"}}
+    schema = {"users": ["id", "name", "at"]}
+    unique = ce.with_conditions(None, [ce.Condition("unique", "users", ("id",))])
+    out = ce._independence("SELECT id FROM users", "SELECT id FROM users", unique, schema=schema, types=types, dialect="mysql")
+    assert out == "dependent"
