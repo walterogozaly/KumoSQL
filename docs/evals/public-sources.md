@@ -71,10 +71,10 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 
 | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- |
-| Dataform BigQuery example (`dataform-co/dataform-example-project-bigquery`) | MIT | yes | 10 SQLX files | **new** (batch 1): added to the real-projects corpus |
-| BigQuery Utils (`GoogleCloudPlatform/bigquery-utils`) | Apache-2.0 | yes | 136 SQL UDFs with 206 test groups; 18 views and Dataform examples | covered for the UDF tests: `bigquery-utils-udfs` ([page](bigquery-behavior-eval.md#bigquery-utils-udf-tests)); **new** (batch 1) for the views and Dataform examples, still to join the real-projects corpus |
-| Marketing Analytics Jumpstart Dataform | Apache-2.0 | yes | 54 SQLX files | **new** (batch 1): real-projects corpus |
-| Security Analytics Dataform | Apache-2.0 (archived) | yes | 107 SQLX files | **new** (batch 1): real-projects corpus |
+| Dataform BigQuery example (`dataform-co/dataform-example-project-bigquery`) | MIT | yes | 10 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `dataform-stackoverflow` |
+| BigQuery Utils (`GoogleCloudPlatform/bigquery-utils`) | Apache-2.0 | yes | 136 SQL UDFs with 206 test groups; 18 views and Dataform examples | covered for the UDF tests: `bigquery-utils-udfs` ([page](bigquery-behavior-eval.md#bigquery-utils-udf-tests)); views and Dataform examples covered: `bq-real-corpora` ([page](bq-real-corpora.md)), projects `bqutils-views` (the five `.sql` files of `views/`) and `bqutils-datavault`; the other two Dataform examples hold only JavaScript |
+| Marketing Analytics Jumpstart Dataform | Apache-2.0 | yes | 54 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `marketing-jumpstart` |
+| Security Analytics Dataform | Apache-2.0 (archived) | yes | 107 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `security-analytics` |
 | ClickBench BigQuery | CC BY-NC-SA 4.0 | yes | 43 queries | covered: `clickbench-rewrites` |
 
 ## Batches

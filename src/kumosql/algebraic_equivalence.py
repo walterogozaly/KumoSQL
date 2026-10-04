@@ -94,7 +94,7 @@ from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types
 from .grouped_join_facts import propagate_grouped_join_facts
 from .correlated_key_groups import expose_correlated_key_groups
 from .lateral_boolean_groups import nullable_lateral_boolean_group
-from . import string_number_compare
+from . import string_number_compare, string_number_literals
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -4944,6 +4944,7 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
 
     dialect = kwargs.get("dialect", "bigquery")
     try:
+        left_sql, right_sql = (string_number_literals.normalize(sql, dialect, kwargs.get("types")) for sql in (left_sql, right_sql))
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
         unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))
