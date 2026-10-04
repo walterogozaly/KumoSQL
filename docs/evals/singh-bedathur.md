@@ -43,11 +43,11 @@ DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A
 
 Measured 2026-10-03 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`, about 30 minutes on 4 cores):
 
-**2736/2800, 0 wrong**: 862 proved equivalent, 1,874 proved different, 64 unknown.
+**2735/2800, 0 wrong**: 861 proved equivalent, 1,874 proved different, 65 unknown.
 
 | Outcome | Pairs |
 | --- | ---: |
-| Proven equivalent | 862 |
+| Proven equivalent | 861 |
 | Refuted (counterexample) | 1,874 |
 | Unknown | 60 |
 | Unsupported (the prover cannot read a query, and no counterexample) | 4 |
@@ -55,7 +55,7 @@ Measured 2026-10-03 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`
 | Error | 0 |
 | Wrong | 0 |
 
-Supported subset: 2736/2795 (one pair that compares a string with a number is now declined as unsupported, #542). Held-out fifth (pairs whose text hash is divisible by 5): **560/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+Supported subset: 2735/2794 (two pairs that compare a string with a number are now declined as unsupported, #542 and #613; the second is a dev pair whose `COALESCE(REFEREE_ID, 'SOME BOGUS VALUE') != 2` was proved equal to `REFEREE_ID <> 2 OR REFEREE_ID IS NULL`: right on MySQL only because the string reads as 0, DuckDB rejects the mixed `COALESCE`). Held-out fifth (pairs whose text hash is divisible by 5): **560/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
 
 The last step was developed on dev pairs only (the held-out fifth went from 509 to 524 without being looked at). It also fixed two ways the harness could see a difference that is not one: DuckDB returns `DECIMAL` results as Python `Decimal` and `DOUBLE` ones as `float`, and `0.33` never equals `Decimal("0.33")`, so numbers are now compared as floats rounded to six places; and every fraction the generator draws is exact in binary (eighths), because DuckDB averages decimals in floating point and a value like `1.005` lands on the other side of a `ROUND(.., 2)` midpoint from MySQL's exact result. Neither had produced a published refutation. Every dev pair labelled equivalent that this step newly refutes was checked by hand: they hinge on a NULL inside `NOT IN`, duplicate rows, or an inclusive `BETWEEN` against a half-open range.
 
@@ -79,9 +79,9 @@ What moved the score:
 
 | Verdict | Label "Equivalent" | Label "Non Equivalent" |
 | --- | ---: | ---: |
-| Proved equivalent | 862 | 0 |
+| Proved equivalent | 861 | 0 |
 | Proved different | 476 | 1,398 |
-| Unknown | 62 | 2 |
+| Unknown | 63 | 2 |
 
 No proof contradicts a label. The 476 pairs labelled equivalent that get a counterexample are equivalent only under LeetCode's constraints, which the files drop: most rely on a key (`UNION` versus `UNION ALL`), a NOT NULL column (`NOT IN` versus an anti-join) or a foreign key. A few differ outright, for example a typo inside a string literal (`'15 OR MORE AS BIN'`). Each comes with its counterexample: `--show-disagreements` prints them.
 
