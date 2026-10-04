@@ -16,5 +16,10 @@ Four wrong rewrites on the first runs: two in the rules that handle provably emp
 
 ## Limits
 
+For aggregate rewrites that rarely occur in random queries, use `--corpus target:regrouping`.
+It deliberately builds sums over grouped counts and arithmetic over several aggregates, plus cases
+where filters, NULLs or empty inputs must stop an unsafe rewrite. The report shows which rule actually
+ran; another rule may simplify the query first.
+
 - A rule that passes is not proven right. It only survived the queries and databases the tool tried, and a rule that never fires has not been tested at all; the report counts how often each rule fired.
 - The checking engine is DuckDB, not BigQuery. Where they behave differently the tool skips the case, and each difference is reviewed by hand.

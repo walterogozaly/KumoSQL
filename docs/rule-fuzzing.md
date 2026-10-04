@@ -72,3 +72,17 @@ branch lost its only aggregate and went from one row to a row per input row) and
 (`EXISTS (SELECT 1 FROM u GROUP BY ())` lost its grand-total row). All four are fixed with regression tests.
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
+
+The `regrouping` target adds focused variants of `_collapse_aggregate` and `regroup_arithmetic`: equal
+and coarser keys, empty global aggregates, several arithmetic outputs, and near misses with COUNT,
+HAVING, outer filters, DISTINCT and repeated grouping sets. Run
+`python tools/rule_fuzz.py run --corpus target:regrouping --seed 496 --count 512 --jobs 2 --out regrouping.json`.
+Some forms are consumed by `distinct_rules` before the older regroupers fire; the coverage report counts
+the rule that actually changed the query. A smoke test requires checked firings of both target rules
+and `distinct_rules`, so a corpus that never exercises them cannot silently pass.
+
+On 2026-10-04, seed 496 over 512 synthetic cases checked all 603 recorded firings with no differences:
+123 `_collapse_aggregate`, 128 `regroup_arithmetic`, 96 `distinct_rules` and 256 other firings.
+The 32 repeated-grouping-set cases were declined as `LossySql`; those refusals are not checked
+firings or evidence of soundness. `_roll_up_aggregate` and `_regroup_distinct` did not fire directly
+in this run, so it supplies no direct coverage of those rules. No held-out corpus was used.
