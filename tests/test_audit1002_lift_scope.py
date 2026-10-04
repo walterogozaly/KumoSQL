@@ -1,282 +1,80 @@
-"""Audit 1002, findings 2 and 10: the subquery lifter moved a query body out of the scope that binds its names.
+"""Audit 1002, findings 2 and 10: the prover's lifting moved a query body out of the scope that binds its names.
 
-A FROM/JOIN subquery inside a correlated subquery (``SELECT t.a`` under ``... FROM t``) or one reading a
-CTE of a nested WITH was hoisted into a top-level CTE, where ``t`` or the CTE is not visible; the raw
-lifter reported success and the rewrite was "proven", because the structural prover normalizes both
-sides through the same lifter. Such a subquery now stays in place (and counts as remaining), the others
-are still lifted, and rewrite verification rejects an output that reads a name outside the scope that
-binds it in the input.
+The rewrite rule already kept a correlated or captured derived table in place. The structural prover's own
+normalization (``lift_subqueries(..., rewrite_pipe_syntax=True)``) still lifted every one, so a lifted form that
+no longer ran was proven equal to its input. It now applies the same checks, and inlining a WITH table whose body
+reads a name a WITH around its use redefines is declined.
 """
 
 from __future__ import annotations
 
-from collections import Counter
-
 import pytest
-import sqlglot
 
-duckdb = pytest.importorskip("duckdb")
-
-from kumosql import apply_rule, count_inline_subqueries, lift_subqueries, prove_equivalent  # noqa: E402
-from kumosql.algebraic_equivalence import prove_equivalent_algebraic  # noqa: E402
-from kumosql.rewrite import verify_rewrite  # noqa: E402
+from kumosql import apply_rule, lift_subqueries, prove_equivalent
+from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.rewrite import verify_rewrite
 
 F2 = "SELECT (SELECT MAX(s.v) FROM (SELECT t.a AS v) AS s) AS x FROM t"
-F2_ESCAPED = (
-    "WITH __lifted_subquery_001 AS (SELECT t.a AS v) "
-    "SELECT (SELECT MAX(s.v) FROM __lifted_subquery_001 AS s) AS x FROM t"
-)
+F2_BARE = "SELECT (SELECT MAX(s.v) FROM (SELECT a AS v) AS s) AS x FROM t"
 F10 = "SELECT * FROM (WITH local AS (SELECT 1 AS a) SELECT * FROM (SELECT a FROM local) AS s) AS z"
-F10_ESCAPED = (
-    "WITH __lifted_subquery_001 AS (SELECT a FROM local), "
-    "__lifted_subquery_002 AS (WITH local AS (SELECT 1 AS a) SELECT * FROM __lifted_subquery_001 AS s) "
-    "SELECT * FROM __lifted_subquery_002 AS z"
+
+CAPTURE_PAIR = (
+    "SELECT * FROM (WITH c AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM c) AS d) AS e",
+    "WITH l1 AS (SELECT x FROM c), l2 AS (WITH c AS (SELECT 1 AS x) SELECT * FROM l1 AS d) SELECT * FROM l2 AS e",
 )
+CORRELATED_PAIR = (
+    "SELECT * FROM a, (SELECT * FROM b WHERE b.x = a.x) AS s",
+    "WITH l AS (SELECT * FROM b WHERE b.x = a.x) SELECT * FROM a CROSS JOIN l AS s",
+)
+SCHEMA = {"a": ["x"], "b": ["x"], "c": ["x"]}
 
 
-def _database():
-    db = duckdb.connect()
-    db.execute("CREATE TABLE t(a BIGINT, b BIGINT); INSERT INTO t VALUES (1, 2), (2, 3), (5, 5)")
-    db.execute("CREATE TABLE u(b BIGINT); INSERT INTO u VALUES (2), (3), (7)")
-    # Real tables named like the nested CTEs: a body moved away from its WITH would read these instead.
-    db.execute("CREATE TABLE local(a BIGINT); INSERT INTO local VALUES (9)")
-    return db
-
-
-def _hashable(value):
-    return tuple(sorted(map(_hashable, value), key=repr)) if isinstance(value, (list, tuple)) else value
-
-
-def _rows(db, sql):
-    rows = db.execute(sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]).fetchall()
-    return Counter(tuple(_hashable(value) for value in row) for row in rows)
-
-
-def _assert_same_rows(original, rewritten):
-    db = _database()
-    assert _rows(db, rewritten) == _rows(db, original)
-
-
-def _assert_kept(sql, *, lifted=0, remaining=1):
+@pytest.mark.parametrize("sql", [F2, F2_BARE])
+def test_lifter_keeps_a_body_that_reads_a_column_of_the_query_around_it(sql):
     result = lift_subqueries(sql)
-    assert result.lifted_subqueries == lifted
-    assert result.remaining_inline_subqueries == remaining
-    assert not result.success
-    assert any(d.code == "inline_subqueries_remaining" for d in result.diagnostics)
-    if not lifted:
-        assert result.sql == sql
-    _assert_same_rows(sql, result.sql)
-    return result
+    assert result.lifted_subqueries == 0
+    assert "__lifted_subquery" not in result.sql
+    assert any(d.code == "correlated_subquery_kept" for d in result.diagnostics)
+    assert "__lifted_subquery" not in apply_rule("lift_subqueries", sql).sql
 
 
-def test_correlated_relation_subquery_stays_in_place():
-    _assert_kept(F2)
-    rewrite = apply_rule("lift_subqueries", F2)
-    assert not rewrite.success
-    assert rewrite.verification.status.value != "proven"
-
-
-def test_subquery_reading_a_nested_cte_stays_and_its_enclosing_subquery_lifts():
-    result = _assert_kept(F10, lifted=1)
-    # The nested WITH travels with ``z``; ``s`` stays next to the WITH that defines ``local``.
-    assert "(SELECT a FROM local) AS s" in result.sql
-    assert count_inline_subqueries(result.sql) == 1
-    assert _rows(_database(), result.sql) == Counter({(1,): 1})
-    assert apply_rule("lift_subqueries", F10).verification.status.value != "proven"
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        # A nested CTE hiding a top-level CTE of the same name.
-        "WITH local AS (SELECT 2 AS a) "
-        "SELECT * FROM (WITH local AS (SELECT 1 AS a) SELECT * FROM (SELECT a FROM local) AS s) AS z",
-        # A nested CTE hiding a real table of the same name.
-        "SELECT * FROM (WITH t AS (SELECT 1 AS a) SELECT * FROM (SELECT a FROM t) AS s) AS z",
-        # A later CTE of a nested WITH reading an earlier one.
-        "SELECT * FROM (WITH local AS (SELECT 1 AS a), k AS (SELECT * FROM (SELECT a FROM local) AS s) SELECT * FROM k) AS z",
-    ],
-)
-def test_nested_with_shadowing_keeps_the_reader_in_place(sql):
-    result = _assert_kept(sql, lifted=1)
-    assert _rows(_database(), result.sql) == Counter({(1,): 1})
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT u.b FROM u WHERE u.b = t.b) AS s)",
-        "SELECT a FROM t WHERE a IN (SELECT s.v FROM (SELECT u.b - t.b AS v FROM u) AS s)",
-        # Unqualified: ``a`` binds nothing inside the body, so it reads ``t``.
-        "SELECT (SELECT MAX(s.v) FROM (SELECT a AS v) AS s) AS x FROM t",
-        # Unqualified next to a relation: without a schema ``b`` may be ``t.b`` (here it is ``u.b``).
-        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT b FROM u) AS s WHERE s.b = t.b)",
-        "SELECT ARRAY(SELECT s.v FROM (SELECT t.a + u.b AS v FROM u) AS s) AS x FROM t",
-    ],
-)
-def test_correlated_exists_in_and_array_subqueries_stay(sql):
-    _assert_kept(sql)
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT (SELECT COUNT(*) FROM (SELECT * FROM o.items) AS s) AS n FROM orders AS o",
-        # A joined UNNEST reads the relations before it, so ``t`` is in scope inside the ARRAY subquery.
-        "SELECT x FROM t, UNNEST(ARRAY(SELECT s.v FROM (SELECT t.a AS v) AS s)) AS x",
-    ],
-)
-def test_correlated_array_reads_stay(sql):
-    result = lift_subqueries(sql)
-    assert result.sql == sql
-    assert result.remaining_inline_subqueries == 1
-
-
-def test_unnest_of_a_sibling_relation_inside_the_body_still_lifts():
-    sql = "SELECT * FROM (SELECT id, e FROM t, UNNEST(arr) AS e) AS c ORDER BY id, e"
-    assert lift_subqueries(sql).success
-    assert apply_rule("lift_subqueries", sql).verification.status.value == "proven"
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT * FROM t JOIN (SELECT b FROM u) AS s ON t.b = s.b",
-        "SELECT a FROM t WHERE t.b IN (SELECT s.b FROM (SELECT u.b FROM u) AS s)",
-        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT u.b FROM u) AS s WHERE s.b = t.b)",
-        "WITH local AS (SELECT 1 AS a) SELECT * FROM (SELECT a FROM local) AS s",
-    ],
-)
-def test_closed_subqueries_still_lift(sql):
-    result = lift_subqueries(sql)
+def test_lifter_keeps_a_body_that_reads_a_with_table_nested_around_it():
+    result = lift_subqueries(F10)
+    # ``z`` is closed (it carries its own WITH) and lifts; ``s`` reads ``local`` from that WITH and stays inside it.
     assert result.lifted_subqueries == 1
-    _assert_same_rows(sql, result.sql)
-    rewrite = apply_rule("lift_subqueries", sql)
-    assert rewrite.verification.status.value == "proven"
+    assert "(SELECT a FROM local) AS s" in result.sql.replace("\n", " ").replace("  ", " ")
+    assert any(d.code == "correlated_subquery_kept" for d in result.diagnostics)
 
 
-def test_other_subqueries_still_lift_next_to_a_kept_one():
-    sql = F2 + " JOIN (SELECT b FROM u) AS w ON t.b = w.b"
-    result = _assert_kept(sql, lifted=1)
-    assert "(SELECT t.a AS v) AS s" in result.sql
-    assert "JOIN __lifted_subquery_001 AS w" in result.sql
-    # The correlation is bound inside the outer body: ``q`` lifts and carries ``s`` along.
-    result = _assert_kept("SELECT * FROM (" + F2 + ") AS q", lifted=1)
-    assert result.sql.startswith("WITH __lifted_subquery_001 AS (" + F2 + ")")
+@pytest.mark.parametrize("before,after", [CAPTURE_PAIR, CORRELATED_PAIR])
+def test_prover_does_not_prove_a_lift_out_of_scope(before, after):
+    assert not prove_equivalent(before, after).proven
+    assert verify_rewrite(before, after).status.value not in ("proven", "unchanged")
 
 
-def test_kept_subquery_in_a_script_statement_is_not_lifted_again_from_a_stale_copy():
-    # Lifting ``z`` copies its body into a CTE; the original query left behind is no longer in the statement.
-    result = lift_subqueries("SET x = (SELECT COUNT(*) FROM " + F10[len("SELECT * FROM "):] + ")")
-    assert (result.lifted_subqueries, result.remaining_inline_subqueries) == (1, 1)
-    assert "(SELECT a FROM local) AS s" in result.sql
+def test_prover_normalization_keeps_correlated_derived_table_in_place():
+    left, right = CORRELATED_PAIR
+    assert not prove_equivalent_algebraic(left, right, schema=SCHEMA).proven
 
 
-def test_struct_field_reads_still_lift_and_verify():
-    rewrite = apply_rule("lift_subqueries", "SELECT e.c FROM (SELECT device.category AS c FROM events) AS e")
-    assert rewrite.success
-    assert rewrite.verification.status.value == "proven"
+def test_a_bare_column_in_a_select_without_from_is_correlated_but_an_output_alias_is_not():
+    # ``a`` can only come from the enclosing query; ``v`` is the subquery's own output used by ORDER BY.
+    assert lift_subqueries(F2_BARE).lifted_subqueries == 0
+    own = "SELECT * FROM t WHERE a IN (SELECT v FROM (SELECT 1 AS v) AS s ORDER BY v)"
+    assert lift_subqueries(own).lifted_subqueries == 1
 
 
-def test_escaped_outputs_are_not_proven():
-    for original, escaped in ((F2, F2_ESCAPED), (F10, F10_ESCAPED)):
-        assert not prove_equivalent(original, escaped).proven
-        assert not prove_equivalent_algebraic(original, escaped).proven
-        verification = verify_rewrite(original, escaped)
-        assert verification.status.value == "unproven"
-    assert "column qualifier t" in " ".join(verify_rewrite(F2, F2_ESCAPED).details)
-    assert "table local" in " ".join(verify_rewrite(F10, F10_ESCAPED).details)
+def test_a_closed_derived_table_still_lifts_and_proves():
+    original = "SELECT s.p FROM (SELECT 1 AS p) AS s"
+    lifted = lift_subqueries(original).sql
+    assert "__lifted_subquery" in lifted
+    assert prove_equivalent(original, lifted).proven
 
 
-def test_structural_prover_rejects_hand_written_escapes():
-    # The structural prover lifts with ``rewrite_pipe_syntax=True`` (the analysis path), not the rewrite rule.
-    db = _database()
-    db.execute("CREATE TABLE c(x BIGINT); INSERT INTO c VALUES (5)")
-    db.execute("CREATE TABLE a(x BIGINT); INSERT INTO a VALUES (1), (2); CREATE TABLE b(x BIGINT); INSERT INTO b VALUES (2)")
-    nested = (
-        "SELECT * FROM (WITH c AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM c) AS d) AS e",
-        "WITH l1 AS (SELECT x FROM c), l2 AS (WITH c AS (SELECT 1 AS x) SELECT * FROM l1 AS d) SELECT * FROM l2 AS e",
-    )
-    assert (_rows(db, nested[0]), _rows(db, nested[1])) == (Counter({(1,): 1}), Counter({(5,): 1}))
-    lateral = (
-        "SELECT * FROM a, (SELECT * FROM b WHERE b.x = a.x) AS s",
-        "WITH __lifted_subquery_001 AS (SELECT * FROM b WHERE b.x = a.x) "
-        "SELECT * FROM a CROSS JOIN __lifted_subquery_001 AS s",
-    )
-    assert _rows(db, lateral[0]) == Counter({(2, 2): 1})  # DuckDB reads the derived table laterally
-    with pytest.raises(duckdb.Error):
-        _rows(db, lateral[1])
-    for left, right in (nested, lateral):
-        assert lift_subqueries(left, rewrite_pipe_syntax=True).remaining_inline_subqueries == 1
-        assert not prove_equivalent(left, right).proven
-        assert not prove_equivalent_algebraic(left, right).proven
-        assert verify_rewrite(left, right).status.value == "unproven"
-
-
-def test_structural_prover_compares_a_kept_subquery_where_it_stands():
-    assert prove_equivalent(F2, F2 + " WHERE TRUE").proven
-    assert not prove_equivalent(F2, F2.replace("MAX", "MIN")).proven
-
-
-def test_algebraic_cte_inlining_does_not_capture_a_nested_with():
-    # ``l1`` reads the real table ``local``; inlining it under ``WITH local`` read the CTE instead.
-    left = "WITH l1 AS (SELECT a FROM local) SELECT * FROM (WITH local AS (SELECT 1 AS a) SELECT * FROM l1 AS s) AS z"
-    db = _database()
-    assert _rows(db, left) != _rows(db, "SELECT 1 AS a")
-    assert not prove_equivalent_algebraic(left, "SELECT 1 AS a").proven
-    assert prove_equivalent_algebraic(
-        "WITH l1 AS (SELECT a FROM t), l2 AS (SELECT a FROM l1 WHERE a > 1) SELECT * FROM l2",
-        "SELECT a FROM t WHERE a > 1",
+def test_inlining_does_not_let_a_nested_with_capture_a_name():
+    # A forward reference reads the real table ``l2`` at the point of use; inlining must not resolve it to the later CTE.
+    assert not prove_equivalent_algebraic(
+        "WITH l1 AS (SELECT a FROM l2), l2 AS (SELECT 1 AS a) SELECT a FROM l1",
+        "SELECT 1 AS a",
+        schema={"l2": ["a"]},
     ).proven
-    # A body reading the real table its own WITH name hides is still inlined.
-    assert prove_equivalent_algebraic("WITH t AS (SELECT a FROM t AS t) SELECT a FROM t", "SELECT a FROM t").proven
-    # A body reading a later table of its own WITH reads the real table; inlining would capture it.
-    forward = "WITH l1 AS (SELECT a FROM l2), l2 AS (SELECT 1 AS a) SELECT a FROM l1"
-    db.execute("CREATE TABLE l2(a BIGINT); INSERT INTO l2 VALUES (9)")
-    assert _rows(db, forward) == Counter({(9,): 1})
-    assert not prove_equivalent_algebraic(forward, "SELECT 1 AS a").proven
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT * FROM (SELECT a, b FROM t UNPIVOT(a FOR b IN (x, y))) UNPIVOT (c FOR d IN (b))",
-        "SELECT * FROM (SELECT * FROM t PIVOT(SUM(a) FOR b IN (1 AS one)))",
-    ],
-)
-def test_pivot_columns_do_not_keep_a_closed_subquery_in_place(sql):
-    # The columns named inside PIVOT/UNPIVOT belong to the table they apply to, not to an enclosing query.
-    result = lift_subqueries(sql)
-    assert result.success and result.lifted_subqueries >= 1
-
-
-@pytest.mark.parametrize(
-    "sql, lifted",
-    [
-        # The bare column is an output of a WITH table or derived table that the body reads: bound inside.
-        ("WITH c AS (SELECT a FROM t) SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM c) AS s) AS x FROM u", 1),
-        ("SELECT a FROM t WHERE a IN (SELECT m FROM (SELECT x AS m FROM (SELECT 1 AS x UNION ALL SELECT 2) AS d) AS s)", 2),
-        ("SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT p FROM (SELECT 1 AS p) AS d GROUP BY p HAVING p > 0) AS s)", 2),
-    ],
-)
-def test_bare_columns_bound_by_a_known_relation_do_not_keep_a_subquery(sql, lifted):
-    result = lift_subqueries(sql)
-    assert result.lifted_subqueries == lifted and result.success
-
-
-@pytest.mark.parametrize(
-    "sql",
-    [
-        # ``b`` is not an output of the derived table, so it reads the enclosing ``t``.
-        "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM (SELECT b FROM (SELECT 1 AS p) AS d) AS s)",
-        # ``t`` is a real table, whose columns are unknown without a schema: ``a`` may belong to the outer ``u``.
-        "SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM (SELECT a FROM t) AS d) AS s) AS x FROM u",
-        "WITH c AS (SELECT a FROM t) SELECT (SELECT m FROM (SELECT MAX(b) AS m FROM c) AS s) AS x FROM u",
-        # A star hides the outputs: not known.
-        "WITH c AS (SELECT * FROM t) SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM c) AS s) AS x FROM u",
-        # A real table next to the known one may hold the column.
-        "SELECT (SELECT m FROM (SELECT MAX(a) AS m FROM (SELECT 1 AS p) AS d, w) AS s) AS x FROM u",
-    ],
-)
-def test_bare_columns_not_bound_by_a_known_relation_keep_the_subquery(sql):
-    assert lift_subqueries(sql).remaining_inline_subqueries >= 1

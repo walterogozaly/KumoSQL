@@ -1,15 +1,15 @@
 {
   "suite": "VeriEQL LeetCode (proofs)",
   "order": 44,
-  "score": "4793/23994, 0 wrong",
+  "score": "4787/23994, 0 wrong",
   "metric": "Pairs proved equivalent by the z3 prover over all databases meeting the declared keys and NOT NULL columns, with no LLM. Inequivalent pairs stay out of this count.",
   "evidence": "proof",
   "correctness": "0 false proofs: every proof survives 1,000 further random DuckDB databases and VeriEQL's published counterexamples replayed on DuckDB",
   "coverage": {
-    "proven": 4793,
-    "unknown": 19201
+    "proven": 4787,
+    "unknown": 19207
   },
-  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,071 pairs are not run (DuckDB rejects them, mostly a table name the schema spells differently and GROUP BY positions that name aggregates). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. Measured on master 7b7ba13 (harness translation #347, HAVING-only wider search #356); prover rules merged later (cast_rules.py and after) are not rerun yet. VeriEQL refutes pair 21215 without a replayable counterexample; read by hand, it is equivalent (GROUP BY 1 vs GROUP BY the key, IS NOT NULL on the primary key). After the lifter began keeping a subquery in place when its body reads a column no relation binds (without a schema, a bare column could belong to an enclosing query; docs/rewrite-rules.md#subquery-lifting), 3 of the 117 pairs whose lifted text changed lost their proof (pairs 13460, 13516, 13580, all `x IN (SELECT .. FROM (derived) WHERE ..)` over a table the harness knows) and none gained one, so the score above is about 3 high until the full corpus is rerun. Still 0 wrong.",
+  "caveats": "Full corpus (23,994 pairs). No labels. MySQL source run on DuckDB; 1,071 pairs are not run (DuckDB rejects them, mostly a table name the schema spells differently and GROUP BY positions that name aggregates). Search settings were tuned on a 1,000-pair sample (every 24th pair), so the other pairs are held out from that tuning. Measured on master 7b7ba13 (harness translation #347, HAVING-only wider search #356); prover rules merged later (cast_rules.py and after) are not rerun yet. VeriEQL refutes pair 21215 without a replayable counterexample; read by hand, it is equivalent (GROUP BY 1 vs GROUP BY the key, IS NOT NULL on the primary key). 2026-10-04: 6 proofs fewer (4,793 to 4,787): the parser check refuses the pairs whose MySQL text uses `||` as OR (MySQL's default reading; sqlglot reads concatenation), found by re-running the 17 pairs it refuses on master and on this branch, not by a full rerun (docs/parser-checks.md).",
   "size": 23994,
   "docs": "docs/evals/verieql.md",
   "command": "python tools/verieql_bench.py leetcode --jobs 4 --audit",

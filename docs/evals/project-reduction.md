@@ -27,7 +27,7 @@ No LLM runs at evaluation time.
 
 The case keeps its own split, so the 64 held-out minimization cases are held out here too.
 
-**Real projects (40 dev, 6 held out).** The eight open-source Dataform projects in `tests/fixtures/bq_corpora` (licences there), with each of up to twelve final actions kept alone and all of them kept together. One case in five, by a hash of its id, is held out. They hold operations scripts, incremental tables, `js` blocks, `includes/` constants, project variables, config assertions and `dependencies`.
+**Real projects (40 dev, 6 held out).** The eight open-source Dataform projects in `tests/fixtures/bq_corpora` (licences there; `REAL_PROJECTS` in `tools/reduction_bench.py` names them, so the projects added to that folder later for the [real-projects eval](bq-real-corpora.md) do not change these cases), with each of up to twelve final actions kept alone and all of them kept together. One case in five, by a hash of its id, is held out. They hold operations scripts, incremental tables, `js` blocks, `includes/` constants, project variables, config assertions and `dependencies`.
 
 **Jaffle Shop (6 dev).** dbt Labs' Jaffle Shop (`tests/fixtures/jaffle_shop`, pinned and licensed there), written as a Dataform project the way `tools/jaffle_shop_bench.py` writes it, with each mart, both marts and each staging model kept. Its seed CSVs are real data, so these reductions are executed as well as proved.
 

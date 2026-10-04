@@ -14,6 +14,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Singleton aggregation and set identity](singleton-and-set-identity.md) | Key-fixed aggregation and scoped set-tree identity, with explicit collation conditions |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
 | [Proof safeguards](proof-safeguards.md) | The independent predicate, CTE, parenthesis and DISTINCT checkers, the checker registry, Dataform expressions in proofs, and what is not covered yet |
+| [Parser checks](parser-checks.md) | A second reading of every query a proof depends on, checked against MySQL, DuckDB and BigQuery, and what sqlglot gets wrong |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
 | [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
@@ -37,9 +38,10 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Eval integrity audit, 2026-10-02](eval-integrity-audit-2026-10-02.md) | The external audit as received: SMT snapshots, typed result comparison, the workbook fixture gate, fuzz floors |
 | [Proof re-check](proof-recheck.md) | The heavy executed search that hunts for wrong proofs among the pairs the evals count as proven: the engine, its adapters, how to triage a difference and what the first runs found |
 | [Rule-level fuzzing](rule-fuzzing.md) | Checking each rewrite `normalize` applies on its own, on the exact query it saw, with DuckDB as the oracle: how a difference is confirmed, the corpora and the limits |
+| [Numeric assumption report](numeric-assumption-report.md) | Counting, per assumption label, how many proofs of the prover evals carried it before and after the numeric semantics of issue #484, and how many numeric proofs were re-proved with fewer |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
 | [Picking up a workstream](handoff.md) | How an outside contributor or agent continues a `workstream` issue: a fresh clone of master, targeted tests only, the rules that never relax, and handing the work back as a pull request |
 
 ## Evals
 
-The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, DLBench's cross-dialect translations, pairs from optimizer wrong-result bugs, DB-GPT's rewrite examples, rewrites recommended by vendor docs, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).
+The [evals folder](evals/README.md) has one page per eval family (the SQLSolver, VeriEQL, Logos' TPC-H, DSB and TPC-DS pairs, Singh and Bedathur, SQL-IQ and LLM-SQL-Solver equivalence suites, DLBench's cross-dialect translations, pairs from optimizer wrong-result bugs, BigQuery number and error traps for the SMT prover, DB-GPT's rewrite examples, rewrites recommended by vendor docs, bounded verification, rewriting benchmarks, engine test suites, syntax and behaviour coverage, lineage and Dataform evals, fuzzing) and a table naming the `benchmarks/results/*.json` file behind every eval. Each eval's numbers are in the README scoreboard ([format](../benchmarks/README.md)).

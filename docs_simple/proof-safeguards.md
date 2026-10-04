@@ -16,6 +16,14 @@ On its first run the checker caught a real mistake: `inline_single_use_ctes` rep
 
 Two more cleanups are checked the same way. Removing parentheses is accepted only if the query still groups every operator exactly as before, so `(a OR b) AND c` can never quietly become `a OR b AND c`. Removing `DISTINCT` is accepted only if the query already has a plain `GROUP BY` and every grouping column is in the output, so every row is already unique.
 
+## Qualifying columns
+
+`qualify_columns` writes `o.id` in place of a bare `id` when `id` belongs to the table `o`. Picking the owner is easy to get wrong: a name can be a column of two tables, a nickname the query gave to a column (`SELECT x AS y ... GROUP BY y` means the nickname, not some table's `y`), a field inside a struct, or a column of the outer query. If the rule and the prover made the same wrong pick, both would agree on a query that reads a different column.
+
+The separate checker looks at the query before and after and asks two things. First, did anything change except that some columns gained a table name? A changed filter, a renamed alias or a dropped clause hidden in the same step is refused. Second, for each column that gained a name, is that name the only table the column can come from? For example, with `a(x, k)` and `b(y, k)`, `SELECT x, y FROM a JOIN b ON a.k = b.k` may become `SELECT a.x, b.y ...`, but `SELECT b.x ...` is refused, and so is any qualification of `k`, which both tables have. It also refuses a name used as a nickname in `GROUP BY` or `ORDER BY`, a column of a table that is read later than the place it is used (a column in an earlier `ON`), and a query that reads a table it does not know the columns of.
+
+The checker is given a table's column list by the part of KumoSQL that accepts rewrites, from the same project and catalog facts the rule reads, because the query alone does not say what columns a plain table has. It trusts that list, and it trusts that the original query runs on BigQuery. While working out what the checker must refuse, five cases the rule itself had wrong turned up, and the rule was fixed (see the [full reference](../docs/proof-safeguards.md#column-qualification)). The checker can also refuse a valid qualification, for example in a query that reads a table function; the rule leaves those queries alone.
+
 ## One list of checked rules
 
 KumoSQL keeps a single reviewed list of which cleanup rules have a separate checker and which do not yet, with the reason for each one that does not. A test fails if someone adds a rule and forgets to put it on the list, so a new rule has to choose between getting a checker and saying what it relies on instead.
@@ -26,4 +34,4 @@ A Dataform file can hold `${...}` expressions. KumoSQL can treat `${ref("orders"
 
 ## What this does not cover
 
-Predicate cleanup, CTE rewrites, parentheses and removing `DISTINCT` are checked independently so far. The step that turns subqueries into CTEs, and the rules that format SQL or qualify columns, are not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity or the parser. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed.
+Predicate cleanup, CTE rewrites, parentheses, removing `DISTINCT` and qualifying columns are checked independently so far. The step that turns subqueries into CTEs, and the rule that formats SQL, are not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).

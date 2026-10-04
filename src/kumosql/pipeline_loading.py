@@ -76,8 +76,10 @@ def _is_asset_reference(reference: object) -> bool:
     return "/" in normalized or normalized.lower().endswith((".sql", ".sqlx"))
 
 
-_REF_RE = re.compile(r"\$\{\s*(?:ctx\.)?ref\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
-_RESOLVE_RE = re.compile(r"\$\{\s*(?:ctx\.)?resolve\(\s*(?P<args>[^()]*?)\s*\)\s*\}")
+# The arguments may hold one level of calls: ``ref({schema: functions.baseSchema("ga4"), name: "event"})``.
+_REF_ARGS = r"(?P<args>(?:[^()]|\([^()]*\))*?)"
+_REF_RE = re.compile(r"\$\{\s*(?:ctx\.)?ref\(\s*" + _REF_ARGS + r"\s*\)\s*\}")
+_RESOLVE_RE = re.compile(r"\$\{\s*(?:ctx\.)?resolve\(\s*" + _REF_ARGS + r"\s*\)\s*\}")
 _SELF_RE = re.compile(r"\$\{\s*(?:ctx\.)?self\(\s*\)\s*\}")
 _CONFIG_DEPENDENCIES_RE = re.compile(r"\bdependencies\s*:\s*(?:\[(?P<list>[^\]]*)\]|(?P<one>\{[^}]*\}|['\"`][^'\"`]*['\"`]))")
 _DEPENDENCY_ITEM_RE = re.compile(r"\{[^}]*\}|['\"`][^'\"`]*['\"`]")
@@ -184,6 +186,52 @@ def _config_identity(
         if known:
             return known, False
     return None, True
+
+
+_JS_WORD_STRING = r"""(?:"[\w\- ]*"|'[\w\- ]*'|\d+)"""
+# ``constants.SCHEMA``, ``functions.baseSchema("ga4")``: a module's member, maybe called with literals.
+_JS_GLOBAL_EXPRESSION = re.compile(
+    rf"(?P<root>[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)+(?:\((?:{_JS_WORD_STRING}(?:,{_JS_WORD_STRING})*)?\))?"
+)
+
+
+def _compact_expression(expression: str) -> str:
+    """``expression`` without whitespace outside its strings."""
+
+    return re.sub(r"\s+(?=[^\"']*(?:[\"'][^\"']*[\"'][^\"']*)*$)", "", expression.strip())
+
+
+def _is_placeholder(part: str) -> bool:
+    """Whether a table part is a :func:`_placeholder` rather than a value."""
+
+    return part.startswith("{") and part.endswith("}")
+
+
+def _placeholder(expression: str, modules: Iterable[str]) -> str | None:
+    """What a computed ``schema`` or ``database`` stands for when it is not a string: a placeholder spelling it, or None.
+
+    An expression of an ``includes/`` module, called with literal arguments at most, is the
+    same table part wherever it is written, so it becomes ``{functions:baseSchema("ga4")}`` (dots made colons so the
+    name stays one part). Two actions whose datasets come from different expressions then stay apart, and a ``ref()``
+    written with the same expression finds its action. The placeholder is not a dataset: the action keeps its
+    ``dynamic_config`` gap. An expression of anything else (a local variable, a computed argument) is None.
+    """
+
+    compact = _compact_expression(expression)
+    found = _JS_GLOBAL_EXPRESSION.fullmatch(compact)
+    if not found or found.group("root") not in set(modules):
+        return None
+    return "{" + compact.replace("'", '"').replace(".", ":") + "}"
+
+
+def _config_expression(config: str, key: str) -> str | None:
+    """The expression a config object sets ``key`` to when it is not a string literal; else None."""
+
+    match = re.search(rf"\b{key}\s*:\s*", _blank_strings(_top_level(config)))
+    if not match:
+        return None
+    expression = _value_at(config, max(config.find("{"), 0) + match.end()).strip()
+    return None if not expression or expression[0] in "'\"`" else expression
 
 
 def _config_flag(config: str, key: str) -> bool | None:
@@ -433,8 +481,11 @@ class _Naming:
     def apply(self, target: Target) -> Target:
         """The target Dataform compiles an action to (``database_ps.schema_sandbox.prefix_name``)."""
 
-        database = f"{target.database}_{self.database_suffix}" if target.database and self.database_suffix else target.database
-        schema = f"{target.schema}_{self.schema_suffix}" if target.schema and self.schema_suffix else target.schema
+        # A placeholder for a computed dataset (see ``_placeholder``) is not a name a suffix can be added to.
+        database = (f"{target.database}_{self.database_suffix}"
+                    if target.database and self.database_suffix and not _is_placeholder(target.database) else target.database)
+        schema = (f"{target.schema}_{self.schema_suffix}"
+                  if target.schema and self.schema_suffix and not _is_placeholder(target.schema) else target.schema)
         name = f"{self.name_prefix}_{target.name}" if target.name and self.name_prefix else target.name
         return Target(database, schema, name)
 
@@ -649,6 +700,7 @@ def js_declared_targets(
     *,
     modules: Mapping[str, Mapping[str, object]] | None = None,
     path: str = "",
+    placeholders: Callable[[str], str | None] | None = None,
 ) -> tuple[list[Target], list[Target], bool]:
     """Declarations and named actions found in one Dataform JavaScript file.
 
@@ -657,6 +709,8 @@ def js_declared_targets(
     name, schema or database cannot be read without running the code (computed in a function, a loop over a
     list that is not literal): the file then may declare tables that are not listed. A loop over a literal list
     of tables, in this file or in a module it ``require``s (``modules``: exports by project path), is expanded.
+    A schema or database written as an includes module's member called with literals (``functions.baseSchema("ga4")``) is read as the
+    placeholder ``placeholders`` gives for it (see :func:`_placeholder`), so such an action is listed, not unknown.
     """
 
     from . import js_literals
@@ -674,6 +728,11 @@ def js_declared_targets(
             names = [first] if first is not None else (_js_bindings(source, name_args[0]) if _JS_IDENT_RE.match(name_args[0]) else None)
         schemas = _js_field(config, source, "schema") if config.startswith("{") else ""
         databases = _js_field(config, source, "database") if config.startswith("{") else ""
+        if placeholders is not None and config.startswith("{"):
+            if schemas is None and (expression := _config_expression(config, "schema")) and (stands_for := placeholders(expression)):
+                schemas = [stands_for]
+            if databases is None and (expression := _config_expression(config, "database")) and (stands_for := placeholders(expression)):
+                databases = [stands_for]
         if not names or schemas is None or databases is None:
             return None
         return [(name, db, schema) for name in names for db in (databases or [default.database]) for schema in (schemas or [default.schema])]
@@ -825,19 +884,26 @@ def js_published_assets(text: str) -> list[tuple[str, str]]:
 _PLAIN_STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""", re.S)
 
 
-def _plain_strings(args: str) -> list[str]:
+def _plain_strings(args: str, placeholders: Callable[[str], str | None] | None = None) -> list[str]:
     """The arguments of a ``ref()`` call, each a plain string literal; anything computed raises ``ValueError``.
 
     ``ref("f" + "eed")`` names the one table ``feed``, not two arguments ``f`` and ``eed``, and ``ref(name)`` names
-    whatever ``name`` holds: neither is read by picking out the quoted pieces.
+    whatever ``name`` holds: neither is read by picking out the quoted pieces. The one exception is a database or
+    dataset (never the name) written as an includes module's member called with literals, ``ref(functions.baseSchema("ga4"), "event")``:
+    ``placeholders`` (see :func:`_placeholder`) gives the part that stands for it.
     """
 
+    items = _split_top_level(args)
     found = []
-    for part in _split_top_level(args):
+    for index, part in enumerate(items):
         quoted = _PLAIN_STRING_RE.fullmatch(part)
-        if quoted is None or "${" in quoted.group(2):
+        if quoted is not None and "${" not in quoted.group(2):
+            found.append(quoted.group(2))
+            continue
+        stands_for = placeholders(part) if placeholders is not None and quoted is None and index < len(items) - 1 else None
+        if stands_for is None:
             raise ValueError("ref() has a computed argument, so the table it names is not known; it was left unresolved")
-        found.append(quoted.group(2))
+        found.append(stands_for)
     return found
 
 
@@ -850,6 +916,7 @@ def _parse_ref_args(
     schema_settles: bool = False,
     logical: Mapping[Target, tuple[str, ...]] | None = None,
     variables: Mapping[str, str] | None = None,
+    placeholders: Callable[[str], str | None] | None = None,
 ) -> Target:
     """The target a ``ref()`` names.
 
@@ -860,7 +927,9 @@ def _parse_ref_args(
     (JavaScript declarations that could not be read), is not guessed: it raises, as does
     any argument that is not a plain string. ``known`` is keyed by the name as the config
     wrote it; ``logical`` gives the database, schema and name of a target that a project
-    prefix or suffix renamed, which is what a ``ref()`` names it by.
+    prefix or suffix renamed, which is what a ``ref()`` names it by. ``placeholders(expression)`` gives the part that
+    stands for a computed database or dataset (see :func:`_placeholder`); a ref whose dataset is such a placeholder
+    that no action of that name shares stays unresolved, since the expression may evaluate to another dataset.
     """
 
     def coordinates(target: Target) -> tuple[str, ...]:
@@ -876,6 +945,8 @@ def _parse_ref_args(
         matches = candidates(name, schema, database)
         if len(matches) > 1:
             raise ValueError("ref() names several tables; it was left unresolved")
+        if not matches and any(part is not None and _is_placeholder(part) for part in (schema, database)):
+            raise ValueError("ref() names its dataset by an expression that is no known action's dataset; it was left unresolved")
         if not matches and names_may_be_missing:
             if schema is not None and schema_settles:
                 return  # the ref names its dataset and no declaration sets a database: the project default is exact
@@ -890,7 +961,9 @@ def _parse_ref_args(
         for key in ("name", "schema", "database"):
             value, computed = _config_identity(args, key, default.database, default.schema, variables)
             if computed:
-                raise ValueError(f"ref() has a computed {key}, so the table it names is not known; it was left unresolved")
+                value = placeholders(expression) if placeholders and key != "name" and (expression := _config_expression(args, key)) else None
+                if value is None:
+                    raise ValueError(f"ref() has a computed {key}, so the table it names is not known; it was left unresolved")
             values[key] = value
         name, schema, database = values["name"] or "", values["schema"], values["database"]
         found = by_name(name, schema, database)
@@ -898,7 +971,7 @@ def _parse_ref_args(
             return found
         unresolved(name, schema, database)
         return Target(database or default.database, schema or default.schema, name)
-    parts = _plain_strings(args)
+    parts = _plain_strings(args, placeholders)
     if len(parts) == 1:
         found = by_name(parts[0])
         if found is None:
@@ -936,6 +1009,16 @@ def load_sqlx_project(
     database, dataset = _read_project_defaults(root, diagnostics)
     assertion_dataset = _assertion_dataset(root) or dataset
     naming = _read_naming(root)
+    try:
+        include_modules = {path.stem for path in (root / "includes").glob("*.js")}
+    except OSError:
+        include_modules = set()
+
+    def placeholders(expression: str) -> str | None:
+        """What a computed database or dataset stands for in a config or a ``ref()``, or None (see ``_placeholder``)."""
+
+        return _placeholder(expression, include_modules)
+
     definitions = root / "definitions"
     # A definitions junction must be pruned relative to the selected project root,
     # including on Python versions without Path.is_junction().
@@ -997,11 +1080,15 @@ def load_sqlx_project(
         kind = declared_type or ("unknown" if computed_type else "table")
         for problem in () if computed_type else _config_problems(config, declared_type):
             diagnostics.append(PipelineDiagnostic(relative, "invalid_config", f"{problem}, so Dataform rejects the project"))
-        identity, computed_identity = {}, []
+        identity, computed_identity, placed = {}, [], []
         for key in ("database", "schema", "name"):
             identity[key], computed = _config_identity(config, key, database, dataset, naming.variables)
             if computed:
                 computed_identity.append(key)
+                expression = _config_expression(config, key) if key != "name" else None
+                if expression and (stands_for := placeholders(expression)):
+                    identity[key] = stands_for
+                    placed.append(key)
         logical = Target(
             identity["database"] or database,
             identity["schema"] or (assertion_dataset if kind == "assertion" else dataset),
@@ -1016,6 +1103,7 @@ def load_sqlx_project(
                 target.key, "dynamic_config",
                 f"its config {' and '.join(computed_identity)} is computed (a project variable or a call), so which table it "
                 "writes is not known" + ("; refs by name do not find it" if "name" in computed_identity else
+                                         "; a placeholder spelling the expression stands in for it" if placed == computed_identity else
                                          "; the project default stands in for it")))
             if kind != "declaration":
                 kind = "unknown"
@@ -1093,7 +1181,7 @@ def load_sqlx_project(
         def plain_ref(match: re.Match[str]) -> str:
             try:
                 return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js or computed_identities,
-                                       logical=renamed, variables=naming.variables).sql()
+                                       logical=renamed, variables=naming.variables, placeholders=placeholders).sql()
             except ValueError:
                 return match.group(0)
 
@@ -1148,7 +1236,7 @@ def load_sqlx_project(
 
     def unknown_names() -> dict:
         return {"names_may_be_missing": incomplete_js or computed_identities, "schema_settles": not js_sets_database,
-                "logical": renamed, "variables": naming.variables}
+                "logical": renamed, "variables": naming.variables, "placeholders": placeholders}
 
     js_files: dict[str, str] = {}
     for path in find_assets(root, (".js",), unlistable):
@@ -1165,7 +1253,8 @@ def load_sqlx_project(
         path = root / relative_js
         if not _JS_CALL_RE.search(text):
             continue
-        declared, actions, complete = js_declared_targets(text, Target(database, dataset, ""), modules=modules, path=relative_js)
+        declared, actions, complete = js_declared_targets(
+            text, Target(database, dataset, ""), modules=modules, path=relative_js, placeholders=placeholders)
         for target in declared:
             known.setdefault(target.name, []).append(target)
             sources[target.key] = target

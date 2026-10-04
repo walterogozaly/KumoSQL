@@ -24,10 +24,10 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | E10 | VeriEQL | CC BY-NC-SA 4.0 | yes | 397 Calcite, 64 literature, 23,224 LeetCode | covered: six `verieql-*` rows and the bounded rows ([page](verieql.md)) |
 | E11 | ParSEval (`sfu-db/ParSEval`) | Apache-2.0 | yes | 21,955 LeetCode pairs, 1,534 BIRD dev questions | not added: its LeetCode pairs are VeriEQL's LeetCode set (covered), and its BIRD pairs (gold against DAIL-SQL predictions) carry no equivalence label, so a proof could not be scored |
 | E12 | QED prover tests | MIT / Apache-2.0 | yes | 373 pairs | covered: `qed-calcite` ([page](sqlsolver.md)) |
-| E13 | Logos core corpus (`WindOctober/Logos`) | MIT, source families keep their terms | yes | 22 R-Bot TPC-H, 37 R-Bot DSB, 14 TPC-DS variant pairs; its VeriEQL, WeTune parts are covered | **new** (batch 1): the 73 TPC-H, DSB and TPC-DS pairs, proved and checked on generated data |
+| E13 | Logos core corpus (`WindOctober/Logos`) | MIT, source families keep their terms | yes | 22 R-Bot TPC-H, 37 R-Bot DSB, 14 TPC-DS variant pairs; its VeriEQL, WeTune parts are covered | covered: `logos-core-proof`, `logos-core-executed`, the 73 TPC-H, DSB and TPC-DS pairs proved and checked on generated data ([page](logos.md)) |
 | E14 | PARROT | README says MIT, no LICENSE file | yes (1.4 GB) | 598 curated pairs not in the repository | not added: the curated pairs are leaderboard-only; the folder redistributes about 38 datasets under their own terms (see [DLBench](dlbench.md)) |
 | E15 | Feedback-driven SQL optimization artifact | GPL-3.0-or-later | yes (zipped run bundles) | PostgreSQL run data | **new** (batch 2, investigate): only if the run bundles hold original and rewritten SQL with a result check; otherwise reference only |
-| — | QUITE (`Yuyang-Song/QUITE`) | none stated | yes | 4,160 LLM rewrites of TPC-H, DSB, Calcite and SQLStorm queries, each flagged equal or not on the benchmark instance (587 not) | **new** (batch 1): downloaded at run time; a pair flagged unequal must never be proved |
+| — | QUITE (`Yuyang-Song/QUITE`) | none stated | yes | 4,160 LLM rewrites of TPC-H, DSB, Calcite and SQLStorm queries, each flagged equal or not on the benchmark instance (587 not) | covered: `quite-rewrites` (1,352/2,609 flagged-equal pairs proved), `quite-negatives` (135 of 498 flagged-unequal pairs refuted, none proved wrongly), 0 wrong ([page](quite.md)); pinned at commit `0cffd7c`, downloaded at run time |
 | — | E3-Rewrite | — | — | — | not added: no public pair release was found |
 | — | DBridge, EQUITAS | — | — | — | not added: DBridge optimizes imperative programs; EQUITAS has no released corpus beyond the Calcite families above |
 
@@ -71,10 +71,10 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 
 | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- |
-| Dataform BigQuery example (`dataform-co/dataform-example-project-bigquery`) | MIT | yes | 10 SQLX files | **new** (batch 1): added to the real-projects corpus |
-| BigQuery Utils (`GoogleCloudPlatform/bigquery-utils`) | Apache-2.0 | yes | 136 SQL UDFs with 206 test groups; 18 views and Dataform examples | **new** (batch 1): the UDF test cases become a GoogleSQL behaviour eval (each UDF run on its test inputs, compared with the expected output); the views and Dataform examples join the real-projects corpus |
-| Marketing Analytics Jumpstart Dataform | Apache-2.0 | yes | 54 SQLX files | **new** (batch 1): real-projects corpus |
-| Security Analytics Dataform | Apache-2.0 (archived) | yes | 107 SQLX files | **new** (batch 1): real-projects corpus |
+| Dataform BigQuery example (`dataform-co/dataform-example-project-bigquery`) | MIT | yes | 10 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `dataform-stackoverflow` |
+| BigQuery Utils (`GoogleCloudPlatform/bigquery-utils`) | Apache-2.0 | yes | 136 SQL UDFs with 206 test groups; 18 views and Dataform examples | covered for the UDF tests: `bigquery-utils-udfs` ([page](bigquery-behavior-eval.md#bigquery-utils-udf-tests)); views and Dataform examples covered: `bq-real-corpora` ([page](bq-real-corpora.md)), projects `bqutils-views` (the five `.sql` files of `views/`) and `bqutils-datavault`; the other two Dataform examples hold only JavaScript |
+| Marketing Analytics Jumpstart Dataform | Apache-2.0 | yes | 54 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `marketing-jumpstart` |
+| Security Analytics Dataform | Apache-2.0 (archived) | yes | 107 SQLX files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `security-analytics` |
 | ClickBench BigQuery | CC BY-NC-SA 4.0 | yes | 43 queries | covered: `clickbench-rewrites` |
 
 ## Batches
@@ -108,15 +108,15 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-SQLFluff | ST01, ST02, ST04, ST05, ST06, ST09, CV12 fixes | MIT | yes | 119 fixes | covered: all 119 are in `sqlfluff-semantic-fixes` (sqlfluff 4.3.0). **new** (batch 2): the `pass_str` refusal cases (recursive CTEs, name clashes, correlated subqueries, templating, ST05's later-branch correlation from PR 8169, CV12's templated joins) run through KumoSQL's own lifter and CTE rules, which must decline or prove |
-| A-R01 | Trino `AbstractTestJoinQueries` two-query assertions | Apache-2.0 | yes (raw file) | 6 named, more in the file | **new** (batch 2, with A-R02): paired engine tests |
-| A-R02 | Spark `SubquerySuite` EXISTS/IN/NOT IN cases | Apache-2.0 | yes (raw file) | 5 | **new** (batch 2): two positive pairs and the NULL-sensitive NOT IN / NOT EXISTS negative |
+| A-SQLFluff | ST01, ST02, ST04, ST05, ST06, ST09, CV12 fixes | MIT | yes | 119 fixes | covered: all 119 are in `sqlfluff-semantic-fixes` (sqlfluff 4.3.0). covered (batch 2): the 212 ST and CV12 cases with no fix, PR 8169's later-branch correlation included, in [`sqlfluff-refusals`](sqlfluff-fixtures.md#refusal-cases) |
+| A-R01 | Trino `AbstractTestJoinQueries` two-query assertions | Apache-2.0 | yes (raw file) | 6 named, more in the file | covered: `engine-paired-tests` (41/157 decided correctly across all sources, 0 wrong), all 137 two-literal assertions at a pinned commit, 134 scored ([page](engine-paired-tests.md)) |
+| A-R02 | Spark `SubquerySuite` EXISTS/IN/NOT IN cases | Apache-2.0 | yes (raw file) | 5 | covered: `engine-paired-tests`, nine pairs on the l/r tables with the NOT IN / NOT EXISTS negative, seven scored ([page](engine-paired-tests.md)) |
 | A-R03 | EET bug bundles | GPL-3.0 | links only | — | not added: the index links to reports on blocked hosts |
-| A-R04 | PostgreSQL EET regressions | PostgreSQL | reports blocked; the PG17976 fix's `join.sql`/`join.out` are on GitHub | 3 | **new** (batch 2, with A-R01): the regression-file case, added to the [optimizer-bug pairs](../../tests/fixtures/optimizer_bugs/README.md) if it fits |
+| A-R04 | PostgreSQL EET regressions | PostgreSQL | reports blocked; the PG17976 fix's `join.sql`/`join.out` are on GitHub | 3 | covered: `engine-paired-tests`, PG17976's regression query from `join.sql` with its join-removed and dropped-qual counterparts ([page](engine-paired-tests.md)); the other two reports are blocked |
 | A-R05 | SQLite `OR FALSE` report | public domain | no: `sqlite.org` is blocked | 1 | not added |
-| A-R06 | JoinEquiv | no licence found | yes | — | not added as code; its projection boundary becomes an authored negative with A-R01 |
-| A-R07 | jOOQ documented transforms | documentation | no fixtures | 3 patterns | **new** (batch 2, with A-R01): authored pairs and guards, citing the pages |
-| A-R08 | DuckDB JoinEquiv issues 20483, 20486, 20608 | MIT | the MIT test file is on GitHub; the issues API is blocked | 3 | **new** (batch 2, with A-R01): from the engine test file where the pair is recoverable |
+| A-R06 | JoinEquiv | no licence found | yes | — | not added as code; its projection boundary is an authored negative in `engine-paired-tests` ([page](engine-paired-tests.md)) |
+| A-R07 | jOOQ documented transforms | documentation | no fixtures | 3 patterns | covered: `engine-paired-tests`, eight authored pairs and guards citing the pages ([page](engine-paired-tests.md)) |
+| A-R08 | DuckDB JoinEquiv issues 20483, 20486, 20608 | MIT | the MIT test file is on GitHub; the issues API is blocked | 3 | covered: `engine-paired-tests`, the 20608 fixture and the file's collation pair ([page](engine-paired-tests.md)); 20483 and 20486 live only in the blocked issues |
 
 ### Databases
 
@@ -148,5 +148,5 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 | A-G05 | `bq-bench` TPC-DS | Apache-2.0, TPC terms | yes | 99 queries | covered by the TPC-DS evals; needs a billed project to run natively |
 | A-G08 | Dataform deployment sample | no licence | — | — | not added |
 | A-G09 | Google patents public data examples | Apache-2.0 (archived) | yes | — | **new** (batch 2): real-projects corpus |
-| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **new** (batch 2): the typed expected rows become an oracle for KumoSQL's BigQuery-to-DuckDB execution |
+| A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **covered** (batch 2): the typed expected rows are an oracle for KumoSQL's BigQuery-to-DuckDB execution: 1,609/4,633 supported cases agree, 0 wrong ([page](googlesql-expected-results.md)) |
 | — | BIRD-CRITIC BigQuery, SQLShare, Fashion Dataform, NHANES-GCP, SQLRight, DQETool, AMOEBA, SlabCity, CODDTest | — | — | — | not added: empty, unlicensed or not a released corpus (as the research says) |

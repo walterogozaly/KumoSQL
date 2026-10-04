@@ -26,11 +26,9 @@ KumoSQL checks each changed result against its input. Read the evidence label be
 
 These rules have exceptions. For example, combining duplicate queries containing random calls can change results. A rule may leave such SQL alone.
 
-`lift_subqueries` only moves a nested query out when that query is self-contained. `SELECT (SELECT MAX(s.v) FROM (SELECT t.a AS v) AS s) FROM t` has an inner query that reads `t.a` from the query around it; a `WITH` at the top could not see `t`, so that query stays where it is and the result is reported as not fully lifted. The same goes for a nested query that reads a table of a `WITH` placed inside its parent. Inside an `EXISTS`, `IN` or scalar subquery, a bare column name (such as `customer_id`) also keeps its query in place when it can only come from a real table, because without that table's columns it may belong to the query around it. A column that a nested query or a `WITH` query in the same statement visibly lists is not a problem. The cost is a missed tidy-up, never a wrong answer; the checker also refuses an output that reads a name it could not see before. Details and recorded scores are in the [full reference](../docs/rewrite-rules.md#subquery-lifting).
-
 ## Qualify columns
 
-`qualify_columns` is for queries that join tables. `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` becomes `SELECT o.id, c.name ...`, so a reader sees where each column comes from. It does not run in the default pipeline; ask for it with `-r qualify_columns`.
+`qualify_columns` is for queries that join tables. `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` becomes `SELECT o.id, c.name ...`, so a reader sees where each column comes from. It does not run in the default pipeline; ask for it with `-r qualify_columns`. Every qualification is also re-checked by a separate checker that confirms only table names were added and that each one names the only table the column can come from ([how](proof-safeguards.md#qualifying-columns)). The rule leaves a column alone when it is a nickname in `GROUP BY` or `ORDER BY`, or is used before its table is read.
 
 It only adds a table name when it is sure. It leaves a column alone when:
 
@@ -51,7 +49,7 @@ Limits: it needs to know each table's columns, which come from the loaded projec
 | `unproven` | Review it; the checker could not establish equivalence |
 | `failed` | The rewrite failed; its output is not accepted |
 
-Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL in general, but a change to a query BigQuery would plainly reject (a column that its subquery does not have, or `HAVING` with no grouping or aggregate) is never `proven`. The check only catches those two cases, so it can miss other invalid SQL. Fatal rule failures exit 2 without writing the result.
+Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL in general, but a change to a query BigQuery would plainly reject (a column that its subquery does not have, `HAVING` with no grouping or aggregate, or a cast to a type name BigQuery does not have such as `FLOAT` or `VARCHAR`) is never `proven`. The check only catches those cases, so it can miss other invalid SQL. Fatal rule failures exit 2 without writing the result.
 
 ## Rule order matters
 

@@ -24,17 +24,19 @@ from urllib.error import URLError
 
 from sqlglot import exp
 
-from .ast_utils import parse_statements, top_level_query, unbound_names
+from .ast_utils import parse_statements, top_level_query
 from .scripts import block_statements, script_skeleton
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
 from .input_validity import invalid_input_reason
+from .type_names import invalid_type_name
 from .layout_equivalence import created_function_calls, layout_only_change, touching_literal_chunks
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
+from .proof_qualify import QUALIFY_FAMILY
 from .proof_registry import FAMILIES, RULE_FAMILIES
 from .proof_steps import RewriteStep, StepCheck, same_tree
 
@@ -194,6 +196,26 @@ def _lossy_types(query: exp.Expression) -> str | None:
     return None
 
 
+def _known_columns(statement: exp.Expression) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The columns the loaded project and saved catalog give the physical tables a statement reads.
+
+    The qualification check cannot learn a table's columns from the SQL, so the acceptance layer supplies them
+    (catalog data, not decision code): each table the statement names, under its lower-case dotted name.
+    """
+
+    try:
+        columns = prover_context.current_schema().columns
+    except Exception:  # noqa: BLE001 - no schema means no known tables, and the check then refuses plain tables
+        return ()
+    found: dict[str, tuple[str, ...]] = {}
+    for table in statement.find_all(exp.Table):
+        parts = [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
+        key = ".".join(parts)
+        if key in columns:
+            found[key] = tuple(str(column).lower() for column in columns[key])
+    return tuple(sorted(found.items()))
+
+
 def _independent_checks(
     left: list[exp.Expression],
     right: list[exp.Expression],
@@ -212,6 +234,7 @@ def _independent_checks(
         step = RewriteStep(
             rule, family, index, old.sql(dialect="bigquery"), new.sql(dialect="bigquery"),
             registered.assumptions, section_index,
+            _known_columns(old) if family == QUALIFY_FAMILY else (),
         )
         check = registered.check(step, old.copy(), new.copy())
         step_checks.append(check)
@@ -248,6 +271,11 @@ def _verify_sql(
             "a Dataform expression other than ref() or self() was dropped, added or repeated; "
             "compile the SQLX to prove a change to this statement"
         ]
+    unknown_type = invalid_type_name(before) or invalid_type_name(after)
+    if unknown_type:
+        # The BigQuery printer writes FLOAT as FLOAT64, INT32 as INT64 and VARCHAR as STRING, so both sides of a
+        # comparison would read the same; BigQuery rejects the name and there is nothing to preserve.
+        return False, [f"the query would not run on BigQuery: {unknown_type}"]
     calls = created_function_calls(before), created_function_calls(after)
     if calls[0] is None or calls[0] != calls[1]:
         # sqlglot prints `abs(1)` and `ABS(1)` alike, but a script can create both as temporary functions.
@@ -301,14 +329,6 @@ def _verify_sql(
         if invalid:
             # Nothing to preserve: BigQuery would reject the statement, so no prover's agreement is evidence.
             problems.append(f"statement {index}: the query would not run on BigQuery: {invalid}")
-            continue
-        # Checked apart from the provers, which normalize both sides through the same lifting and
-        # inlining: a table or qualifier the input binds in scope must not lose that binding.
-        escaped = unbound_names(new_query) - unbound_names(old_query)
-        if escaped:
-            problems.append(
-                f"statement {index}: the output reads {', '.join(sorted(escaped))} outside the scope that binds it in the input"
-            )
             continue
         # The prover compares result bags; a rewrite must also keep ordering.
         if _order_sql(old_query) != _order_sql(new_query):

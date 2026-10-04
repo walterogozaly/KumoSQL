@@ -111,6 +111,30 @@ def test_row5_division_by_zero_fails(db):
     assert one(db, "SELECT SAFE_DIVIDE(x, 0) FROM UNNEST([1]) x") is None
 
 
+def test_nested_guarded_operations_are_planned_in_time(db):
+    # a macro that pastes its argument in several times makes each level of nesting several times larger: a
+    # division nested 14 deep was never planned (a variance written with divisions took 0.15 s at depth 3)
+    expression = "x"
+    for _ in range(14):
+        expression = f"({expression} * 2) / 2"
+    db.execute("CREATE TABLE t (x INT64)")
+    db.execute("INSERT INTO t VALUES (3), (NULL)")
+    assert sorted(run(db, f"SELECT {expression} FROM t"), key=str) == [(3.0,), (None,)]
+    nested = "SUM(x)"
+    for _ in range(8):
+        nested = f"(SUM(x) - ({nested}) / NULLIF(COUNT(*), 0) * COUNT(*))"
+    assert run(db, f"SELECT {nested} FROM t") == [(3.0,)]
+
+
+def test_guards_over_aggregates_work_in_having_group_by_and_order_by(db):
+    # the guards bind their arguments through a lambda, which DuckDB cannot bind around an aggregate in HAVING
+    rows = "FROM UNNEST([STRUCT(1 AS g, 2 AS x), STRUCT(1 AS g, 3 AS x), STRUCT(2 AS g, 4 AS x)])"
+    assert run(db, f"SELECT g {rows} GROUP BY g HAVING SUM(x) / COUNT(*) > 3") == [(2,)]
+    assert run(db, f"SELECT g, SUM(x) {rows} GROUP BY g HAVING SUM(x) > 4") == [(1, 5)]
+    assert run(db, f"SELECT g {rows} GROUP BY g ORDER BY SUM(x) / COUNT(*) DESC") == [(2,), (1,)]
+    assert sorted(run(db, f"SELECT x * 2 {rows} GROUP BY x * 2")) == [(4,), (6,), (8,)]
+
+
 def test_integer_division_and_mod_by_zero_fail(db):
     assert fails(db, "SELECT MOD(x, 0) FROM UNNEST([1]) x")
     assert fails(db, "SELECT DIV(x, 0) FROM UNNEST([1]) x")
@@ -441,3 +465,74 @@ def test_row20_week_truncation_and_week_differences(db, row):
     )
     expected = tuple(date.fromisoformat(v) for v in (sunday, monday, iso, datetime_sunday)) + tuple(int(v) for v in diffs)
     assert run(db, sql) == [expected]
+
+
+# --- cases found by the GoogleSQL compliance expected results (tools/googlesql_results_eval.py) -------------
+# The expected values are the typed rows in google/googlesql's compliance tests; each construct below
+# returned other rows on DuckDB before the module refused or rewrote it.
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT PARSE_DATE('%Y-%m-%d', '2024-01-02')",
+        "SELECT CAST('2024-01-02' AS DATE FORMAT 'YYYY-MM-DD')",
+        "SELECT FORMAT_TIMESTAMP('%H', TIMESTAMP '2024-01-02 03:04:05+00', 'Asia/Kolkata')",
+        "SELECT DATETIME(TIMESTAMP '2024-01-02 03:04:05+00', '+01:00')",
+        "SELECT 'a' LIKE ANY UNNEST(['a', 'b'])",
+        "SELECT ROUND(2.5, 0, 'ROUND_HALF_EVEN')",
+        "SELECT * FROM (SELECT 1 AS a, 2 AS b) UNPIVOT (v FOR k IN (a, b))",
+        "SELECT a FROM UNNEST([1, 2]) a GROUP BY ROLLUP(a + 1)",
+        "WITH t AS (SELECT AS STRUCT 1 AS a, 2 AS b) SELECT * FROM t",
+        "SELECT 'x' AS c UNION ALL SELECT '2014-01-17'",
+        "SELECT ANY_VALUE(x HAVING MAX y) FROM UNNEST([STRUCT(1 AS x, 2 AS y)]) t",
+        "SELECT REGEXP_INSTR('abcabc', 'a(b)c', 1, 2)",
+        "SELECT (1, NULL) IN UNNEST([(1, 2)])",
+        r"SELECT '\x41'",
+        r'SELECT "\u20AC"',
+        r"SELECT '\101'",
+        r"SELECT b'\x41'",
+    ],
+)
+def test_constructs_with_another_meaning_in_duckdb_are_refused(sql):
+    with pytest.raises(Unfaithful):
+        faithful(sqlglot.parse_one(sql, read="bigquery"))
+
+
+def test_raw_strings_and_decoded_escapes_are_kept(db):
+    assert one(db, r"SELECT r'\x41'") == r"\x41"
+    assert one(db, r"SELECT 'a\nb'") == "a\nb"
+    assert one(db, r"SELECT '\\d'") == "\\d"
+
+
+def test_extract_milliseconds_and_microseconds_are_the_fraction_only(db):
+    # EXTRACT(MILLISECOND FROM TIME '12:34:56.999999') is 999 in BigQuery; DuckDB counts the 56 whole seconds too
+    sql = "SELECT EXTRACT(MILLISECOND FROM TIME '12:34:56.999999'), EXTRACT(MICROSECOND FROM TIME '12:34:56.999999')"
+    assert run(db, sql) == [(999, 999999)]
+
+
+def test_a_backslash_in_a_like_pattern_escapes_the_next_character(db):
+    assert run(db, r"SELECT 'a_b' LIKE r'a\_b', 'axb' LIKE r'a\_b'") == [(True, False)]
+    assert run(db, r"SELECT 'a_b' LIKE ANY (r'x', r'a\_b'), 'axb' LIKE ALL (r'a%', r'a\_b')") == [(True, False)]
+
+
+def test_split_with_a_null_delimiter_is_null(db):
+    assert one(db, "SELECT SPLIT('x', CAST(NULL AS STRING))") is None
+    assert one(db, "SELECT SPLIT('a,b', ',')") == ("a", "b")
+
+
+def test_avg_and_variance_of_numeric_are_exact_in_bigquery_so_they_fail(db):
+    # DuckDB computes them as DOUBLE: VAR_POP over NUMERIC values 1e-9 apart came back 0.0, not 2.5e-3
+    for function in ("AVG", "VAR_POP", "STDDEV_SAMP"):
+        assert fails(db, f"SELECT {function}(x) FROM UNNEST([NUMERIC '1.5', NUMERIC '2']) x")
+    assert one(db, "SELECT AVG(x) FROM UNNEST([CAST(1.5 AS FLOAT64), CAST(2.5 AS FLOAT64)]) x") == 2.0
+
+
+def test_fractional_seconds_are_written_in_groups_of_three_digits(db):
+    assert fails(db, "SELECT CAST(TIMESTAMP '2015-01-28 00:00:00.1' AS STRING)")
+    assert one(db, "SELECT CAST(TIMESTAMP '2015-01-28 00:00:00.123' AS STRING)") == "2015-01-28 00:00:00.123+00"
+
+
+def test_set_operation_operands_keep_their_grouping(db):
+    sql = "SELECT 1 AS x INTERSECT DISTINCT (SELECT 1 AS x UNION ALL SELECT 2 AS x)"
+    assert run(db, sql) == [(1,)]

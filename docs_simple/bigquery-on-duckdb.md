@@ -16,6 +16,14 @@ The layer applies to BigQuery-dialect execution paths, including counterexample 
 
 Some queries may return any one value from a group (`ANY_VALUE`) or any one of several tied rows (`LIMIT`). BigQuery can choose differently from DuckDB, and even two copies of the same pick can differ in DuckDB. When a pair only differs through such a pick, the search no longer calls it different. It reruns the candidate with the pick guarded: if a group holds more than one value, or a `LIMIT` cuts through ties, the run fails and the pair stays unknown. A pick over a group that holds one value, such as a column the grouping already fixes, still counts.
 
+## Checked against Google's expected rows
+
+Google's GoogleSQL compliance tests list the rows each query must return. [One eval](evals/googlesql-expected-results.md) runs those queries through this layer and compares. The differences it found are now fixed (a millisecond count that included whole seconds, a backslash in a `LIKE` pattern, `SPLIT` with a NULL delimiter) or refused: when the layer cannot tell what BigQuery would return, for example a string escape or a time zone written as an offset, the query fails and the pair stays unknown.
+
+## Keeping the guards fast
+
+Each guard wraps an operation, such as a division, and runs inside the query. When guards were nested (a division inside a division), the local engine used to copy the inner part several times, so a few queries became much slower to plan and could run out of time in the evals. Each guard now looks at its inputs once. The answers do not change; the queries just plan quickly again.
+
 ## Read the limits
 
 Compatibility fixes do not turn DuckDB into BigQuery. Unsupported or unfaithful shapes must not become accepted BigQuery counterexamples just because local results differ.

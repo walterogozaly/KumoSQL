@@ -443,15 +443,14 @@ def test_every_fixture_query_lifts_all_relational_subqueries():
     assert not problems, "\n".join(problems[:50]) + "\n\n" + summary
     if fixture.resolve() == DEFAULT_FIXTURE.resolve():
         # The labels already pin every row; these keep the headline numbers in view.
-        # 26 credited on current sqlglot; 25 before sqlglot 28, where q20 is unproven. q18's subquery sits in an
-        # EXISTS with an unqualified column and stays in place (docs/rewrite-rules.md#subquery-lifting). q28 holds a
-        # dynamic ${when(...)} expression and stays unproven until the SQLX is compiled (docs/proof-safeguards.md).
+        # 27 credited on current sqlglot; 26 before sqlglot 28, where q20 is unproven. q28 holds a dynamic
+        # ${when(...)} expression and stays unproven until the SQLX is compiled (docs/proof-safeguards.md).
         assert len(outcomes) == 32
-        assert sum(outcome.credited for outcome in outcomes) >= 25
+        assert sum(outcome.credited for outcome in outcomes) >= 26
         assert [o.id for o in outcomes if o.valid_input is False] == ["q09", "q21"]
-        assert [o.id for o in outcomes if not o.changed] == ["q16", "q17", "q18"]
-        assert [o.id for o in outcomes if not o.structural] == ["q17", "q18"]
-        assert {o.id for o in outcomes if o.verification != "proven"} <= {"q09", "q16", "q17", "q18", "q20", "q21", "q28"}
+        assert [o.id for o in outcomes if not o.changed] == ["q16", "q17"]
+        assert [o.id for o in outcomes if not o.structural] == ["q17"]
+        assert {o.id for o in outcomes if o.verification != "proven"} <= {"q09", "q16", "q17", "q20", "q21", "q28"}
 
 
 # --- the gate's own guards --------------------------------------------------------------------
