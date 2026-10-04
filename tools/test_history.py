@@ -43,6 +43,7 @@ ORDER_FILE = ROOT / "tests" / "order.json"
 SCHEMA = 3  # 2 added the times: cpu_seconds, test_seconds, test_cpu_seconds, file_seconds, slow_cpu, machine;
 # 3 times a slow test with its setup and teardown (2 timed the call only) and adds slow_setup
 SLOW_SECONDS = 3.0  # a test at least this slow (setup, call and teardown) is recorded with its duration and runs in the slow tier
+USUALLY_FAST_SECONDS = 10.0  # a test slower than this stays in the slow tier even when it is slow in only some runs
 MASS_FAILURE = 20  # a run with this many failures is an environment problem, not a test that broke
 MESSAGE_CHARS = 200
 
@@ -524,13 +525,28 @@ def flaky_candidates(records: list[dict]) -> list[tuple[str, int, int, str]]:
 
 
 def slow_tests(records: list[dict]) -> dict[str, float]:
+    """The slow tier: tests that took ``SLOW_SECONDS`` or more, with the median of their slow runs.
+
+    A run records a test only when it was slow, so the median alone cannot tell a test that is always slow from one that
+    was slow on a loaded machine in a few runs of its file. A test of under ``USUALLY_FAST_SECONDS`` that was slow in less
+    than half the runs that ran its file stays out of the tier, so ``--quick`` still runs it.
+    """
+
     seen: dict[str, list[float]] = collections.defaultdict(list)
+    ran: dict[str, int] = collections.Counter()
     for record in records:
         if mass_failure(record):
             continue
+        ran.update(record.get("files", {}).keys())
         for nodeid, seconds in record.get("slow", {}).items():
             seen[nodeid].append(seconds)
-    return {nodeid: round(statistics.median(values), 1) for nodeid, values in seen.items()}
+    tier = {}
+    for nodeid, values in seen.items():
+        median = round(statistics.median(values), 1)
+        slow_share = len(values) / max(ran[nodeid.split("::", 1)[0]], len(values))
+        if median >= USUALLY_FAST_SECONDS or slow_share >= 0.5:
+            tier[nodeid] = median
+    return tier
 
 
 def build_order(records: list[dict], risky_limit: int = 40, root: Path | None = None) -> dict:
