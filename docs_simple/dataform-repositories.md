@@ -45,7 +45,19 @@ Three more things it handles the way Dataform does:
 - Built-in assertions such as `rowConditions: ["status > 0"]`, and a table's `partitionBy` and `clusterBy`, use that table's columns. A column named there is never reported as unused, even when no query reads it. If the setting is computed by JavaScript and cannot be read, KumoSQL reports no unused columns for that table.
 - A table with such settings and nothing reading it is still treated as a final output.
 
-Limits: these checks come from small synthetic projects compared with Dataform's compiler, not from a benchmark. Computed table names, schema prefixes and projects the compiler would reject are not handled yet. The [full guide](../docs/dataform-repositories.md#what-the-static-reader-does-not-guess) lists them.
+More of the same, from the later rounds of the audit:
+
+- If a table's name, schema or database is computed, KumoSQL does not pretend to know which table it is. The same goes for a `ref("f" + "eed")` that is built from pieces: it stays unresolved instead of being read as two separate names.
+- Settings such as a table-name prefix or a dataset suffix rename every table Dataform builds (not the declared source tables). KumoSQL applies them, so the names in lineage and impact match what Dataform creates. For example, with a prefix `t` and a suffix `sbx`, a table `a` in dataset `ds` is `ds_sbx.t_a`. Your `ref("a")` still finds it.
+- A reference to something that does not exist, or that is spelled with the wrong capital letters, is reported, because Dataform would refuse the project. KumoSQL still loads it so the rest can be analysed.
+- A compiled graph that Dataform rejected shows its errors instead of looking like an empty project. The query that an incremental table runs on later runs is read too, so a column only that query uses is not called unused.
+- Windows line endings in `---` separators, and a stray `${` inside a comment, no longer break loading.
+
+- A table made in JavaScript, such as `publish("report").query(ctx => \`SELECT 1 AS id\`)`, is read like a `.sqlx` file when its name and query are written out. Its columns then show up in lineage, and an unused column is found. A query built by code is not guessed.
+- A config key that Dataform would refuse, such as `bigqueryPolicy`, or a `uniqueKey` on a plain table, is reported. The model still loads.
+- Project variables and `includes` inside the SQL itself stay as placeholders. A variable can be overridden when Dataform compiles, so its value in the settings file is only a default, and KumoSQL will not prove two queries equal on a guess. (A table's name taken from a variable does use the settings value, since nothing else can name it.)
+
+Limits: these checks come from small synthetic projects compared with Dataform's compiler, not from a benchmark. A hook that writes into a table it also references is still reported as a cycle, which is cautious rather than exact. Queries built by JavaScript code, and exact SQL from variables, need the compiled output. The [full guide](../docs/dataform-repositories.md#what-the-static-reader-does-not-guess) lists them.
 
 ## If loading fails
 

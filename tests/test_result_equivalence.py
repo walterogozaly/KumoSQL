@@ -7,6 +7,8 @@ tests make sure the harness actually catches broken rewrites.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 pytest.importorskip("duckdb")
@@ -14,9 +16,11 @@ pytest.importorskip("duckdb")
 from kumosql import lift_subqueries, prove_equivalent
 from kumosql.result_equivalence import (
     ExecutionError,
+    QueryOutput,
     ResultEquivalenceStatus,
     assert_result_equivalent,
     check_result_equivalence,
+    compare_outputs,
     execute_on_dataset,
     generate_synthetic_dataset,
     prepare_statements,
@@ -166,13 +170,21 @@ def test_harness_catches_broken_rewrites(name):
     assert f"failing seed: {result.failing_seed}" in result.describe()
 
 
+# Pairs of LIFT_CORPUS the static prover proves today (9 of 10); a prover that
+# declines everything would otherwise leave the next test checking nothing.
+MIN_PROVEN_PAIRS_EXECUTED = 9
+
+
 def test_static_proofs_agree_with_execution():
     # The static prover must never prove something execution refutes.
+    checked = 0
     for original in LIFT_CORPUS.values():
         lifted = lift_subqueries(original).sql
         proof = prove_equivalent(original, lifted)
         if proof.proven:
             assert check_result_equivalence(original, lifted, SCHEMA, seeds=SEEDS).equivalent
+            checked += 1
+    assert checked >= MIN_PROVEN_PAIRS_EXECUTED, f"only {checked} proven pairs were executed"
 
 
 def test_ordered_mode_detects_reordering():
@@ -198,6 +210,69 @@ def test_float_noise_is_tolerated():
     right = "SELECT SUM(amount * 3) / 3 AS s FROM `p.d.orders`"
 
     assert check_result_equivalence(left, right, SCHEMA, seeds=SEEDS).equivalent
+
+
+def test_bool_is_not_an_integer():
+    result = check_result_equivalence("SELECT TRUE AS x", "SELECT 1 AS x", SCHEMA, seeds=range(2))
+
+    assert result.status is ResultEquivalenceStatus.DIFFERENT, result.describe()
+
+
+def test_exact_float_mode_distinguishes_close_floats():
+    left = "SELECT CAST(1.0000000000001 AS FLOAT64) AS x"
+    right = "SELECT CAST(1.0000000000002 AS FLOAT64) AS x"
+
+    rounded = check_result_equivalence(left, right, SCHEMA, seeds=range(2))
+    exact = check_result_equivalence(left, right, SCHEMA, seeds=range(2), float_digits=None)
+
+    assert rounded.equivalent and rounded.float_digits == 12
+    assert "floats compared: 12 significant digits" in rounded.describe()
+    assert exact.status is ResultEquivalenceStatus.DIFFERENT, exact.describe()
+    assert exact.float_digits is None
+    assert "floats compared: exact" in exact.describe()
+
+
+def _single(value):
+    return QueryOutput(columns=("x",), rows=((value,),))
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        (True, 1),
+        (False, 0.0),
+        (float("nan"), ["NaN"]),
+        (float("nan"), "NaN"),
+        ({"a": 1}, [["a", 1]]),
+        ([True], [1]),
+        ({"a": [float("nan")]}, {"a": [["NaN"]]}),
+    ],
+    ids=["true-vs-1", "false-vs-0.0", "nan-vs-array", "nan-vs-string", "struct-vs-pairs", "nested-bool", "nested-nan"],
+)
+def test_compare_outputs_keeps_value_kinds_apart(left, right):
+    equal, reason, only_left, only_right = compare_outputs(_single(left), _single(right))
+
+    assert not equal and reason == "result multisets differ"
+    assert only_left == ((left,),) and only_right == ((right,),)
+
+
+def test_booleans_are_integers_is_opt_in_and_reaches_nested_values():
+    # Corpora written for MySQL or Calcite have no boolean type: a predicate is TRUE in one query and
+    # CAST(.. AS BIGINT) in the other, and the two are the same answer there.
+    for left, right in [(True, 1), (False, 0), ([True, False], [1, 0]), ({"a": True}, {"a": 1})]:
+        assert not compare_outputs(_single(left), _single(right))[0]
+        assert compare_outputs(_single(left), _single(right), booleans_are_integers=True)[0]
+    assert not compare_outputs(_single(True), _single(0), booleans_are_integers=True)[0]
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [(1, 1.0), (2, Decimal("2.000")), (2.5, Decimal("2.5")), (float("nan"), float("nan")), ([1, 2], (1, 2))],
+    ids=["int-float", "int-decimal", "float-decimal", "nan-nan", "list-fixed-array"],
+)
+def test_compare_outputs_still_merges_numeric_types(left, right):
+    assert compare_outputs(_single(left), _single(right))[0]
+    assert compare_outputs(_single(left), _single(right), float_digits=None)[0]
 
 
 def test_unknown_table_fails_closed():

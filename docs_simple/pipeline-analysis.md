@@ -30,6 +30,10 @@ lists both written tables, and a rename connects the old name to the new one. Th
 that every assigned column can be traced. Nested fields of a stored STRUCT still trace to the containing column.
 A partition name such as `events$__UNPARTITIONED__` uses the schema of `events` when it is available.
 
+## A query's own WITH table is not the model
+
+A `WITH` table only exists inside the query that defines it. If model `read_secret` reads the model `t`, and a subquery further along declares its own `WITH t AS (SELECT 1 AS id) ...`, that inner `t` is a different, private table. Reading `t` outside it, or inside a `WITH t AS (SELECT * FROM t)` body, still reads the real model. KumoSQL follows this rule, so the dependency on `t` is kept and `t.secret` is not called unused just because a nested `WITH` reused the name. This tracks name scope only; it does not check that the data matches. The exact rule is in the [full reference](../docs/pipeline-analysis.md).
+
 ## Find work already done elsewhere
 
 A table profile describes its sources, attributes, and grain. Grain means what one row represents: one sale, one customer, or one customer per day.
@@ -47,4 +51,4 @@ Profiles and match reports include reasons and unknowns. Check whether the match
 
 An unresolved Dataform template can also hide a dependency. The report marks analysis gaps; it does not silently treat them as no dependency.
 
-For a refactor already built into two datasets, output-comparison plans progress from row counts to fingerprints to exact row comparisons. Those comparisons describe the data in those builds, while static proofs reason under their stated assumptions. See [cost and change reports](cost-and-change-reports.md) and [whole-pipeline equivalence](evals/pipeline-equivalence.md).
+For a refactor already built into two datasets, output-comparison plans progress from row counts to fingerprints to exact row comparisons. When you give the comparison a key column, each key is checked as a set of whole rows, so two rows that share a key and swap values (`(1, 10, 100), (1, 20, 200)` becoming `(1, 10, 200), (1, 20, 100)`) are reported as changed even though every column still holds the same values. Those comparisons describe the data in those builds, while static proofs reason under their stated assumptions. See [cost and change reports](cost-and-change-reports.md) and [whole-pipeline equivalence](evals/pipeline-equivalence.md).
