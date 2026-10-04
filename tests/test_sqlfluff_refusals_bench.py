@@ -28,19 +28,19 @@ FLOORS = {"correct": 188, "declined": 137}
 # that uses the CTE, so ``remove_unused_ctes`` drops the CTE and prints a garbled statement (marked unproven).
 KNOWN_CAUGHT = {"ST03/test_pass_oracle_select_into_record_fields"}
 
-# Pairs the structural prover (kumosql.equivalence) proves although they differ: it normalizes both sides by lifting
-# every FROM subquery into a CTE, correlated or not, so the lifted form looks identical to the original. The rule no
-# longer produces these outputs; the prover still accepts them. Remove a pair once the prover stops proving it.
-KNOWN_PROVER_FALSE_PROOFS = [
+# Lifted forms that differ from their input because the lift moved a subquery out of its scope (DuckDB: binder
+# error), which the structural prover used to prove. Its lift now leaves such a subquery in place and the
+# independent check of the lift (``proof_lift``) refuses a body that reads the query around it.
+PROVER_LIFT_OUT_OF_SCOPE = [
+    # a correlated derived table: `a` is out of scope in the CTE
+    (
+        "SELECT * FROM a, (SELECT * FROM b WHERE b.x = a.x) AS s",
+        "WITH l AS (SELECT * FROM b WHERE b.x = a.x) SELECT * FROM a CROSS JOIN l AS s",
+    ),
     # the derived table reads `c` from the WITH around it; at the top level `c` is the base table (c = {5}: 1 vs 5)
     (
         "SELECT * FROM (WITH c AS (SELECT 1 AS x) SELECT * FROM (SELECT x FROM c) AS d) AS e",
         "WITH l1 AS (SELECT x FROM c), l2 AS (WITH c AS (SELECT 1 AS x) SELECT * FROM l1 AS d) SELECT * FROM l2 AS e",
-    ),
-    # a correlated derived table moved into a CTE, where `a` is out of scope (DuckDB: binder error)
-    (
-        "SELECT * FROM a, (SELECT * FROM b WHERE b.x = a.x) AS s",
-        "WITH l AS (SELECT * FROM b WHERE b.x = a.x) SELECT * FROM a CROSS JOIN l AS s",
     ),
 ]
 
@@ -94,7 +94,7 @@ def test_refusal_cases():
     assert all(verdicts[i][0] == "unsupported" for i in templated), {i: verdicts[i] for i in templated}
 
 
-@pytest.mark.parametrize("before,after", KNOWN_PROVER_FALSE_PROOFS)
+@pytest.mark.parametrize("before,after", PROVER_LIFT_OUT_OF_SCOPE)
 def test_prover_does_not_prove_a_lift_out_of_scope(before, after):
     from kumosql.rewrite import verify_rewrite
 

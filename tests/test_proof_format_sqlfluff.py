@@ -24,9 +24,9 @@ def check(before: str, after: str):
 
 
 def _bench():
-    spec = importlib.util.spec_from_file_location("sqlfluff_fixtures_bench", Path(__file__).resolve().parent.parent / "tools" / "sqlfluff_fixtures_bench.py")
+    spec = importlib.util.spec_from_file_location("sqlfluff_fixtures_bench_proof_format", Path(__file__).resolve().parent.parent / "tools" / "sqlfluff_fixtures_bench.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules["sqlfluff_fixtures_bench"] = module
+    sys.modules["sqlfluff_fixtures_bench_proof_format"] = module
     spec.loader.exec_module(module)
     return module
 

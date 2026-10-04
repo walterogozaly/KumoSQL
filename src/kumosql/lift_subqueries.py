@@ -72,7 +72,10 @@ class LiftResult:
 
 
 def _is_relation_subquery(node: exp.Expression) -> bool:
-    return isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join))
+    """A FROM or JOIN relation that is a query. ``FROM (t)`` and ``FROM (VALUES ...)`` hold no query, and a CTE
+    body must be one (``WITH l AS (t) ...`` is not SQL), so they are not lifted."""
+
+    return isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join)) and isinstance(node.this, exp.Query)
 
 
 def _relation_names(select: exp.Select) -> set[str]:
@@ -164,11 +167,15 @@ def _captured(subquery: exp.Subquery, query: exp.Expression) -> bool:
     return bool(nested and free_reads(subquery.this) & nested)
 
 
-def _liftable(subquery: exp.Subquery, query: exp.Expression, check_scope: bool = True) -> bool:
-    """Whether the subquery can move to ``query``'s top-level WITH. ``check_scope`` is off only for the prover's
-    normalization (``lift_subqueries(..., rewrite_pipe_syntax=True)``), which lifts every relation subquery as before."""
+def _liftable(subquery: exp.Subquery, query: exp.Expression) -> bool:
+    """Whether the subquery can move to ``query``'s top-level WITH without changing what it reads.
 
-    return not check_scope or (not _correlated(subquery) and not _captured(subquery, query))
+    The prover's normalization (``rewrite_pipe_syntax=True``) asks the same question: its independent check
+    (``proof_lift``) refuses a lifted body that reads a relation of the query around it or a name a nested
+    WITH defines, so such a subquery stays where it is.
+    """
+
+    return not _correlated(subquery) and not _captured(subquery, query)
 
 
 def _relation_subqueries(node: exp.Expression) -> list[exp.Subquery]:
@@ -194,10 +201,10 @@ def _lift_scope(subquery: exp.Subquery, statement: exp.Expression) -> exp.Expres
     return outermost
 
 
-def _liftable_subqueries(statement: exp.Expression, check_scope: bool = True) -> list[exp.Subquery]:
+def _liftable_subqueries(statement: exp.Expression) -> list[exp.Subquery]:
     """The statement's relation subqueries that can move to a top-level WITH unchanged in meaning."""
 
-    return [s for s in _relation_subqueries(statement) if _liftable(s, _lift_scope(s, statement), check_scope)]
+    return [s for s in _relation_subqueries(statement) if _liftable(s, _lift_scope(s, statement))]
 
 
 def count_inline_subqueries(sql: str) -> int:
@@ -233,6 +240,10 @@ def _used_relation_names(query: exp.Expression) -> set[str]:
         if (alias := identifier_name(cte.args.get("alias")))
     }
     names.update(table.name.lower() for table in query.root().find_all(exp.Table) if table.name)
+    # An alias or column spelled like a generated name counts too: an unaliased derived table becomes a relation
+    # named like its CTE, and the independent check (``proof_lift``) accepts a lifted name only if it occurs
+    # nowhere else in the statement. (``inline_single_use_ctes`` leaves a lifted name behind as an alias.)
+    names.update(identifier.name.lower() for identifier in query.root().find_all(exp.Identifier) if identifier.name)
     return names
 
 
@@ -250,7 +261,11 @@ def _replace_relation_subquery(subquery: exp.Subquery, name: str) -> None:
 
     replacement = exp.to_table(name)
     if subquery.alias:
-        replacement.set("alias", exp.TableAlias(this=exp.to_identifier(subquery.alias)))
+        alias = exp.TableAlias(this=exp.to_identifier(subquery.alias))
+        columns = subquery.args["alias"].args.get("columns")
+        if columns:  # `(...) AS t (a, b)` names the relation's columns; the lifted reference must keep them
+            alias.set("columns", [column.copy() for column in columns])
+        replacement.set("alias", alias)
     # PIVOT / UNPIVOT / TABLESAMPLE attach to the subquery in the tree; they belong to the relation
     # and must move onto the new table reference, or the lifted query silently loses them.
     for key in ("pivots", "sample", "laterals"):
@@ -281,7 +296,7 @@ def _tree_depth(node: exp.Expression) -> int:
     return depth
 
 
-def _lift_query(query: exp.Expression, counter: list[int] | None = None, check_scope: bool = True) -> int:
+def _lift_query(query: exp.Expression, counter: list[int] | None = None) -> int:
     """Lift relation subqueries from a SELECT/UNION query, recursively."""
 
     used = _used_relation_names(query)
@@ -297,7 +312,7 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None, check_s
     # lifted CTE. That gives every lifted relation one top-level name and
     # keeps dependency order (inner before outer).
     while True:
-        candidates = [s for s in _relation_subqueries(query) if _liftable(s, query, check_scope)]
+        candidates = [s for s in _relation_subqueries(query) if _liftable(s, query)]
         if not candidates:
             break
 
@@ -340,10 +355,10 @@ def _lift_query(query: exp.Expression, counter: list[int] | None = None, check_s
 _NO_STATEMENT_WITH = (exp.Update, exp.Delete, exp.Merge)
 
 
-def _transform_statement(statement: exp.Expression, check_scope: bool = True) -> int:
+def _transform_statement(statement: exp.Expression) -> int:
     query = None if isinstance(statement, _NO_STATEMENT_WITH) else top_level_query(statement)
     if query is not None:
-        return _lift_query(query, check_scope=check_scope)
+        return _lift_query(query)
 
     # BigQuery scripting statements such as SET can contain a query inside a
     # scalar expression, and UPDATE, DELETE and MERGE cannot start with WITH.
@@ -358,7 +373,7 @@ def _transform_statement(statement: exp.Expression, check_scope: bool = True) ->
         if isinstance(node, (exp.Select, exp.Union)) and _relation_subqueries(node)
     ]
     for query_node in query_nodes:
-        lifted += _lift_query(query_node, check_scope=check_scope)
+        lifted += _lift_query(query_node)
     return lifted
 
 
@@ -372,10 +387,9 @@ class LiftSubqueriesRule(RewriteRule):
     def rewrite_statement(
         self, statement: exp.Expression, index: int
     ) -> tuple[int, list[RuleDiagnostic]]:
-        check_scope = True
-        before = len(_liftable_subqueries(statement, check_scope))
-        lifted = _transform_statement(statement, check_scope)
-        after = len(_liftable_subqueries(statement, check_scope))
+        before = len(_liftable_subqueries(statement))
+        lifted = _transform_statement(statement)
+        after = len(_liftable_subqueries(statement))
         kept = len(_relation_subqueries(statement)) - after
         diagnostics: list[RuleDiagnostic] = []
         if before and after:

@@ -453,6 +453,24 @@ def _proposed_database(pair: Pair, result) -> list[dict]:
     return [data]
 
 
+def _text_types(pair: Pair) -> dict[str, dict[str, str]]:
+    """The columns the queries compare with a string, declared as text (the pairs carry no types).
+
+    This is the same reading the witness search uses (``column_kinds``), so the prover and the search agree on which columns
+    hold text. Without it every such column is untyped, and the prover declines a proof that two different strings differ.
+    """
+
+    try:
+        trees = [sqlglot.parse_one(sql, read="mysql") for sql in (pair.left, pair.right)]
+    except sqlglot.errors.SqlglotError:
+        return {}
+    types: dict[str, dict[str, str]] = {}
+    for (table, column), kind in column_kinds(trees, pair.tables).items():
+        if kind == "VARCHAR":
+            types.setdefault(table, {})[column] = "STRING"
+    return types
+
+
 def prove(pair: Pair):
     """``(proved, proposed databases, reason)``: the prover's verdict, any counterexample it proposed, and why not."""
 
@@ -461,6 +479,9 @@ def prove(pair: Pair):
     from kumosql.canonical_rules import canonicalize
 
     options = dict(schema=pair.tables, compare_names=False, dialect="mysql", timeout_ms=4000)
+    text = _text_types(pair)
+    if text:
+        options["types"] = text
     first = prove_equivalent_algebraic(pair.left, pair.right, **options)
     if first.proven:
         return True, [], first.reason

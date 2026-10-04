@@ -39,6 +39,7 @@ import sqlglot
 from sqlglot import exp
 
 from .smt_equivalence import Counterexample, TableConstraints
+from .type_names import invalid_type_name
 
 ASSUMPTION = "the counterexample was found by running both queries on DuckDB with the declared column types"
 
@@ -373,6 +374,8 @@ def search_counterexample(
 
     if dialect != "bigquery" or not schema or not types:
         return None
+    if invalid_type_name(left_sql) or invalid_type_name(right_sql):
+        return None  # BigQuery rejects the query, and DuckDB would run it anyway
     try:
         import duckdb  # noqa: F401
     except ImportError:
