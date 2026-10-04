@@ -311,7 +311,8 @@ def published_size(case: dict, record: dict) -> tuple[bool | None, int]:
     script = record.get("counterexample")
     if not script:
         return None, 0
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     results = []
     try:
         for statement in [x for x in sqlglot.parse(script, read="mysql") if x is not None]:
