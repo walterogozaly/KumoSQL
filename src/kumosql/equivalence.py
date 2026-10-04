@@ -35,6 +35,7 @@ from .parse_check import refuse_misread_proofs
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
 from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
+from .proof_lift import LIFT_ASSUMPTIONS, LIFT_FAMILY, check_lift_transition
 from .proof_syntax import (
     DISTINCT_ASSUMPTIONS,
     DISTINCT_FAMILY,
@@ -924,6 +925,24 @@ def _checked_cte_normalization(before: exp.Expression, after: exp.Expression) ->
     return check
 
 
+def _checked_lift(before: exp.Expression, after: exp.Expression, before_sql: str, after_sql: str) -> StepCheck | None:
+    """Have ``proof_lift`` re-derive the subquery lifting from the query's text and the lifter's output text.
+
+    The lifter that turns FROM subqueries into CTEs is the rewrite rule's lifter, so a mistake in it (a name a
+    table already has, a captured name, a subquery moved out of its scope) would be shared by both sides of a
+    proof. The checker reads both texts again and imports none of that code. ``None`` when nothing was lifted;
+    raises ``_StepRejected`` when the checker refuses the change.
+    """
+
+    if same_tree(before, after):
+        return None
+    step = RewriteStep("lift_subqueries", LIFT_FAMILY, 0, before_sql, after_sql, LIFT_ASSUMPTIONS)
+    check = check_lift_transition(step, before, after)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
 _GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
 
 
@@ -960,10 +979,16 @@ def _prepare_query(
         # parameters, so the query would compare equal to its valid unparameterized twin.
         raise ValueError("BigQuery does not allow parameterized types in CAST")
     lifted = lift_subqueries(sql, rewrite_pipe_syntax=True)
-    if lifted.diagnostics:
-        details = "; ".join(f"{d.code}: {d.message}" for d in lifted.diagnostics)
+    # A derived table that reads the query around it stays where it is (a CTE could not see that query); it is
+    # compared inline on both sides, so it is no reason to stop.
+    diagnostics = [d for d in lifted.diagnostics if d.code != "correlated_subquery_kept"]
+    if diagnostics:
+        details = "; ".join(f"{d.code}: {d.message}" for d in diagnostics)
         raise ValueError(f"query could not be normalized without diagnostics: {details}")
     query = _parse_single_query(lifted.sql)
+    lift_check = _checked_lift(parsed, query, sql, lifted.sql)
+    if lift_check is not None and checks is not None:
+        checks.append(lift_check)
     if ignore_row_order:
         _remove_unordered_result_order(query)
     # Recorded before the remaining structure-changing normalizations so that
