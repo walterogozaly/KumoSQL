@@ -46,6 +46,10 @@ print(result.status.value)  # proven_equivalent
 
 A comment such as `-- note` does not change what a query returns, so it does not stop two queries from being proven the same. The one exception is a comment holding a Dataform `${...}` expression: Dataform fills those in even inside comments, and the result can turn into real SQL, so such a comment is compared like code. For example `SELECT 1 AS a -- note` and `SELECT 1 AS a` are proven the same. See the [full reference](../docs/provers.md) for details.
 
+## Moving a subquery into a WITH
+
+Before comparing two queries KumoSQL moves each subquery in a `FROM` into a `WITH` so both sides are in the same shape. A subquery that reads a column of the query around it, or a table a nested `WITH` defines, would mean something else once moved, so it stays where it is and the comparison is made with it in place. Without this, a lifted form that no longer ran could be called equal to the query it came from. A column with no table in front of it, read over a real table, still counts as that subquery's own; KumoSQL cannot tell without the table's columns. See the [full reference](../docs/provers.md).
+
 ## What if the answer is unknown?
 
 It may mean the SQL uses an unsupported feature, a table's columns are missing, or the solver reached its time or work limit. It does not establish that the queries differ. Text that cannot be read at all (an unclosed quote, very deep nesting) and queries that would take too long to even set up (a chain of CTEs that each read the previous one twice) also come back unknown rather than as an error.
