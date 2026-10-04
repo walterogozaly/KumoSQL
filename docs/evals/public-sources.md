@@ -92,7 +92,7 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | **new** (batch 2): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time |
+| A-E01 | Arcwise-Plat-SQL corrections (`uiuc-kang-lab/text_to_sql_benchmarks`) | CC BY-SA 4.0 | yes | 498 BIRD records with original and corrected SQL, plus BIRD schemas | covered: `arcwise-corrections` ([page](arcwise-corrections.md)): original against corrected SQL as negatives, refuted on databases KumoSQL builds; downloaded at run time, never committed |
 | A-E02 | Dr.Spider | Apache-2.0, CC BY 4.0 | no: `data.tar.gz` is a Git LFS pointer | 17 perturbation suites | not added |
 | A-E03 | IBM text2sql eval toolkit results | CC BY-SA 4.0 | no: results are on HuggingFace | — | not added |
 | A-E04 | SQL-IQ | MIT | yes | — | covered: `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` ([page](sql-iq.md)) |
