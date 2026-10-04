@@ -270,3 +270,54 @@ def test_route_folds_the_loaded_project(ui_server, diamond, monkeypatch):
     )
     with urlopen(request) as response:
         assert json.load(response)["status"] == "equivalent"
+
+
+def _limit_build(root, source, target):
+    write(root, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: an\n")
+    write(root, "definitions/up.sqlx", 'config { type: "declaration", schema: "raw", name: "upstream" }\n')
+    write(root, "definitions/q.sqlx", TABLE + source + "\n")
+    write(root, "definitions/d.sqlx", TABLE + target + "\n")
+    return load_sqlx_project(root)
+
+
+TIED_LIMITS = [
+    ('SELECT id, amount FROM ${ref("raw","upstream")}', 'SELECT id FROM ${ref("q")} ORDER BY amount LIMIT 1'),
+    ('SELECT id, amount FROM ${ref("raw","upstream")} ORDER BY amount LIMIT 1', 'SELECT id FROM ${ref("q")}'),
+    ('SELECT id, amount FROM ${ref("raw","upstream")}', 'SELECT id FROM (SELECT id FROM ${ref("q")} ORDER BY amount LIMIT 1) AS t'),
+]
+
+
+@pytest.mark.parametrize("source,target", TIED_LIMITS)
+def test_a_fold_that_needs_a_limit_to_cut_the_same_rows_is_not_called_equivalent(tmp_path, source, target):
+    pipeline = _limit_build(tmp_path, source, target)
+    result = consolidate.consolidate_tables(pipeline, ["q"], "d")
+    assert result.status == "unknown" and not result.proven
+    assert "LIMIT" in result.reason and "stable-selection" in result.reason
+    assert result.sql  # still shown so it can be read
+    assert result.assumptions == []
+
+
+@pytest.mark.parametrize("source,target", TIED_LIMITS)
+def test_a_stable_selection_contract_accepts_the_fold_and_says_so(tmp_path, source, target):
+    pipeline = _limit_build(tmp_path, source, target)
+    result = consolidate.consolidate_tables(pipeline, ["q"], "d", stable_selection=True)
+    assert result.proven
+    assert any("LIMIT" in a for a in result.assumptions)
+    assert any("stable-selection" in n for n in result.notes)
+
+
+def test_a_limit_over_a_total_order_still_folds_without_a_contract(tmp_path):
+    pipeline = _limit_build(
+        tmp_path, 'SELECT id, amount FROM ${ref("raw","upstream")}', 'SELECT id, amount FROM ${ref("q")} ORDER BY id, amount LIMIT 1',
+    )
+    result = consolidate.consolidate_tables(pipeline, ["q"], "d")
+    assert result.proven and not any("LIMIT" in a for a in result.assumptions)
+
+
+def test_the_cli_and_the_api_take_the_stable_selection_contract(tmp_path, capsys):
+    root = tmp_path / "p"
+    _limit_build(root, *TIED_LIMITS[0])
+    assert consolidate.main([str(root), "d", "q"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "unknown"
+    assert consolidate.main([str(root), "d", "q", "--stable-selection"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "equivalent"
