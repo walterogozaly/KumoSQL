@@ -42,6 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .duckdb_load import small_database
 from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, drop_case_conflicts, expand_group_by_all, expanded_reads, star_modified
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
@@ -1978,7 +1979,7 @@ class DuckDBReplay:
         self.schema = schema
         self.shuffles = shuffles
         self.duckdb = duckdb
-        self.db = duckdb.connect(":memory:")
+        self.db = small_database()
         self.cx = cx
         self.bigquery = dialect == "bigquery"
         if self.bigquery:

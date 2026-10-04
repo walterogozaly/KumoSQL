@@ -31,6 +31,7 @@ from typing import Any, Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .duckdb_load import small_database
 from .sqlx import looks_like_sqlx, split_sqlx_sections
 
 Schema = Mapping[str, Mapping[str, str]]
@@ -565,7 +566,7 @@ def _connect(dialect: str = "bigquery"):
         raise ExecutionError(
             "duckdb is required for result equivalence; install kumosql[execution]"
         ) from exc
-    connection = duckdb.connect(database=":memory:")
+    connection = small_database()
     if dialect == "bigquery":
         from .bigquery_on_duckdb import configure
 

@@ -50,6 +50,9 @@ import sqlglot
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from calcite_corpora import skip_category  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from kumosql.duckdb_load import small_database  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tests" / "fixtures" / "cosette"
 
@@ -282,7 +285,7 @@ def run_duckdb(schema_ddl: str, tables: list[dict], constraints: list[dict], sql
     rng = random.Random(seed)
     disagreements = by_name = 0
     for trial in range(trials + 1):
-        con = duckdb.connect()
+        con = small_database()
         con.execute(schema_ddl)
         if trial:
             for t in tables:

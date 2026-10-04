@@ -91,7 +91,8 @@ def _connect(db: dict[str, list[list]]):
 
     from kumosql.duckdb_load import insert_rows
 
-    con = duckdb.connect()
+    from kumosql.duckdb_load import small_database
+    con = small_database()
     for table, columns in SCHEMA.items():
         con.execute(f"CREATE TABLE {table} ({', '.join(c + ' BIGINT' for c in columns)})")
         insert_rows(con, table, db.get(table, []))
