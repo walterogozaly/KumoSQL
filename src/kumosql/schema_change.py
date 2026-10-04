@@ -27,6 +27,8 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.schema import MappingSchema
 
+from .ast_utils import binding_cte, star_modifier
+
 if TYPE_CHECKING:
     from .pipeline import Pipeline
 
@@ -99,11 +101,10 @@ def _resolve(pipeline: "Pipeline", key: str, tables: dict[str, Columns | None]) 
     if query is None:
         raise _Unresolvable("unparsed_model")
     query = query.copy()
-    ctes = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
     schema: dict = {}
     for table in list(query.find_all(exp.Table)):
-        if not table.db and table.name.lower() in ctes:
-            continue
+        if binding_cte(table) is not None:
+            continue  # a WITH table in scope here; a nested ``WITH t`` does not hide a read of the table t elsewhere
         canonical = _canonical(table, pipeline)
         if canonical is None:
             raise _Unresolvable("unknown_table")
@@ -120,8 +121,8 @@ def _resolve(pipeline: "Pipeline", key: str, tables: dict[str, Columns | None]) 
             node = node.setdefault(part, {})
         node[canonical.name] = {col: typ for col, typ in columns}
     for star in query.find_all(exp.Star):
-        named = [c.name.lower() for c in (star.args.get("except_") or [])]
-        named += [r.alias_or_name.lower() for r in (star.args.get("replace") or [])]
+        named = [c.name.lower() for c in (star_modifier(star, "except") or [])]
+        named += [r.alias_or_name.lower() for r in (star_modifier(star, "replace") or [])]
         if not named:
             continue
         scope_select = star.find_ancestor(exp.Select)

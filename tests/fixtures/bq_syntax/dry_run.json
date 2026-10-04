@@ -696,6 +696,10 @@
   "message": "Function not found: `kumosql.kumosql_messy.some_agg_udf` at [1:8]",
   "category": "needs_objects"
  },
+ "query/aggregate_where_filter": {
+  "status": "ok",
+  "bytes": 0
+ },
  "query/ai_generate": {
   "status": "error",
   "reason": "notFound",
@@ -880,6 +884,10 @@
   "status": "ok"
  },
  "query/json_type_subscript": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/like_all_any_unnest": {
   "status": "ok",
   "bytes": 0
  },
@@ -1171,6 +1179,10 @@
   "status": "ok",
   "bytes": 0
  },
+ "query/unnest_path_with_offset": {
+  "status": "ok",
+  "bytes": 0
+ },
  "query/unnest_struct_array": {
   "status": "ok",
   "bytes": 0
@@ -1223,6 +1235,10 @@
  "query/window_ntile_percent": {
   "status": "ok",
   "bytes": 290784
+ },
+ "query/with_expression": {
+  "status": "ok",
+  "bytes": 0
  },
  "query/with_in_set_operand": {
   "status": "ok",

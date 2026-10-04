@@ -188,14 +188,13 @@ def assess_change(
 
     # Tables named in a query also count, so a SELECT * over a table is found
     # even though it consumes no named column.
-    from .ast_utils import is_function_table
+    from .ast_utils import binding_cte, is_function_table
     from .pipeline import _table_name_for_schema
     from sqlglot import exp
 
     for model, query in a.parsed.items():
-        ctes = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
         for node in query.find_all(exp.Table):
-            if node.name and not is_function_table(node) and not (not node.db and node.name.lower() in ctes):
+            if node.name and not is_function_table(node) and binding_cte(node) is None:
                 name = pipeline.resolve(node) or _table_name_for_schema(node)
                 if name != model:
                     readers_index.setdefault(name, set()).add(model)
@@ -270,6 +269,9 @@ def assess_change(
                 continue
             if wanted is None:
                 note(reader, "breaks", "model_dependency", depth, ())
+                continue
+            if name in a.star_branch_tables.get(reader, ()):
+                unknown.setdefault(reader, "unexpanded_star")  # a ``SELECT *`` branch may read the column
                 continue
             refs = [r for r in a.consumed[reader] if r.table == name and r.column.lower() in wanted]
             if not refs:

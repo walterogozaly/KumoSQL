@@ -33,6 +33,7 @@ connects those tables; renaming `old` to `new` keeps both names. Dropping or tru
 without inventing an input. A script can write several tables, even though only its final supported output has
 column lineage. Stored nested fields still trace to their containing column.
 
+- A table named like a `WITH` table is a real table whenever the `WITH` does not cover that spot: a temporary table `tmp` read next to a nested `WITH tmp AS (...)` is still traced through its script statement. When a statement does not parse and its tables come from tokens, a name is skipped only where a `WITH` of that name is in scope.
 - Dynamic SQL may build a table name at runtime. KumoSQL does not guess it.
 - Updating or merging a temporary table can make its column lineage unknown while its table dependencies remain visible.
 - Unresolved Dataform expressions and unsupported statements are reported.

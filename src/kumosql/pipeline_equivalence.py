@@ -31,7 +31,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import equivalences as saved
-from .ast_utils import captured_names
+from .ast_utils import binding_cte, captured_names
 from .algebraic_equivalence import prove_equivalent_algebraic
 from .conditional_equivalence import conditions_json
 from .equivalence import _has_row_selection_nondeterminism, _nondeterminism_reasons, _value_nondeterminism_sites
@@ -120,11 +120,10 @@ def nondeterministic(tree: exp.Expression) -> str:
 
 
 def _tables(tree: exp.Expression) -> set[str]:
-    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
     found = set()
     for table in tree.find_all(exp.Table):
         parts = saved._parts(table)
-        if parts and not (len(parts) == 1 and parts[0] in ctes):
+        if parts and binding_cte(table) is None:
             found.add(".".join(parts))
     return found
 

@@ -11,6 +11,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Local browser UI](ui.md) | Starting the UI, its pages, saved state, scopes, data sources and tags |
 | [Connecting Dataform repositories](dataform-repositories.md) | Private repositories through local `git`, the data folder, logging and diagnostics, production schedules |
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
+| [Singleton aggregation and set identity](singleton-and-set-identity.md) | Key-fixed aggregation and scoped set-tree identity, with explicit collation conditions |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
 | [Proof safeguards](proof-safeguards.md) | The independent predicate and CTE checkers, Dataform expressions in proofs, and what is not covered yet |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
@@ -35,6 +36,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Eval integrity audit status](eval-integrity-status.md) | What each finding of the October 2026 external [eval integrity audit](eval-integrity-audit-2026-10-02.md) means on current master, and what was fixed |
 | [Eval integrity audit, 2026-10-02](eval-integrity-audit-2026-10-02.md) | The external audit as received: SMT snapshots, typed result comparison, the workbook fixture gate, fuzz floors |
 | [Proof re-check](proof-recheck.md) | The heavy executed search that hunts for wrong proofs among the pairs the evals count as proven: the engine, its adapters, how to triage a difference and what the first runs found |
+| [Rule-level fuzzing](rule-fuzzing.md) | Checking each rewrite `normalize` applies on its own, on the exact query it saw, with DuckDB as the oracle: how a difference is confirmed, the corpora and the limits |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
 | [Picking up a workstream](handoff.md) | How an outside contributor or agent continues a `workstream` issue: a fresh clone of master, targeted tests only, the rules that never relax, and handing the work back as a pull request |
 

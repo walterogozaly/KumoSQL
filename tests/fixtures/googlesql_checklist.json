@@ -668,8 +668,31 @@
    "feature": "WITH expression",
    "category": "function-call syntax",
    "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/operators#with_expression",
-   "sql": "SELECT WITH(a AS 1, a+1)",
-   "gap": "not read: no sqlglot expression for it"
+   "sql": "SELECT WITH(a AS 1, a+1)"
+  },
+  {
+   "feature": "LIKE ALL UNNEST",
+   "category": "operator",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/operators#like_operator",
+   "sql": "SELECT 'ab' LIKE ALL UNNEST(['a%','%b'])"
+  },
+  {
+   "feature": "LIKE SOME UNNEST",
+   "category": "operator",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/operators#like_operator",
+   "sql": "SELECT 'ab' LIKE SOME UNNEST(['a%'])"
+  },
+  {
+   "feature": "aggregate WHERE filter",
+   "category": "function-call syntax",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate-function-calls",
+   "sql": "SELECT COUNT(x WHERE x > 1) FROM UNNEST([1,2,3]) x"
+  },
+  {
+   "feature": "array path UNNEST WITH OFFSET",
+   "category": "query",
+   "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#unnest_operator",
+   "sql": "SELECT elem, off FROM (SELECT [1,2] AS arr) t, t.arr elem WITH OFFSET off"
   },
   {
    "feature": "chained function call syntax",

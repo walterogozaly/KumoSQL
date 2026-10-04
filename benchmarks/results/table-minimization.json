@@ -2,7 +2,7 @@
   "suite": "Table minimization",
   "order": 112,
   "size": 270,
-  "score": "255/270 simplified, 0 wrong; 80% of the reference reduction",
+  "score": "255/270 simplified, 0 wrong; 81% of the reference reduction",
   "metric": "Pipelines of 3 to 20 tables with protected tables that must keep their names and exact output: KumoSQL's table minimizer (kumosql.table_minimizer) returns its simplest pipeline, scored by sqlfluff complexity plus one per table (kumosql.formatting.pipeline_complexity). Quality is (original - output) / (original - reference), averaged.",
   "evidence": "proof",
   "correctness": "0 wrong: every output's protected tables agree with the original on 100 random and targeted DuckDB databases (optimizer off) plus every trap witness. 249 are proved by prove_models in the harness, 4 agree (the minimizer proved them with its own inlining, the harness's prover did not), 17 are returned unchanged (counted proven in the coverage table). Proofs are as sound as KumoSQL's prover. Negative control: the first trap of 24 dev cases is fed to the checker and each is counted wrong; the cases hold 711 traps, each with a stored witness.",
@@ -10,11 +10,11 @@
     "proven": 266,
     "unknown": 4
   },
-  "held_out": "64 cases (59 generated, 5 hand-written), run once: 63/64 simplified, 60 proved, 0 wrong, quality 0.75 (Refactor search: 23, quality 0.24)",
+  "held_out": "64 cases (59 generated, 5 hand-written), run once and rerun unchanged after the complexity score change: 63/64 simplified, 60 proved, 0 wrong, quality 0.75 (Refactor search: 23, quality 0.24)",
   "docs": "docs/evals/table-minimization.md",
   "command": "python tools/minimization_bench.py --jobs 4",
-  "date": "2026-10-03",
-  "caveats": "Cases written for this eval with Claude (241 generated from templates, 29 hand-written dev cases), each reference verified on 300 DuckDB databases; KumoSQL proves 170 of the 334 references in full. References are targets, not optima: the minimizer beats 51 of them. The minimizer was written without looking at the cases; nothing was tuned on held-out cases. Search is greedy and bounded (60 s per case); it does not add shared tables. Before the minimizer, the Refactor search scored 164/270 at quality 0.39 (python tools/minimization_bench.py --minimizer refactor).",
-  "usefulness": "255/270 dev cases improved (94.4%); total complexity 4,831.5 -> 3,164.5 against 2,682.5 for the references; by family: dead tables 94/94, duplicated logic 78/78, unused columns and joins 80/80, pass-through chains 92/93, redundant filters 69/70, CTE repeats 73/80, mergeable tables 94/104",
-  "performance": "Minimizer: median 4.6 s per case, max 74 s, 2,008 s in total on the dev split (4 workers; 60 s search limit per case). Checking: 1,001 s."
+  "date": "2026-10-04",
+  "caveats": "Cases written for this eval with Claude (241 generated from templates, 29 hand-written dev cases), each reference verified on 300 DuckDB databases; KumoSQL proves 170 of the 334 references in full. References are targets, not optima: the minimizer beats 51 of them. The minimizer was written without looking at the cases; nothing was tuned on held-out cases. Search is greedy and bounded (60 s per case); it does not add shared tables. Rerun on 2026-10-04 after the complexity score change, which rescored 12 stored complexities; the number of improved cases did not move. Before the minimizer, the Refactor search scored 164/270 at quality 0.39 (python tools/minimization_bench.py --minimizer refactor).",
+  "usefulness": "255/270 dev cases improved (94.4%); total complexity 4,831.5 -> 3,164.5 against 2,693.5 for the references; by family: dead tables 94/94, duplicated logic 78/78, unused columns and joins 80/80, pass-through chains 92/93, redundant filters 69/70, CTE repeats 73/80, mergeable tables 94/104",
+  "performance": "Minimizer: median 3.4 s per case, max 66 s, 1,631 s in total on the dev split (4 workers; 60 s search limit per case). Checking: 450 s."
 }

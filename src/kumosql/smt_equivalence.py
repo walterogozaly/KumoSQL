@@ -66,7 +66,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
 from .set_operations import positional_sql_pair
-from .solver_lock import bounded_solver, serialized
+from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .sqlx_fragments import masked_template_problem
 from . import string_number_compare
@@ -643,6 +643,50 @@ class _Source:
         if self.occ.columns is None:
             raise Unsupported(f"SELECT * over {self.occ.table} needs a schema")
         return [(name, self.occ.col(name)) for name in self.occ.columns]
+
+
+def _star_columns(star: exp.Star, columns: list[tuple[str, _Val]]) -> list[tuple[str, _Val | exp.Expression]]:
+    """What ``*`` or ``t.*`` lists, given what it would list bare (``columns``), after its EXCEPT, REPLACE and RENAME.
+
+    They apply in that order, the order sqlglot reads them in. sqlglot 30 calls EXCEPT ``except_`` and 26
+    ``except``: both are read. A REPLACE value comes back as its expression, for the select to compile in its
+    FROM scope. A name the star lacks or lists twice (the query fails, or engines differ on the column it
+    means), a RENAME onto a name the star has, and any other modifier (``ILIKE``) are declined.
+    """
+
+    modifiers = {key.rstrip("_"): value for key, value in star.args.items() if value}
+    if set(modifiers) - {"except", "replace", "rename"}:
+        raise Unsupported(f"SELECT * {' '.join(sorted(m.upper() for m in modifiers))}")
+    out: list = list(columns)
+
+    def position(name: str) -> int:
+        found = [i for i, (n, _) in enumerate(out) if n == name]
+        if len(found) != 1:
+            raise Unsupported(f"SELECT * modifier naming {name}, which the star lists {len(found)} times")
+        return found[0]
+
+    def named(node) -> str:
+        if isinstance(node, exp.Column) and not node.table and isinstance(node.this, exp.Identifier):
+            return node.name.lower()
+        raise Unsupported(f"SELECT * modifier naming {node.sql(dialect='bigquery')}")
+
+    for column in modifiers.get("except", ()):
+        del out[position(named(column))]
+    for key in ("replace", "rename"):
+        if any(not isinstance(a, exp.Alias) or not a.alias for a in modifiers.get(key, ())):
+            raise Unsupported(f"SELECT * {key.upper()} of this shape")
+    replace = [(position(a.alias.lower()), a.this) for a in modifiers.get("replace", ())]
+    rename = [(position(named(a.this)), a.alias.lower()) for a in modifiers.get("rename", ())]
+    if len({i for i, _ in replace}) != len(replace) or len({i for i, _ in rename}) != len(rename):
+        raise Unsupported("SELECT * modifier naming a column twice")
+    # Renames read the names before any of them applies; one onto a name the star has (a swap, say) is declined.
+    if len({n for _, n in rename}) != len(rename) or any(out[j][0] == n for i, n in rename for j in range(len(out)) if j != i):
+        raise Unsupported("SELECT * RENAME onto a name the star has")
+    for i, value in replace:
+        out[i] = (out[i][0], value)
+    for i, name in rename:
+        out[i] = (name, out[i][1])
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1229,8 +1273,6 @@ class _Compiler:
         aliases: dict[str, exp.Expression] = {}
         for item in node.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
-                if item.args.get("except") or item.args.get("replace"):
-                    raise Unsupported("SELECT * EXCEPT/REPLACE")
                 if isinstance(item, exp.Star):
                     sources = list(env.values())
                 else:
@@ -1238,10 +1280,14 @@ class _Compiler:
                     if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
-                for source in sources:
-                    for name, val in source.star():
-                        names.append(name)
-                        outputs.append(val)
+                # ``t.*`` keeps its EXCEPT/REPLACE/RENAME on the Star under the column.
+                star = item if isinstance(item, exp.Star) else item.this
+                for name, val in _star_columns(star, [pair for source in sources for pair in source.star()]):
+                    if isinstance(val, exp.Expression):
+                        aliases[name] = val  # ``* REPLACE (e AS a)`` names ``e`` as ``e AS a`` does
+                        val = self._val(val, env, agg_ctx, None)
+                    names.append(name)
+                    outputs.append(val)
                 continue
             expr = item.this if isinstance(item, exp.Alias) else item
             name = item.alias_or_name.lower() if isinstance(item, (exp.Alias, exp.Column)) else ""
@@ -2156,7 +2202,7 @@ class _Prover:
         self.unknown = False
         self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
-        self.candidates: list[tuple[object, list[_Occ]]] = []
+        self.candidates: list[tuple[object, object, list[_Occ], list[_Val]]] = []
 
     @staticmethod
     def _typing(occs: list[_Occ]):
@@ -2263,33 +2309,48 @@ class _Prover:
         if result == z3.unsat:
             return True
         if result == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
         else:
             self.unknown = True
             self.wall_clock = self.wall_clock or solver.reason_unknown() == "timeout"
         return False
 
-    def _counterexample(self, solver, occs):
-        """A model of the last satisfiable check, preferring an integral one.
+    def _candidate(self, solver, occs):
+        # Internal proof attempts often discard their candidates or prove the pair.
+        # Only extract a model if refutation search actually consumes this candidate.
+        # Keep the asserted terms and the plain model, not the solver: a solver holds its whole search state,
+        # and a prover that collects many candidates would hold all of it until the search ends.
+        # Snapshot the values now: occurrences can acquire more columns later.
+        values = [v for occ in occs for v in occ.cols.values()]
+        self.candidates.append((solver.assertions(), solver.model(), list(occs), values))
 
-        The plain model is read first: ``_nice_model`` runs further checks, and
-        after those the solver holds no model to fall back on.
+    def _counterexample(self, assertions, base, values):
+        """A model of a satisfiable check, preferring an integral one.
+
+        Extract candidates in a fresh context: the shared context's term ids can
+        change which unconstrained NULL flags Z3 picks across identical calls.
+        The proof check above is unchanged, and every candidate is still checked
+        against the constraints and both queries before it is returned.
         """
 
-        base = solver.model()
-        return self._nice_model(solver, occs) or base
+        context = z3.Context()
+        isolated = bound(z3.Solver(ctx=context), self.timeout_ms)  # a fresh solver has no limits of its own
+        isolated.add(*[assertion.translate(context) for assertion in assertions])
+        if isolated.check() != z3.sat:
+            return base  # A timeout in the extra search must not lose a satisfiable model.
+        model = self._nice_model(isolated, values) or isolated.model()
+        return model.translate(base.ctx)
 
-    def _nice_model(self, solver, occs):
+    def _nice_model(self, solver, values):
         """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
         column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
-        values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
         for extra in (integral + numeric, numeric, integral):
             solver.push()
-            solver.add(*extra)
+            solver.add(*[fact.translate(solver.ctx) for fact in extra])
             model = solver.model() if solver.check() == z3.sat else None
             solver.pop()
             if model is not None:
@@ -2303,7 +2364,7 @@ class _Prover:
         solver.add(*facts)
         solver.add(pred)
         if solver.check() == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
 
     def unify_subs(self, a_subs: list, b_subs: list, base_pairs: list, scope: list, facts):
         """Group equivalent existence tests so equal tests share one atom.
@@ -3588,7 +3649,8 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         prover.witness(block.cond.t, block.occs, block.facts)
     empty = z3.Solver()
     empty.check()
-    for model, occs in [(empty.model(), [])] + prover.candidates:
+    for assertions, base, occs, values in [(None, empty.model(), [], [])] + prover.candidates:
+        model = prover._counterexample(assertions, base, values) if occs else base
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})
