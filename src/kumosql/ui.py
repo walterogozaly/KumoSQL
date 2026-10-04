@@ -698,7 +698,7 @@ class UIHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/consolidate-tables":
                 from . import consolidate
 
-                result = consolidate.consolidate_loaded(payload.get("tables"), payload.get("target"))
+                result = consolidate.consolidate_loaded(payload.get("tables"), payload.get("target"), payload.get("stable_selection", False))
             elif self.path in ("/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries"):
                 from . import equivalences, pipeline_equivalence
 

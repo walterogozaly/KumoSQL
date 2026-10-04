@@ -191,8 +191,16 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
     restorations: list[SqlxRestoration] = []
     cursor = 0
     ordinal = 0
+    comments = sql_comment_spans(sql)
     while True:
         opening = sql.find("${", cursor)
+        while opening >= 0 and any(start <= opening < end for start, end in comments):
+            try:
+                _find_interpolation_end(sql, opening)
+                break
+            except ValueError:
+                # Dataform leaves ${...} in a SQL comment as text, so one that never closes is only comment text.
+                opening = sql.find("${", opening + 2)
         if opening < 0:
             output.append(sql[cursor:])
             break
@@ -271,7 +279,9 @@ def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, .
 
     restored = sql
     for item in restorations:
-        restored = item.pattern.sub(item.original, restored)
+        # A function replacement is inserted as is; a string one would read
+        # the backslashes in ``r'\d'`` or ``\1`` as replacement syntax.
+        restored = item.pattern.sub(lambda _match, original=item.original: original, restored)
         # sqlglot can quote an identifier sentinel when it occurs inside a
         # quoted table reference. Restore that spelling too.
         restored = restored.replace(f"`{item.token}`", item.original)

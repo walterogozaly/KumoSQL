@@ -228,6 +228,17 @@ class _Setup:
         return round(sum(self.score(s) for s in state.values()) + len(state), 2), sum(len(s) for s in state.values())
 
 
+def _with_incremental(fixed, incremental):
+    """``fixed`` plus the incremental tables: a table that builds on its own earlier rows cannot be read as its SELECT."""
+
+    names = [str(n) for n in (incremental or ())]
+    if not names:
+        return fixed
+    if isinstance(fixed, Mapping):
+        return {**{name: None for name in names}, **fixed}
+    return [*(fixed or ()), *names]
+
+
 def _prepare(tables, protected, sources, dialect, timeout_ms, fixed=None, checked=(), keep_columns=None, extra_texts=()):
     if not isinstance(tables, Mapping) or not tables:
         raise MinimizationError("give at least one table")
@@ -1193,6 +1204,7 @@ def minimize_tables(
     max_steps: int = 200,
     progress: Callable[[str], None] | None = None,
     fixed: Iterable[str] | Mapping[str, object] = (),
+    incremental: Iterable[str] = (),
     checked: Iterable[str] = (),
     keep_columns: Mapping[str, Iterable[str]] | None = None,
     factor: bool = False,
@@ -1206,7 +1218,10 @@ def minimize_tables(
     the prover may assume. Raises :class:`MinimizationError` on input it cannot use.
 
     ``fixed`` tables are kept exactly as given, like a table that is not a query, and every table they
-    read is kept and proved unchanged (a mapping gives their columns). A ``checked`` table may be dropped
+    read is kept and proved unchanged (a mapping gives their columns). ``incremental`` names tables whose
+    rows depend on earlier runs (a SELECT alone cannot say so, nor give a ``uniqueKey``, an
+    ``updatePartitionFilter`` or a schedule): they are fixed, so they are never folded, merged, pruned or
+    rewritten. A ``checked`` table may be dropped
     or folded away, but while it exists it must stay proved equal to the original on the columns it
     keeps. ``keep_columns`` are columns of a table that are never pruned. With ``factor``, a query
     repeated as a derived table or WITH table in several tables may be moved into a table of its own
@@ -1216,6 +1231,7 @@ def minimize_tables(
 
     started = time.time()
     protected = list(protected)
+    fixed = _with_incremental(fixed, incremental)
     setup, names, mapping, back = _prepare(tables, protected, sources, dialect, timeout_ms, fixed, checked, keep_columns)
     setup.factor = factor
     start = dict(setup.original)
@@ -1421,6 +1437,7 @@ def verify_tables(
     dialect: str = "bigquery",
     timeout_ms: int = 5000,
     fixed: Iterable[str] | Mapping[str, object] = (),
+    incremental: Iterable[str] = (),
     checked: Iterable[str] = (),
 ) -> dict[str, ProtectedProof]:
     """Check a proposed set of tables against the original: one result per protected table.
@@ -1429,12 +1446,13 @@ def verify_tables(
     returns the same rows, with the same output columns), ``missing`` or ``unknown`` (not proved; the reason
     says why). ``candidate`` may add tables of its own. Raises :class:`MinimizationError` on unusable input.
 
-    ``fixed`` tables (as in :func:`minimize_tables`) must be in the candidate exactly as given, and every
+    ``fixed`` and ``incremental`` tables (as in :func:`minimize_tables`) must be in the candidate exactly as given, and every
     table one of them (or an unreadable table) reads gets a result too, since it is read as given. Each
     ``checked`` table the candidate still has gets a result: proved equal on the columns it keeps.
     """
 
     protected = list(protected)
+    fixed = _with_incremental(fixed, incremental)
     fold = dialect != "bigquery"
     added = {name: sql for name, sql in candidate.items()
              if _parts(str(name), fold) not in {_parts(str(n), fold) for n in original}}
@@ -1520,7 +1538,7 @@ def minimize_case(case: Mapping) -> dict[str, str]:
 
     return minimize_tables(
         case["tables"], case["protected"], sources=case.get("sources"), dialect=case.get("dialect") or "bigquery",
-        max_seconds=float(case.get("max_seconds") or 60.0),
+        max_seconds=float(case.get("max_seconds") or 60.0), incremental=case.get("incremental") or (),
     ).tables
 
 
@@ -1536,7 +1554,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m kumosql minimize-tables",
         description=__doc__.split("\n")[0] + " READ-ONLY: it prints the result and writes no file.")
-    parser.add_argument("case", help="JSON file with tables, protected and (optionally) sources and dialect; - reads stdin")
+    parser.add_argument("case", help="JSON file with tables, protected and (optionally) sources, dialect and incremental (tables kept as written); - reads stdin")
     parser.add_argument("--max-seconds", type=float, default=120.0)
     parser.add_argument("--timeout-ms", type=int, default=5000)
     args = parser.parse_args(argv)
@@ -1545,7 +1563,7 @@ def main(argv: list[str] | None = None) -> int:
         case = json.loads(text)
         result = minimize_tables(
             case["tables"], case["protected"], sources=case.get("sources"), dialect=case.get("dialect") or "bigquery",
-            timeout_ms=args.timeout_ms, max_seconds=args.max_seconds,
+            timeout_ms=args.timeout_ms, max_seconds=args.max_seconds, incremental=case.get("incremental") or (),
             progress=lambda line: print(line, file=sys.stderr),
         )
     except (OSError, ValueError, KeyError) as error:
