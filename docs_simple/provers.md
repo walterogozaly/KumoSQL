@@ -42,6 +42,10 @@ result = prove_equivalent(
 print(result.status.value)  # proven_equivalent
 ```
 
+## Comments
+
+A comment such as `-- note` does not change what a query returns, so it does not stop two queries from being proven the same. The one exception is a comment holding a Dataform `${...}` expression: Dataform fills those in even inside comments, and the result can turn into real SQL, so such a comment is compared like code. For example `SELECT 1 AS a -- note` and `SELECT 1 AS a` are proven the same. See the [full reference](../docs/provers.md) for details.
+
 ## What if the answer is unknown?
 
 It may mean the SQL uses an unsupported feature, a table's columns are missing, or the solver reached its time or work limit. It does not establish that the queries differ. Text that cannot be read at all (an unclosed quote, very deep nesting) and queries that would take too long to even set up (a chain of CTEs that each read the previous one twice) also come back unknown rather than as an error.
