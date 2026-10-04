@@ -278,7 +278,19 @@ class Pipeline:
         return dict(self._analyse().statement_writes)
 
     def topological_order(self) -> list[str]:
+        """Models in dependency order, each after the models it reads.
+
+        Models on a dependency cycle cannot be ordered: they come last, by name, each with a
+        ``cycle`` diagnostic, and :meth:`cyclic_models` lists them. Only when that list is empty
+        is the whole result a topological order.
+        """
+
         return self._analyse().order
+
+    def cyclic_models(self) -> list[str]:
+        """Models on a dependency cycle, which :meth:`topological_order` could not place."""
+
+        return sorted({d.model for d in self._analyse().diagnostics if d.code == "cycle"})
 
     # ---------------------------------------------------------------- columns
 
@@ -361,7 +373,11 @@ class Pipeline:
         return _closure(column, self._analyse().lineage)
 
     def downstream_columns(self, column: ColumnRef) -> frozenset[ColumnRef]:
-        """Every model column, across the pipeline, computed from ``column``."""
+        """Every model column, across the pipeline, whose value is computed from ``column``.
+
+        This is value lineage: a model that only filters, joins or groups on ``column`` has no
+        column here although its rows depend on it. :meth:`assess_change` follows those too.
+        """
 
         return _closure(column, self._analyse().reverse_lineage)
 
@@ -375,7 +391,10 @@ class Pipeline:
 
         Terminal models (nothing downstream) are treated as pipeline outputs
         and never reported. A model is skipped when any consumer could not be
-        analysed, because an unseen reader might use any column.
+        analysed, because an unseen reader might use any column. A column its
+        own config names (a built-in assertion, ``partitionBy``, ``clusterBy``,
+        ``uniqueKey``, ``updatePartitionFilter``) counts as used, and a model
+        whose config reads columns it cannot read is skipped.
         """
 
         analysis = self._analyse()
@@ -389,14 +408,17 @@ class Pipeline:
             if any(reader not in analysis.consumed or reader in cyclic for reader in readers):
                 continue  # a reader that was not analysed, or sits in a dependency cycle (so its input columns were unknown), might use any column
             outputs = analysis.outputs.get(key)
-            if not outputs:
-                continue
+            model = self.models.get(key)
+            if not outputs or (model is not None and model.config_reads_unread):
+                continue  # a config value that reads columns could not be read: any column might be used
             used = {
                 ref.column.lower()
                 for reader in readers
                 for ref in analysis.consumed.get(reader, ())
                 if ref.table == key
             }
+            if model is not None:
+                used.update(model.config_reads)  # built-in assertions, partitioning and clustering read columns too
             dead = tuple(column for column in outputs if column.lower() not in used)
             if dead:
                 result[key] = dead
@@ -720,6 +742,8 @@ class Pipeline:
             "scope": scope.name,
             "models": len(keep),
             "order": [key for key in report["order"] if key in keep],
+            "cyclic_models": [key for key in report["cyclic_models"] if key in keep],
+            "order_complete": not any(key in keep for key in report["cyclic_models"]),
             "node_identities": {
                 key: value for key, value in report["node_identities"].items() if key in keep
             },
@@ -794,6 +818,7 @@ class Pipeline:
             return value
 
         order = section("order", [], self.topological_order)
+        cyclic = section("cyclic_models", [], self.cyclic_models)
         dead = section("dead_columns", {}, lambda: {k: list(v) for k, v in self.dead_columns().items()})
         lineage_rows = section("column_lineage", [], self.lineage_report)
         table_reads = section("table_reads", {}, lambda: {k: sorted(v) for k, v in self.table_reads().items()})
@@ -835,6 +860,9 @@ class Pipeline:
                 for key, model in sorted(self.models.items())
             },
             "order": order,
+            # False when models on a cycle were appended unordered at the end of ``order``.
+            "order_complete": not cyclic,
+            "cyclic_models": cyclic,
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
             "table_reads": table_reads,
             "table_writes": table_writes,

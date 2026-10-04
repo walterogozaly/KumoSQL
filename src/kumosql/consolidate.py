@@ -31,6 +31,21 @@ from .refactor import _Reads, _alias_of, _parse, _replace_tables, check_observab
 FOLDABLE = ("table", "view", "sql")
 
 
+HELP_SUMMARY = (
+    "READ-ONLY PREVIEW. Shows what one table would look like with a chain of intermediate tables folded into it,\n"
+    "and whether that was proved to return the same rows. It prints JSON to the screen and changes none of your files."
+)
+HELP_EPILOG = (
+    "This command never writes, moves, renames or deletes any of your files, never touches the project folder, and\n"
+    "has no option that does. Copy the printed \"sql\" into the target model yourself if you want it.\n"
+    "(Like every KumoSQL command that analyzes a project, it appends timing lines to KumoSQL's own diagnostic log,\n"
+    "ui.log, in KumoSQL's data folder; that is not part of your project.)\n"
+    "\n"
+    "Exit code: 0 proved equal, 1 not proved (unknown), 2 refused or bad input.\n"
+    "Example: python -m kumosql consolidate-tables path/to/project D A B C"
+)
+
+
 class ConsolidationError(ValueError):
     """The tables cannot be folded; ``readers`` maps a folded table to the models outside the set that read it."""
 
@@ -250,8 +265,11 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql consolidate-tables", description=__doc__.split("\n")[0])
-    parser.add_argument("project", help="Dataform or SQL folder")
+    parser = argparse.ArgumentParser(
+        prog="python -m kumosql consolidate-tables", description=HELP_SUMMARY, epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("project", help="Dataform or SQL folder (read, never modified)")
     parser.add_argument("target", help="the table that keeps existing and absorbs the others")
     parser.add_argument("tables", nargs="+", metavar="TABLE", help="intermediate tables to fold into the target")
     parser.add_argument("--timeout-ms", type=int, default=5000)

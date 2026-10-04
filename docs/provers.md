@@ -9,17 +9,19 @@ cover key-fixed zero-or-one-row joins and deterministic set trees differing in
 scoped relation aliases. String singleton joins report an explicit collation
 condition; normalization without an assumption collector refuses that rewrite.
 
+**Network.** None of these checks reaches the network. Calling a prover, a rewrite or a pipeline analysis from Python makes no request: the one optional library lookup, the columns of tables a project does not define (`SELECT *` over them), is off by default and needs an explicit opt-in (`KUMOSQL_SCHEMA_FETCH=1`, `--fetch-schema` on `python -m kumosql pipeline-report`, or the Settings checkbox in the local UI); see [whole-pipeline analysis](pipeline-analysis.md). BigQuery dry runs and planner checks are likewise opt-in calls.
+
 ## Conservative SQL equivalence
 
-`kumosql.prove_equivalent(left_sql, right_sql)` returns `proven_equivalent` only when both inputs are strict, single-query BigQuery statements whose normalized ASTs match after relational subquery lifting. By default it compares result bags, so unspecified row order is ignored.
+`kumosql.prove_equivalent(left_sql, right_sql)` returns `proven_equivalent` only when both inputs are strict, single-query BigQuery statements whose normalized ASTs match after relational subquery lifting. By default it compares result bags, so unspecified row order is ignored. With `ignore_row_order=False` (`--respect-row-order`) both queries must also end in the same `ORDER BY`; nothing shows its keys are unique, so rows tied on them may still come back in a different order, as on any two runs of either query.
 
 Root CTEs are renamed by position after being put in a canonical dependency order, so CTE order alone does not block a proof; reordering is skipped for recursive WITH, forward references, or names that differ only in case.
 
 Before comparing, the prover also removes grouping parentheses, flattens `AND`/`OR` chains, removes `TRUE` from `AND` and `FALSE` from `OR` in filter and join conditions, drops `WHERE TRUE`, merges root CTEs with identical bodies, and drops unreferenced CTEs. These normalizations are written separately from the cleanup rules, and a three-valued-logic test evaluates both against the original predicates.
 
-It refuses to prove queries containing volatile values, windows, tie-sensitive aggregates, `TABLESAMPLE`, or any `LIMIT`/`OFFSET`. Structural differences are reported as `not_proven`, never as a proof of inequivalence. This is intentional: false negatives are acceptable; false positives are not.
+It refuses to prove queries containing windows that depend on how ties are broken, tie-sensitive or approximate (`APPROX_*`) aggregates, `TABLESAMPLE`, or a `LIMIT`/`OFFSET`, unless both queries end in the same `ORDER BY ... LIMIT` over output columns. Volatile calls (`RAND()`, `CURRENT_*`, `GENERATE_UUID()`, `SESSION_USER()`) and calls that may be user-defined functions are accepted only when left identical and in place. A user-defined function name is compared exactly, since BigQuery reads it case-sensitively; built-in function names are compared in any case. Under bag semantics a root `ORDER BY` is dropped only when no key can raise an error: columns, literals, comparisons, or an expression the SELECT list already computes. This holds when a `LIMIT` that cannot cut any row is stripped first: the `ORDER BY` stays until the same check passes. Structural differences are reported as `not_proven`, never as a proof of inequivalence. This is intentional: false negatives are acceptable; false positives are not.
 
-For audit or optional execution, `result.verifier_sql` contains a BigQuery query that counts JSON-encoded result rows on each side and compares their multiplicities with a full outer join. The verifier is an execution artifact and does not override the static safety checks.
+For audit or optional execution, `result.verifier_sql` contains a BigQuery query that counts JSON-encoded result rows on each side and compares their multiplicities with a full outer join; it compares bags even when row order is respected. The verifier is an execution artifact and does not override the static safety checks.
 
 ```python
 from kumosql import prove_equivalent
@@ -45,10 +47,10 @@ Two `CREATE [OR REPLACE] TABLE|VIEW name AS query` statements are compared as a 
 
 The static prover only accepts rewrites whose normalized ASTs match. To test rewrites it cannot prove, `kumosql.check_result_equivalence(left_sql, right_sql, schema)` runs both sides against the same deterministic synthetic tables in a local DuckDB engine (BigQuery SQL is translated with `sqlglot`, then pinned to BigQuery's semantics, see [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md)) and compares the results as multisets, including column names.
 
-- Seed 0 is always empty tables; other seeds include NULLs and duplicate rows, drawn from small value domains so joins and groups collide.
+- Seed 0 is always empty tables. On other seeds each value is NULL with probability `null_rate` (default 0.15, so a small table can come out with no NULLs at all), every non-empty table without a declared key gets one exact duplicate row, and values come from small domains so joins and groups collide.
 - Every run gets a fresh in-memory connection. Tables written by a script (`CREATE TABLE ... AS`, `INSERT`) are renamed to run-unique local names, and the final written table is compared when the script does not end in a query.
 - Dataform SQLX is supported: blocks are dropped and `${ref(...)}` becomes a table name. Any other interpolation, unknown table, or execution failure is reported as `error`, never as equivalent.
-- A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof.
+- A mismatch returns `different` with the failing seed and the rows only one side produced. Agreement is evidence, not a proof, and it is weaker than BigQuery agreement: the queries run on DuckDB after translation, floats are compared to 12 significant digits, column names are compared without case, and result column types are not compared (`SELECT 1` and `SELECT 1.0` agree).
 - Data generation is seeded and repeatable: the same schema and seed always produce the same rows (a test pins a digest of a small dataset, so a change to the value domains or draw order fails loudly). Column order in the schema mapping is part of the input.
 - Each side is executed twice per seed on identical data. A side that differs from itself (for example `RAND()` or `GENERATE_UUID()`) makes the result `inconclusive`, naming the side and seed, instead of a false `different` or `equivalent`. Failures while fetching results are reported as `error`.
 
