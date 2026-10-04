@@ -73,6 +73,17 @@ def test_plain_ref_arguments_still_read():
     assert _parse_ref_args('"d", "s", "t"', Target("p", "ds", "")) == Target("d", "s", "t")
 
 
+def test_the_projects_own_default_settings_are_not_computed(tmp_path):
+    pl = project(tmp_path, {
+        "a.sqlx": 'config { type: "table", database: dataform.projectConfig.defaultDatabase, schema: dataform.projectConfig.defaultSchema }\n'
+                  'SELECT 1 AS id\n',
+        "r.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref({ name: "a", database: dataform.projectConfig.defaultDatabase })}\n',
+    })
+    assert set(pl.models) == {"p.ds.a", "p.ds.r"} and pl.models["p.ds.a"].kind == "table"
+    assert [t.key for t in pl.models["p.ds.r"].declared_dependencies] == ["p.ds.a"]
+    assert not codes(pl, "dynamic_config") and not codes(pl, "unsupported_ref")
+
+
 # ------------------------------------------------------------- prefixes and suffixes
 
 SUFFIXED = {

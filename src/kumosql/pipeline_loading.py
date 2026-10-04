@@ -159,6 +159,27 @@ def _config_literal(config: str, key: str) -> tuple[str | None, bool]:
     return None, True
 
 
+_PROJECT_DEFAULT_RE = re.compile(r"dataform\s*\.\s*projectConfig\s*\.\s*(defaultDatabase|defaultSchema)")
+
+
+def _config_identity(config: str, key: str, database: str, dataset: str) -> tuple[str | None, bool]:
+    """``_config_literal`` for ``database``, ``schema`` and ``name``, also reading ``dataform.projectConfig.defaultDatabase``
+    and ``defaultSchema``: the project's own settings, which the common ``database: dataform.projectConfig.defaultDatabase``
+    spelling means. A default the project does not set stays computed."""
+
+    value, computed = _config_literal(config, key)
+    if not computed:
+        return value, False
+    match = re.search(rf"\b{key}\s*:\s*", _blank_strings(_top_level(config)))
+    raw = _value_at(config, max(config.find("{"), 0) + match.end()).strip() if match else ""
+    named = _PROJECT_DEFAULT_RE.fullmatch(raw)
+    if named and key in ("database", "schema") and (named.group(1) == "defaultDatabase") == (key == "database"):
+        known = database if key == "database" else dataset
+        if known:
+            return known, False
+    return None, True
+
+
 def _config_flag(config: str, key: str) -> bool | None:
     """``True``/``False`` for a literal ``key: true|false`` of the config's own top level; ``None`` when absent or computed."""
 
@@ -714,7 +735,7 @@ def _parse_ref_args(
     if args.lstrip().startswith("{"):
         values = {}
         for key in ("name", "schema", "database"):
-            value, computed = _config_literal(args, key)
+            value, computed = _config_identity(args, key, default.database, default.schema)
             if computed:
                 raise ValueError(f"ref() has a computed {key}, so the table it names is not known; it was left unresolved")
             values[key] = value
@@ -820,7 +841,7 @@ def load_sqlx_project(
         kind = declared_type or ("unknown" if computed_type else "table")
         identity, computed_identity = {}, []
         for key in ("database", "schema", "name"):
-            identity[key], computed = _config_literal(config, key)
+            identity[key], computed = _config_identity(config, key, database, dataset)
             if computed:
                 computed_identity.append(key)
         logical = Target(
