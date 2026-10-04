@@ -33,10 +33,18 @@ SUM/AVG independent of row order, result column types not compared; with
 Numeric conversions that the query text makes visible are kept: a CASE, IF,
 COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
 cast, or arithmetic over one) reads each other non-literal branch as
-``CAST(.. AS FLOAT64)``, and ``x * 1`` is ``x`` only for an integer (or exact
+``CAST(.. AS FLOAT64)``, a comparison (``=``, ``<``, ``IN``, ``BETWEEN``, a
+simple ``CASE``) with a FLOAT64 operand reads each other one the same way (a
+FLOAT64 literal below 2**53 converts nothing: an integer and its rounding
+compare alike with it), and ``x * 1`` is ``x`` only for an integer (or exact
 decimal) ``1``; declared column types (``types``) count as visible. Values
 from different sources whose types are not known (two undeclared columns) are
-combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``.
+compared and combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``. A
+decimal or exponent literal is its exact value, which keeps its order against
+every FLOAT64 value only with at most 15 significant digits and inside the
+normal FLOAT64 range; other literals (``1e-324`` is 0, ``1e400`` overflows)
+are not modeled. FLOAT64 arithmetic is never computed on its literals (BigQuery's
+``0.1 + 0.2`` is not ``0.3``), except under ``exact_arithmetic``.
 
 When a proof fails the prover looks for a small concrete database on which
 the two queries return different rows; if it finds one the result is
@@ -64,7 +72,7 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails, star_modified
 from .set_operations import positional_sql_pair
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
@@ -140,7 +148,7 @@ BASE_ASSUMPTIONS = (
 )
 EXACT_ARITHMETIC_ASSUMPTION = "+, - and * are exact (no FLOAT64 rounding or INT64 overflow)"
 MIXED_NUMERIC_ASSUMPTION = (
-    "values combined by CASE, IF, COALESCE or a set operation have the same numeric type (no INT64 to FLOAT64 conversion)"
+    "values compared, or combined by CASE, IF, COALESCE or a set operation, have the same numeric type (no INT64 to FLOAT64 conversion)"
 )
 
 _NONDETERMINISTIC_NAMES = {
@@ -727,7 +735,15 @@ def _parse_number(text: str) -> Fraction:
     # and rounding preserves its order against every other FLOAT64 value.
     if len(dec.normalize().as_tuple().digits) > 15:
         raise Unsupported(f"numeric literal {text} has more than 15 significant digits")
+    # Only in the normal FLOAT64 range: below it a literal rounds to a subnormal with fewer digits or to
+    # 0 (1e-324 and 2e-324 are both 0), above it to infinity.
+    if value and not _FLOAT64_MIN_NORMAL <= abs(value) <= _FLOAT64_MAX:
+        raise Unsupported(f"numeric literal {text} is outside the normal FLOAT64 range")
     return value
+
+
+_FLOAT64_MIN_NORMAL = Fraction(sys.float_info.min)
+_FLOAT64_MAX = Fraction(sys.float_info.max)
 
 
 _INTEGER_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.Type.SMALLINT, exp.DataType.Type.TINYINT}
@@ -756,7 +772,8 @@ def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
             value = _parse_number(node.this)
         except Unsupported:
             return None
-        if value.denominator != 1 and dialect not in _EXACT_DECIMAL_LITERALS:
+        # An exponent literal is FLOAT64/DOUBLE even where decimals are exact (NUMERIC only in PostgreSQL).
+        if value.denominator != 1 and (dialect not in _EXACT_DECIMAL_LITERALS or ("e" in node.this.lower() and dialect != "postgres")):
             return None
         return value
     if isinstance(node, exp.Neg):
@@ -847,6 +864,17 @@ def _plain_literal(node: exp.Expression, dialect: str) -> bool:
     return _literal_arithmetic(node, dialect) is not None
 
 
+def _literal_value(node: exp.Expression, dialect: str) -> Fraction:
+    """The model value of a numeric ``_plain_literal`` (0 for NULL and booleans)."""
+
+    node = node.unnest() if isinstance(node, exp.Paren) else node
+    if isinstance(node, exp.Literal) and not node.is_string:
+        return _parse_number(node.this)
+    if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal) and not node.this.is_string:
+        return -_parse_number(node.this.this)
+    return _literal_arithmetic(node, dialect) or Fraction(0)
+
+
 def _branch_values(node: exp.Expression, dialect: str) -> list[exp.Expression]:
     """The expressions whose common type is the type of a CASE, COALESCE, IF or NULLIF."""
 
@@ -895,8 +923,8 @@ class _Compiler:
         # Declared column types by table key, and the table of each base-table occurrence.
         self.types = {key.lower(): {c.lower(): t for c, t in cols.items()} for key, cols in (types or {}).items()}
         self.occ_tables: dict[str, str] = {}
-        # A CASE/COALESCE/IF/NULLIF or set-operation column combined values whose numeric types are not known
-        # to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
+        # A comparison, or a CASE/COALESCE/IF/NULLIF or set-operation column, met values whose numeric types are
+        # not known to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
         self.mixed_numeric = False
         self.schema = {
             key.lower(): [c.lower() for c in cols] for key, cols in (schema or {}).items()
@@ -1593,9 +1621,9 @@ class _Compiler:
             if type(e) is cls:
                 if string_number_compare.mismatched(e, self.types):
                     return self._converted_compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
-                return self._compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+                return self._compare(op, *self._compared_vals([e.this, e.expression], env, agg, aliases))
         if isinstance(e, (exp.NullSafeEQ, exp.NullSafeNEQ)):
-            eq = _null_eq(self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+            eq = _null_eq(*self._compared_vals([e.this, e.expression], env, agg, aliases))
             eq = eq if isinstance(e, exp.NullSafeEQ) else z3.Not(eq)
             return _Pred(eq, z3.Not(eq))
         if isinstance(e, exp.Is):
@@ -1613,16 +1641,16 @@ class _Compiler:
                 return self._in_subquery(e, env, agg, aliases)
             if e.args.get("query") is not None or e.args.get("unnest") is not None or e.args.get("field") is not None:
                 raise Unsupported("IN subquery/UNNEST")
-            left = self._val(e.this, env, agg, aliases)
+            left, *items = self._compared_vals([e.this, *e.expressions], env, agg, aliases)
             result = _const_pred(False)
-            for item in e.expressions:
-                c = self._compare("=", left, self._val(item, env, agg, aliases))
+            for item in items:
+                c = self._compare("=", left, item)
                 result = _Pred(z3.Or(result.t, c.t), z3.And(result.f, c.f))
             return result
         if isinstance(e, exp.Between):
-            v = self._val(e.this, env, agg, aliases)
-            lo = self._compare(">=", v, self._val(e.args["low"], env, agg, aliases))
-            hi = self._compare("<=", v, self._val(e.args["high"], env, agg, aliases))
+            v, low, high = self._compared_vals([e.this, e.args["low"], e.args["high"]], env, agg, aliases)
+            lo = self._compare(">=", v, low)
+            hi = self._compare("<=", v, high)
             return _Pred(z3.And(lo.t, hi.t), z3.Or(lo.f, hi.f))
         if isinstance(e, exp.Exists):
             atom = self._existence(e.this, env)
@@ -1693,8 +1721,9 @@ class _Compiler:
 
         def compare(scope, node):
             tests = []
-            for left, item in zip(left_values, node.expressions):
-                right = self._val(item.this if isinstance(item, exp.Alias) else item, scope, None, None)
+            for left_expr, left, item in zip(lefts, left_values, node.expressions):
+                item = item.this if isinstance(item, exp.Alias) else item
+                left, right = self._compared([left_expr, item], [left, self._val(item, scope, None, None)])
                 tests.append(self._compare("=", left, right))
             # A row value equals another when every pair is equal; it differs when some pair differs.
             return _Pred(z3.And(*[t.t for t in tests]), z3.Or(*[t.f for t in tests]))
@@ -1797,22 +1826,23 @@ class _Compiler:
             return _Val(z3.If(cond.t, then.null, other.null), z3.If(cond.t, then.val, other.val))
         if isinstance(e, exp.Case):
             operand = e.args.get("this")
-            operand_val = self._val(operand, env, agg, aliases) if operand is not None else None
             default = e.args.get("default")
             ifs = e.args.get("ifs") or []
+            if operand is not None:
+                operand_val, *whens = self._compared_vals([operand, *[b.this for b in ifs]], env, agg, aliases)
             branches = [b.args["true"] for b in ifs] + ([default] if default is not None else [])
             values = self._common_type(branches, [self._val(b, env, agg, aliases) for b in branches])
             result = values.pop() if default is not None else _Val(z3.BoolVal(True), V.Num(0))
-            for branch, then in reversed(list(zip(ifs, values))):
-                if operand_val is not None:
-                    cond = self._compare("=", operand_val, self._val(branch.this, env, agg, aliases))
+            for i, (branch, then) in reversed(list(enumerate(zip(ifs, values)))):
+                if operand is not None:
+                    cond = self._compare("=", operand_val, whens[i])
                 else:
                     cond = self._pred(branch.this, env, agg, aliases)
                 result = _Val(z3.If(cond.t, then.null, result.null), z3.If(cond.t, then.val, result.val))
             return result
         if isinstance(e, exp.Nullif):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
-            eq = self._compare("=", a, b)
+            eq = self._compare("=", *self._compared([e.this, e.expression], [a, b]))
             if self.dialect in _NULLIF_SUPERTYPE:
                 a = self._common_type([e.this, e.expression], [a, b])[0]
             elif self.dialect not in _NULLIF_FIRST_TYPE and _float64_kind(e.expression, self.dialect):
@@ -1990,6 +2020,24 @@ class _Compiler:
             (_float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null), v) for e, v in zip(exprs, vals)
         ])
 
+    def _compared(self, exprs: list, vals: list[_Val]) -> list[_Val]:
+        """``vals`` of the operands ``exprs`` of one comparison (``=``, ``<``, ``IN``, ``BETWEEN``, a simple
+        CASE) in the type they are compared in, as ``_common_type`` does for branches: an INT64 operand
+        compared with a FLOAT64 one is converted first, so ``a = b AND b = c`` over INT64 ``a``, ``c`` and
+        FLOAT64 ``b`` does not give ``a = c``. A FLOAT64 literal below 2**53 in magnitude converts nothing:
+        an integer and its FLOAT64 rounding compare alike with it."""
+
+        entries = []
+        for e, v in zip(exprs, vals):
+            kind, literal = _float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null)
+            if literal and kind and abs(_literal_value(e, self.dialect)) < 2**53:
+                kind = False
+            entries.append((kind, literal, v))
+        return self._coerce(entries)
+
+    def _compared_vals(self, exprs: list, env, agg, aliases) -> list[_Val]:
+        return self._compared(exprs, [self._val(e, env, agg, aliases) for e in exprs])
+
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
 
@@ -2138,7 +2186,18 @@ class _Compiler:
 
 
 def _subst(term, pairs):
-    return z3.substitute(term, *pairs) if pairs else term
+    """``z3.substitute(term, *pairs)``: the same call into Z3, without z3py's per-pair checks (which
+    took most of a proof's time; Z3 itself still rejects a pair of different sorts)."""
+
+    if not pairs:
+        return term
+    if not isinstance(term, z3.ExprRef):
+        return z3.substitute(term, *pairs)
+    count = len(pairs)
+    old, new = (z3.Ast * count)(), (z3.Ast * count)()
+    for i, (x, y) in enumerate(pairs):
+        old[i], new[i] = x.as_ast(), y.as_ast()
+    return z3.z3._to_expr_ref(z3.Z3_substitute(term.ctx.ref(), term.as_ast(), count, old, new), term.ctx)
 
 
 def _subst_val(v: _Val, pairs) -> _Val:
@@ -2191,6 +2250,62 @@ def _occ_pairs(src: _Occ, dst: _Occ) -> list:
         pairs.append((v.null, target.null))
         pairs.append((v.val, target.val))
     return pairs
+
+
+class _CaseSearch:
+    """The answers of one ``set_contained_by_cases`` search, so that no check is made twice.
+
+    ``targets`` holds ``(block, parent)`` pairs. A case of a target whose tables and tests are
+    those of ``parent`` only adds a filter to it, so it holds no row ``parent`` lacks: ``parent`` is
+    the target's index, or ``("joined", index)`` for the target with the tests its own condition
+    requires made joins (``joined`` holds those blocks; every case of the target makes the same
+    joins), else ``None``. ``known`` maps ``(case key, target index or parent)`` to
+    ``(contained, decided)``, decided meaning no check timed out. ``kept`` holds every split, so
+    no id in a key is reused while the search runs.
+    """
+
+    def __init__(self, targets: list):
+        self.targets = targets
+        self.joined: dict = {}
+        self.known: dict = {}
+        self.kept: list = []
+
+    @staticmethod
+    def key(parts: frozenset, block) -> tuple:
+        """A case by the disjuncts it adds (z3 ids), its tables and its tests. Two cases with one
+        key differ only in the order of their conjuncts (``a AND p AND q`` split in either order,
+        or ``a AND p AND p`` and ``a AND p`` when no test became a join), so they have the same
+        rows and the same answers."""
+
+        return parts, _CaseSearch.shape(block)
+
+    @staticmethod
+    def shape(block) -> tuple:
+        return tuple(map(id, block.occs)), tuple(map(id, block.subs))
+
+    def answer(self, key, index: int, block, probe=None):
+        """Whether target ``index`` contains the case, when that is already known, else ``None``
+        (a refutation in which a check timed out is asked again, as before).
+
+        A target ``b AND q`` that only adds a filter to ``b`` needs ``b``'s condition and ``q``
+        under the same mappings, so a model refuting ``b`` refutes it too. ``probe(b)`` checks a
+        case against a joined target that is not itself a target (only to skip its cases).
+        """
+
+        contained, decided = self.known.get((key, index), (None, False))
+        if contained or decided:
+            return contained
+        parent = self.targets[index][1]
+        if parent is None or not isinstance(block, _Spj):
+            return None
+        if (key, parent) not in self.known and probe is not None and parent in self.joined:
+            self.known[key, parent] = probe(self.joined[parent])
+        return False if self.known.get((key, parent)) == (False, True) else None
+
+    def outside(self, key, block) -> bool:
+        """No target contains the case, as far as is already known."""
+
+        return all(self.answer(key, i, block) is False for i in range(len(self.targets)))
 
 
 class _Prover:
@@ -3256,25 +3371,76 @@ class _Prover:
         (a row passes the filter only if one disjunct is TRUE, so the cases cover
         every row). Each case of ``a`` may land in a different target, and a case
         of a target is part of that target. Up to two disjunctions of ``a`` are split.
+
+        No check is made twice (see ``_CaseSearch``), and a case of a target that only adds a
+        filter is not tried for a case its target was refuted for.
         """
 
-        if any(self.branch_set_contained(a, b) for b in targets):
+        search = _CaseSearch([(b, None) for b in targets])
+        key = _CaseSearch.key(frozenset(), a)
+        if self._in_some_target(a, key, search):
             return True
-        targets = list(targets) + [case for b in targets for cases in self._disjunctive_cases(b) for case in cases]
-        return self._contained_by_cases(a, targets, 2)
+        for i, b in enumerate(targets):
+            joined = None
+            for split in self._disjunctive_cases(b):
+                for _, case in split:
+                    shape = _CaseSearch.shape(case)
+                    if shape != _CaseSearch.shape(b) and joined is None:
+                        joined = self._quietly(lambda: self.inline_unique_subs(dataclasses.replace(b), require_unique=False))[0]
+                        search.joined["joined", i] = joined
+                    parent = i if shape == _CaseSearch.shape(b) else ("joined", i) if shape == _CaseSearch.shape(joined) else None
+                    search.targets.append((case, parent))
+        return self._contained_by_cases(a, key, search, 2)
 
-    def _contained_by_cases(self, a, targets, depth: int) -> bool:
-        if any(self.branch_set_contained(a, b) for b in targets):
+    def _contained_by_cases(self, a, key, search: "_CaseSearch", depth: int) -> bool:
+        if self._in_some_target(a, key, search):
             return True
         if depth <= 0:
             return False
-        return any(all(self._contained_by_cases(case, targets, depth - 1) for case in cases) for cases in self._disjunctive_cases(a))
+        for split in self._disjunctive_cases(a):
+            search.kept.append(split)
+            cases = [(_CaseSearch.key(key[0] | {part.get_id()}, case), case) for part, case in split]
+            if depth == 1 and any(search.outside(k, case) for k, case in cases):
+                continue  # a case no target holds: this split cannot cover ``a``
+            if all(self._contained_by_cases(case, k, search, depth - 1) for k, case in cases):
+                return True
+        return False
 
-    def _disjunctive_cases(self, block) -> list:
-        """For each disjunction among the conjuncts of a block's filter, the block split by its disjuncts."""
+    def _in_some_target(self, a, key, search: "_CaseSearch") -> bool:
+        def probe(joined):
+            return self._quietly(lambda: self.branch_set_contained(a, joined))
+
+        for index, (b, _) in enumerate(search.targets):
+            contained = search.answer(key, index, a, probe)
+            if contained is None:
+                outer, self.unknown = self.unknown, False
+                try:
+                    contained = self.branch_set_contained(a, b)
+                    search.known[key, index] = (contained, not self.unknown)
+                finally:
+                    self.unknown = outer or self.unknown
+            if contained:
+                return True
+        return False
+
+    def _quietly(self, check) -> tuple:
+        """``(check(), whether no check timed out)`` for work the case search adds only to skip
+        checks: it leaves no candidate model and no timeout behind."""
+
+        saved, outer = len(self.candidates), self.unknown
+        self.unknown = False
+        try:
+            return check(), not self.unknown
+        finally:
+            del self.candidates[saved:]
+            self.unknown = outer
+
+    def _disjunctive_cases(self, block):
+        """For each disjunction among the conjuncts of a block's filter, the block split by its
+        disjuncts, as ``(disjunct, case)`` pairs (one disjunction at a time, when asked for)."""
 
         if not isinstance(block, _Spj) or any(o.opaque for o in block.occs):
-            return []
+            return
         disjunctions, stack = [], [block.cond.t]
         while stack:
             term = stack.pop()
@@ -3291,13 +3457,11 @@ class _Prover:
                     disjunctions.append(parts)
                 del self.candidates[saved:]
         # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
-        return [
-            [
-                self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
+        for parts in disjunctions:
+            yield [
+                (part, self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False))
                 for part in parts
             ]
-            for parts in disjunctions
-        ]
 
     def groups_unique(self, block) -> bool:
         """No two groups of a ``GROUP BY`` give the same row: equal outputs force equal group keys,

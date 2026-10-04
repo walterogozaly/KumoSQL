@@ -22,7 +22,7 @@ subquery reading `a AS b` under an outer `FROM a` both read the CTE). A step is 
 
 * a WITH is recursive, repeats a name, or a CTE carries a MATERIALIZED hint;
 * a name that matches a visible CTE appears anywhere other than as a FROM or JOIN relation, or that
-  relation carries anything beyond an alias (a snapshot, a sample, a pivot);
+  relation carries anything beyond an alias or a PIVOT/UNPIVOT (a snapshot, a sample);
 * a volatile call (``RAND()``, ``GENERATE_UUID()``, the current time) in a CTE is copied more than once by
   the expansion, that is, the CTE is read more than once, because merging, inlining or splitting its
   readers changes how many values are drawn;
@@ -209,7 +209,7 @@ def _visit(parent, key, child, index, env, state: _Expansion) -> None:
         name = child.name.lower()
         if not (isinstance(parent, (exp.From, exp.Join)) and key == "this"):
             raise _Rejected(f"the CTE name {name!r} is read somewhere other than a FROM or JOIN relation")
-        extra = {k for k, v in child.args.items() if v is not None and v != [] and k not in ("this", "alias", "comments")}
+        extra = {k for k, v in child.args.items() if v is not None and v != [] and k not in ("this", "alias", "pivots", "comments")}
         if extra:
             raise _Rejected(f"a reference to the CTE {name!r} carries {sorted(extra)[0]}")
         body, columns = env[name]
@@ -222,6 +222,8 @@ def _visit(parent, key, child, index, env, state: _Expansion) -> None:
         if columns and not label.args.get("columns"):
             label.set("columns", [column.copy() for column in columns])
         replacement = exp.Subquery(this=copy, alias=label)
+        if child.args.get("pivots"):  # PIVOT and UNPIVOT apply to whatever relation the name stands for
+            replacement.set("pivots", [pivot.copy() for pivot in child.args["pivots"]])
         state.references += 1
         if index is None:
             parent.set(key, replacement)

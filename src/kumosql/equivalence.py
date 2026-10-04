@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+from collections import Counter
 import hashlib
 import re
 
@@ -157,6 +158,9 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     with_clause = _root_with(query)
     if not with_clause:
+        return
+    if with_clause.args.get("recursive"):
+        # The independent CTE check does not expand a recursive WITH, so the prover leaves its names alone.
         return
     if any(
         isinstance(node, exp.With) and node is not with_clause
@@ -1129,6 +1133,9 @@ def prove_equivalent(
     return _prove_equivalent(left_sql, right_sql, ignore_row_order=ignore_row_order)
 
 
+_SQLX_MARKER = re.compile(r"\$\{|__sqlx_\w*?__")
+
+
 def _prove_equivalent(
     left_sql: str,
     right_sql: str,
@@ -1157,6 +1164,18 @@ def _prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="input could not be normalized conservatively",
             diagnostics=(str(exc),),
+        )
+
+    lost_left, lost_right = (
+        Counter(_SQLX_MARKER.findall(text)) - Counter(_SQLX_MARKER.findall(canonical))
+        for text, canonical in ((left_sql, left_canonical), (right_sql, right_canonical))
+    )
+    if lost_left != lost_right:
+        # sqlglot 26 drops a comment at the end of a BigQuery statement, taking a SQLX expression with it
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="a SQLX expression in a comment could not be read from one of the queries",
+            diagnostics=("sqlx expression lost with a comment",),
         )
 
     diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))
