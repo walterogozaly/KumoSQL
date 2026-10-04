@@ -81,7 +81,7 @@ Before this check, these rewrites were labeled `proven`:
 - The DISTINCT check is a sufficient condition, not a complete one: a DISTINCT that is redundant for another reason (a unique key, a one-row table) is not accepted by this checker, so a rule that removes it is `unproven`.
 - The CTE check is exact on the expanded tree. A rewrite that changes a CTE and the query together in a way that is still equivalent (a filter moved into a CTE, say) is refused here; those rules are proven by the prover alone and are not in the CTE family.
 - An unread CTE is assumed to have no effect, as BigQuery never evaluates one (checked 2026-10-03); the checker does not look for errors that dropping it would hide.
-- sqlglot's parser stays inside the trusted boundary. The checker does not establish BigQuery validity, schemas or parser correctness.
+- sqlglot's parse is checked separately, not by this checker: every proof is refused when an independent reading of its text disagrees with sqlglot's ([parser checks](parser-checks.md)). This checker still does not establish BigQuery validity or schemas.
 - SQLite is used only for the Boolean and literal model, never to run BigQuery SQL.
 
 ## Extending it
@@ -115,6 +115,8 @@ The audit was written against an older checkout. Each finding was re-run on mast
 | A step that fails mid-mutation is returned as if unchanged | Already fixed on master: the driver restores the statement it copied before the rule ran |
 | SQLX restoration reads backslashes in an expression as regex escapes | Reproduced; tracked as a separate fix |
 | SMT proves `SELECT * EXCEPT (b) FROM t` equal to `SELECT * FROM t` | Reproduced; tracked as a separate fix |
+| The provers treat type names BigQuery rejects as aliases: `CAST(x AS FLOAT)`, `INT32` and `UUID` were proven equal to `FLOAT64`, `INT64` and `STRING` | Fixed: `type_names.py` refuses casts to names BigQuery does not have in the structural, SMT and algebraic provers and in rewrite acceptance (see [Rewrite rules](rewrite-rules.md#inputs-bigquery-would-reject)) |
 | SMT and the algebraic prover read `1e-324 < 2e-324` as exact reals (BigQuery: FALSE) | Reproduced; tracked as a separate fix |
 | SMT drops `FOR SYSTEM_TIME AS OF` | Already refused on master ("Table.version is not modeled") |
 | The synthetic-data comparison treats `TRUE` and `1` as equal | Reproduced; tracked as a separate fix |
+| sqlglot's parse is trusted: bitwise operator precedence in BigQuery, comparison chains and `XOR` in MySQL, `~`, `IS` and `INTERSECT` in DuckDB and PostgreSQL, or a dropped `NOT`, give the provers a query nobody wrote | Fixed: every proof is refused when an independent reading of its text disagrees ([parser checks](parser-checks.md)) |

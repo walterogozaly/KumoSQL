@@ -36,8 +36,10 @@ from sqlglot import exp
 from .ast_utils import FROM_KEY, UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
+from .parse_check import refuse_misread_proofs
 from .solver_lock import serialized
 from .string_literals import canonical_literals, invalid_literal
+from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -4923,6 +4925,7 @@ def normalize(
     return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
+@refuse_misread_proofs
 @serialized
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result.
@@ -4943,6 +4946,9 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     try:
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))
+        if unknown_type:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
         masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
         if masked:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
