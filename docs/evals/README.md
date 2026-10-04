@@ -28,6 +28,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Bounded verification](bounded-verification.md) | The same suites under the z3 bounded checker (at most 3 rows per table) | `bounded-sqlsolver-calcite`, `bounded-sqlsolver-spark`, `bounded-sqlsolver-tpch`, `bounded-sqlsolver-tpcc`, `bounded-qed`, `bounded-rbot`, `bounded-cosette`, `bounded-spes`, `bounded-singh`, `bounded-literature`, `bounded-calcite`, `bounded-leetcode` |
 | [SQL-IQ](sql-iq.md) | Equivalence judge, SQL judge and error classification | `sql-iq-equivalence`, `sql-iq-judge`, `sql-iq-errors` |
 | [LLM-SQL-Solver](llm-sql-solver.md) | 180 Spider pairs that must never be proved, 70 pairs with expert labels | `llm-sql-solver-negatives`, `llm-sql-solver-relaxed` |
+| [QUITE LLM rewrites](quite.md) | The 4,160 rewrites that 13 LLM and learned rewriters published for TPC-H, DSB, Calcite and SQLStorm queries, each flagged equal or not on the authors' instance: flagged-equal pairs proved, flagged-unequal pairs refuted by a replayed database and never proved on grounds a replay contradicts | `quite-rewrites`, `quite-negatives` |
 | [DLBench](dlbench.md) | Cross-dialect translations from SQLite, MySQL and PostgreSQL into six databases: parsed, and proved equal to the source | `dlbench` |
 | [DB-GPT rewrite examples](dbgpt-rules.md) | DB-GPT's 36 PostgreSQL before/after rewrites, labelled by hand and checked on DuckDB | `dbgpt-rules` |
 | [Documented rewrites](documented-rewrites.md) | Rewrites recommended by vendor and style-guide docs, written as KumoSQL's own cases; the ones that change results must not be proved | `documented-rewrites` |
@@ -60,6 +61,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Analytical SQL coverage](analytical-sql-coverage.md) | TPC-DS, DSB and SQLStorm through every stage | `analytical-sql-coverage` |
 | [BigQuery and Dataform syntax coverage](bigquery-syntax-coverage.md) | One case per GoogleSQL or Dataform construct (a checked-in manifest, run by the test suite) | none |
 | [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases; BigQuery Utils UDF tests run through the BigQuery to DuckDB translation | `googlesql-behavior`, `bigquery-edge-cases`, `bigquery-utils-udfs` |
+| [GoogleSQL compliance expected results](googlesql-expected-results.md) | The compliance tests' expected rows as an oracle for the BigQuery-to-DuckDB translation | `googlesql-expected-results` |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | Lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them; KumoSQL's rewrite rules on the queries sqlfluff refuses to fix | `sqlfluff-semantic-fixes`, `sqlfluff-layout-fixes`, `sqlfluff-kumosql-formatter`, `sqlfluff-refusals` |
 
 ## Lineage, impact and Dataform

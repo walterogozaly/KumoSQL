@@ -24,6 +24,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Bounded verification](bounded-verification.md) | Do queries agree on every modeled small database? |
 | [SQL-IQ](sql-iq.md) | Equivalence, candidate choice, and error classification |
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |
+| [QUITE LLM rewrites](quite.md) | When language models rewrite a query, which rewrites can be proved right, and are any wrongly proved? |
 | [Join rewrites](join-rewrites.md) | When does changing a join type preserve results? |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Does the prover avoid accepting known faulty rewrites? |
 | [Numeric traps](numeric-traps.md) | Does the prover handle BigQuery's number and error rules, and tell when a rewrite could start failing? |
@@ -56,6 +57,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Analytical SQL coverage](analytical-sql-coverage.md) | Which stages handle large analytical queries? |
 | [BigQuery syntax coverage](bigquery-syntax-coverage.md) | Is each syntax feature supported or explicitly declined? |
 | [BigQuery behavior](bigquery-behavior-eval.md) | Do supported rewrites preserve tested BigQuery-specific behavior, and does the BigQuery to DuckDB translation compute the values BigQuery does? |
+| [GoogleSQL expected rows](googlesql-expected-results.md) | Does the local BigQuery translation return the rows Google's compliance tests expect? |
 | [SQLFluff fixtures](sqlfluff-fixtures.md) | Which formatting and lint fixes preserve meaning? |
 | [Lineage and impact](lineage-bench.md) | Are dependencies and change effects traced correctly? |
 | [Lineage goldens](lineage-goldens-bench.md) | Do results match other projects' expected lineage? |
