@@ -29,6 +29,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 _PLACEHOLDER = re.compile(r"<[^>]+>|\bPATH\b")
 _TIMING = [
+    (re.compile(r"""(["'])([A-Za-z_]\w*_seconds)\1:\s*(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"""), r"\1\2\1: T"),
     (re.compile(r"""(["'])(seconds|elapsed|time|wall|runtime|peak_mb|growth_mb)[a-z_]*\1: ?[0-9.]+"""), r"\1\2\1: T"),
     (re.compile(r"\b[0-9]+(\.[0-9]+)? ?(s|ms|seconds|MB)\b"), "T"),
     (re.compile(r"\b[0-9]{2}:[0-9]{2}:[0-9]{2}\b"), "HH:MM:SS"),

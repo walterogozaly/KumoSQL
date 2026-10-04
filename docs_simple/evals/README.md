@@ -4,6 +4,8 @@
 
 An evaluation, or eval, is a repeatable test suite measuring a feature. Some use public SQL test cases; others generate projects whose expected behavior is known in advance. None calls a language model while deciding the results.
 
+`python tools/eval_diff.py --only <words>` compares selected evaluations on the base branch and your checkout. Duration fields such as `search_seconds` and `proof_recheck_seconds` are ignored in both JSON and Python-style output. Changes to proof counts or wrong answers still appear.
+
 ## Read a score carefully
 
 “X/Y, 0 wrong” needs two questions: what counts as success, and how was correctness checked? An equivalence proof, a bounded check, and agreement on executed data are different evidence levels.

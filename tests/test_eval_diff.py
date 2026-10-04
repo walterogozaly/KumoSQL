@@ -33,6 +33,22 @@ def test_python_repr_timing_and_memory_keys_are_masked():
     assert a != c
 
 
+def test_seconds_suffix_fields_are_masked_in_json_and_python_output():
+    for quote in ('"', "'"):
+        def report(seconds, proved=12, wrong=0):
+            return "{" + ", ".join(
+                f"{quote}{key}{quote}: {value}"
+                for key, value in (("build_seconds", seconds), ("search_seconds", seconds),
+                                   ("proof_recheck_seconds", seconds), ("runtime_seconds", seconds),
+                                   ("proved", proved), ("wrong", wrong))
+            ) + "}"
+
+        assert eval_diff.normalize(report(0.25)) == eval_diff.normalize(report(19.75))
+        assert eval_diff.normalize(report(1e-10)) == eval_diff.normalize(report(19.75))
+        assert eval_diff.normalize(report(0.25)) != eval_diff.normalize(report(19.75, proved=13))
+        assert eval_diff.normalize(report(0.25)) != eval_diff.normalize(report(19.75, wrong=1))
+
+
 def test_commands_come_from_results_files(tmp_path):
     results = tmp_path / "benchmarks" / "results"
     results.mkdir(parents=True)
