@@ -35,6 +35,9 @@ import duckdb
 import sqlglot
 from sqlglot import exp
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from kumosql.duckdb_load import small_database  # noqa: E402
+
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "calcite_mined"
 
@@ -66,7 +69,7 @@ def gen_value(col: dict, rng: random.Random):
 
 
 def make_db(schema: dict, rng: random.Random) -> tuple[duckdb.DuckDBPyConnection, dict]:
-    con = duckdb.connect()
+    con = small_database()
     for stmt in sqlglot.parse(schema["ddl"], read="mysql") if schema["ddl"] else []:
         con.execute(stmt.transform(_fix).sql(dialect="duckdb"))
     data = {}
