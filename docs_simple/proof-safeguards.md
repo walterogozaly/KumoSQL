@@ -12,4 +12,4 @@ A Dataform file can hold `${...}` expressions. KumoSQL can treat `${ref("orders"
 
 ## What this does not cover
 
-Only predicate cleanup is checked independently so far. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity or the parser. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed.
+Only predicate cleanup is checked independently so far. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md). See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed.

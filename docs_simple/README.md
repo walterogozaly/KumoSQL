@@ -22,6 +22,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Clean up one query | [Rewrite rules](rewrite-rules.md) |
 | Understand whether two queries match | [Provers](provers.md) |
 | See how rewrites are double-checked | [Proof safeguards](proof-safeguards.md) |
+| See how KumoSQL checks it read a query correctly | [Parser checks](parser-checks.md) |
 | See when two queries match only if some facts hold | [Equivalent under conditions](conditional-equivalence.md) |
 | Find dependencies and repeated work | [Pipeline analysis](pipeline-analysis.md) |
 | Review cost or a proposed change | [Cost and change reports](cost-and-change-reports.md) |

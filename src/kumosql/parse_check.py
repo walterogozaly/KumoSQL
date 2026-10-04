@@ -2138,7 +2138,7 @@ def _positioned_parser(engine):
             class Positioned(cls):  # type: ignore[misc, valid-type]
                 def expression(self, exp_class, comments=None, **kwargs):
                     instance = super().expression(exp_class, comments=comments, **kwargs)
-                    if isinstance(instance, (exp.Identifier, exp.Literal)) and self._prev is not None and not instance._meta:
+                    if isinstance(instance, _POSITIONED_NODES) and self._prev is not None and not instance._meta:
                         token = self._prev
                         instance.meta.update(line=token.line, col=token.col, start=token.start, end=token.end)
                     return instance
@@ -2148,6 +2148,8 @@ def _positioned_parser(engine):
 
 
 _POSITIONED: dict[type, type] = {}
+# sqlglot 30 gives the byte and raw string literals a position as well; they are separate classes in sqlglot 26
+_POSITIONED_NODES = tuple(getattr(exp, name) for name in ("Identifier", "Literal", "ByteString", "RawString") if hasattr(exp, name))
 
 
 def _check(sql: str, dialect: str, mutate=None) -> ParseCheck:

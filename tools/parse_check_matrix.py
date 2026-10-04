@@ -10,8 +10,9 @@ files and rows are skipped, see ``tools/parse_check_sweep.py``) is read under it
 * what ``kumosql.parse_check`` says (agree, disagree, unchecked), and
 * a digest of the operator grouping of sqlglot's tree (``parse_check._skeleton``).
 
-A query whose reading differs between releases is printed. Exit status 1 when any does: a proof that depends on
-one release's reading would not hold under another.
+A query whose verdict differs between releases is printed, and so is one every release accepts but whose trees group
+operators differently. Exit status 1 when a verdict differs: a proof that depends on one release's reading would not
+hold under another.
 """
 
 from __future__ import annotations
@@ -78,14 +79,15 @@ def worker(cases_file: str, out_file: str) -> int:
     result = {"sqlglot": sqlglot.__version__, "compiled": any(Path(sqlglot.__file__).parent.rglob("*.so")), "rows": {}}
     for directory, dialect, sql in json.loads(Path(cases_file).read_text(encoding="utf-8")):
         key = hashlib.sha1(f"{dialect}\0{sql}".encode()).hexdigest()
-        status = parse_check.check_query(sql, dialect).status
+        verdict = parse_check.check_query(sql, dialect)
+        status = verdict.status
         try:
             with quiet_parser():
                 trees = [canonical_negation(t) for t in sqlglot.parse(sql, read=dialect) if t is not None]
             grouping = hashlib.sha1(repr([parse_check._skeleton(t) for t in trees]).encode()).hexdigest()[:12]
         except Exception as error:
             grouping = "error:" + type(error).__name__
-        result["rows"][key] = [status, parse_check.round_trip(sql, dialect) is not None, grouping]
+        result["rows"][key] = [status, parse_check.round_trip(sql, dialect) is not None, grouping, (verdict.reasons or (verdict.note,))[0][:100]]
     Path(out_file).write_text(json.dumps(result), encoding="utf-8")
     return 0
 
@@ -126,22 +128,27 @@ def main(argv: list[str] | None = None) -> int:
 
     specs = list(results)
     texts = {hashlib.sha1(f"{d}\0{s}".encode()).hexdigest(): (name, d, s) for name, d, s in cases}
-    differ = []
+    status_differs, grouping_differs = [], []
     for key, (name, dialect, sql) in texts.items():
         readings = {spec: tuple(results[spec]["rows"][key]) for spec in specs}
-        if len(set(readings.values())) > 1:
-            differ.append((name, dialect, sql, readings))
+        if len({row[0] for row in readings.values()}) > 1:
+            status_differs.append((name, dialect, sql, readings))
+        elif len({row[2] for row in readings.values()}) > 1 and all(row[0] == "agree" for row in readings.values()):
+            grouping_differs.append((name, dialect, sql, readings))
     for spec in specs:
         counts: dict[str, int] = {}
         for row in results[spec]["rows"].values():
             counts[row[0]] = counts.get(row[0], 0) + 1
         print(f"  {spec}: {counts}, round trip refused {sum(1 for r in results[spec]['rows'].values() if r[1])}")
-    print(f"{len(differ)} of {len(texts)} readings differ between releases")
-    for name, dialect, sql, readings in differ[: args.show]:
-        print(f"  [{name} / {dialect}] {' '.join(sql.split())[:200]}")
-        for spec, row in readings.items():
-            print(f"      {spec}: {row}")
-    return 1 if differ else 0
+    print(f"{len(status_differs)} of {len(texts)} readings get a different verdict between releases")
+    print(f"{len(grouping_differs)} more agree everywhere but group operators differently in the releases' own trees")
+    for title, rows in (("verdict differs", status_differs), ("grouping differs", grouping_differs)):
+        for name, dialect, sql, readings in rows[: args.show]:
+            print(f"  [{title}: {name} / {dialect}] {' '.join(sql.split())[:200]}")
+            for spec, row in readings.items():
+                print(f"      {spec}: {row}")
+    # a different verdict between releases is the finding: a proof that holds under one release would not under another
+    return 1 if status_differs else 0
 
 
 if __name__ == "__main__":

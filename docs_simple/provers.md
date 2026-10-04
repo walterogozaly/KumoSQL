@@ -60,6 +60,10 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
+## The parser is checked too
+
+The provers also refuse to trust the parser blindly. Before a proof counts, the text is read a second time by a small separate reader that knows each engine's operator order, and if the two readings group the operators differently (for example `a | b & c` in BigQuery, or `a = b < c` in MySQL) the answer is "not proven" with the reason "parser disagreement". The limit is that this can only take proofs away, and a construct the second reader does not know is left to sqlglot's reading. See [parser checks](parser-checks.md).
+
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
