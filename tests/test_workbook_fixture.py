@@ -550,8 +550,10 @@ def test_default_labels_explain_every_case_that_earns_no_credit():
     assert {i for i, c in cases.items() if not c["valid_input"]} == {"q09", "q21"}
     assert all(c.get("verification_reason") for c in cases.values() if c["verification"] not in ("proven", "unchanged"))
     assert cases["q17"]["remaining"] == 1 and "UPDATE" in cases["q17"]["remaining_reason"]
-    assert expected_verification(cases["q20"], "27.0.0") == "unproven"
-    assert expected_verification(cases["q20"], "30.21.0") == "proven"
+    older = {"verification": "proven", "verification_before_sqlglot": {"version": "28.0.0", "status": "unproven", "reason": "r"}}
+    assert expected_verification(older, "27.0.0") == "unproven"
+    assert expected_verification(older, "30.21.0") == "proven"
+    assert "verification_before_sqlglot" not in cases["q20"]  # every supported sqlglot proves it; see window_canonical
 
 
 INVALID_INPUTS = {
