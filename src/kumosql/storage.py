@@ -18,7 +18,7 @@ from pathlib import Path
 from . import state
 
 SECTION = "storage"
-SNAPSHOT_VERSION = 2  # 2: models carry config_reads and config_reads_unread
+SNAPSHOT_VERSION = 3  # 3: models carry logical, disabled, has_output, incremental_sql and the pipeline a default_location; 2: models carry config_reads and config_reads_unread
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -61,6 +61,7 @@ def pipeline_snapshot(pipeline, key: str) -> dict:
             "source_schema": pipeline.source_schema,
             "diagnostics": [asdict(v) for v in pipeline.diagnostics],
             "default_project": pipeline.default_project, "default_dataset": pipeline.default_dataset,
+            "default_location": pipeline.default_location,
             "source_files": getattr(pipeline, "source_files", {})}
 
 
@@ -71,10 +72,10 @@ def pipeline_from_snapshot(value: object, key: str):
     from .live_graph import MAX_FILES, MAX_TOTAL_BYTES, _safe_path
 
     data = _object(value, {"version", "content_key", "models", "sources", "source_schema", "diagnostics",
-                           "default_project", "default_dataset", "source_files"})
+                           "default_project", "default_dataset", "default_location", "source_files"})
     if type(data["version"]) is not int or data["version"] != SNAPSHOT_VERSION or data["content_key"] != key:
         raise ValueError("stale snapshot")
-    if not all(isinstance(data[k], str) for k in ("content_key", "default_project", "default_dataset")):
+    if not all(isinstance(data[k], str) for k in ("content_key", "default_project", "default_dataset", "default_location")):
         raise ValueError("invalid snapshot defaults")
 
     def target(value):
@@ -94,8 +95,10 @@ def pipeline_from_snapshot(value: object, key: str):
         if not isinstance(obj["declared_dependencies"], list):
             raise ValueError("invalid snapshot dependencies")
         obj["declared_dependencies"] = tuple(target(t) for t in obj["declared_dependencies"])
-        for k in ("masked_expressions", "tags", "non_null", "operations_sql", "config_reads", "config_reads_unread"):
+        for k in ("masked_expressions", "tags", "non_null", "operations_sql", "config_reads", "config_reads_unread", "logical", "incremental_sql"):
             obj[k] = tuple(_strings(obj[k]))
+        if not all(isinstance(obj[k], bool) for k in ("disabled", "has_output")):
+            raise ValueError("invalid snapshot model flags")
         if not isinstance(obj["unique_keys"], list):
             raise ValueError("invalid snapshot unique keys")
         obj["unique_keys"] = tuple(tuple(_strings(v)) for v in obj["unique_keys"])
@@ -118,7 +121,7 @@ def pipeline_from_snapshot(value: object, key: str):
         raise ValueError("snapshot project is too large")
     for name in files:
         _safe_path(name)
-    pipeline = Pipeline(models, sources, schema, diagnostics, data["default_project"], data["default_dataset"])
+    pipeline = Pipeline(models, sources, schema, diagnostics, data["default_project"], data["default_dataset"], data["default_location"])
     pipeline.source_files = files
     return pipeline
 

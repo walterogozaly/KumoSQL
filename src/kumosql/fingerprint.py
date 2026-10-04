@@ -17,7 +17,8 @@ by row is expensive, so this module generates BigQuery SQL in three tiers:
   side, so the summary reports it rather than a match.
 * drill-down: for one table, the rows whose multiplicity differs between the
   sides, or with key columns, each key that is missing, duplicated or changed
-  together with the names of the columns that changed.
+  together with the names of the columns that changed (``"*"`` when only
+  the pairing of values into rows changed within the key).
 
 Fingerprint and comparison queries for a whole pipeline are single queries
 that scan each table once, so they cost the bytes of the tables and return a
@@ -404,7 +405,10 @@ def diff_rows_sql(
     ``only_before``, ``only_after``, ``row_count_differs`` (the key occurs a
     different number of times) or ``changed``, with ``changed_columns``
     listing the columns whose values differ. Duplicate keys are compared as
-    bags, so a key duplicated identically on both sides matches.
+    bags of whole rows, so a key duplicated identically on both sides
+    matches, and values swapped between rows that share a key are
+    ``changed`` with ``changed_columns`` ``["*"]`` (whole rows differ while
+    each column holds the same values).
     """
 
     if limit < 1:
@@ -448,28 +452,34 @@ def _keyed_diff(before_table, after_table, columns, keys, where, normalize, limi
     values = [column for column in columns if column.lower() not in key_lower]
     key_json = f"TO_JSON_STRING(STRUCT({', '.join(_struct_field(k, normalize) for k in keys)}))"
 
+    row_json = _row_json(columns, normalize)
+
     def side(table: str) -> str:
+        # Per-column checksums say which columns changed; the whole-row
+        # checksum compares each key's rows as a bag, so values swapped
+        # between rows that share a key are still a difference.
         checksums = "".join(
             f",\n    {_checksum(_value_json(column, normalize))} AS c{i}"
             for i, column in enumerate(values)
         )
         return (
             f"  SELECT\n    {key_json} AS key_json,\n    COUNT(*) AS n{checksums},\n"
-            f"    ANY_VALUE({_row_json(columns, normalize)}) AS row_json\n"
+            f"    {_checksum(row_json)} AS row_checksum,\n"
+            f"    ANY_VALUE({row_json}) AS row_json\n"
             f"  FROM {_table(table)} AS t{_where(where)}\n"
             "  GROUP BY key_json"
         )
 
     same = [f"b.c{i} = a.c{i}" for i in range(len(values))]
+    same_rows = "b.row_checksum = a.row_checksum"
+    # When every column holds the same values but whole rows differ, no
+    # single column changed: report the whole row, ``ROW``.
     flags = ", ".join(
-        f"STRUCT({_string(column)} AS name, {same[i]} AS same)" for i, column in enumerate(values)
+        [f"STRUCT({_string(column)} AS name, {same[i]} AS same)" for i, column in enumerate(values)]
+        + [f"STRUCT({_string(ROW)} AS name, {same_rows} OR NOT ({' AND '.join(same) or 'TRUE'}) AS same)"]
     )
-    changed = (
-        f"ARRAY(SELECT f.name FROM UNNEST([{flags}]) AS f WHERE NOT f.same)"
-        if values
-        else "ARRAY<STRING>[]"
-    )
-    differs = "".join(f"\n   OR NOT ({condition})" for condition in same)
+    changed = f"ARRAY(SELECT f.name FROM UNNEST([{flags}]) AS f WHERE NOT f.same)"
+    differs = "".join(f"\n   OR NOT ({condition})" for condition in [*same, same_rows])
     return (
         f"WITH before_keys AS (\n{side(before_table)}\n),\n"
         f"after_keys AS (\n{side(after_table)}\n)\n"
