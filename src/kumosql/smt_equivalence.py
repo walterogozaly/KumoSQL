@@ -81,7 +81,7 @@ from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
-from . import smt_errors, smt_values, string_number_compare, string_number_literals
+from . import numeric_column_reading, smt_errors, smt_values, string_number_compare, string_number_literals
 from .float_sum_order import Ledger
 
 try:  # pragma: no cover - exercised by the import itself
@@ -4747,6 +4747,19 @@ def _check_options(kwargs: dict) -> None:
 @refuse_misread_proofs
 @serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    On MySQL a proof that needs different strings compared with an untyped column to differ must also hold with the strings
+    read as the numbers they convert to (``kumosql.numeric_column_reading``).
+    See ``_prove_equivalent_smt`` for the rest.
+    """
+
+    return numeric_column_reading.checked(
+        _prove_equivalent_smt, left_sql, right_sql, kwargs, lambda reason: SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason)
+    )
+
+
+def _prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
     Input the prover cannot read (untokenizable text, nesting too deep for the compiler) is

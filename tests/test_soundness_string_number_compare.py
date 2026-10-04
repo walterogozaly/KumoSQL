@@ -45,9 +45,12 @@ PROVEN = [
     ("SELECT t.a FROM t WHERE '2' <> '2'", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE '2' = '3'", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE 2 = 2", "SELECT t.a FROM t"),
-    ("SELECT t.a FROM t WHERE t.a = 'x' AND t.a = 'y'", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE t.a = 1 AND t.a = 2", "SELECT t.a FROM t WHERE FALSE"),
 ]
+
+# two different strings against one untyped column: proven where the column must be text, not on MySQL, where an integer
+# column reads both as 0 (tests/test_untyped_string_columns.py)
+TEXT_ONLY = [("SELECT t.a FROM t WHERE t.a = 'x' AND t.a = 'y'", "SELECT t.a FROM t WHERE FALSE")]
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
@@ -72,6 +75,14 @@ def test_bigquery_keeps_declining_a_string_against_a_number(prover, left, right)
 @pytest.mark.parametrize("left,right", PROVEN)
 def test_same_kind_comparisons_stay_proven(prover, dialect, left, right):
     assert prover(left, right, dialect=dialect).status is SmtStatus.PROVEN_EQUIVALENT, (dialect, left)
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("prover", PROVERS)
+@pytest.mark.parametrize("left,right", TEXT_ONLY)
+def test_different_strings_against_an_untyped_column(prover, dialect, left, right):
+    assert (prover(left, right, dialect=dialect).status is SmtStatus.PROVEN_EQUIVALENT) == (dialect != "mysql")
+    assert prover(left, right, dialect=dialect, types={"t": {"a": "VARCHAR"}}).status is SmtStatus.PROVEN_EQUIVALENT
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)

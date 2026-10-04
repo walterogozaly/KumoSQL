@@ -40,9 +40,7 @@ WITNESSES = [
 ]
 
 NEAR_MISSES = [
-    ("SELECT d.k FROM (SELECT * FROM a WHERE a.x = 'abc') d JOIN b ON d.x = b.y WHERE b.y = 'abd'", "SELECT d.k FROM (SELECT * FROM a WHERE FALSE) d"),
     ("SELECT d.k FROM (SELECT * FROM a WHERE a.k = 1) d JOIN (SELECT * FROM b WHERE b.y = 2) e ON d.k = e.y", "SELECT d.k FROM (SELECT * FROM a WHERE FALSE) d"),
-    ("SELECT k FROM a WHERE x = 'abc' AND a.x = 'abd'", "SELECT k FROM a WHERE FALSE"),
     ("SELECT k FROM a WHERE k = 1 AND a.k = 2", "SELECT k FROM a WHERE FALSE"),
     # a star over a table whose columns the query only compares with their own kind
     ("SELECT d.k FROM (SELECT * FROM a) d WHERE d.k = 1 AND d.k = 2", "SELECT d.k FROM (SELECT * FROM a) d WHERE FALSE"),
@@ -62,6 +60,22 @@ def test_witness_is_not_proven(prover, dialect, left, right):
 @pytest.mark.parametrize("left,right", NEAR_MISSES)
 def test_same_kind_comparisons_stay_proven(prover, dialect, left, right):
     assert prover(left, right, dialect=dialect, schema=SCHEMA).status is SmtStatus.PROVEN_EQUIVALENT, (dialect, left)
+
+
+# Different strings on one column are empty only for a text column: on MySQL an untyped column could be an integer that
+# holds 0 (test_untyped_string_columns.py), so these are proven once the schema declares the columns as text.
+TEXT_COLUMNS = [
+    ("SELECT d.k FROM (SELECT * FROM a WHERE a.x = 'abc') d JOIN b ON d.x = b.y WHERE b.y = 'abd'", "SELECT d.k FROM (SELECT * FROM a WHERE FALSE) d"),
+    ("SELECT k FROM a WHERE x = 'abc' AND a.x = 'abd'", "SELECT k FROM a WHERE FALSE"),
+]
+TYPES = {"a": {"x": "STRING"}, "b": {"y": "STRING"}}
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("prover", PROVERS)
+@pytest.mark.parametrize("left,right", TEXT_COLUMNS)
+def test_declared_text_columns_stay_proven(prover, dialect, left, right):
+    assert prover(left, right, dialect=dialect, schema=SCHEMA, types=TYPES).status is SmtStatus.PROVEN_EQUIVALENT, (dialect, left)
 
 
 @pytest.mark.parametrize("left,right", WITNESSES)
