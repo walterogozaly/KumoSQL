@@ -95,7 +95,8 @@ def random_database(schema: dict, rng: random.Random) -> dict[str, list[tuple]]:
 def new_connection(schema: dict):
     import duckdb
 
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     for table, spec in schema["tables"].items():
         columns = ", ".join(f'"{c}" {DUCK[t]}' for c, t in spec["columns"].items())
         db.execute(f'CREATE TABLE "{table}" ({columns})')

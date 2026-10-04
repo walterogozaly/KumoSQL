@@ -446,7 +446,8 @@ class Executor:
         self.order = list(pipeline.topological_order())
         self.sql: dict[str, str] = {}
         self.created: list[str] = []
-        self.con = duckdb.connect(":memory:")
+        from kumosql.duckdb_load import small_database
+        self.con = small_database()
         configure(self.con)  # the models are BigQuery: run them as BigQuery does, or fail where it fails
         types = {"status": "VARCHAR", "region": "VARCHAR", "tier": "VARCHAR", "kind": "VARCHAR"}
         for table, columns in SOURCES.items():

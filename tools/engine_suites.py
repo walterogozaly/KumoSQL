@@ -268,7 +268,8 @@ def parse_slt(text: str) -> tuple[list[Record], str | None]:
 def _connect():
     import duckdb
 
-    connection = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    connection = small_database()
     for pragma in ("SET threads=1", "SET autoinstall_known_extensions=false", "SET autoload_known_extensions=false"):
         try:
             connection.execute(pragma)
