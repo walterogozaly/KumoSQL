@@ -40,6 +40,15 @@ def test_a_computed_identity_is_flagged_and_the_action_is_not_read_as_a_table(tm
     assert key in codes(pl, "dynamic_config")[0][1]
 
 
+def test_a_declaration_with_a_computed_schema_is_still_found_by_its_name(tmp_path):
+    pl = project(tmp_path, {
+        "src.sqlx": 'config { type: "declaration", schema: "raw_" + constants.ID, name: "events" }\n',
+        "r.sqlx": 'config { type: "table" }\nSELECT id FROM ${ref("events")}\n',
+    })
+    assert [t.key for t in pl.models["p.ds.r"].declared_dependencies] == ["p.ds.events"]  # the project default stands in
+    assert "schema" in codes(pl, "dynamic_config")[0][1] and not codes(pl, "unsupported_ref")
+
+
 def test_a_ref_never_finds_an_action_whose_name_is_computed(tmp_path):
     pl = project(tmp_path, {
         "a.sqlx": 'config { type: "table", name: dataform.projectConfig.vars.n }\nSELECT 1 AS id\n',

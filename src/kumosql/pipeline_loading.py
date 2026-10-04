@@ -868,16 +868,19 @@ def load_sqlx_project(
         # Declarations name an existing table: the project's prefix and suffix settings leave them alone.
         target = logical if kind == "declaration" else naming.apply(logical)
         if computed_identity:
-            # Neither the table nor the name a ref() finds it by is known without running the project.
-            nonlocal computed_identities
-            computed_identities = True
+            # A computed name is also what a ref() finds the action by, so it cannot be found at all; a computed database
+            # or schema leaves the name known, so refs still find the action (at the project defaults, the best guess).
             diagnostics.append(PipelineDiagnostic(
                 target.key, "dynamic_config",
                 f"its config {' and '.join(computed_identity)} is computed (a project variable or a call), so which table it "
-                "writes is not known; it was not read as a table and refs by name do not find it"))
+                "writes is not known" + ("; refs by name do not find it" if "name" in computed_identity else
+                                         "; the project default stands in for it")))
             if kind != "declaration":
                 kind = "unknown"
-        else:
+            if "name" in computed_identity:
+                nonlocal computed_identities
+                computed_identities = True
+        if "name" not in computed_identity:
             known.setdefault(logical.name, []).append(target)
             if target != logical:
                 renamed[target] = (logical.database, logical.schema, logical.name)
@@ -886,7 +889,7 @@ def load_sqlx_project(
                 target.key, "dynamic_config",
                 "its config type is computed (a project variable or a call), so it is not read as a table: it may be incremental"))
         if kind == "declaration":
-            if not computed_identity:
+            if "name" not in computed_identity:
                 sources[target.key] = target
             return None
         return relative, sections, config, kind, target
