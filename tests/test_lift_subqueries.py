@@ -233,7 +233,7 @@ def test_update_delete_and_merge_never_start_with_a_with_clause(source):
 
 
 def test_subquery_in_a_delete_predicate_is_lifted_inside_its_select():
-    result = lift_subqueries("DELETE FROM `p.d.t` WHERE id IN (SELECT id FROM (SELECT id FROM `p.d.u`) AS s)")
+    result = lift_subqueries("DELETE FROM `p.d.t` WHERE id IN (SELECT s.id FROM (SELECT u.id FROM `p.d.u` AS u) AS s)")
 
     assert result.success
     assert result.lifted_subqueries == 1
