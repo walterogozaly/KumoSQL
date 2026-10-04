@@ -69,6 +69,7 @@ _CAST_TARGETS = {
 _SET_OPERATIONS = (exp.Union, exp.Intersect, exp.Except)
 
 _DATASET_LIMIT = 140
+_ISOLATED_LIMIT = 40
 _RANDOM_SEEDS = range(1, 13)
 
 
@@ -127,18 +128,50 @@ def _refusal(tree: exp.Expression) -> str | None:
     return _struct_refusal(tree)
 
 
+_INTEGER_CASTS = {exp.DataType.Type.BIGINT, exp.DataType.Type.INT}
+
+
 def _faithful(tree: exp.Expression) -> exp.Expression:
-    """``tree`` with ``DATE_ADD``/``DATE_SUB`` cast back to ``DATE`` (DuckDB's date plus
-    interval is a timestamp). The rest of the BigQuery reading (a zero divisor fails, NULL
-    order, ...) is :mod:`kumosql.bigquery_on_duckdb`, applied by the runner.
+    """``tree`` with the parts of the DuckDB reading that :mod:`kumosql.bigquery_on_duckdb` leaves open
+    pinned to BigQuery's: ``DATE_ADD``/``DATE_SUB`` are cast back to ``DATE`` (DuckDB's date plus
+    interval is a timestamp) and fail outside BigQuery's years 1 to 9999 (DuckDB's dates go far
+    beyond), and ``CAST(x AS INT64)`` rounds first (BigQuery rounds a FLOAT64 half away from zero,
+    DuckDB's cast half to even). Nested forms are guarded from the inside out. The rest of the
+    BigQuery reading (a zero divisor fails, NULL order, ...) is applied by the runner.
     """
 
+    from .bigquery_on_duckdb import MARKER
+
+    def error(message: str) -> exp.Expression:
+        return exp.Anonymous(this="ERROR", expressions=[exp.Literal.string(f"{MARKER}: {message}")])
+
     def guard(node: exp.Expression) -> exp.Expression:
-        if isinstance(node, (exp.DateAdd, exp.DateSub)) and not isinstance(node.parent, exp.Cast):
-            return exp.Cast(this=node, to=exp.DataType.build("DATE"))
+        if isinstance(node, (exp.DateAdd, exp.DateSub)):
+            day = exp.Cast(this=node, to=exp.DataType.build("DATE"))
+            low = exp.LT(this=day.copy(), expression=exp.cast(exp.Literal.string("0001-01-01"), "DATE"))
+            high = exp.GT(this=day.copy(), expression=exp.cast(exp.Literal.string("9999-12-31"), "DATE"))
+            return exp.If(this=exp.Or(this=low, expression=high), true=error("date out of range"), false=day)
+        if isinstance(node, (exp.Cast, exp.TryCast)) and node.to.this in _INTEGER_CASTS:
+            operand = node.this
+            if isinstance(operand, (exp.Predicate, exp.Connector, exp.Not, exp.Boolean, exp.Null)) or (
+                isinstance(operand, exp.Literal) and operand.is_int
+            ):
+                return node
+            return node.__class__(**{**node.args, "this": exp.Round(this=operand)})
         return node
 
-    return tree.transform(guard, copy=True)
+    tree = tree.copy()
+    targets = (exp.DateAdd, exp.DateSub, exp.Cast, exp.TryCast)
+    for node in reversed([n for n in tree.walk() if isinstance(n, targets)]):  # breadth-first, reversed: inner ones first
+        candidate = node.copy()
+        replacement = guard(candidate)
+        if replacement is candidate:
+            continue
+        if node.parent is not None:
+            node.replace(replacement)
+        else:
+            tree = replacement
+    return tree
 
 
 def _tables_read(tree: exp.Expression) -> set[str]:
@@ -229,6 +262,31 @@ def _legal(dataset, typed, constraints: Mapping[str, TableConstraints]) -> bool:
 
 
 def _datasets(left: str, right: str, typed, rules):
+    import itertools
+
+    yield from itertools.islice(_built_datasets(left, right, typed, rules), _DATASET_LIMIT)
+    yield from itertools.islice(_isolated_datasets(left, right, typed, rules), _ISOLATED_LIMIT)
+
+
+def _isolated_datasets(left: str, right: str, typed, rules):
+    """Each constant's boundary rows alone in one table (``targeted_data.isolated_boundary_datasets``), once each."""
+
+    from .targeted_data import isolated_boundary_datasets
+
+    seen = set()
+    for sql in (left, right):
+        try:
+            suite = isolated_boundary_datasets(sql, typed, rules)
+        except (ValueError, sqlglot.errors.SqlglotError):
+            suite = []
+        for labeled in suite:
+            signature = tuple(sorted((k, t.rows) for k, t in labeled.dataset.tables.items()))
+            if signature not in seen:
+                seen.add(signature)
+                yield labeled.dataset
+
+
+def _built_datasets(left: str, right: str, typed, rules):
     from .result_equivalence import generate_synthetic_dataset, query_constants
     from .targeted_data import edge_datasets, targeted_datasets
 
@@ -426,26 +484,70 @@ def search_counterexample(
         except ExecutionError:
             return None
         search = _Search(runner, *guarded)
-        for count, dataset in enumerate(_datasets(left_sql, right_sql, typed, rules)):
-            if count >= _DATASET_LIMIT or time.monotonic() > deadline:
-                return None
-            if not legal(dataset) or not search.differs(dataset):
-                continue
-            small = search.shrink(dataset, legal, time.monotonic() + max(1.0, time_limit / 2))
-            # The queries as written must differ on it too, so that a plain DuckDB replay shows it.
-            try:
-                if not _Search(runner, left_sql, right_sql).differs(small):
-                    return None
-            except ExecutionError:
-                return None
-            a, b = search.outputs(small)
-            tables = {
-                key: [{name: _export(v) for (name, _), v in zip(table.columns, row)} for row in table.rows]
-                for key, table in small.tables.items()
+
+        def accept(dataset) -> bool:
+            return legal(dataset) and search.differs(dataset)
+
+        found = None
+        for dataset in _datasets(left_sql, right_sql, typed, rules):
+            if time.monotonic() > deadline:
+                break
+            if accept(dataset):
+                found = dataset
+                break
+        if found is None:
+            # Nothing built from the literals differs: ask z3 for a small database (a candidate, replayed like the rest).
+            from . import bounded_refutation
+
+            foreign_keys = {
+                k.lower(): list(v.foreign_keys) for k, v in constraints.items() if k.lower() in {t.lower() for t in typed}
             }
-            return Counterexample(
-                tables=tables,
-                left_rows=sorted((tuple(_export(v) for v in r) for r in a.rows), key=repr),
-                right_rows=sorted((tuple(_export(v) for v in r) for r in b.rows), key=repr),
+            found = bounded_refutation.find(
+                left_sql, right_sql, typed, rules, foreign_keys, accept, deadline=time.monotonic() + time_limit
             )
-    return None
+        if found is None:
+            return None
+        small = search.shrink(found, legal, time.monotonic() + max(1.0, time_limit / 2))
+        # The queries as written must differ on it too, so that a plain DuckDB replay shows it.
+        written = _Search(runner, left_sql, right_sql)
+        try:
+            if not written.differs(small):
+                return None
+        except ExecutionError:
+            return None
+        outputs = search.outputs(small)
+        plain = written.outputs(small)
+        if (
+            outputs is None
+            or plain is None
+            or not _unoptimized_agrees(typed, guarded, small, outputs)
+            or not _unoptimized_agrees(typed, [left_sql, right_sql], small, plain)
+        ):
+            return None
+        a, b = outputs
+        tables = {
+            key: [{name: _export(v) for (name, _), v in zip(table.columns, row)} for row in table.rows]
+            for key, table in small.tables.items()
+        }
+        return Counterexample(
+            tables=tables,
+            left_rows=sorted((tuple(_export(v) for v in r) for r in a.rows), key=repr),
+            right_rows=sorted((tuple(_export(v) for v in r) for r in b.rows), key=repr),
+        )
+
+
+def _unoptimized_agrees(typed, queries, dataset, outputs) -> bool:
+    """Both queries return the same rows with DuckDB's optimizer off (DuckDB 1.5 returns wrong rows
+    for some correlated subqueries with it on; see ``duckdb_load.run_unoptimized``)."""
+
+    from .result_equivalence import DatasetRunner, ExecutionError, compare_outputs
+
+    try:
+        with DatasetRunner(typed, settings=("PRAGMA disable_optimizer",)) as plain:
+            for sql, output in zip(queries, outputs):
+                again = plain.run(sql, dataset, timeout=5)
+                if not compare_outputs(output, again, check_column_names=False, float_digits=12)[0]:
+                    return False
+    except ExecutionError:
+        return False
+    return True
