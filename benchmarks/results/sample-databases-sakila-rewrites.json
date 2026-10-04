@@ -1,0 +1,30 @@
+{
+  "suite": "Sample databases (Sakila): workload rewrites",
+  "order": 342,
+  "size": 394,
+  "score": "0 wrong in 394 executed; 180 rewrites verified on the real data",
+  "metric": "57 Sakila workload queries (17 upstream, adapted to BigQuery; 40 authored), each through KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the result multiset or stops running is wrong.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing rewrites (0 of them labelled proven); every rewrite is compared with an unrewritten control on the real Sakila data, a difference confirmed with DuckDB's optimizer off",
+  "coverage": {
+    "proven": 180,
+    "unknown": 214,
+    "unsupported": 0,
+    "timeout": 0,
+    "error": 0
+  },
+  "usefulness": "180 of 394 executed cases changed by a rewrite: pipeline 169, lift_subqueries 4, optimizer 7; upstream queries 0 wrong / 53 changed, authored 0 wrong / 127 changed",
+  "held_out": "dev 0 wrong / 148 changed; held out (a fifth of the queries by SHA-1 of their id) 0 wrong / 32 changed of 75 executed",
+  "docs": "docs/evals/sample-databases.md",
+  "command": "python tools/sample_db_bench.py --database sakila --write-results",
+  "date": "2026-10-04",
+  "caveats": "Pinned: Sakila datacharmer/test_db@e324b56193 sakila/sakila-mv-schema.sql (SHA-256 61c30abd47a0, New BSD, Copyright (c) 2014, Oracle Corporation). Loaded and checked against upstream: 16 tables / 47,273 rows, 16 primary and 22 foreign keys. Workload origins: 40 authored, 10 upstream-procedure, 7 upstream-view. Sakila's 7 views and the SELECTs of its 6 stored procedures and functions (parameters bound) are adapted from MySQL to BigQuery (each adaptation recorded in the workload file); the authored queries were written for this eval. In coverage, 'proven' counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "8afdccdf+changes"
+  }
+}

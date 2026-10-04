@@ -95,7 +95,6 @@ def test_refusal_cases():
 
 
 @pytest.mark.parametrize("before,after", KNOWN_PROVER_FALSE_PROOFS)
-@pytest.mark.xfail(strict=True, reason="known false proof of the structural prover's lifting normalization")
 def test_prover_does_not_prove_a_lift_out_of_scope(before, after):
     from kumosql.rewrite import verify_rewrite
 
