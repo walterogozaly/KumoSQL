@@ -1,0 +1,790 @@
+{
+ "about": "Authored query pairs on Oracle HR for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the HR data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates.",
+ "pairs": [
+  {
+   "id": "hr-fk-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "employees.job_id is NOT NULL and references jobs' key: every employee joins exactly one job",
+   "left": "SELECT e.employee_id, e.last_name FROM employees AS e JOIN jobs AS j ON e.job_id = j.job_id",
+   "right": "SELECT employee_id, last_name FROM employees"
+  },
+  {
+   "id": "hr-fk-join-elimination-nullable",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-fk-join-elimination",
+   "why": "employees.department_id may be NULL: such an employee joins no department",
+   "left": "SELECT e.employee_id, e.last_name FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id",
+   "right": "SELECT employee_id, last_name FROM employees",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "last_name": "a",
+      "department_id": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-fk-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-fk-join-elimination",
+   "drop": [
+    "fk:employees.job_id"
+   ],
+   "why": "without the foreign key an employee may name a job that does not exist",
+   "left": "SELECT e.employee_id, e.last_name FROM employees AS e JOIN jobs AS j ON e.job_id = j.job_id",
+   "right": "SELECT employee_id, last_name FROM employees",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "last_name": "a",
+      "job_id": "ZZ"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-fk-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-fk-join-elimination",
+   "drop": [
+    "pk:jobs"
+   ],
+   "why": "without jobs' primary key two jobs may share an id, and the employee joins both",
+   "left": "SELECT e.employee_id, e.last_name FROM employees AS e JOIN jobs AS j ON e.job_id = j.job_id",
+   "right": "SELECT employee_id, last_name FROM employees",
+   "witness": {
+    "jobs": [
+     {
+      "job_id": "J",
+      "job_title": "a"
+     },
+     {
+      "job_id": "J",
+      "job_title": "b"
+     }
+    ],
+    "employees": [
+     {
+      "employee_id": 1,
+      "last_name": "a",
+      "job_id": "J"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-left-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a LEFT JOIN on the key of jobs adds no row and no filter",
+   "left": "SELECT e.employee_id FROM employees AS e LEFT JOIN jobs AS j ON e.job_id = j.job_id",
+   "right": "SELECT employee_id FROM employees"
+  },
+  {
+   "id": "hr-left-join-elimination-not-unique",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-left-join-elimination",
+   "why": "an employee with two past jobs appears twice",
+   "left": "SELECT e.employee_id FROM employees AS e LEFT JOIN job_history AS jh ON jh.employee_id = e.employee_id",
+   "right": "SELECT employee_id FROM employees",
+   "witness": "real"
+  },
+  {
+   "id": "hr-left-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-left-join-elimination",
+   "drop": [
+    "pk:jobs"
+   ],
+   "why": "without jobs' primary key a job id may repeat",
+   "left": "SELECT e.employee_id FROM employees AS e LEFT JOIN jobs AS j ON e.job_id = j.job_id",
+   "right": "SELECT employee_id FROM employees",
+   "witness": {
+    "jobs": [
+     {
+      "job_id": "J",
+      "job_title": "a"
+     },
+     {
+      "job_id": "J",
+      "job_title": "b"
+     }
+    ],
+    "employees": [
+     {
+      "employee_id": 1,
+      "job_id": "J"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-self-join-to-filter",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "manager_id references employees' key: an employee with a manager joins exactly that manager, one without joins nobody",
+   "left": "SELECT e.employee_id FROM employees AS e JOIN employees AS m ON e.manager_id = m.employee_id",
+   "right": "SELECT employee_id FROM employees WHERE manager_id IS NOT NULL"
+  },
+  {
+   "id": "hr-self-join-to-filter-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-self-join-to-filter",
+   "drop": [
+    "fk:employees.manager_id"
+   ],
+   "why": "without the foreign key an employee may name a manager who is not an employee",
+   "left": "SELECT e.employee_id FROM employees AS e JOIN employees AS m ON e.manager_id = m.employee_id",
+   "right": "SELECT employee_id FROM employees WHERE manager_id IS NOT NULL",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "manager_id": 999
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-self-left-join-to-manager",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "each employee has at most one manager row: the LEFT JOIN to employees' key keeps every employee once",
+   "left": "SELECT e.employee_id FROM employees AS e LEFT JOIN employees AS m ON e.manager_id = m.employee_id",
+   "right": "SELECT employee_id FROM employees"
+  },
+  {
+   "id": "hr-self-left-join-to-reports",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-self-left-join-to-manager",
+   "why": "a manager appears once per direct report",
+   "left": "SELECT e.employee_id FROM employees AS e LEFT JOIN employees AS r ON r.manager_id = e.employee_id",
+   "right": "SELECT employee_id FROM employees",
+   "witness": "real"
+  },
+  {
+   "id": "hr-history-join-employee",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "job_history.employee_id is NOT NULL and references employees' key",
+   "left": "SELECT jh.employee_id, jh.job_id FROM job_history AS jh JOIN employees AS e ON jh.employee_id = e.employee_id",
+   "right": "SELECT employee_id, job_id FROM job_history"
+  },
+  {
+   "id": "hr-history-join-employee-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-history-join-employee",
+   "drop": [
+    "fk:job_history.employee_id"
+   ],
+   "why": "without the foreign key a history row may name an employee that does not exist",
+   "left": "SELECT jh.employee_id, jh.job_id FROM job_history AS jh JOIN employees AS e ON jh.employee_id = e.employee_id",
+   "right": "SELECT employee_id, job_id FROM job_history",
+   "witness": {
+    "job_history": [
+     {
+      "employee_id": 999,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-nullable-fk-join-as-filter",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "the join keeps exactly the employees whose department_id is not NULL (foreign key to the key of departments)",
+   "left": "SELECT e.employee_id FROM employees AS e JOIN departments AS d ON d.department_id = e.department_id",
+   "right": "SELECT employee_id FROM employees WHERE department_id IS NOT NULL"
+  },
+  {
+   "id": "hr-nullable-fk-join-as-filter-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-nullable-fk-join-as-filter",
+   "drop": [
+    "fk:employees.department_id"
+   ],
+   "why": "without the foreign key a department_id may name no department",
+   "left": "SELECT e.employee_id FROM employees AS e JOIN departments AS d ON d.department_id = e.department_id",
+   "right": "SELECT employee_id FROM employees WHERE department_id IS NOT NULL",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "department_id": 999
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-self-join-on-composite-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a self join on the whole composite key (employee_id, start_date) matches each row with itself",
+   "left": "SELECT a.employee_id, a.job_id FROM job_history AS a JOIN job_history AS b ON a.employee_id = b.employee_id AND a.start_date = b.start_date",
+   "right": "SELECT employee_id, job_id FROM job_history"
+  },
+  {
+   "id": "hr-self-join-on-part-of-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-self-join-on-composite-key",
+   "why": "employee_id alone is not the key: an employee with two history rows matches twice over",
+   "left": "SELECT a.employee_id, a.job_id FROM job_history AS a JOIN job_history AS b ON a.employee_id = b.employee_id",
+   "right": "SELECT employee_id, job_id FROM job_history",
+   "witness": "real"
+  },
+  {
+   "id": "hr-self-join-on-composite-key-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "hr-self-join-on-composite-key",
+   "drop": [
+    "pk:job_history"
+   ],
+   "why": "without the primary key two history rows may be identical and match each other",
+   "left": "SELECT a.employee_id, a.job_id FROM job_history AS a JOIN job_history AS b ON a.employee_id = b.employee_id AND a.start_date = b.start_date",
+   "right": "SELECT employee_id, job_id FROM job_history",
+   "witness": {
+    "job_history": [
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J"
+     },
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-distinct-on-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "employee_id is the primary key",
+   "left": "SELECT DISTINCT employee_id, last_name FROM employees",
+   "right": "SELECT employee_id, last_name FROM employees"
+  },
+  {
+   "id": "hr-distinct-not-on-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "hr-distinct-on-key",
+   "why": "many employees share a job",
+   "left": "SELECT DISTINCT job_id FROM employees",
+   "right": "SELECT job_id FROM employees",
+   "witness": "real"
+  },
+  {
+   "id": "hr-distinct-on-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "hr-distinct-on-key",
+   "drop": [
+    "pk:employees"
+   ],
+   "why": "without the primary key two employee rows may be identical",
+   "left": "SELECT DISTINCT employee_id, last_name FROM employees",
+   "right": "SELECT employee_id, last_name FROM employees",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "last_name": "a"
+     },
+     {
+      "employee_id": 1,
+      "last_name": "a"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-distinct-on-composite-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "(employee_id, start_date) is the primary key and the select list contains it",
+   "left": "SELECT DISTINCT employee_id, start_date, job_id FROM job_history",
+   "right": "SELECT employee_id, start_date, job_id FROM job_history"
+  },
+  {
+   "id": "hr-distinct-on-part-of-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "hr-distinct-on-composite-key",
+   "why": "one employee may hold the same job twice, starting on different dates",
+   "left": "SELECT DISTINCT employee_id, job_id FROM job_history",
+   "right": "SELECT employee_id, job_id FROM job_history",
+   "witness": {
+    "job_history": [
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J"
+     },
+     {
+      "employee_id": 1,
+      "start_date": "2002-01-01",
+      "end_date": "2003-01-01",
+      "job_id": "J"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-distinct-on-composite-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "hr-distinct-on-composite-key",
+   "drop": [
+    "pk:job_history"
+   ],
+   "why": "without the primary key a history row may repeat",
+   "left": "SELECT DISTINCT employee_id, start_date, job_id FROM job_history",
+   "right": "SELECT employee_id, start_date, job_id FROM job_history",
+   "witness": {
+    "job_history": [
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J"
+     },
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-distinct-on-unique-email-not-declared",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "why": "upstream declares UNIQUE (email), which BigQuery cannot declare and this eval drops: under the declared keys two employees may share an email (the real data has none, so the pair agrees on it)",
+   "left": "SELECT DISTINCT email FROM employees",
+   "right": "SELECT email FROM employees",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "email": "e"
+     },
+     {
+      "employee_id": 2,
+      "email": "e"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-in-to-exists",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "IN over a subquery is EXISTS of the correlated subquery (NULL department_id matches nothing either way)",
+   "left": "SELECT employee_id FROM employees WHERE department_id IN (SELECT department_id FROM departments WHERE location_id = 1700)",
+   "right": "SELECT e.employee_id FROM employees AS e WHERE EXISTS (SELECT 1 FROM departments AS d WHERE d.department_id = e.department_id AND d.location_id = 1700)"
+  },
+  {
+   "id": "hr-in-to-join-on-key",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "the subquery selects departments' primary key, so the join cannot repeat an employee",
+   "left": "SELECT employee_id FROM employees WHERE department_id IN (SELECT department_id FROM departments WHERE location_id = 1700)",
+   "right": "SELECT e.employee_id FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id WHERE d.location_id = 1700"
+  },
+  {
+   "id": "hr-in-to-join-without-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "hr-in-to-join-on-key",
+   "drop": [
+    "pk:departments"
+   ],
+   "why": "without departments' primary key two departments may share an id and the join repeats the employee",
+   "left": "SELECT employee_id FROM employees WHERE department_id IN (SELECT department_id FROM departments WHERE location_id = 1700)",
+   "right": "SELECT e.employee_id FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id WHERE d.location_id = 1700",
+   "witness": {
+    "departments": [
+     {
+      "department_id": 1,
+      "department_name": "a",
+      "location_id": 1700
+     },
+     {
+      "department_id": 1,
+      "department_name": "b",
+      "location_id": 1700
+     }
+    ],
+    "employees": [
+     {
+      "employee_id": 1,
+      "department_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-in-to-join-not-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "hr-in-to-join-on-key",
+   "why": "the subquery selects employees.department_id, which repeats: the join gives one row per employee",
+   "left": "SELECT d.department_id FROM departments AS d JOIN employees AS e ON e.department_id = d.department_id WHERE e.salary > 10000",
+   "right": "SELECT department_id FROM departments WHERE department_id IN (SELECT department_id FROM employees WHERE salary > 10000)",
+   "witness": "real"
+  },
+  {
+   "id": "hr-not-in-to-not-exists",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "employees.job_id is NOT NULL, so NOT IN cannot be poisoned by a NULL",
+   "left": "SELECT job_id FROM jobs WHERE job_id NOT IN (SELECT job_id FROM employees)",
+   "right": "SELECT j.job_id FROM jobs AS j WHERE NOT EXISTS (SELECT 1 FROM employees AS e WHERE e.job_id = j.job_id)"
+  },
+  {
+   "id": "hr-not-in-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "hr-not-in-to-not-exists",
+   "why": "departments.manager_id has NULLs: NOT IN then returns no row at all",
+   "left": "SELECT employee_id FROM employees WHERE employee_id NOT IN (SELECT manager_id FROM departments)",
+   "right": "SELECT e.employee_id FROM employees AS e WHERE NOT EXISTS (SELECT 1 FROM departments AS d WHERE d.manager_id = e.employee_id)",
+   "witness": "real"
+  },
+  {
+   "id": "hr-not-in-without-not-null",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "hr-not-in-to-not-exists",
+   "drop": [
+    "not_null:employees.job_id"
+   ],
+   "why": "without NOT NULL on employees.job_id one NULL makes NOT IN return nothing",
+   "left": "SELECT job_id FROM jobs WHERE job_id NOT IN (SELECT job_id FROM employees)",
+   "right": "SELECT j.job_id FROM jobs AS j WHERE NOT EXISTS (SELECT 1 FROM employees AS e WHERE e.job_id = j.job_id)",
+   "witness": {
+    "jobs": [
+     {
+      "job_id": "A",
+      "job_title": "a"
+     }
+    ],
+    "employees": [
+     {
+      "employee_id": 1,
+      "job_id": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-coalesce-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "last_name is NOT NULL",
+   "left": "SELECT COALESCE(last_name, 'none') AS n FROM employees",
+   "right": "SELECT last_name AS n FROM employees"
+  },
+  {
+   "id": "hr-coalesce-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "hr-coalesce-not-null",
+   "why": "first_name may be NULL",
+   "left": "SELECT COALESCE(first_name, 'none') AS n FROM employees",
+   "right": "SELECT first_name AS n FROM employees",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "first_name": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-is-not-null-on-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "hire_date is NOT NULL",
+   "left": "SELECT employee_id FROM employees WHERE hire_date IS NOT NULL",
+   "right": "SELECT employee_id FROM employees"
+  },
+  {
+   "id": "hr-is-not-null-on-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "hr-is-not-null-on-not-null",
+   "why": "the president has no manager",
+   "left": "SELECT employee_id FROM employees WHERE manager_id IS NOT NULL",
+   "right": "SELECT employee_id FROM employees",
+   "witness": "real"
+  },
+  {
+   "id": "hr-count-not-null-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "email is NOT NULL",
+   "left": "SELECT COUNT(email) FROM employees",
+   "right": "SELECT COUNT(*) FROM employees"
+  },
+  {
+   "id": "hr-count-nullable-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "hr-count-not-null-column",
+   "why": "most employees have no commission",
+   "left": "SELECT COUNT(commission_pct) FROM employees",
+   "right": "SELECT COUNT(*) FROM employees",
+   "witness": "real"
+  },
+  {
+   "id": "hr-group-by-dependent-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "location_id depends on the grouped primary key department_id",
+   "left": "SELECT d.department_id, d.department_name, COUNT(*) AS n FROM departments AS d JOIN employees AS e ON e.department_id = d.department_id GROUP BY d.department_id, d.department_name, d.location_id",
+   "right": "SELECT d.department_id, d.department_name, COUNT(*) AS n FROM departments AS d JOIN employees AS e ON e.department_id = d.department_id GROUP BY d.department_id, d.department_name"
+  },
+  {
+   "id": "hr-group-by-dependent-column-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "hr-group-by-dependent-column",
+   "drop": [
+    "pk:departments"
+   ],
+   "why": "without the primary key two department rows may share id and name but differ in location",
+   "left": "SELECT d.department_id, d.department_name, COUNT(*) AS n FROM departments AS d JOIN employees AS e ON e.department_id = d.department_id GROUP BY d.department_id, d.department_name, d.location_id",
+   "right": "SELECT d.department_id, d.department_name, COUNT(*) AS n FROM departments AS d JOIN employees AS e ON e.department_id = d.department_id GROUP BY d.department_id, d.department_name",
+   "witness": {
+    "departments": [
+     {
+      "department_id": 1,
+      "department_name": "a",
+      "location_id": 1
+     },
+     {
+      "department_id": 1,
+      "department_name": "a",
+      "location_id": 2
+     }
+    ],
+    "employees": [
+     {
+      "employee_id": 1,
+      "department_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-group-by-independent-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "hr-group-by-dependent-column",
+   "why": "job_id is not determined by department_id",
+   "left": "SELECT department_id, COUNT(*) AS n FROM employees GROUP BY department_id, job_id",
+   "right": "SELECT department_id, COUNT(*) AS n FROM employees GROUP BY department_id",
+   "witness": "real"
+  },
+  {
+   "id": "hr-having-on-group-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "a HAVING on the group key is a WHERE",
+   "left": "SELECT department_id, COUNT(*) AS n FROM employees GROUP BY department_id HAVING department_id > 50",
+   "right": "SELECT department_id, COUNT(*) AS n FROM employees WHERE department_id > 50 GROUP BY department_id"
+  },
+  {
+   "id": "hr-filter-vs-conditional-count",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "hr-having-on-group-key",
+   "why": "a department whose employees all earn 5000 or less has no group on the left and a zero on the right",
+   "left": "SELECT department_id, COUNT(*) AS n FROM employees WHERE salary > 5000 GROUP BY department_id",
+   "right": "SELECT department_id, COUNTIF(salary > 5000) AS n FROM employees GROUP BY department_id",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "department_id": 10,
+      "salary": 100
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-count-through-composite-key-group",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "job_id depends on the composite primary key",
+   "left": "SELECT employee_id, start_date, COUNT(*) AS n FROM job_history GROUP BY employee_id, start_date, job_id",
+   "right": "SELECT employee_id, start_date, COUNT(*) AS n FROM job_history GROUP BY employee_id, start_date"
+  },
+  {
+   "id": "hr-count-through-composite-key-group-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "hr-count-through-composite-key-group",
+   "drop": [
+    "pk:job_history"
+   ],
+   "why": "without the key the same (employee, start date) may appear with two jobs",
+   "left": "SELECT employee_id, start_date, COUNT(*) AS n FROM job_history GROUP BY employee_id, start_date, job_id",
+   "right": "SELECT employee_id, start_date, COUNT(*) AS n FROM job_history GROUP BY employee_id, start_date",
+   "witness": {
+    "job_history": [
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "A"
+     },
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-union-all-vs-distinct",
+   "category": "set operation",
+   "label": "different",
+   "why": "the same job id appears many times",
+   "left": "SELECT job_id FROM employees UNION ALL SELECT job_id FROM job_history",
+   "right": "SELECT job_id FROM employees UNION DISTINCT SELECT job_id FROM job_history",
+   "witness": "real"
+  },
+  {
+   "id": "hr-union-all-of-complementary-filters",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "the two filters split the NOT NULL key into two disjoint halves",
+   "left": "SELECT employee_id FROM employees WHERE employee_id > 150 UNION ALL SELECT employee_id FROM employees WHERE employee_id <= 150",
+   "right": "SELECT employee_id FROM employees"
+  },
+  {
+   "id": "hr-union-all-of-complementary-filters-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "hr-union-all-of-complementary-filters",
+   "why": "salary may be NULL and then matches neither half",
+   "left": "SELECT employee_id FROM employees WHERE salary > 5000 UNION ALL SELECT employee_id FROM employees WHERE salary <= 5000",
+   "right": "SELECT employee_id FROM employees",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "salary": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-intersect-to-in-not-null",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "both job_id columns are NOT NULL",
+   "left": "SELECT job_id FROM employees INTERSECT DISTINCT SELECT job_id FROM job_history",
+   "right": "SELECT DISTINCT job_id FROM employees WHERE job_id IN (SELECT job_id FROM job_history)"
+  },
+  {
+   "id": "hr-intersect-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "hr-intersect-to-in-not-null",
+   "why": "INTERSECT matches NULLs, IN does not",
+   "left": "SELECT department_id FROM employees INTERSECT DISTINCT SELECT department_id FROM job_history",
+   "right": "SELECT DISTINCT department_id FROM employees WHERE department_id IN (SELECT department_id FROM job_history)",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "department_id": null
+     }
+    ],
+    "job_history": [
+     {
+      "employee_id": 1,
+      "start_date": "2000-01-01",
+      "end_date": "2001-01-01",
+      "job_id": "J",
+      "department_id": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-outer-to-inner-join",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "the filter on the outer side rejects the NULL-padded rows",
+   "left": "SELECT e.employee_id, d.department_name FROM employees AS e LEFT JOIN departments AS d ON e.department_id = d.department_id WHERE d.location_id = 1700",
+   "right": "SELECT e.employee_id, d.department_name FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id WHERE d.location_id = 1700"
+  },
+  {
+   "id": "hr-outer-to-inner-join-null-accepting",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "hr-outer-to-inner-join",
+   "why": "the filter accepts the NULL-padded row of an employee without a department",
+   "left": "SELECT e.employee_id, d.department_name FROM employees AS e LEFT JOIN departments AS d ON e.department_id = d.department_id WHERE d.location_id IS NULL OR d.location_id = 1700",
+   "right": "SELECT e.employee_id, d.department_name FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id WHERE d.location_id IS NULL OR d.location_id = 1700",
+   "witness": {
+    "employees": [
+     {
+      "employee_id": 1,
+      "department_id": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "hr-window-filter-on-partition-key",
+   "category": "window",
+   "label": "equivalent",
+   "why": "a filter on the partition key keeps whole partitions",
+   "left": "SELECT employee_id, department_id, r FROM (SELECT employee_id, department_id, salary, RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r FROM employees) AS t WHERE department_id = 50",
+   "right": "SELECT employee_id, department_id, RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r FROM employees WHERE department_id = 50"
+  },
+  {
+   "id": "hr-window-filter-on-other-column",
+   "category": "window",
+   "label": "different",
+   "sibling": "hr-window-filter-on-partition-key",
+   "why": "filtering before the window removes rows that rank above the kept ones",
+   "left": "SELECT employee_id, department_id, r FROM (SELECT employee_id, department_id, salary, RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r FROM employees) AS t WHERE employee_id > 120",
+   "right": "SELECT employee_id, department_id, RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r FROM employees WHERE employee_id > 120",
+   "witness": "real"
+  }
+ ]
+}
