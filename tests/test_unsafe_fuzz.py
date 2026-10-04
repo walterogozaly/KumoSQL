@@ -139,7 +139,19 @@ def test_counterexample_keeps_numeric_columns_numeric_when_no_integer_model_exis
     left = "SELECT y.b AS k0, x.b AS k1 FROM t AS x JOIN u AS y ON x.b > 0"
     p = "((x.b >= 1) OR ((y.a < 2) OR (y.b <= 1)))"
     right = f"{left} WHERE {p} UNION ALL {left} WHERE NOT {p} UNION ALL {left} WHERE NOT ({p} IS TRUE)"
-    result = unsafe_fuzz.prove(left, right)
+    # Over INT64 columns x.b > 0 means x.b >= 1, so the pair is equal: it needs FLOAT64 columns to be separated.
+    assert unsafe_fuzz.prove(left, right).counterexample is None
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    result = prove_equivalent_algebraic(
+        left,
+        right,
+        schema={t: list(unsafe_fuzz.COLUMNS) for t in unsafe_fuzz.TABLES},
+        types={t: {c: "FLOAT64" for c in unsafe_fuzz.COLUMNS} for t in unsafe_fuzz.TABLES},
+        timeout_ms=unsafe_fuzz.PROVER_TIMEOUT_MS,
+        compare_names=False,
+        search_counterexample=True,
+    )
     assert result.counterexample is not None
     cells = [v for rows in result.counterexample.tables.values() for row in rows for v in row.values() if v is not None]
     assert cells and all(isinstance(v, (int, float)) for v in cells)
