@@ -13,7 +13,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
 | [Singleton aggregation and set identity](singleton-and-set-identity.md) | Key-fixed aggregation and scoped set-tree identity, with explicit collation conditions |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
-| [Proof safeguards](proof-safeguards.md) | The independent predicate checker, Dataform expressions in proofs, and what is not covered yet |
+| [Proof safeguards](proof-safeguards.md) | The independent predicate and CTE checkers, Dataform expressions in proofs, and what is not covered yet |
 | [Parser checks](parser-checks.md) | A second reading of every query a proof depends on, checked against MySQL, DuckDB and BigQuery, and what sqlglot gets wrong |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
 | [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |

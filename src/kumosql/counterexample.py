@@ -575,6 +575,84 @@ def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -
 _TARGETED_TYPES = {"INT": "INT64", "VARCHAR": "STRING", "ENUM": "STRING", "TIME": "STRING", "DATE": "DATE", "NUMERIC": "FLOAT64", "BOOL": "BOOL"}
 
 
+def _pick_argument(node: exp.Expression) -> exp.Expression | None:
+    """The one value expression a pick call chooses from, ``None`` when it is not a plain one."""
+
+    if isinstance(node, exp.Anonymous):
+        argument = node.expressions[0] if len(node.expressions) == 1 else None
+    else:
+        argument = node.this
+    if isinstance(argument, exp.Distinct) and len(argument.expressions) == 1:
+        argument = argument.expressions[0]  # a DISTINCT does not change which value may be picked
+    return None if isinstance(argument, (exp.Distinct, exp.Order)) else argument
+
+
+def guard_arbitrary_picks(sql: str) -> str | None:
+    """``sql`` with every aggregate pick that may land on any of several values made to fail instead.
+
+    ``ANY_VALUE(x)``, ``first(x)``, ``last(x)`` and ``arbitrary(x)`` return some row's ``x``. BigQuery and
+    MySQL may return a different one, and DuckDB's choice follows its hash order, which shuffling the rows
+    cannot move. Each call becomes ``CASE WHEN COUNT(DISTINCT x) <= 1 AND (COUNT(x) = 0 OR COUNT(x) =
+    COUNT(*)) THEN ANY_VALUE(x) ELSE error(..) END`` (the call's ``FILTER`` goes on every count): the same
+    value when the group holds one value, or only NULLs, and an error when the pick is free. Returns ``sql``
+    itself when there is no pick, and ``None`` when a pick cannot be guarded (a window function, an
+    ``ORDER BY`` or several arguments inside the call).
+    """
+
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    sites = []
+    for node in tree.find_all(exp.AnyValue, exp.First, exp.Last, exp.Anonymous):
+        if isinstance(node, exp.Anonymous) and str(node.this).lower() != "arbitrary":
+            continue
+        top = node
+        while isinstance(top.parent, (exp.IgnoreNulls, exp.RespectNulls)) and top.parent.this is top:
+            top = top.parent
+        if isinstance(top.parent, exp.Filter) and top.parent.this is top:
+            top = top.parent
+        if _pick_argument(node) is None or (isinstance(top.parent, exp.Window) and top.parent.this is top):
+            return None
+        sites.append((node, top))
+    for node, top in reversed(sites):  # an inner pick first, so an outer one copies it already guarded
+        condition = top.expression.this if isinstance(top, exp.Filter) and isinstance(top.expression, exp.Where) else None
+        value = _pick_argument(node).sql(dialect="duckdb")
+        where = f" FILTER (WHERE {condition.sql(dialect='duckdb')})" if condition is not None else ""
+
+        def count(what: str) -> str:
+            return f"COUNT({what}){where}"
+
+        guarded = (
+            f"CASE WHEN {count('DISTINCT ' + value)} <= 1 AND ({count(value)} = 0 OR {count(value)} = {count('*')}) "
+            f"THEN ANY_VALUE({value}){where} ELSE error('arbitrary pick') END"
+        )
+        top.replace(sqlglot.parse_one(guarded, read="duckdb"))
+    return tree.sql(dialect="duckdb") if sites else sql
+
+
+def has_limit(sql: str) -> bool:
+    return sqlglot.parse_one(sql, read="duckdb").args.get("limit") is not None
+
+
+def tie_breaking_variants(sql: str, columns: int) -> list[str]:
+    """``sql`` again with every output column appended to its ``ORDER BY``, ascending and then descending.
+
+    Only a ``LIMIT`` on the whole query matters: it keeps some of the rows tied on the ordering, and which
+    ones is arbitrary. Both variants must keep the same bag as the query itself.
+    """
+
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    if tree.args.get("limit") is None or not columns:
+        return []
+    variants = []
+    for descending in (False, True):
+        variant = tree.copy()
+        order = variant.args.get("order")
+        keys = list(order.expressions) if order is not None else []
+        keys += [exp.Ordered(this=exp.Literal.number(i), desc=descending) for i in range(1, columns + 1)]
+        variant.set("order", exp.Order(expressions=keys))
+        variants.append(variant.sql(dialect="duckdb"))
+    return variants
+
+
 class Searcher:
     """Reusable search over one schema: parse once, then try many databases.
 
@@ -627,6 +705,7 @@ class Searcher:
         self._loaded: dict[str, str | None] = {name: "" for name in self.used}
         self._agreed: set[tuple[str, ...]] = set()
         self._agreed_targeted: set[str] = set()
+        self._picks: list[tuple[list[str], int]] | bool | None = None  # see ``_pick_checks``
 
     def _values(self, data) -> dict[str, str]:
         """Each used table's rows as the literal VALUES list ``_load`` inserts ("" for no rows)."""
@@ -906,16 +985,50 @@ class Searcher:
                     return False  # the strict reading: a NULL reference is not generated either
         return all(generator._holds(c, data) for c in generator.global_checks if all(t in self.used for t in c.tables))
 
+    def _pick_checks(self) -> list[tuple[list[str], int]] | None:
+        """For each query: its guarded copy (if it picks arbitrarily) and its column count (if it has a ``LIMIT``).
+
+        ``None`` when a pick cannot be checked (the pair is then never called different). Built once, on the
+        first counterexample candidate: most searches never need it.
+        """
+
+        if self._picks is None:
+            checks = []
+            try:
+                for sql in (self.left_sql, self.right_sql):
+                    guarded = guard_arbitrary_picks(sql)
+                    if guarded is None:
+                        break
+                    columns = len(self.db.execute(sql).description) if has_limit(sql) else 0
+                    checks.append(([guarded] if guarded != sql else [], columns))
+                else:
+                    self._picks = checks
+            except (sqlglot.errors.SqlglotError, duckdb.Error):
+                pass
+            if self._picks is None:
+                self._picks = False
+        return self._picks or None
+
     def _stable(self, data, a, b, rng) -> bool:
         """The difference must not depend on row order or on an arbitrary pick: shuffle and compare again."""
 
         expected = (_bag(a), _bag(b))
+        picks = self._pick_checks()
+        if picks is None:
+            return False
         try:
             # DuckDB's optimizer has returned wrong rows for some correlated subqueries: the same rows must
             # come back with the optimizer off, so a counterexample never rests on an engine bug
             self._load(data)
             if tuple(_bag(self._read(rows)) for rows in run_unoptimized(self.db, self.left_sql, self.right_sql)) != expected:
                 return False
+            # a shuffle cannot move a pick that follows hash order, so check the picks on the data itself: every
+            # ``ANY_VALUE`` group must hold one value (or only NULLs), and a ``LIMIT`` must cut the same bag
+            # whichever way its ties are broken
+            for sql, (guarded, columns), want in zip((self.left_sql, self.right_sql), picks, expected):
+                for variant in [*guarded, *tie_breaking_variants(sql, columns)]:
+                    if _bag(self._rows(variant)) != want:
+                        return False
             # reversed and rotated first: three random shuffles of a two-row table keep its order 1 time in 8
             orders = [{name: list(reversed(data[name])) for name in self.used}]
             orders.append({name: list(data[name][1:]) + list(data[name][:1]) for name in self.used})

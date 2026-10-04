@@ -84,6 +84,10 @@ Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or
 
 The provers also refuse to trust the parser blindly. Before a proof counts, the text is read a second time by a small separate reader that knows each engine's operator order, and if the two readings group the operators differently (for example `a | b & c` in BigQuery, or `a = b < c` in MySQL) the answer is "not proven" with the reason "parser disagreement". The limit is that this can only take proofs away, and a construct the second reader does not know is left to sqlglot's reading. See [parser checks](parser-checks.md).
 
+## Example: grouping with a grand total
+
+`GROUP BY ROLLUP (x)`, `CUBE` and `GROUPING SETS` can add a grand-total row, even when no input row exists, and a list that repeats a grouping set returns each group twice. A rule that assumes one row per group (summing per-group counts into one count, say) would then give a different number than the real query. KumoSQL's rules now recognise these groupings, `GROUP BY ()` and `DISTINCT ON` everywhere and decline to rewrite them, so such pairs come back unproven instead of proven. The evidence is regression pairs checked on DuckDB, so a pair that is still unproven may well be equivalent. The exact conditions are in the [full reference](../docs/provers.md).
+
 ## Example: whole numbers that turn into decimals
 
 A database that compares a whole number with a decimal column first converts the whole number to a decimal, and a very large whole number loses its last digits in that conversion. So `a = b AND b = c` does not always mean `a = c`: 9007199254740992 and 9007199254740993 both equal the decimal 9007199254740992.0. Likewise `1e-324 < 2e-324` is false, because both literals round to zero. KumoSQL's SMT prover now models the conversion when the column types are declared, and it does not treat tiny, huge or long decimal literals as exact numbers. When column types are not declared, a proof that compares columns states the assumption that they have the same type. The evidence is regression pairs; the exact rules are in the [full reference](../docs/provers.md).
