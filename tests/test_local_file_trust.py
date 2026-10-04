@@ -48,6 +48,79 @@ def test_windows_device_names_and_normalized_directory_aliases_are_refused(tmp_p
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("part", ["PROGRA~1", "model~12.sqlx", "A~9", "notes~1backup"])
+def test_windows_short_alias_detection_is_platform_independent(part):
+    assert resilience.is_windows_short_name_alias(part)
+
+
+@pytest.mark.parametrize("part", ["model.sqlx", "backup~", "notes~draft.sql", "release~v1", "123"])
+def test_ordinary_tilde_names_are_not_short_aliases(part):
+    assert not resilience.is_windows_short_name_alias(part)
+
+
+@pytest.mark.parametrize("name", ["PROGRA~1/model.sql", "definitions/MODEL~1.sqlx", "a~12/b.sql"])
+def test_short_alias_project_paths_are_refused_before_writing(tmp_path, name):
+    assert resilience.unsafe_checkout_path(name)
+    with pytest.raises(live_graph.ProjectError):
+        live_graph._write_files({name: "SELECT 1"}, str(tmp_path))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_short_alias_read_never_opens_the_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail("read an alias target"))
+    assert resilience.read_text_or_reason(tmp_path / "DEFINI~1" / "model.sql") == (
+        None, "Windows short-name aliases are not read"
+    )
+
+
+def test_asset_scan_prunes_short_alias_directories_and_files(tmp_path):
+    (tmp_path / "MODEL~1.sql").write_text("SELECT 2")
+    (tmp_path / "DEFINI~1").mkdir()
+    (tmp_path / "DEFINI~1" / "hidden.sql").write_text("SELECT 3")
+    (tmp_path / "ordinary.sql").write_text("SELECT 1")
+    errors = []
+    found = find_assets(tmp_path, (".sql",), lambda path, reason: errors.append((path.name, reason)))
+    assert [path.name for path in found] == ["ordinary.sql"]
+    assert sorted(name for name, _ in errors) == ["DEFINI~1", "MODEL~1.sql"]
+    assert all(reason == "Windows short-name aliases are not read" for _, reason in errors)
+
+
+def test_asset_scan_refuses_a_short_alias_root_before_walking(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "walk", lambda *a, **k: pytest.fail("walked an alias root"))
+    root = tmp_path / "DEFINI~1"
+    errors = []
+    assert find_assets(root, (".sql",), lambda path, reason: errors.append((path, reason))) == []
+    assert errors == [(root, "Windows short-name aliases are not read")]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows short-name resolution")
+def test_actual_short_alias_cannot_reach_a_refused_long_directory(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+
+    # Extended syntax can create a trailing-dot name that the project policy refuses.
+    blocked = resilience.extended_path(tmp_path) / "blocked directory."
+    blocked.mkdir()
+    get_short = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+    get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_short.restype = wintypes.DWORD
+    size = get_short(str(blocked), None, 0)
+    if not size:
+        pytest.skip("filesystem provides no short-name alias")
+    buffer = ctypes.create_unicode_buffer(size)
+    written = get_short(str(blocked), buffer, size)
+    if not written or written >= size:
+        pytest.skip("filesystem provides no short-name alias")
+    alias = Path(buffer.value).name
+    if "~" not in alias:
+        pytest.skip("8.3 name creation is disabled on this volume")
+    assert (tmp_path / alias).is_dir()
+    for name in (blocked.name, alias):
+        with pytest.raises(live_graph.ProjectError):
+            live_graph._write_files({f"{name}/model.sql": "SELECT 1"}, str(tmp_path))
+    assert list(blocked.iterdir()) == []
+
+
 def _link(link, target, directory=False):
     try:
         link.symlink_to(target, target_is_directory=directory)
@@ -166,7 +239,9 @@ def test_snapshot_round_trip_preserves_reports_and_source_without_sqlx_parsing(m
     lambda d: d.update(version=999), lambda d: d.update(version=True),
     lambda d: d.update(content_key="other"), lambda d: d.update(unexpected={}),
     lambda d: d.update(source_files={"Z:outside.sql": "SELECT 1"}),
+    lambda d: d.update(source_files={"DEFINI~1/a.sql": "SELECT 1"}),
     lambda d: d["models"]["a"].update(path="Z:outside.sql"),
+    lambda d: d["models"]["a"].update(path="DEFINI~1/a.sql"),
     lambda d: d.update(models={"a": {"target": "invalid"}}),
 ])
 def test_invalid_snapshot_schema_is_a_cache_miss(mutate):
@@ -259,10 +334,11 @@ def test_git_listing_skips_paths_that_cannot_be_written_safely(tmp_path):
     run("init", "-q")
     run("config", "user.email", "t@example.com")
     run("config", "user.name", "t")
-    (repo / "definitions").mkdir()
-    (repo / "definitions" / "good.sqlx").write_text("select 1")
-    (repo / "definitions" / "aux.sqlx").write_text("select 2")
-    (repo / "definitions" / "notes:v2.sql").write_text("select 3")
-    run("add", "-A")
+    run("config", "core.protectNTFS", "false")  # fixture-only: construct names a Windows checkout must reject
+    # Populate the index directly: Windows cannot open a device name/ADS as an ordinary file.
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], input=b"SELECT 1",
+                          cwd=repo, check=True, capture_output=True).stdout.decode().strip()
+    for name in ("good.sqlx", "aux.sqlx", "notes:v2.sql", "MODEL~1.sqlx"):
+        run("update-index", "--add", "--cacheinfo", f"100644,{blob},definitions/{name}")
     run("commit", "-q", "-m", "x")
     assert set(git_repo._tree_blobs(repo)) == {"definitions/good.sqlx"}

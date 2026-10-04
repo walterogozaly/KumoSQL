@@ -29,7 +29,7 @@ from contextlib import contextmanager
 
 from . import console
 from .pipeline import Pipeline, load_sqlx_project
-from .resilience import extended_path, is_windows_device_name
+from .resilience import extended_path, is_windows_device_name, is_windows_short_name_alias
 from .scripts import expand_script_jobs
 from .timing import stage
 
@@ -547,6 +547,7 @@ def _safe_path(path: object) -> PurePosixPath:
     windows = PureWindowsPath(path)
     if posix.is_absolute() or windows.drive or windows.root or any(
         p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p)
+        or is_windows_short_name_alias(p)
         for p in path.split("/")
     ):
         raise ProjectError("invalid file path")
