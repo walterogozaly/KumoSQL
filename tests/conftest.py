@@ -176,6 +176,7 @@ EVAL_FILES = {
     "test_jaffle_shop_bench.py",
     "test_lineage_benchmarks.py",
     "test_lineage_goldens_bench.py",
+    "test_logos_bench.py",
     "test_llm_sql_solver_bench.py",
     "test_llmr2_bench.py",
     "test_minimization_bench.py",

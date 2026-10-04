@@ -19,6 +19,7 @@ the execution checks use to generate synthetic tables.
 
     python tools/benchmark_corpora.py fetch sqlstorm dsb    # into $KUMOSQL_BENCH_DIR
     python tools/benchmark_corpora.py fetch tpch-data tpcds-data   # real data for the transformation bench
+    python tools/benchmark_corpora.py fetch logos           # Logos' rewrite pairs (tools/logos_bench.py)
     python tools/benchmark_corpora.py list                  # corpora and their sizes
 
 Data lives in ``$KUMOSQL_BENCH_DIR`` (default ``~/.cache/kumosql-bench``), outside git.
@@ -44,6 +45,7 @@ DSB_URL = "https://github.com/microsoft/dsb.git"
 JOB_URL = "https://github.com/gregrahn/join-order-benchmark.git"
 IMDB_URL = "https://github.com/danolivo/jo-bench.git"  # the IMDB data JOB runs on, as CSV chunks in git (BSD-2)
 LLMR2_URL = "https://github.com/DAMO-NLP-SG/LLM-R2.git"  # no licence file: fetched at the pin, never committed
+LOGOS_URL = "https://github.com/WindOctober/Logos.git"  # MIT, but its TPC-derived query text is fetched, never committed
 # Pinned source versions: results are only comparable on the same queries.
 PINS = {
     SQLSTORM_URL: "b3bb0b96794a6afe9bb8f3ff2b243562b779c40d",
@@ -51,6 +53,7 @@ PINS = {
     JOB_URL: "a39603662e023e449cb2121997a5034df9e02ebf",
     IMDB_URL: "ad516b39edc51f914f0097b801dc7dbd114fc46b",
     LLMR2_URL: "91ba530b45b1353d6d2cc45d816dfefc34dbad92",
+    LOGOS_URL: "333d5275ac871f5b36ce3a7dc5f6fef5f7879069",
 }
 SQLSTORM_DATASETS = ("stackoverflow", "tpch", "tpcds", "job")
 DSB_SEEDS = (1, 2, 3)
@@ -80,7 +83,7 @@ def source_versions() -> dict[str, str]:
     """The commit each fetched corpus is at (it should match ``PINS``)."""
 
     out = {}
-    for name in ("SQLStorm", "dsb", "join-order-benchmark", "jo-bench", "llm-r2"):
+    for name in ("SQLStorm", "dsb", "join-order-benchmark", "jo-bench", "llm-r2", "logos"):
         path = BENCH_DIR / name
         if path.exists():
             out[name] = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True).stdout.strip()
@@ -162,7 +165,8 @@ def fetch_tpcds_data(scale: int = 1) -> Path:
     tools = BENCH_DIR / "dsb" / "code" / "tools"
     raw = BENCH_DIR / "tpcds-raw"
     raw.mkdir(parents=True, exist_ok=True)
-    _run(["./dsdgen", "-SCALE", str(scale), "-DIR", str(raw), "-FORCE", "-QUIET", "Y"], cwd=tools)
+    # dsdgen keeps -DIR in a short fixed buffer, so a long absolute path overflows it; pass it relative to tools
+    _run(["./dsdgen", "-SCALE", str(scale), "-DIR", os.path.relpath(raw, tools), "-FORCE", "-QUIET", "Y"], cwd=tools)
     con = duckdb.connect(str(target))
     for statement in (tools / "tpcds.sql").read_text().split(";"):
         if "create table" in statement.lower():
@@ -325,6 +329,26 @@ def fetch_llmr2() -> Path:
     return dest / "data" / "data_llmr2" / "queries"
 
 
+def fetch_logos() -> Path:
+    """Logos' core rewrite pairs (R-Bot TPC-H and DSB, TPC-DS variants) with their licence files, under 1 MB."""
+
+    import shutil
+
+    dest = BENCH_DIR / "logos"
+    core = "benchmarks/core"
+    if not dest.exists():
+        # clone beside the target and rename, so two runs fetching at once never see a half-made checkout
+        partial = BENCH_DIR / f"logos.partial-{os.getpid()}"
+        shutil.rmtree(partial, ignore_errors=True)
+        _clone(LOGOS_URL, partial, sparse=["LICENSE", f"{core}/README.md", f"{core}/licenses", f"{core}/rbot", f"{core}/tpcds"])
+        try:
+            partial.rename(dest)
+        except OSError:  # another run finished first
+            shutil.rmtree(partial, ignore_errors=True)
+    _clone(LOGOS_URL, dest)  # checks the pin
+    return dest / core
+
+
 FETCHERS = {
     "sqlstorm": fetch_sqlstorm,
     "dsb": fetch_dsb,
@@ -332,6 +356,7 @@ FETCHERS = {
     "tpcds-data": fetch_tpcds_data,
     "job-data": fetch_job_data,
     "llm-r2": fetch_llmr2,
+    "logos": fetch_logos,
 }
 
 
