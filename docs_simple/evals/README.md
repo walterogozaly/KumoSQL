@@ -30,6 +30,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Arcwise corrections of BIRD](arcwise-corrections.md) | Does the checker see that a human-corrected BIRD query differs from the original? |
 | [Numeric traps](numeric-traps.md) | Does the prover handle BigQuery's number and error rules, and tell when a rewrite could start failing? |
 | [Sample databases](sample-databases.md) | Do rewrites and proofs hold on complete real databases with declared keys? |
+| [Sample databases: Pagila](sample-databases-pagila.md) | Do rewrites and proofs also hold on Pagila, a PostgreSQL sample with a partitioned table and many nullable columns? |
 | [DB-GPT examples](dbgpt-rules.md) | Which demonstration rewrites preserve results under reviewed schemas? |
 | [Documented rewrites](documented-rewrites.md) | Do rewrites recommended by vendor docs keep the results? |
 | [Paired engine tests](engine-paired-tests.md) | Which query pairs from Trino, Spark, PostgreSQL and DuckDB tests can be proved equal or shown different? |

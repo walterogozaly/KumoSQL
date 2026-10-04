@@ -2,7 +2,7 @@
 
 [Simple eval index](README.md) · [Full reference](../../docs/evals/sample-databases.md)
 
-Most evals use small invented tables. This one loads three complete public sample databases, Chinook (a music store), Northwind (a trading company) and Sakila (a DVD rental shop), into DuckDB from their pinned upstream scripts. They come with real keys, foreign keys, NOT NULL columns, thousands of rows, and Northwind's and Sakila's own views and stored procedures. Chinook and Northwind share one pair of recorded scores; Sakila has its own, so adding a database never changes the numbers of another.
+Most evals use small invented tables. This one loads three complete public sample databases, Chinook (a music store), Northwind (a trading company) and Sakila (a DVD rental shop), into DuckDB from their pinned upstream scripts. They come with real keys, foreign keys, NOT NULL columns, thousands of rows, and Northwind's and Sakila's own views and stored procedures. Chinook and Northwind share one pair of recorded scores; Sakila has its own, so adding a database never changes the numbers of another. A fourth database, Pagila (a PostgreSQL DVD-rental sample), has [its own page](sample-databases-pagila.md) and its own results files.
 
 ## What it checks
 
