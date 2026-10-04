@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import FROM_KEY
+
 _OUTER_SIDES = {"LEFT", "RIGHT", "FULL"}
 _NONDETERMINISTIC = (exp.Rand,)
 _NONDETERMINISTIC_NAMES = {"RAND", "RANDOM", "UUID", "GENERATE_UUID", "NEWID"}
@@ -209,7 +211,7 @@ def flatten_outer_join_derived(select: exp.Select) -> exp.Expression | None:
         replacement = by_name[column.name.lower()].copy()
         column.replace(exp.Paren(this=replacement) if isinstance(replacement, (exp.Binary, exp.Not)) else replacement)
     new_inner = inner.copy()
-    copy.set("from_" if "from_" in copy.args else "from", new_inner.args.get("from_") or new_inner.args.get("from"))
+    copy.set(FROM_KEY, new_inner.args.get("from_") or new_inner.args.get("from"))
     copy.set("joins", (new_inner.args.get("joins") or []) + list(copy.args.get("joins") or []))
     conditions = [w.this for w in (new_inner.args.get("where"), copy.args.get("where")) if w is not None]
     if conditions:

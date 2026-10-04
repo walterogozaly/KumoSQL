@@ -28,7 +28,7 @@ import itertools
 
 from sqlglot import exp
 
-from .ast_utils import distinct_on, star_modified
+from .ast_utils import FROM_KEY, distinct_on, star_modified
 from .canonical import canonical_copy
 from .empty_rules import is_empty
 
@@ -436,7 +436,7 @@ def _sf_flatten(select: exp.Select) -> exp.Select | None:
             mapping[name] = _sf_value(item)
         alias = source.alias.lower()
         flat = select.copy()
-        flat.set("from_", None)
+        flat.set(FROM_KEY, None)
         flat.set("from", None)
         flat_where = flat.args.get("where")
         for column in list(flat.find_all(exp.Column)):
@@ -453,7 +453,7 @@ def _sf_flatten(select: exp.Select) -> exp.Select | None:
         inner_from = inner.args.get("from_") or inner.args.get("from")
         if inner_from is None:
             return None
-        flat.set("from_", inner_from.copy())
+        flat.set(FROM_KEY, inner_from.copy())
         flat.set("joins", [j.copy() for j in inner.args.get("joins") or []] or None)
         parts = [w.this.copy() for w in (inner.args.get("where"), flat_where) if w is not None]
         flat.set("where", exp.Where(this=exp.and_(*[exp.Paren(this=p) for p in parts])) if parts else None)

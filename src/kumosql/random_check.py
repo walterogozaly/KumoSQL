@@ -23,6 +23,7 @@ from typing import Iterable, Sequence
 
 import sqlglot
 
+from .ast_utils import spell_for_duckdb
 from .duckdb_load import run_unoptimized
 from .string_literals import canonical_literals
 
@@ -214,7 +215,7 @@ def _duck(sql: str, dialect: str) -> str:
             from .bigquery_on_duckdb import faithful
 
             tree = faithful(tree)
-        return tree.sql(dialect="duckdb")
+        return spell_for_duckdb(tree).sql(dialect="duckdb")
     except sqlglot.errors.SqlglotError as error:
         raise CheckError(f"cannot translate: {error}") from error
 

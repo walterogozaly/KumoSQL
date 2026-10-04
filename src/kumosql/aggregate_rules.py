@@ -31,7 +31,7 @@ from decimal import Decimal
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping
+from .ast_utils import FROM_KEY, extended_grouping
 
 # Aggregates that skip NULL inputs, so a NULL argument is the same as a missing row.
 _NULL_IGNORING = (exp.Sum, exp.Min, exp.Max, exp.Avg, exp.Count, exp.LogicalAnd, exp.LogicalOr)
@@ -1032,7 +1032,7 @@ def _merge_joined_aggregates(select: exp.Select) -> exp.Expression | None:
     copy = select.copy()
     copy.set("joins", None)
     copy.set("from", None)
-    copy.set("from_", exp.From(this=exp.Subquery(this=merged, alias=exp.TableAlias(this=exp.to_identifier(first_alias)))))
+    copy.set(FROM_KEY, exp.From(this=exp.Subquery(this=merged, alias=exp.TableAlias(this=exp.to_identifier(first_alias)))))
     for column in list(copy.find_all(exp.Column)):
         if _inside(column, merged):
             continue
