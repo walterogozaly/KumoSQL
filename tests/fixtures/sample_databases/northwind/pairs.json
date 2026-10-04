@@ -1,0 +1,233 @@
+{
+  "about": "Authored query pairs on Northwind for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the Northwind data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates.",
+  "pairs": [
+    {
+      "id": "nw-nullable-fk-join-as-filter",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "Orders.CustomerID references Customers' key: an order joins one customer exactly when CustomerID is not NULL",
+      "left": "SELECT o.OrderID FROM Orders AS o JOIN Customers AS c ON c.CustomerID = o.CustomerID",
+      "right": "SELECT OrderID FROM Orders WHERE CustomerID IS NOT NULL"
+    },
+    {
+      "id": "nw-nullable-fk-join-elimination",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "nw-nullable-fk-join-as-filter",
+      "why": "Orders.CustomerID may be NULL: such an order joins no customer",
+      "left": "SELECT o.OrderID FROM Orders AS o JOIN Customers AS c ON c.CustomerID = o.CustomerID",
+      "right": "SELECT OrderID FROM Orders",
+      "witness": {"Orders": [{"OrderID": 1, "CustomerID": null}]}
+    },
+    {
+      "id": "nw-nullable-fk-join-as-filter-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "nw-nullable-fk-join-as-filter",
+      "drop": ["fk:Orders.CustomerID"],
+      "why": "without the foreign key an order may name a customer that does not exist",
+      "left": "SELECT o.OrderID FROM Orders AS o JOIN Customers AS c ON c.CustomerID = o.CustomerID",
+      "right": "SELECT OrderID FROM Orders WHERE CustomerID IS NOT NULL",
+      "witness": {"Orders": [{"OrderID": 1, "CustomerID": "ZZZZZ"}]}
+    },
+    {
+      "id": "nw-distinct-on-composite-key",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "(OrderID, ProductID) is the key of Order Details",
+      "left": "SELECT DISTINCT OrderID, ProductID, Quantity FROM `Order Details`",
+      "right": "SELECT OrderID, ProductID, Quantity FROM `Order Details`"
+    },
+    {
+      "id": "nw-distinct-on-part-of-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "nw-distinct-on-composite-key",
+      "why": "one order holds several lines of the same quantity",
+      "left": "SELECT DISTINCT OrderID, Quantity FROM `Order Details`",
+      "right": "SELECT OrderID, Quantity FROM `Order Details`",
+      "witness": "real"
+    },
+    {
+      "id": "nw-distinct-on-composite-key-without-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "nw-distinct-on-composite-key",
+      "drop": ["pk:Order Details"],
+      "why": "without the key a line may appear twice",
+      "left": "SELECT DISTINCT OrderID, ProductID, Quantity FROM `Order Details`",
+      "right": "SELECT OrderID, ProductID, Quantity FROM `Order Details`",
+      "witness": {"Order Details": [{"OrderID": 1, "ProductID": 1, "Quantity": 2}, {"OrderID": 1, "ProductID": 1, "Quantity": 2}]}
+    },
+    {
+      "id": "nw-fk-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "Order Details.OrderID is NOT NULL and references Orders' key",
+      "left": "SELECT od.OrderID, od.ProductID FROM `Order Details` AS od JOIN Orders AS o ON o.OrderID = od.OrderID",
+      "right": "SELECT OrderID, ProductID FROM `Order Details`"
+    },
+    {
+      "id": "nw-fk-join-with-filter",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "nw-fk-join-elimination",
+      "why": "the join condition also filters on the product, so lines of discontinued products drop out",
+      "left": "SELECT od.OrderID, od.ProductID FROM `Order Details` AS od JOIN Products AS p ON p.ProductID = od.ProductID AND p.Discontinued = 0",
+      "right": "SELECT OrderID, ProductID FROM `Order Details`",
+      "witness": "real"
+    },
+    {
+      "id": "nw-self-left-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "the LEFT JOIN to the manager matches at most one employee (EmployeeID is the key) and reads nothing from it",
+      "left": "SELECT e.EmployeeID, e.LastName FROM Employees AS e LEFT JOIN Employees AS m ON m.EmployeeID = e.ReportsTo",
+      "right": "SELECT EmployeeID, LastName FROM Employees"
+    },
+    {
+      "id": "nw-self-left-join-to-reports",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "nw-self-left-join-elimination",
+      "why": "joining the employees who report to e repeats a manager once per report",
+      "left": "SELECT e.EmployeeID, e.LastName FROM Employees AS e LEFT JOIN Employees AS m ON m.ReportsTo = e.EmployeeID",
+      "right": "SELECT EmployeeID, LastName FROM Employees",
+      "witness": "real"
+    },
+    {
+      "id": "nw-not-in-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "why": "Suppliers.Region holds NULLs, so NOT IN returns no row",
+      "left": "SELECT CustomerID FROM Customers WHERE Region NOT IN (SELECT Region FROM Suppliers)",
+      "right": "SELECT c.CustomerID FROM Customers AS c WHERE NOT EXISTS (SELECT 1 FROM Suppliers AS s WHERE s.Region = c.Region)",
+      "witness": "real"
+    },
+    {
+      "id": "nw-not-in-on-keys",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "both CustomerID columns are NOT NULL",
+      "left": "SELECT CustomerID FROM Customers WHERE CustomerID NOT IN (SELECT CustomerID FROM CustomerCustomerDemo)",
+      "right": "SELECT c.CustomerID FROM Customers AS c WHERE NOT EXISTS (SELECT 1 FROM CustomerCustomerDemo AS d WHERE d.CustomerID = c.CustomerID)"
+    },
+    {
+      "id": "nw-in-to-join-on-key",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "CategoryID is Categories' key, so the join matches at most one category and repeats no product",
+      "left": "SELECT p.ProductName FROM Products AS p WHERE p.CategoryID IN (SELECT CategoryID FROM Categories WHERE CategoryName = 'Seafood')",
+      "right": "SELECT p.ProductName FROM Products AS p JOIN Categories AS c ON c.CategoryID = p.CategoryID WHERE c.CategoryName = 'Seafood'"
+    },
+    {
+      "id": "nw-in-to-join-not-unique",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "nw-in-to-join-on-key",
+      "why": "many suppliers share a country, so the join repeats customers",
+      "left": "SELECT c.CompanyName FROM Customers AS c WHERE c.Country IN (SELECT Country FROM Suppliers)",
+      "right": "SELECT c.CompanyName FROM Customers AS c JOIN Suppliers AS s ON s.Country = c.Country",
+      "witness": "real"
+    },
+    {
+      "id": "nw-count-distinct-key",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "OrderID is the key and NOT NULL",
+      "left": "SELECT COUNT(DISTINCT OrderID) FROM Orders",
+      "right": "SELECT COUNT(*) FROM Orders"
+    },
+    {
+      "id": "nw-count-distinct-non-key",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "nw-count-distinct-key",
+      "why": "customers place several orders",
+      "left": "SELECT COUNT(DISTINCT CustomerID) FROM Orders",
+      "right": "SELECT COUNT(*) FROM Orders",
+      "witness": "real"
+    },
+    {
+      "id": "nw-filter-pushdown-through-group",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "a filter on the grouping column can run before the grouping",
+      "left": "SELECT * FROM (SELECT CategoryID, COUNT(*) AS n FROM Products GROUP BY CategoryID) WHERE CategoryID = 1",
+      "right": "SELECT CategoryID, COUNT(*) AS n FROM Products WHERE CategoryID = 1 GROUP BY CategoryID"
+    },
+    {
+      "id": "nw-filter-vs-conditional-count",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "nw-filter-pushdown-through-group",
+      "why": "a category whose products are all discontinued is missing on the left and counted 0 on the right",
+      "left": "SELECT CategoryID, COUNT(*) AS n FROM Products WHERE Discontinued = 0 GROUP BY CategoryID",
+      "right": "SELECT CategoryID, COUNTIF(Discontinued = 0) AS n FROM Products GROUP BY CategoryID",
+      "witness": {"Products": [{"ProductID": 1, "CategoryID": null, "Discontinued": 1}]}
+    },
+    {
+      "id": "nw-outer-to-inner-join",
+      "category": "outer join",
+      "label": "equivalent",
+      "why": "o.EmployeeID = 5 rejects the NULL-extended rows of the LEFT JOIN",
+      "left": "SELECT c.CustomerID, o.OrderID FROM Customers AS c LEFT JOIN Orders AS o ON o.CustomerID = c.CustomerID WHERE o.EmployeeID = 5",
+      "right": "SELECT c.CustomerID, o.OrderID FROM Customers AS c JOIN Orders AS o ON o.CustomerID = c.CustomerID WHERE o.EmployeeID = 5"
+    },
+    {
+      "id": "nw-outer-to-inner-join-null-accepting",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "nw-outer-to-inner-join",
+      "why": "two customers have no order; IS NULL keeps their NULL-extended rows",
+      "left": "SELECT c.CustomerID, o.OrderID FROM Customers AS c LEFT JOIN Orders AS o ON o.CustomerID = c.CustomerID WHERE o.EmployeeID = 5 OR o.EmployeeID IS NULL",
+      "right": "SELECT c.CustomerID, o.OrderID FROM Customers AS c JOIN Orders AS o ON o.CustomerID = c.CustomerID WHERE o.EmployeeID = 5 OR o.EmployeeID IS NULL",
+      "witness": "real"
+    },
+    {
+      "id": "nw-self-union-distinct",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "the union of a query with itself, without duplicates, is its distinct rows",
+      "left": "SELECT Country FROM Customers UNION DISTINCT SELECT Country FROM Customers",
+      "right": "SELECT DISTINCT Country FROM Customers"
+    },
+    {
+      "id": "nw-intersect-to-in-on-not-null",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "Customers.CustomerID is NOT NULL, so INTERSECT's NULL matching never applies",
+      "left": "SELECT CustomerID FROM Customers INTERSECT DISTINCT SELECT CustomerID FROM Orders",
+      "right": "SELECT DISTINCT c.CustomerID FROM Customers AS c WHERE c.CustomerID IN (SELECT CustomerID FROM Orders)"
+    },
+    {
+      "id": "nw-intersect-to-in-nullable",
+      "category": "set operation",
+      "label": "different",
+      "sibling": "nw-intersect-to-in-on-not-null",
+      "why": "INTERSECT matches a NULL city with a NULL city; IN does not",
+      "left": "SELECT City FROM Customers INTERSECT DISTINCT SELECT City FROM Employees",
+      "right": "SELECT DISTINCT c.City FROM Customers AS c WHERE c.City IN (SELECT City FROM Employees)",
+      "witness": {"Customers": [{"CustomerID": "A", "City": null}], "Employees": [{"EmployeeID": 1, "City": null}]}
+    },
+    {
+      "id": "nw-fk-chain-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "Territories.RegionID is NOT NULL and references Region's key",
+      "left": "SELECT t.TerritoryID FROM Territories AS t JOIN Region AS r ON r.RegionID = t.RegionID",
+      "right": "SELECT TerritoryID FROM Territories"
+    },
+    {
+      "id": "nw-fk-chain-join-elimination-without-not-null",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "nw-fk-chain-join-elimination",
+      "drop": ["not_null:Territories.RegionID"],
+      "why": "once RegionID may be NULL, such a territory joins no region",
+      "left": "SELECT t.TerritoryID FROM Territories AS t JOIN Region AS r ON r.RegionID = t.RegionID",
+      "right": "SELECT TerritoryID FROM Territories",
+      "witness": {"Territories": [{"TerritoryID": "1", "RegionID": null}]}
+    }
+  ]
+}
