@@ -60,6 +60,14 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
+## Numbers and errors
+
+BigQuery numbers have traps. A whole number past about nine quadrillion loses its last digits once it meets a decimal, `0.1 + 0.2` is not `0.3`, and dividing by zero is an error. Worse, BigQuery does not promise to filter rows before it computes the select list, so `SELECT x / y FROM t WHERE y <> 0` can still divide by zero.
+
+When you tell the prover the column types, it reads numbers the way BigQuery does and keeps track of every operation that could fail (a division, an integer overflow, a `CAST`). It then says what a rewrite does to those failures: nothing changes, it removes one that the original had, or it adds one the original did not have. In the last case it refuses to call the pair equal and shows why. For example, replacing `IF(y = 0, 0, x / y)` with `x / y` is flagged, because the `IF` was what kept the division away from zero.
+
+The limits: without declared types the older, looser reading applies and the result lists that runtime errors were not modelled. Exact decimal rounding is not reasoned about, so such pairs come back unknown. Floating-point columns are still assumed never to hold `NaN`, and a sum of floating-point values is still assumed not to depend on row order; the result lists both. The recorded scores and the case list are in the [numeric traps eval](evals/numeric-traps.md); the details are in the [full reference](../docs/provers.md#numbers-and-runtime-errors).
+
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
