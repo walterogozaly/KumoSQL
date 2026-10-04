@@ -38,6 +38,7 @@ from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .solver_lock import serialized
 from .string_literals import canonical_literals, invalid_literal
+from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -4943,6 +4944,9 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
     try:
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))
+        if unknown_type:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
         masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
         if masked:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)

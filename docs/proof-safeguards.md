@@ -102,6 +102,7 @@ The audit was written against an older checkout. Each finding was re-run on mast
 | A step that fails mid-mutation is returned as if unchanged | Already fixed on master: the driver restores the statement it copied before the rule ran |
 | SQLX restoration reads backslashes in an expression as regex escapes | Reproduced; tracked as a separate fix |
 | SMT proves `SELECT * EXCEPT (b) FROM t` equal to `SELECT * FROM t` | Reproduced; tracked as a separate fix |
+| The provers treat type names BigQuery rejects as aliases: `CAST(x AS FLOAT)`, `INT32` and `UUID` were proven equal to `FLOAT64`, `INT64` and `STRING` | Fixed: `type_names.py` refuses casts to names BigQuery does not have in the structural, SMT and algebraic provers and in rewrite acceptance (see [Rewrite rules](rewrite-rules.md#inputs-bigquery-would-reject)) |
 | SMT and the algebraic prover read `1e-324 < 2e-324` as exact reals (BigQuery: FALSE) | Reproduced; tracked as a separate fix |
 | SMT drops `FOR SYSTEM_TIME AS OF` | Already refused on master ("Table.version is not modeled") |
 | The synthetic-data comparison treats `TRUE` and `1` as equal | Reproduced; tracked as a separate fix |

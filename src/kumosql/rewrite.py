@@ -30,6 +30,7 @@ from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
 from .input_validity import invalid_input_reason
+from .type_names import invalid_type_name
 from .layout_equivalence import created_function_calls, layout_only_change, touching_literal_chunks
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
@@ -265,6 +266,11 @@ def _verify_sql(
             "a Dataform expression other than ref() or self() was dropped, added or repeated; "
             "compile the SQLX to prove a change to this statement"
         ]
+    unknown_type = invalid_type_name(before) or invalid_type_name(after)
+    if unknown_type:
+        # The BigQuery printer writes FLOAT as FLOAT64, INT32 as INT64 and VARCHAR as STRING, so both sides of a
+        # comparison would read the same; BigQuery rejects the name and there is nothing to preserve.
+        return False, [f"the query would not run on BigQuery: {unknown_type}"]
     calls = created_function_calls(before), created_function_calls(after)
     if calls[0] is None or calls[0] != calls[1]:
         # sqlglot prints `abs(1)` and `ABS(1)` alike, but a script can create both as temporary functions.
