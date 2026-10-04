@@ -1,21 +1,21 @@
 {
   "suite": "Multi-database semantic suite",
   "order": 71,
-  "size": 7388,
-  "score": "935 dev mutants escape the default 8 random databases but not the suite",
-  "metric": "Mutants caught by the fixed suite of databases (corner cases, targeted and 4 random) that the engine's default eight random databases miss: 935 of 4,542 dev mutants and 1,038 of 2,846 held-out mutants; 2,209 dev mutants escape a single random seed.",
+  "size": 7865,
+  "score": "1,089 dev mutants escape the default 8 random databases but not the suite",
+  "metric": "Mutants caught by the fixed suite of databases (corner cases, targeted and 4 random) that the engine's default eight random databases miss: 1,089 of 5,019 dev mutants and 1,021 of 2,846 held-out mutants; 2,514 dev mutants escape a single random seed.",
   "evidence": "executed",
   "correctness": "Same kill rule as Targeted test data; the suite never reports equivalence, only differences found.",
   "coverage": {
-    "refuted": 3882,
-    "proven": 948,
-    "unknown": 1748,
-    "timeout": 585,
-    "error": 225
+    "refuted": 4169,
+    "proven": 1541,
+    "unknown": 1117,
+    "timeout": 775,
+    "error": 263
   },
-  "held_out": "1,038 held-out mutants escape 8 random databases and are caught by the suite",
+  "held_out": "1,021 held-out mutants escape 8 random databases and are caught by the suite",
   "docs": "docs/evals/targeted-test-data.md",
   "command": "python tools/targeted_data_bench.py --split all",
-  "date": "2026-10-02",
-  "caveats": "Check time per original query: 0.29 s dev (suite) versus 0.13 s (8 random). Held-out TPC-H timeouts depress every strategy's score equally. 108 escape cases are kept as regression tests in tests/fixtures/targeted_data."
+  "date": "2026-10-04",
+  "caveats": "Check time per original query: 0.32 s dev (suite) versus 0.15 s (8 random). Held-out TPC-H timeouts depress every strategy's score equally. 108 escape cases are kept as regression tests in tests/fixtures/targeted_data. Rerun 2026-10-04 on the same command as Targeted test data: more dev originals run than before, so the counts above are not comparable with the 2026-10-02 run (935 and 2,209)."
 }

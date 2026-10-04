@@ -1,21 +1,21 @@
 {
   "suite": "Targeted test data (mutant kills)",
   "order": 70,
-  "size": 7388,
-  "score": "71.8% dev (2,618/3,647), 62.8% held out (1,244/1,981)",
-  "metric": "Share of faulty query variants (mutants, 14 operators) that targeted databases plus corner cases tell apart from the original, among mutants not proven equivalent; the engine's default 8 random databases get 46.3% dev, 10.4% held out, one random seed 11.2% / 4.4%.",
+  "size": 7865,
+  "score": "83.2% dev (2,920/3,508), 69.2% held out (1,227/1,772)",
+  "metric": "Share of faulty query variants (mutants, 14 operators) that targeted databases plus corner cases tell apart from the original, among mutants not proven equivalent and not timed out; the engine's default 8 random databases get 52.7% dev, 11.6% held out, one random seed 11.7% / 4.9%.",
   "evidence": "executed",
   "correctness": "Every kill repeats on both sides on a database respecting NOT NULL and keys (foreign keys not modelled); no kill is counted from a side that disagrees with itself. Survivors not proven equivalent stay in the denominator.",
   "coverage": {
-    "refuted": 3882,
-    "proven": 948,
-    "unknown": 1748,
-    "timeout": 585,
-    "error": 225
+    "refuted": 4169,
+    "proven": 1541,
+    "unknown": 1117,
+    "timeout": 775,
+    "error": 263
   },
-  "held_out": "62.8% (1,244/1,981 mutants of 22 TPC-H and 19 TPC-C queries), run once after the strategies were fixed on the development split",
+  "held_out": "69.2% (1,227/1,772 mutants of 22 TPC-H and 19 TPC-C queries; 775 TPC-H mutants timed out and are not in the denominator), strategies fixed on the development split before it was run",
   "docs": "docs/evals/targeted-test-data.md",
   "command": "python tools/targeted_data_bench.py --split all",
-  "date": "2026-10-02",
-  "caveats": "Originals: Calcite, Spark, a 16-query university set (dev) and TPC-H, TPC-C (held out); 72 originals are unsupported (DuckDB rejects them) and not counted. Mutants are generated, not hand-labelled; 'proven' = proven equivalent mutants (excluded from the score), 'refuted' = killed by any strategy, 'unknown' = survived and not proven equivalent (many are DISTINCT toggles that are equivalent but unprovable), 'timeout' = TPC-H queries over the 90 s per-query budget, 'error' = invalid mutants. Strategy details were tuned on the development split. Median counterexample is 3 rows (random 8 databases: 38)."
+  "date": "2026-10-04",
+  "caveats": "Originals: Calcite, Spark, a 16-query university set (dev) and TPC-H, TPC-C (held out); 28 originals are unsupported (DuckDB rejects them) and not counted. Rerun after the BigQuery-on-DuckDB guards (#446, #469, #633) with nothing else running: 667 dev originals run (623 before: the inline-table queries run again and more translate), so the dev score moved from 71.8% to 83.2% largely because 477 more, mostly easy, mutants are scored, not because a strategy improved. Held-out kills are 1,227 against 1,244 before: 8 of them ended in 'error' (a division by a zero divisor fails in BigQuery, so the database is skipped), 8 in 'timeout', and 'timeout' rose overall from 585 to 775 because the guards cost time per row on TPC-H joins; timeouts leave the denominator, which is why the held-out percentage rose while kills fell. Per mutant against the commit before #446 on the same machine, no mutant went from killed to survived. Mutants are generated, not hand-labelled; 'proven' = proven equivalent mutants (excluded from the score), 'refuted' = killed by any strategy, 'unknown' = survived and not proven equivalent (many are DISTINCT toggles that are equivalent but unprovable), 'timeout' = queries over the 90 s per-query budget (all TPC-H), 'error' = invalid mutants. Strategy details were tuned on the development split. Median counterexample is 3 rows (random 8 databases: 38). Counterexample minimization was not rerun."
 }
