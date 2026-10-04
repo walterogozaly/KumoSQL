@@ -89,6 +89,8 @@ Every disagreement was triaged by hand:
 
 - **GoogleSQL compliance queries, round trip: 11 texts** that sqlglot prints differently from how it read them (an `ARRAY_FILTER` lambda, `IF(...)` folded into `LIMIT NULL`, `LIKE ANY UNNEST([...])` with a collation, an `INTERVAL` followed by a comment). They are sqlglot's own rewrites, harmless as a reading but still refused; no prover eval proves them.
 
+- **DLBench, round trip: 1 proof.** `eval_diff` found that `BUTTERTrans/mariadb/578` (`ISNULL(1/0 = null)`, a MySQL test-suite line) is no longer proved. sqlglot prints it as `1 / 0 = NULL IS NULL`, which MySQL reads as `(1 / 0 = NULL) IS NULL` and sqlglot reads as `1 / 0 = (NULL IS NULL)`: a real sqlglot misread of its own output, caught by the round trip. The source and the translation are the same text, so the answer was right, but the proof went through the regrouped print. The floor of 109 exact pairs still holds (master measures 110, the recorded score is 109).
+
 A hand check of the 22 refused dev texts of the BigQuery edge-case corpus and dlbench found no false decline: each one is rejected by the engine or read differently by it.
 
 ### Proofs that relied on a misread
