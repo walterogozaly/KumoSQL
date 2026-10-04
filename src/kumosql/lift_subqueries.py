@@ -163,6 +163,17 @@ def _tree_depth(node: exp.Expression) -> int:
     return depth
 
 
+def _in_pivot(node: exp.Expression, top: exp.Expression) -> bool:
+    """Whether ``node`` sits inside a PIVOT or UNPIVOT clause that is part of ``top``."""
+
+    parent = node.parent
+    while parent is not None and parent is not top:
+        if isinstance(parent, exp.Pivot):
+            return True
+        parent = parent.parent
+    return False
+
+
 def _escapes_scope(subquery: exp.Subquery, query: exp.Expression) -> bool:
     """Whether the subquery's body reads a name bound around it, which ``query``'s WITH clause cannot see.
 
@@ -187,6 +198,8 @@ def _escapes_scope(subquery: exp.Subquery, query: exp.Expression) -> bool:
         around |= relation_names(node)
         node = node.parent
     for column in body.find_all(exp.Column):
+        if _in_pivot(column, body):
+            continue  # PIVOT/UNPIVOT name columns of the table they apply to, never of an enclosing query
         qualifier = leading_qualifier(column)
         if qualifier:
             if qualifier not in scope_relations(column, body) and (correlated or qualifier in around):

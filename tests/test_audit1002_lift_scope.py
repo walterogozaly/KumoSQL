@@ -235,3 +235,16 @@ def test_algebraic_cte_inlining_does_not_capture_a_nested_with():
     db.execute("CREATE TABLE l2(a BIGINT); INSERT INTO l2 VALUES (9)")
     assert _rows(db, forward) == Counter({(9,): 1})
     assert not prove_equivalent_algebraic(forward, "SELECT 1 AS a").proven
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM (SELECT a, b FROM t UNPIVOT(a FOR b IN (x, y))) UNPIVOT (c FOR d IN (b))",
+        "SELECT * FROM (SELECT * FROM t PIVOT(SUM(a) FOR b IN (1 AS one)))",
+    ],
+)
+def test_pivot_columns_do_not_keep_a_closed_subquery_in_place(sql):
+    # The columns named inside PIVOT/UNPIVOT belong to the table they apply to, not to an enclosing query.
+    result = lift_subqueries(sql)
+    assert result.success and result.lifted_subqueries >= 1
