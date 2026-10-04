@@ -17,6 +17,11 @@ _SQLX_BLOCK_RE = re.compile(
     r"""(?im)^[ \t]*(?:(?:config|js|pre_operations|post_operations)|input\s+(?:"[^"\n]*"|'[^'\n]*'))\s*\{"""
 )
 _SQLX_WHEN_CONNECTIVE_RE = re.compile(r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*[`'\"]\s*(AND|OR)\b", re.IGNORECASE)
+# ``when(cond, `a > 1 AND`)``: the expression opens a condition and ends with its connective.
+_SQLX_WHEN_TRAILING_RE = re.compile(
+    r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*(?P<q>[`'\"])(?:(?!(?P=q))[^$])*?\b(AND|OR)\s*(?P=q)\s*\)\s*$",
+    re.IGNORECASE,
+)
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"__sqlx_token_\d+__")
 _QUOTED = r"""(?:"[^"\\]*"|'[^'\\]*'|`[^`\\]*`)"""
@@ -182,6 +187,9 @@ class SqlxRestoration:
     token: str
     original: str
     pattern: re.Pattern[str]
+    # The sentinel stands for the expression together with SQL around it (``__sqlx_token_000__ AND``): restoring it
+    # anywhere else would change the meaning, so a rewrite that separates them cannot be restored.
+    whole: bool = False
 
 
 def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]]:
@@ -226,8 +234,16 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
 
         replacement = token
         pattern = re.compile(re.escape(token))
+        whole = False
         connective = _SQLX_WHEN_CONNECTIVE_RE.match(body)
-        if connective and not clause_match and not preceding_clause and not preceding_condition:
+        trailing = _SQLX_WHEN_TRAILING_RE.match(body)
+        if trailing and (preceding_clause or preceding_condition):
+            # ``WHERE ${when(incremental(), `a > 1 AND`)} b > 2``: the expression starts the condition and ends with its connective.
+            keyword = trailing.group(2).upper()
+            replacement = f"{token} {keyword}"
+            pattern = re.compile(rf"\b{re.escape(token)}\s+{keyword}\b", re.IGNORECASE)
+            whole = True
+        elif connective and not clause_match and not preceding_clause and not preceding_condition:
             # ``... WHERE a > 0 ${when(incremental(), `AND b > 1`)}``: the expression continues the condition.
             keyword = connective.group(1).upper()
             replacement = f"{keyword} {token}"
@@ -242,7 +258,7 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
                 pattern = re.compile(rf"\bORDER\s+BY\s+{re.escape(token)}\b", re.IGNORECASE)
 
         output.append(replacement)
-        restorations.append(SqlxRestoration(token, original, pattern))
+        restorations.append(SqlxRestoration(token, original, pattern, whole))
         cursor = closing + 1
 
     return "".join(output), tuple(restorations)
@@ -279,6 +295,8 @@ def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, .
 
     restored = sql
     for item in restorations:
+        if item.whole and len(item.pattern.findall(restored)) != 1:
+            raise SqlxRestorationError("a rewrite separated a SQLX interpolation from the connective it ends with")
         # A function replacement is inserted as is; a string one would read
         # the backslashes in ``r'\d'`` or ``\1`` as replacement syntax.
         restored = item.pattern.sub(lambda _match, original=item.original: original, restored)
