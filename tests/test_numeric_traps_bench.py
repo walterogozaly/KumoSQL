@@ -36,13 +36,25 @@ def test_a_trap_pair_is_never_proven_without_disclosing_the_violated_assumption(
 def test_an_assumed_proof_lists_the_assumption_its_case_violates(results):
     for case, result in results.values():
         if result["outcome"] == "assumed":
-            assert case.violates and any(a.startswith(v) for a in result["assumptions"] for v in case.violates)
+            named = case.violates + case.discharged
+            assert named and any(a.startswith(v) for a in result["assumptions"] for v in named)
 
 
 def test_sound_pairs_are_still_proved(results):
     equivalent = [r for c, r in results.values() if c.label == "equivalent"]
-    assert sum(r["outcome"] == "proven" for r in equivalent) >= 32
+    assert sum(r["outcome"] == "proven" for r in equivalent) >= 45
     assert not any(r["outcome"] == "refuted" for r in equivalent)
+
+
+def test_a_float_sum_is_proved_clean_only_over_an_identical_plan_or_an_exact_type(results):
+    for case_id in ("float-sum-same-text", "float-sum-grouped-same-text", "float-avg-same-text", "int-sum-with-float-filter-elsewhere"):
+        assert results[case_id][1]["outcome"] == "proven", case_id
+    for case_id, (case, result) in results.items():
+        if case_id.startswith("float-") and "-sum-" in case_id and case.label == "equivalent" and case.violates:
+            # another plan over the same rows: any proof lists the order assumption
+            assert result["outcome"] in ("assumed", "unknown"), case_id
+    for case_id in ("float-sum-pre-aggregated", "float-sum-split", "float-sum-extra-filter"):
+        assert results[case_id][1]["outcome"] in ("unknown", "refuted"), case_id
 
 
 def test_the_literals_of_the_october_audit_are_exact(results):
@@ -53,7 +65,7 @@ def test_the_literals_of_the_october_audit_are_exact(results):
 
 def test_every_error_case_is_classified_by_its_verdict(results):
     errors = [(i, r) for i, (c, r) in results.items() if c.label in bench.EXPECTED_VERDICT]
-    assert len(errors) >= 19
+    assert len(errors) >= 31
     # the two window pairs are not proven equal (a filter moved across a window is not modelled): unknown, not wrong
     assert sorted(i for i, r in errors if not r["classified"]) == ["window-sum-filter-below", "window-sum-where-to-outer"]
 
@@ -63,6 +75,17 @@ def test_a_rewrite_that_moves_an_operation_ahead_of_its_guard_is_reported(result
         assert results[case_id][1]["errors"] == "introduces", case_id
     for case_id in ("slash-to-safe-divide", "slash-to-nullif", "cast-to-safe-cast", "div-if-guard-removed"):
         assert results[case_id][1]["errors"] == "refines", case_id
+
+
+def test_numeric_scale_and_rounding_pairs_are_decided(results):
+    proved = ("numeric-literal-zeros", "numeric-literal-rounding", "numeric-times-int-keeps-scale", "numeric-cast-same-type", "numeric-round-idempotent",
+              "numeric-round-nine-noop", "numeric-add-product-twice", "numeric-round-negative-idempotent", "numeric-division-nine-digits", "numeric-bignumeric-roundtrip")
+    for case_id in proved:
+        assert results[case_id][1]["outcome"] == "proven", case_id
+    for case_id in ("numeric-double-round", "numeric-product-casts-wider", "numeric-literal-below-half", "numeric-division-roundtrip", "numeric-mul-distributes"):
+        assert results[case_id][1]["outcome"] in ("refuted", "unknown"), case_id
+    for case_id in ("numeric-overflow-guard", "numeric-div-guard-dropped"):
+        assert results[case_id][1]["errors"] == "introduces", case_id
 
 
 def test_a_sum_over_a_group_is_compared_group_by_group(results):

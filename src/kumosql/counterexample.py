@@ -30,6 +30,7 @@ from sqlglot import exp
 from .ast_utils import EXCEPT_KEY, spell_for_duckdb
 from .duckdb_load import run_unoptimized, small_database
 from .result_equivalence import DataRules
+from .type_names import invalid_type_name
 
 try:
     import duckdb
@@ -1043,8 +1044,14 @@ class Searcher:
 
 
 def find_counterexample(spec: Spec, left: str, right: str, *, dialect: str = "mysql", trials: int = 150, seed: int = 0):
-    """A database on which the queries differ, ``None`` if none was found, ``False`` if DuckDB rejects a query."""
+    """A database on which the queries differ, ``None`` if none was found, ``False`` if DuckDB rejects a query.
 
+    ``False`` too for a BigQuery query that names a type BigQuery does not have (``kumosql.type_names``): DuckDB
+    reads ``FLOAT`` and ``VARCHAR``, so a search would report on a query BigQuery rejects.
+    """
+
+    if dialect == "bigquery" and (invalid_type_name(left) or invalid_type_name(right)):
+        return False
     try:
         searcher = Searcher(spec, left, right, dialect=dialect)
     except (sqlglot.errors.SqlglotError, duckdb.Error):

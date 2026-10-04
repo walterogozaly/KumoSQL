@@ -33,6 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
+from . import proof_columns
 from .ast_utils import FROM_KEY, UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, free_reads, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions, visible_ctes
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
@@ -94,7 +95,7 @@ from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types
 from .grouped_join_facts import propagate_grouped_join_facts
 from .correlated_key_groups import expose_correlated_key_groups
 from .lateral_boolean_groups import nullable_lateral_boolean_group
-from . import string_number_compare, string_number_literals
+from . import numeric_column_reading, string_number_compare, string_number_literals
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -1490,6 +1491,20 @@ def _qualify_outer_join_columns(tree: exp.Expression, schema: dict[str, list[str
                 continue
             column.set("table", exp.to_identifier(owners[name][0]))
     return tree
+
+
+def _checked_qualification(tree: exp.Expression, apply, schema: dict[str, list[str]], dialect: str, site: str) -> exp.Expression:
+    """Run a pass that writes ``a.x`` for a bare ``x`` and have ``proof_columns`` re-derive each qualifier it added.
+
+    The pass picks the owner from the columns of the sources it can see; the independent reader works from the
+    statement's text and the same supplied columns. A qualifier that names a different owner (or a bare name with
+    no single owner) declines the query, as an unmodeled construct does.
+    """
+
+    try:
+        return proof_columns.guarded_qualification(tree, apply, schema, dialect, site)
+    except proof_columns.ColumnResolutionRefused as refusal:
+        raise UnmodeledConstruct(f"independent check of column resolution: {refusal}") from None
 
 
 def _column_owners(select: exp.Select, schema: dict[str, list[str]]) -> dict[str, list[str]] | None:
@@ -4860,7 +4875,9 @@ def normalize(
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source
-        tree = _qualify_correlated_columns(_qualify_outer_join_columns(tree, schema), schema)
+        tree = _checked_qualification(
+            tree, lambda t: _qualify_correlated_columns(_qualify_outer_join_columns(t, schema), schema), schema, dialect, "algebraic_qualification"
+        )
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
 
@@ -4868,7 +4885,7 @@ def normalize(
         if not schema:
             return None
         copy = select.copy()
-        _qualify_outer_join_columns(copy, schema)
+        _checked_qualification(copy, lambda t: _qualify_outer_join_columns(t, schema), schema, dialect, "algebraic_select_qualification")
         return copy if copy.sql() != select.sql() else None
 
     def step(node: exp.Expression) -> exp.Expression:
@@ -4935,6 +4952,19 @@ def normalize(
 @refuse_misread_proofs
 @serialized
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Normalize both queries algebraically, then run the SMT prover on the result.
+
+    On MySQL a proof that needs different strings compared with an untyped column to differ must also hold with the strings
+    read as the numbers they convert to (``kumosql.numeric_column_reading``).
+    See ``_prove_equivalent_algebraic_checked`` for the rest.
+    """
+
+    return numeric_column_reading.checked(
+        _prove_equivalent_algebraic_checked, left_sql, right_sql, kwargs, lambda reason: SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason)
+    )
+
+
+def _prove_equivalent_algebraic_checked(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result.
 
     With ``search_counterexample=True`` an unproven pair the solver cannot refute is
