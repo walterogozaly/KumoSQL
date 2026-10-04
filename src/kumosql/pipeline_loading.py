@@ -605,6 +605,10 @@ _JS_LOOP_RES = (
 )
 
 
+class _EmptyCompilation(Exception):
+    """The Dataform API answered but its compilation listed no actions, which settles nothing."""
+
+
 def js_declared_targets(
     text: str,
     default: Target,
@@ -1041,15 +1045,23 @@ def load_sqlx_project(
     if incomplete_js and compiled_targets is None:
         diagnostics.append(PipelineDiagnostic(
             "", "compiled_graph_not_requested",
-            "no Dataform repository is connected to this load, so computed declarations were not resolved from Dataform's compilation"))
+            "the Dataform API fallback for computed declarations was not used: no Dataform repository is connected to this "
+            "load, so refs to unlisted names stay unresolved"))
     if incomplete_js and compiled_targets is not None:
         # Dataform's own compilation lists every action, which settles what the JavaScript could not.
         try:
             fetched = list(compiled_targets())
+            if not fetched:
+                raise _EmptyCompilation()
         except Exception as exc:  # noqa: BLE001 - no credentials, offline, no matching repository: stay unresolved
+            reason = getattr(exc, "reason", None)
+            outcome = "was skipped" if getattr(exc, "attempted", True) is False else "was tried and failed"
+            detail = f" ({reason}): {exc}" if reason else f" ({type(exc).__name__})"
+            if isinstance(exc, _EmptyCompilation):
+                detail = " (empty_compilation): the compilation lists no actions"
             diagnostics.append(PipelineDiagnostic(
                 "", "compiled_graph_unavailable",
-                f"the Dataform compilation could not be read ({type(exc).__name__}); refs to unlisted names stay unresolved"))
+                f"the Dataform API fallback for computed declarations {outcome}{detail}; refs to unlisted names stay unresolved"))
         else:
             for (target_db, target_schema, target_name), is_declaration in fetched:
                 target = Target(target_db, target_schema, target_name)
@@ -1058,6 +1070,10 @@ def load_sqlx_project(
                 if is_declaration:
                     sources[target.key] = target
             incomplete_js = False
+            diagnostics.append(PipelineDiagnostic(
+                "", "compiled_graph_read",
+                f"the Dataform API fallback for computed declarations read {len(fetched)} compiled actions "
+                f"({sum(1 for _, is_declaration in fetched if is_declaration)} declarations)"))
 
     known_targets: set[Target] = set()
     reads_output: list[tuple[str, Target]] = []  # (reading action, table it ref()s): checked against operations once all load
