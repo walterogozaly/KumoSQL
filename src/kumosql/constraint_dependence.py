@@ -1,11 +1,15 @@
 """Which declared guarantees a rewrite's equivalence proof actually needs.
 
 A proof that uses declared NOT NULL columns, keys and foreign keys is only as good as
-those declarations (BigQuery does not enforce them). ``needed_guarantees`` finds a minimal
+those declarations (BigQuery does not enforce them). ``needed_guarantees`` finds a sufficient
 set of declared facts the proof relies on: it proves the pair with every fact on the
 queried tables, then drops facts one at a time and keeps a fact out when the proof still
-goes through without it. What is left is minimal: remove any one of them and the proof
-fails, or the prover abstains. The result names the facts in words (``orders.customer_id
+goes through without it, repeating until a whole pass drops nothing. What is left is
+minimal *for this prover*: every single fact was tried against the final set and the proof
+failed or the prover abstained. An abstention does not show a fact is semantically needed,
+and a prover that is not monotone in its facts may have other, smaller sufficient sets.
+The report keeps the proof for that final set, with the assumptions it names, apart from the
+proof under every offered fact. The result names the facts in words (``orders.customer_id
 is NOT NULL``, ``(id) is unique in customers``, ``orders(customer_id) references
 customers(id)``) so a recommendation can say what has to hold in the data.
 
@@ -49,10 +53,13 @@ class GuaranteeReport:
     """Outcome of ``needed_guarantees``."""
 
     status: str  # "proven", "not_proven" or "refuted"
-    needed: tuple[Guarantee, ...] = ()  # a minimal sufficient set (empty when none is needed)
+    needed: tuple[Guarantee, ...] = ()  # a sufficient set the prover cannot shrink (empty when none is needed)
     offered: tuple[Guarantee, ...] = ()  # every declared fact on the queried tables
     proofs_run: int = 0
+    # The proof under ``needed`` alone (its own assumptions); the last attempt when nothing was proven.
     result: SmtEquivalenceResult | None = field(default=None, compare=False)
+    # The first proof, under every offered fact.
+    offered_result: SmtEquivalenceResult | None = field(default=None, compare=False)
 
     @property
     def labels(self) -> tuple[str, ...]:
@@ -116,7 +123,7 @@ def needed_guarantees(
     dialect: str = "bigquery",
     **options,
 ) -> GuaranteeReport:
-    """A minimal set of ``constraints`` that the proof of ``left_sql`` = ``right_sql`` needs."""
+    """A sufficient set of ``constraints`` for the proof of ``left_sql`` = ``right_sql``, minimal for ``prove``."""
 
     if prove is None:
         from .algebraic_equivalence import prove_equivalent_algebraic as prove
@@ -134,13 +141,19 @@ def needed_guarantees(
     full = attempt(offered)
     if not full.proven:
         status = "refuted" if full.status is SmtStatus.NOT_EQUIVALENT else "not_proven"
-        return GuaranteeReport(status, offered=tuple(offered), proofs_run=runs, result=full)
-    keep = list(offered)
-    for fact in list(offered):
-        trial = [g for g in keep if g is not fact]
-        if attempt(trial).proven:
-            keep = trial
-    return GuaranteeReport("proven", needed=tuple(keep), offered=tuple(offered), proofs_run=runs, result=full)
+        return GuaranteeReport(status, offered=tuple(offered), proofs_run=runs, result=full, offered_result=full)
+    keep, proof = list(offered), full
+    # A prover that is not monotone in its facts can accept a deletion that makes an earlier kept fact droppable, so
+    # repeat the pass until it drops nothing: then every single fact of ``keep`` was tried against ``keep`` itself.
+    dropped = True
+    while dropped and keep:
+        dropped = False
+        for fact in list(keep):
+            trial = [g for g in keep if g is not fact]
+            attempted = attempt(trial)
+            if attempted.proven:
+                keep, proof, dropped = trial, attempted, True
+    return GuaranteeReport("proven", needed=tuple(keep), offered=tuple(offered), proofs_run=runs, result=proof, offered_result=full)
 
 
 def without(constraints: Mapping[str, TableConstraints], fact: Guarantee) -> dict[str, TableConstraints]:
