@@ -18,7 +18,7 @@ def test_empty_sources_propagate_but_global_aggregates_keep_their_row():
 
 def test_left_join_to_an_empty_relation_pads_with_nulls():
     tree = propagate_empty(sqlglot.parse_one("SELECT t.x, e.y FROM t LEFT JOIN (SELECT y FROM u WHERE FALSE) AS e ON t.x = e.y"))
-    assert _sql(tree) == "SELECT t.x, NULL FROM t"
+    assert _sql(tree) == "SELECT t.x, NULL AS y FROM t"
 
 
 def test_exists_over_an_empty_relation_is_false():

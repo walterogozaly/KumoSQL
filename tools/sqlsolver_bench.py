@@ -303,7 +303,7 @@ def targeted_differ(left_sql: str, right_sql: str, used: list[Table]):
         for t in used
     }
     foreign = [(t.name, c, p, pc) for t in used for c, p, pc in t.foreign if p in names]
-    found = find_targeted_difference(left_sql, right_sql, schema, rules, foreign_keys=foreign, dialect="duckdb", budget=20.0)
+    found = find_targeted_difference(left_sql, right_sql, schema, rules, foreign_keys=foreign, dialect="duckdb", budget=20.0, booleans_are_integers=True)
     if found is None:
         return None
     return (left_sql, right_sql, Counter(found.left.rows), Counter(found.right.rows))

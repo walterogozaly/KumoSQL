@@ -50,7 +50,7 @@ from .lineage_soundness import (
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
-from .ast_utils import is_function_table, quiet_parser as _quiet_parser, set_with_clause, star_modifier, top_level_query, with_clause
+from .ast_utils import binding_cte, is_function_table, quiet_parser as _quiet_parser, set_with_clause, star_modifier, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -92,6 +92,7 @@ class Pipeline:
     diagnostics: list[PipelineDiagnostic] = field(default_factory=list)
     default_project: str = ""
     default_dataset: str = ""
+    default_location: str = ""
 
     # ------------------------------------------------------------------ graph
 
@@ -973,13 +974,12 @@ def _script_tables(query: exp.Expression | None, analysis: ScriptAnalysis) -> tu
     tables: list[exp.Table] = []
     seen: set[str] = set()
     if query is not None:
-        cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
         opaque = analysis.opaque_temps
         for table in query.find_all(exp.Table):
             if is_function_table(table):
                 continue  # a table function call: the function is not a table (what it is given is read as a table)
-            if not table.db and table.name.lower() in cte_names:
-                continue
+            if binding_cte(table) is not None:
+                continue  # a WITH table in scope here (a nested ``WITH t`` does not hide a read of the model t elsewhere)
             if not table.db and not table.catalog and table.name.lower() in opaque:
                 continue  # a temporary table the script defines; its sources are in ``analysis``
             tables.append(table)
@@ -1257,13 +1257,13 @@ class _Analysis:
         procedures = collect_procedures(
             text
             for model in pipeline.models.values()
-            for text in (model.sql, *model.operations_sql)
+            for text in (model.sql, *model.scripts)
             if _PROCEDURE_WORD.search(text)
         )
         functions = collect_table_functions(
             text
             for model in pipeline.models.values()
-            for text in (model.sql, *model.operations_sql)
+            for text in (model.sql, *model.scripts)
             if _TABLE_FUNCTION_WORD.search(text)
         )
         # Tables other models' scripts write, with the models they read (``INSERT INTO t SELECT ...`` feeds t).
@@ -1391,7 +1391,7 @@ class _Analysis:
                         parents.update(members)
                         operation_readers.update(members)
                 _note_writes(pipeline, key, analysis, written)
-            for operation in model.operations_sql:
+            for operation in model.scripts:
                 extra = analyse_script(operation, procedures=procedures, functions=functions)
                 note_statement_tables(key, extra)
                 if extra.all_reads():
