@@ -29,6 +29,7 @@ from .ast_utils import (
     with_clause as _with_clause,
 )
 from .distinct_safety import distinct_is_redundant
+from .input_validity import invalid_input_reason
 from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
@@ -892,6 +893,10 @@ def _prepare_query(
         raise ValueError("the query reads a table named like a CTE the normalizer generates")
     if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
+    invalid = invalid_input_reason(parsed)
+    if invalid:
+        # Matching trees say nothing about results when BigQuery would reject the query.
+        raise ValueError(f"the query would not run on BigQuery: {invalid}")
     if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):
         # BigQuery rejects CAST(x AS NUMERIC(10, 2)), and the printed form drops the
         # parameters, so the query would compare equal to its valid unparameterized twin.

@@ -74,6 +74,8 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 When results are compared by running both queries, a value keeps its kind: `TRUE` is not `1`, a NaN is not the text `NaN`, and a struct is not a list of pairs. Floats are compared rounded to 12 significant digits unless you ask for an exact comparison, and each result records which one it used.
 
+The structural checker also refuses a query BigQuery would plainly reject (for example `HAVING` with no grouping, or a column that the subquery it reads does not have), because two such queries matching proves nothing about results. It only recognizes those two cases. See the [full reference](../docs/provers.md).
+
 ## A limit that moves into a projection
 
 KumoSQL knows that `SELECT d.b + 1 FROM (SELECT a AS b FROM t ORDER BY a LIMIT 1) AS d` returns the same row as `SELECT a + 1 FROM t ORDER BY a LIMIT 1`: it takes the first row, then computes the value. That rewrite had three holes, all now closed. When the outer query contained its own subquery, such as `(SELECT MAX(b) FROM u)`, renaming `d.b` to `a` also changed which column that subquery read, so two different queries were called equal. A value like `RAND()` that the outer query used twice would be drawn twice after the rewrite. And a `GROUP BY 1` could point at a different item once the select list changed. In each case the checker now declines, so the pair is "not proven" rather than wrongly "proven", and the common rewrites still go through. The evidence is a handful of hand-made witnesses plus fuzzing, not a proof that no such hole is left. The [full reference](../docs/provers.md) has the details.
