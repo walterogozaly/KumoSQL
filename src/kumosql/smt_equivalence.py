@@ -74,6 +74,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
 from .set_operations import positional_sql_pair
+from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .sqlx_fragments import masked_template_problem
@@ -965,7 +966,7 @@ class _Compiler:
 
     def compile(self, sql: str) -> _Union:
         try:
-            statements = [expand_alias_columns(check_modeled(canonical_negation(s)), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
         if len(statements) != 1:
