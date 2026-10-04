@@ -26,7 +26,9 @@ The dbt projects (ga4-bigquery-starter, bigquery-dbt-user-dimension, dbt-ga4) ar
 | Coverage | Statements read and columns traced in query models; files read with no blocking gap and also cleaned up and formatted without one; the gaps the loader reports, by kind |
 | Performance | Seconds for every project and stage |
 
-**Score: 202 files in 8 projects, 0 failures. All 217 literal dependencies are found. 120/121 statements are read and 1,358/1,371 columns traced. 131/202 files are handled with no blocking gap.** Cleanup: 197 pass, 5 unsupported. Format: 202 pass. The run takes about 90 s.
+**Score: 202 files in 8 projects, 0 failures. All 217 literal dependencies are found. 120/121 statements are read and 1,359/1,371 columns traced. 129/202 files are handled with no blocking gap.** Cleanup: 199 pass, 3 unsupported. Format: 202 pass. The run takes about 60 to 90 s.
+
+A cleanup rule leaves a statement that holds a JavaScript constant such as `${sp.output_schema}` or `${sp.entropy}` as written, and when a rule or override changes one anyway, the [proof safeguards](../proof-safeguards.md#dataform-expressions) keep the change `unproven` until the SQLX is compiled, because the constant can expand to any SQL. The two wintermi `template_columns` gaps, which take the handled count from 131 to 129, came from a loader change on master, not from the safeguards.
 
 ## Bugs found and fixed
 
@@ -35,6 +37,6 @@ The dbt projects (ga4-bigquery-starter, bigquery-dbt-user-dimension, dbt-ga4) ar
 
 ## What is left
 
-- **JavaScript in SQLX** accounts for most gaps. Snowplow names its tables with constants from `includes/sp.js` (`${sp.scratch_schema}`), giving 57 `unresolved_template` gaps. It also splices SQL returned by JavaScript functions into a condition or a `BEGIN ... END` block, giving 7 `parse_error` gaps. Their table reads still come from the tokens. One wintermi action is built entirely by JavaScript (`no_query`).
+- **JavaScript in SQLX** accounts for most gaps. Snowplow names its tables with constants from `includes/sp.js` (`${sp.scratch_schema}`), giving 57 `unresolved_template` gaps. It also splices SQL returned by JavaScript functions into a condition or a `BEGIN ... END` block, giving 7 `parse_error` gaps. Their table reads still come from the tokens. One wintermi action is built entirely by JavaScript (`no_query`). One terashim declaration takes its database and schema from `includes` constants, so it is reported once as `dynamic_config`; refs still find it by name and the project defaults stand in for its location. Scores and counts of handled files did not change.
 - **`SELECT *` over tables with unknown columns** (7) and reads of tables outside the project (41, mostly basedosdados staging tables) are reported, not guessed.
 - Nothing is run on BigQuery, so values are not compared.

@@ -25,7 +25,7 @@ Orders, subsets, and proposed deliverables are recommendations based on the curr
 
 ## Current repo coverage and integration limits
 
-The checked-in workbook contains 32 hand-authored `{id, sql_text}` records in `tests/fixtures/sql_subquery_samples.json`. Its shape and exact count are asserted in `tests/test_generic_fixture.py`; keep that fixture intact and add external collections separately. The full workbook test is marked `slow` and excluded by normal CI. The workflow's comment about a private CSV is stale: the default fixture is now the public JSON in this repo.
+The checked-in workbook contains 32 hand-authored `{id, sql_text}` records in `tests/fixtures/sql_subquery_samples.json`. Its shape and exact count are asserted in `tests/test_generic_fixture.py`; keep that fixture intact and add external collections separately. `tests/test_workbook_fixture.py` scores every record against labelled expectations in `tests/fixtures/sql_subquery_samples.expected.json` (strict parse, DuckDB input validity, change, structural removal and verified status, all 32 in the denominator) and runs in the default suite and CI; see [rewrite-rules.md](rewrite-rules.md#authored-fixture-gate).
 
 The existing APIs already provide three useful evaluation lanes:
 

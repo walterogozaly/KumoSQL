@@ -31,6 +31,8 @@ from .distinct_safety import distinct_is_redundant
 from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
+from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
+from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
 
 
@@ -53,6 +55,8 @@ class EquivalenceResult:
     normalized_right: str | None = None
     verifier_sql: str | None = None
     diagnostics: tuple[str, ...] = ()
+    #: The independent checks of this proof's own predicate normalization (see ``proof_steps``).
+    proof_checks: tuple[StepCheck, ...] = ()
 
     @property
     def proven(self) -> bool:
@@ -154,28 +158,50 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     _canonicalize_cte_order(query, with_clause)
 
+    # BigQuery resolves CTE names case-insensitively (`FROM A` reads CTE `a`), so
+    # references are matched by lower-cased name; a CTE name repeated up to case
+    # is ambiguous and not canonicalized.
     mapping: dict[str, str] = {}
-    for index, cte in enumerate(with_clause.expressions, start=1):
+    cte_index: dict[str, int] = {}
+    ctes = list(with_clause.expressions)
+    for index, cte in enumerate(ctes, start=1):
         old = _cte_alias(cte)
         if old:
-            mapping[old] = f"__canonical_cte_{index:03d}"
+            if old.lower() in mapping:
+                raise ValueError("CTE names repeat up to case")
+            mapping[old.lower()] = f"__canonical_cte_{index:03d}"
+            cte_index[old.lower()] = index - 1
+    recursive = bool(with_clause.args.get("recursive"))
+
+    # A non-recursive CTE is visible only after its definition, so a reference in the
+    # same or an earlier CTE body names a physical table even when it matches the CTE's
+    # name up to case. Renaming it would make `FROM A` inside CTE `a` look like a read
+    # of the CTE itself. The decision is made before the aliases are renamed.
+    renames: list[tuple[exp.Table, str]] = []
+    for table in query.find_all(exp.Table):
+        old = table.name
+        if old.lower() not in mapping or not is_cte_reference_candidate(table):
+            continue
+        owner = nearest_root_cte(table, ctes)
+        owner_index = len(ctes) if owner is None else next(
+            i for i, cte in enumerate(ctes) if cte is owner
+        )
+        defined = cte_index[old.lower()]
+        if defined < owner_index or (recursive and defined == owner_index):
+            renames.append((table, old))
 
     for cte in with_clause.expressions:
         old = _cte_alias(cte)
-        if old in mapping:
+        if old and old.lower() in mapping:
             alias = cte.args.get("alias")
-            alias.set("this", exp.to_identifier(mapping[old]))
+            alias.set("this", exp.to_identifier(mapping[old.lower()]))
 
-    for table in query.find_all(exp.Table):
-        old = table.name
-        # A one-part table reference can be a CTE reference. Qualified tables
-        # are physical objects and must never be renamed by this pass.
-        if old in mapping and is_cte_reference_candidate(table):
-            # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable
-            # name so column qualifiers still match after renaming.
-            if not table.alias:
-                table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
-            table.set("this", exp.to_identifier(mapping[old]))
+    for table, old in renames:
+        # ``FROM a`` is ``FROM a AS a``: keep the implicit range-variable name so
+        # column qualifiers still match after renaming.
+        if not table.alias:
+            table.set("alias", exp.TableAlias(this=exp.to_identifier(old)))
+        table.set("this", exp.to_identifier(mapping[old.lower()]))
 
 
 def _canonicalize_cte_order(query: exp.Expression, with_clause: exp.With) -> None:
@@ -775,13 +801,59 @@ SELECT COUNTIF(left_count != right_count) = 0 AS equivalent
 FROM joined_counts"""
 
 
+class _StepRejected(ValueError):
+    """The independent checker refused a normalization step, so the proof must not rely on it."""
+
+    def __init__(self, check: StepCheck):
+        super().__init__(check.reason)
+        self.check = check
+
+
+def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
+    """Run ``_normalize_predicates`` and have ``proof_steps`` re-derive the change from scratch.
+
+    Rules such as ``remove_trivial_predicates`` fold predicates the same way, so a folding bug would
+    make both sides of a proof agree. The checker shares no code with either. ``None`` when nothing
+    changed; raises ``_StepRejected`` when the checker refuses the change.
+    """
+
+    before = query.copy()
+    _normalize_predicates(query)
+    if same_tree(before, query):
+        return None
+    rendered = lambda q: _parenthesize_operators(q).sql(dialect="bigquery", comments=False)
+    step = RewriteStep("normalize_predicates", PREDICATE_FAMILY, 0, rendered(before), rendered(query))
+    check = check_predicate_transition(step, before, query)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
+_GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
+
+
+def _reads_table_named_like_generated_cte(query: exp.Expression) -> bool:
+    cte_names = {
+        alias.lower() for cte in query.find_all(exp.CTE) if (alias := _cte_alias(cte))
+    }
+    return any(
+        table.name.lower().startswith(_GENERATED_CTE_PREFIXES)
+        and (table.args.get("db") or table.name.lower() not in cte_names)
+        for table in query.find_all(exp.Table)
+    )
+
+
 def _prepare_query(
-    sql: str, *, ignore_row_order: bool
+    sql: str, *, ignore_row_order: bool, checks: list[StepCheck] | None = None
 ) -> tuple[exp.Expression, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     # Require strict parsing before invoking the lifting transformer. Recovery
     # mode is useful for formatting, but a proof must not be based on a
     # partially recovered AST.
     parsed = _parse_single_query(sql)
+    if _reads_table_named_like_generated_cte(parsed):
+        # Lifting and CTE canonicalization give CTEs these names; a real table with one
+        # could be confused with them, and the proof would compare the wrong relation.
+        raise ValueError("the query reads a table named like a CTE the normalizer generates")
     if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
     if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):
@@ -801,7 +873,9 @@ def _prepare_query(
     _drop_redundant_distinct(query)
     _strip_grouping_parens(query)
     _flatten_connectors(query)
-    _normalize_predicates(query)
+    check = _checked_predicate_normalization(query)
+    if check is not None and checks is not None:
+        checks.append(check)
     unambiguous = _cte_references_are_unambiguous(query)
     _canonicalize_cte_names(query)
     if unambiguous and _merge_duplicate_ctes(query):
@@ -967,6 +1041,9 @@ def prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
         )
+    masked = masked_template_problem(left_sql, right_sql)
+    if masked:
+        return EquivalenceResult(status=EquivalenceStatus.NOT_PROVEN, reason=masked)
     left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     if ignore_row_order:
         left_sql = _drop_noop_limit(left_sql) or left_sql
@@ -993,14 +1070,22 @@ def _prove_equivalent(
     ignore_row_order: bool = True,
 ) -> EquivalenceResult:
     verifier_sql: str | None = None
+    checks: list[StepCheck] = []
     try:
         left_query, left_canonical, left_nondeterminism, left_before, left_after = _prepare_query(
-            left_sql, ignore_row_order=ignore_row_order
+            left_sql, ignore_row_order=ignore_row_order, checks=checks
         )
         right_query, right_canonical, right_nondeterminism, right_before, right_after = _prepare_query(
-            right_sql, ignore_row_order=ignore_row_order
+            right_sql, ignore_row_order=ignore_row_order, checks=checks
         )
         verifier_sql = build_bag_verifier_sql(left_sql, right_sql)
+    except _StepRejected as exc:
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="the independent check of predicate normalization refused a step",
+            diagnostics=(exc.check.reason,),
+            proof_checks=(*checks, exc.check),
+        )
     except Exception as exc:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
@@ -1010,7 +1095,7 @@ def _prove_equivalent(
 
     diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))
     if diagnostics:
-        return _not_stable(left_canonical, right_canonical, verifier_sql, diagnostics)
+        return _not_stable(left_canonical, right_canonical, verifier_sql, diagnostics, tuple(checks))
 
     if _has_row_selection_nondeterminism(left_query) or _has_row_selection_nondeterminism(right_query):
         return EquivalenceResult(
@@ -1021,6 +1106,7 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
             diagnostics=("row-selection nondeterminism",),
         )
 
@@ -1036,6 +1122,7 @@ def _prove_equivalent(
             normalized_left=left_canonical,
             normalized_right=right_canonical,
             verifier_sql=verifier_sql,
+            proof_checks=tuple(checks),
         )
 
     sites_untouched = (
@@ -1048,7 +1135,7 @@ def _prove_equivalent(
             f"call that may be nondeterministic changed: {site}"
             for site in dict.fromkeys(left_before + right_before + left_after + right_after)
         )
-        return _not_stable(left_canonical, right_canonical, verifier_sql, diagnostics)
+        return _not_stable(left_canonical, right_canonical, verifier_sql, diagnostics, tuple(checks))
 
     if not ignore_row_order:
         if left_query.args.get("order") is None or right_query.args.get("order") is None:
@@ -1060,6 +1147,7 @@ def _prove_equivalent(
                 normalized_left=left_canonical,
                 normalized_right=right_canonical,
                 verifier_sql=verifier_sql,
+                proof_checks=tuple(checks),
             )
 
     unchanged = (
@@ -1092,11 +1180,16 @@ def _prove_equivalent(
         normalized_right=right_canonical,
         verifier_sql=verifier_sql,
         diagnostics=unchanged,
+        proof_checks=tuple(checks),
     )
 
 
 def _not_stable(
-    left_canonical: str, right_canonical: str, verifier_sql: str | None, diagnostics: tuple[str, ...]
+    left_canonical: str,
+    right_canonical: str,
+    verifier_sql: str | None,
+    diagnostics: tuple[str, ...],
+    proof_checks: tuple[StepCheck, ...] = (),
 ) -> EquivalenceResult:
     return EquivalenceResult(
         status=EquivalenceStatus.NOT_PROVEN,
@@ -1106,5 +1199,6 @@ def _not_stable(
         normalized_left=left_canonical,
         normalized_right=right_canonical,
         verifier_sql=verifier_sql,
+        proof_checks=proof_checks,
         diagnostics=diagnostics,
     )
