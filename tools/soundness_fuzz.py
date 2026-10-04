@@ -342,6 +342,16 @@ def convert_sql(sql: str, case: dict) -> str:
                 raise UnsupportedConversion("ROW_NUMBER requires a declared key total order")
         if isinstance(node, exp.Window) and node.args.get("spec") is not None:
             raise UnsupportedConversion("explicit window frames are unsupported")
+    # sqlglot reads ``a = b IS NULL`` as ``a = (b IS NULL)``; BigQuery, DuckDB and PostgreSQL read ``(a = b) IS NULL``,
+    # and the operand order of other comparison chains differs across engines too. Only parentheses settle them.
+    comparisons = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ, exp.Is, exp.Like)
+    for node in tree.find_all(*comparisons):
+        for arg in ("this", "expression"):
+            operand = node.args.get(arg)
+            if isinstance(operand, exp.Not):
+                operand = operand.this
+            if isinstance(operand, comparisons):
+                raise UnsupportedConversion("comparison chain without parentheses reads differently across engines")
     # Operators are written with sqlglot's own precedence, which is not DuckDB's: Is(Not(Is(y, NULL)), NULL) comes
     # out as ``NOT y IS NULL IS NULL``, read by DuckDB as NOT ((y IS NULL) IS NULL). Parenthesizing every operator
     # operand keeps the reading the prover gets.
@@ -777,7 +787,7 @@ def tpl_predicate_value(f, ctx):
         (f"SELECT t.id, ({p}) AND ({p}) AS b FROM t", True),
         (f"SELECT t.id, ({p}) OR FALSE AS b FROM t", True),
         (f"SELECT t.id, ({p}) AND TRUE AS b FROM t", True),
-        (f"SELECT t.id, ({p}) OR ({p} IS NULL) AS b FROM t", None),
+        (f"SELECT t.id, ({p}) OR (({p}) IS NULL) AS b FROM t", None),
     ])
     return "predicate_value", left, right, label
 

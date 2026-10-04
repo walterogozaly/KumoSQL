@@ -80,6 +80,12 @@ def load_cases(paths: Iterable[Path] | None = None, split: str | None = None) ->
     return cases
 
 
+def sourced(case: Mapping) -> bool:
+    """Whether a case was adapted from a public project (scored apart from the generated and hand-written ones)."""
+
+    return case.get("source") not in ("generated", "handwritten")
+
+
 def case_input(case: Mapping) -> dict:
     """What a minimizer sees: no reference, no traps, no verification."""
 
@@ -322,8 +328,11 @@ class Engine:
         import duckdb
 
         self.sources = sources
-        self.con = duckdb.connect(":memory:")
+        from kumosql.duckdb_load import small_database
+        self.con = small_database()
         self.con.execute("PRAGMA disable_optimizer")  # as kumosql.duckdb_load.run_unoptimized
+        # one thread: row order then depends only on the input order, which the row-order check relies on
+        self.con.execute("SET threads = 1")
         self.errors: dict[str, str] = {}
         self.worlds = {label: dict(tables) for label, tables in worlds.items()}
         self._loaded: dict[str, str] = {}  # source -> repr of the rows it holds
@@ -407,18 +416,40 @@ def order_sensitive(tables: Mapping[str, str]) -> bool:
     return any(ORDER_SENSITIVE.search(sql) for sql in tables.values())
 
 
+def real_data(case: Mapping) -> bool:
+    """Whether the case comes with real rows (``data``). Its sources then have narrower domains than
+    their types (JSON or timestamps stored as STRING), so a database on which the original fails is
+    skipped instead of raising."""
+
+    return bool(case.get("data"))
+
+
 def reversed_rows(db: Mapping[str, list[tuple]]) -> dict[str, list[tuple]]:
     return {name: list(reversed(rows)) for name, rows in db.items()}
 
 
+def _outputs(engine: Engine, label: str, names: list[str], skip_errors: bool) -> dict:
+    out = {}
+    for name in names:
+        try:
+            out[name] = engine.output(label, name)
+        except WorldError:
+            if not skip_errors:
+                raise
+    return out
+
+
 def compare(engine: Engine, dbs: Iterable[Mapping], base: str, others: Iterable[str], names: Iterable[str],
-            stable_only: bool = False) -> dict:
+            stable_only: bool = False, skip_errors: bool = False, checked: Counter | None = None) -> dict:
     """For each other world, the first difference from ``base`` on a protected table, or ``None``.
 
     A difference is ``{"table", "database", "reason"}``; an error in the other world counts as one. An
-    error in ``base`` raises. With ``stable_only``, a database counts for a protected table only when
-    ``base`` gives that table the same output with every source's rows reversed: where the original
-    itself depends on row order (ties in a window's ORDER BY), no answer can be held to one order.
+    error in ``base`` raises, unless ``skip_errors``: then a database on which the original fails for a
+    table (a real pipeline casting or parsing a random string) is not an input and is not checked for it.
+    With ``stable_only``, a database counts for a protected table only when ``base`` gives that table
+    the same output with every source's rows reversed: where the original itself depends on row order
+    (ties in a window's ORDER BY), no answer can be held to one order. ``checked`` (optional) counts
+    the databases each protected table was compared on.
     """
 
     names = list(names)
@@ -426,18 +457,20 @@ def compare(engine: Engine, dbs: Iterable[Mapping], base: str, others: Iterable[
     for db in dbs:
         if all(found.values()):
             break
-        checked = names
         if stable_only:
             engine.load(reversed_rows(db))
-            flipped = {name: engine.output(base, name) for name in names}
+            flipped = _outputs(engine, base, names, skip_errors)
         engine.load(db)
-        expected = {name: engine.output(base, name) for name in names}
+        expected = _outputs(engine, base, names, skip_errors)
+        tables = [name for name in names if name in expected]
         if stable_only:
-            checked = [name for name in names if flipped[name] == expected[name]]
+            tables = [name for name in tables if flipped.get(name) == expected[name]]
+        if checked is not None:
+            checked.update(tables)
         for label in found:
             if found[label]:
                 continue
-            for name in checked:
+            for name in tables:
                 try:
                     got = engine.output(label, name)
                 except WorldError as error:

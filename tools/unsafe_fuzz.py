@@ -71,7 +71,8 @@ class Oracle:
         from kumosql.bigquery_on_duckdb import configure
 
         self._duckdb = duckdb
-        self.db = duckdb.connect(":memory:")
+        from kumosql.duckdb_load import small_database
+        self.db = small_database()
         configure(self.db)  # BigQuery's reading of the queries, or a failure where BigQuery fails
         for table in TABLES:
             self.db.execute(f"CREATE TABLE {table} ({', '.join(c + ' BIGINT' for c in COLUMNS)})")

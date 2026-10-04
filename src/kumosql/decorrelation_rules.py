@@ -15,7 +15,7 @@ import itertools
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping, same_table
+from .ast_utils import FROM_KEY, extended_grouping, same_table
 
 _counter = itertools.count()
 _CLAUSES = ("distinct", "group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with", "laterals", "into", "locks", "sample", "prewhere", "connect", "match")
@@ -210,7 +210,7 @@ def _merge(select: exp.Select, source: exp.Subquery, position: int, uses: list[e
     joins = list(select.args.get("joins") or [])
     parts = []
     if position == 0:
-        select.set("from_", exp.From(this=new_sources[0]))
+        select.set(FROM_KEY, exp.From(this=new_sources[0]))
         select.set("joins", rest + joins or None)
     else:
         # every join is inner here, so the old ON (which may read any merged source) moves to WHERE

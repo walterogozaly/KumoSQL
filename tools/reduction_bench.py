@@ -3,7 +3,8 @@
 ``kumosql.project_reduction.reduce_project`` gets a whole Dataform project and the outputs to keep, and
 returns a patch. Two families of cases, each split into dev and held out up front:
 
-* **converted**: every table-minimization case (``benchmarks/table_minimization/*.jsonl``) written out as a
+* **converted**: every generated and hand-written table-minimization case (``benchmarks/table_minimization/*.jsonl``, not the
+  adapted ``sourced-*`` files, which are scored apart) written out as a
   Dataform project: sources as declarations, every table as a ``.sqlx`` file with ``ref()``, protected
   tables kept. A hash of the case id adds Dataform features: standalone assertions (over a kept output, over
   an intermediate), ``assertions`` in a config block, a project variable in place of a literal, an
@@ -616,7 +617,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     cases: list[tuple[str, dict]] = []
     if args.family in ("converted", "all"):
-        cases += [("converted", c) for c in mc.load_cases(split=None if args.split == "all" else args.split)]
+        cases += [("converted", c) for c in mc.load_cases(split=None if args.split == "all" else args.split)
+                  if not mc.sourced(c)]  # the adapted cases are scored apart (table-minimization-sourced)
     if args.family in ("real", "all"):
         cases += [("real", c) for c in real_cases() if args.split == "all" or c["split"] == args.split]
     if args.family in ("jaffle", "all"):

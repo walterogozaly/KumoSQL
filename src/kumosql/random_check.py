@@ -23,7 +23,8 @@ from typing import Iterable, Sequence
 
 import sqlglot
 
-from .duckdb_load import run_unoptimized
+from .ast_utils import spell_for_duckdb
+from .duckdb_load import run_unoptimized, small_database
 from .string_literals import canonical_literals
 
 _DUCK_TYPES = {"int": "BIGINT", "float": "DOUBLE", "text": "VARCHAR", "date": "DATE", "bool": "BOOLEAN"}
@@ -164,7 +165,7 @@ def random_tables(schema: Schema, seed: int, domains: dict[str, list], rows: int
 def _connect(schema: Schema, dialect: str = "postgres"):
     import duckdb
 
-    db = duckdb.connect(":memory:")
+    db = small_database()
     if dialect == "bigquery":
         from .bigquery_on_duckdb import configure
 
@@ -214,7 +215,7 @@ def _duck(sql: str, dialect: str) -> str:
             from .bigquery_on_duckdb import faithful
 
             tree = faithful(tree)
-        return tree.sql(dialect="duckdb")
+        return spell_for_duckdb(tree).sql(dialect="duckdb")
     except sqlglot.errors.SqlglotError as error:
         raise CheckError(f"cannot translate: {error}") from error
 

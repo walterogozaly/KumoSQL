@@ -43,11 +43,21 @@ Where it cannot decide, it leaves the ref unresolved (a `unsupported_ref` diagno
 - a name declared in more than one schema (Dataform itself refuses to compile it);
 - any ref to an unlisted name while a `.js` file declares tables it cannot read without running the code (`js_declaration_dynamic`). For exact results on such projects, load the compiled graph from the Dataform API.
 
-When Google credentials allow and the repository is also a Dataform repository (found the same way as workflow configurations), KumoSQL reads the newest release compilation (else the newest compilation) from the Dataform API and takes every compiled action and declaration from it, so computed declarations resolve too. It is only asked when a `.js` file could not be read; the compilation may differ from the checked-out commit. Without credentials, or when no repository matches, refs stay unresolved (`compiled_graph_unavailable`); the parse is still saved, so a restart shows the project at once, but the load that follows parses it again instead of reusing it, so a later load with credentials tries again.
+**The Dataform API fallback.** When a `.js` file declares tables the files cannot list, KumoSQL asks the Dataform API for the repository's newest release compilation (else the newest compilation) and takes every compiled action and declaration from it, so computed declarations resolve too. The repository is found the same way as workflow configurations: the Dataform repository whose git remote matches the connected repository, searched in the Google Cloud projects chosen on the BigQuery page (or the repository's override) and first in the configured location (`us-central1` unless set). When that location lists no repository, every other Dataform location is searched too (in parallel), and the location where the repository is found is tried first from then on. It needs a connected remote and Google credentials. It is only asked when a `.js` file could not be read, and the compilation may differ from the checked-out commit. The compiled targets are the same ones `dataform compile --json` prints for the same commit (checked with `@dataform/cli` 3.0.71), so the fallback adds nothing a local compile would not.
+
+A load that needed the fallback always records what happened, and each message carries counts and reasons only, never a project, repository, dataset or table name:
+
+| Code | Meaning |
+| --- | --- |
+| `compiled_graph_read` | The compilation was read: how many actions and declarations it listed. |
+| `compiled_graph_not_requested` | Skipped: no repository is connected to this load (a local folder or upload). |
+| `compiled_graph_unavailable` | The names stay unresolved. The message says whether the fallback `was skipped` (no request was made) or `was tried and failed`, then the reason: `no_projects` (no Google Cloud project to search), `no_credentials`, `no_repository` (the searched projects hold no Dataform repository with this remote in the configured location or any other), `no_compilation` (the repository has none), `api_error` (the HTTP status, or that Dataform could not be reached) or `empty_compilation`. |
+
+A load that could not reach Dataform is still saved, so a restart shows the project at once, but the load that follows parses it again instead of reusing it, so a later load with credentials tries again. `tests/test_dataform_api_fallback.py` runs the whole path against a local stand-in for the Dataform API with a synthetic project that computes its declarations in JavaScript (`tools/make_dataform_fixture.py`), including each reason above.
 
 A table name that carries a dataset (`raw.orders`, `ref("raw", "orders")`) is matched on that dataset, never on its table name alone, so a staging model that shares its source table's name still reads the source. A bare `ref("orders")` that two actions answer to is ambiguous to Dataform itself and stays unresolved; spell the dataset (`ref("raw", "orders")`) to settle it.
 
-While a `.js` file declares tables by computation, a two-part `ref("schema", "name")` to an unlisted name resolves exactly to the project's default database, unless that file sets a `database` (then it stays unresolved). A one-part ref to an unlisted name stays unresolved. A load with no Dataform repository to ask notes `compiled_graph_not_requested`.
+While a `.js` file declares tables by computation, a two-part `ref("schema", "name")` to an unlisted name resolves exactly to the project's default database, unless that file sets a `database` (then it stays unresolved). A one-part ref to an unlisted name stays unresolved. A load with no Dataform repository to ask notes `compiled_graph_not_requested` (see the table above).
 
 ## What the static reader does not guess
 

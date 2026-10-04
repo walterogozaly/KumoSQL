@@ -411,6 +411,10 @@ def pipeline_main(argv: list[str] | None = None) -> int:
             ).to_json()
         except ValueError as exc:
             parser.error(str(exc))
+        if args.fetch_schema:
+            from . import schema_fetch
+
+            print(schema_fetch.summary(pipeline._analyse().schema_lookup), file=sys.stderr)
         text = json.dumps(data, indent=2)
         if args.output:
             args.output.write_text(text + "\n", encoding="utf-8")
@@ -440,6 +444,10 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         return 0
     if scope is not None and not data["models"]:
         print(f"warning: scope {scope.name!r} matches no models", file=sys.stderr)
+    if args.fetch_schema:
+        from . import schema_fetch
+
+        print(schema_fetch.summary(data.get("schema_lookup") or {}), file=sys.stderr)
     summary = data.get("diagnostic_summary", {})
     if summary.get("assets_not_analyzed"):
         count = summary["assets_not_analyzed"]

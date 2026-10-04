@@ -11,6 +11,8 @@ import sqlglot
 
 pytest.importorskip("z3")
 
+from sqlglot_support import skip_if_unparseable
+
 from kumosql.algebraic_equivalence import normalize, prove_equivalent_algebraic
 from kumosql.ast_utils import LossySql, expand_alias_columns, faithful_sql
 from kumosql.smt_equivalence import TableConstraints, prove_equivalent_smt
@@ -149,6 +151,17 @@ def test_pairs_that_differ_are_never_proven(left, right, schema, constraints, dd
         assert not prove(left, right, **kwargs).proven, prove.__name__
 
 
+
+def _prints_div() -> bool:
+    try:
+        faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql")
+    except LossySql:
+        return False
+    return True
+
+
+# sqlglot 26 has no generator that writes MySQL's DIV back as DIV, so a query using it is refused there
+PRINTS_DIV = _prints_div()
 STILL_PROVEN = [
     pytest.param("SELECT x.k FROM (SELECT t.a AS k FROM (SELECT a FROM s) t) x", "SELECT a FROM s", id="renamed-column-passthrough"),
     pytest.param(
@@ -157,7 +170,10 @@ STILL_PROVEN = [
         id="arithmetic-from-the-null-side-folds",
     ),
     pytest.param("SELECT x FROM s AS d(x, y)", "SELECT a FROM s", id="alias-column-list-renames-by-position"),
-    pytest.param("SELECT a DIV 2 FROM s", "SELECT a DIV 2 FROM s WHERE TRUE", id="div-matches-div"),
+    pytest.param(
+        "SELECT a DIV 2 FROM s", "SELECT a DIV 2 FROM s WHERE TRUE", id="div-matches-div",
+        marks=pytest.mark.skipif(not PRINTS_DIV, reason="this sqlglot version cannot print DIV"),
+    ),
     pytest.param(
         "SELECT p.id, d.y FROM p LEFT JOIN (SELECT k, CASE WHEN w < 11 THEN -1 * w ELSE w END AS y FROM q) AS d ON p.k = d.k",
         "SELECT p.id, CASE WHEN d.w < 11 THEN -1 * d.w ELSE d.w END FROM p LEFT JOIN q AS d ON p.k = d.k",
@@ -195,7 +211,11 @@ def test_constants_on_the_null_side_of_any_outer_join_are_not_folded():
 
 
 def test_faithful_sql_refuses_what_a_dialect_cannot_print():
-    assert faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql") == "SELECT a DIV 2 FROM t"
+    if PRINTS_DIV:
+        assert faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql") == "SELECT a DIV 2 FROM t"
+    else:  # MySQL's own generator writes CAST(a / 2 AS SIGNED), which rounds where DIV truncates
+        with pytest.raises(LossySql):
+            faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql")
     full = sqlglot.parse_one("SELECT COUNT(*) FROM a FULL JOIN b ON a.k = b.k", read="mysql")
     assert "FULL JOIN" in faithful_sql(full, "mysql")  # MySQL's generator writes a LEFT/RIGHT union that doubles the count
     hyphen = sqlglot.parse_one("SELECT 1 FROM `my-project.d.t`", read="bigquery")
@@ -485,6 +505,7 @@ def test_in_over_union_split_keeps_a_union_level_limit():
     # the sibling of S009-005: x IN (A UNION B LIMIT n) is not x IN (A) OR x IN (B)
     from kumosql.set_split_rules import _split_in_over_union
 
+    skip_if_unparseable("SELECT x FROM t WHERE x IN ((SELECT a FROM p UNION ALL SELECT b FROM q) ORDER BY 1 LIMIT 1 OFFSET 1)")
     for sub in (
         "SELECT a FROM p UNION DISTINCT SELECT b FROM q LIMIT 1",
         "(SELECT a FROM p UNION ALL SELECT b FROM q) ORDER BY 1 LIMIT 1 OFFSET 1",
@@ -546,3 +567,16 @@ def test_distinct_on_operands_are_not_one_filtered_table():
     assert merge_same_source(sqlglot.parse_one(left, read="duckdb")) is None
     right = "SELECT DISTINCT ON (x) y FROM t UNION SELECT DISTINCT ON (x) y FROM t"
     assert not prove_equivalent_algebraic(left, right, schema=DISTINCT_ON_SCHEMA, dialect="duckdb").proven
+@pytest.mark.parametrize(
+    "left,right",
+    [
+        ("SELECT * EXCEPT (b) FROM t", "SELECT * FROM t"),
+        ("SELECT x.* EXCEPT (b) FROM t AS x", "SELECT x.* FROM t AS x"),
+        ("SELECT * EXCEPT (b) FROM t UNION ALL SELECT * FROM t", "SELECT * FROM t UNION ALL SELECT * FROM t"),
+    ],
+)
+def test_a_star_except_is_not_read_as_a_plain_star(left, right):
+    # sqlglot 30 renamed the star's "except" argument to "except_"; a check of the old name alone missed it
+    schema = {"t": ["a", "b"]}
+    assert not prove_equivalent_smt(left, right, schema=schema, dialect="bigquery").proven
+    assert not prove_equivalent_algebraic(left, right, schema=schema, dialect="bigquery").proven

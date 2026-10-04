@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+from collections import Counter
 import hashlib
 import re
 
@@ -28,10 +29,20 @@ from .ast_utils import (
     with_clause as _with_clause,
 )
 from .distinct_safety import distinct_is_redundant
+from .input_validity import invalid_input_reason
 from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
-from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
+from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
+from .proof_syntax import (
+    DISTINCT_ASSUMPTIONS,
+    DISTINCT_FAMILY,
+    PAREN_ASSUMPTIONS,
+    PAREN_FAMILY,
+    _strip_parens,
+    check_syntax_transition,
+)
+from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, _key, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
 
@@ -149,6 +160,9 @@ def _canonicalize_cte_names(query: exp.Expression) -> None:
 
     with_clause = _root_with(query)
     if not with_clause:
+        return
+    if with_clause.args.get("recursive"):
+        # The independent CTE check does not expand a recursive WITH, so the prover leaves its names alone.
         return
     if any(
         isinstance(node, exp.With) and node is not with_clause
@@ -842,6 +856,72 @@ def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
     return check
 
 
+def _readable_sql(query: exp.Expression) -> str:
+    """The statement as text that reads back as the same tree, for the independent check.
+
+    The AST keeps grouping without parentheses, but text does not: ``Not(And(a, b))`` prints as
+    ``NOT a AND b``, which reads as ``(NOT a) AND b``. Where an expression's printed text reads as a
+    different tree, its operands are parenthesized, so the check compares what the normalizer's tree means.
+    A tree that cannot be printed faithfully stays unfaithful and the check refuses it.
+    """
+
+    probe = query.copy()
+    operators = (exp.Binary, exp.Unary, exp.Between, exp.In)
+    needs_parens = lambda value: isinstance(value, (exp.Binary, exp.Unary)) and not isinstance(value, exp.Paren)
+    for node in reversed(list(probe.find_all(*operators))):
+        if isinstance(node, exp.Paren):
+            continue
+        try:
+            reread = sqlglot.parse_one(node.sql(dialect="bigquery", comments=False), read="bigquery")
+            faithful = _key(_strip_parens(reread)) == _key(_strip_parens(node))
+        except Exception:  # noqa: BLE001 - text that cannot be read again is not faithful
+            faithful = False
+        if faithful:
+            continue
+        for key, value in list(node.args.items()):
+            if needs_parens(value):
+                node.set(key, exp.Paren(this=value.copy()))
+            elif isinstance(value, list):
+                node.set(key, [exp.Paren(this=item.copy()) if needs_parens(item) else item for item in value])
+    return probe.sql(dialect="bigquery", comments=False)
+
+
+def _checked_syntax_normalization(transform, query: exp.Expression, name: str, family: str, assumptions: tuple[str, ...]) -> StepCheck | None:
+    """Run a parenthesis or DISTINCT normalization and have ``proof_syntax`` re-derive it from scratch.
+
+    ``None`` when nothing changed; raises ``_StepRejected`` when the checker refuses the change.
+    """
+
+    before = query.copy()
+    transform(query)
+    if same_tree(before, query):
+        return None
+    rendered = lambda q: q.sql(dialect="bigquery", comments=False)
+    step = RewriteStep(name, family, 0, _readable_sql(before), _readable_sql(query), assumptions)
+    check = check_syntax_transition(step, before, query)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
+def _checked_cte_normalization(before: exp.Expression, after: exp.Expression) -> StepCheck | None:
+    """Have ``proof_ctes`` re-derive the renaming, reordering, merging and dropping of CTEs from scratch.
+
+    The normalizer and the CTE rewrite rules each decide which names are CTE references. A mistake they
+    share would make both sides of a proof agree. ``None`` when nothing changed; raises ``_StepRejected``
+    when the checker refuses the change.
+    """
+
+    if same_tree(before, after):
+        return None
+    rendered = lambda q: q.sql(dialect="bigquery", comments=False)
+    step = RewriteStep("normalize_ctes", CTE_FAMILY, 0, rendered(before), rendered(after), CTE_ASSUMPTIONS)
+    check = check_cte_transition(step, before, after)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
 _GENERATED_CTE_PREFIXES = ("__lifted_subquery_", "__canonical_cte_")
 
 
@@ -869,6 +949,10 @@ def _prepare_query(
         raise ValueError("the query reads a table named like a CTE the normalizer generates")
     if table_function_reads_cte(parsed):
         raise ValueError("a table function reads a CTE by name, so CTE use cannot be tracked")
+    invalid = invalid_input_reason(parsed)
+    if invalid:
+        # Matching trees say nothing about results when BigQuery would reject the query.
+        raise ValueError(f"the query would not run on BigQuery: {invalid}")
     if any(cast.to.find(exp.DataTypeParam) for cast in parsed.find_all(exp.Cast)):
         # BigQuery rejects CAST(x AS NUMERIC(10, 2)), and the printed form drops the
         # parameters, so the query would compare equal to its valid unparameterized twin.
@@ -886,16 +970,25 @@ def _prepare_query(
     # Recorded before the remaining structure-changing normalizations so that
     # merging, dropping or simplifying around a call cannot hide a change to it.
     sites_before = _value_nondeterminism_sites(query) + _routine_call_sites(query)
-    _drop_redundant_distinct(query)
-    _strip_grouping_parens(query)
+    for transform, name, family, assumptions in (
+        (_drop_redundant_distinct, "drop_redundant_distinct", DISTINCT_FAMILY, DISTINCT_ASSUMPTIONS),
+        (_strip_grouping_parens, "strip_grouping_parens", PAREN_FAMILY, PAREN_ASSUMPTIONS),
+    ):
+        syntax_check = _checked_syntax_normalization(transform, query, name, family, assumptions)
+        if syntax_check is not None and checks is not None:
+            checks.append(syntax_check)
     _flatten_connectors(query)
     check = _checked_predicate_normalization(query)
     if check is not None and checks is not None:
         checks.append(check)
+    before_ctes = query.copy()
     unambiguous = _cte_references_are_unambiguous(query)
     _canonicalize_cte_names(query)
     if unambiguous and _merge_duplicate_ctes(query):
         _canonicalize_cte_names(query)
+    cte_check = _checked_cte_normalization(before_ctes, query)
+    if cte_check is not None and checks is not None:
+        checks.append(cte_check)
     _remove_comments(query)
     canonical = _canonical_sql(query)
     reasons = tuple(_nondeterminism_reasons(query, allow_unchanged_values=True))
@@ -1079,6 +1172,9 @@ def prove_equivalent(
     return _prove_equivalent(left_sql, right_sql, ignore_row_order=ignore_row_order)
 
 
+_SQLX_MARKER = re.compile(r"\$\{|__sqlx_\w*?__")
+
+
 def _prove_equivalent(
     left_sql: str,
     right_sql: str,
@@ -1098,7 +1194,7 @@ def _prove_equivalent(
     except _StepRejected as exc:
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
-            reason="the independent check of predicate normalization refused a step",
+            reason="the independent check of a normalization step refused it",
             diagnostics=(exc.check.reason,),
             proof_checks=(*checks, exc.check),
         )
@@ -1107,6 +1203,18 @@ def _prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="input could not be normalized conservatively",
             diagnostics=(str(exc),),
+        )
+
+    lost_left, lost_right = (
+        Counter(_SQLX_MARKER.findall(text)) - Counter(_SQLX_MARKER.findall(canonical))
+        for text, canonical in ((left_sql, left_canonical), (right_sql, right_canonical))
+    )
+    if lost_left != lost_right:
+        # sqlglot 26 drops a comment at the end of a BigQuery statement, taking a SQLX expression with it
+        return EquivalenceResult(
+            status=EquivalenceStatus.NOT_PROVEN,
+            reason="a SQLX expression in a comment could not be read from one of the queries",
+            diagnostics=("sqlx expression lost with a comment",),
         )
 
     diagnostics = tuple(dict.fromkeys(left_nondeterminism + right_nondeterminism))

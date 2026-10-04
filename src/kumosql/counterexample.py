@@ -27,7 +27,8 @@ from typing import Callable
 import sqlglot
 from sqlglot import exp
 
-from .duckdb_load import run_unoptimized
+from .ast_utils import EXCEPT_KEY, spell_for_duckdb
+from .duckdb_load import run_unoptimized, small_database
 from .result_equivalence import DataRules
 
 try:
@@ -499,8 +500,7 @@ def _fill_empty_select_lists(tree: exp.Expression) -> exp.Expression:
         if isinstance(outer, exp.Select):
             for star in outer.expressions:
                 if isinstance(star, exp.Star):
-                    key = "except_" if "except_" in exp.Star.arg_types else "except"  # renamed in sqlglot 30
-                    star.set(key, [*(star.args.get(key) or []), exp.column(filler, quoted=True)])
+                    star.set(EXCEPT_KEY, [*(star.args.get(EXCEPT_KEY) or []), exp.column(filler, quoted=True)])
     return tree
 
 
@@ -569,14 +569,96 @@ def to_duckdb(sql: str, dialect: str = "mysql", known: set[str] | None = None) -
         from .bigquery_on_duckdb import faithful
 
         tree = faithful(tree)
-    return _quote_unusual_names(tree).sql(dialect="duckdb")
+    return spell_for_duckdb(_quote_unusual_names(tree)).sql(dialect="duckdb")
 
 
 _TARGETED_TYPES = {"INT": "INT64", "VARCHAR": "STRING", "ENUM": "STRING", "TIME": "STRING", "DATE": "DATE", "NUMERIC": "FLOAT64", "BOOL": "BOOL"}
 
 
+def _pick_argument(node: exp.Expression) -> exp.Expression | None:
+    """The one value expression a pick call chooses from, ``None`` when it is not a plain one."""
+
+    if isinstance(node, exp.Anonymous):
+        argument = node.expressions[0] if len(node.expressions) == 1 else None
+    else:
+        argument = node.this
+    if isinstance(argument, exp.Distinct) and len(argument.expressions) == 1:
+        argument = argument.expressions[0]  # a DISTINCT does not change which value may be picked
+    return None if isinstance(argument, (exp.Distinct, exp.Order)) else argument
+
+
+def guard_arbitrary_picks(sql: str) -> str | None:
+    """``sql`` with every aggregate pick that may land on any of several values made to fail instead.
+
+    ``ANY_VALUE(x)``, ``first(x)``, ``last(x)`` and ``arbitrary(x)`` return some row's ``x``. BigQuery and
+    MySQL may return a different one, and DuckDB's choice follows its hash order, which shuffling the rows
+    cannot move. Each call becomes ``CASE WHEN COUNT(DISTINCT x) <= 1 AND (COUNT(x) = 0 OR COUNT(x) =
+    COUNT(*)) THEN ANY_VALUE(x) ELSE error(..) END`` (the call's ``FILTER`` goes on every count): the same
+    value when the group holds one value, or only NULLs, and an error when the pick is free. Returns ``sql``
+    itself when there is no pick, and ``None`` when a pick cannot be guarded (a window function, an
+    ``ORDER BY`` or several arguments inside the call).
+    """
+
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    sites = []
+    for node in tree.find_all(exp.AnyValue, exp.First, exp.Last, exp.Anonymous):
+        if isinstance(node, exp.Anonymous) and str(node.this).lower() != "arbitrary":
+            continue
+        top = node
+        while isinstance(top.parent, (exp.IgnoreNulls, exp.RespectNulls)) and top.parent.this is top:
+            top = top.parent
+        if isinstance(top.parent, exp.Filter) and top.parent.this is top:
+            top = top.parent
+        if _pick_argument(node) is None or (isinstance(top.parent, exp.Window) and top.parent.this is top):
+            return None
+        sites.append((node, top))
+    for node, top in reversed(sites):  # an inner pick first, so an outer one copies it already guarded
+        condition = top.expression.this if isinstance(top, exp.Filter) and isinstance(top.expression, exp.Where) else None
+        value = _pick_argument(node).sql(dialect="duckdb")
+        where = f" FILTER (WHERE {condition.sql(dialect='duckdb')})" if condition is not None else ""
+
+        def count(what: str) -> str:
+            return f"COUNT({what}){where}"
+
+        guarded = (
+            f"CASE WHEN {count('DISTINCT ' + value)} <= 1 AND ({count(value)} = 0 OR {count(value)} = {count('*')}) "
+            f"THEN ANY_VALUE({value}){where} ELSE error('arbitrary pick') END"
+        )
+        top.replace(sqlglot.parse_one(guarded, read="duckdb"))
+    return tree.sql(dialect="duckdb") if sites else sql
+
+
+def has_limit(sql: str) -> bool:
+    return sqlglot.parse_one(sql, read="duckdb").args.get("limit") is not None
+
+
+def tie_breaking_variants(sql: str, columns: int) -> list[str]:
+    """``sql`` again with every output column appended to its ``ORDER BY``, ascending and then descending.
+
+    Only a ``LIMIT`` on the whole query matters: it keeps some of the rows tied on the ordering, and which
+    ones is arbitrary. Both variants must keep the same bag as the query itself.
+    """
+
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    if tree.args.get("limit") is None or not columns:
+        return []
+    variants = []
+    for descending in (False, True):
+        variant = tree.copy()
+        order = variant.args.get("order")
+        keys = list(order.expressions) if order is not None else []
+        keys += [exp.Ordered(this=exp.Literal.number(i), desc=descending) for i in range(1, columns + 1)]
+        variant.set("order", exp.Order(expressions=keys))
+        variants.append(variant.sql(dialect="duckdb"))
+    return variants
+
+
 class Searcher:
-    """Reusable search over one schema: parse once, then try many databases."""
+    """Reusable search over one schema: parse once, then try many databases.
+
+    It remembers what its tables hold and which databases it already ran both queries on, so write the
+    tables only through its own methods.
+    """
 
     def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql", predicates: dict[str, int] | None = None):
         """``predicates`` names uninterpreted boolean functions (name to arity) the queries call.
@@ -602,7 +684,7 @@ class Searcher:
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
             self.having = self.having or tree.find(exp.Having) is not None
-        self.db = duckdb.connect(":memory:")
+        self.db = small_database()
         self.bigquery = dialect == "bigquery"
         if self.bigquery:
             from .bigquery_on_duckdb import configure
@@ -618,18 +700,41 @@ class Searcher:
             table = spec.tables[name]
             columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
             self.db.execute(f'CREATE TABLE "{name}" ({columns})')
+        # what each table holds, as the VALUES list ``_load`` inserted ("" when empty, None when unknown), and
+        # the databases on which both queries already ran and agreed: running them again would agree again
+        self._loaded: dict[str, str | None] = {name: "" for name in self.used}
+        self._agreed: set[tuple[str, ...]] = set()
+        self._agreed_targeted: set[str] = set()
+        self._picks: list[tuple[list[str], int]] | bool | None = None  # see ``_pick_checks``
+
+    def _values(self, data) -> dict[str, str]:
+        """Each used table's rows as the literal VALUES list ``_load`` inserts ("" for no rows)."""
+
+        return {name: ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in data[name]) for name in self.used}
+
+    def _key(self, values: dict[str, str]) -> tuple[str, ...]:
+        return tuple(values[name] for name in sorted(self.used))
 
     def _load(self, data, order=None) -> None:
         """Replace the contents of every used table (one literal INSERT per table: ``executemany`` is slow)."""
 
+        self._load_values(self._values(data))
+
+    def _load_values(self, values: dict[str, str]) -> None:
+        """A table already holding exactly these rows, inserted the same way, is left as it is."""
+
         statements = []
         for name in self.used:
-            statements.append(f'DELETE FROM "{name}";')
-            rows = data[name]
-            if rows:
-                values = ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in rows)
-                statements.append(f'INSERT INTO "{name}" VALUES {values};')
-        self.db.execute(" ".join(statements))
+            if self._loaded[name] == values[name]:
+                continue
+            if self._loaded[name] != "":
+                statements.append(f'DELETE FROM "{name}";')
+            if values[name]:
+                statements.append(f'INSERT INTO "{name}" VALUES {values[name]};')
+            self._loaded[name] = None  # unknown until the statements have run
+        if statements:
+            self.db.execute(" ".join(statements))
+            self._loaded.update(values)
 
     def _read(self, rows):
         """BigQuery-dialect rows as BigQuery returns them; a row it could not return fails like a query error."""
@@ -735,10 +840,16 @@ class Searcher:
                 data = dict(zip(tables, combo))
                 if not self._satisfies(data, generator):
                     continue
-                self._load(data)
+                values = self._values(data)
+                key = self._key(values)
+                if key in self._agreed:
+                    continue
+                self._load_values(values)
                 a = self._rows(self.left_sql)
                 b = self._rows(self.right_sql)
-                if _bag(a) != _bag(b) and self._stable(data, a, b, random.Random(1)):
+                if _bag(a) == _bag(b):
+                    self._agreed.add(key)
+                elif self._stable(data, a, b, random.Random(1)):
                     return "found", Counterexample(data, a, b)
         except duckdb.Error:
             return "too_large", None
@@ -776,13 +887,19 @@ class Searcher:
             data = generator.database(self.used, max_rows, empty)
             if data is None:
                 continue
+            values = self._values(data)
+            key = self._key(values)
+            if key in self._agreed:
+                continue
             try:
-                self._load(data)
+                self._load_values(values)
                 a = self._rows(self.left_sql)
                 b = self._rows(self.right_sql)
             except duckdb.Error:
                 continue  # a runtime error on this database (a failed cast, SINGLE_VALUE of two rows): try the next
-            if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+            if _bag(a) == _bag(b):
+                self._agreed.add(key)
+            elif self._stable(data, a, b, rng):
                 return Counterexample({n: data[n] for n in self.used}, a, b)
         return self._search_targeted(rng) if targeted and os.environ.get("KUMOSQL_TARGETED", "1") != "0" else None
 
@@ -819,9 +936,13 @@ class Searcher:
                 if key in seen or not self._conforms(generator, data):
                     continue
                 seen.add(key)
+                exact = repr(key)  # repr keeps 1, 1.0 and True apart
+                if exact in self._agreed_targeted:
+                    continue
                 try:
                     for name in self.used:
                         table = self.spec.tables[name]
+                        self._loaded[name] = None
                         self.db.execute(f'DELETE FROM "{name}"')
                         if data[name]:
                             self.db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(table.columns))})', data[name])
@@ -829,7 +950,9 @@ class Searcher:
                     b = self._rows(self.right_sql)
                 except duckdb.Error:
                     continue
-                if _bag(a) != _bag(b) and self._stable(data, a, b, rng):
+                if _bag(a) == _bag(b):
+                    self._agreed_targeted.add(exact)
+                elif self._stable(data, a, b, rng):
                     return Counterexample({n: data[n] for n in self.used}, a, b)
         return None
 
@@ -862,16 +985,50 @@ class Searcher:
                     return False  # the strict reading: a NULL reference is not generated either
         return all(generator._holds(c, data) for c in generator.global_checks if all(t in self.used for t in c.tables))
 
+    def _pick_checks(self) -> list[tuple[list[str], int]] | None:
+        """For each query: its guarded copy (if it picks arbitrarily) and its column count (if it has a ``LIMIT``).
+
+        ``None`` when a pick cannot be checked (the pair is then never called different). Built once, on the
+        first counterexample candidate: most searches never need it.
+        """
+
+        if self._picks is None:
+            checks = []
+            try:
+                for sql in (self.left_sql, self.right_sql):
+                    guarded = guard_arbitrary_picks(sql)
+                    if guarded is None:
+                        break
+                    columns = len(self.db.execute(sql).description) if has_limit(sql) else 0
+                    checks.append(([guarded] if guarded != sql else [], columns))
+                else:
+                    self._picks = checks
+            except (sqlglot.errors.SqlglotError, duckdb.Error):
+                pass
+            if self._picks is None:
+                self._picks = False
+        return self._picks or None
+
     def _stable(self, data, a, b, rng) -> bool:
         """The difference must not depend on row order or on an arbitrary pick: shuffle and compare again."""
 
         expected = (_bag(a), _bag(b))
+        picks = self._pick_checks()
+        if picks is None:
+            return False
         try:
             # DuckDB's optimizer has returned wrong rows for some correlated subqueries: the same rows must
             # come back with the optimizer off, so a counterexample never rests on an engine bug
             self._load(data)
             if tuple(_bag(self._read(rows)) for rows in run_unoptimized(self.db, self.left_sql, self.right_sql)) != expected:
                 return False
+            # a shuffle cannot move a pick that follows hash order, so check the picks on the data itself: every
+            # ``ANY_VALUE`` group must hold one value (or only NULLs), and a ``LIMIT`` must cut the same bag
+            # whichever way its ties are broken
+            for sql, (guarded, columns), want in zip((self.left_sql, self.right_sql), picks, expected):
+                for variant in [*guarded, *tie_breaking_variants(sql, columns)]:
+                    if _bag(self._rows(variant)) != want:
+                        return False
             # reversed and rotated first: three random shuffles of a two-row table keep its order 1 time in 8
             orders = [{name: list(reversed(data[name])) for name in self.used}]
             orders.append({name: list(data[name][1:]) + list(data[name][:1]) for name in self.used})

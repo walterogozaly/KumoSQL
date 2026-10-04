@@ -270,6 +270,9 @@ def assess_change(
             if wanted is None:
                 note(reader, "breaks", "model_dependency", depth, ())
                 continue
+            if name in a.star_branch_tables.get(reader, ()):
+                unknown.setdefault(reader, "unexpanded_star")  # a ``SELECT *`` branch may read the column
+                continue
             refs = [r for r in a.consumed[reader] if r.table == name and r.column.lower() in wanted]
             if not refs:
                 if name in a.template_reads.get(reader, ()):

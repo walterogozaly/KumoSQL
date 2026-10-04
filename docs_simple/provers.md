@@ -54,9 +54,17 @@ It may mean the SQL uses an unsupported feature, a table's columns are missing, 
 
 Each solver check has a fixed work limit as well as a time limit. When the work limit stops a check, the same query pair gets the same answer on a fast or a busy machine; the result says "timed out" only when the clock stopped it, which a faster machine might not. With a very small time limit the clock usually stops a check first, so whether a pair is proven or unknown can still vary with machine load; it never flips between proven and different. The bounded check follows the same work limit, and a number such as `1e100000000` is declined everywhere rather than read. `GROUP BY ALL` is read as the columns it actually groups by, so an aggregate-only query still returns its one row on an empty table.
 
+`SELECT * EXCEPT (b)`, `* REPLACE (...)` and `* RENAME (...)` change which columns a query returns, so the provers either apply them or say unknown. Example: `SELECT * EXCEPT (b) FROM t` is no longer treated as the same query as `SELECT * FROM t`. The cases the SMT prover cannot apply (a name the star does not have, `* ILIKE`) come back unknown, and the bounded checker always declines a modified star. See the full reference for details.
+
 A replayed counterexample does establish a difference: the report includes a database where the results disagree. Matching a few random databases does not establish that no counterexample exists. That agreement is also weaker than BigQuery agreement: the queries run on DuckDB, decimals are compared to 12 significant digits, and column types are not compared.
 
 Two details of the structural check: it drops a result ordering only when no sort key could raise an error (a `LIMIT` that cannot cut any row does not change that), and it treats a function that might be a user-defined one as a different function when its spelling differs, because BigQuery reads those names case-sensitively.
+
+## Comparing scripts that change a table
+
+An `UPDATE` or `DELETE` only reports how many rows it touched, and two updates can touch the same number of rows while writing different values: `UPDATE t SET a = 1 WHERE TRUE` and `UPDATE t SET a = 2 WHERE TRUE` both touch every row. The executed comparison therefore works on a private copy of the table and compares the rows that are left afterwards, not the count. This also covers `TRUNCATE`.
+
+Some writes cannot be compared faithfully, so the check answers `error` instead of guessing: `MERGE` and `UPDATE ... FROM` (BigQuery fails when a target row matches several source rows, while DuckDB quietly picks one), an `UPDATE` or `DELETE` with no `WHERE` clause (BigQuery rejects it), and a statement whose target table cannot be identified. The limit is that a script writing several tables is still compared on the last table it wrote. See the [full reference](../docs/provers.md) for details.
 
 Repeating the same comparison should find the same counterexample regardless of earlier comparisons or unrelated imports. For example, removing a lookup join can lose its treatment of a user whose plan is NULL: the join drops that user, while reading the users table keeps them. The solver isolates its candidate search to avoid changing this witness with process history. The search can still miss a difference or run out of time; returned examples must respect the declared data guarantees and make the query results differ.
 
@@ -68,7 +76,25 @@ The checkers no longer guess: they treat the result of a string-versus-number co
 
 When results are compared by running both queries, a value keeps its kind: `TRUE` is not `1`, a NaN is not the text `NaN`, and a struct is not a list of pairs. Floats are compared rounded to 12 significant digits unless you ask for an exact comparison, and each result records which one it used.
 
+The structural checker also refuses a query BigQuery would plainly reject (for example `HAVING` with no grouping, or a column that the subquery it reads does not have), because two such queries matching proves nothing about results. It only recognizes those two cases. See the [full reference](../docs/provers.md).
+
+## A limit that moves into a projection
+
+KumoSQL knows that `SELECT d.b + 1 FROM (SELECT a AS b FROM t ORDER BY a LIMIT 1) AS d` returns the same row as `SELECT a + 1 FROM t ORDER BY a LIMIT 1`: it takes the first row, then computes the value. That rewrite had three holes, all now closed. When the outer query contained its own subquery, such as `(SELECT MAX(b) FROM u)`, renaming `d.b` to `a` also changed which column that subquery read, so two different queries were called equal. A value like `RAND()` that the outer query used twice would be drawn twice after the rewrite. And a `GROUP BY 1` could point at a different item once the select list changed. In each case the checker now declines, so the pair is "not proven" rather than wrongly "proven", and the common rewrites still go through. The evidence is a handful of hand-made witnesses plus fuzzing, not a proof that no such hole is left. The [full reference](../docs/provers.md) has the details.
+
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
+
+## Example: grouping with a grand total
+
+`GROUP BY ROLLUP (x)`, `CUBE` and `GROUPING SETS` can add a grand-total row, even when no input row exists, and a list that repeats a grouping set returns each group twice. A rule that assumes one row per group (summing per-group counts into one count, say) would then give a different number than the real query. KumoSQL's rules now recognise these groupings, `GROUP BY ()` and `DISTINCT ON` everywhere and decline to rewrite them, so such pairs come back unproven instead of proven. The evidence is regression pairs checked on DuckDB, so a pair that is still unproven may well be equivalent. The exact conditions are in the [full reference](../docs/provers.md).
+
+## Example: whole numbers that turn into decimals
+
+A database that compares a whole number with a decimal column first converts the whole number to a decimal, and a very large whole number loses its last digits in that conversion. So `a = b AND b = c` does not always mean `a = c`: 9007199254740992 and 9007199254740993 both equal the decimal 9007199254740992.0. Likewise `1e-324 < 2e-324` is false, because both literals round to zero. KumoSQL's SMT prover now models the conversion when the column types are declared, and it does not treat tiny, huge or long decimal literals as exact numbers. When column types are not declared, a proof that compares columns states the assumption that they have the same type. The evidence is regression pairs; the exact rules are in the [full reference](../docs/provers.md).
+
+## Example: a clause the prover does not understand
+
+`CAST(x AS NUMBER DEFAULT 0 ON CONVERSION ERROR)` returns 0 for a value that cannot be converted, where a plain `CAST` fails. If the prover quietly ignored the extra clause, it would call the two queries equal. Now the SMT prover checks every query for clauses it does not model (this one, `FOR UPDATE`, `CLUSTER BY`, `SETTINGS`, `SELECT` modifiers, `* EXCEPT`) and gives up on the pair instead. Some of those clauses cannot change a result, so a few pairs that are really equal now come back unproven. The evidence is a small set of regression pairs; the exact list is in the [full reference](../docs/provers.md).
 
 ## Example: a DISTINCT that can move outward
 
