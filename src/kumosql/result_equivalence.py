@@ -151,6 +151,9 @@ _TYPE_ALIASES = {
     "DECIMAL": "NUMERIC",
     "BOOLEAN": "BOOL",
     "DATETIME": "TIMESTAMP",
+    "VARCHAR": "STRING",
+    "CHAR": "STRING",
+    "TEXT": "STRING",
 }
 
 _DUCKDB_TYPES = {

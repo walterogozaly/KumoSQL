@@ -21,7 +21,7 @@ The facts come from the queries themselves: a column is NOT NULL, a set of colum
 - The facts are yours to make true. BigQuery does not enforce keys, so run each check before relying on a result.
 - Facts about value ranges, tables that are never empty, or keys that hold only for some rows are not tried. Pairs that need them stay unproven.
 - "Short" means short for this prover. A stronger prover might need fewer facts, and a fact on the list is one the prover could not do without, not a fact shown to be necessary: a fact can be stronger than the pair needs.
-- If the check that guards against proving a pair for the wrong reason cannot run, the answer stays "unknown".
+- If the check that guards against proving a pair for the wrong reason breaks, the answer stays "unknown". If the test engine simply cannot run the queries, the answer is kept and says it was not checked.
 - The proof shown next to the list names its own assumptions, including, when declared keys come from BigQuery, that those keys are not enforced.
 - The answer says nothing about speed or cost, only about the rows returned.
 

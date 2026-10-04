@@ -36,7 +36,7 @@ A search that runs out of its 30 seconds returns the set it has, marked in the r
 Three guards keep the verdict honest:
 
 - **Not vacuous.** A set that makes both queries return the same thing on every test database is passed over for another set. A unique key under `HAVING COUNT(*) > 1`, or a self join on a key that asks for two different rows, proves the pair for the wrong reason: both queries come back empty.
-- **Fails closed.** The first guard samples databases; when that check cannot run (the queries do not execute on the sample, or no database was generated), the conditions are not cleared and the verdict is withheld.
+- **Fails closed.** The first guard samples databases; when that check itself fails, the conditions are not cleared and the verdict is withheld. When the engine rejects the queries outright (no sample database ran on both, for example a MySQL-only `GROUP BY`), the guard has nothing to run: the verdict stands and its reason ends "not checked for conditions that make both queries constant". Declared types the sample databases cannot build (`TIME`, `ENUM`) are left to inference instead of stopping the check.
 - **Not refuted.** If the prover or the executed search has a counterexample for the pair, the counterexample must break one of the reported conditions. A database that meets every condition and still separates the queries would contradict the proof, so no conditional verdict is given.
 
 Not in the catalog: that a table is non-empty (the provers have no way to assume it), filtered uniqueness, functional dependencies and CHECK constraints. Pairs that need them stay unproven.

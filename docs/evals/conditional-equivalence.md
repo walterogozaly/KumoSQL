@@ -65,6 +65,27 @@ The 316 use 471 conditions (224 NOT NULL, 187 unique keys, 60 foreign keys). All
 python tools/conditional_bench.py verieql --every 8 --workers 4   # about 15 minutes on 4 cores
 ```
 
+## Constraint-touched candidate pairs
+
+A list of 655 benchmark pairs whose queries read a declared key, NOT NULL column or foreign key in a WHERE, join, GROUP BY, DISTINCT, IN or COUNT (VeriEQL Calcite and Literature, SQLSolver Calcite, WeTune Calcite, Cosette examples) was mined syntactically; no prover had run on it. `tools/conditional_candidates.py <candidates.json>` runs the verdict on the 508 pairs of VeriEQL Calcite (321), VeriEQL Literature (5 of 6) and SQLSolver Calcite (182), with the schema's tables, columns and types kept and **every declared constraint removed**, so a proof has to name the facts it needs. It compares those with what the schema declares (a declared key covers every superset of its columns) and re-checks each conditional proof on databases that meet only the returned conditions. WeTune Calcite (142 pairs, a catalog format with no loader here), the four Cosette pairs and one Literature pair whose text does not match the pinned file are not run. None of the three corpora has a held-out split of its own, and mined Calcite pairs and adapted Cosette pairs, which do, are not in the list; the harness was not tuned on these pairs.
+
+| Corpus | Pairs | Proved with no condition | Proved under conditions | Unknown | Of the unknown, proved when the schema's constraints are given |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| VeriEQL Calcite | 321 | 233 | 30 | 58 | 2 |
+| VeriEQL Literature | 5 | 0 | 3 | 2 | 1 |
+| SQLSolver Calcite | 182 | 153 | 16 | 13 | 2 |
+
+0 wrong and 0 crashes. All 49 conditional proofs were re-checked on databases that meet only their conditions, and each is minimal for the prover. What the run shows:
+
+- **Touching a constraint is not depending on it.** 386 of the 508 pairs are proved with no constraint at all.
+- **49 pairs need conditions** (85 conditions: 46 unique keys, 39 NOT NULL, no foreign key; one condition for 25 pairs, two for 14, three for 8, four for 2). 35 use only facts the schema declares (a primary key gives unique and NOT NULL, and a declared key makes every superset of its columns unique). 14 use a fact the schema does not state. Three read by hand: `WHERE DEPTNO IN (SELECT DEPTNO FROM DEPT)` against an inner join needs `DEPT.DEPTNO` unique, and VeriEQL's schema gives DEPT no key; a self join of `R2` on its key with `Y.B = Z.B` dropped needs `R2.b` NOT NULL (the two joined rows are one row, and `b = b` still rejects it when `b` is NULL); `(empno, deptno) IN (...)` against a LEFT JOIN needs NOT NULL on both columns and a unique pair, which the declared key on `empno` provides.
+- **11 of the 49 are not shown to be semantically needed.** A database without the conditions separated the queries for 38; for these 11 none turned up in 300 tries, so the prover needs the conditions and the queries may not. Examples: the Calcite `INTERSECT` of `DEPTNO = 10`, `20` and `30` (a row cannot have two `DEPTNO` values, so the left side is empty on every database), and one pair (`MGR IS NULL` under a returned `NOT NULL mgr`) whose conditions empty both sides; its query already compares `HIREDATE = CURRENT_TIMESTAMP`, which the constant check treats as a query written to be empty, so the verdict stands.
+- **5 pairs are proved with the schema's constraints but not conditionally** (2 VeriEQL Calcite, 1 Literature, 2 SQLSolver Calcite): the catalog, at most 40 single-column candidates, leaves out what they need.
+
+```bash
+python tools/conditional_candidates.py <candidates.json> --json results.json   # about 2 minutes on 4 cores
+```
+
 ## Hand-checked suites
 
 | Suite | Cases | What it checks |

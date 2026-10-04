@@ -305,8 +305,26 @@ def test_the_assumptions_are_those_of_the_proof_under_the_returned_conditions():
     assert out.assumptions == ("t.y is read as NOT NULL by this proof",)
 
 
-def test_a_check_that_could_not_run_does_not_clear_the_conditions(monkeypatch):
+def test_a_check_that_failed_does_not_clear_the_conditions(monkeypatch):
     left, right = SELF_JOIN, PLAIN_USERS
     assert prove_equivalent_algebraic(left, right, conditional=True).status is SmtStatus.PROVEN_CONDITIONALLY
-    monkeypatch.setattr(ce, "data_independent", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ce, "_independence", lambda *args, **kwargs: "error")
     assert prove_equivalent_algebraic(left, right, conditional=True).status is not SmtStatus.PROVEN_CONDITIONALLY
+
+
+def test_queries_the_engine_rejects_keep_the_verdict_and_say_it_was_not_checked(monkeypatch):
+    left, right = SELF_JOIN, PLAIN_USERS
+    monkeypatch.setattr(ce, "_independence", lambda *args, **kwargs: "not_run")
+    out = prove_equivalent_algebraic(left, right, conditional=True)
+    assert out.status is SmtStatus.PROVEN_CONDITIONALLY
+    assert "not checked for conditions that make both queries constant" in out.reason
+    monkeypatch.undo()
+    assert "not checked" not in prove_equivalent_algebraic(left, right, conditional=True).reason
+
+
+def test_a_declared_varchar_column_does_not_stop_the_constant_check_from_running():
+    types = {"users": {"id": "INT", "name": "VARCHAR", "at": "TIME"}}
+    schema = {"users": ["id", "name", "at"]}
+    unique = ce.with_conditions(None, [ce.Condition("unique", "users", ("id",))])
+    out = ce._independence("SELECT id FROM users", "SELECT id FROM users", unique, schema=schema, types=types, dialect="mysql")
+    assert out == "dependent"
