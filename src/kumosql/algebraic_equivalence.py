@@ -33,7 +33,7 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import FROM_KEY, UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions
+from .ast_utils import FROM_KEY, UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, free_reads, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions, visible_ctes
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .parse_check import refuse_misread_proofs
@@ -94,7 +94,7 @@ from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types
 from .grouped_join_facts import propagate_grouped_join_facts
 from .correlated_key_groups import expose_correlated_key_groups
 from .lateral_boolean_groups import nullable_lateral_boolean_group
-from . import string_number_compare
+from . import string_number_compare, string_number_literals
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -3011,7 +3011,14 @@ def _inline_ctes(tree: exp.Expression) -> exp.Expression:
                     for t in owner.find_all(exp.Table)
                     if not t.db and not t.catalog and t.name.lower() == name and _declaring_cte(t, name, owner) is cte
                 ]
+                # The body's own name is the real table there (``WITH t AS (SELECT * FROM t)``); copies placed now
+                # are not revisited for it. Earlier tables of this WITH are already replaced inside the body.
+                reads = free_reads(body) - {name} if uses else set()
                 for table in uses:
+                    if reads & visible_ctes(table, owner):
+                        # A WITH nested around the use (or a later table of this WITH) defines a name the body
+                        # reads as something else, which inlining would capture.
+                        raise UnmodeledConstruct(f"WITH table {name} reads a name that a WITH around its use redefines")
                     derived = exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name)))
                     table.replace(derived)
             owner.set("with_", None)
@@ -4944,6 +4951,7 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
 
     dialect = kwargs.get("dialect", "bigquery")
     try:
+        left_sql, right_sql = (string_number_literals.normalize(sql, dialect, kwargs.get("types")) for sql in (left_sql, right_sql))
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
         unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))

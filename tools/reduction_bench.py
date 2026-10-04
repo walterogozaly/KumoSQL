@@ -68,6 +68,10 @@ CORPORA = ROOT / "tests" / "fixtures" / "bq_corpora"
 PROJECT, DATASET, RAW = "kumo-eval", "analytics", "raw"
 DATABASES = 60
 REAL_PER_PROJECT = 12
+# The eight corpora projects this eval was recorded on. ``bq_corpora`` holds more (see ``tools/bq_corpus_bench.py``), but
+# a project joins this eval only with its own baseline run, so adding a folder there does not move these scores.
+REAL_PROJECTS = ("basedosdados", "dataform-bqml", "snowplow-web", "terashim-ga4", "wintermi-bqe", "wintermi-fashion",
+                 "wintermi-imdb", "wintermi-movielens")
 
 
 # ------------------------------------------------------------------ converted cases
@@ -380,7 +384,7 @@ def real_cases() -> list[dict]:
     from kumosql.pipeline import load_sqlx_project
 
     cases = []
-    for folder in sorted(p for p in CORPORA.iterdir() if p.is_dir()):
+    for folder in sorted(CORPORA / name for name in REAL_PROJECTS):
         with contextlib.redirect_stderr(io.StringIO()):
             pipeline = load_sqlx_project(folder)
         downstream = pipeline.downstream

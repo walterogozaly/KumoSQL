@@ -82,7 +82,7 @@ from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
-from . import smt_errors, smt_values, string_number_compare
+from . import smt_errors, smt_values, string_number_compare, string_number_literals
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -4962,6 +4962,7 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
         unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
         if unknown_type:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
+    left_sql, right_sql = (string_number_literals.normalize(sql, kwargs.get("dialect", "bigquery"), kwargs.get("types")) for sql in (left_sql, right_sql))
     result = _prove_with_limit(left_sql, right_sql, **kwargs)
     if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
         return result
