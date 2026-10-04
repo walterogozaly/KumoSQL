@@ -38,9 +38,10 @@ from .proof_syntax import (
     DISTINCT_FAMILY,
     PAREN_ASSUMPTIONS,
     PAREN_FAMILY,
+    _strip_parens,
     check_syntax_transition,
 )
-from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
+from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, _key, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
 
@@ -376,10 +377,6 @@ def _paren_is_semantic(paren: exp.Paren) -> bool:
     parent = paren.parent
     # ``(a).b`` reads field b of a; ``a.b`` reads column b of table a.
     if isinstance(parent, (exp.Dot, exp.Bracket)):
-        return True
-    # ``(a = 1) IS TRUE`` printed as ``a = 1 IS TRUE`` reads as ``a = (1 IS TRUE)``: comparison operators
-    # share one precedence level, so a comparison inside a comparison keeps its parentheses.
-    if isinstance(paren.this, exp.Predicate) and isinstance(parent, exp.Predicate):
         return True
     return isinstance(parent, (exp.Select, exp.Union)) and paren.arg_key == "expressions"
 
@@ -858,6 +855,36 @@ def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
     return check
 
 
+def _readable_sql(query: exp.Expression) -> str:
+    """The statement as text that reads back as the same tree, for the independent check.
+
+    The AST keeps grouping without parentheses, but text does not: ``Not(And(a, b))`` prints as
+    ``NOT a AND b``, which reads as ``(NOT a) AND b``. Where an expression's printed text reads as a
+    different tree, its operands are parenthesized, so the check compares what the normalizer's tree means.
+    A tree that cannot be printed faithfully stays unfaithful and the check refuses it.
+    """
+
+    probe = query.copy()
+    operators = (exp.Binary, exp.Unary, exp.Between, exp.In)
+    needs_parens = lambda value: isinstance(value, (exp.Binary, exp.Unary)) and not isinstance(value, exp.Paren)
+    for node in reversed(list(probe.find_all(*operators))):
+        if isinstance(node, exp.Paren):
+            continue
+        try:
+            reread = sqlglot.parse_one(node.sql(dialect="bigquery", comments=False), read="bigquery")
+            faithful = _key(_strip_parens(reread)) == _key(_strip_parens(node))
+        except Exception:  # noqa: BLE001 - text that cannot be read again is not faithful
+            faithful = False
+        if faithful:
+            continue
+        for key, value in list(node.args.items()):
+            if needs_parens(value):
+                node.set(key, exp.Paren(this=value.copy()))
+            elif isinstance(value, list):
+                node.set(key, [exp.Paren(this=item.copy()) if needs_parens(item) else item for item in value])
+    return probe.sql(dialect="bigquery", comments=False)
+
+
 def _checked_syntax_normalization(transform, query: exp.Expression, name: str, family: str, assumptions: tuple[str, ...]) -> StepCheck | None:
     """Run a parenthesis or DISTINCT normalization and have ``proof_syntax`` re-derive it from scratch.
 
@@ -869,7 +896,7 @@ def _checked_syntax_normalization(transform, query: exp.Expression, name: str, f
     if same_tree(before, query):
         return None
     rendered = lambda q: q.sql(dialect="bigquery", comments=False)
-    step = RewriteStep(name, family, 0, rendered(before), rendered(query), assumptions)
+    step = RewriteStep(name, family, 0, _readable_sql(before), _readable_sql(query), assumptions)
     check = check_syntax_transition(step, before, query)
     if not check.accepted:
         raise _StepRejected(check)
