@@ -37,7 +37,7 @@ column lineage. Stored nested fields still trace to their containing column.
 - Dynamic SQL may build a table name at runtime. KumoSQL does not guess it.
 - Updating or merging a temporary table can make its column lineage unknown while its table dependencies remain visible.
 - Unresolved Dataform expressions and unsupported statements are reported.
-- A parse failure may still retain table dependencies recovered from tokens, with a diagnostic explaining that columns are unknown.
+- A parse failure may still retain table dependencies recovered from tokens, with a diagnostic explaining that columns are unknown. A `FROM` that is part of a function, as in `EXTRACT(DATE FROM ts)` or `TRIM(BOTH 'x' FROM s)`, or of `IS DISTINCT FROM`, is not mistaken for a table.
 
 Diagnostics distinguish informational script summaries from gaps that block completeness. Check those gaps before concluding that a table or column has no readers.
 
