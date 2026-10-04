@@ -224,3 +224,26 @@ def test_a_cte_named_like_the_table_it_reads_is_renamed():
     assert fivetran.unshadow_ctes(tree, {"r"})
     assert tree.sql("duckdb") == ("WITH a AS (SELECT 1 AS x), r__cte AS (SELECT * FROM r), "
                                   "b AS (SELECT * FROM r__cte AS r JOIN a ON TRUE) SELECT * FROM r__cte AS r, b")
+
+
+def test_hand_references_are_strictly_simpler_and_scored_with_the_current_score():
+    from kumosql.formatting import pipeline_complexity
+
+    hand = [c for c in SOURCED if c["reference_kind"] == "hand"]
+    assert len(hand) >= 36
+    for case in hand:
+        assert case["reference"]["complexity"] == pipeline_complexity(case["reference"]["tables"]), case["id"]
+        assert case["reference"]["complexity"]["score"] < case["original"]["complexity"]["score"], case["id"]
+        assert case["verification"]["databases"] >= 200, case["id"]
+
+
+def test_isolated_runs_report_limits_as_errors_and_normal_runs_as_results():
+    isolated = _load("minimization_isolated")
+    case = next(c for c in SOURCED if c["id"] == "sqlglot-merge-subqueries-011")
+    ok = isolated.run_isolated(case, "reference", 8, 120, 10, True, 2000, None)
+    assert ok.status in ("proved", "agreed", "same"), ok.reason
+    assert ok.output == case["reference"]["complexity"]["score"]
+    capped = isolated.run_isolated(case, "reference", 0.05, 120, 10, True, 2000, None)
+    assert capped.status == "error" and capped.reason.startswith(("memory", "crashed")) and not capped.improved
+    slow = isolated.run_isolated(case, "reference", 8, 0.01, 10, True, 2000, None)
+    assert slow.status == "error" and slow.reason.startswith("time")
