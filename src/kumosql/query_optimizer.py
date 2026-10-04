@@ -37,6 +37,7 @@ import time
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import distinct_on, extended_grouping, plain_distinct
 from .ast_utils import select_sources as _sources, star_modified
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -634,9 +635,8 @@ def rule_drop_inner_order(tree: exp.Expression) -> bool:
         holder = node.parent
         if not isinstance(holder, (exp.Subquery, exp.CTE)):
             continue
-        distinct = node.args.get("distinct")
-        if distinct is not None and distinct.args.get("on") is not None:
-            continue  # DISTINCT ON keeps the first row in this order
+        if distinct_on(node):
+            continue  # DISTINCT ON keeps the first row in this order (a set operation's DISTINCT is a bool)
         node.set("order", None)
         return True
     return False
@@ -982,10 +982,10 @@ def _deletion_edits(tree: exp.Expression):
     for index, node in enumerate(nodes):
         if isinstance(node, exp.Select):
             distinct = node.args.get("distinct")
-            if distinct is not None and distinct.args.get("on") is None:
+            if plain_distinct(node):
                 yield "drop_distinct", index, lambda n: n.set("distinct", None)
             group = node.args.get("group")
-            if group is not None and len(group.expressions) > 1 and not group.args.get("rollup") and not group.args.get("cube") and not group.args.get("grouping_sets"):
+            if group is not None and len(group.expressions) > 1 and not extended_grouping(group):
                 for k in range(len(group.expressions)):
                     yield "drop_group_key", index, (lambda k: lambda n: n.args["group"].set("expressions", [e.copy() for i, e in enumerate(n.args["group"].expressions) if i != k]))(k)
             if group is not None and not node.args.get("having") and not any(_has_agg_or_window(e) for e in node.expressions):
