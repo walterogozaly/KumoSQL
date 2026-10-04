@@ -57,6 +57,9 @@ from .intersection_rules import collapse_counted_intersection, collapse_named_co
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
 from .row_bound_rules import trim_redundant_row_clauses
+from .singleton_aggregate_rules import singleton_count_sum
+from .set_identity import expose_set_identity
+from .projected_in_rules import normalize_projected_in
 from .limit_rules import drops_global_aggregate, limit_rule as _limit_rule, rebinds_grouping_names
 from .using_rules import using_to_on_unqualified
 from .cast_rules import fold_casts_and_constant_cases
@@ -87,6 +90,9 @@ from .regroup_arithmetic import regroup_arithmetic
 from .tuple_count_rules import regroup_tuple_count
 from .union_filter_rules import push_filter_into_set_operation
 from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types, unchecked_types
+from .grouped_join_facts import propagate_grouped_join_facts
+from .correlated_key_groups import expose_correlated_key_groups
+from .lateral_boolean_groups import nullable_lateral_boolean_group
 from . import string_number_compare
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
@@ -4775,6 +4781,7 @@ def normalize(
     group_by_constants: bool = False,
     keyed_distinct: int = 0,
     foreign_keys: dict[str, list[tuple]] | None = None,
+    _assumptions: set[str] | None = None,
 ) -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out).
 
@@ -4792,6 +4799,8 @@ def normalize(
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
     tree = inline_named_windows(tree)
+    from .nonnull_any import rewrite_nonnull_any
+
     tree = rewrite_quantified(tree, schema, not_null, keys)
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
@@ -4853,6 +4862,15 @@ def normalize(
             # them would silently redirect those reads (to another column of the same name, say)
             names = _derived_output_names(node) if isinstance(node.parent, (exp.Subquery, exp.CTE)) else None
             snapshot = node.copy() if names is not None else None  # rules rewrite in place
+            quantified = rewrite_nonnull_any(node.copy(), schema, not_null, types, _assumptions)
+            if quantified.sql() != node.sql() and (names is None or _keeps_names(names, _derived_output_names(quantified))):
+                return quantified
+            projected = normalize_projected_in(node, not_null)
+            if projected is not None and (names is None or _keeps_names(names, _derived_output_names(projected))):
+                return projected
+            singleton = singleton_count_sum(node, keys, types_map, _assumptions)
+            if singleton is not None and (names is None or _keeps_names(names, _derived_output_names(singleton))):
+                return singleton
             constrained = lift_keyed_set_join(node, keys, not_null, types_map) or normalize_key_counts(node, keys) or keyed_join_to_exists(node, keys, not_null)
             if constrained is not None:
                 if names is None or _keeps_names(names, _derived_output_names(constrained)):
@@ -4861,7 +4879,7 @@ def normalize(
                 if node.parent is not None:
                     node.replace(fresh)
                 node = fresh
-            for rule in (distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, lambda sel: _drop_exists_witnessed_by_join(sel, dialect), _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema, dialect), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map), lambda sel: exists_constant_rules(sel, schema, not_null, foreign_keys, types_map), collapse_constant_regroup, regroup_tuple_count, sum_of_grouped_counts):
+            for rule in (lambda sel: nullable_lateral_boolean_group(sel, schema, not_null), distribute_over_constant_union, collapse_named_counted_intersection, lambda sel: distinct_rules(sel, schema), _mean_times_count, _single_row_source, lambda sel: _drop_exists_witnessed_by_join(sel, dialect), _drop_empty_null_extended_side, _inline_constant_source, _constant_counts, _inline_constant_columns, lambda sel: _push_distinct_into_sources(sel, schema, keys), _push_filter_into_derived, push_filter_into_set_operation, _unwrap_distinct_projection, _drop_redundant_distinct_source, left_join_to_inner, lambda sel: join_rewrites(sel, schema, not_null, foreign_keys), strengthen_under_outer_on, _full_join_to_one_sided, lambda sel: _drop_unused_left_join(sel, keys), lambda sel: decorrelation_step(sel, not_null, schema, dialect), lambda sel: _decorrelate_aggregate(sel, schema), lambda sel: _decorrelate_select_list(sel, schema), lambda sel: _inline_expression_projection(sel, schema), _inline_expression_projection, _prune_derived, _distinct_over_union_all, _merge_spj_source, _fold_filter_into_grouping, _merge_outer_right_filter, lambda sel: move_exists_into_padded_side(sel, schema), lambda sel: _drop_derived_null_guard(sel, not_null or {}), lambda sel: _pull_up_exists(sel, schema), lambda sel: _drop_implied_exists(sel, schema), _flatten_join_source, lambda sel: outer_join_rules(sel, keys), qualify, _order_grouped_columns, fold_literal_int_div, lambda sel: _fold_identity_casts(sel, types_map, dialect), lambda sel: fold_casts_and_constant_cases(sel, types_map, dialect), lambda sel: _shifted_sums(sel, types_map), _wrap_outer_join_aggregate, lambda sel: limit_rule(sel, types_map, dialect), _lift_limit_derived, _group_by_to_distinct, _unwrap_projection, key_having_to_where, window_rules, _collapse_aggregate, _drop_global_null_filter, _roll_up_aggregate, _regroup_distinct, lambda sel: regroup_arithmetic(sel, (_collapse_aggregate, _roll_up_aggregate, _regroup_distinct)), _split_aggregates, _distribute, unnest_grouped_source, flatten_grouped_join, lambda sel: pull_up_aggregate(sel, keys), _key_aggregates, rewrite_aggregates, lambda sel: remove_keyed_grouping(sel, keys, not_null), lambda sel: drop_fk_join(sel, keys, not_null, foreign_keys), drop_unread_outer_join, strengthen_derived_outer_join, lambda sel: drop_grouped_sum_coalesce(sel, not_null or {}), lift_derived_expressions, lambda sel: _indicator_join_above(sel, keys), split_distinct_select, grouped_outer_join_rules, lambda sel: propagate_constant_correlations(sel, types_map), lambda sel: propagate_grouped_join_facts(sel, types_map), lambda sel: expose_correlated_key_groups(sel, keys, not_null or {}, types_map), lambda sel: exists_constant_rules(sel, schema, not_null, foreign_keys, types_map), collapse_constant_regroup, regroup_tuple_count, sum_of_grouped_counts):
                 rewritten = rule(node)
                 if rewritten is not None:
                     if names is not None and not _keeps_names(names, _derived_output_names(rewritten)):
@@ -4878,6 +4896,12 @@ def normalize(
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
         tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(fold_string_literals(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))))), not_null), not_null)
+        from .passthrough_sources import remove_passthrough_sources
+
+        tree = remove_passthrough_sources(tree, schema)
+        from .counted_membership import rewrite_counted_membership
+
+        tree = rewrite_counted_membership(tree, schema, not_null, _assumptions)
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
@@ -4885,6 +4909,7 @@ def normalize(
             replacement = _canonicalize_union_source(subquery)
             if replacement is not None:
                 subquery.replace(replacement)
+    tree = expose_set_identity(tree, schema)
     return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
@@ -5003,20 +5028,21 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
     constants = kwargs.get("group_by_constants", False)
+    normalization_assumptions: set[str] = set()
     kwargs = {k: v for k, v in kwargs.items() if k not in ("types", "group_by_constants")}
     try:
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
         fks = {t.lower(): list(c.foreign_keys) for t, c in (kwargs.get("constraints") or {}).items() if c.foreign_keys}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, _assumptions=normalization_assumptions)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, _assumptions=normalization_assumptions)
         if keyed_distinct and (left, right) == tuple(
-            normalize(sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, foreign_keys=fks)
+            normalize(sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, foreign_keys=fks, _assumptions=normalization_assumptions)
             for sql in (left_sql, right_sql)
         ):
-            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop")
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop", assumptions=tuple(sorted(normalization_assumptions)))
     except sqlglot.errors.SqlglotError as error:
-        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}")
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=tuple(sorted(normalization_assumptions)))
     from . import scalar_subqueries
 
     replaced = False
@@ -5025,7 +5051,10 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
         inner = {k: v for k, v in kwargs.items() if k != "compare_names"}
 
         def same(a: str, b: str) -> bool:
-            return prove_equivalent_algebraic(a, b, compare_names=False, types=types, **inner).proven
+            proof = prove_equivalent_algebraic(a, b, compare_names=False, types=types, **inner)
+            if proof.proven:
+                normalization_assumptions.update(proof.assumptions)
+            return proof.proven
 
         def single_row(sql: str) -> bool:
             from .output_properties import infer_properties
@@ -5041,6 +5070,8 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
     except sqlglot.errors.SqlglotError:
         replaced = False
     result = prove_equivalent_smt(left, right, types=types, **kwargs)
+    if normalization_assumptions:
+        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys((*result.assumptions, *sorted(normalization_assumptions)))))
     if result.status is SmtStatus.NOT_PROVEN and not replaced:
         reduced = set_aggregates.reduce(left, right, dialect, kwargs.get("compare_names", True))
         if reduced:
@@ -5052,7 +5083,7 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
                     break
                 proofs.append(proof)
             else:
-                assumptions = tuple(dict.fromkeys(a for proof in proofs for a in proof.assumptions))
+                assumptions = tuple(dict.fromkeys((*sorted(normalization_assumptions), *(a for proof in proofs for a in proof.assumptions))))
                 return SmtEquivalenceResult(
                     SmtStatus.PROVEN_EQUIVALENT, "the aggregates read the same set of values on both sides", assumptions=assumptions
                 )

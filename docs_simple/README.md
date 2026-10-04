@@ -21,6 +21,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Load a Dataform git repository | [Dataform repositories](dataform-repositories.md) |
 | Clean up one query | [Rewrite rules](rewrite-rules.md) |
 | Understand whether two queries match | [Provers](provers.md) |
+| Understand singleton joins and nested UNION identities in a proof | [Singleton aggregation and set identity](singleton-and-set-identity.md) |
 | See how rewrites are double-checked | [Proof safeguards](proof-safeguards.md) |
 | See how KumoSQL checks it read a query correctly | [Parser checks](parser-checks.md) |
 | See when two queries match only if some facts hold | [Equivalent under conditions](conditional-equivalence.md) |
@@ -40,6 +41,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Analyze scripts or MERGE | [Scripts](scripts.md) |
 | Reuse an existing summary table | [Model reuse](model-reuse.md) |
 | Search harder for wrong proofs | [Proof re-check](proof-recheck.md) |
+| Test each rewrite on its own | [Rule-level fuzzing](rule-fuzzing.md) |
 | Run tests and understand their history | [Test history](test-history.md) |
 | Continue a workstream someone else started | [Picking up a workstream](handoff.md) |
 | See what an outside audit of the checks found | [Eval integrity audit status](eval-integrity-status.md), [the audit itself](eval-integrity-audit-2026-10-02.md) |
