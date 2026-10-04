@@ -53,6 +53,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Analytical SQL coverage](analytical-sql-coverage.md) | Which stages handle large analytical queries? |
 | [BigQuery syntax coverage](bigquery-syntax-coverage.md) | Is each syntax feature supported or explicitly declined? |
 | [BigQuery behavior](bigquery-behavior-eval.md) | Do supported rewrites preserve tested BigQuery-specific behavior? |
+| [GoogleSQL expected rows](googlesql-expected-results.md) | Does the local BigQuery translation return the rows Google's compliance tests expect? |
 | [SQLFluff fixtures](sqlfluff-fixtures.md) | Which formatting and lint fixes preserve meaning? |
 | [Lineage and impact](lineage-bench.md) | Are dependencies and change effects traced correctly? |
 | [Lineage goldens](lineage-goldens-bench.md) | Do results match other projects' expected lineage? |
