@@ -60,7 +60,6 @@ WITNESSES = [
 
 # comparisons of one kind with itself: both provers keep proving them
 NEAR_MISSES = [
-    ("SELECT a.k FROM a JOIN b ON a.x = b.y WHERE a.x = 'abc' AND b.y = 'abd'", NONE, None),
     ("SELECT a.k FROM a JOIN b ON a.x = b.y WHERE a.x = 1 AND b.y = 2", NONE, None),
     ("SELECT a.k FROM a JOIN b ON a.x = b.y WHERE a.x = 1 AND b.y = 2", NONE, {"a": {"x": "INT", "k": "INT"}, "b": {"y": "INT"}}),
     ("SELECT a.k FROM a WHERE COALESCE(a.x, 0) = 1 AND a.x IS NULL", NONE, None),
@@ -69,6 +68,12 @@ NEAR_MISSES = [
     ("SELECT a.k FROM a WHERE CASE WHEN a.k > 0 THEN 'p' ELSE 'q' END = 'r'", NONE, None),
     ("SELECT a.k FROM a WHERE CASE WHEN a.k > 0 THEN 1 ELSE 2 END = 3", NONE, None),
     # the same column name in two tables with nothing joining the two
+    ("SELECT a.k FROM a JOIN b ON a.k = b.k WHERE a.x = 'abc' AND b.x = 'abd' AND a.x = 'abc'", "SELECT a.k FROM a JOIN b ON a.k = b.k WHERE a.x = 'abc' AND b.x = 'abd'", None),
+]
+
+# these need two different strings to differ; on MySQL an untyped integer column reads them alike, so only the other dialects prove them
+TEXT_ONLY = [
+    ("SELECT a.k FROM a JOIN b ON a.x = b.y WHERE a.x = 'abc' AND b.y = 'abd'", NONE, None),
     ("SELECT a.k FROM a JOIN b ON a.k = b.k WHERE a.x = 'abc' AND a.x = 'abd' AND b.x = 0", NONE, None),
     (
         "SELECT d.k FROM (SELECT a.k, a.x AS v FROM a WHERE a.x = 'abc') d JOIN (SELECT b.y AS w FROM b WHERE b.y = 'abd') e ON d.v = e.w",
@@ -91,6 +96,13 @@ def test_witness_is_not_proven(prover, dialect, left, right, types):
 @pytest.mark.parametrize("left,right,types", NEAR_MISSES)
 def test_same_kind_comparisons_stay_proven(prover, dialect, left, right, types):
     assert prover(left, right, dialect=dialect, types=types).status is SmtStatus.PROVEN_EQUIVALENT, (dialect, left)
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("prover", PROVERS)
+@pytest.mark.parametrize("left,right,types", TEXT_ONLY)
+def test_different_strings_need_a_text_column(prover, dialect, left, right, types):
+    assert (prover(left, right, dialect=dialect, types=types).status is SmtStatus.PROVEN_EQUIVALENT) == (dialect != "mysql")
 
 
 def test_problem_names_what_it_found():

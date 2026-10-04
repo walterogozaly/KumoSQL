@@ -122,6 +122,19 @@ def mismatched(node: exp.Expression, types: dict[str, dict[str, str]] | None = N
     return isinstance(node, _COMPARISONS) and {_kind(node.this, _column_kinds(types)), _kind(node.expression, _column_kinds(types))} == {"string", "number"}
 
 
+_MYSQL_NUMBER_PREFIX = re.compile(r"[ \t\n\r\f\v]*[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?")
+
+
+def mysql_number(text: str) -> float:
+    """The number MySQL reads a string as when it compares the string with a number (the leading numeric part, else 0)."""
+
+    found = _MYSQL_NUMBER_PREFIX.match(text)
+    try:
+        return float(found.group(0)) if found else 0.0
+    except ValueError:
+        return 0.0
+
+
 def _unwrap(node: exp.Expression) -> exp.Expression:
     while isinstance(node, (exp.Paren, exp.Alias)):
         node = node.this
@@ -144,6 +157,8 @@ class _Kinds:
         self.by_name = _column_kinds(types)
         self.parent: dict[tuple[str, str], tuple[str, str]] = {}
         self.evidence: dict[tuple[str, str], set[str]] = {}
+        self.literals: dict[tuple[str, str], set[str]] = {}
+        self.members: dict[tuple[str, str], set[tuple[str, str]]] = {}
         self.tables: dict[str, set[str]] = {}
         self.derived: dict[str, exp.Query] = {}
         self._collect_sources()
@@ -173,6 +188,8 @@ class _Kinds:
         if ra != rb:
             self.parent[ra] = rb
             self.evidence.setdefault(rb, set()).update(self.evidence.pop(ra, set()))
+            self.literals.setdefault(rb, set()).update(self.literals.pop(ra, set()))
+            self.members[rb] = self.members.get(rb, {rb}) | self.members.pop(ra, {ra})
 
     def add(self, key: tuple[str, str], kinds: set[str]) -> None:
         self.evidence.setdefault(self.find(key), set()).update(kinds)
@@ -253,6 +270,27 @@ class _Kinds:
                 self.union(key, self.key(other))
         else:
             self.add(key, self.kinds(other))
+            if isinstance(other, exp.Literal) and other.is_string:
+                self.literals.setdefault(self.find(key), set()).add(other.this)
+
+    def untyped_text_columns(self) -> set[tuple[str, str]]:
+        """Roots of the column classes with no declared type that two different strings of one MySQL number are compared with.
+
+        ``n = 'x' AND n = 'y'`` is empty for a text column and not for an integer column that holds 0, since MySQL reads
+        both strings as 0.
+        """
+
+        found = set()
+        for root, literals in self.literals.items():
+            root = self.find(root)
+            if any(self.declared(key) for key in self.members.get(root, {root})):
+                continue
+            numbers: dict[float, set[str]] = {}
+            for text in literals:
+                numbers.setdefault(mysql_number(text), set()).add(text)
+            if any(len(group) > 1 for group in numbers.values()):
+                found.add(root)
+        return found
 
     def _using(self) -> None:
         for select in self.tree.find_all(exp.Select):
