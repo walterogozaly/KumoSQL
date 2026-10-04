@@ -102,7 +102,8 @@ def summarize_evidence(
     """Aggregate evidence labels over results, one output per result.
 
     Raises ``ValueError`` if the gate is broken: unchanged text must carry the
-    ``unchanged`` (or ``failed``) label and changed text must carry one of the
+    ``unchanged`` (or ``failed``) label, or ``unproven`` with parser-recovery
+    evidence, and changed text must carry one of the
     changed labels.
     """
 
@@ -113,7 +114,11 @@ def summarize_evidence(
         total += 1
         status = result.verification.status
         if result.input_sql == result.sql:
-            if status not in (VerificationStatus.UNCHANGED, VerificationStatus.FAILED):
+            recovered = status is VerificationStatus.UNPROVEN and any(
+                check.kind == "strict_parse" and check.outcome == "not_proven"
+                for check in result.verification.checks
+            )
+            if status not in (VerificationStatus.UNCHANGED, VerificationStatus.FAILED) and not recovered:
                 raise ValueError("unchanged output carries a changed-output label")
             unchanged += 1
             continue

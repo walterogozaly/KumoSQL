@@ -51,6 +51,8 @@ Limits: it needs to know each table's columns, which come from the loaded projec
 
 Only `unchanged` and `proven` count as trusted. The CLI exits 3 for untrusted output unless you explicitly use `--allow-unproven`; that option does not add evidence. Trusted does not mean the input was valid SQL. Fatal rule failures exit 2 without writing the result.
 
+If a rule needed parser recovery, even unchanged text is `unproven`. For example, `SELECT 1 FROM t WHERE 1 =` stays visible for review but cannot be accepted automatically. Its step reports the failed strict parse, and later pipeline steps cannot remove that warning. The low-level subquery lifter still exposes recovery through `result.recovered`.
+
 ## Rule order matters
 
 Supply multiple `-r` options to run rules in that order. Put formatting last: other rules can change the layout again.

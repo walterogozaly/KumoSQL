@@ -536,6 +536,22 @@ def _result(rule_name: str, sql: str, output: RuleOutput) -> RewriteResult:
         failure_details=failure_details,
         rule=rule_name,
     )
+    recovery_details = tuple(
+        diagnostic.message for diagnostic in output.diagnostics
+        if diagnostic.code == "recovered_parse"
+    )
+    if recovery_details and output.success:
+        # Recovery may discard malformed input even when the rule leaves its text alone.
+        # Neither byte equality nor a proof over the recovered AST validates that input.
+        verification = replace(
+            verification,
+            status=VerificationStatus.UNPROVEN,
+            reason="the input required parser recovery; automatic acceptance needs a strict parse",
+            details=verification.details + recovery_details,
+            checks=verification.checks + (
+                VerificationCheck("strict_parse", "not_proven", "; ".join(recovery_details)),
+            ),
+        )
     return RewriteResult(
         rule=rule_name,
         input_sql=sql,
@@ -615,6 +631,12 @@ def apply_rules(
         if step.rule in INDEPENDENT_CHECK_FAMILIES and step.rule_success and not step.verification.trusted
     )
     proof_checks = tuple(check for step in steps for check in step.verification.proof_checks)
+    recovered = tuple(
+        f"{step.rule}: {check.detail}"
+        for step in steps
+        for check in step.verification.checks
+        if check.kind == "strict_parse" and check.outcome == "not_proven"
+    )
     if not rule_succeeded:
         base = _verify_rewrite(
             sql,
@@ -627,6 +649,14 @@ def apply_rules(
             base.reason,
             base.details,
             step_checks + base.checks,
+            proof_checks,
+        )
+    elif recovered:
+        verification = Verification(
+            VerificationStatus.UNPROVEN,
+            "a step required parser recovery; the pipeline cannot automatically accept it",
+            recovered,
+            step_checks,
             proof_checks,
         )
     elif refused:
