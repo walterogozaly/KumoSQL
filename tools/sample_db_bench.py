@@ -4,6 +4,9 @@ Each database is an *adapter* (``ADAPTERS``): the pinned upstream script, commit
 its licence under ``tests/fixtures/sample_databases/<name>/upstream/``, and the adapted BigQuery DDL
 (``adapted/schema.sql``, labelled ADAPTED) that says how the upstream tables become BigQuery tables.
 Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two;
+the Oracle HR and Customer Orders schemas (oracle-samples/db-sample-schemas, ``OracleSample``: SQL*Plus scripts
+with the DDL and the rows in separate files) are the next two, scored in a results group of their own
+(``Adapter.group``, ``--group oracle``) so the first two databases' recorded rows stay as they were;
 Pagila, Sakila, AdventureWorks and Employees plug in as further adapters (subclass ``Adapter``, give
 the pins, the type conversions and the expected row counts).
 
@@ -45,6 +48,7 @@ One case in five (by SHA-1 of its id) is held out and reported apart.
     python tools/sample_db_bench.py --part rewrites    # (a)
     python tools/sample_db_bench.py --part pairs       # (b)
     python tools/sample_db_bench.py --write-results    # both parts, write benchmarks/results/*.json
+    python tools/sample_db_bench.py --group oracle --write-results   # only the Oracle group's two files
 """
 
 from __future__ import annotations
@@ -154,10 +158,25 @@ class Raw:
 
     kind: str
     text: str | None
+    args: tuple = ()  # kind ``call``: ``text`` is the function name (upper case), ``args`` its literals
 
 
 def _literal(tokens: list[Token], i: int) -> tuple[Raw, int]:
     token = tokens[i]
+    if token.kind == "word" and not token.is_word("NULL", "TRUE", "FALSE"):
+        # a function call on literals: TO_DATE('17-06-2013', 'dd-MM-yyyy'), UTL_RAW.CAST_TO_RAW('...')
+        name, j = token.text, i + 1
+        while tokens[j].text == "." and tokens[j + 1].kind == "word":
+            name, j = name + "." + tokens[j + 1].text, j + 2
+        if tokens[j].text == "(":
+            args, j = [], j + 1
+            while tokens[j].text != ")":
+                if tokens[j].text == ",":
+                    j += 1
+                    continue
+                value, j = _literal(tokens, j)
+                args.append(value)
+            return Raw("call", name.upper(), tuple(args)), j + 1
     if token.kind == "string":
         body = token.text[2:-1] if token.text[0] in "Nn" else token.text[1:-1]
         return Raw("string", body.replace("''", "'")), i + 1
@@ -501,8 +520,24 @@ class Adapter:
     def folder(self) -> Path:
         return FIXTURES / self.name
 
+    #: results group: the databases of one group are scored together in their own results files
+    #: (``""`` is Chinook and Northwind, whose rows were recorded first and are never rewritten)
+    group: str = ""
+
     def upstream_text(self) -> str:
         return (self.folder / self.data_file).read_text(encoding="utf-8")
+
+    # -- what the upstream scripts declare and insert (an adapter whose upstream splits DDL and data into
+    #    files, or writes them in another dialect, overrides these)
+
+    def upstream_ddl(self) -> dict[str, TableDef]:
+        return read_ddl(self.upstream_text())
+
+    def upstream_inserts(self) -> dict[str, list]:
+        return read_inserts(self.upstream_text())
+
+    def upstream_views(self) -> dict[str, str]:
+        return read_views(self.upstream_text())
 
     def schema(self) -> dict[str, TableDef]:
         """The adapted BigQuery DDL."""
@@ -552,12 +587,17 @@ class Adapter:
             return raw.text not in ("0", "f", "false")
         return raw.text
 
+    def omitted(self, table: str, column: str, index: int) -> Raw:
+        """The value of a column an INSERT leaves out (``index``: rows of the table before this one)."""
+
+        return Raw("null", None)
+
     def rows(self) -> dict[str, list[tuple]]:
         """Every upstream row, converted to the adapted column order and types."""
 
         schema = self.schema()
         out: dict[str, list[tuple]] = {name: [] for name in schema}
-        for upstream_table, inserted in read_inserts(self.upstream_text()).items():
+        for upstream_table, inserted in self.upstream_inserts().items():
             table = self.renames.get(upstream_table, upstream_table)
             spec = schema[table]
             order = list(spec.columns)
@@ -570,7 +610,9 @@ class Adapter:
                 given = dict(zip(names, values))
                 row = []
                 for column in order:
-                    raw = given.get(column, Raw("null", None))
+                    raw = given.get(column)
+                    if raw is None:
+                        raw = self.omitted(table, column, len(out[table]))
                     row.append(self.convert(table, column, spec.columns[column], raw))
                 out[table].append(tuple(row))
         return out
@@ -841,7 +883,196 @@ class Northwind(Adapter):
         return value
 
 
-ADAPTERS: dict[str, Adapter] = {a.name: a for a in (Chinook(), Northwind())}
+_MONTHS = {m: i for i, m in enumerate("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), 1)}
+
+
+class OracleSample(Adapter):
+    """One schema of oracle-samples/db-sample-schemas: SQL*Plus scripts, the DDL in ``*_create.sql`` and the
+    rows in ``*_populate.sql`` (INSERTs inside PL/SQL blocks, dates as ``TO_DATE``/``TO_TIMESTAMP``).
+
+    The scripts are read as they are: ``REM`` and ``PROMPT`` lines are dropped, ``ALTER TABLE t ADD (a, b)`` is
+    read as one ADD per constraint, a ``REFERENCES parent`` without columns names the parent's primary key, and
+    a PL/SQL variable assigned by ``:=`` (one product's JSON, split over two strings) is inlined where it is used.
+    """
+
+    group = "oracle"
+    ddl_file = ""  # the *_create.sql script
+    created_tables: tuple[str, ...] = ()
+
+    _SQLPLUS_LINE = re.compile(r"(?im)^[ \t]*(?:rem|prompt)\b.*$")
+
+    def _read(self, local: str) -> str:
+        return self._SQLPLUS_LINE.sub("", (self.folder / local).read_text(encoding="utf-8"))
+
+    def ddl_text(self) -> str:
+        text = self._read(self.ddl_file)
+        out, pos = [], 0
+        for match in re.finditer(r"(?is)ALTER\s+TABLE\s+(\w+)\s+ADD\s*\(", text):
+            if match.start() < pos:
+                continue
+            depth, i, start, items = 1, match.end(), match.end(), []
+            while depth:
+                char = text[i]
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                elif char == "," and depth == 1:
+                    items.append(text[start:i])
+                    start = i + 1
+                i += 1
+            items.append(text[start : i - 1])
+            out += [text[pos : match.start()]] + [
+                f"ALTER TABLE {match.group(1)} ADD {item.strip()};\n" for item in items
+            ]
+            pos = i
+        text = "".join(out) + text[pos:]
+        # REFERENCES parent (no column list): the parent's primary key, filled in by upstream_ddl
+        return re.sub(
+            r"(?i)(FOREIGN\s+KEY\s*\([^)]*\)\s*REFERENCES\s+\w+)\b(?!\s*\()", r"\1 (__pk__)", text
+        )
+
+    def upstream_ddl(self) -> dict[str, TableDef]:
+        tables = read_ddl(self.ddl_text())
+        for table in tables.values():
+            table.foreign_keys = [
+                (cols, parent, tables[parent].primary_key if pcols == ("__pk__",) else pcols)
+                for cols, parent, pcols in table.foreign_keys
+            ]
+        return tables
+
+    def upstream_views(self) -> dict[str, str]:
+        """``CREATE [OR REPLACE] VIEW name [(columns)] AS body;`` by name (body as written)."""
+
+        return {
+            m.group(1): m.group(2).strip()
+            for m in re.finditer(
+                r"(?is)create\s+or\s+replace\s+view\s+(\w+)\s*(?:\([^)]*\))?\s*as\s+(.*?);",
+                self._read(self.ddl_file),
+            )
+        }
+
+    def data_text(self) -> str:
+        text = self._read(self.data_file)
+        while True:  # PL/SQL: name := 'a' || chr(10) || 'b';  (the INSERT that uses the variable names it)
+            match = re.search(r"(?m)^\s*(\w+)\s*:=\s*", text)
+            if match is None:
+                break
+            i, value = match.end(), ""
+            while text[i] != ";":
+                if text[i] == "'":
+                    j = i + 1
+                    while text[j] != "'" or text[j : j + 2] == "''":
+                        j += 2 if text[j : j + 2] == "''" else 1
+                    value += text[i + 1 : j].replace("''", "'")
+                    i = j + 1
+                elif text.startswith("chr(", i):
+                    j = text.index(")", i)
+                    value += chr(int(text[i + 4 : j]))
+                    i = j + 1
+                elif text[i].isspace() or text.startswith("||", i):
+                    i += 2 if text.startswith("||", i) else 1
+                else:
+                    raise ValueError(f"unexpected {text[i:i + 20]!r} in an assignment")
+            literal = "'" + value.replace("'", "''") + "'"
+            name = match.group(1)
+            rest = re.sub(rf"\b{name}\b", lambda _: literal, text[i + 1 :])
+            text = re.sub(rf"(?m)^\s*{name}\s+VARCHAR2\(\d+\);\s*$", "", text[: match.start()]) + rest
+        return text
+
+    def upstream_inserts(self) -> dict[str, list]:
+        return read_inserts(self.data_text())
+
+    def evaluate(self, raw: Raw) -> Raw:
+        """The literal an Oracle function call on literals stands for."""
+
+        args = [a.text for a in raw.args]
+        if raw.text == "TO_DATE" and args[1].lower() == "dd-mm-yyyy":
+            day, month, year = (int(x) for x in args[0].split("-"))
+            return Raw("string", _dt.date(year, month, day).isoformat())
+        if raw.text == "TO_TIMESTAMP" and args[1] == "DD-MON-YYYY HH24.MI.SS.FF":
+            date, clock = args[0].split(" ")
+            day, month, year = date.split("-")
+            hour, minute, second, fraction = clock.split(".")
+            micro = int(fraction[:6].ljust(6, "0"))  # Oracle keeps nine digits, BigQuery DATETIME six
+            return Raw(
+                "string",
+                f"{int(year):04d}-{_MONTHS[month.upper()]:02d}-{int(day):02d} {hour}:{minute}:{second}.{micro:06d}",
+            )
+        if raw.text == "UTL_RAW.CAST_TO_RAW":  # the JSON text of products.product_details, kept as a STRING column
+            return Raw("string", args[0])
+        raise ValueError(f"unsupported Oracle function {raw.text}")
+
+    #: identity columns the INSERTs leave out: Oracle numbers the rows 1, 2, ... in script order
+    identity: dict[str, str] = {}
+
+    def omitted(self, table, column, index):
+        if self.identity.get(table) == column:
+            return Raw("number", str(index + 1))
+        return super().omitted(table, column, index)
+
+    def convert(self, table, column, kind, raw):
+        if raw.kind == "call":
+            raw = self.evaluate(raw)
+        return super().convert(table, column, kind, raw)
+
+    def upstream_text(self) -> str:
+        return self.data_text()
+
+
+class OracleHR(OracleSample):
+    name = "oracle_hr"
+    title = "Oracle HR"
+    ddl_file = "upstream/hr_create.sql"
+    data_file = "upstream/hr_populate.sql"
+    _REPO, _COMMIT = "oracle-samples/db-sample-schemas", "6660bad68c07bd143430ace58565b3f727e17263"
+    _LICENCE = "MIT text, Copyright (c) 2023 Oracle and/or its affiliates (upstream/LICENSE.txt)"
+    upstream = (
+        Upstream("upstream/hr_create.sql", _REPO, _COMMIT, "human_resources/hr_create.sql", "19bb40fdad9ff31b66aad4bb2eff1a13b730fec2f39eb13f25bd157c980e023f", _LICENCE),
+        Upstream("upstream/hr_populate.sql", _REPO, _COMMIT, "human_resources/hr_populate.sql", "420375c58700178b74949ccfc1a7b22bc2fd305c486fc558fca43f8ce3ddc4df", _LICENCE),
+        Upstream("upstream/hr_code.sql", _REPO, _COMMIT, "human_resources/hr_code.sql", "5604aae0d47585bba996a90eecc43f494d4c63de19b2b9db7afe5007d6f669f5", _LICENCE),
+        Upstream("upstream/LICENSE.txt", _REPO, _COMMIT, "LICENSE.txt", "2da4f8e1f04662e5db9b224a20dfd13db8bc396398271d607bda0343212fbce3", "the licence itself"),
+    )
+    # Oracle publishes no row counts for HR: these are the rows of the pinned script's INSERT statements,
+    # pinned here so a change in how the script is read shows up as a difference.
+    published_counts = {
+        "regions": 5,
+        "countries": 25,
+        "locations": 23,
+        "departments": 27,
+        "jobs": 19,
+        "employees": 107,
+        "job_history": 10,
+    }
+    published_counts_source = "counted from the INSERT statements of the pinned hr_populate.sql (Oracle publishes no counts); they are the counts every HR installation shows"
+
+
+class OracleCO(OracleSample):
+    name = "oracle_co"
+    title = "Oracle CO"
+    ddl_file = "upstream/co_create.sql"
+    data_file = "upstream/co_populate.sql"
+    _REPO, _COMMIT = "oracle-samples/db-sample-schemas", "6660bad68c07bd143430ace58565b3f727e17263"
+    _LICENCE = "MIT text, Copyright (c) 2023 Oracle and/or its affiliates (upstream/LICENSE.txt)"
+    upstream = (
+        Upstream("upstream/co_create.sql", _REPO, _COMMIT, "customer_orders/co_create.sql", "8ce42790ec255840bcaf22ff8bc4f53e53996ccecb318410a0b3a36a4c3d6cc1", _LICENCE),
+        Upstream("upstream/co_populate.sql", _REPO, _COMMIT, "customer_orders/co_populate.sql", "e636942e49d9f7cb586f779122ffa2b4da95b07cc7f314c0ef1dae60a5f0cefa", _LICENCE),
+        Upstream("upstream/LICENSE.txt", _REPO, _COMMIT, "LICENSE.txt", "2da4f8e1f04662e5db9b224a20dfd13db8bc396398271d607bda0343212fbce3", "the licence itself"),
+    )
+    published_counts = {
+        "customers": 392,
+        "stores": 23,
+        "products": 46,
+        "orders": 1950,
+        "shipments": 1892,
+        "order_items": 3914,
+        "inventory": 566,
+    }
+    published_counts_source = "counted from the INSERT statements of the pinned co_populate.sql (Oracle publishes no counts)"
+    identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
+
+
+ADAPTERS: dict[str, Adapter] = {a.name: a for a in (Chinook(), Northwind(), OracleHR(), OracleCO())}
 
 
 # ---------------------------------------------------------------- load checks
@@ -857,9 +1088,8 @@ def check_database(adapter: Adapter, con=None) -> dict:
             problems.append(
                 f"{pin.local}: SHA-256 {digest} is not the pinned {pin.sha256}"
             )
-    upstream_text = adapter.upstream_text()
     upstream = {
-        adapter.renames.get(n, n): t for n, t in read_ddl(upstream_text).items()
+        adapter.renames.get(n, n): t for n, t in adapter.upstream_ddl().items()
     }
     adapted = adapter.schema()
     if set(upstream) != set(adapted):
@@ -894,9 +1124,9 @@ def check_database(adapter: Adapter, con=None) -> dict:
         declared["foreign_keys"] += len(table.foreign_keys)
         declared["not_null"] += len(table.not_null)
     inserted = Counter()
-    for upstream_table, rows in read_inserts(upstream_text).items():
+    for upstream_table, rows in adapter.upstream_inserts().items():
         inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
-    upstream_views = read_views(upstream_text)
+    upstream_views = adapter.upstream_views()
     for query in adapter.workload():
         if query["origin"] == "upstream-view" and query["name"] not in upstream_views:
             problems.append(
@@ -1299,6 +1529,14 @@ def _typed(value, kind: str):
         if isinstance(value, (int, float)):
             return _dt.datetime(2000, 1, 1) + _dt.timedelta(days=int(value))
         return _dt.datetime.fromisoformat(str(value))
+    if base == "DATE":
+        if isinstance(value, _dt.datetime):
+            return value.date()
+        if isinstance(value, _dt.date):
+            return value
+        if isinstance(value, (int, float)):
+            return _dt.date(2000, 1, 1) + _dt.timedelta(days=int(value))
+        return _dt.date.fromisoformat(str(value)[:10])
     if base == "BYTES":
         return value if isinstance(value, bytes) else str(value).encode()
     return value if isinstance(value, str) else str(value)
@@ -1314,6 +1552,8 @@ def _filler(kind: str, n: int, unique: bool):
         return float(900_000 + n) if unique else 0.0
     if base == "DATETIME":
         return _dt.datetime(2000, 1, 1) + _dt.timedelta(days=n if unique else 0)
+    if base == "DATE":
+        return _dt.date(2000, 1, 1) + _dt.timedelta(days=n if unique else 0)
     if base == "BYTES":
         return f"k{n}".encode() if unique else b""
     return f"k{n}" if unique else "x"
@@ -1776,6 +2016,136 @@ def results_rows(
     return rows
 
 
+#: results of the databases that are scored apart from Chinook and Northwind, one pair of results files each
+GROUPS = {
+    "oracle": {
+        "label": "Oracle HR, Customer Orders",
+        "names": "Oracle HR and Customer Orders",
+        "rewrites": "sample-databases-oracle-rewrites",
+        "pairs": "sample-databases-oracle-pairs",
+        "order": 350,
+        "command": COMMAND + " --group oracle",
+        "bug": (
+            "The wrong cases are one bug in the bounded checker, found and not fixed here (prover modules are not changed by this eval): it renders a DATE "
+            "model value below ordinal 1 as 0001-01-01 (bounded_equivalence.py, the max(1, ...) clamp), so two job_history rows that differ in the DATE key "
+            "column come out equal and the counterexample repeats the primary key (employee_id, start_date). The pairs are labelled correctly (each "
+            "separates the queries on a legal witness database) and none is proved; the bounded checker's verdict there is a refutation of a true "
+            "difference with an illegal witness, which counts as wrong here."
+        ),
+        "adaptation": (
+            "The one view of HR and the four views of Customer Orders are adapted from Oracle SQL to BigQuery (LISTAGG becomes STRING_AGG, "
+            "GROUPING_ID becomes GROUPING arithmetic, JSON_TABLE becomes a LEFT JOIN UNNEST over JSON_QUERY_ARRAY; each adaptation is recorded in the "
+            "workload file); HR's procedures and triggers (hr_code.sql) hold no query; the authored queries were written for this eval. "
+            "Oracle's UNIQUE constraints, CHECKs, sequences, identity columns and indexes are dropped from the BigQuery DDL (BigQuery declares only "
+            "primary and foreign keys). Oracle Sales History is not included: its data is 91 MB of CSV (918,843 sales rows), too large to commit, "
+            "and a download at run time would make the eval depend on the network; FIBEN is not included either."
+        ),
+    },
+}
+
+
+def _pins_text_files(adapters: list[Adapter]) -> str:
+    """Every pinned file of each database (a schema is several scripts), not only the first."""
+
+    out = []
+    for a in adapters:
+        files = [u for u in a.upstream if u.licence != "the licence itself"]
+        out.append(
+            f"{a.title} {files[0].repo}@{files[0].commit[:10]} "
+            + ", ".join(f"{u.path} (SHA-256 {u.sha256[:12]})" for u in files)
+            + f", {files[0].licence.rsplit(' (', 1)[0]}"
+        )
+    return "; ".join(out)
+
+
+def group_results_rows(
+    group: str, adapters: list[Adapter], reports: list[dict], rewrites: dict, pairs: dict
+) -> dict[str, dict]:
+    """The two results rows of a group of databases scored apart from Chinook and Northwind (same measures as ``results_rows``)."""
+
+    from bench_common import today
+
+    spec = GROUPS[group]
+    loaded = ", ".join(f"{r['database']} {r['tables']} tables / {r['rows']:,} rows" for r in reports)
+    keys = (sum(r["declared"]["primary_keys"] for r in reports), sum(r["declared"]["foreign_keys"] for r in reports))
+    a, up, au, dev, ho = (rewrites[k] for k in ("all", "upstream", "authored", "dev", "held_out"))
+    plain, stages = rewrites["plain"], rewrites["by_stage"]
+    rewrites_row = {
+        "suite": f"Sample databases ({spec['label']}): workload rewrites",
+        "order": spec["order"],
+        "size": a["cases"],
+        "score": f"{a['wrong']} wrong in {a['executed']} executed; {a['verified']} rewrites verified on the real data",
+        "metric": (
+            f"{plain['queries']} workload queries ({up['queries']} upstream views, adapted to BigQuery; {au['queries']} authored), each through "
+            "KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the "
+            "proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the "
+            "result multiset or stops running is wrong."
+        ),
+        "evidence": "executed",
+        "correctness": (
+            f"{a['wrong']} behaviour-changing rewrites ({a['wrong_but_proven']} of them labelled proven); every rewrite is compared with an "
+            f"unrewritten control on the real {spec['names']} data, a difference confirmed with DuckDB's optimizer off"
+        ),
+        "coverage": {
+            "proven": a["verified"],
+            "unknown": a["declined"],
+            "unsupported": a["unsupported"],
+            "timeout": a["timeout"],
+            "error": a["error"],
+        },
+        "usefulness": (
+            f"{a['transformed']} of {a['executed']} executed cases changed by a rewrite: pipeline {stages.get('pipeline', {}).get('transformed', 0)}, "
+            f"lift_subqueries {stages.get('lift_subqueries', {}).get('transformed', 0)}, optimizer {stages.get('optimizer', {}).get('transformed', 0)}; "
+            f"upstream queries {up['wrong']} wrong / {up['transformed']} changed, authored {au['wrong']} wrong / {au['transformed']} changed"
+        ),
+        "held_out": f"dev {dev['wrong']} wrong / {dev['transformed']} changed; held out (a fifth of the queries by SHA-1 of their id) {ho['wrong']} wrong / {ho['transformed']} changed of {ho['executed']} executed",
+        "docs": "docs/evals/sample-databases.md",
+        "command": spec["command"],
+        "date": today(),
+        "caveats": (
+            f"Pinned: {_pins_text_files(adapters)}. Loaded and checked against upstream: {loaded}, {keys[0]} primary and {keys[1]} foreign keys. "
+            f"{spec['adaptation']} In coverage, 'proven' counts rewrites whose executed result matched the control and 'unknown' counts cases no rule "
+            "changed. No rule was changed for this eval; the first run is the baseline."
+        ),
+    }
+    p, pdev, pho = pairs["all"], pairs["dev"], pairs["held_out"]
+    unreplayed = sum("does not replay" in c["wrong"] for c in pairs["wrong_cases"])
+    pairs_row = {
+        "suite": f"Sample databases ({spec['label']}): equivalent pairs and siblings",
+        "order": spec["order"] + 1,
+        "size": p["pairs"],
+        "score": f"{p['proven']}/{p['equivalent']} equivalent proved, {p['refuted']}/{p['different']} different refuted (replayed), {p['wrong']} wrong",
+        "metric": (
+            "Authored pairs on the two schemas under their declared keys, labelled equivalent or different (each 'different' label has a witness "
+            f"database); {p['constraint_siblings']} siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, "
+            "algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample."
+        ),
+        "evidence": "proof",
+        "correctness": (
+            f"{p['wrong']} wrong" + (f" ({unreplayed} bounded counterexamples that violate a declared key and do not replay; no proof or refutation contradicts a label or the real data)" if unreplayed == p["wrong"] and unreplayed else "")
+            + ": every proof also gives the same result on the real data and no proof is of a pair labelled different; every other refutation's "
+            "counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB"
+        ),
+        "coverage": {
+            "proven": p["proven"],
+            "refuted": p["refuted"],
+            "unknown": p["unknown"],
+            "unsupported": p["unsupported"],
+        },
+        "held_out": f"{pho['proven']}/{pho['equivalent']} proved, {pho['refuted']}/{pho['different']} refuted, {pho['wrong']} wrong (a fifth of the pairs by SHA-1 of their id)",
+        "docs": "docs/evals/sample-databases.md",
+        "command": spec["command"],
+        "date": today(),
+        "caveats": (
+            f"Authored pairs ({p['pairs']}; dev {pdev['pairs']}, held out {pho['pairs']}), not from upstream. "
+            f"Constraint siblings refuted: {p['constraint_siblings_refuted']}/{p['constraint_siblings']}. The algebraic prover's executed counterexample search "
+            "is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval; the first run is the baseline. "
+            + (spec.get("bug", "") if unreplayed else "")
+        ).strip(),
+    }
+    return {spec["rewrites"]: rewrites_row, spec["pairs"]: pairs_row}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--database", choices=sorted(ADAPTERS), action="append")
@@ -1804,6 +2174,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write benchmarks/results/sample-databases-*.json (every database, both parts)",
     )
+    parser.add_argument(
+        "--group",
+        choices=sorted(a.group for a in ADAPTERS.values()),
+        help="only the databases of this results group ('' is Chinook and Northwind; with --write-results, only that group's files are written)",
+    )
     args = parser.parse_args(argv)
     if args.write_results and (
         args.database
@@ -1818,7 +2193,11 @@ def main(argv: list[str] | None = None) -> int:
     from bench_common import quiet
 
     quiet()
-    adapters = [ADAPTERS[n] for n in (args.database or sorted(ADAPTERS))]
+    adapters = [
+        ADAPTERS[n]
+        for n in (args.database or sorted(ADAPTERS))
+        if args.group is None or ADAPTERS[n].group == args.group
+    ]
     failed = False
     reports = []
     for adapter in adapters:
@@ -1893,9 +2272,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_results:
         from bench_common import write_results
 
-        written = results_rows(
-            adapters, reports, dump["rewrites"]["summary"], dump["pairs"]["summary"]
-        )
+        written = {}
+        for group in sorted({a.group for a in adapters}):
+            members = [a for a in adapters if a.group == group]
+            names = {a.name for a in members}
+            rewrites = summarize_rewrites(
+                [r for r in dump["rewrites"]["cases"] if r["database"] in names]
+            )
+            pair_summary = summarize_pairs(
+                [r for r in dump["pairs"]["cases"] if r["database"] in names]
+            )
+            member_reports = [r for r in reports if r["database"] in names]
+            written.update(
+                results_rows(members, member_reports, rewrites, pair_summary)
+                if group == ""
+                else group_results_rows(
+                    group, members, member_reports, rewrites, pair_summary
+                )
+            )
         for index, (name, row) in enumerate(written.items()):
             write_results(name, row, scoreboard=index == len(written) - 1)
     return 1 if failed else 0

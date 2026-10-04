@@ -1,0 +1,28 @@
+{
+  "suite": "Sample databases (Oracle HR, Customer Orders): equivalent pairs and siblings",
+  "order": 351,
+  "size": 106,
+  "score": "36/43 equivalent proved, 57/63 different refuted (replayed), 3 wrong",
+  "metric": "Authored pairs on the two schemas under their declared keys, labelled equivalent or different (each 'different' label has a witness database); 26 siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample.",
+  "evidence": "proof",
+  "correctness": "3 wrong (3 bounded counterexamples that violate a declared key and do not replay; no proof or refutation contradicts a label or the real data): every proof also gives the same result on the real data and no proof is of a pair labelled different; every other refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB",
+  "coverage": {
+    "proven": 36,
+    "refuted": 57,
+    "unknown": 13,
+    "unsupported": 0
+  },
+  "held_out": "5/5 proved, 7/7 refuted, 0 wrong (a fifth of the pairs by SHA-1 of their id)",
+  "docs": "docs/evals/sample-databases.md",
+  "command": "python tools/sample_db_bench.py --write-results --group oracle",
+  "date": "2026-10-04",
+  "caveats": "Authored pairs (106; dev 94, held out 12), not from upstream. Constraint siblings refuted: 25/26. The algebraic prover's executed counterexample search is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval; the first run is the baseline. The wrong cases are one bug in the bounded checker, found and not fixed here (prover modules are not changed by this eval): it renders a DATE model value below ordinal 1 as 0001-01-01 (bounded_equivalence.py, the max(1, ...) clamp), so two job_history rows that differ in the DATE key column come out equal and the counterexample repeats the primary key (employee_id, start_date). The pairs are labelled correctly (each separates the queries on a legal witness database) and none is proved; the bounded checker's verdict there is a refutation of a true difference with an illegal witness, which counts as wrong here.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "8afdccdf+changes"
+  }
+}

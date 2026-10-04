@@ -195,6 +195,7 @@ EVAL_FILES = {
     "test_reduction_bench.py",
     "test_soundness_fuzz.py",
     "test_sample_db_bench.py",
+    "test_sample_db_oracle.py",
     "test_safety_corpus.py",
     "test_schema_change.py",
     "test_script_bench.py",

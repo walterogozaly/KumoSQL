@@ -115,7 +115,7 @@ def test_readers_handle_the_sample_dialects():
 
 
 def test_every_pair_is_decided_without_a_wrong_answer():
-    rows = bench.run_pairs(list(bench.ADAPTERS.values()))
+    rows = bench.run_pairs([a for a in bench.ADAPTERS.values() if a.group == ""])
     summary = bench.summarize_pairs(rows)["all"]
     assert summary["wrong"] == 0, [r for r in rows if r["wrong"]]
     assert summary["labels_unverified"] == 0, [

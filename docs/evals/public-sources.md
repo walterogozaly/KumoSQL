@@ -122,9 +122,9 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| A-D01–D03 | Oracle HR, Customer Orders, Sales History (`oracle-samples/db-sample-schemas`) | MIT | yes | 7 + 7 + 9 tables | **new** (batch 2): sample-database adapters |
+| A-D01–D03 | Oracle HR, Customer Orders, Sales History (`oracle-samples/db-sample-schemas`) | MIT (the licence file is an MIT permission notice, Copyright (c) 2023 Oracle) | yes | 7 + 7 + 9 tables | HR and Customer Orders **covered** (batch 2): `sample-databases-oracle-rewrites` and `sample-databases-oracle-pairs`, both databases loaded whole at commit `6660bad68c07` ([page](sample-databases.md#oracle-schemas-hr-and-customer-orders)); Sales History **not added**: 91 MB of CSV (918,843 sales rows), too large to commit |
 | A-D04 | Mondial | CC BY 3.0 | no: host blocked | — | not added |
-| A-D05 | IBM FIBEN | Apache-2.0 | yes (80 MB `data.zip`) | 152 tables, 237 distinct SQL targets | **new** (batch 2): sample-database adapter with its own query workload |
+| A-D05 | IBM FIBEN | Apache-2.0 | yes (80 MB `data.zip`) | 152 tables, 237 distinct SQL targets | **new** (batch 2), not started: 152 tables and an 80 MB archive are not feasible in the Oracle pull request (see [sample databases](sample-databases.md#oracle-schemas-hr-and-customer-orders)); it needs a run-time download from the pinned commit |
 | A-D06 | MIMIC-IV Demo | ODbL | no: `physionet.org` is blocked | — | not added; the GoogleSQL concepts (A-G03) are added without data |
 | A-D07–D13 | BenchBase SmallBank, TATP, Epinions, Twitter, SEATS, AuctionMark, Wikipedia | Apache-2.0 | yes | 3–17 tables | not added in this pass: the data comes from Java loaders that would have to be ported and frozen |
 | A-D14 | LDBC SNB SF0.003 | Apache-2.0 | no: `ldbcouncil.org` is blocked | — | not added |
