@@ -222,13 +222,24 @@ def test_a_later_step_cannot_rescue_a_refused_distinct_step():
     "SELECT (a = 1) IS TRUE AS m FROM t",
     "SELECT x FROM t WHERE NOT (b < 25 AND a IS NULL)",
     "SELECT x FROM t WHERE -(a + b) > 1",
-    "SELECT -(3) >= (f = a) BETWEEN (~(1) % (NULL)) AND (-(1) < (a & 2)) AS e FROM t",
+    "SELECT -(3) >= ((f = a) BETWEEN (~(1) % (NULL)) AND (-(1) < (a & 2))) AS e FROM t",
     "SELECT x FROM t WHERE (a = 1) IN (TRUE, (b > 2))",
 ])
 def test_the_prover_proves_a_query_whose_printed_text_needs_parentheses(sql):
     from kumosql.equivalence import prove_equivalent
 
     assert prove_equivalent(sql, sql).proven
+
+
+def test_a_comparison_chain_that_bigquery_rejects_is_not_proved():
+    from kumosql.equivalence import prove_equivalent
+
+    # ``x >= (f = a) BETWEEN lo AND hi`` has a comparison as the operand of another one without parentheses: GoogleSQL
+    # rejects it (docs/parser-checks.md), so a proof of it is about a query nobody can run
+    sql = "SELECT -(3) >= (f = a) BETWEEN (~(1) % (NULL)) AND (-(1) < (a & 2)) AS e FROM t"
+    result = prove_equivalent(sql, sql)
+    assert not result.proven
+    assert "parser disagreement" in result.reason
 
 
 def test_a_comparison_inside_a_comparison_keeps_its_parentheses_in_the_prover():

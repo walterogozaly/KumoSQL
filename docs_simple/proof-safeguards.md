@@ -26,4 +26,4 @@ A Dataform file can hold `${...}` expressions. KumoSQL can treat `${ref("orders"
 
 ## What this does not cover
 
-Predicate cleanup, CTE rewrites, parentheses and removing `DISTINCT` are checked independently so far. The step that turns subqueries into CTEs, and the rules that format SQL or qualify columns, are not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity or the parser. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed.
+Predicate cleanup, CTE rewrites, parentheses and removing `DISTINCT` are checked independently so far. The step that turns subqueries into CTEs, and the rules that format SQL or qualify columns, are not. Other rules and the solver-based provers still rely on their existing checks, and the separate checker does not check BigQuery validity. See the [full reference](../docs/proof-safeguards.md) for the list of audit findings and what is fixed. How the parser's reading of a query is checked is described in [parser checks](parser-checks.md).
