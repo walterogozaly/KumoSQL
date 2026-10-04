@@ -220,6 +220,22 @@ class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
 
 
+# ``SELECT * EXCEPT (b)``, ``* REPLACE (.. AS c)``, ``* RENAME (a AS b)`` and ``* ILIKE (..)`` change the
+# column list, and this compiler has no step that expands them: it read every one of them as a plain
+# ``SELECT *`` and proved the pair. The algebraic prover does expand BigQuery's spellings before the
+# query reaches here, so only the SMT prover needs the refusal.
+_STAR_MODIFIERS = ("except_", "except", "replace", "rename", "ilike")
+
+
+def _check_star_args(statement: exp.Expression) -> None:
+    """Raise :class:`Unsupported` for a star that carries an unexpanded modifier."""
+
+    for star in statement.find_all(exp.Star):
+        for key in _STAR_MODIFIERS:
+            if star.args.get(key):
+                raise Unsupported(f"SELECT * {key.upper().rstrip('_')} is not modeled")
+
+
 def _lost_null_ordering(body: exp.Expression, text: str) -> str:
     """A suffix naming every NULLS FIRST/LAST of ``body`` when its BigQuery ``text`` lost one, else "".
 
@@ -905,6 +921,7 @@ class _Compiler:
         # Inside a comparison of two opaque bodies (``_unify_opaque``) the kqw* markers are renamed away;
         # a window there still raises Unsupported wherever it would be evaluated, or sits in an opaque body.
         self._check_nondeterminism(statement, allow_windows=_nesting[0] > 0)
+        _check_star_args(statement)
         self.window_opaque = any(statement.find_all(exp.Window))
         return self._query(statement, {})
 

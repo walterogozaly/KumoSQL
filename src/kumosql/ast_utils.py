@@ -334,6 +334,113 @@ def expanded_reads(tree: exp.Expression, limit: int = MAX_EXPANDED_READS) -> int
     return reads(tree)
 
 
+# The sqlglot arguments the provers read, or check by name and reject. A node type listed here with
+# any other argument populated is a gap: they ignore it and reason about a reading of the query
+# nobody wrote. ``CAST(a AS INT64 DEFAULT 5 ON CONVERSION ERROR)`` reads as a plain cast,
+# and ``SELECT * EXCEPT (b)`` reads as ``SELECT *``, so both were proven equal to a cast or a star
+# they are not. Every argument a newer sqlglot adds to these nodes is declined until it is modeled,
+# which is the safe direction: unknown beats wrong.
+#
+# A node type that is not listed is not guarded, because a prover either rejects it by name or keeps
+# it whole and compares its text (a window inside an isolated derived relation, an unknown function
+# inside an opaque body), where an argument cannot be silently dropped.
+_MODELED_ARGS: dict[type, frozenset[str]] = {
+    # SELECT: the clause keys the provers read, plus the ones they reject by name, so their own
+    # message stays. SORT BY, CLUSTER BY, DISTRIBUTE BY, hints, settings and options are Hive, Spark
+    # and BigQuery extensions that change which rows come back and were read as no clause at all.
+    exp.Select: frozenset({
+        "expressions", "from_", "joins", "where", "group", "having", "order", "with_", "distinct",
+        "limit", "offset", "kind", "qualify", "laterals", "pivots", "connect", "match", "prewhere",
+        "windows", "into",
+    }),
+    exp.Union: frozenset({"this", "expression", "distinct", "with_", "limit", "offset", "order", "by_name", "side", "kind", "on"}),
+    exp.Intersect: frozenset({"this", "expression", "distinct", "with_", "limit", "offset", "order", "by_name", "side", "kind", "on"}),
+    exp.Except: frozenset({"this", "expression", "distinct", "with_", "limit", "offset", "order", "by_name", "side", "kind", "on"}),
+    # A derived relation: its body, its name, and the tails the query compiler reads. A subquery
+    # carrying its own joins, pivots or laterals is a body nothing ever looks at.
+    exp.Subquery: frozenset({"this", "alias", "order", "limit", "offset"}),
+    exp.Join: frozenset({"this", "on", "kind", "side", "using", "method"}),
+    exp.Table: frozenset({"this", "alias", "db", "catalog"}),
+    # Every argument of a star is a modifier that reshapes the column list. The algebraic prover
+    # expands BigQuery's ``* EXCEPT``/``* REPLACE``/``* RENAME``/``* ILIKE`` into explicit columns
+    # before this runs, so they are read there; the SMT compiler has no such step and refuses them
+    # itself (see ``smt_equivalence._check_star_args``).
+    exp.Star: frozenset({"except_", "except", "replace", "rename", "ilike"}),
+    exp.Column: frozenset({"this", "table"}),
+    exp.Unnest: frozenset({"expressions", "alias", "offset"}),
+    # ``expressions`` is an aggregate's own DISTINCT argument (COUNT(DISTINCT a, b)); ``on`` is a
+    # select's DISTINCT ON, which the compiler rejects by name.
+    exp.Distinct: frozenset({"expressions", "on"}),
+    # DEFAULT .. ON CONVERSION ERROR (default) and FORMAT change what a cast returns.
+    exp.Cast: frozenset({"this", "to", "safe"}),
+    exp.TryCast: frozenset({"this", "to", "safe"}),
+    # The type of a cast matters; a COLLATE or a VALUES list on the type is not modeled.
+    exp.DataType: frozenset({"this", "kind", "nested", "nullable", "expressions"}),
+    exp.Ordered: frozenset({"this", "desc", "nulls_first"}),
+    exp.Order: frozenset({"this", "expressions"}),
+    # A window is kept whole and compared as text, so every argument of one is covered by that text.
+    exp.Window: frozenset({"this", "alias", "over", "partition_by", "order", "spec", "first"}),
+    exp.WindowSpec: frozenset({"start", "end", "start_side", "end_side", "kind", "exclude"}),
+    # GROUP BY ALL is spelled out before this runs; the rest are rejected by name.
+    exp.Group: frozenset({"expressions", "rollup", "cube", "grouping_sets", "totals", "all"}),
+    exp.GroupingSets: frozenset({"expressions"}),
+    exp.Rollup: frozenset({"expressions"}),
+    exp.Cube: frozenset({"expressions"}),
+    exp.With: frozenset({"expressions", "recursive"}),
+    exp.CTE: frozenset({"alias", "this"}),
+    exp.Values: frozenset({"expressions", "alias"}),
+    exp.TableAlias: frozenset({"this", "columns"}),
+    exp.Alias: frozenset({"this", "alias"}),
+    exp.From: frozenset({"this"}),
+    exp.Where: frozenset({"this"}),
+    exp.Having: frozenset({"this"}),
+    exp.Qualify: frozenset({"this"}),
+    exp.In: frozenset({"this", "query", "expressions", "field", "unnest"}),
+    exp.Between: frozenset({"this", "low", "high"}),
+    exp.Exists: frozenset({"this"}),
+    exp.Case: frozenset({"this", "ifs", "default"}),
+    exp.If: frozenset({"this", "true", "false"}),
+    exp.Interval: frozenset({"this", "unit"}),
+    exp.Bracket: frozenset({"this", "expressions", "offset"}),
+    exp.Array: frozenset({"expressions", "struct_name_inheritance"}),
+    exp.Tuple: frozenset({"expressions"}),
+    exp.Property: frozenset({"this", "value"}),
+    exp.Grouping: frozenset({"expressions"}),
+    exp.Command: frozenset({"this", "expression"}),
+}
+
+def _populated(value: object) -> bool:
+    """Whether an sqlglot argument carries something (sqlglot stores absent flags as ``False``)."""
+
+    if value is None or value is False:
+        return False
+    return not (isinstance(value, (list, str, tuple, dict)) and len(value) == 0)
+
+
+def _check_args(tree: exp.Expression) -> None:
+    """Raise :class:`UnmodeledConstruct` for any populated argument the provers do not model.
+
+    This is the structural guard: sqlglot keeps a clause on a node whether or not the provers read
+    it, so a query carrying an argument outside :data:`_MODELED_ARGS` is declined instead of being
+    read as a query without it. ``CAST(a AS INT64 DEFAULT 5 ON CONVERSION ERROR)`` reads as a plain
+    cast, ``SELECT * EXCEPT (b)`` as ``SELECT *``, and a Hive ``SORT BY`` as no ``ORDER BY`` at all;
+    each was proven equal to a cast, a star or an unordered query it is not.
+    """
+
+    for node in tree.walk():
+        allowed = _MODELED_ARGS.get(type(node))
+        if allowed is None:
+            continue
+        for key, value in node.args.items():
+            if key in allowed or not _populated(value):
+                continue
+            # WITH ORDINALITY on UNNEST is ``offset=True`` and adds a column the compiler does not
+            # model; a named offset column (``offset=<column>``) is the one case it does read.
+            if type(node) is exp.Unnest and key == "offset" and isinstance(value, exp.Expression):
+                continue
+            raise UnmodeledConstruct(f"{type(node).__name__}.{key} is not modeled")
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
@@ -342,6 +449,8 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     anything carried on the node is refused whichever version produced it. ``GROUP BY ALL`` is
     spelled out first (see :func:`expand_group_by_all`). An ``IS`` test after a
     comparison is re-read as the engines read it (:func:`read_is_after_comparison`).
+    Every other populated argument on a node of :data:`_MODELED_ARGS` is refused too
+    (see :func:`_check_args`).
     """
 
     tree = expand_group_by_all(tree)
@@ -367,6 +476,7 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
     tree = read_is_after_comparison(tree)
+    _check_args(tree)
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
