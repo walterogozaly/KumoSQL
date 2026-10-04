@@ -99,9 +99,29 @@ The structural prover resolves nothing: it compares text and never qualifies a c
 
 `proof_columns.recording()` collects every verdict, so the share of decided columns can be measured (`summarize` counts them by site), and `proof_columns.disabled()` turns the check off for fault-injection tests and measurements.
 
-@@MEASURED@@
+**What it covers on the benchmarks.** Run in process with `proof_columns.recording()`, each eval below counts every verdict the check reached (columns, not queries). The evals with `dialect="mysql"` (sqlsolver, qed, calcite-mined, cosette, VeriEQL, ...) never reach the check, which reads BigQuery text only, so their answers are unchanged by construction; `tools/eval_diff.py` was run on the BigQuery evals below.
 
-**Fault injection** (`tests/test_proof_columns.py`). A prover that resolves a shared column name to the wrong source is refused with the check on and certified with it off: the SMT compiler's column lookup made to believe the inner source has no `a` (the name falls out to the outer table, which has one), the algebraic correlated-column pass handing a name both sources share to the enclosing source, the per-select pass qualifying with the first source, and sqlglot's qualifier output rewritten to the enclosing table. With the check off each is a false proof; with it on each is `not_proven` and the recording shows a `disagree`. The reader is also cross-checked against the `qualify_columns` rule, which was written separately: on the corpus of about 1,700 queries with three invented schemas, every qualifier the rule writes is the reader's owner and every re-qualification to another source is a disagreement.
+| Eval | Site | `agree` | `unchecked` | `disagree` |
+| --- | --- | ---: | ---: | ---: |
+| `pipeline_bench` | SMT compiler | 6,169 | 0 | 0 |
+| | `same_scoped_query` | 214 | 258 (the owner is not named in the text) | 0 |
+| | SMT schema qualification | 50 | 0 | 0 |
+| `jaffle_shop_bench` | SMT compiler | 1,600 | 46 (a source whose columns are not known) | 0 |
+| | algebraic qualification | 9 | 0 | 0 |
+| `constraint_rewrite_bench` | SMT compiler | 809 | 0 | 0 |
+| | `same_scoped_query` | 243 | 0 | 0 |
+| `documented_rewrites_bench` | SMT compiler | 118 | 0 | 0 |
+| | `same_scoped_query` | 76 | 0 | 0 |
+| | SMT schema qualification | 44 | 0 | 0 |
+| | algebraic qualification | 4 | 0 | 0 |
+| `numeric_traps_bench` | SMT compiler | 341 | 0 | 0 |
+| `join_rewrite_bench` | SMT compiler | 20 | 0 | 0 |
+| | `same_scoped_query` | 7 | 0 | 0 |
+| | SMT schema qualification | 4 | 0 | 0 |
+
+`bq_corpus_bench`, `mv_reuse_bench`, `sample_db_bench` and `querybooster_bench` reach none of the sites. No `disagree` occurs on any benchmark: the check removed no proof, so no score moves. On a second corpus, each of 145 queries from the fixtures (the `qualify_columns` corpus, the BigQuery corpora, the BigQuery syntax queries and the jaffle_shop models) was proven equal to its `qualify_columns` output with the invented schema (a table gets each bare name by a hash, so the pairs are only equal when the qualification is right) by the SMT prover and by the algebraic prover, with the check on and off; the statuses were identical for all 145 pairs on each prover. These fixture corpora were used to build and tune the reader and the cross-check, so they are "tuned on test" (the jaffle_shop models are in both lists); the other benchmark evals above were only run to measure coverage and were not used to choose the reader's rules.
+
+**Fault injection** (`tests/test_proof_columns.py`). A prover that resolves a shared column name to the wrong source is refused with the check on and certified with it off: the SMT compiler's column lookup made to believe the inner source has no `a` (the name falls out to the outer table, which has one), the algebraic correlated-column pass handing a name both sources share to the enclosing source, the per-select pass qualifying with the first source, and sqlglot's qualifier output rewritten to the enclosing table. With the check off each is a false proof; with it on each is `not_proven` and the recording shows a `disagree`. The reader is also cross-checked against the `qualify_columns` rule, which was written separately: on the corpus of about 1,700 queries with two invented schemas, every qualifier the rule writes is the reader's owner and every re-qualification to another source is a disagreement.
 
 ## Acceptance registry
 
