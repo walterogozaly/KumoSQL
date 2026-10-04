@@ -11,6 +11,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Local browser UI](ui.md) | Starting the UI, its pages, saved state, scopes, data sources and tags |
 | [Connecting Dataform repositories](dataform-repositories.md) | Private repositories through local `git`, the data folder, logging and diagnostics, production schedules |
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
+| [Singleton aggregation and set identity](singleton-and-set-identity.md) | Key-fixed aggregation and scoped set-tree identity, with explicit collation conditions |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
 | [Proof safeguards](proof-safeguards.md) | The independent predicate checker, Dataform expressions in proofs, and what is not covered yet |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |

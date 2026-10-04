@@ -633,3 +633,34 @@ def test_tables_that_reuse_with_names_can_be_folded_together():
     assert tree.sql(dialect="bigquery") == (
         "WITH orders__kumo2 AS (SELECT * FROM orders), b__kumo3 AS (SELECT * FROM orders__kumo2 AS orders) "
         "SELECT * FROM b__kumo3 AS b JOIN (WITH b__kumo1 AS (SELECT 1 AS x) SELECT * FROM b__kumo1 AS b) AS q ON TRUE")
+
+
+def test_incremental_tables_stay_as_written_without_a_dataform_project():
+    tables = {
+        "stage": "SELECT id, amount FROM orders WHERE amount > 0",
+        "report": "SELECT id FROM stage WHERE amount > 5",
+    }
+    plain = minimize_tables(tables, ["report"], sources=SOURCES)
+    assert "stage" not in plain.tables  # folded away: a SELECT alone does not say stage is incremental
+    kept = minimize_tables(tables, ["report"], sources=SOURCES, incremental=["stage"])
+    assert kept.tables["stage"] == tables["stage"] and kept.removed == []
+    assert kept.proofs["report"].status in ("proved", "unchanged")
+    with_columns = minimize_tables(tables, ["report"], sources=SOURCES, fixed={"stage": ["id", "amount"]}, incremental=["stage"])
+    assert with_columns.tables["stage"] == tables["stage"]  # fixed and incremental together: no clash
+    with pytest.raises(MinimizationError):
+        minimize_tables(tables, ["report"], sources=SOURCES, incremental=["nope"])
+    _assert_same(tables, kept.tables, ["report"])
+
+
+def test_verify_keeps_an_incremental_table_as_given_and_the_case_file_names_it():
+    tables = {
+        "stage": "SELECT id, amount FROM orders WHERE amount > 0",
+        "report": "SELECT id FROM stage WHERE amount > 5",
+    }
+    folded = {"report": "SELECT id FROM orders WHERE amount > 0 AND amount > 5"}
+    verify = table_minimizer.verify_tables
+    assert verify(tables, folded, ["report"], sources=SOURCES)["report"].status == "proved"
+    found = verify(tables, folded, ["report"], sources=SOURCES, incremental=["stage"])
+    assert found["report"].status == "unknown"  # the candidate dropped the incremental stage
+    case = {"tables": tables, "protected": ["report"], "sources": SOURCES, "incremental": ["stage"]}
+    assert minimize_case(case)["stage"] == tables["stage"]
