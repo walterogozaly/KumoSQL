@@ -135,8 +135,10 @@ def test_empty_bit_aggregate_is_not_folded_to_null():
 
 
 def test_decimal_literals_are_not_folded_where_they_are_floats():
-    # BigQuery reads 0.25 as FLOAT64, so literal arithmetic is left alone there (integers still fold).
-    assert not _proven("SELECT x * (1 - 0.25) FROM t", "SELECT x * 0.75 FROM t", dialect="bigquery")
+    # BigQuery reads 0.1 as FLOAT64, so literal arithmetic is done on doubles there: 0.1 + 0.2 is not 0.3 (integers still fold).
+    assert not _proven("SELECT x * (0.1 + 0.2) FROM t", "SELECT x * 0.3 FROM t", dialect="bigquery")
+    # 1 - 0.25 is exactly 0.75 as a double, so that pair is equal.
+    assert _proven("SELECT x * (1 - 0.25) FROM t", "SELECT x * 0.75 FROM t", dialect="bigquery")
     assert _proven("SELECT x * (3 - 1) FROM t", "SELECT x * 2 FROM t", dialect="bigquery")
 
 
