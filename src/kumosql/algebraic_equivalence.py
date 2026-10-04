@@ -2940,6 +2940,8 @@ def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
         alias = source.alias_or_name.lower()
         if not (isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias and alias)):
             return tree
+        if star_modified(item):
+            return tree  # ``* EXCEPT / REPLACE ..`` lists other columns than ``q``
         tree = source.this.copy()
     return tree
 

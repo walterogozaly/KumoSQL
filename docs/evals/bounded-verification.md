@@ -26,7 +26,7 @@ Each table has N slots. A slot has a presence flag and, per column, a symbolic v
 
 Two relations are compared as bags: a difference exists when some row's multiplicity differs. `sat` gives a model; `unsat` is "equivalent within the bound".
 
-Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
+Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, `SELECT * EXCEPT/REPLACE/RENAME/ILIKE`, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
 
 ## Replay, assumptions, and what a result means
 

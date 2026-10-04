@@ -42,7 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, drop_case_conflicts, expand_group_by_all, expanded_reads, is_call, spell_for_duckdb
+from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, drop_case_conflicts, expand_group_by_all, expanded_reads, is_call, spell_for_duckdb, star_modified
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
 
@@ -998,6 +998,8 @@ class Compiler:
     def _output_names(self, items, source: Rel) -> list[tuple[str | None, str]]:
         names = []
         for position, item in enumerate(items):
+            if star_modified(item):
+                raise Unsupported("SELECT * with EXCEPT, REPLACE, RENAME or ILIKE")  # not expanded below
             if isinstance(item, exp.Star):
                 names.extend(source.cols[i] for i in self._star_order(source))
             elif isinstance(item, exp.Column) and isinstance(item.this, exp.Star):

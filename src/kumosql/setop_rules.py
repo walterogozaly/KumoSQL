@@ -113,14 +113,11 @@ def _star_of(select: exp.Select, alias: str) -> bool:
     if len(select.expressions) != 1:
         return False
     item = select.expressions[0]
+    if star_modified(item):
+        return False
     if isinstance(item, exp.Star):
-        return not star_modified(item)
-    return (
-        isinstance(item, exp.Column)
-        and isinstance(item.this, exp.Star)
-        and not star_modified(item.this)
-        and item.table.lower() == alias
-    )
+        return True
+    return isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias
 
 
 def distinct_rows(node: exp.Expression) -> bool:

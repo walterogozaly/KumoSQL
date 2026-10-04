@@ -304,9 +304,8 @@ def _map_to_sources(pipeline, key: str, select: exp.Select, predicate: exp.Expre
         elif isinstance(projection, exp.Star) or (
             isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star)
         ):
-            star = projection if isinstance(projection, exp.Star) else projection.this
-            if star_modified(star):
-                raise _Refuse("unmappable_filter", "the model's star projection has EXCEPT or REPLACE")
+            if star_modified(projection):
+                raise _Refuse("unmappable_filter", "the model's star projection has EXCEPT, REPLACE, RENAME or ILIKE")
             stars.append(projection.table or None if isinstance(projection, exp.Column) else None)
         else:
             name = projection.alias_or_name.lower()
