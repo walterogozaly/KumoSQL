@@ -114,6 +114,7 @@ The 4 lost proofs (`IEEE_DIVIDE(1, f)` filtered to `f = 0`, `IEEE_DIVIDE(1, 0.0)
 - Pairs are proven under wall-clock timeouts on a shared machine. A proof near its limit can flip between runs. Both sides of the figures above agree on all 4,276 prover-eval pairs, so no timeout noise shows there, but a rerun on a busy machine can differ by a few proofs.
 - The lost-proof check is the eval's own executed search with a fixed number of trials; "no counterexample found" is not proof that a pair is right.
 - `Replaced` labels are counted as not fewer even though the verdict `same` or `refines` is a more precise statement than "not modeled".
+- The prover-eval and BigQuery-reading figures were measured on `80c0720d` (the #602 merge). Master has moved since: the numeric traps figures were rerun on the merged tree and agree, the long runs were not repeated.
 - The report compares against a fixed commit, so after other prover changes land it measures their sum with #602. Rerun it then: the command above is all it takes.
 
 Tests: `tests/test_numeric_assumption_report.py`.
