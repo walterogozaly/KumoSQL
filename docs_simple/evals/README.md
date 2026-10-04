@@ -28,6 +28,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Sample databases](sample-databases.md) | Do rewrites and proofs hold on complete real databases with declared keys? |
 | [DB-GPT examples](dbgpt-rules.md) | Which demonstration rewrites preserve results under reviewed schemas? |
 | [Documented rewrites](documented-rewrites.md) | Do rewrites recommended by vendor docs keep the results? |
+| [Paired engine tests](engine-paired-tests.md) | Which query pairs from Trino, Spark, PostgreSQL and DuckDB tests can be proved equal or shown different? |
 | [DLBench](dlbench.md) | Are translations across SQL dialects faithful? |
 | [Whole-pipeline equivalence](pipeline-equivalence.md) | Are observable outputs preserved across several changed models? |
 | [Targeted test data](targeted-test-data.md) | Can carefully chosen data reveal subtle differences? |
