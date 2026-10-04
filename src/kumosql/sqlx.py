@@ -191,8 +191,16 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
     restorations: list[SqlxRestoration] = []
     cursor = 0
     ordinal = 0
+    comments = sql_comment_spans(sql)
     while True:
         opening = sql.find("${", cursor)
+        while opening >= 0 and any(start <= opening < end for start, end in comments):
+            try:
+                _find_interpolation_end(sql, opening)
+                break
+            except ValueError:
+                # Dataform leaves ${...} in a SQL comment as text, so one that never closes is only comment text.
+                opening = sql.find("${", opening + 2)
         if opening < 0:
             output.append(sql[cursor:])
             break

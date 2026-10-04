@@ -322,8 +322,9 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
         reads[key] = {r for r in upstream.get(key, ()) if r in pipeline.models and r != key}
         reads[key] |= {d.key for d in model.declared_dependencies if d.key in pipeline.models and d.key != key}
     known: dict[str, list] = {}
+    logical = {model.target: model.logical for model in pipeline.models.values() if model.logical}
     for model in pipeline.models.values():
-        known.setdefault(model.target.name, []).append(model.target)
+        known.setdefault(model.logical[2] if model.logical else model.target.name, []).append(model.target)
     for target in pipeline.sources.values():
         known.setdefault(target.name, []).append(target)
     default = type(next(iter(pipeline.models.values())).target)(pipeline.default_project, pipeline.default_dataset, "") \
@@ -333,7 +334,7 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
     for key, text in texts.items():
         for match in _REF_RE.finditer(text):
             try:
-                target = _parse_ref_args(match.group("args"), default, known)
+                target = _parse_ref_args(match.group("args"), default, known, logical=logical)
             except ValueError:
                 continue
             spelled = counts.setdefault(target.key, {})
