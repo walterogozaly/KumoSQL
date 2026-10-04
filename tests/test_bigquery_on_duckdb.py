@@ -111,6 +111,21 @@ def test_row5_division_by_zero_fails(db):
     assert one(db, "SELECT SAFE_DIVIDE(x, 0) FROM UNNEST([1]) x") is None
 
 
+def test_nested_guarded_operations_are_planned_in_time(db):
+    # a macro that pastes its argument in several times makes each level of nesting several times larger: a
+    # division nested 14 deep was never planned (a variance written with divisions took 0.15 s at depth 3)
+    expression = "x"
+    for _ in range(14):
+        expression = f"({expression} * 2) / 2"
+    db.execute("CREATE TABLE t (x INT64)")
+    db.execute("INSERT INTO t VALUES (3), (NULL)")
+    assert sorted(run(db, f"SELECT {expression} FROM t"), key=str) == [(3.0,), (None,)]
+    nested = "SUM(x)"
+    for _ in range(8):
+        nested = f"(SUM(x) - ({nested}) / NULLIF(COUNT(*), 0) * COUNT(*))"
+    assert run(db, f"SELECT {nested} FROM t") == [(3.0,)]
+
+
 def test_integer_division_and_mod_by_zero_fail(db):
     assert fails(db, "SELECT MOD(x, 0) FROM UNNEST([1]) x")
     assert fails(db, "SELECT DIV(x, 0) FROM UNNEST([1]) x")
