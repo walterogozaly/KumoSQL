@@ -29,13 +29,18 @@ A step is accepted only when all of these hold:
   time) is refused when its reference sits inside an expression subquery, because a derived table there is
   evaluated per outer row while a CTE need not be.
 
+* **Recursive WITH.** ``proof_ctes`` cannot expand a recursive CTE, so a statement that holds one is expanded as
+  if its WITH were sequential, and a lifted body is refused if it calls a volatile function (it can be evaluated
+  once per iteration) or reads a CTE name of a recursive WITH (a CTE may read itself, and perhaps CTEs after it)
+  other than the CTEs that come before it in its own WITH clause.
+
 Both statements are printed and read once by sqlglot before they are compared (its printer rewrites ``INT`` as
 ``INT64``, ``DISTINCT ON`` as a window function and so on), so only what the lifter changed remains; two
 statements that agree after that print are accepted as a step that lifted nothing.
 
-Refused, never guessed: a step in which a recursive or MATERIALIZED WITH, a duplicate CTE name, a column list on
-a lifted CTE or a CTE name read outside FROM and JOIN appears, anything ``proof_ctes`` cannot follow, and any
-error in the checker. Both statements are read again from the step's SQL text, never from the caller's
+Refused, never guessed: a step in which a MATERIALIZED hint, a duplicate CTE name, a column list on a lifted
+CTE or a CTE name read outside FROM and JOIN appears, anything ``proof_ctes`` cannot follow, and any error in
+the checker. Both statements are read again from the step's SQL text, never from the caller's
 in-memory trees.
 """
 
@@ -114,9 +119,6 @@ def _fresh_ctes(before: exp.Expression, after: exp.Expression) -> dict[str, exp.
             continue
         if name in fresh:
             raise _Rejected(f"the lifted CTE name {name!r} is defined twice")
-        clause = cte.parent
-        if isinstance(clause, exp.With) and clause.args.get("recursive"):
-            raise _Rejected("a lifted CTE sits in a recursive WITH clause")
         if cte.args["alias"].args.get("columns"):
             raise _Rejected(f"the lifted CTE {name!r} has a column list")
         fresh[name] = cte
@@ -254,10 +256,52 @@ def _read_outer_relation(body: exp.Expression, site: exp.Subquery) -> str | None
     return None
 
 
+def _check_recursive(after: exp.Expression, fresh: dict[str, exp.CTE]) -> None:
+    """Lifting around a recursive WITH: refuse a body that the recursion could change the meaning of.
+
+    ``proof_ctes`` cannot expand a recursive CTE, so a statement that holds one is expanded as if its WITH were
+    sequential. That reading matches the real one except for a name defined by a recursive WITH (a CTE may read
+    itself, and perhaps CTEs after it) and for a body evaluated once per iteration. A lifted body is therefore
+    refused if it calls a volatile function, or reads a CTE name of a recursive WITH other than the CTEs that
+    come before it in its own WITH clause (which it sees from either place).
+    """
+
+    recursive = [clause for clause in after.find_all(exp.With) if clause.args.get("recursive")]
+    if not recursive:
+        return
+    for name, cte in fresh.items():
+        volatile = _volatile_in(cte.this)
+        if volatile:
+            raise _Rejected(
+                f"the lifted body of {name!r} calls {volatile} in a statement with a recursive WITH, "
+                "where it can be evaluated once per iteration"
+            )
+        home = cte.parent
+        siblings = [_cte_name(other) for other in home.expressions]
+        visible = {sibling for sibling in siblings[: siblings.index(name)] if sibling}
+        watched: set[str] = set()
+        for clause in recursive:
+            if any(ancestor is cte.this for ancestor in _ancestors(clause)):
+                continue  # a recursive WITH inside the body moves with it, scope and all
+            members = {_cte_name(other) for other in clause.expressions} - {None}
+            watched |= members - visible if clause is home else members
+        for table in cte.this.find_all(exp.Table):
+            if not table.args.get("db") and not table.args.get("catalog") and table.name.lower() in watched:
+                raise _Rejected(
+                    f"the lifted body of {name!r} reads {table.name!r}, a CTE of a recursive WITH "
+                    "that it does not see the same way from its new place"
+                )
+
+
 def _check_expansion(before: exp.Expression, after: exp.Expression, fresh: dict[str, exp.CTE]) -> None:
     """Scope-correct restoration: replace every CTE reference by its definition on both sides and compare."""
 
     old, new = before.copy(), after.copy()
+    for tree in (old, new):
+        # Read as a plain sequential WITH on both sides (``_check_recursive`` has already refused every lift that
+        # could tell the two readings apart).
+        for clause in tree.find_all(exp.With):
+            clause.set("recursive", None)
     fresh_new = _fresh_ctes(old, new)
     for cte in fresh_new.values():
         cte.this.meta["lifted_body"] = _cte_name(cte)
@@ -298,6 +342,7 @@ def _check(step: RewriteStep) -> tuple[bool, str, int]:
             "no CTE with a new name was added, so no subquery was lifted "
             "(a CTE named like a table, alias or column the statement already has is not a lifted CTE)"
         ), 0
+    _check_recursive(after, fresh)
     lifted = _restore_exactly(before, after, fresh)
     _check_expansion(before, after, fresh)
     return True, f"{lifted} lifted CTE(s) written back as the subqueries they replaced give the before statement", lifted

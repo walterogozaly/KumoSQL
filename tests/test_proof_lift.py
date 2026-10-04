@@ -198,16 +198,6 @@ def test_unsound_lifts_are_refused(before, after, reason):
 
 @pytest.mark.parametrize("before,after,reason", [
     (
-        "WITH RECURSIVE a AS (SELECT 1 x) SELECT * FROM (SELECT 2 y) s",
-        f"WITH RECURSIVE a AS (SELECT 1 x), {L1} AS (SELECT 2 y) SELECT * FROM {L1} AS s",
-        "recursive",
-    ),
-    (
-        "SELECT * FROM (SELECT 1 x) s",
-        f"WITH RECURSIVE {L1} AS (SELECT 1 x) SELECT * FROM {L1} AS s",
-        "recursive",
-    ),
-    (
         "SELECT * FROM (SELECT 1 x) s",
         f"WITH {L1} AS MATERIALIZED (SELECT 1 x) SELECT * FROM {L1} AS s",
         "MATERIALIZED",
@@ -223,6 +213,53 @@ def test_unsound_lifts_are_refused(before, after, reason):
 def test_unclear_cases_are_refused_not_guessed(before, after, reason):
     step = RewriteStep("test", LIFT_FAMILY, 0, before, after, LIFT_ASSUMPTIONS)
     result = check_lift_transition(step, None, None)
+    assert not result.accepted
+    assert reason in result.reason, result.reason
+
+
+RECURSIVE = "WITH RECURSIVE r AS (SELECT 1 n UNION ALL SELECT n + 1 FROM r WHERE n < 3)"
+
+
+def test_a_lift_next_to_a_recursive_with_is_accepted_when_the_body_sees_the_same_names():
+    # the sqlfluff fixture `with_recursive_fail_no_fix`: a plain CTE added to a WITH RECURSIVE list, reading a CTE
+    # that comes before it
+    before = f"{RECURSIVE} SELECT * FROM r JOIN (SELECT x FROM t) AS s ON TRUE"
+    after = f"{RECURSIVE}, {L1} AS (SELECT x FROM t) SELECT * FROM r JOIN {L1} AS s ON TRUE"
+    assert check(before, after).accepted, check(before, after).reason
+    before = f"{RECURSIVE} SELECT * FROM (SELECT n FROM r) AS s"
+    after = f"{RECURSIVE}, {L1} AS (SELECT n FROM r) SELECT * FROM {L1} AS s"
+    assert check(before, after).accepted, check(before, after).reason
+
+
+def test_a_recursive_with_inside_the_lifted_body_moves_with_it():
+    inner = "(WITH RECURSIVE seq AS (SELECT 1 n UNION ALL SELECT n + 1 FROM seq WHERE n < 3) SELECT * FROM seq)"
+    before = f"SELECT * FROM {inner} AS series"
+    body = inner[1:-1]
+    assert check(before, f"WITH {L1} AS ({body}) SELECT * FROM {L1} AS series").accepted
+
+
+@pytest.mark.parametrize("before,after,reason", [
+    # a body that read a CTE defined after it (visible in a recursive WITH, perhaps) now comes before that CTE
+    (
+        "WITH RECURSIVE a AS (SELECT * FROM (SELECT x FROM b) AS s), b AS (SELECT 1 x) SELECT * FROM a",
+        f"WITH RECURSIVE {L1} AS (SELECT x FROM b), a AS (SELECT * FROM {L1} AS s), b AS (SELECT 1 x) SELECT * FROM a",
+        "recursive WITH",
+    ),
+    # a body evaluated once per iteration of the recursion, once as a CTE
+    (
+        "WITH RECURSIVE r AS (SELECT 1 n UNION ALL SELECT n + (SELECT x FROM (SELECT RAND() x)) FROM r WHERE n < 3) SELECT * FROM r",
+        f"WITH RECURSIVE {L1} AS (SELECT RAND() x), r AS (SELECT 1 n UNION ALL SELECT n + (SELECT x FROM {L1}) FROM r WHERE n < 3) SELECT * FROM r",
+        "recursive WITH",
+    ),
+    # the lifted body was changed
+    (
+        f"{RECURSIVE} SELECT * FROM r JOIN (SELECT x FROM t) AS s ON TRUE",
+        f"{RECURSIVE}, {L1} AS (SELECT y FROM t) SELECT * FROM r JOIN {L1} AS s ON TRUE",
+        "not the before",
+    ),
+])
+def test_a_lift_around_a_recursive_with_is_refused_when_the_recursion_could_matter(before, after, reason):
+    result = check(before, after)
     assert not result.accepted
     assert reason in result.reason, result.reason
 

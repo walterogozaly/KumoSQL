@@ -22,7 +22,7 @@ Two more cleanups are checked the same way. Removing parentheses is accepted onl
 
 The separate checker undoes the lift: it writes each new CTE back as the subquery it replaced and requires the result to be exactly the original query. The new name must appear nowhere in the original, each new CTE must be read exactly once, the original CTEs must be untouched, and the names must still mean the same thing where the CTE now sits (a subquery that read a nested `WITH`'s name, or a column of the query around it, cannot be moved to the top). A new CTE that calls `RAND()` inside a scalar subquery is refused too, because the subquery would have been evaluated for each outer row.
 
-Running it over about 2,900 test queries found real problems, now fixed: the prover moved a correlated subquery out of the query it depends on, the lifter dropped the column names in `(...) AS t (a, b)`, and it turned `FROM (t)` into the invalid `WITH l AS (t)`. One valid query is still refused: a lift in a statement that holds `WITH RECURSIVE`. The checker also cannot tell when a bare, unqualified column of a subquery comes from the query around it, because that needs a table schema.
+Running it over about 2,900 test queries found real problems, now fixed: the prover moved a correlated subquery out of the query it depends on, the lifter dropped the column names in `(...) AS t (a, b)`, and it turned `FROM (t)` into the invalid `WITH l AS (t)`. It handles `WITH RECURSIVE` cautiously, refusing a lift whose subquery reads the recursive part's names or calls `RAND()`. The checker also cannot tell when a bare, unqualified column of a subquery comes from the query around it, because that needs a table schema.
 
 ## One list of checked rules
 
