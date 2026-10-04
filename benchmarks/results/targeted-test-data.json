@@ -2,7 +2,7 @@
   "suite": "Targeted test data (mutant kills)",
   "order": 70,
   "size": 7865,
-  "score": "83.2% dev (2,920/3,508), 69.2% held out (1,227/1,772)",
+  "score": "83.2% dev (2,920/3,508), 69.2% held out (1,227/1,772; held-out kills fell from 1,244 and timeouts rose from 585 to 775, so that percentage rose only because timeouts leave the denominator)",
   "metric": "Share of faulty query variants (mutants, 14 operators) that targeted databases plus corner cases tell apart from the original, among mutants not proven equivalent and not timed out; the engine's default 8 random databases get 52.7% dev, 11.6% held out, one random seed 11.7% / 4.9%.",
   "evidence": "executed",
   "correctness": "Every kill repeats on both sides on a database respecting NOT NULL and keys (foreign keys not modelled); no kill is counted from a side that disagrees with itself. Survivors not proven equivalent stay in the denominator.",
