@@ -37,6 +37,6 @@ A cleanup rule leaves a statement that holds a JavaScript constant such as `${sp
 
 ## What is left
 
-- **JavaScript in SQLX** accounts for most gaps. Snowplow names its tables with constants from `includes/sp.js` (`${sp.scratch_schema}`), giving 57 `unresolved_template` gaps. It also splices SQL returned by JavaScript functions into a condition or a `BEGIN ... END` block, giving 7 `parse_error` gaps. Their table reads still come from the tokens. One wintermi action is built entirely by JavaScript (`no_query`).
+- **JavaScript in SQLX** accounts for most gaps. Snowplow names its tables with constants from `includes/sp.js` (`${sp.scratch_schema}`), giving 57 `unresolved_template` gaps. It also splices SQL returned by JavaScript functions into a condition or a `BEGIN ... END` block, giving 7 `parse_error` gaps. Their table reads still come from the tokens. One wintermi action is built entirely by JavaScript (`no_query`). One terashim declaration takes its database and schema from `includes` constants, so it is reported once as `dynamic_config`; refs still find it by name and the project defaults stand in for its location. Scores and counts of handled files did not change.
 - **`SELECT *` over tables with unknown columns** (7) and reads of tables outside the project (41, mostly basedosdados staging tables) are reported, not guessed.
 - Nothing is run on BigQuery, so values are not compared.
