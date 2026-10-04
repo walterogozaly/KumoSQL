@@ -105,6 +105,8 @@ def _correlated(subquery: exp.Subquery) -> bool:
         return False
     for column in subquery.this.find_all(exp.Column):
         parts = {part.lower() for part in (column.text("catalog"), column.text("db"), column.table) if part}
+        if not parts and _bare_column_without_relation(column, subquery):
+            return True
         if not parts & outer:
             continue
         inner: set[str] = set()
@@ -116,6 +118,34 @@ def _correlated(subquery: exp.Subquery) -> bool:
         if not parts & inner:
             return True
     return False
+
+
+def _bare_column_without_relation(column: exp.Column, subquery: exp.Subquery) -> bool:
+    """Whether an unqualified column sits in a SELECT with nothing to read it from, so it can only come from around.
+
+    ``(SELECT MAX(s.v) FROM (SELECT a AS v) AS s)``: the inner SELECT has no FROM, so ``a`` is a column of an
+    enclosing query. A name that the SELECT itself defines (an output alias used by GROUP BY, HAVING or ORDER BY)
+    is not one.
+    """
+
+    if not _has_scope_above(subquery):
+        return False
+    node = column.parent
+    while node is not None and node is not subquery:
+        if isinstance(node, exp.Select):
+            if select_sources(node) or node.args.get("laterals"):
+                return False
+            return column.name.lower() not in {name.lower() for name in node.named_selects if name}
+        node = node.parent
+    return False
+
+
+def _has_scope_above(subquery: exp.Subquery) -> bool:
+    """Whether a query encloses the one whose FROM holds ``subquery`` (the only place an outer column can come from)."""
+
+    holder = subquery.find_ancestor(exp.Select)
+    return holder is not None and holder.find_ancestor(exp.Select) is not None or bool(
+        holder is not None and holder.args.get("laterals"))
 
 
 def _captured(subquery: exp.Subquery, query: exp.Expression) -> bool:
@@ -342,7 +372,7 @@ class LiftSubqueriesRule(RewriteRule):
     def rewrite_statement(
         self, statement: exp.Expression, index: int
     ) -> tuple[int, list[RuleDiagnostic]]:
-        check_scope = not self.analysis_only
+        check_scope = True
         before = len(_liftable_subqueries(statement, check_scope))
         lifted = _transform_statement(statement, check_scope)
         after = len(_liftable_subqueries(statement, check_scope))
@@ -368,7 +398,7 @@ class LiftSubqueriesRule(RewriteRule):
         return lifted, diagnostics
 
     def count_remaining(self, statements: list[exp.Expression]) -> int:
-        return sum(len(_liftable_subqueries(statement, not self.analysis_only)) for statement in statements)
+        return sum(len(_liftable_subqueries(statement)) for statement in statements)
 
 
 _RULE = LiftSubqueriesRule()

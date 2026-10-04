@@ -1,0 +1,30 @@
+{
+  "suite": "Sample databases (Oracle HR): workload rewrites",
+  "order": 352,
+  "size": 225,
+  "score": "0 wrong in 225 executed; 99 rewrites verified on the real data",
+  "metric": "33 Oracle HR workload queries (1 upstream, adapted to BigQuery; 32 authored), each through KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the result multiset or stops running is wrong.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing rewrites (0 of them labelled proven); every rewrite is compared with an unrewritten control on the real Oracle HR data, a difference confirmed with DuckDB's optimizer off",
+  "coverage": {
+    "proven": 99,
+    "unknown": 126,
+    "unsupported": 0,
+    "timeout": 0,
+    "error": 0
+  },
+  "usefulness": "99 of 225 executed cases changed by a rewrite: pipeline 94, lift_subqueries 1, optimizer 4; upstream queries 0 wrong / 3 changed, authored 0 wrong / 96 changed",
+  "held_out": "dev 0 wrong / 85 changed; held out (a fifth of the queries by SHA-1 of their id) 0 wrong / 14 changed of 34 executed",
+  "docs": "docs/evals/sample-databases.md",
+  "command": "python tools/sample_db_bench.py --database oracle_hr --write-results",
+  "date": "2026-10-04",
+  "caveats": "Pinned: Oracle HR oracle-samples/db-sample-schemas@6660bad68c human_resources/hr_create.sql (SHA-256 19bb40fdad9f) and human_resources/hr_populate.sql (SHA-256 420375c58700) and human_resources/hr_code.sql (SHA-256 5604aae0d475), MIT text, Copyright (c) 2023 Oracle and/or its affiliates. Loaded and checked against upstream: 7 tables / 216 rows, 7 primary and 10 foreign keys. Workload origins: 32 authored, 1 upstream-view. HR's one view (emp_details_view) is adapted from Oracle SQL to BigQuery (recorded in the workload file); hr_code.sql holds procedures and triggers, no query. Oracle's UNIQUE constraints, CHECKs, sequences, identity columns and indexes are dropped from the BigQuery DDL (BigQuery declares only primary and foreign keys). Oracle Sales History is not included: its data is 91 MB of CSV (918,843 sales rows), too large to commit, and a download at run time would make the eval depend on the network; FIBEN is not included either; the authored queries were written for this eval. In coverage, 'proven' counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "ab197bf0+changes"
+  }
+}

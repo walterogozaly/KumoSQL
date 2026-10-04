@@ -1,9 +1,10 @@
 """Sample databases eval, Oracle schemas (HR, Customer Orders): the Oracle readers, the loads, pairs and rewrites.
 
-The full run is ``python tools/sample_db_bench.py --group oracle --write-results``. Here every pair of both
-databases runs, and a pinned subset of the workload runs through the rewrite pipeline, lift_subqueries and
-(for the key-dependent ones) the proof-gated optimizer. The Chinook and Northwind rows are in
-``test_sample_db_bench.py``; their results files are not touched by the Oracle group.
+The full run is ``python tools/sample_db_bench.py --database oracle_hr --database oracle_co --write-results``.
+The shared checks of ``test_sample_db_bench.py`` (every pair of every database with its floors, the load against
+upstream) also cover both schemas. Here: the Oracle readers, the three HR pairs whose counterexamples once repeated
+a DATE key, a pinned subset of the workload through the rewrite pipeline, lift_subqueries and (for the
+key-dependent ones) the proof-gated optimizer, and the results files.
 """
 
 import importlib.util
@@ -23,13 +24,11 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["sample_db_bench_oracle"] = bench
 _spec.loader.exec_module(bench)
 
-ORACLE = sorted(n for n, a in bench.ADAPTERS.items() if a.group == "oracle")
-# floors only ever go up (recorded run: 36 proved, 57 refuted; the executed counterexample search is time-limited)
-FLOORS = {"proven": 35, "refuted": 54}
-# Known bug, not fixed here (prover modules are not changed by this eval): the bounded checker renders a DATE
-# below ordinal 1 as 0001-01-01, so two rows that differ in a DATE key column come out equal and the
-# counterexample repeats a primary key. The pairs it affects are labelled correctly and are not proved.
-KNOWN_WRONG = {
+ORACLE = ["oracle_co", "oracle_hr"]
+# Pairs on the DATE key of job_history: the bounded checker used to render a DATE below its first day as 0001-01-01,
+# so two rows that differ in the key came out equal and the counterexample repeated the primary key. They are refuted
+# with a counterexample that replays on a legal database.
+DATE_KEY_PAIRS = {
     "hr-left-join-elimination-not-unique",
     "hr-self-join-on-part-of-key",
     "hr-distinct-on-part-of-key",
@@ -54,10 +53,11 @@ KEYED = {
 }
 
 
-def test_the_oracle_group_is_scored_apart_from_the_first_two_databases():
-    assert ORACLE == ["oracle_co", "oracle_hr"]
-    assert sorted(n for n, a in bench.ADAPTERS.items() if a.group == "") == ["chinook", "northwind"]
-    assert set(bench.GROUPS) == {"oracle"}
+def test_the_oracle_schemas_have_results_files_of_their_own():
+    assert all(n in bench.ADAPTERS and n not in bench.COMBINED for n in ORACLE)
+    # each database's two rows (rewrites at the order, pairs one after) sit apart from every other database's
+    slots = [o for n, a in bench.ADAPTERS.items() if n not in bench.COMBINED for o in (a.results_order, a.results_order + 1)]
+    assert all(bench.ADAPTERS[n].results_order for n in ORACLE) and len(slots) == len(set(slots))
 
 
 @pytest.mark.parametrize("name", ORACLE)
@@ -124,11 +124,11 @@ END;
         folder = property(lambda self: tmp_path)
 
     tiny = Tiny()
-    tables = tiny.upstream_ddl()
+    tables = tiny.upstream_tables()
     assert list(tables["a"].columns) == ["id", "n"] and tables["a"].not_null == {"id", "n"}
     assert tables["b"].primary_key == ("x",) and tables["b"].foreign_keys == [(("y",), "a", ("id",))]
     assert list(tiny.upstream_views()) == ["v"]
-    rows = tiny.upstream_inserts()
+    rows = tiny.upstream_rows()
     assert sorted(rows) == ["a", "b", "c"]
     (_, date), = [(c, v[2]) for c, v in rows["b"]]
     assert date == bench.Raw("call", "TO_DATE", (bench.Raw("string", "17-06-2013"), bench.Raw("string", "dd-MM-yyyy")))
@@ -142,7 +142,7 @@ END;
 
 
 def test_foreign_keys_without_a_column_list_name_the_parents_primary_key():
-    hr = bench.ADAPTERS["oracle_hr"].upstream_ddl()
+    hr = bench.ADAPTERS["oracle_hr"].upstream_tables()
     assert sorted(hr["employees"].foreign_keys) == [
         (("department_id",), "departments", ("department_id",)),
         (("job_id",), "jobs", ("job_id",)),
@@ -150,7 +150,7 @@ def test_foreign_keys_without_a_column_list_name_the_parents_primary_key():
     ]
     assert hr["job_history"].primary_key == ("employee_id", "start_date")
     assert (("manager_id",), "employees", ("employee_id",)) in hr["departments"].foreign_keys
-    co = bench.ADAPTERS["oracle_co"].upstream_ddl()
+    co = bench.ADAPTERS["oracle_co"].upstream_tables()
     assert co["order_items"].primary_key == ("order_id", "line_item_id")
 
 
@@ -184,20 +184,12 @@ def test_a_changed_oracle_declaration_is_caught():
     assert any("customers: NOT NULL" in p for p in problems)
 
 
-def test_every_oracle_pair_is_decided_without_a_wrong_answer_beyond_the_known_bug():
-    rows = bench.run_pairs([bench.ADAPTERS[n] for n in ORACLE], jobs=2)
-    summary = bench.summarize_pairs(rows)["all"]
-    wrong = {r["id"]: r["wrong"] for r in rows if r["wrong"]}
-    # no proof of a pair labelled different, no refutation of an equivalent pair, no proof that differs on the real data
-    assert set(wrong) <= KNOWN_WRONG, wrong
-    assert all(r["wrong"] == "counterexample does not replay on a legal database" and "repeats a key" in r["how"] for r in rows if r["wrong"])
-    assert not [r["id"] for r in rows if r["wrong"] and r["outcome"] == "proven"]
-    assert summary["labels_unverified"] == 0, [r["id"] for r in rows if r["witness_ok"] is False]
-    assert summary["proven"] >= FLOORS["proven"] and summary["refuted"] >= FLOORS["refuted"]
-    # every sibling that drops a guarantee is refuted (or, at worst, not decided) but never proved
-    siblings = [r for r in rows if r["drop"]]
-    assert siblings and all(r["outcome"] != "proven" for r in siblings)
-    assert sum(r["outcome"] == "refuted" for r in siblings) >= len(siblings) - 2
+def test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay():
+    rows = bench.run_pairs([bench.ADAPTERS["oracle_hr"]], jobs=2, pair_ids=DATE_KEY_PAIRS)
+    assert {r["id"] for r in rows} == DATE_KEY_PAIRS
+    for row in rows:
+        assert row["label"] == "different" and row["outcome"] == "refuted" and row["wrong"] == "", row
+        assert row["counterexample_ok"] is True
 
 
 @pytest.mark.parametrize("name", sorted(SUBSET))
@@ -218,17 +210,23 @@ def test_the_optimizer_uses_the_declared_keys_on_the_real_oracle_data(name):
 
 
 def test_oracle_results_files_say_what_they_measured():
-    for name in ("sample-databases-oracle-rewrites", "sample-databases-oracle-pairs"):
-        row = json.loads((ROOT / "benchmarks" / "results" / f"{name}.json").read_text())
-        assert row["command"] == bench.COMMAND + " --group oracle"
-        assert row["docs"] == "docs/evals/sample-databases.md"
-    rewrites = json.loads((ROOT / "benchmarks" / "results" / "sample-databases-oracle-rewrites.json").read_text())
-    assert rewrites["score"].startswith("0 wrong")
-    assert "6660bad68c" in rewrites["caveats"] and "Sales History is not included" in rewrites["caveats"]
-    pairs = json.loads((ROOT / "benchmarks" / "results" / "sample-databases-oracle-pairs.json").read_text())
-    assert f"{len(KNOWN_WRONG)} wrong" in pairs["score"]
-    # the first two databases' rows are the ones recorded before the Oracle group existed
-    first = json.loads((ROOT / "benchmarks" / "results" / "sample-databases-rewrites.json").read_text())
+    results = ROOT / "benchmarks" / "results"
+    for name in ORACLE:
+        rewrites = json.loads((results / f"sample-databases-{name}-rewrites.json").read_text())
+        pairs = json.loads((results / f"sample-databases-{name}-pairs.json").read_text())
+        for row in (rewrites, pairs):
+            assert row["command"] == f"python tools/sample_db_bench.py --database {name} --write-results"
+            assert row["docs"] == "docs/evals/sample-databases.md"
+        # no wrong answer is recorded and no list of known failures is kept
+        assert rewrites["score"].startswith("0 wrong")
+        assert pairs["score"].endswith(", 0 wrong") and "known failure" not in pairs["caveats"].lower()
+        assert "6660bad68c" in rewrites["caveats"]
+    # the pairs file of HR records the DATE bug as fixed on master, not as a failure
+    hr = json.loads((results / "sample-databases-oracle_hr-pairs.json").read_text())
+    assert hr["score"] == "18/22 equivalent proved, 32/32 different refuted (replayed), 0 wrong"
+    assert "DATE" in hr["caveats"] and "start_date" in hr["caveats"]
+    # the first two databases' rows are the ones recorded before the Oracle schemas existed
+    first = json.loads((results / "sample-databases-rewrites.json").read_text())
     assert first["score"] == "0 wrong in 510 executed; 242 rewrites verified on the real data" and first["size"] == 515
-    first = json.loads((ROOT / "benchmarks" / "results" / "sample-databases-pairs.json").read_text())
+    first = json.loads((results / "sample-databases-pairs.json").read_text())
     assert first["score"].startswith("20/24 equivalent proved, 28/30 different refuted") and first["size"] == 54

@@ -1,0 +1,832 @@
+{
+  "about": "Authored query pairs on Pagila for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the Pagila data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates. Pagila's payment table declares no foreign key and the composite key (payment_date, payment_id), as upstream does for the table as a whole, so the payment pairs are different under the declarations even where the data happens to agree.",
+  "pairs": [
+    {
+      "id": "pg-fk-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "rental.inventory_id is NOT NULL and references inventory's key: every rental joins exactly one inventory row",
+      "left": "SELECT r.rental_id, r.rental_date FROM rental AS r JOIN inventory AS i ON r.inventory_id = i.inventory_id",
+      "right": "SELECT rental_id, rental_date FROM rental"
+    },
+    {
+      "id": "pg-fk-join-elimination-nullable",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-fk-join-elimination",
+      "why": "film.original_language_id may be NULL (it is NULL in every film of the data): such a film joins no language",
+      "left": "SELECT f.film_id, f.title FROM film AS f JOIN language AS l ON f.original_language_id = l.language_id",
+      "right": "SELECT film_id, title FROM film",
+      "witness": "real"
+    },
+    {
+      "id": "pg-fk-join-elimination-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-fk-join-elimination",
+      "drop": [
+        "fk:rental.inventory_id"
+      ],
+      "why": "without the foreign key a rental may name an inventory row that does not exist",
+      "left": "SELECT r.rental_id, r.rental_date FROM rental AS r JOIN inventory AS i ON r.inventory_id = i.inventory_id",
+      "right": "SELECT rental_id, rental_date FROM rental",
+      "witness": {
+        "rental": [
+          {
+            "rental_id": 1,
+            "inventory_id": 99
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-fk-join-elimination-without-key",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-fk-join-elimination",
+      "drop": [
+        "pk:inventory"
+      ],
+      "why": "without inventory's key two inventory rows may share an id, and the join repeats the rental",
+      "left": "SELECT r.rental_id, r.rental_date FROM rental AS r JOIN inventory AS i ON r.inventory_id = i.inventory_id",
+      "right": "SELECT rental_id, rental_date FROM rental",
+      "witness": {
+        "inventory": [
+          {
+            "inventory_id": 1,
+            "film_id": 1,
+            "store_id": 1
+          },
+          {
+            "inventory_id": 1,
+            "film_id": 2,
+            "store_id": 1
+          }
+        ],
+        "rental": [
+          {
+            "rental_id": 1,
+            "inventory_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-two-hop-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "rental.customer_id and customer.address_id are NOT NULL foreign keys to keys: both joins keep every rental exactly once",
+      "left": "SELECT r.rental_id FROM rental AS r JOIN customer AS c ON r.customer_id = c.customer_id JOIN address AS a ON c.address_id = a.address_id",
+      "right": "SELECT rental_id FROM rental"
+    },
+    {
+      "id": "pg-two-hop-join-elimination-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-two-hop-join-elimination",
+      "drop": [
+        "fk:customer.address_id"
+      ],
+      "why": "without the foreign key customer.address_id a customer may have an address that does not exist",
+      "left": "SELECT r.rental_id FROM rental AS r JOIN customer AS c ON r.customer_id = c.customer_id JOIN address AS a ON c.address_id = a.address_id",
+      "right": "SELECT rental_id FROM rental",
+      "witness": {
+        "customer": [
+          {
+            "customer_id": 1,
+            "address_id": 99
+          }
+        ],
+        "rental": [
+          {
+            "rental_id": 1,
+            "customer_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-nullable-fk-join-as-filter",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "film.original_language_id references language's key: a non-NULL value always finds exactly one language, a NULL finds none",
+      "left": "SELECT f.film_id FROM film AS f JOIN language AS l ON f.original_language_id = l.language_id",
+      "right": "SELECT film_id FROM film WHERE original_language_id IS NOT NULL"
+    },
+    {
+      "id": "pg-nullable-fk-join-as-filter-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-nullable-fk-join-as-filter",
+      "drop": [
+        "fk:film.original_language_id"
+      ],
+      "why": "without the foreign key a film may name an original language that does not exist",
+      "left": "SELECT f.film_id FROM film AS f JOIN language AS l ON f.original_language_id = l.language_id",
+      "right": "SELECT film_id FROM film WHERE original_language_id IS NOT NULL",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1,
+            "original_language_id": 99
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-left-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "address_id is address's key: the LEFT JOIN neither drops nor repeats a customer",
+      "left": "SELECT c.customer_id, c.last_name FROM customer AS c LEFT JOIN address AS a ON c.address_id = a.address_id",
+      "right": "SELECT customer_id, last_name FROM customer"
+    },
+    {
+      "id": "pg-left-join-elimination-not-unique",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-left-join-elimination",
+      "why": "inventory.film_id is not unique: a film with several copies is repeated by the LEFT JOIN",
+      "left": "SELECT f.film_id, f.title FROM film AS f LEFT JOIN inventory AS i ON i.film_id = f.film_id",
+      "right": "SELECT film_id, title FROM film",
+      "witness": "real"
+    },
+    {
+      "id": "pg-left-join-elimination-without-key",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-left-join-elimination",
+      "drop": [
+        "pk:address"
+      ],
+      "why": "without address's key two addresses may share an id, and the LEFT JOIN repeats the customer",
+      "left": "SELECT c.customer_id, c.last_name FROM customer AS c LEFT JOIN address AS a ON c.address_id = a.address_id",
+      "right": "SELECT customer_id, last_name FROM customer",
+      "witness": {
+        "address": [
+          {
+            "address_id": 1,
+            "address": "x",
+            "district": "d",
+            "city_id": 1,
+            "phone": "p"
+          },
+          {
+            "address_id": 1,
+            "address": "y",
+            "district": "d",
+            "city_id": 1,
+            "phone": "p"
+          }
+        ],
+        "customer": [
+          {
+            "customer_id": 1,
+            "address_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-composite-key-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "film_actor.actor_id is a NOT NULL foreign key to actor's key",
+      "left": "SELECT fa.film_id, fa.last_update FROM film_actor AS fa JOIN actor AS a ON fa.actor_id = a.actor_id",
+      "right": "SELECT film_id, last_update FROM film_actor"
+    },
+    {
+      "id": "pg-one-to-one-join",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "film_embedding.film_id is the table's key and a NOT NULL foreign key to film: every embedding joins exactly one film",
+      "left": "SELECT e.film_id, e.embedding FROM film_embedding AS e JOIN film AS f ON e.film_id = f.film_id",
+      "right": "SELECT film_id, embedding FROM film_embedding"
+    },
+    {
+      "id": "pg-one-to-one-join-wrong-side",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-one-to-one-join",
+      "why": "nothing requires a film to have an embedding: a film without one is dropped by the join (every film of the data has one)",
+      "left": "SELECT f.film_id, f.title FROM film AS f JOIN film_embedding AS e ON e.film_id = f.film_id",
+      "right": "SELECT film_id, title FROM film",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-payment-join-customer",
+      "category": "join elimination",
+      "label": "different",
+      "why": "payment declares no foreign key: upstream declares payment's customer, rental and staff keys on the first six of its 55 partitions only, so the table as a whole guarantees nothing (every payment of the data does have a customer)",
+      "left": "SELECT p.payment_id, p.amount FROM payment AS p JOIN customer AS c ON p.customer_id = c.customer_id",
+      "right": "SELECT payment_id, amount FROM payment",
+      "witness": {
+        "payment": [
+          {
+            "payment_id": 1,
+            "customer_id": 99,
+            "staff_id": 1,
+            "rental_id": 1,
+            "amount": 1.0,
+            "payment_date": "2022-07-01T00:00:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-self-join-on-key",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "film_id is film's key: joining a film to itself on it keeps every film once",
+      "left": "SELECT a.film_id, a.title FROM film AS a JOIN film AS b ON a.film_id = b.film_id",
+      "right": "SELECT film_id, title FROM film"
+    },
+    {
+      "id": "pg-self-join-on-key-without-key",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "pg-self-join-on-key",
+      "drop": [
+        "pk:film"
+      ],
+      "why": "without film's key two films may share an id, and the self join repeats them",
+      "left": "SELECT a.film_id, a.title FROM film AS a JOIN film AS b ON a.film_id = b.film_id",
+      "right": "SELECT film_id, title FROM film",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          },
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-distinct-on-key",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "film_id is film's key and is selected",
+      "left": "SELECT DISTINCT film_id, title FROM film",
+      "right": "SELECT film_id, title FROM film"
+    },
+    {
+      "id": "pg-distinct-on-key-without-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "pg-distinct-on-key",
+      "drop": [
+        "pk:film"
+      ],
+      "why": "without film's key two identical film rows may exist",
+      "left": "SELECT DISTINCT film_id, title FROM film",
+      "right": "SELECT film_id, title FROM film",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          },
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-distinct-not-on-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "why": "rating is not a key: many films share one",
+      "left": "SELECT DISTINCT rating FROM film",
+      "right": "SELECT rating FROM film",
+      "witness": "real"
+    },
+    {
+      "id": "pg-distinct-composite-key",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "(actor_id, film_id) is film_actor's key and both are selected",
+      "left": "SELECT DISTINCT actor_id, film_id FROM film_actor",
+      "right": "SELECT actor_id, film_id FROM film_actor"
+    },
+    {
+      "id": "pg-distinct-composite-key-part-of-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "pg-distinct-composite-key",
+      "why": "film_id alone is only part of the key: a film has several actors",
+      "left": "SELECT DISTINCT film_id FROM film_actor",
+      "right": "SELECT film_id FROM film_actor",
+      "witness": "real"
+    },
+    {
+      "id": "pg-distinct-after-key-join",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "the join is to address's key, so no customer is repeated, and customer_id is customer's key",
+      "left": "SELECT DISTINCT c.customer_id, c.last_name FROM customer AS c JOIN address AS a ON c.address_id = a.address_id",
+      "right": "SELECT c.customer_id, c.last_name FROM customer AS c JOIN address AS a ON c.address_id = a.address_id"
+    },
+    {
+      "id": "pg-distinct-after-key-join-fan-out",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "pg-distinct-after-key-join",
+      "why": "rental.customer_id is not unique: the join repeats a customer once per rental",
+      "left": "SELECT DISTINCT c.customer_id FROM customer AS c JOIN rental AS r ON r.customer_id = c.customer_id",
+      "right": "SELECT c.customer_id FROM customer AS c JOIN rental AS r ON r.customer_id = c.customer_id",
+      "witness": "real"
+    },
+    {
+      "id": "pg-distinct-payment-composite-key",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "(payment_date, payment_id) is payment's declared key and both are selected",
+      "left": "SELECT DISTINCT payment_date, payment_id, amount FROM payment",
+      "right": "SELECT payment_date, payment_id, amount FROM payment"
+    },
+    {
+      "id": "pg-distinct-payment-composite-key-id-alone",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "pg-distinct-payment-composite-key",
+      "why": "payment_id alone is not a declared key (the key is (payment_date, payment_id)): two payments may share an id and an amount; no payment of the data does",
+      "left": "SELECT DISTINCT payment_id, amount FROM payment",
+      "right": "SELECT payment_id, amount FROM payment",
+      "witness": {
+        "payment": [
+          {
+            "payment_id": 1,
+            "customer_id": 1,
+            "staff_id": 1,
+            "rental_id": 1,
+            "amount": 1.0,
+            "payment_date": "2022-01-01T00:00:00"
+          },
+          {
+            "payment_id": 1,
+            "customer_id": 1,
+            "staff_id": 1,
+            "rental_id": 1,
+            "amount": 1.0,
+            "payment_date": "2022-01-02T00:00:00"
+          }
+        ]
+      },
+      "known_prover_bug": "bounded checker: a DATETIME model value is clamped to 0001-01-01 on extraction (bounded_equivalence._model_value), so two payments with different payment_date come out with the same composite key and the counterexample violates it"
+    },
+    {
+      "id": "pg-count-not-null-column",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "rental.rental_date is NOT NULL, so COUNT(rental_date) counts every row",
+      "left": "SELECT COUNT(rental_date) FROM rental",
+      "right": "SELECT COUNT(*) FROM rental"
+    },
+    {
+      "id": "pg-count-nullable-column",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "pg-count-not-null-column",
+      "why": "rental.return_date is NULL for rentals still out",
+      "left": "SELECT COUNT(return_date) FROM rental",
+      "right": "SELECT COUNT(*) FROM rental",
+      "witness": "real"
+    },
+    {
+      "id": "pg-group-by-dependent-column",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "store_id depends on customer_id, customer's key",
+      "left": "SELECT c.customer_id, c.last_name, COUNT(*) AS n FROM customer AS c JOIN rental AS r ON r.customer_id = c.customer_id GROUP BY c.customer_id, c.last_name, c.store_id",
+      "right": "SELECT c.customer_id, c.last_name, COUNT(*) AS n FROM customer AS c JOIN rental AS r ON r.customer_id = c.customer_id GROUP BY c.customer_id, c.last_name"
+    },
+    {
+      "id": "pg-group-by-independent-column",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "pg-group-by-dependent-column",
+      "why": "a customer's rentals are handled by several staff members, so grouping by staff_id too splits the count",
+      "left": "SELECT r.customer_id, COUNT(*) AS n FROM rental AS r GROUP BY r.customer_id, r.staff_id",
+      "right": "SELECT r.customer_id, COUNT(*) AS n FROM rental AS r GROUP BY r.customer_id",
+      "witness": "real"
+    },
+    {
+      "id": "pg-count-distinct-key",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "customer_id is customer's key",
+      "left": "SELECT COUNT(DISTINCT customer_id) FROM customer",
+      "right": "SELECT COUNT(*) FROM customer"
+    },
+    {
+      "id": "pg-count-distinct-key-non-key",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "pg-count-distinct-key",
+      "why": "a customer has many rentals",
+      "left": "SELECT COUNT(DISTINCT customer_id) FROM rental",
+      "right": "SELECT COUNT(*) FROM rental",
+      "witness": "real"
+    },
+    {
+      "id": "pg-count-distinct-key-payment-id",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "pg-count-distinct-key",
+      "why": "payment_id alone is not a declared key: two payments may share an id (none do in the data)",
+      "left": "SELECT COUNT(DISTINCT payment_id) FROM payment",
+      "right": "SELECT COUNT(*) FROM payment",
+      "witness": {
+        "payment": [
+          {
+            "payment_id": 1,
+            "customer_id": 1,
+            "staff_id": 1,
+            "rental_id": 1,
+            "amount": 1.0,
+            "payment_date": "2022-01-01T00:00:00"
+          },
+          {
+            "payment_id": 1,
+            "customer_id": 1,
+            "staff_id": 1,
+            "rental_id": 1,
+            "amount": 1.0,
+            "payment_date": "2022-01-02T00:00:00"
+          }
+        ]
+      },
+      "known_prover_bug": "bounded checker: a DATETIME model value is clamped to 0001-01-01 on extraction (bounded_equivalence._model_value), so two payments with different payment_date come out with the same composite key and the counterexample violates it"
+    },
+    {
+      "id": "pg-having-on-group-key",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "a condition on the group key can filter before grouping",
+      "left": "SELECT rating, COUNT(*) AS n FROM film GROUP BY rating HAVING rating <> 'G'",
+      "right": "SELECT rating, COUNT(*) AS n FROM film WHERE rating <> 'G' GROUP BY rating"
+    },
+    {
+      "id": "pg-filter-vs-conditional-count",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "pg-having-on-group-key",
+      "why": "a group with no matching row disappears from the first query and counts 0 in the second",
+      "left": "SELECT rating, COUNT(*) AS n FROM film WHERE length > 100 GROUP BY rating",
+      "right": "SELECT rating, COUNTIF(length > 100) AS n FROM film GROUP BY rating",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1,
+            "rating": "G",
+            "length": 50
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-filter-pushdown-through-group",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "a filter on the grouping column commutes with GROUP BY",
+      "left": "SELECT * FROM (SELECT customer_id, COUNT(*) AS n FROM rental GROUP BY customer_id) WHERE customer_id = 1",
+      "right": "SELECT customer_id, COUNT(*) AS n FROM rental WHERE customer_id = 1 GROUP BY customer_id"
+    },
+    {
+      "id": "pg-left-join-count-as-subquery",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "film_id is film's key: grouping the LEFT JOIN by it counts each film's copies once, as the correlated subquery does",
+      "left": "SELECT f.film_id, COUNT(i.inventory_id) AS copies FROM film AS f LEFT JOIN inventory AS i ON i.film_id = f.film_id GROUP BY f.film_id",
+      "right": "SELECT f.film_id, (SELECT COUNT(*) FROM inventory AS i WHERE i.film_id = f.film_id) AS copies FROM film AS f"
+    },
+    {
+      "id": "pg-left-join-count-as-subquery-without-key",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "pg-left-join-count-as-subquery",
+      "drop": [
+        "pk:film"
+      ],
+      "why": "without film's key two films may share an id: grouping merges them, the subquery does not",
+      "left": "SELECT f.film_id, COUNT(i.inventory_id) AS copies FROM film AS f LEFT JOIN inventory AS i ON i.film_id = f.film_id GROUP BY f.film_id",
+      "right": "SELECT f.film_id, (SELECT COUNT(*) FROM inventory AS i WHERE i.film_id = f.film_id) AS copies FROM film AS f",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          },
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-in-to-exists",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "IN and a correlated EXISTS agree",
+      "left": "SELECT customer_id FROM customer WHERE customer_id IN (SELECT customer_id FROM payment WHERE amount > 10)",
+      "right": "SELECT c.customer_id FROM customer AS c WHERE EXISTS (SELECT 1 FROM payment AS p WHERE p.customer_id = c.customer_id AND p.amount > 10)"
+    },
+    {
+      "id": "pg-in-to-join-fan-out",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "pg-in-to-exists",
+      "why": "a customer with several payments over 5 is repeated by the join",
+      "left": "SELECT c.customer_id FROM customer AS c JOIN payment AS p ON p.customer_id = c.customer_id WHERE p.amount > 5",
+      "right": "SELECT customer_id FROM customer WHERE customer_id IN (SELECT customer_id FROM payment WHERE amount > 5)",
+      "witness": "real"
+    },
+    {
+      "id": "pg-in-to-join-on-key",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "film_id is film's key: the join cannot repeat an inventory row",
+      "left": "SELECT i.inventory_id FROM inventory AS i WHERE i.film_id IN (SELECT film_id FROM film WHERE rating = 'R')",
+      "right": "SELECT i.inventory_id FROM inventory AS i JOIN film AS f ON f.film_id = i.film_id WHERE f.rating = 'R'"
+    },
+    {
+      "id": "pg-in-to-join-on-key-without-key",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "pg-in-to-join-on-key",
+      "drop": [
+        "pk:film"
+      ],
+      "why": "without film's key two films may share an id, and the join repeats the inventory row",
+      "left": "SELECT i.inventory_id FROM inventory AS i WHERE i.film_id IN (SELECT film_id FROM film WHERE rating = 'R')",
+      "right": "SELECT i.inventory_id FROM inventory AS i JOIN film AS f ON f.film_id = i.film_id WHERE f.rating = 'R'",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1,
+            "rating": "R"
+          },
+          {
+            "film_id": 1,
+            "title": "b",
+            "language_id": 1,
+            "rating": "R"
+          }
+        ],
+        "inventory": [
+          {
+            "inventory_id": 1,
+            "film_id": 1,
+            "store_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-not-in-to-not-exists",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "inventory.film_id is NOT NULL, so NOT IN and NOT EXISTS agree",
+      "left": "SELECT film_id FROM film WHERE film_id NOT IN (SELECT film_id FROM inventory)",
+      "right": "SELECT f.film_id FROM film AS f WHERE NOT EXISTS (SELECT 1 FROM inventory AS i WHERE i.film_id = f.film_id)"
+    },
+    {
+      "id": "pg-not-in-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "pg-not-in-to-not-exists",
+      "why": "film.original_language_id is NULL in every film, so NOT IN returns no row while NOT EXISTS returns every language",
+      "left": "SELECT language_id FROM language WHERE language_id NOT IN (SELECT original_language_id FROM film)",
+      "right": "SELECT l.language_id FROM language AS l WHERE NOT EXISTS (SELECT 1 FROM film AS f WHERE f.original_language_id = l.language_id)",
+      "witness": "real"
+    },
+    {
+      "id": "pg-not-in-to-not-exists-without-not-null",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "pg-not-in-to-not-exists",
+      "drop": [
+        "not_null:inventory.film_id"
+      ],
+      "why": "without the NOT NULL a NULL film_id in inventory makes NOT IN return no row",
+      "left": "SELECT film_id FROM film WHERE film_id NOT IN (SELECT film_id FROM inventory)",
+      "right": "SELECT f.film_id FROM film AS f WHERE NOT EXISTS (SELECT 1 FROM inventory AS i WHERE i.film_id = f.film_id)",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1
+          }
+        ],
+        "inventory": [
+          {
+            "inventory_id": 1,
+            "film_id": null,
+            "store_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-union-all-vs-distinct",
+      "category": "set operation",
+      "label": "different",
+      "why": "UNION ALL keeps the duplicates UNION DISTINCT removes",
+      "left": "SELECT customer_id FROM rental UNION ALL SELECT customer_id FROM payment",
+      "right": "SELECT customer_id FROM rental UNION DISTINCT SELECT customer_id FROM payment",
+      "witness": "real"
+    },
+    {
+      "id": "pg-union-all-of-complementary-filters",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "film.rental_duration is NOT NULL, so every film satisfies exactly one of the two filters",
+      "left": "SELECT film_id FROM film WHERE rental_duration > 4 UNION ALL SELECT film_id FROM film WHERE rental_duration <= 4",
+      "right": "SELECT film_id FROM film"
+    },
+    {
+      "id": "pg-union-all-of-complementary-filters-nullable",
+      "category": "set operation",
+      "label": "different",
+      "sibling": "pg-union-all-of-complementary-filters",
+      "why": "film.length may be NULL: such a film satisfies neither filter (no film of the data has a NULL length)",
+      "left": "SELECT film_id FROM film WHERE length > 100 UNION ALL SELECT film_id FROM film WHERE length <= 100",
+      "right": "SELECT film_id FROM film",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1,
+            "length": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-intersect-to-in-on-not-null",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "rental.customer_id and payment.customer_id are NOT NULL",
+      "left": "SELECT customer_id FROM rental INTERSECT DISTINCT SELECT customer_id FROM payment",
+      "right": "SELECT DISTINCT r.customer_id FROM rental AS r WHERE r.customer_id IN (SELECT customer_id FROM payment)"
+    },
+    {
+      "id": "pg-intersect-to-in-on-not-null-nullable",
+      "category": "set operation",
+      "label": "different",
+      "sibling": "pg-intersect-to-in-on-not-null",
+      "why": "INTERSECT matches NULLs, IN does not: a NULL email in both tables is returned by the first query only",
+      "left": "SELECT email FROM customer INTERSECT DISTINCT SELECT email FROM staff",
+      "right": "SELECT DISTINCT c.email FROM customer AS c WHERE c.email IN (SELECT email FROM staff)",
+      "witness": {
+        "customer": [
+          {
+            "customer_id": 1,
+            "email": null
+          }
+        ],
+        "staff": [
+          {
+            "staff_id": 1,
+            "email": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-outer-to-inner-join",
+      "category": "outer join",
+      "label": "equivalent",
+      "why": "the WHERE condition rejects the NULL-padded rows of the LEFT JOIN",
+      "left": "SELECT r.rental_id, p.amount FROM rental AS r LEFT JOIN payment AS p ON p.rental_id = r.rental_id WHERE p.amount > 5",
+      "right": "SELECT r.rental_id, p.amount FROM rental AS r JOIN payment AS p ON p.rental_id = r.rental_id WHERE p.amount > 5"
+    },
+    {
+      "id": "pg-outer-to-inner-join-null-accepting",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "pg-outer-to-inner-join",
+      "why": "the condition accepts NULL: rentals without a payment survive the LEFT JOIN only",
+      "left": "SELECT r.rental_id, p.amount FROM rental AS r LEFT JOIN payment AS p ON p.rental_id = r.rental_id WHERE p.amount > 5 OR p.amount IS NULL",
+      "right": "SELECT r.rental_id, p.amount FROM rental AS r JOIN payment AS p ON p.rental_id = r.rental_id WHERE p.amount > 5 OR p.amount IS NULL",
+      "witness": "real"
+    },
+    {
+      "id": "pg-is-null-on-not-null",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "customer.address_id is NOT NULL",
+      "left": "SELECT customer_id FROM customer WHERE address_id IS NULL",
+      "right": "SELECT customer_id FROM customer WHERE FALSE"
+    },
+    {
+      "id": "pg-is-null-on-not-null-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "pg-is-null-on-not-null",
+      "why": "customer.email may be NULL (no customer of the data has a NULL email)",
+      "left": "SELECT customer_id FROM customer WHERE email IS NULL",
+      "right": "SELECT customer_id FROM customer WHERE FALSE",
+      "witness": {
+        "customer": [
+          {
+            "customer_id": 1,
+            "email": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-coalesce-on-not-null",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "actor.first_name is NOT NULL",
+      "left": "SELECT actor_id, COALESCE(first_name, 'x') AS first_name FROM actor",
+      "right": "SELECT actor_id, first_name FROM actor"
+    },
+    {
+      "id": "pg-coalesce-on-not-null-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "pg-coalesce-on-not-null",
+      "why": "address.address2 is NULL for some addresses",
+      "left": "SELECT address_id, COALESCE(address2, 'x') AS address2 FROM address",
+      "right": "SELECT address_id, address2 FROM address",
+      "witness": "real"
+    },
+    {
+      "id": "pg-negated-comparison",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "film.rental_duration is NOT NULL",
+      "left": "SELECT film_id FROM film WHERE NOT (rental_duration = 3)",
+      "right": "SELECT film_id FROM film WHERE rental_duration <> 3"
+    },
+    {
+      "id": "pg-negated-comparison-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "pg-negated-comparison",
+      "why": "film.length may be NULL: NOT (NULL = 100) is NULL, so the film is dropped by the first query and kept by the second (no film of the data has a NULL length)",
+      "left": "SELECT film_id FROM film WHERE NOT (length = 100)",
+      "right": "SELECT film_id FROM film WHERE length <> 100 OR length IS NULL",
+      "witness": {
+        "film": [
+          {
+            "film_id": 1,
+            "title": "a",
+            "language_id": 1,
+            "length": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "pg-window-filter-on-partition-key",
+      "category": "window",
+      "label": "equivalent",
+      "why": "a filter on the PARTITION BY column commutes with the window",
+      "left": "SELECT film_id, rating, r FROM (SELECT film_id, rating, RANK() OVER (PARTITION BY rating ORDER BY length) AS r FROM film) WHERE rating = 'PG'",
+      "right": "SELECT film_id, rating, RANK() OVER (PARTITION BY rating ORDER BY length) AS r FROM film WHERE rating = 'PG'"
+    },
+    {
+      "id": "pg-window-filter-on-other-column",
+      "category": "window",
+      "label": "different",
+      "sibling": "pg-window-filter-on-partition-key",
+      "why": "a filter on another column changes the ranks",
+      "left": "SELECT film_id, rating, r FROM (SELECT film_id, rating, length, RANK() OVER (PARTITION BY rating ORDER BY length) AS r FROM film) WHERE length > 100",
+      "right": "SELECT film_id, rating, RANK() OVER (PARTITION BY rating ORDER BY length) AS r FROM film WHERE length > 100",
+      "witness": "real"
+    }
+  ]
+}

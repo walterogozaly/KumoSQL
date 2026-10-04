@@ -6,6 +6,8 @@ Bounded verification asks: do these queries agree on every database with at most
 
 At a bound of 3, each table can have zero, one, two, or three rows. Z3 reasons about symbolic cell values and NULLs, rather than trying only a few randomly chosen values.
 
+Columns keep to the values they can really hold: a `DATE` stays between year 1 and year 9999 and a `NUMERIC(10, 2)` keeps two decimals, so a counterexample never needs a date or number the database could not store. See the [full reference](../../docs/evals/bounded-verification.md) for the details.
+
 ## Read the result
 
 - **Bounded, 3 rows** means no difference exists within that model and row limit. It says nothing about larger databases.
