@@ -2163,6 +2163,22 @@ _POSITIONED: dict[type, type] = {}
 _POSITIONED_NODES = tuple(getattr(exp, name) for name in ("Identifier", "Literal", "ByteString", "RawString") if hasattr(exp, name))
 
 
+def _as_the_provers_read(tree: exp.Expression, fam: str | None) -> exp.Expression:
+    """``tree`` as the provers read it: ``check_modeled`` re-reads an ``IS`` test after a comparison (``a = b IS TRUE``)
+    as ``(a = b) IS TRUE``, which MySQL, PostgreSQL and DuckDB do too, so the check compares that tree with the
+    independent reading. GoogleSQL has no such reading (it rejects the text), so BigQuery's tree is left as sqlglot made
+    it and the independent reader reports the text. A text the repair declines is declined by the provers as well."""
+
+    if fam in (None, "bigquery"):
+        return tree
+    from .ast_utils import UnmodeledConstruct, read_is_after_comparison
+
+    try:
+        return read_is_after_comparison(tree)
+    except UnmodeledConstruct:
+        return tree
+
+
 def _check(sql: str, dialect: str, mutate=None) -> ParseCheck:
     """:func:`check_query` without the cache. ``mutate`` (fault injection, ``tests/test_parse_check_faults.py``)
     receives the trees sqlglot read and returns the trees to compare, standing in for a misreading parser."""
@@ -2189,7 +2205,7 @@ def _check(sql: str, dialect: str, mutate=None) -> ParseCheck:
         engine = Dialect.get_or_raise(dialect)
         with quiet_parser():
             theirs = engine.tokenize(sql)
-            trees = [canonical_negation(t) for t in _positioned_parser(engine).parse(theirs, sql) if t is not None]
+            trees = [_as_the_provers_read(canonical_negation(t), fam) for t in _positioned_parser(engine).parse(theirs, sql) if t is not None]
         if mutate is not None:
             trees = mutate(trees)
     except Exception as error:  # sqlglot raises more than its own errors on some inputs
@@ -2313,6 +2329,19 @@ def _undo_div_cast(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _undo_null_safe_not_equal(tree: exp.Expression) -> exp.Expression:
+    """Read ``NOT a <=> b``, which is how sqlglot prints ``a IS DISTINCT FROM b`` for MySQL, as ``a IS DISTINCT FROM b`` again."""
+
+    for node in list(tree.find_all(exp.Not)):
+        inner = node.this
+        if isinstance(inner, exp.NullSafeEQ):
+            distinct = exp.NullSafeNEQ(this=inner.this, expression=inner.expression)
+            if node is tree:
+                return distinct
+            node.replace(distinct)
+    return tree
+
+
 def _skeleton(node: object) -> object:
     """The grouping of operators in ``node``: ``(class, (operand, ...))``, a plain operand being ``"_"``."""
 
@@ -2362,7 +2391,9 @@ def round_trip(sql: str, dialect: str = "bigquery") -> str | None:
     except Exception:  # nothing was read, so nothing can be proved about it
         return None
     for tree in trees:
-        tree = canonical_negation(tree)
+        tree = _as_the_provers_read(canonical_negation(tree), family(dialect))
+        if family(dialect) in ("googlesql", "mysql") and any(d.args.get("on") for d in tree.find_all(exp.Distinct)):
+            continue  # neither has DISTINCT ON: sqlglot prints a window-function emulation, a different tree by design
         if family(dialect) == "mysql" and (
             any(str(j.args.get("side") or "").upper() == "FULL" or str(j.args.get("kind") or "").upper() in ("ANTI", "SEMI") for j in tree.find_all(exp.Join))
             or any(o.args.get("nulls_first") is not None and o.args.get("nulls_first") == bool(o.args.get("desc")) for o in tree.find_all(exp.Ordered))
@@ -2371,11 +2402,11 @@ def round_trip(sql: str, dialect: str = "bigquery") -> str | None:
         try:
             with quiet_parser():
                 text = tree.sql(dialect=dialect)
-                back = canonical_negation(sqlglot.parse_one(text, read=dialect))
+                back = _as_the_provers_read(canonical_negation(sqlglot.parse_one(text, read=dialect)), family(dialect))
         except Exception:
             return f"sqlglot cannot read back its own {dialect} SQL"
         if family(dialect) == "mysql":
-            tree, back = _undo_div_cast(tree), _undo_div_cast(back)
+            tree, back = _undo_null_safe_not_equal(_undo_div_cast(tree)), _undo_null_safe_not_equal(_undo_div_cast(back))
         if _skeleton(back) != _skeleton(tree):
             return f"sqlglot reads its own {dialect} SQL back with different operator grouping"
     return None

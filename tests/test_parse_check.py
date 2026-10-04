@@ -34,11 +34,9 @@ MISREADS = [
     ("mysql", "SELECT a FROM t WHERE a XOR b AND c", "(a) XOR (b AND c)"),
     ("mysql", "SELECT a FROM t WHERE !a = b", "NOT (a)"),
     ("mysql", "SELECT 1 AND !2 IS NULL", "NOT (2)"),
-    ("mysql", "SELECT NULL > 2 % 3 IS NULL", "IS (NULL)"),
     # PostgreSQL gram.y, as DuckDB builds on it
     ("postgres", "SELECT 1 UNION SELECT 2 INTERSECT SELECT 3", "UNION (SELECT 2 INTERSECT SELECT 3)"),
     ("duckdb", "SELECT ~1 + 1", "~ (1 + 1)"),
-    ("postgres", "SELECT a FROM t WHERE a = b IS NULL", "(a = b) IS (NULL)"),
     ("postgres", "SELECT 'a' 'b'", "adjacent strings"),
     ("duckdb", "SELECT 1 | NOT 1", "rejects NOT"),
 ]
@@ -302,3 +300,25 @@ def test_a_number_with_a_leading_dot_is_one_token(dialect):
     # sqlglot's MySQL tokenizer reads ``.49`` as a dot and a number and the parser joins them; that is not a misread
     for sql in ("SELECT 1 - .49", "SELECT ROUND(SALARY * (1 - .49), 0) FROM s", "SELECT x * .5 FROM t"):
         assert pc.check_query(sql, dialect).status == "agree", (dialect, sql)
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "postgres", "duckdb"])
+def test_an_is_test_after_a_comparison_is_compared_as_the_provers_read_it(dialect):
+    # ``ast_utils.check_modeled`` re-reads ``a = b IS NULL`` as ``(a = b) IS NULL``, as these engines do, so the check
+    # compares that tree with the independent reading; sqlglot's own tree would be a disagreement
+    for sql in ("SELECT a FROM t WHERE a = b IS NULL", "SELECT NULL > 2 % 3 IS NULL"):
+        assert pc.check_query(sql, dialect).status == "agree", (dialect, sql)
+
+
+def test_bigquery_rejects_an_is_test_after_a_comparison():
+    # GoogleSQL has no such reading, so the repair does not apply and the text stays a disagreement
+    check = pc.check_query("SELECT a FROM t WHERE a > 10 IS TRUE", "bigquery")
+    assert check.status == "disagree", check
+    assert pc.check_query("SELECT a FROM t WHERE (a > 10) IS TRUE", "bigquery").status == "agree"
+
+
+def test_round_trip_exempts_a_distinct_on_and_a_null_safe_not_equal():
+    # sqlglot prints DISTINCT ON as a window emulation in MySQL and BigQuery, and IS DISTINCT FROM as NOT a <=> b in MySQL
+    assert pc.round_trip("SELECT DISTINCT ON (x) y FROM t ORDER BY x, y", "mysql") is None
+    assert pc.round_trip("SELECT DISTINCT ON (x) y FROM t ORDER BY x, y", "bigquery") is None
+    assert pc.round_trip("SELECT * FROM s WHERE (a = b) IS DISTINCT FROM c", "mysql") is None
