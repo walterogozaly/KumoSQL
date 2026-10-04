@@ -50,7 +50,7 @@ from .lineage_soundness import (
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
-from .ast_utils import EXCEPT_KEY, is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
+from .ast_utils import EXCEPT_KEY, binding_cte, is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -974,13 +974,12 @@ def _script_tables(query: exp.Expression | None, analysis: ScriptAnalysis) -> tu
     tables: list[exp.Table] = []
     seen: set[str] = set()
     if query is not None:
-        cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
         opaque = analysis.opaque_temps
         for table in query.find_all(exp.Table):
             if is_function_table(table):
                 continue  # a table function call: the function is not a table (what it is given is read as a table)
-            if not table.db and table.name.lower() in cte_names:
-                continue
+            if binding_cte(table) is not None:
+                continue  # a WITH table in scope here (a nested ``WITH t`` does not hide a read of the model t elsewhere)
             if not table.db and not table.catalog and table.name.lower() in opaque:
                 continue  # a temporary table the script defines; its sources are in ``analysis``
             tables.append(table)

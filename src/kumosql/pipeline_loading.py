@@ -232,6 +232,40 @@ def _blank_strings(text: str) -> str:
     return _ANY_STRING_RE.sub(lambda m: m.group(1) + " " * len(m.group(2)) + m.group(1), text)
 
 
+# Top-level config keys @dataform/cli 3.0.71 accepts, by action type: every key it did not reject as "Unexpected property"
+# when each was tried alone on a minimal project of that type (a key it rejects for its value, as with `protected: false` on a table,
+# is still a known key).
+_COMMON_CONFIG_KEYS = frozenset(['additionalOptions', 'assertions', 'bigquery', 'columns', 'database', 'dataset', 'dependOnDependencyAssertions', 'dependencies', 'dependencyTargets', 'description', 'disabled', 'filename', 'hermetic', 'iceberg', 'incrementalPredicates', 'labels', 'metadata', 'name', 'preserveGovernanceControls', 'project', 'protected', 'requirePartitionFilter', 'schema', 'tags', 'type'])
+_CONFIG_KEYS = {
+    "table": _COMMON_CONFIG_KEYS | frozenset(['clusterBy', 'fileName', 'partitionBy', 'partitionExpirationDays', 'reservation']),
+    "view": _COMMON_CONFIG_KEYS | frozenset(['clusterBy', 'fileName', 'materialized', 'partitionBy', 'reservation']),
+    "incremental": _COMMON_CONFIG_KEYS | frozenset(['clusterBy', 'fileName', 'incrementalStrategy', 'onSchemaChange', 'partitionBy', 'partitionExpirationDays', 'reservation', 'uniqueKey', 'updatePartitionFilter']),
+    "assertion": _COMMON_CONFIG_KEYS | frozenset(['fileName', 'reservation']),
+    "operations": _COMMON_CONFIG_KEYS | frozenset(['fileName', 'hasOutput', 'reservation']),
+    "declaration": _COMMON_CONFIG_KEYS | frozenset([]),
+}
+_CONFIG_KEYS["test"] = _CONFIG_KEYS["table"]
+_ACTION_TYPES = frozenset(_CONFIG_KEYS)
+_CONFIG_KEY_RE = re.compile(r"(?:^|[{,])\s*([A-Za-z_$][\w$]*)\s*:")
+
+
+def _config_problems(config: str, declared_type: str | None) -> list[str]:
+    """What Dataform's compiler rejects in a config block, read without running it: an unrecognized action ``type``, or
+    a top-level key the action's type does not accept (``bigqueryPolicy``, ``uniqueKey`` on a table, ``partitionBy`` on an
+    assertion). A missing type is a table; the caller skips a computed type, since the accepted keys then depend on it."""
+
+    if not config:
+        return []
+    if declared_type is not None and declared_type not in _ACTION_TYPES:
+        return [f"type {declared_type!r} is not an action type Dataform recognizes"]
+    allowed = _CONFIG_KEYS[declared_type or "table"]
+    problems = []
+    for key in dict.fromkeys(_CONFIG_KEY_RE.findall(_blank_strings(_top_level(config)))):
+        if key not in allowed:
+            problems.append(f"config key {key!r} is not accepted for type {declared_type or 'table'!r}")
+    return problems
+
+
 def _column_reads(config: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """``(words, unread keys)`` for the config values that read the table's own columns.
 
@@ -685,6 +719,105 @@ def js_declared_targets(
     return declared, actions, complete
 
 
+_JS_TEMPLATE_RE = re.compile(r"""\s*(['"`])((?:(?!\1)[^\\])*)\1\s*""", re.S)
+_JS_ARROW_RE = re.compile(r"""\s*(?:\(\s*\w*\s*\)|\w+)\s*=>\s*(?P<body>.*)""", re.S)
+_JS_FUNCTION_RE = re.compile(r"""\s*function\s*\w*\s*\(\s*\w*\s*\)\s*\{\s*return\s+(?P<body>.*?);?\s*\}\s*""", re.S)
+_JS_BLOCK_ARROW_RE = re.compile(r"""\s*(?:\(\s*\w*\s*\)|\w+)\s*=>\s*\{\s*return\s+(?P<body>.*?);?\s*\}\s*""", re.S)
+
+
+def _js_query_text(argument: str) -> str | None:
+    """The SQL of a ``.query()`` argument written out in the file: a string or template literal, or a function of ``ctx``
+    that returns one. ``None`` for anything computed (a call, a concatenation, an escape sequence)."""
+
+    argument = argument.strip()
+    for pattern in (_JS_BLOCK_ARROW_RE, _JS_FUNCTION_RE, _JS_ARROW_RE):
+        found = pattern.fullmatch(argument)
+        if found:
+            argument = found.group("body").strip()
+            break
+    literal = _JS_TEMPLATE_RE.fullmatch(argument)
+    if literal is None:
+        return None
+    quote, body = literal.group(1), literal.group(2)
+    if quote != "`" and "${" in body:
+        return None  # not an interpolation in a plain string
+    return body
+
+
+def _js_depth_at(text: str, position: int) -> int:
+    """Bracket depth at ``position``, skipping strings and comments: 0 at the top level of the file."""
+
+    depth, quote, index = 0, "", 0
+    while index < position:
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif text.startswith("//", index):
+            index = text.find("\n", index)
+            if index < 0:
+                break
+        elif text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            index = len(text) if end < 0 else end + 1
+        elif char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        index += 1
+    return depth
+
+
+def js_published_assets(text: str) -> list[tuple[str, str]]:
+    """``(name, sqlx)`` for each top-level ``publish("name", {config}).query(...)`` in a JavaScript file whose query is
+    written out as a literal, as the SQLX Dataform would read from a ``.sqlx`` file with the same config and body.
+
+    Only a literal name, a literal config object and a literal query count; a publish inside a function or loop, a
+    computed query and chained calls other than ``query`` and ``config`` are left to the declaration scan, which
+    reports the names it cannot read.
+    """
+
+    found: list[tuple[str, str]] = []
+    for match in _JS_CALL_RE.finditer(text):
+        if match.group(1) != "publish" or _js_depth_at(text, match.start()) != 0:
+            continue
+        opening = match.end() - 1
+        arguments = _split_top_level(_call_arguments(text, opening))
+        name = _js_string(arguments[0]) if arguments else None
+        if name is None or len(arguments) > 3:
+            continue
+        config, query = "", None
+        for argument in arguments[1:]:
+            if argument.startswith("{"):
+                config = argument
+            else:
+                query = _js_query_text(argument)
+        end = opening + len(_call_arguments(text, opening)) + 2
+        chained = True
+        while chained and (call := re.match(r"\s*\.\s*(query|config)\s*\(", text[end:])):
+            inner_open = end + call.end() - 1
+            inner = _call_arguments(text, inner_open)
+            if call.group(1) == "query":
+                query = _js_query_text(inner)
+            elif inner.strip().startswith("{"):
+                config = inner.strip()
+            else:
+                chained = False
+            end = inner_open + len(inner) + 2
+        if query is None:
+            continue
+        body = config.strip()[1:-1] if config.strip().startswith("{") else ""
+        if _config_literal("config { " + body + " }", "name") != (None, False):
+            continue  # a name in the config object as well as the argument: not read
+        sqlx = "config { " + (body.strip().rstrip(",") + ", " if body.strip() else "") + f"name: {json.dumps(name)} }}\n{query}\n"
+        found.append((name, sqlx))
+    return found
+
+
 _PLAIN_STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""", re.S)
 
 
@@ -840,8 +973,11 @@ def load_sqlx_project(
         if text is None:
             diagnostics.append(PipelineDiagnostic(relative, "read_error", f"{reason}; asset was skipped"))
             return None
-        if path.suffix == ".sql" and not _SQLX_CONFIG_RE.search(text):
-            target = Target(name=path.stem)
+        return read_text_asset(relative, path.stem, path.suffix, text)
+
+    def read_text_asset(relative: str, stem: str, suffix: str, text: str):
+        if suffix == ".sql" and not _SQLX_CONFIG_RE.search(text):
+            target = Target(name=stem)
             add_model(Model(target, "sql", text, relative))
             return None
         try:
@@ -855,6 +991,8 @@ def load_sqlx_project(
         )
         declared_type, computed_type = _config_literal(config, "type")
         kind = declared_type or ("unknown" if computed_type else "table")
+        for problem in () if computed_type else _config_problems(config, declared_type):
+            diagnostics.append(PipelineDiagnostic(relative, "invalid_config", f"{problem}, so Dataform rejects the project"))
         identity, computed_identity = {}, []
         for key in ("database", "schema", "name"):
             identity[key], computed = _config_identity(config, key, database, dataset, naming.variables)
@@ -863,7 +1001,7 @@ def load_sqlx_project(
         logical = Target(
             identity["database"] or database,
             identity["schema"] or (assertion_dataset if kind == "assertion" else dataset),
-            identity["name"] or path.stem,
+            identity["name"] or stem,
         )
         # Declarations name an existing table: the project's prefix and suffix settings leave them alone.
         target = logical if kind == "declaration" else naming.apply(logical)
@@ -881,7 +1019,8 @@ def load_sqlx_project(
                 nonlocal computed_identities
                 computed_identities = True
         if "name" not in computed_identity:
-            known.setdefault(logical.name, []).append(target)
+            if target not in known.setdefault(logical.name, []):  # a JavaScript publish already listed it
+                known[logical.name].append(target)
             if target != logical:
                 renamed[target] = (logical.database, logical.schema, logical.name)
         if computed_type:
@@ -1028,7 +1167,8 @@ def load_sqlx_project(
             sources[target.key] = target
         for target in actions:
             final = naming.apply(target)
-            known.setdefault(target.name, []).append(final)
+            if final not in known.setdefault(target.name, []):
+                known[target.name].append(final)
             if final != target:
                 renamed[final] = (target.database, target.schema, target.name)
         if not complete:
@@ -1070,6 +1210,18 @@ def load_sqlx_project(
             continue
         if asset is not None:
             pending.append(asset)
+    for relative_js, text in js_files.items():
+        if use_definitions and not relative_js.startswith("definitions/"):
+            continue  # includes are required by definitions, not run as definitions
+        if not _JS_CALL_RE.search(text):
+            continue
+        try:
+            for name, sqlx in js_published_assets(text):
+                asset = read_text_asset(relative_js, name, ".sqlx", sqlx)
+                if asset is not None:
+                    pending.append(asset)
+        except Exception as exc:  # noqa: BLE001 - one odd file must not fail the whole project
+            unreadable(relative_js, exc)
     known_targets.update(target for targets in known.values() for target in targets)
     for asset in pending:
         try:
