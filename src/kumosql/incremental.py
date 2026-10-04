@@ -36,6 +36,7 @@ from typing import Any, Iterable
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import spell_for_duckdb
 from .sqlx import _find_interpolation_end, split_sqlx_sections
 
 
@@ -312,7 +313,7 @@ def _pin_clock(tree: exp.Expression, clock: dt.datetime, read: str) -> exp.Expre
             tree = faithful(tree)
         except sqlglot.errors.SqlglotError as exc:
             raise IncrementalError(f"cannot run as BigQuery does: {exc}") from exc
-    return tree
+    return spell_for_duckdb(tree)
 
 
 def _norm(value: Any) -> Any:

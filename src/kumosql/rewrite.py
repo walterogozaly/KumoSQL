@@ -238,6 +238,13 @@ def _verify_sql(
         return True, []
     if touching_literal_chunks(before) or touching_literal_chunks(after):
         return False, ["two string literals touch ('a''b'); GoogleSQL needs whitespace or a comment between them"]
+    if any(before.count(sentinel) != after.count(sentinel) for sentinel in dynamic):
+        # A Dataform expression dropped or added with a comment. sqlglot 26 drops a comment at the end of a
+        # BigQuery statement from the parse tree, so the statements below would compare equal without it.
+        return False, [
+            "a Dataform expression other than ref() or self() was dropped, added or repeated; "
+            "compile the SQLX to prove a change to this statement"
+        ]
     calls = created_function_calls(before), created_function_calls(after)
     if calls[0] is None or calls[0] != calls[1]:
         # sqlglot prints `abs(1)` and `ABS(1)` alike, but a script can create both as temporary functions.
