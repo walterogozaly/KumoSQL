@@ -1,0 +1,191 @@
+{
+  "by_operator": {
+    "count": {
+      "equivalent": 0,
+      "mutants": 60,
+      "random_8": 60,
+      "single_seed": 53,
+      "suite": 60,
+      "survived": 0,
+      "targeted": 60
+    },
+    "join_dupes": {
+      "equivalent": 0,
+      "mutants": 80,
+      "random_8": 80,
+      "single_seed": 80,
+      "suite": 80,
+      "survived": 0,
+      "targeted": 80
+    },
+    "not_in": {
+      "equivalent": 0,
+      "mutants": 60,
+      "random_8": 60,
+      "single_seed": 49,
+      "suite": 60,
+      "survived": 0,
+      "targeted": 60
+    },
+    "outer_join": {
+      "equivalent": 0,
+      "mutants": 100,
+      "random_8": 100,
+      "single_seed": 100,
+      "suite": 100,
+      "survived": 0,
+      "targeted": 100
+    },
+    "union": {
+      "equivalent": 0,
+      "mutants": 40,
+      "random_8": 40,
+      "single_seed": 40,
+      "suite": 40,
+      "survived": 0,
+      "targeted": 40
+    }
+  },
+  "configs": {
+    "random_8": {
+      "killed": 340,
+      "median_counterexample_rows": 25.0,
+      "median_query_seconds": 0.014758325498405611,
+      "score": 1.0
+    },
+    "single_seed": {
+      "killed": 322,
+      "median_counterexample_rows": 25.0,
+      "median_query_seconds": 0.00855145649984479,
+      "score": 0.9470588235294117
+    },
+    "suite": {
+      "killed": 340,
+      "median_counterexample_rows": 2.0,
+      "median_query_seconds": 0.017497152999567334,
+      "score": 1.0
+    },
+    "targeted": {
+      "killed": 340,
+      "median_counterexample_rows": 4.0,
+      "median_query_seconds": 0.01741621849942021,
+      "score": 1.0
+    }
+  },
+  "denominator": 340,
+  "escape_random_8_caught_by_suite": 0,
+  "escape_single_seed_caught_by_suite": 18,
+  "minimization": {
+    "attempted": 150,
+    "chars_after_total": 15640,
+    "chars_before_total": 16968,
+    "max_seconds": 0.17759914999987814,
+    "median_seconds": 0.0645249214994692,
+    "nodes_after_total": 5966,
+    "nodes_before_total": 6576,
+    "outcomes": {
+      "minimized": 150
+    },
+    "rows_after_median": 2.0,
+    "rows_after_total": 275,
+    "rows_before_median": 2.0,
+    "rows_before_total": 464
+  },
+  "mutants": 340,
+  "outcomes": {
+    "killed": 340
+  },
+  "per_suite": {
+    "unsafe": {
+      "by_operator": {
+        "count": {
+          "equivalent": 0,
+          "mutants": 60,
+          "random_8": 60,
+          "single_seed": 53,
+          "suite": 60,
+          "survived": 0,
+          "targeted": 60
+        },
+        "join_dupes": {
+          "equivalent": 0,
+          "mutants": 80,
+          "random_8": 80,
+          "single_seed": 80,
+          "suite": 80,
+          "survived": 0,
+          "targeted": 80
+        },
+        "not_in": {
+          "equivalent": 0,
+          "mutants": 60,
+          "random_8": 60,
+          "single_seed": 49,
+          "suite": 60,
+          "survived": 0,
+          "targeted": 60
+        },
+        "outer_join": {
+          "equivalent": 0,
+          "mutants": 100,
+          "random_8": 100,
+          "single_seed": 100,
+          "suite": 100,
+          "survived": 0,
+          "targeted": 100
+        },
+        "union": {
+          "equivalent": 0,
+          "mutants": 40,
+          "random_8": 40,
+          "single_seed": 40,
+          "suite": 40,
+          "survived": 0,
+          "targeted": 40
+        }
+      },
+      "configs": {
+        "random_8": {
+          "killed": 340,
+          "median_counterexample_rows": 25.0,
+          "median_query_seconds": 0.014758325498405611,
+          "score": 1.0
+        },
+        "single_seed": {
+          "killed": 322,
+          "median_counterexample_rows": 25.0,
+          "median_query_seconds": 0.00855145649984479,
+          "score": 0.9470588235294117
+        },
+        "suite": {
+          "killed": 340,
+          "median_counterexample_rows": 2.0,
+          "median_query_seconds": 0.017497152999567334,
+          "score": 1.0
+        },
+        "targeted": {
+          "killed": 340,
+          "median_counterexample_rows": 4.0,
+          "median_query_seconds": 0.01741621849942021,
+          "score": 1.0
+        }
+      },
+      "denominator": 340,
+      "escape_random_8_caught_by_suite": 0,
+      "escape_single_seed_caught_by_suite": 18,
+      "mutants": 340,
+      "outcomes": {
+        "killed": 340
+      },
+      "queries": {
+        "ok": 340
+      }
+    }
+  },
+  "queries": {
+    "ok": 340
+  },
+  "seconds": 19.293083667755127,
+  "split": "all",
+  "unsupported_reasons": {}
+}

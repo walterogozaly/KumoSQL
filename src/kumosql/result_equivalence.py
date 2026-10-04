@@ -669,7 +669,7 @@ class DatasetRunner:
         return QueryOutput(columns=columns, rows=_bigquery_rows(rows, self.dialect))
 
 
-def _normalize_value(value: Any, float_digits: int | None) -> Any:
+def _normalize_value(value: Any, float_digits: int | None, booleans_are_integers: bool = False) -> Any:
     """Encode one result value as a hashable key that keeps its kind.
 
     Booleans, NaN, arrays and structs get tagged tuples, so ``TRUE`` never equals
@@ -679,11 +679,13 @@ def _normalize_value(value: Any, float_digits: int | None) -> Any:
     DuckDB's result types legitimately differ from BigQuery's (and between two
     equivalent queries), e.g. a ``NUMERIC`` column comes back as ``Decimal`` but
     dividing it gives a ``float``. ``float_digits`` rounds floats to that many significant digits;
-    ``None`` compares them exactly.
+    ``None`` compares them exactly. ``booleans_are_integers`` reads ``TRUE`` as ``1`` for corpora written in
+    a dialect with no boolean type (MySQL, Calcite), where the same predicate is a boolean in one query and a
+    0/1 integer in the other.
     """
 
     if isinstance(value, bool):
-        return ("bool", value)
+        return int(value) if booleans_are_integers else ("bool", value)
     if isinstance(value, float):
         if math.isnan(value):
             return ("nan",)
@@ -693,9 +695,9 @@ def _normalize_value(value: Any, float_digits: int | None) -> Any:
     if isinstance(value, Decimal):
         return value.normalize() if value == value else ("nan",)
     if isinstance(value, (list, tuple)):
-        return ("array", *(_normalize_value(v, float_digits) for v in value))
+        return ("array", *(_normalize_value(v, float_digits, booleans_are_integers) for v in value))
     if isinstance(value, dict):
-        return ("struct", *sorted((k, _normalize_value(v, float_digits)) for k, v in value.items()))
+        return ("struct", *sorted((k, _normalize_value(v, float_digits, booleans_are_integers)) for k, v in value.items()))
     return value
 
 
@@ -716,6 +718,7 @@ def compare_outputs(
     ignore_row_order: bool = True,
     check_column_names: bool = True,
     float_digits: int | None = 12,
+    booleans_are_integers: bool = False,
 ) -> tuple[bool, str, tuple[Row, ...], tuple[Row, ...]]:
     """Compare two outputs; returns (equal, reason, only_left, only_right).
 
@@ -734,7 +737,7 @@ def compare_outputs(
         keys: list[Row] = []
         originals: dict[Row, list[Row]] = {}
         for row in rows:
-            key = tuple(_normalize_value(v, float_digits) for v in row)
+            key = tuple(_normalize_value(v, float_digits, booleans_are_integers) for v in row)
             keys.append(key)
             originals.setdefault(key, []).append(row)
         return keys, originals

@@ -256,6 +256,15 @@ def test_compare_outputs_keeps_value_kinds_apart(left, right):
     assert only_left == ((left,),) and only_right == ((right,),)
 
 
+def test_booleans_are_integers_is_opt_in_and_reaches_nested_values():
+    # Corpora written for MySQL or Calcite have no boolean type: a predicate is TRUE in one query and
+    # CAST(.. AS BIGINT) in the other, and the two are the same answer there.
+    for left, right in [(True, 1), (False, 0), ([True, False], [1, 0]), ({"a": True}, {"a": 1})]:
+        assert not compare_outputs(_single(left), _single(right))[0]
+        assert compare_outputs(_single(left), _single(right), booleans_are_integers=True)[0]
+    assert not compare_outputs(_single(True), _single(0), booleans_are_integers=True)[0]
+
+
 @pytest.mark.parametrize(
     "left, right",
     [(1, 1.0), (2, Decimal("2.000")), (2.5, Decimal("2.5")), (float("nan"), float("nan")), ([1, 2], (1, 2))],
