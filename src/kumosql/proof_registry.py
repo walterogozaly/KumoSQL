@@ -2,7 +2,7 @@
 
 A rewrite step is ``proven`` by the equivalence prover. For some rules a second check, written without any
 code the rule or the prover uses (``proof_steps``, ``proof_ctes``, ``proof_syntax``, ``proof_qualify``), must also accept it.
-This module is the single place that says which. Every rule in the rewrite registry is classified exactly one
+The provers' own bare-column resolution is checked the same way (``proof_columns``). This module is the single place that says which. Every rule in the rewrite registry is classified exactly one
 way, and ``tests/test_proof_registry.py`` fails when a rule is registered without a classification, so adding
 a rule means choosing between an independent checker and a named legacy basis. The acceptance layer
 (``rewrite.apply_rule``) reads ``RULE_FAMILIES``, so neither a rule nor an override can opt out.
@@ -29,6 +29,7 @@ from .proof_syntax import (
     check_syntax_transition,
 )
 from .proof_qualify import QUALIFY_ASSUMPTIONS, QUALIFY_FAMILY, check_qualify_transition
+from .proof_columns import COLUMN_RESOLUTION_ASSUMPTIONS, COLUMN_RESOLUTION_FAMILY, check_column_resolution_transition
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,8 @@ FAMILIES: dict[str, Family] = {
                "DISTINCT: only cleared where a plain GROUP BY keys are all projected"),
         Family(QUALIFY_FAMILY, "qualification", QUALIFY_ASSUMPTIONS, check_qualify_transition,
                "qualification: only qualifiers added, each naming the one readable source that has the column"),
+        Family(COLUMN_RESOLUTION_FAMILY, "prover column resolution", COLUMN_RESOLUTION_ASSUMPTIONS, check_column_resolution_transition,
+               "the provers' own resolution of bare columns: each qualifier a pass adds is the owner re-derived from the text"),
     )
 }
 

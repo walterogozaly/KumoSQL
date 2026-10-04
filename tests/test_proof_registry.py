@@ -37,7 +37,7 @@ def test_an_unclassified_rule_is_an_error():
 
 def test_every_rule_family_is_registered_and_used():
     assert set(RULE_FAMILIES.values()) <= set(FAMILIES)
-    assert set(FAMILIES) <= set(RULE_FAMILIES.values()) | {"predicate_cleanup"}  # the prover also checks its own steps
+    assert set(FAMILIES) <= set(RULE_FAMILIES.values()) | {"predicate_cleanup", "prover_column_resolution"}  # the provers also check their own steps
 
 
 @pytest.mark.parametrize("name", sorted(FAMILIES))

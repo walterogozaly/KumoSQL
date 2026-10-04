@@ -50,6 +50,10 @@ A comment such as `-- note` does not change what a query returns, so it does not
 
 Before comparing two queries KumoSQL moves each subquery in a `FROM` into a `WITH` so both sides are in the same shape. A subquery that reads a column of the query around it, or a table a nested `WITH` defines, would mean something else once moved, so it stays where it is and the comparison is made with it in place. Without this, a lifted form that no longer ran could be called equal to the query it came from. A column with no table in front of it, read over a real table, still counts as that subquery's own; KumoSQL cannot tell without the table's columns. See the [full reference](../docs/provers.md).
 
+## Which table does a bare column belong to?
+
+In `SELECT id, name FROM orders JOIN customers ON ...`, the provers have to work out for themselves which table `id` and `name` come from, and inside a subquery whether a name means the subquery's own table or the query around it. Two queries that differ only in such a pick can look the same to a prover that picks wrong. So a separate reader goes through the query text, works out the owner of each bare column on its own, and compares it with what the prover chose. If they disagree, the pair is reported as unknown. If the reader cannot tell (it does not know a table's columns, or the name could mean several things), the proof stands, because refusing every such case would throw away correct proofs. This reader does not check every place the algebraic prover rewrites columns; the [full reference](../docs/proof-safeguards.md#the-provers-own-column-resolution) lists what it covers, how often it could decide on the benchmark sets, and what it cannot do.
+
 ## What if the answer is unknown?
 
 It may mean the SQL uses an unsupported feature, a table's columns are missing, or the solver reached its time or work limit. It does not establish that the queries differ. Text that cannot be read at all (an unclosed quote, very deep nesting) and queries that would take too long to even set up (a chain of CTEs that each read the previous one twice) also come back unknown rather than as an error.
