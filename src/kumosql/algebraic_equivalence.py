@@ -44,7 +44,6 @@ from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_g
 from .fk_rules import drop_fk_join
 from .exists_constant_rules import exists_constant_rules
 from .decorrelation_rules import decorrelation_step
-from .lateral_decorrelation import decorrelate_laterals
 from .constraint_normalization import keyed_join_to_exists, normalize_key_counts
 from .grouping_expansion import collapse_grouping_expansion
 from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
@@ -4835,7 +4834,7 @@ def normalize(
         tree = _using_to_on(_expand_stars(tree, schema), schema)  # USING over a derived table read once its stars are known
     tree = _except_of_same_table_filters(tree, schema, dialect)
     tree = _probe_and_nth_value(tree)
-    tree = _name_derived_columns(decorrelate_laterals(_lateral_joins(tree), schema, types, dialect))
+    tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
         tree = _expand_stars(tree, schema)
     tree = _isolate_windows(canonical_windows(drop_unread_windows(tree), types))
