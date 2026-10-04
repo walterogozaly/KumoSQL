@@ -27,7 +27,7 @@ from typing import Callable
 import sqlglot
 from sqlglot import exp
 
-from .duckdb_load import run_unoptimized
+from .duckdb_load import run_unoptimized, small_database
 from .result_equivalence import DataRules
 
 try:
@@ -606,8 +606,7 @@ class Searcher:
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
             self.having = self.having or tree.find(exp.Having) is not None
-        # one thread: the tables hold a few rows, so more threads only add scheduling work (about half the CPU)
-        self.db = duckdb.connect(":memory:", config={"threads": 1})
+        self.db = small_database()
         self.bigquery = dialect == "bigquery"
         if self.bigquery:
             from .bigquery_on_duckdb import configure
