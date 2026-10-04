@@ -80,7 +80,7 @@ python -m kumosql rewrite-sql input.sqlx --rule inline_single_use_ctes --output 
 
 ## Subquery lifting
 
-`kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward.
+`kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward byte for byte (a backslash in one, as in `r'\d'` or `\1`, is kept as written).
 
 Scalar, `EXISTS`, and correlated predicate subqueries are intentionally left in place because changing those into CTEs can change query semantics. BigQuery does not allow `WITH` in front of `UPDATE`, `DELETE` or `MERGE`, so in those statements subqueries are lifted only inside a nested query (for example `DELETE ... WHERE id IN (WITH ... SELECT ...)`); a subquery directly in `UPDATE ... FROM` stays inline and is reported as remaining, so the result is not a success. The result includes diagnostics, and an unrecoverable parse or transform error is never reported as success.
 

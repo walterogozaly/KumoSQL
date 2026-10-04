@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
@@ -156,6 +157,43 @@ def _config_literal(config: str, key: str) -> tuple[str | None, bool]:
     if quoted and "${" not in quoted.group(2):
         return quoted.group(2), False
     return None, True
+
+
+_PROJECT_DEFAULT_RE = re.compile(r"dataform\s*\.\s*projectConfig\s*\.\s*(defaultDatabase|defaultSchema|vars\s*\.\s*([A-Za-z_]\w*))")
+
+
+def _config_identity(
+    config: str, key: str, database: str, dataset: str, variables: Mapping[str, str] | None = None
+) -> tuple[str | None, bool]:
+    """``_config_literal`` for ``database``, ``schema`` and ``name``, also reading the project's own settings:
+    ``dataform.projectConfig.defaultDatabase``, ``defaultSchema`` and ``vars.NAME`` (a string in the project's ``vars``).
+    A setting the project does not hold stays computed."""
+
+    value, computed = _config_literal(config, key)
+    if not computed:
+        return value, False
+    match = re.search(rf"\b{key}\s*:\s*", _blank_strings(_top_level(config)))
+    raw = _value_at(config, max(config.find("{"), 0) + match.end()).strip() if match else ""
+    named = _PROJECT_DEFAULT_RE.fullmatch(raw)
+    if named and named.group(2):
+        found = (variables or {}).get(named.group(2))
+        if found:
+            return found, False
+    elif named and key in ("database", "schema") and (named.group(1) == "defaultDatabase") == (key == "database"):
+        known = database if key == "database" else dataset
+        if known:
+            return known, False
+    return None, True
+
+
+def _config_flag(config: str, key: str) -> bool | None:
+    """``True``/``False`` for a literal ``key: true|false`` of the config's own top level; ``None`` when absent or computed."""
+
+    match = re.search(rf"\b{key}\s*:\s*", _blank_strings(_top_level(config)))
+    if not match:
+        return None
+    value = _value_at(config, max(config.find("{"), 0) + match.end()).strip()
+    return {"true": True, "false": False}.get(value)
 
 
 def _value_at(text: str, start: int) -> str:
@@ -346,25 +384,90 @@ def _read_project_defaults(
         return "", ""
 
 
+@dataclass(frozen=True)
+class _Naming:
+    """Project settings that change every action's final target (not declarations'): ``projectSuffix`` /
+    ``databaseSuffix``, ``datasetSuffix`` / ``schemaSuffix`` and ``namePrefix`` / ``tablePrefix``; and the default location."""
+
+    database_suffix: str = ""
+    schema_suffix: str = ""
+    name_prefix: str = ""
+    location: str = ""
+    # The project's ``vars`` (``dataform.projectConfig.vars.NAME``), when they are plain strings.
+    variables: dict[str, str] = field(default_factory=dict)
+
+    def apply(self, target: Target) -> Target:
+        """The target Dataform compiles an action to (``database_ps.schema_sandbox.prefix_name``)."""
+
+        database = f"{target.database}_{self.database_suffix}" if target.database and self.database_suffix else target.database
+        schema = f"{target.schema}_{self.schema_suffix}" if target.schema and self.schema_suffix else target.schema
+        name = f"{self.name_prefix}_{target.name}" if target.name and self.name_prefix else target.name
+        return Target(database, schema, name)
+
+
+def _read_naming(root: Path) -> _Naming:
+    """Prefix, suffix and location settings of ``workflow_settings.yaml`` or ``dataform.json``; none when unreadable.
+
+    ``_read_project_defaults`` already reports an unreadable settings file, so this one stays quiet.
+    """
+
+    try:
+        settings = root / "workflow_settings.yaml"
+        legacy = root / "dataform.json"
+        if settings.is_symlink() or legacy.is_symlink():
+            return _Naming()
+        if settings.is_file():
+            text = settings.read_text(encoding="utf-8-sig")
+
+            def value(*keys: str) -> str:
+                for key in keys:
+                    match = re.search(rf"(?m)^\s*{key}\s*:\s*['\"]?([^'\"\s#]+)", text)
+                    if match:
+                        return match.group(1)
+                return ""
+
+            variables: dict[str, str] = {}
+            block = re.search(r"(?m)^vars\s*:[ \t]*(?:#.*)?\r?\n((?:[ \t]+\S.*(?:\r?\n|$)|[ \t]*(?:#.*)?\r?\n)*)", text)
+            for entry in re.finditer(r"(?m)^[ \t]+([A-Za-z_]\w*)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s#'\"][^#\r\n]*?))\s*(?:#.*)?$",
+                                     block.group(1) if block else ""):
+                variables[entry.group(1)] = next(g for g in entry.groups()[1:] if g is not None)
+            return _Naming(value("projectSuffix", "databaseSuffix"), value("datasetSuffix", "schemaSuffix"),
+                           value("namePrefix", "tablePrefix"), value("defaultLocation"), variables)
+        if legacy.is_file():
+            data = json.loads(legacy.read_text(encoding="utf-8-sig"))
+
+            def field_(key: str) -> str:
+                found = data.get(key)
+                return found if isinstance(found, str) else ""
+
+            raw_vars = data.get("vars")
+            variables = {k: v for k, v in raw_vars.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(raw_vars, dict) else {}
+            return _Naming(field_("databaseSuffix"), field_("schemaSuffix"), field_("tablePrefix"), field_("defaultLocation"), variables)
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        pass
+    return _Naming()
+
+
 def _assertion_dataset(root: Path) -> str:
-    """Where assertions without their own schema live: the project's assertion dataset, else Dataform's default."""
+    """The project's assertion dataset, or ``""`` when it sets none: assertions then live in the default dataset
+    (``@dataform/cli`` 3.0.71 compiles a project without ``defaultAssertionDataset`` that way)."""
 
     try:
         settings = root / "workflow_settings.yaml"
         if settings.is_symlink():
-            return "dataform_assertions"
+            return ""
         if settings.is_file():
             match = re.search(r"(?m)^\s*defaultAssertionDataset\s*:\s*['\"]?([^'\"\s#]+)", settings.read_text(encoding="utf-8-sig"))
-            return match.group(1) if match else "dataform_assertions"
+            return match.group(1) if match else ""
         legacy = root / "dataform.json"
         if legacy.is_symlink():
-            return "dataform_assertions"
+            return ""
         if legacy.is_file():
             value = json.loads(legacy.read_text(encoding="utf-8-sig")).get("assertionSchema")
-            return value if isinstance(value, str) and value else "dataform_assertions"
+            return value if isinstance(value, str) and value else ""
     except (OSError, UnicodeError, ValueError, AttributeError):
         pass
-    return "dataform_assertions"
+    return ""
 
 
 def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
@@ -582,6 +685,25 @@ def js_declared_targets(
     return declared, actions, complete
 
 
+_PLAIN_STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""", re.S)
+
+
+def _plain_strings(args: str) -> list[str]:
+    """The arguments of a ``ref()`` call, each a plain string literal; anything computed raises ``ValueError``.
+
+    ``ref("f" + "eed")`` names the one table ``feed``, not two arguments ``f`` and ``eed``, and ``ref(name)`` names
+    whatever ``name`` holds: neither is read by picking out the quoted pieces.
+    """
+
+    found = []
+    for part in _split_top_level(args):
+        quoted = _PLAIN_STRING_RE.fullmatch(part)
+        if quoted is None or "${" in quoted.group(2):
+            raise ValueError("ref() has a computed argument, so the table it names is not known; it was left unresolved")
+        found.append(quoted.group(2))
+    return found
+
+
 def _parse_ref_args(
     args: str,
     default: Target,
@@ -589,6 +711,8 @@ def _parse_ref_args(
     *,
     names_may_be_missing: bool = False,
     schema_settles: bool = False,
+    logical: Mapping[Target, tuple[str, ...]] | None = None,
+    variables: Mapping[str, str] | None = None,
 ) -> Target:
     """The target a ``ref()`` names.
 
@@ -596,11 +720,23 @@ def _parse_ref_args(
     it, so a name that ``known`` (every action and declaration by name) holds
     once resolves to that target; otherwise the project defaults apply. A name that
     several targets hold, or one that no action names while ``names_may_be_missing``
-    (JavaScript declarations that could not be read), is not guessed: it raises.
+    (JavaScript declarations that could not be read), is not guessed: it raises, as does
+    any argument that is not a plain string. ``known`` is keyed by the name as the config
+    wrote it; ``logical`` gives the database, schema and name of a target that a project
+    prefix or suffix renamed, which is what a ``ref()`` names it by.
     """
 
-    def unresolved(name: str, schema: str | None = None) -> None:
-        matches = [t for t in (known or {}).get(name, []) if schema is None or t.schema == schema]
+    def coordinates(target: Target) -> tuple[str, ...]:
+        return (logical or {}).get(target, (target.database, target.schema, target.name))
+
+    def candidates(name: str, schema: str | None, database: str | None) -> list[Target]:
+        return [
+            target for target in (known or {}).get(name, [])
+            if (schema is None or coordinates(target)[1] == schema) and (database is None or coordinates(target)[0] == database)
+        ]
+
+    def unresolved(name: str, schema: str | None = None, database: str | None = None) -> None:
+        matches = candidates(name, schema, database)
         if len(matches) > 1:
             raise ValueError("ref() names several tables; it was left unresolved")
         if not matches and names_may_be_missing:
@@ -608,24 +744,24 @@ def _parse_ref_args(
                 return  # the ref names its dataset and no declaration sets a database: the project default is exact
             raise ValueError("ref() names a table that a declaration may define; it was left unresolved")
 
-    def by_name(name: str, schema: str | None = None) -> Target | None:
-        matches = [
-            target for target in (known or {}).get(name, [])
-            if schema is None or target.schema == schema
-        ]
+    def by_name(name: str, schema: str | None = None, database: str | None = None) -> Target | None:
+        matches = candidates(name, schema, database)
         return matches[0] if len(matches) == 1 else None
 
     if args.lstrip().startswith("{"):
-        name = _config_value(args, "name") or ""
-        schema = _config_value(args, "schema")
-        database = _config_value(args, "database")
-        if not database:
-            found = by_name(name, schema)
-            if found is not None:
-                return found
-            unresolved(name, schema)
+        values = {}
+        for key in ("name", "schema", "database"):
+            value, computed = _config_identity(args, key, default.database, default.schema, variables)
+            if computed:
+                raise ValueError(f"ref() has a computed {key}, so the table it names is not known; it was left unresolved")
+            values[key] = value
+        name, schema, database = values["name"] or "", values["schema"], values["database"]
+        found = by_name(name, schema, database)
+        if found is not None:
+            return found
+        unresolved(name, schema, database)
         return Target(database or default.database, schema or default.schema, name)
-    parts = [match.group(2) for match in _STRING_RE.finditer(args)]
+    parts = _plain_strings(args)
     if len(parts) == 1:
         found = by_name(parts[0])
         if found is None:
@@ -637,7 +773,8 @@ def _parse_ref_args(
             unresolved(parts[1], parts[0])
         return found or Target(default.database, parts[0], parts[1])
     if len(parts) >= 3:
-        return Target(parts[0], parts[1], parts[2])
+        found = by_name(parts[2], parts[1], parts[0])
+        return found or Target(parts[0], parts[1], parts[2])
     raise ValueError("unsupported ref() arguments")
 
 
@@ -660,7 +797,8 @@ def load_sqlx_project(
         raise PipelineLoadError("project folder was not found or is not a directory")
     diagnostics: list[PipelineDiagnostic] = []
     database, dataset = _read_project_defaults(root, diagnostics)
-    assertion_dataset = _assertion_dataset(root)
+    assertion_dataset = _assertion_dataset(root) or dataset
+    naming = _read_naming(root)
     definitions = root / "definitions"
     # A definitions junction must be pruned relative to the selected project root,
     # including on Python versions without Path.is_junction().
@@ -693,6 +831,8 @@ def load_sqlx_project(
 
     # Read every asset first: a ref() names an action wherever its config put it.
     known: dict[str, list[Target]] = {}
+    renamed: dict[Target, tuple[str, ...]] = {}  # targets a project prefix or suffix changed -> as the config wrote them
+    computed_identities = False  # an asset's name, schema or database is computed: refs to unlisted names stay unresolved
 
     def read_asset(path: Path):
         relative = str(path.relative_to(root))
@@ -715,18 +855,42 @@ def load_sqlx_project(
         )
         declared_type, computed_type = _config_literal(config, "type")
         kind = declared_type or ("unknown" if computed_type else "table")
-        target = Target(
-            _config_value(config, "database") or database,
-            _config_value(config, "schema") or (assertion_dataset if kind == "assertion" else dataset),
-            _config_value(config, "name") or path.stem,
+        identity, computed_identity = {}, []
+        for key in ("database", "schema", "name"):
+            identity[key], computed = _config_identity(config, key, database, dataset, naming.variables)
+            if computed:
+                computed_identity.append(key)
+        logical = Target(
+            identity["database"] or database,
+            identity["schema"] or (assertion_dataset if kind == "assertion" else dataset),
+            identity["name"] or path.stem,
         )
-        known.setdefault(target.name, []).append(target)
+        # Declarations name an existing table: the project's prefix and suffix settings leave them alone.
+        target = logical if kind == "declaration" else naming.apply(logical)
+        if computed_identity:
+            # A computed name is also what a ref() finds the action by, so it cannot be found at all; a computed database
+            # or schema leaves the name known, so refs still find the action (at the project defaults, the best guess).
+            diagnostics.append(PipelineDiagnostic(
+                target.key, "dynamic_config",
+                f"its config {' and '.join(computed_identity)} is computed (a project variable or a call), so which table it "
+                "writes is not known" + ("; refs by name do not find it" if "name" in computed_identity else
+                                         "; the project default stands in for it")))
+            if kind != "declaration":
+                kind = "unknown"
+            if "name" in computed_identity:
+                nonlocal computed_identities
+                computed_identities = True
+        if "name" not in computed_identity:
+            known.setdefault(logical.name, []).append(target)
+            if target != logical:
+                renamed[target] = (logical.database, logical.schema, logical.name)
         if computed_type:
             diagnostics.append(PipelineDiagnostic(
                 target.key, "dynamic_config",
                 "its config type is computed (a project variable or a call), so it is not read as a table: it may be incremental"))
         if kind == "declaration":
-            sources[target.key] = target
+            if "name" not in computed_identity:
+                sources[target.key] = target
             return None
         return relative, sections, config, kind, target
 
@@ -735,20 +899,34 @@ def load_sqlx_project(
         body = "".join(section for kind_, section in sections if kind_ == "sql")
         dependencies: list[Target] = []
 
+        def checked(ref: Target, what: str, *, needs_output: bool = False) -> Target:
+            """``ref`` after noting a name Dataform would not resolve, or an operation without an output it reads."""
+
+            if ref not in known_targets:
+                spelled = sorted({name for name in known if name.lower() == ref.name.lower() and name != ref.name})
+                hint = f"; the action is named {spelled[0]!r} (names are case-sensitive)" if spelled else ""
+                diagnostics.append(PipelineDiagnostic(
+                    target.key, "missing_ref",
+                    f"{what} names {ref.name!r}, which no action or declaration of the project defines, so Dataform rejects "
+                    f"the project{hint}"))
+            elif needs_output:
+                reads_output.append((target.key, ref))
+            return ref
+
         def substitute(match: re.Match[str]) -> str:
             try:
                 ref = _parse_ref_args(match.group("args"), default, known, **unknown_names())
             except ValueError as exc:
                 diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
                 return match.group(0)  # left masked like any other interpolation
-            dependencies.append(ref)
+            dependencies.append(checked(ref, "ref()", needs_output=True))
             return ref.sql()
 
         body = _sub_outside_comments(_REF_RE, substitute, body)
         body = _sub_outside_comments(_SELF_RE, lambda match: target.sql(), body)
         if kind == "operations":
             # Dataform separates the statements of an operations file by a line of ``---`` as well as by semicolons.
-            body = re.sub(r"(?m)^[ \t]*---[ \t]*$", ";", body)
+            body = re.sub(r"(?m)^[ \t]*---[ \t]*\r?$", ";", body)
         # Dataform evaluates ref() in pre_operations and post_operations too, so what they ref is a dependency.
         for kind_, section in sections:
             if kind_ == "block" and re.match(r"\s*(?:pre|post)_operations\b", section):
@@ -759,11 +937,11 @@ def load_sqlx_project(
                         diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", str(exc)))
                         continue
                     if ref not in dependencies:
-                        dependencies.append(ref)
+                        dependencies.append(checked(ref, "ref()", needs_output=True))
 
         def resolve(match: re.Match[str]) -> str:
             try:
-                return _parse_ref_args(match.group("args"), default, known, **unknown_names()).sql()
+                return checked(_parse_ref_args(match.group("args"), default, known, **unknown_names()), "resolve()").sql()
             except ValueError:
                 return match.group(0)  # computed argument: left masked like any other interpolation
 
@@ -771,7 +949,8 @@ def load_sqlx_project(
 
         def plain_ref(match: re.Match[str]) -> str:
             try:
-                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js).sql()
+                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js or computed_identities,
+                                       logical=renamed, variables=naming.variables).sql()
             except ValueError:
                 return match.group(0)
 
@@ -793,7 +972,7 @@ def load_sqlx_project(
                 diagnostics.append(PipelineDiagnostic(target.key, "unsupported_ref", f"config dependencies: {exc}"))
                 continue
             if declared not in dependencies:
-                dependencies.append(declared)
+                dependencies.append(checked(declared, "a config dependency"))
         masked: tuple[str, ...] = ()
         if "${" in body:
             body, restorations = _mask_sqlx_interpolations(body)
@@ -812,7 +991,9 @@ def load_sqlx_project(
         except Exception:  # noqa: BLE001 - a config that cannot be read keeps every column of the model in use
             config_reads, config_reads_unread = (), ("config",)
         add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys, tuple(operations),
-                        config_reads=config_reads, config_reads_unread=config_reads_unread))
+                        config_reads=config_reads, config_reads_unread=config_reads_unread,
+                        logical=renamed.get(target, ()), disabled=_config_flag(config, "disabled") is True,
+                        has_output=_config_flag(config, "hasOutput") is True))
 
     def unreadable(relative: str, exc: Exception) -> None:
         diagnostics.append(PipelineDiagnostic(
@@ -823,7 +1004,8 @@ def load_sqlx_project(
     js_sets_database = False
 
     def unknown_names() -> dict:
-        return {"names_may_be_missing": incomplete_js, "schema_settles": not js_sets_database}
+        return {"names_may_be_missing": incomplete_js or computed_identities, "schema_settles": not js_sets_database,
+                "logical": renamed, "variables": naming.variables}
 
     js_files: dict[str, str] = {}
     for path in find_assets(root, (".js",), unlistable):
@@ -845,7 +1027,10 @@ def load_sqlx_project(
             known.setdefault(target.name, []).append(target)
             sources[target.key] = target
         for target in actions:
-            known.setdefault(target.name, []).append(target)
+            final = naming.apply(target)
+            known.setdefault(target.name, []).append(final)
+            if final != target:
+                renamed[final] = (target.database, target.schema, target.name)
         if not complete:
             incomplete_js = True
             js_sets_database = js_sets_database or bool(re.search(r"\bdatabase\b", text))
@@ -874,6 +1059,8 @@ def load_sqlx_project(
                     sources[target.key] = target
             incomplete_js = False
 
+    known_targets: set[Target] = set()
+    reads_output: list[tuple[str, Target]] = []  # (reading action, table it ref()s): checked against operations once all load
     pending = []
     for path in find_assets(search_root, (".sqlx", ".sql"), unlistable):
         try:
@@ -883,11 +1070,19 @@ def load_sqlx_project(
             continue
         if asset is not None:
             pending.append(asset)
+    known_targets.update(target for targets in known.values() for target in targets)
     for asset in pending:
         try:
             load_asset(*asset)
         except Exception as exc:  # noqa: BLE001 - one odd file must not fail the whole project
             unreadable(asset[0], exc)
+
+    for reader, ref in reads_output:
+        operation = models.get(ref.key)
+        if operation is not None and operation.kind == "operations" and not operation.has_output:
+            diagnostics.append(PipelineDiagnostic(
+                reader, "ref_to_operation_without_output",
+                f"ref() names the operations action {ref.name!r}, which has no output (hasOutput), so Dataform rejects the project"))
 
     from .pipeline import Pipeline  # deferred: pipeline imports this module
 
@@ -898,6 +1093,7 @@ def load_sqlx_project(
         diagnostics,
         default_project=database,
         default_dataset=dataset,
+        default_location=naming.location,
     )
 
 
@@ -928,6 +1124,16 @@ def load_compiled_graph(
             )
             return []
         return value
+
+    errors = graph.get("graphErrors")
+    for entry in (errors.get("compilationErrors") if isinstance(errors, dict) else None) or []:
+        # Dataform rejected the project: what is loaded below is partial, never a validated compilation.
+        if isinstance(entry, dict):
+            where = entry.get("actionName") or entry.get("fileName") or ""
+            message = " ".join(str(entry.get("message") or "compilation error").split())
+            diagnostics.append(PipelineDiagnostic(str(where), "compilation_error", message[:500]))
+    if isinstance(errors, dict) and errors and not any(d.code == "compilation_error" for d in diagnostics):
+        diagnostics.append(PipelineDiagnostic("", "compilation_error", "the compiler reported graph errors that could not be read"))
 
     models: dict[str, Model] = {}
     for kind_key, default_kind in (("tables", "table"), ("assertions", "assertion"), ("operations", "operations")):
@@ -970,6 +1176,15 @@ def load_compiled_graph(
                     pre_operations=sum(1 for text in (item.get("preOps") or []) if isinstance(text, str) and text.strip()),
                     config_reads=config_reads,
                     config_reads_unread=config_reads_unread,
+                    disabled=item.get("disabled") is True,
+                    has_output=item.get("hasOutput") is True,
+                    incremental_sql=tuple(
+                        text for text in (
+                            item.get("incrementalQuery"),
+                            *(item.get("incrementalPreOps") or []),
+                            *(item.get("incrementalPostOps") or []),
+                        ) if isinstance(text, str) and text.strip()
+                    ),
                 )
             except (AttributeError, TypeError, ValueError):
                 diagnostics.append(
@@ -993,6 +1208,17 @@ def load_compiled_graph(
             )
             continue
         sources[target.key] = target
+    project_config = graph.get("projectConfig") if isinstance(graph.get("projectConfig"), dict) else {}
+
+    def defaults(*keys: str) -> str:
+        """A project default: the compiler keeps them under ``projectConfig``; older output had them at the top."""
+
+        for block in (project_config, graph):
+            for key in keys:
+                if isinstance(block.get(key), str) and block[key]:
+                    return block[key]
+        return ""
+
     from .pipeline import Pipeline  # deferred: pipeline imports this module
 
     return Pipeline(
@@ -1000,8 +1226,9 @@ def load_compiled_graph(
         sources,
         dict(source_schema or {}),
         diagnostics,
-        default_project=str(graph.get("defaultDatabase", graph.get("defaultProject", "")) or ""),
-        default_dataset=str(graph.get("defaultSchema", graph.get("defaultDataset", "")) or ""),
+        default_project=defaults("defaultDatabase", "defaultProject"),
+        default_dataset=defaults("defaultSchema", "defaultDataset"),
+        default_location=defaults("defaultLocation"),
     )
 
 if TYPE_CHECKING:

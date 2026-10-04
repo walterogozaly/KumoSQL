@@ -92,6 +92,7 @@ class Pipeline:
     diagnostics: list[PipelineDiagnostic] = field(default_factory=list)
     default_project: str = ""
     default_dataset: str = ""
+    default_location: str = ""
 
     # ------------------------------------------------------------------ graph
 
@@ -1257,13 +1258,13 @@ class _Analysis:
         procedures = collect_procedures(
             text
             for model in pipeline.models.values()
-            for text in (model.sql, *model.operations_sql)
+            for text in (model.sql, *model.scripts)
             if _PROCEDURE_WORD.search(text)
         )
         functions = collect_table_functions(
             text
             for model in pipeline.models.values()
-            for text in (model.sql, *model.operations_sql)
+            for text in (model.sql, *model.scripts)
             if _TABLE_FUNCTION_WORD.search(text)
         )
         # Tables other models' scripts write, with the models they read (``INSERT INTO t SELECT ...`` feeds t).
@@ -1391,7 +1392,7 @@ class _Analysis:
                         parents.update(members)
                         operation_readers.update(members)
                 _note_writes(pipeline, key, analysis, written)
-            for operation in model.operations_sql:
+            for operation in model.scripts:
                 extra = analyse_script(operation, procedures=procedures, functions=functions)
                 note_statement_tables(key, extra)
                 if extra.all_reads():
