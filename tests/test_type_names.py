@@ -31,6 +31,7 @@ def test_a_type_name_bigquery_accepts_passes(name):
 
 
 @pytest.mark.parametrize("sql,name", [
+    ("SELECT CAST(x AS MAP<STRING, INT64>) FROM t", "MAP"),  # BigQuery: "MAP datatype is not supported"
     ("SELECT CAST(x AS ARRAY<FLOAT>) FROM t", "FLOAT"),  # BigQuery: "Type not found: FLOAT"
     ("SELECT CAST(x AS STRUCT<a UUID, b ARRAY<INT64>>) FROM t", "UUID"),
     ("SELECT CAST(CAST(x AS INT64) AS DOUBLE PRECISION) FROM t", "DOUBLE PRECISION"),
