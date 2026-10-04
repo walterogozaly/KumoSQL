@@ -78,6 +78,7 @@ from .set_operations import positional_sql_pair
 from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
+from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 from . import string_number_compare
 
@@ -4282,6 +4283,10 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     conditional = kwargs.pop("conditional", False)
     wall = kwargs.pop("conditional_seconds", None)
     _check_options(kwargs)
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+        if unknown_type:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     result = _prove_with_limit(left_sql, right_sql, **kwargs)
     if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
         return result

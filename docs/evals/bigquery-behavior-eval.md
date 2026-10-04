@@ -51,10 +51,12 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 | Corpus | Pipeline | Cases | Rewritten and identical | Wrong | Declined | Unsupported | Not executable |
 |---|---|---:|---:|---:|---:|---:|---:|
 | GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 31 | 0 | 6,674 | 946 | 219 |
-| GoogleSQL compliance | lift | 7,870 | 259 | 0 | 6,050 | 946 | 615 |
+| GoogleSQL compliance | lift | 7,870 | 230 | 0 | 6,081 | 946 | 613 |
 | Edge cases (967 custom: 379 hand-written, 588 seeded fuzz) | semantic | 967 | 410 | 0 | 556 | 0 | 1 |
 | Edge cases | lift | 967 | 417 | 0 | 549 | 0 | 1 |
 | Held-out fuzz (662, seeds 101 and 103, not used while fixing) | semantic / lift | 662 | 395 | 0 | 267 | 0 | 0 |
+
+The GoogleSQL lift row fell from 259 to 230 on 2026-10-04: the proof layer now refuses a query that casts to a type name BigQuery does not have (291 of the 7,870 queries use `DOUBLE`, `INT32`, `FLOAT`, `UUID`, `MAP` or `VECTOR`; BigQuery dry runs return "Type not found" or "MAP datatype is not supported"), so the 29 rewrites accepted among them are declined (master measured 259 with 6,052 declined and 613 not executable on the same day; this branch measures 230 with 6,081 declined and the same 613). The semantic row stays at 31 and the edge-case rows are unchanged by it. This removes rewrites whose proof was credited on an input BigQuery rejects, not coverage of valid SQL.
 
 On 2026-10-04 the edge-case numbers fell (lift 435 to 417, semantic 428 to 410, held-out 421 to 395) because every prover now refuses a text that an independent reading groups differently from sqlglot ([parser checks](../parser-checks.md)). The refused cases are seeded fuzz texts with a non-associative comparison BigQuery rejects or a bitwise chain sqlglot regroups; `wrong` stays 0 and no rewritten result differed. The held-out run was repeated only to update this count.
 

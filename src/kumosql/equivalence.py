@@ -46,6 +46,7 @@ from .proof_syntax import (
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, _key, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
+from .type_names import invalid_type_name
 
 
 class EquivalenceStatus(str, Enum):
@@ -1149,6 +1150,9 @@ def prove_equivalent(
             status=EquivalenceStatus.NOT_PROVEN,
             reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
         )
+    unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+    if unknown_type:
+        return EquivalenceResult(status=EquivalenceStatus.NOT_PROVEN, reason=f"BigQuery would reject the query: {unknown_type}")
     masked = masked_template_problem(left_sql, right_sql)
     if masked:
         return EquivalenceResult(status=EquivalenceStatus.NOT_PROVEN, reason=masked)
