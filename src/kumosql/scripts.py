@@ -685,6 +685,24 @@ def _name_at(tokens: list[Tok], i: int) -> tuple[exp.Table | None, int]:
     return (table, j) if isinstance(table, exp.Table) and table.name else (None, j)
 
 
+# Functions whose arguments are separated by ``FROM``: that ``FROM`` names no table.
+_FROM_ARGUMENT_CALLS = {"EXTRACT", "TRIM", "SUBSTRING", "SUBSTR", "OVERLAY", "POSITION"}
+
+
+def _enclosing_call(tokens: list[Tok], index: int) -> str:
+    """The word before the innermost parenthesis still open at ``tokens[index]``; empty when there is none."""
+
+    depth = 0
+    for k in range(index - 1, -1, -1):
+        if tokens[k].text == ")":
+            depth += 1
+        elif tokens[k].text == "(":
+            if depth == 0:
+                return tokens[k - 1].up if k else ""
+            depth -= 1
+    return ""
+
+
 def token_reads(text: str) -> tuple[list[exp.Table], list[exp.Table]]:
     """``(tables read, tables written)`` found in the token stream of a statement that could not be parsed.
 
@@ -757,7 +775,9 @@ def token_reads(text: str) -> tuple[list[exp.Table], list[exp.Table]]:
         word = tokens[i].up
         previous = tokens[i - 1].up if i else ""
         kind = None
-        if word == "FROM":
+        if word == "FROM" and (previous == "DISTINCT" or _enclosing_call(tokens, i) in _FROM_ARGUMENT_CALLS):
+            pass  # ``EXTRACT(DATE FROM ts)``, ``TRIM(BOTH 'x' FROM s)``, ``a IS DISTINCT FROM b``: not a table
+        elif word == "FROM":
             kind = "write" if previous == "DELETE" else "read"
         elif word in {"JOIN", "USING"}:
             kind = "read"

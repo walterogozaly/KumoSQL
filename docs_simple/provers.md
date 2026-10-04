@@ -82,6 +82,14 @@ KumoSQL knows that `SELECT d.b + 1 FROM (SELECT a AS b FROM t ORDER BY a LIMIT 1
 
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
+## Numbers and errors
+
+BigQuery numbers have traps. A whole number past about nine quadrillion loses its last digits once it meets a decimal, `0.1 + 0.2` is not `0.3`, and dividing by zero is an error. Worse, BigQuery does not promise to filter rows before it computes the select list, so `SELECT x / y FROM t WHERE y <> 0` can still divide by zero.
+
+When you tell the prover the column types, it reads numbers the way BigQuery does and keeps track of every operation that could fail (a division, an integer overflow, a `CAST`). It then says what a rewrite does to those failures: nothing changes, it removes one that the original had, or it adds one the original did not have. In the last case it refuses to call the pair equal and shows why. For example, replacing `IF(y = 0, 0, x / y)` with `x / y` is flagged, because the `IF` was what kept the division away from zero.
+
+The limits: without declared types the older, looser reading applies and the result lists that runtime errors were not modelled. Exact decimal rounding is not reasoned about, so such pairs come back unknown. Floating-point columns are still assumed never to hold `NaN`, and a sum of floating-point values is still assumed not to depend on row order; the result lists both. The recorded scores and the case list are in the [numeric traps eval](evals/numeric-traps.md); the details are in the [full reference](../docs/provers.md#numbers-and-runtime-errors).
+
 ## The parser is checked too
 
 The provers also refuse to trust the parser blindly. Before a proof counts, the text is read a second time by a small separate reader that knows each engine's operator order, and if the two readings group the operators differently (for example `a | b & c` in BigQuery, or `a = b < c` in MySQL) the answer is "not proven" with the reason "parser disagreement". The limit is that this can only take proofs away, and a construct the second reader does not know is left to sqlglot's reading. See [parser checks](parser-checks.md).
@@ -92,7 +100,7 @@ The provers also refuse to trust the parser blindly. Before a proof counts, the 
 
 ## Example: whole numbers that turn into decimals
 
-A database that compares a whole number with a decimal column first converts the whole number to a decimal, and a very large whole number loses its last digits in that conversion. So `a = b AND b = c` does not always mean `a = c`: 9007199254740992 and 9007199254740993 both equal the decimal 9007199254740992.0. Likewise `1e-324 < 2e-324` is false, because both literals round to zero. KumoSQL's SMT prover now models the conversion when the column types are declared, and it does not treat tiny, huge or long decimal literals as exact numbers. When column types are not declared, a proof that compares columns states the assumption that they have the same type. The evidence is regression pairs; the exact rules are in the [full reference](../docs/provers.md).
+A database that compares a whole number with a decimal column first converts the whole number to a decimal, and a very large whole number loses its last digits in that conversion. So `a = b AND b = c` does not always mean `a = c`: 9007199254740992 and 9007199254740993 both equal the decimal 9007199254740992.0. Likewise `1e-324 < 2e-324` is false, because both literals round to zero. KumoSQL's SMT prover now models the conversion when the column types are declared, and outside BigQuery it does not treat tiny, huge or long decimal literals as exact numbers (BigQuery decimal literals are read as the nearest floating-point value, as BigQuery does). When column types are not declared, a proof that compares columns states the assumption that they have the same type. The evidence is regression pairs; the exact rules are in the [full reference](../docs/provers.md).
 
 ## Example: a clause the prover does not understand
 

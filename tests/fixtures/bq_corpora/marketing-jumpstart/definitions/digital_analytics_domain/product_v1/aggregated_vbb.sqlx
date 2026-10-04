@@ -1,0 +1,43 @@
+/*
+ * Copyright 2023 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+config {
+    type: "view",
+    schema: functions.productSchema("ga4"),
+    description: "Source data for Aggregated VBB pipeline.",
+    tags: ['ga4', 'vbb']
+}
+js {
+    const eventDateField = "event_date";
+    const eventNameField = "event_name";
+    const eventTimestampField = "event_timestamp";
+    const eventDateAlias = "Dt"
+}
+
+WITH Base_Events AS (
+  SELECT
+    EXTRACT(date from ${eventTimestampField}) AS ${eventDateField},
+    ${eventNameField}
+  FROM
+    ${ref({schema: functions.baseSchema("ga4"), name: "event"})}
+  WHERE
+    ${eventTimestampField} BETWEEN TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL -365 DAY) AND CURRENT_TIMESTAMP()
+)
+SELECT
+  ${sql.aggregatedVBBColumns(eventDateField, eventDateAlias, eventNameField, ga4.aggregatedVBBColumns)}
+FROM
+  Base_Events
+GROUP BY
+  ${eventDateField}
