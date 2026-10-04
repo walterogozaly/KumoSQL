@@ -8,6 +8,8 @@ The rule is conservative and skips a CTE when any of these hold:
 
 - the WITH clause is ``RECURSIVE`` or the query contains a nested WITH scope
   (a nested scope could shadow the name);
+- a CTE name is read before its definition (an earlier CTE's body, or its own), where it is a table, not the
+  CTE; inlining one CTE would move that read out of the body that makes it a table;
 - the CTE declares column aliases (``WITH a(x) AS ...``);
 - the name is referenced zero or several times, compared case-insensitively,
   or the one reference differs from the CTE name in case;
@@ -24,6 +26,7 @@ from sqlglot import exp
 
 from .ast_utils import (
     ambiguous_unnest_names,
+    cte_dependency_errors,
     cte_alias_name,
     has_nested_with,
     is_cte_reference_candidate,
@@ -109,7 +112,7 @@ class InlineSingleUseCtesRule(RewriteRule):
         clause = with_clause(query)
         if not clause or clause.args.get("recursive") or has_nested_with(query):
             return 0, []
-        if ambiguous_unnest_names(query):
+        if ambiguous_unnest_names(query) or cte_dependency_errors(statement):
             return 0, []
 
         inlined = 0
