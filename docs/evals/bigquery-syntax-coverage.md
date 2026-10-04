@@ -27,7 +27,7 @@ Each case runs through every stage that applies. A stage is **✅ pass**, **⚪ 
 | refs | (Dataform) every literal `ref()` and config `dependencies` entry is a graph edge |
 | graph | graph, column lineage and report build without error, and the tables the statement reads appear as reads |
 | fingerprint | (single queries) the output-comparison SQL built around the query is valid |
-| cleanup | the cleanup and rewrite rules run, and their result is proven equivalent or left unchanged |
+| cleanup | the cleanup and rewrite rules run, and their result is proven equivalent or left unchanged; a statement sqlglot could only read in recovery mode counts as ⚪ even when no rule changed it, because an unchanged recovered parse is not trusted (see [Rewrite rules](../rewrite-rules.md)) |
 | format | `format_sql` neither crashes nor changes meaning; backticked names are untouched; the result is proven equivalent |
 | prover | the SMT prover returns a verdict or "unknown" for the query compared with itself, and never crashes or calls it different |
 | dry run | BigQuery accepts the SQL (`dryRun`, never billed). ✅ accepted; ⚠ parsed, then stopped on something outside the SQL (an object, connection, session or permission the project lacks); ❌ rejected; – not submitted (administrative statements, and Dataform actions that need the Dataform compiler) |
@@ -91,14 +91,14 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 <!-- coverage-table:start -->
 | Family | Cases | parse | load | graph | fingerprint | cleanup | format | prover | dry run |
 |---|---:|---|---|---|---|---|---|---|---|
-| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 8 ✅ | 7 ✅ 1 ⚪ | n/a | 1 ✅ 7 ⚠ |
+| data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 5 ✅ 3 ⚪ | 7 ✅ 1 ⚪ | n/a | 1 ✅ 7 ⚠ |
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 5 ✅ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
-| ddl | 74 | 45 ✅ 29 ⚪ | 74 ✅ | 74 ✅ | n/a | 74 ✅ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| ddl | 74 | 45 ✅ 29 ⚪ | 74 ✅ | 74 ✅ | n/a | 73 ✅ 1 ⚪ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
 | dml | 16 | 16 ✅ | 16 ✅ | 16 ✅ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 138 | 136 ✅ 2 ⚪ | 138 ✅ | 138 ✅ | 135 ✅ | 138 ✅ | 132 ✅ 6 ⚪ | 112 ✅ 23 ⚪ | 119 ✅ 16 ⚠ 3 – |
+| query | 138 | 136 ✅ 2 ⚪ | 138 ✅ | 138 ✅ | 135 ✅ | 136 ✅ 2 ⚪ | 132 ✅ 6 ⚪ | 112 ✅ 23 ⚪ | 119 ✅ 16 ⚠ 3 – |
 | script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 265 | 213 ✅ 52 ⚪ | 265 ✅ | 264 ✅ 1 ⚪ | 135 ✅ | 265 ✅ | 243 ✅ 22 ⚪ | 112 ✅ 23 ⚪ | 206 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 265 | 213 ✅ 52 ⚪ | 265 ✅ | 264 ✅ 1 ⚪ | 135 ✅ | 259 ✅ 6 ⚪ | 243 ✅ 22 ⚪ | 112 ✅ 23 ⚪ | 206 ✅ 45 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
@@ -129,9 +129,11 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | parse | sqlglot | sqlglot keeps WHILE as an opaque command | 1 | `script/while_loop` |
 | load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
 | graph | kumosql | reads of this DML, script or non-query statement are not extracted | 1 | `script/assert` |
+| cleanup | kumosql | recovered_parse | 4 | `data/export_model`, `data/load_data_overwrite`, `ddl/undrop_schema` |
 | cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
 | cleanup | kumosql | equivalence could not be proven for every changed statement | 1 | `dataform/table_with_qualify_cte` |
+| cleanup | kumosql | recovered_parse; pipe_syntax_kept; recovered_parse; pipe_syntax_kept; recovered_parse; pip | 1 | `query/pipe_extend_set_drop` |
 | format | sqlfluff | parse_error | 22 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
 | prover | prover | unsupported: LIMIT is not modeled | 9 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
 | prover | prover | unsupported: WINDOW is not modeled | 7 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pseudo_columns_row_number` |

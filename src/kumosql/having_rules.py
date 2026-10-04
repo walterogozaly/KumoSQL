@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def key_having_to_where(select: exp.Select) -> exp.Select | None:
     """The select with each key-only conjunct of its ``HAVING`` moved to ``WHERE``, or None."""
@@ -17,9 +19,7 @@ def key_having_to_where(select: exp.Select) -> exp.Select | None:
     group, having = select.args.get("group"), select.args.get("having")
     if group is None or having is None or not group.expressions:
         return None
-    if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals", "all")):
-        return None
-    if any(isinstance(k, (exp.Rollup, exp.Cube, exp.GroupingSets)) for k in group.expressions):
+    if extended_grouping(group) or group.args.get("all"):
         return None
     if any(select.args.get(k) for k in ("qualify", "windows", "with_", "with")) or select.find(exp.Window):
         return None
