@@ -272,7 +272,8 @@ def _escapes_scope(subquery: exp.Subquery, query: exp.Expression, lifted: dict[s
     table of that name), nor a column of a query around it: one qualified by a name of their relations, or,
     where an enclosing query's relations are in scope (inside a scalar, EXISTS, IN or ARRAY subquery), any
     column that no relation inside the body binds, since without a schema an unqualified column there may
-    be correlated. A column with no relation at all to read inside the body must come from around it.
+    be correlated (``_bound_inside`` binds it through derived tables and WITH tables whose outputs are
+    listed). A column with no relation at all to read inside the body must come from around it.
     """
 
     body = subquery.this
