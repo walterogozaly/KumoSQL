@@ -269,7 +269,22 @@ def _decide_singh_job(pair: singh.Pair) -> Outcome:
 # --- VeriEQL LeetCode ---------------------------------------------------------------------------------------
 
 
-def decide_verieql(case: dict) -> Outcome:
+def _without_declared(spec):
+    """``spec`` with every constraint it declares removed: columns, types and foreign-key-free tables only."""
+
+    for table in spec.tables.values():
+        table.primary_key, table.unique, table.sequential = (), [], ()
+        for column in table.columns:
+            column.not_null = False
+    spec.foreign_keys.clear()
+    spec.checks.clear()
+    return spec
+
+
+def decide_verieql(case: dict, declared: bool = True) -> Outcome:
+    """The conditional verdict for one VeriEQL case. ``declared=False`` keeps the schema's names and types but none of its
+    constraints, so the verdict names the facts a proof needs instead of taking them as given."""
+
     import verieql_bench as veri
     from kumosql import counterexample as cx
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
@@ -280,6 +295,8 @@ def decide_verieql(case: dict) -> Outcome:
     base = dict(key=str(index))
     try:
         spec = veri.build_spec(case)
+        if not declared:
+            _without_declared(spec)
         left, right, predicates = veri.repaired_pair(case, spec)
     except Exception as error:
         return Outcome("unknown", f"constraints: {type(error).__name__}", seconds=time.time() - start, **base)
@@ -314,6 +331,8 @@ def decide_verieql(case: dict) -> Outcome:
         # the executed check has no composite foreign key to impose, so the proof cannot be re-checked: not scored as conditional
         return Outcome("unchecked", result.reason, [c.to_json() for c in conditions], 0, seconds=time.time() - start, **base)
     stricter = veri.build_spec(case)  # the spec again, with the conditions as extra constraints
+    if not declared:
+        _without_declared(stricter)
     names = {t.name.lower(): t for t in stricter.tables.values()}
     def actual(table, name):  # the spec keeps each column's own case; the prover works in lower case
         return next(col.name for col in table.columns if col.name.lower() == name.lower())

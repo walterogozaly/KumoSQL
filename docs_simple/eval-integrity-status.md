@@ -13,4 +13,4 @@ The fixes that are in place:
 - **The sample-query check.** Each sample has a written expectation, so a sample that cannot run, or that the lifter leaves unchanged, no longer counts as a success. A sample earns credit only when it was actually run against a declared set of tables and worked; a check with no table list earns none.
 - **Random testing.** The pairs are fixed before any proof is tried, and a proof of a query against an identical copy of itself no longer counts toward the floors.
 
-Limits: some fixes are still in progress, and a few things were found but left to the evals that own them. The full page lists each finding and its state. No benchmark score changed because of these fixes.
+Limits: a few things were found but left to the evals that own them. The full page lists each finding and its state. No benchmark score changed because of these fixes.

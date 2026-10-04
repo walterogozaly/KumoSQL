@@ -141,6 +141,11 @@ def _position_form(expr: exp.Expression, names: list[str] | None, alias: str | N
     """``expr`` over the columns of a relation with output ``names``, columns written ``__p<i>``; over a
     base table (``names`` ``None``) columns are written ``__n_<name>``."""
 
+    # A nested query resolves its own unqualified names first: once ``d.b`` is spelled ``__p0`` and then
+    # replaced by the value the derived table gave ``b``, a ``b`` the nested query reads from its own
+    # table would be read as that value's name.
+    if expr.find(exp.Select, exp.SetOperation, exp.Subquery) is not None:
+        return None
     copy = expr.copy()
     for column in list(copy.find_all(exp.Column)):
         if isinstance(column.this, exp.Star):
@@ -217,6 +222,19 @@ def _deterministic(expr: exp.Expression) -> bool:
     return not any(isinstance(n, _VOLATILE) for n in expr.walk())
 
 
+_RUN_DEPENDENT = {"Rand", "Randn", "Uuid", "CurrentDate", "CurrentTime", "CurrentTimestamp", "CurrentDatetime"}
+_RUN_DEPENDENT_FUNCTIONS = {"RAND", "RANDOM", "UUID", "GENERATE_UUID", "NEWID", "GEN_RANDOM_UUID"}
+
+
+def _repeatable(expr: exp.Expression) -> bool:
+    """``expr`` gives the same value each time it is evaluated, so it may be written once per use."""
+
+    return not any(
+        type(n).__name__ in _RUN_DEPENDENT or (isinstance(n, exp.Anonymous) and (n.name or "").upper() in _RUN_DEPENDENT_FUNCTIONS)
+        for n in expr.walk()
+    )
+
+
 def _owns_aggregate(select: exp.Select, clauses) -> bool:
     for clause in clauses:
         value = select.args.get(clause)
@@ -249,6 +267,25 @@ def _renamed(expressions) -> dict[str, str]:
     }
 
 
+def _moves_ordinal(before: exp.Select, outputs, clauses) -> bool:
+    """``GROUP BY 2`` (or ``ORDER BY 2``) names the second select item, and ``outputs`` puts another there."""
+
+    for clause in ("group", "order"):
+        node = before.args.get(clause)
+        if clause not in clauses or node is None:
+            continue
+        for key in node.expressions:
+            key = key.this if isinstance(key, exp.Ordered) else key
+            if not isinstance(key, exp.Literal) or key.is_string:
+                continue
+            position = _literal(key)
+            if position is None or not 1 <= position <= len(before.expressions):
+                continue
+            if position > len(outputs) or outputs[position - 1].sql() != before.expressions[position - 1].sql():
+                return True
+    return False
+
+
 def rebinds_grouping_names(before: exp.Select, outputs, moved=(), clauses=("group", "having")) -> bool:
     """A name in ``before``'s GROUP BY or HAVING means something else once its select list is ``outputs``.
 
@@ -258,6 +295,8 @@ def rebinds_grouping_names(before: exp.Select, outputs, moved=(), clauses=("grou
     columns that join HAVING alongside the new list; ``clauses`` adds ``"order"`` for an ORDER BY kept too.
     """
 
+    if _moves_ordinal(before, outputs, clauses):
+        return True
     old, new = _renamed(before.expressions), _renamed(outputs)
     clauses = [(before.args.get(clause), old) for clause in clauses] + [(m, {}) for m in moved]
     for node, meaning in clauses:
@@ -615,6 +654,9 @@ def _lift_cut(select: exp.Select) -> exp.Expression | None:
     if outputs is None or len(set(outputs[0])) != len(outputs[0]) or "" in outputs[0]:
         return None
     names, values = outputs
+    # ``SELECT d.r, d.r FROM (SELECT RAND() AS r ...) AS d`` reads one value twice; spelled out it draws two.
+    if not all(_repeatable(value) for value in values):
+        return None
     alias = (source.alias or "").lower() or None
     items = []
     for item in select.expressions:
@@ -650,12 +692,15 @@ def _lift_cut(select: exp.Select) -> exp.Expression | None:
                     return None  # an output alias inside an ORDER BY expression
         keys.append(ordered.copy())
         keys[-1].set("this", key.copy())
-    new_names = {i.alias_or_name.lower(): (i.this if isinstance(i, exp.Alias) else i) for i in items}
+    # Every item an unqualified key name could read counts: two items may share one output name.
     for ordered in keys:
         for column in ordered.this.find_all(exp.Column):
-            value = new_names.get(column.name.lower())
-            if not column.table and value is not None and value.sql() != column.sql():
-                return None
+            if column.table:
+                continue
+            for item in items:
+                value = item.this if isinstance(item, exp.Alias) else item
+                if item.alias_or_name.lower() == column.name.lower() and value.sql() != column.sql():
+                    return None
     if rebinds_grouping_names(inner, items):
         return None
     result = inner.copy()

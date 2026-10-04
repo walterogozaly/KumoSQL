@@ -41,24 +41,24 @@ Each patch is applied to a copy of the project.
 
 ## Scores
 
-Measured 2026-10-03 (`python tools/reduction_bench.py --jobs 4`). Complexity is summed over the cases; "dropping alone" is `reduce-project --drop-only`, which deletes what the kept outputs do not need and rewrites nothing.
+Measured 2026-10-04 (`python tools/reduction_bench.py --jobs 4`; the complexity score changed on 2026-10-04, so the real-project and Jaffle Shop totals moved a little: comma-joined FROM items count as joins and `IF()` as a CASE). Complexity is summed over the cases; "dropping alone" is `reduce-project --drop-only`, which deletes what the kept outputs do not need and rewrites nothing.
 
 | Split | Cases | Reduced | Wrong | Re-proved | Complexity | Dropping alone | Beyond dropping |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dev, converted | 270 | 240 | 0 | 270 | 5,056.5 -> 3,547.0 (-29.9%) | -14.2% | 220 |
-| Dev, real projects | 40 | 36 | 0 | 40 | 5,084.2 -> 3,754.9 (-26.1%) | -26.0% | 7 |
-| Dev, Jaffle Shop | 6 | 6 | 0 | 6 | 198 -> 60 (-69.7%) | -59.1% | 6 |
-| **Dev, all** | **316** | **282** | **0** | **316** | **10,338.7 -> 7,361.9 (-28.8%)** | **-20.9%** | **233** |
-| Held out, converted | 64 | 59 | 0 | 64 | 1,143.5 -> 820.5 (-28.2%) | -10.2% | 56 |
-| Held out, real projects | 6 | 6 | 0 | 6 | 972.9 -> 769.7 (-20.9%) | -20.8% | 1 |
+| Dev, real projects | 40 | 36 | 0 | 40 | 5,207.2 -> 3,801.9 (-27.0%) | -26.8% | 7 |
+| Dev, Jaffle Shop | 6 | 6 | 0 | 6 | 198 -> 61 (-69.2%) | -59.1% | 6 |
+| **Dev, all** | **316** | **282** | **0** | **316** | **10,461.7 -> 7,409.9 (-29.2%)** | **-21.3%** | **233** |
+| Held out, converted | 64 | 59 | 0 | 64 | 1,144.5 -> 821.5 (-28.2%) | -10.2% | 56 |
+| Held out, real projects | 6 | 6 | 0 | 6 | 1,002.9 -> 773.7 (-22.9%) | -22.8% | 1 |
 
 - **Executed:** on DuckDB, 220 converted dev projects agree with the original on every check database and 50 are the same SQL; all 6 Jaffle Shop reductions agree on the seeds and 60 random databases.
-- **Quality:** the converted tables reach 65.5% of the minimization reference's reduction (66.2% held out), against 80% for the [table minimizer](table-minimization.md) on the same cases as plain tables. The difference is the Dataform features: incremental tables and models with a project variable in a value stay as written, assertions keep their tables or are dropped, and a rewrite has to lower the score.
-- **Proof rate:** 788 of the 1,275 steps the search tried were proved (61.8%); the rest were rejected and listed.
+- **Quality:** the converted tables reach 65.6% of the minimization reference's reduction (66.3% held out), against 80% for the [table minimizer](table-minimization.md) on the same cases as plain tables. The difference is the Dataform features: incremental tables and models with a project variable in a value stay as written, assertions keep their tables or are dropped, and a rewrite has to lower the score.
+- **Proof rate:** 787 of the 1,267 steps the search tried were proved (62.1%); the rest were rejected and listed.
 - **Actions:** 4,329 -> 2,557 on the dev split (dropping alone: 3,106). 302 assertions over removed or rewritten tables were dropped, each listed with the reason.
 - **Shared tables:** no dev case gained a new shared table, and one held-out case reused an existing table for a repeated query. The converted cases repeat logic as whole tables (merged instead), not as subqueries; factoring is covered by `tests/test_project_reduction.py` and `tests/test_table_minimizer.py`.
 - **Real projects:** most of the gain is dropping. snowplow-web is mostly operations scripts, which stay as written; one of its queries is simplified in all five of its cases. In wintermi-imdb, two staging tables are folded into the kept report, which inherits their assertion gates.
-- **Runtime:** median 4.1 s per case, max 75 s, 2,114 s in total on 4 workers (60 s search limit for converted cases, 120 s for real projects and Jaffle Shop), re-proof included; checking took 1,460 s.
+- **Runtime:** median 3.8 s per case, max 73 s, 1,987 s in total on 4 workers (60 s search limit for converted cases, 120 s for real projects and Jaffle Shop), re-proof included; checking took 411 s.
 
 The first full run found one wrong reduction, `gen-0173`. A model compared a column with `"${dataform.projectConfig.vars.v1}"`, and the prover read that as one more string, different from `'paid'`, so a filter looked contradictory. Such models are now kept exactly as written, and the same problem in other KumoSQL features was reported to their owners. The run also showed that the check after writing the patch back skipped tables that an action kept as written reads (`verify_tables` now proves them too), and that a declaration named `events_*` was deleted while it was still read (that patch was not verified, so it was never returned).
 

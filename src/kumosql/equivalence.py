@@ -555,9 +555,19 @@ def _parenthesize_operators(query: exp.Expression) -> exp.Expression:
 
 
 def _remove_comments(query: exp.Expression) -> None:
+    """Drop SQL comments, which cannot change a result.
+
+    sqlglot keeps parsed comments on ``node.comments``, not in ``node.args``. A comment
+    holding a SQLX interpolation stays: Dataform expands ``${...}`` inside SQL comments
+    too, so dropping one can change the SQL.
+    """
+
     for node in query.walk():
-        if node.args.get("comments") is not None:
-            node.set("comments", None)
+        comments = node.comments
+        if not comments:
+            continue
+        kept = [text for text in comments if "${" in text or "__sqlx_" in text]
+        node.comments = kept or None
 
 
 def _remove_unordered_result_order(query: exp.Expression) -> None:
@@ -652,10 +662,10 @@ _ROUTINE_PREFIX = "KUMOSQL_ROUTINE_"
 _ROUTINE_SENTINEL = _ROUTINE_PREFIX + "{}_"
 
 
-def _render(node: exp.Expression, *, pretty: bool = False) -> str:
+def _render(node: exp.Expression, *, pretty: bool = False, comments: bool = False) -> str:
     """BigQuery SQL with built-in function names upper-cased and every other call name as written."""
 
-    options = {"dialect": "bigquery", "pretty": pretty, "normalize_functions": "upper", "identify": False, "comments": False}
+    options = {"dialect": "bigquery", "pretty": pretty, "normalize_functions": "upper", "identify": False, "comments": comments}
     if all(_is_builtin_call(call) for call in node.find_all(*_ANONYMOUS_CALLS)):
         return node.sql(**options)
     copy = node.copy()
@@ -759,7 +769,10 @@ def _has_row_selection_nondeterminism(query: exp.Expression) -> bool:
 def _canonical_sql(query: exp.Expression) -> str:
     # Built-in function names have no case in BigQuery; user-defined function names do,
     # so ``Foo(x)`` and ``foo(x)`` must not render alike.
-    return _render(_parenthesize_operators(query))
+    # Only comments that may hold SQLX survive _remove_comments; they stay in the key.
+    stripped = query.copy()
+    _remove_comments(stripped)
+    return _render(_parenthesize_operators(stripped), comments=True)
 
 
 def _fingerprint(sql: str) -> str:
