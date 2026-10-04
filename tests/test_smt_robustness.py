@@ -13,7 +13,7 @@ import sqlglot
 pytest.importorskip("z3")
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
-from kumosql.ast_utils import MAX_EXPANDED_READS, drop_case_conflicts, expanded_reads, parse_statements
+from kumosql.ast_utils import MAX_EXPANDED_READS, drop_case_conflicts, exponent_out_of_range, expanded_reads, parse_statements
 from kumosql.bounded_equivalence import BoundedStatus, check_bounded, schema_from_prover
 from kumosql.smt_equivalence import SmtStatus, _Compiler, _Prover, _prove, prove_equivalent_smt
 
@@ -145,3 +145,39 @@ def test_drop_case_conflicts():
     assert drop_case_conflicts({"t": ["a"], "T": ["b"], "u": ["c"]}) == {"u": ["c"]}
     assert drop_case_conflicts({"t": {"a": "INT64"}, "T": {"A": "INT64"}}) == {"t": {"a": "INT64"}, "T": {"A": "INT64"}}
     assert drop_case_conflicts(None) is None
+
+
+def test_bounded_schema_drops_case_conflicts_like_the_other_provers():
+    conflicting = schema_from_prover({"t": ["a"], "T": ["b"]}, types={"t": {"a": "INT64"}})
+    assert not conflicting.tables  # both entries dropped; the checker knows nothing about the table
+    result = check_bounded("SELECT a FROM t", "SELECT a FROM t", conflicting)
+    assert result.status is BoundedStatus.UNKNOWN
+    agreeing = schema_from_prover({"t": ["a"], "T": ["A"]}, types={"t": {"a": "INT64"}})
+    assert list(agreeing.tables) == ["t"]
+    assert check_bounded("SELECT a FROM t", "SELECT a FROM t", agreeing, rows=2).status is BoundedStatus.BOUNDED_EQUIVALENT
+
+
+@pytest.mark.parametrize("literal", ["1e100000000", "1e-100000000"])
+@pytest.mark.parametrize("prove", PROVERS)
+def test_an_extreme_exponent_is_declined_even_beside_an_identical_query(prove, literal):
+    # The algebraic prover used to answer "identical scoped queries" for a query against itself when given a schema.
+    sql = f"SELECT {literal} AS x"
+    for options in ({}, {"schema": {"t": ["a"]}}):
+        assert prove(sql, sql, **options).status is SmtStatus.NOT_PROVEN
+
+
+def test_exponent_out_of_range():
+    assert exponent_out_of_range("1e100000000") and exponent_out_of_range("1e-401")
+    assert not exponent_out_of_range("1e5") and not exponent_out_of_range("0e100000000") and not exponent_out_of_range("12.5")
+
+
+def test_bounded_solver_checks_carry_the_work_cap(monkeypatch):
+    from kumosql import bounded_equivalence
+
+    created = []
+    real = bounded_equivalence.bounded_solver
+    monkeypatch.setattr(bounded_equivalence, "bounded_solver", lambda ms: created.append(ms) or real(ms))
+    schema = schema_from_prover({"t": ["a"]}, types={"t": {"a": "INT64"}})
+    check_bounded("SELECT a FROM t", "SELECT a FROM t WHERE a = a OR a IS NULL", schema, rows=1)
+    bounded_equivalence.evaluate("SELECT a FROM t", schema, {"t": [(1,)]})
+    assert len(created) >= 2

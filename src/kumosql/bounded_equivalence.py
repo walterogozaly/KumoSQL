@@ -42,9 +42,9 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, expand_group_by_all, expanded_reads, extended_grouping
+from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop_case_conflicts, expand_group_by_all, expanded_reads, extended_grouping
 from .set_operations import positional_sql_pair
-from .solver_lock import serialized
+from .solver_lock import bounded_solver, serialized
 
 try:  # pragma: no cover - exercised through the tests
     import z3
@@ -172,10 +172,15 @@ class BoundedSchema:
 def schema_from_prover(schema: Mapping[str, Sequence[str]], constraints=None, types=None) -> BoundedSchema:
     """A :class:`BoundedSchema` from the prover's schema, ``TableConstraints`` and column types."""
 
-    constraints = constraints or {}
-    types = types or {}
+    # Tables whose names differ only in case and disagree are dropped, as in the SMT and algebraic provers
+    # (otherwise both reach the DuckDB replay, which rejects the second as a duplicate table).
+    schema = drop_case_conflicts(dict(schema))
+    constraints = drop_case_conflicts(dict(constraints or {}))
+    types = drop_case_conflicts(dict(types or {}))
     tables: dict[str, BTable] = {}
     for name, columns in schema.items():
+        if name.lower() in {t.lower() for t in tables}:
+            continue  # an entry that agrees with an earlier one up to case: one table, not a duplicate
         constraint = constraints.get(name)
         column_types = {k.lower(): v for k, v in (types.get(name) or {}).items()}
         not_null = {c.lower() for c in (constraint.not_null if constraint else ())}
@@ -2182,9 +2187,8 @@ def _check_bounded(
                 compiler = Compiler(database, dialect, nulls_first=nulls_first, group_constants=group_constants)
                 left = compiler.compile(left_sql)
                 right = compiler.compile(right_sql)
-                solver = z3.Solver()
                 remaining = timeout_ms if budget_s is None else int(max(1, min(timeout_ms, (budget_s - (time.time() - began)) * 1000)))
-                solver.set("timeout", remaining)
+                solver = bounded_solver(remaining)
                 solver.add(*database.constraints, *compiler.side_conditions)
                 solver.add(bag_difference(left, right))
                 verdict = solver.check()
@@ -2230,8 +2234,7 @@ def evaluate(sql: str, schema: BoundedSchema, data: dict[str, list[tuple]], dial
     database = SymbolicDatabase(schema, max([len(r) for r in data.values()] + [1]))
     compiler = Compiler(database, dialect, nulls_first=nulls_first)
     rel = compiler.compile(sql)
-    solver = z3.Solver()
-    solver.set("timeout", 20_000)
+    solver = bounded_solver(20_000)
     for name, slots in database.tables.items():
         table = schema.tables[name]
         rows = data.get(name) or []

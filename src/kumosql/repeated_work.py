@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Iterable
 
 from sqlglot import exp
 
+from .ast_utils import binding_cte
 from .pipeline import _fingerprint, _select_location
 
 if TYPE_CHECKING:
@@ -110,20 +111,10 @@ def _short(text: str, limit: int = 12) -> str:
 
 
 def _cte_definition(table: exp.Table) -> exp.Expression | None:
-    """The CTE body a bare table name refers to, searching enclosing scopes."""
+    """The CTE body a bare table name refers to, searching enclosing scopes (``WITH t AS (SELECT * FROM t)`` reads the table t)."""
 
-    if table.db:
-        return None
-    name = table.name.lower()
-    node = table.parent
-    while node is not None:
-        with_ = node.args.get("with_") or node.args.get("with")
-        if with_ is not None:
-            for cte in with_.expressions:
-                if cte.alias_or_name.lower() == name:
-                    return cte.this
-        node = node.parent
-    return None
+    cte = binding_cte(table)
+    return cte.this if cte is not None else None
 
 
 def _reads(pipeline: "Pipeline", select: exp.Expression) -> tuple[str, ...]:

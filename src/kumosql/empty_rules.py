@@ -2,10 +2,13 @@
 
 * A select whose FROM source, an inner or cross joined source, or the left
   side of a LEFT JOIN can never hold a row returns no rows (unless it is a
-  global aggregate, which always returns one row, or groups by ROLLUP, CUBE,
-  GROUPING SETS or ``()``, whose grand total can): its WHERE becomes FALSE.
+  global aggregate, which always returns one row, or groups by ``ROLLUP``,
+  ``CUBE`` or a grouping set list holding ``()``, whose grand-total row exists
+  over no input too): its WHERE becomes FALSE.
 * A LEFT JOIN whose right side can never hold a row pads every left row with
-  NULLs: the join is dropped and the right side's columns read as NULL.
+  NULLs: the join is dropped and the right side's columns read as NULL. Only
+  the columns that read that side become NULL: a nested query that binds the
+  same name to a table of its own keeps its columns.
 * ``EXISTS`` over such a relation is FALSE, ``x IN (...)`` over it is FALSE.
 * ``ORDER BY`` without ``LIMIT``/``OFFSET`` in a derived table does not change
   the bag of rows and is dropped.
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import distinct_on, extended_grouping
+from .ast_utils import distinct_on, inside, select_sources
 
 
 def _false(node: exp.Expression | None) -> bool:
@@ -32,14 +35,37 @@ def _false(node: exp.Expression | None) -> bool:
     return False
 
 
-def _global_aggregate(select: exp.Select) -> bool:
-    if select.args.get("group"):
-        return False
-    for projection in select.expressions:
-        for agg in projection.find_all(exp.AggFunc):
-            if agg.find_ancestor(exp.Select) is select and agg.find_ancestor(exp.Window) is None:
-                return True
+def _grand_total(item: exp.Expression) -> bool:
+    """Whether a ``GROUP BY`` item can contribute the empty grouping set ``()``."""
+
+    if isinstance(item, (exp.Rollup, exp.Cube)):
+        return True
+    if isinstance(item, exp.GroupingSets):
+        return any(_grand_total(e) for e in item.expressions)
+    if isinstance(item, exp.Tuple):
+        return all(_grand_total(e) for e in item.expressions)
     return False
+
+
+def _global_aggregate(select: exp.Select) -> bool:
+    """``select`` returns a row even over no input.
+
+    That is an aggregate without ``GROUP BY`` (in its list, ``HAVING`` or ``ORDER BY``; ``SUM(COUNT(*)) OVER ()``
+    aggregates too), or a grouping whose sets include the empty one: ``GROUP BY ()``, ``ROLLUP``, ``CUBE``, or
+    ``GROUPING SETS`` listing ``()``, since every item's sets are crossed, ``GROUP BY x, ROLLUP (y)`` has none.
+    """
+
+    group = select.args.get("group")
+    if group is not None:
+        if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+            return True  # older sqlglot keeps these outside group.expressions
+        return bool(group.expressions) and all(_grand_total(e) for e in group.expressions)
+    if select.args.get("having") is not None:
+        return True
+    return any(
+        agg.find_ancestor(exp.Select) is select and not isinstance(agg.parent, exp.Window)
+        for agg in select.find_all(exp.AggFunc)
+    )
 
 
 def is_empty(node: exp.Expression | None) -> bool:
@@ -55,8 +81,6 @@ def is_empty(node: exp.Expression | None) -> bool:
         return is_empty(node.left)
     if not isinstance(node, exp.Select) or _global_aggregate(node):
         return False
-    if extended_grouping(node.args.get("group")):
-        return False  # ROLLUP, CUBE, GROUPING SETS or GROUP BY (): a grand-total row even over no input rows
     if node.args.get("having") is not None and _false(node.args["having"].this):
         return True
     where = node.args.get("where")
@@ -87,7 +111,30 @@ def _source_empty(select: exp.Select) -> bool:
 
 def _alias(source: exp.Expression) -> str | None:
     alias = source.args.get("alias")
-    return alias.name if alias is not None and alias.name else None
+    return alias.name.lower() if alias is not None and alias.name else None
+
+
+def _binds(select: exp.Select, name: str) -> bool:
+    return any(_alias(source) == name or (isinstance(source, exp.Table) and not _alias(source) and source.name.lower() == name) for source in select_sources(select))
+
+
+def _reads_source(column: exp.Column, select: exp.Select, name: str) -> bool | None:
+    """Whether ``column`` (qualified by ``name``) reads the source ``select`` binds to ``name``.
+
+    False when a nearer query binds ``name`` itself, None when the column sits inside one of ``select``'s own
+    FROM or JOIN items, which cannot see their siblings.
+    """
+
+    scope = column.find_ancestor(exp.Select)
+    while scope is not select:
+        if scope is None:
+            return None
+        if _binds(scope, name):
+            return False
+        scope = scope.find_ancestor(exp.Select)
+    if any(inside(column, source) for source in select_sources(select)):
+        return None
+    return True
 
 
 def _drop_empty_left_joins(select: exp.Select) -> exp.Select | None:
@@ -95,7 +142,7 @@ def _drop_empty_left_joins(select: exp.Select) -> exp.Select | None:
     for join in joins:
         if (join.side or "").upper() != "LEFT" or join.args.get("kind") or not is_empty(join.this):
             continue
-        name = _alias(join.this) or (join.this.name if isinstance(join.this, exp.Table) else None)
+        name = _alias(join.this) or (join.this.name.lower() if isinstance(join.this, exp.Table) else None)
         if not name:
             continue
         copy = select.copy()
@@ -103,11 +150,18 @@ def _drop_empty_left_joins(select: exp.Select) -> exp.Select | None:
         copy.args["joins"][index].pop()
         if not copy.args.get("joins"):
             copy.set("joins", None)
-        if any(star.table == name for star in copy.find_all(exp.Column) if isinstance(star.this, exp.Star)):
-            return None
-        for column in list(copy.find_all(exp.Column)):
-            if column.table == name:
-                column.replace(exp.null())
+        reads = []
+        for column in copy.find_all(exp.Column):
+            if (column.table or "").lower() != name:
+                continue
+            found = _reads_source(column, copy, name)
+            if found is None or (found and isinstance(column.this, exp.Star)):
+                return None
+            if found:
+                reads.append(column)
+        for column in reads:
+            # a bare column in the list keeps its output name
+            column.replace(exp.alias_(exp.null(), column.name) if column.parent is copy else exp.null())
         return copy
     return None
 
