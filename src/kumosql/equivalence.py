@@ -32,6 +32,13 @@ from .layout_equivalence import _builtin_functions
 from .lift_subqueries import lift_subqueries
 from .named_windows import inline_named_windows
 from .proof_ctes import CTE_ASSUMPTIONS, CTE_FAMILY, check_cte_transition
+from .proof_syntax import (
+    DISTINCT_ASSUMPTIONS,
+    DISTINCT_FAMILY,
+    PAREN_ASSUMPTIONS,
+    PAREN_FAMILY,
+    check_syntax_transition,
+)
 from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
 from .sqlx_fragments import masked_template_problem
 from .string_literals import canonical_literals, invalid_literal
@@ -830,6 +837,24 @@ def _checked_predicate_normalization(query: exp.Expression) -> StepCheck | None:
     return check
 
 
+def _checked_syntax_normalization(transform, query: exp.Expression, name: str, family: str, assumptions: tuple[str, ...]) -> StepCheck | None:
+    """Run a parenthesis or DISTINCT normalization and have ``proof_syntax`` re-derive it from scratch.
+
+    ``None`` when nothing changed; raises ``_StepRejected`` when the checker refuses the change.
+    """
+
+    before = query.copy()
+    transform(query)
+    if same_tree(before, query):
+        return None
+    rendered = lambda q: q.sql(dialect="bigquery", comments=False)
+    step = RewriteStep(name, family, 0, rendered(before), rendered(query), assumptions)
+    check = check_syntax_transition(step, before, query)
+    if not check.accepted:
+        raise _StepRejected(check)
+    return check
+
+
 def _checked_cte_normalization(before: exp.Expression, after: exp.Expression) -> StepCheck | None:
     """Have ``proof_ctes`` re-derive the renaming, reordering, merging and dropping of CTEs from scratch.
 
@@ -889,8 +914,13 @@ def _prepare_query(
     # Recorded before the remaining structure-changing normalizations so that
     # merging, dropping or simplifying around a call cannot hide a change to it.
     sites_before = _value_nondeterminism_sites(query) + _routine_call_sites(query)
-    _drop_redundant_distinct(query)
-    _strip_grouping_parens(query)
+    for transform, name, family, assumptions in (
+        (_drop_redundant_distinct, "drop_redundant_distinct", DISTINCT_FAMILY, DISTINCT_ASSUMPTIONS),
+        (_strip_grouping_parens, "strip_grouping_parens", PAREN_FAMILY, PAREN_ASSUMPTIONS),
+    ):
+        syntax_check = _checked_syntax_normalization(transform, query, name, family, assumptions)
+        if syntax_check is not None and checks is not None:
+            checks.append(syntax_check)
     _flatten_connectors(query)
     check = _checked_predicate_normalization(query)
     if check is not None and checks is not None:
