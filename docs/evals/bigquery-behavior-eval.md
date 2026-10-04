@@ -43,7 +43,7 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 
 - 1,356 GoogleSQL queries do not parse in sqlglot's BigQuery dialect (GoogleSQL-only features: protos, enums, graph queries, `FLOAT32`, newer pipe and table syntax). They are counted as unsupported, not hidden.
 - The 81 pipe-syntax (`|>`) queries are left as written. sqlglot parses pipe syntax into nested CTEs, so the rewrites that used to count for 7 of them were of that translation, printed as standard SQL.
-- Four `having_queries` cases (`complex_aggregation7` and `8` with their `data_with_nulls_` variants) hold `(select count(distinct(a)) from (select distinct_2 a union all select distinct_4) foo)` inside the select list: the inner query reads columns of the enclosing query, so the lifter used to hoist it into a top-level `WITH` where those columns do not exist. They are now left unchanged (declined, 6,013 to 6,017) instead of rewritten, and no longer count as not executable (610 to 606). The rewritten count and the 0 wrong are unchanged: the broken rewrites had not been credited, because the original query could not be run in DuckDB.
+- Two `measures` cases (`correlated_measure_referenced_but_not_aggregated` and `correlated_measure_referenced_and_aggregated_2`) hold a derived table inside a scalar subquery that reads `OuterTable.key` or `OuterTable.measure_sum_price` from the enclosing query. The lifter used to hoist it into a top-level `WITH`, where `OuterTable` does not exist. They are now left unchanged (declined, 6,013 to 6,015) instead of rewritten, and no longer count as not executable (610 to 608). The rewritten count and the 0 wrong are unchanged: the broken rewrites had not been credited, because the original query could not be run in DuckDB here.
 - Most GoogleSQL cases are declined because KumoSQL has nothing to rewrite in a bare `SELECT`; the handled count measures rewrites that happened and held.
 - Still wanted on real BigQuery (to run on the laptop replica): every rewritten before/after pair from the edge suite (`--failures` lists none; use `evaluate()` for the pairs), especially the CTE-inlining cases with `RAND()`, `GENERATE_UUID()` and `CURRENT_*`, and `SAFE_`/cast cases whose result a DuckDB transpile may not model.
 
@@ -52,7 +52,7 @@ Correctness (WRONG), coverage (handled / declined / unsupported / error) and per
 | Corpus | Pipeline | Cases | Rewritten and identical | Wrong | Declined | Unsupported | Not executable |
 |---|---|---:|---:|---:|---:|---:|---:|
 | GoogleSQL compliance (googlesql @ d82db99, 7,870 original queries) | semantic | 7,870 | 31 | 0 | 6,626 | 994 | 219 |
-| GoogleSQL compliance | lift | 7,870 | 253 | 0 | 6,017 | 994 | 606 |
+| GoogleSQL compliance | lift | 7,870 | 253 | 0 | 6,015 | 994 | 608 |
 | Edge cases (967 custom: 379 hand-written, 588 seeded fuzz) | semantic | 967 | 428 | 0 | 539 | 0 | 0 |
 | Edge cases | lift | 967 | 434 | 0 | 533 | 0 | 0 |
 | Held-out fuzz (662, seeds 101 and 103, not used while fixing) | semantic / lift | 662 | 421 | 0 | 241 | 0 | 0 |

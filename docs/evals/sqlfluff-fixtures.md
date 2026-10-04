@@ -159,14 +159,14 @@ All 167 reproductions are exact, and the 8 unverified runs are right to be: seve
 
 | Rule | Fired | Verified | Same as sqlfluff's fix |
 | --- | ---: | ---: | ---: |
-| `lift_subqueries` (ST05's fix) | 37 | 32 | 17 |
-| `inline_single_use_ctes` | 18 | 18 | 10 |
-| `remove_redundant_parentheses` | 20 | 20 | 7 |
+| `lift_subqueries` (ST05's fix) | 36 | 31 | 16 |
+| `inline_single_use_ctes` | 18 | 17 | 11 |
+| `remove_redundant_parentheses` | 20 | 20 | 8 |
 | `remove_trivial_predicates` | 6 | 6 | – |
 | `remove_unused_ctes` | 4 | 4 | 1 |
 | `deduplicate_ctes`, `remove_redundant_distinct` | 0 | – | – |
 
-None is wrong. The five unverified `lift_subqueries` results (four ST05 fixtures with set operations or a `WITH` inside the subquery, and one CV07 query) are ones KumoSQL's verification could not prove and refused. Differing from sqlfluff's fix is not an error: the two tools name lifted CTEs differently and flatten different parts.
+None is wrong. The five unverified `lift_subqueries` results (four ST05 fixtures with set operations or a `WITH` inside the subquery, and one CV07 query) are ones KumoSQL's verification could not prove and refused. Two fixtures that used to count no longer do, because the lifter keeps a subquery whose body reads a column no relation binds (a lint fixture with no `FROM`, such as `WITH cte1 AS (SELECT a FROM (SELECT a)) SELECT a FROM cte1`, where `a` would have to come from outside): `lift_subqueries` no longer fires on that one (37 fired, 32 verified, 17 same as the fix, become 36, 31, 16), and `inline_single_use_ctes` on `WITH totals AS (SELECT (a - b) AS calc, name, SUM(c) -- total) SELECT * FROM totals` is now unproven instead of proven (18 verified becomes 17). Neither query can run, so these were not credited proofs of a runnable pair. Differing from sqlfluff's fix is not an error: the two tools name lifted CTEs differently and flatten different parts.
 
 ## Caveats
 
