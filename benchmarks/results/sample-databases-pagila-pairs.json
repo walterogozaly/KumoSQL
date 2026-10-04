@@ -1,0 +1,28 @@
+{
+  "suite": "Sample databases (Pagila): equivalent pairs and siblings",
+  "order": 351,
+  "size": 60,
+  "score": "22/27 equivalent proved, 31/33 different refuted (replayed), 0 wrong",
+  "metric": "Authored pairs on the Pagila schema under their declared keys, labelled equivalent or different (each 'different' label has a witness database); 10 siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB; 2 counterexamples that violated a declared key were caught by the replay and are unknown, not wrong (see caveats)",
+  "coverage": {
+    "proven": 22,
+    "refuted": 31,
+    "unknown": 7,
+    "unsupported": 0
+  },
+  "held_out": "2/2 proved, 6/6 refuted, 0 wrong (a fifth of the pairs by SHA-1 of their id)",
+  "docs": "docs/evals/sample-databases-pagila.md",
+  "command": "python tools/sample_db_bench.py --database pagila --write-results",
+  "date": "2026-10-04",
+  "caveats": "Authored pairs (60; dev 52, held out 8), not from upstream. Constraint siblings refuted: 10/10. The algebraic prover's executed counterexample search is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval; the first run is the baseline: 22/27 proved, 30/33 refuted and 3 counterexamples that did not replay. One was the harness's completion of a counterexample (a NOT NULL foreign key column the counterexample leaves out got the type default 0, which coincided with the original_language_id the counterexample uses; this adapter now completes it with a fresh value and its parent row), and two are a bounded-checker bug: it clamps a DATETIME model value to 0001-01-01 when it extracts the counterexample (bounded_equivalence._model_value), so two payments with different payment_date come out with the same value and the counterexample violates payment's composite key (pg-distinct-payment-composite-key-id-alone and pg-count-distinct-key-payment-id). The replay gate catches them: the two pairs stay unknown, are listed as prover bugs and are not counted wrong. Pagila declares no foreign key on payment (upstream declares them on 6 of the 55 partitions), so payment's joins cannot be eliminated and its pairs are different under the declarations.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "8afdccdf+changes"
+  }
+}

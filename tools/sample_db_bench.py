@@ -3,9 +3,9 @@
 Each database is an *adapter* (``ADAPTERS``): the pinned upstream script, committed unchanged with
 its licence under ``tests/fixtures/sample_databases/<name>/upstream/``, and the adapted BigQuery DDL
 (``adapted/schema.sql``, labelled ADAPTED) that says how the upstream tables become BigQuery tables.
-Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two;
-Pagila, Sakila, AdventureWorks and Employees plug in as further adapters (subclass ``Adapter``, give
-the pins, the type conversions and the expected row counts).
+Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two and
+Pagila (devrimgunduz/pagila) the third; Sakila, AdventureWorks and Employees plug in as further adapters
+(subclass ``Adapter``, give the pins, the type conversions and the expected row counts).
 
 For every database the harness
 
@@ -45,6 +45,7 @@ One case in five (by SHA-1 of its id) is held out and reported apart.
     python tools/sample_db_bench.py --part rewrites    # (a)
     python tools/sample_db_bench.py --part pairs       # (b)
     python tools/sample_db_bench.py --write-results    # both parts, write benchmarks/results/*.json
+    python tools/sample_db_bench.py --database pagila --write-results   # just Pagila's own pair of results files
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 import datetime as _dt
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 import hashlib
 import json
 import logging
@@ -492,6 +493,9 @@ class Adapter:
     #: row counts upstream publishes, and where (checked in addition to the rows the script inserts)
     published_counts: dict[str, int] = {}
     published_counts_source: str = ""
+    published_counts_complete: bool = (
+        True  # False: upstream publishes the counts of some tables only
+    )
     #: upstream table name -> adapted name, when they differ
     renames: dict[str, str] = {}
     #: (BigQuery SQL, expected rows) that upstream asserts about its data
@@ -501,8 +505,41 @@ class Adapter:
     def folder(self) -> Path:
         return FIXTURES / self.name
 
+    #: upstream file holding the DDL when it is not ``data_file`` (empty: the same file)
+    ddl_file: str = ""
+    #: results files this database is scored in (``<group>-rewrites`` and ``<group>-pairs``); the first two
+    #: databases share one pair of files, each later database has its own
+    results_group: str = "sample-databases"
+    #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
+    #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
+    fresh_foreign_key_values: bool = False
+    results_order: int = (
+        340  # scoreboard position of the group's rewrites row (pairs: one more)
+    )
+    docs_page: str = "docs/evals/sample-databases.md"
+    #: extra sentences for the results files' caveats: ``rewrites`` and ``pairs`` (not for the first two databases)
+    results_notes: dict = {}
+
     def upstream_text(self) -> str:
         return (self.folder / self.data_file).read_text(encoding="utf-8")
+
+    def ddl_text(self) -> str:
+        return (self.folder / (self.ddl_file or self.data_file)).read_text(
+            encoding="utf-8"
+        )
+
+    def upstream_tables(self) -> dict[str, TableDef]:
+        """The tables of the upstream DDL under their adapted names."""
+
+        return {self.renames.get(n, n): t for n, t in read_ddl(self.ddl_text()).items()}
+
+    def upstream_views(self) -> dict[str, str]:
+        return read_views(self.ddl_text())
+
+    def upstream_rows(self) -> dict[str, list]:
+        """Every upstream data row by upstream table name, as ``read_inserts`` returns them."""
+
+        return read_inserts(self.upstream_text())
 
     def schema(self) -> dict[str, TableDef]:
         """The adapted BigQuery DDL."""
@@ -557,7 +594,7 @@ class Adapter:
 
         schema = self.schema()
         out: dict[str, list[tuple]] = {name: [] for name in schema}
-        for upstream_table, inserted in read_inserts(self.upstream_text()).items():
+        for upstream_table, inserted in self.upstream_rows().items():
             table = self.renames.get(upstream_table, upstream_table)
             spec = schema[table]
             order = list(spec.columns)
@@ -841,7 +878,241 @@ class Northwind(Adapter):
         return value
 
 
-ADAPTERS: dict[str, Adapter] = {a.name: a for a in (Chinook(), Northwind())}
+def read_copy(
+    text: str,
+) -> dict[str, list[tuple[tuple[str, ...] | None, tuple[Raw, ...]]]]:
+    """Every row of every ``COPY [schema.]t (cols) FROM stdin;`` block of a ``pg_dump`` script.
+
+    Same shape as :func:`read_inserts`: rows keep the column list of their block and the values as
+    text (``\\N`` is NULL; the backslash escapes of the text format are undone).
+    """
+
+    escapes = {
+        "\\": "\\",
+        "t": "\t",
+        "n": "\n",
+        "r": "\r",
+        "b": "\b",
+        "f": "\f",
+        "v": "\v",
+    }
+
+    def unescape(field: str) -> str:
+        if "\\" not in field:
+            return field
+        return re.sub(r"\\(.)", lambda m: escapes.get(m.group(1), m.group(1)), field)
+
+    rows: dict[str, list] = {}
+    table, columns = None, None
+    for line in text.split("\n"):
+        if table is None:
+            match = re.match(r"COPY (?:\w+\.)?(\w+) \(([^)]*)\) FROM stdin;$", line)
+            if match:
+                table = match.group(1)
+                columns = tuple(c.strip() for c in match.group(2).split(","))
+            continue
+        if line == "\\.":
+            table = None
+            continue
+        values = tuple(
+            Raw("null", None) if f == "\\N" else Raw("string", unescape(f))
+            for f in line.split("\t")
+        )
+        if len(values) != len(columns):
+            raise ValueError(
+                f"{table}: {len(values)} values for {len(columns)} columns"
+            )
+        rows.setdefault(table, []).append((columns, values))
+    return rows
+
+
+class Pagila(Adapter):
+    name = "pagila"
+    title = "Pagila"
+    results_group = "sample-databases-pagila"
+    results_order = 350
+    docs_page = "docs/evals/sample-databases-pagila.md"
+    fresh_foreign_key_values = True
+    results_notes = {
+        "rewrites": (
+            "Pagila's 8 views (rental_by_category is a materialized view created WITH NO DATA upstream) and the SELECT statements of its functions "
+            "(parameters bound) are adapted from PostgreSQL to BigQuery, the README's portable example queries are included, and the other queries "
+            "were written for this eval (each adaptation recorded in the workload file). timestamptz columns are loaded as DATETIME holding the UTC time; "
+            "the enum, array, tsvector, uuid and vector columns as STRING text; the 55 payment partitions as one table. The two README queries that "
+            "read CURRENT_DATE or a uuid are skipped by the plain pipeline run as non-deterministic or environment-reading."
+        ),
+        "pairs": (
+            "No prover was changed for this eval; the first run is the baseline: 22/27 proved, 30/33 refuted and 3 counterexamples that did not replay. "
+            "One was the harness's completion of a counterexample (a NOT NULL foreign key column the counterexample leaves out got the type default 0, "
+            "which coincided with the original_language_id the counterexample uses; this adapter now completes it with a fresh value and its parent row), "
+            "and two are a bounded-checker bug: it clamps a DATETIME model value to 0001-01-01 when it extracts the counterexample "
+            "(bounded_equivalence._model_value), so two payments with different payment_date come out with the same value and the counterexample "
+            "violates payment's composite key (pg-distinct-payment-composite-key-id-alone and pg-count-distinct-key-payment-id). The replay gate catches "
+            "them: the two pairs stay unknown, are listed as prover bugs and are not counted wrong. Pagila declares no foreign key on payment "
+            "(upstream declares them on 6 of the 55 partitions), so payment's joins cannot be eliminated and its pairs are different under the declarations."
+        ),
+    }
+    ddl_file = "upstream/pagila-schema.sql"
+    data_file = "upstream/pagila-data.sql"
+    upstream = (
+        Upstream(
+            "upstream/pagila-schema.sql",
+            "devrimgunduz/pagila",
+            "9baf49c4149e43229f6021e6218d6b2ac8ef4f34",
+            "pagila-schema.sql",
+            "071ee940a73c8f4fad2997185788065291607e2c55559e3747959e8275391536",
+            "PostgreSQL licence, Copyright (c) Devrim Gündüz (upstream/LICENSE.txt)",
+        ),
+        Upstream(
+            "upstream/pagila-data.sql",
+            "devrimgunduz/pagila",
+            "9baf49c4149e43229f6021e6218d6b2ac8ef4f34",
+            "pagila-data.sql",
+            "a88efa94c7ae8bc9cf55def4efc9f164d064d5b9cd93f11719ba3b5ace1602f7",
+            "PostgreSQL licence, Copyright (c) Devrim Gündüz (upstream/LICENSE.txt)",
+        ),
+        Upstream(
+            "upstream/LICENSE.txt",
+            "devrimgunduz/pagila",
+            "9baf49c4149e43229f6021e6218d6b2ac8ef4f34",
+            "LICENSE.txt",
+            "516e7dac679ac1eeb62d5614b01c4e7318154e9a147377d6264954215997ff38",
+            "the licence itself",
+        ),
+    )
+    # The 55 monthly partitions of payment are read into the one adapted table.
+    renames = {
+        f"payment_p{year}_{month:02d}": "payment"
+        for year in range(2022, 2027)
+        for month in range(1, 13)
+        if (year, month) <= (2026, 7)
+    }
+    # The README of the pinned release: "Grow the customer base from 599 to 999" (4.0.0 history).
+    published_counts = {"customer": 999}
+    published_counts_complete = False
+    published_counts_source = (
+        "README.md of the pinned release (version history: 999 customers; about 51.8k rentals and 51k "
+        "payments, checked as ranges), and the sequence values pagila-data.sql ends with"
+    )
+    assertions = (
+        # "Grow rental activity from ~16k to ~51.8k rows, and payments from ~16k to ~51k rows, spanning
+        # January 2022 through July 2026"
+        ("SELECT COUNT(*) BETWEEN 51700 AND 51900 FROM rental", [(True,)]),
+        ("SELECT COUNT(*) BETWEEN 50500 AND 51500 FROM payment", [(True,)]),
+        (
+            "SELECT MIN(rental_date) >= DATETIME '2022-01-01 00:00:00', MAX(rental_date) < DATETIME '2026-08-01 00:00:00' FROM rental",
+            [(True, True)],
+        ),
+        (
+            "SELECT MIN(payment_date) >= DATETIME '2022-01-01 00:00:00', MAX(payment_date) < DATETIME '2026-08-01 00:00:00' FROM payment",
+            [(True, True)],
+        ),
+        # 4.0.0: language.name "strip the trailing blank-padding it left in the shipped data"
+        ("SELECT COUNT(*) FROM language WHERE name <> TRIM(name)", [(0,)]),
+        # 4.0.0: "Fix 400 of the 999 customers ... all being named ELIZABETH HALL"
+        (
+            "SELECT COUNT(*) < 20 FROM customer WHERE first_name = 'ELIZABETH' AND last_name = 'HALL'",
+            [(True,)],
+        ),
+        # 4.1.0: film.length_hours is round(length / 60.0, 2), computed from the upstream expression
+        (
+            "SELECT COUNT(*) FROM film WHERE length_hours IS NULL <> (length IS NULL)",
+            [(0,)],
+        ),
+        # every id is within the sequence value the dump ends with (setval(..., n, true))
+        # payment's three foreign keys are declared on six of its 55 partitions only; the rows satisfy them all
+        (
+            "SELECT (SELECT COUNT(*) FROM payment AS p WHERE NOT EXISTS (SELECT 1 FROM customer AS c WHERE c.customer_id = p.customer_id)), "
+            "(SELECT COUNT(*) FROM payment AS p WHERE NOT EXISTS (SELECT 1 FROM rental AS r WHERE r.rental_id = p.rental_id)), "
+            "(SELECT COUNT(*) FROM payment AS p WHERE NOT EXISTS (SELECT 1 FROM staff AS s WHERE s.staff_id = p.staff_id))",
+            [(0, 0, 0)],
+        ),
+        ("SELECT MAX(actor_id) <= 200 FROM actor", [(True,)]),
+        ("SELECT MAX(address_id) <= 1005 FROM address", [(True,)]),
+        ("SELECT MAX(category_id) <= 16 FROM category", [(True,)]),
+        ("SELECT MAX(city_id) <= 600 FROM city", [(True,)]),
+        ("SELECT MAX(country_id) <= 109 FROM country", [(True,)]),
+        ("SELECT MAX(customer_id) <= 999 FROM customer", [(True,)]),
+        ("SELECT MAX(film_id) <= 1000 FROM film", [(True,)]),
+        ("SELECT MAX(inventory_id) <= 4581 FROM inventory", [(True,)]),
+        ("SELECT MAX(language_id) <= 6 FROM language", [(True,)]),
+        ("SELECT MAX(payment_id) <= 102094 FROM payment", [(True,)]),
+        ("SELECT MAX(rental_id) <= 87559 FROM rental", [(True,)]),
+        ("SELECT MAX(staff_id) <= 1500 FROM staff", [(True,)]),
+        ("SELECT MAX(store_id) <= 500 FROM store", [(True,)]),
+    )
+
+    def upstream_rows(self):
+        return read_copy(self.upstream_text())
+
+    def upstream_tables(self) -> dict[str, TableDef]:
+        """Upstream's tables, the 55 payment partitions folded into ``payment``.
+
+        The parent declares the columns and the primary key; foreign keys are declared on partitions
+        only, and upstream declares them on the first six (January to June 2022) and not on the other
+        49. The table as a whole guarantees only what every partition declares: no foreign key.
+        """
+
+        raw = read_ddl(self.ddl_text())
+        tables = {n: t for n, t in raw.items() if n not in self.renames}
+        parent = tables["payment"]
+        partitions = [raw[n] for n in self.renames if n in raw]
+        assert len(partitions) == len(self.renames), (
+            "a payment partition is missing upstream"
+        )
+        for partition in partitions:
+            assert list(partition.columns) == list(parent.columns), partition.name
+            assert partition.not_null == parent.not_null, partition.name
+        declared_everywhere = set.intersection(
+            *(set(p.foreign_keys) for p in partitions)
+        )
+        parent.foreign_keys = sorted(declared_everywhere)
+        return tables
+
+    def upstream_views(self) -> dict[str, str]:
+        """``CREATE [MATERIALIZED] VIEW public.name AS body;`` of the schema file, by name."""
+
+        return {
+            m.group(1): m.group(2).strip()
+            for m in re.finditer(
+                r"^CREATE (?:MATERIALIZED )?VIEW (?:public\.)?(\w+) AS\n(.*?);\n",
+                self.ddl_text(),
+                re.MULTILINE | re.DOTALL,
+            )
+        }
+
+    def parse_datetime(self, text: str) -> _dt.datetime:
+        # timestamptz in the dump: '2025-07-31 04:26:30.712241+00' (every value is UTC)
+        if re.fullmatch(r"\d{4}-\d\d-\d\d", text):
+            return _dt.datetime.fromisoformat(text)  # a date column
+        if not text.endswith("+00"):
+            raise ValueError(f"not a UTC timestamp: {text!r}")
+        return _dt.datetime.fromisoformat(text[:-3])
+
+    def convert(self, table, column, kind, raw):
+        if (
+            raw.kind != "null"
+            and prover_type(kind) == "BYTES"
+            and raw.text.startswith("\\x")
+        ):
+            return bytes.fromhex(raw.text[2:])  # bytea hex format
+        return super().convert(table, column, kind, raw)
+
+    def rows(self) -> dict[str, list[tuple]]:
+        out = super().rows()
+        # film.length_hours: a VIRTUAL generated column, round(length / 60.0, 2) (not in the dump)
+        names = list(self.schema()["film"].columns)
+        length, hours = names.index("length"), names.index("length_hours")
+        for index, row in enumerate(out["film"]):
+            if row[length] is not None:
+                value = (Decimal(row[length]) / Decimal("60.0")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                out["film"][index] = row[:hours] + (value,) + row[hours + 1 :]
+        return out
+
+
+ADAPTERS: dict[str, Adapter] = {a.name: a for a in (Chinook(), Northwind(), Pagila())}
 
 
 # ---------------------------------------------------------------- load checks
@@ -857,10 +1128,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
             problems.append(
                 f"{pin.local}: SHA-256 {digest} is not the pinned {pin.sha256}"
             )
-    upstream_text = adapter.upstream_text()
-    upstream = {
-        adapter.renames.get(n, n): t for n, t in read_ddl(upstream_text).items()
-    }
+    upstream = adapter.upstream_tables()
     adapted = adapter.schema()
     if set(upstream) != set(adapted):
         problems.append(
@@ -894,9 +1162,9 @@ def check_database(adapter: Adapter, con=None) -> dict:
         declared["foreign_keys"] += len(table.foreign_keys)
         declared["not_null"] += len(table.not_null)
     inserted = Counter()
-    for upstream_table, rows in read_inserts(upstream_text).items():
+    for upstream_table, rows in adapter.upstream_rows().items():
         inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
-    upstream_views = read_views(upstream_text)
+    upstream_views = adapter.upstream_views()
     for query in adapter.workload():
         if query["origin"] == "upstream-view" and query["name"] not in upstream_views:
             problems.append(
@@ -1299,6 +1567,16 @@ def _typed(value, kind: str):
         if isinstance(value, (int, float)):
             return _dt.datetime(2000, 1, 1) + _dt.timedelta(days=int(value))
         return _dt.datetime.fromisoformat(str(value))
+    if base == "DATE":
+        if isinstance(value, _dt.datetime):
+            return value.date()
+        if isinstance(value, _dt.date):
+            return value
+        if isinstance(value, (int, float)):
+            return _dt.date(2000, 1, 1) + _dt.timedelta(days=int(value))
+        return _dt.date.fromisoformat(str(value))
+    if base == "BOOL":
+        return value if isinstance(value, bool) else str(value).lower() in ("1", "true")
     if base == "BYTES":
         return value if isinstance(value, bytes) else str(value).encode()
     return value if isinstance(value, str) else str(value)
@@ -1314,6 +1592,10 @@ def _filler(kind: str, n: int, unique: bool):
         return float(900_000 + n) if unique else 0.0
     if base == "DATETIME":
         return _dt.datetime(2000, 1, 1) + _dt.timedelta(days=n if unique else 0)
+    if base == "DATE":
+        return _dt.date(2000, 1, 1) + _dt.timedelta(days=n if unique else 0)
+    if base == "BOOL":
+        return False
     if base == "BYTES":
         return f"k{n}".encode() if unique else b""
     return f"k{n}" if unique else "x"
@@ -1354,7 +1636,13 @@ def complete_database(
             if column in key:
                 values[column] = fresh(kind)
             elif column in not_null:
-                values[column] = _filler(kind, 0, False)
+                if adapter.fresh_foreign_key_values and any(
+                    column in cols and f"fk:{table}.{column}" not in drop
+                    for cols, _, _ in spec.foreign_keys
+                ):
+                    values[column] = fresh(kind)
+                else:
+                    values[column] = _filler(kind, 0, False)
             else:
                 values[column] = None
         return values
@@ -1606,7 +1894,12 @@ def decide_pair(name: str, pair: dict, con) -> dict:
                     "unknown",
                     f"{how} did not replay" + (f": {broken[0]}" if broken else ""),
                 )
-                row["wrong"] = "counterexample does not replay on a legal database"
+                if pair.get("known_prover_bug"):
+                    # a prover emitted an illegal counterexample and the replay gate caught it: the pair stays
+                    # unknown, and the bug is listed apart instead of counted as a wrong answer
+                    row["prover_bug"] = pair["known_prover_bug"]
+                else:
+                    row["wrong"] = "counterexample does not replay on a legal database"
         elif not row["how"]:
             row["how"] = result.reason[:100] if result is not None else ""
     row["seconds"] = round(time.time() - started, 2)
@@ -1646,6 +1939,7 @@ def summarize_pairs(rows: list[dict]) -> dict:
                 bool(r["drop"]) and r["outcome"] == "refuted" for r in selection
             ),
             "wrong": sum(bool(r["wrong"]) for r in selection),
+            "prover_bugs": sum(bool(r.get("prover_bug")) for r in selection),
             "labels_unverified": sum(r["witness_ok"] is False for r in selection),
         }
 
@@ -1667,6 +1961,11 @@ def summarize_pairs(rows: list[dict]) -> dict:
             if r["wrong"]
         ],
         "unverified_labels": [r["id"] for r in rows if r["witness_ok"] is False],
+        "prover_bug_cases": [
+            {k: r.get(k) for k in ("id", "prover_bug", "how")}
+            for r in rows
+            if r.get("prover_bug")
+        ],
     }
 
 
@@ -1676,16 +1975,47 @@ COMMAND = "python tools/sample_db_bench.py --write-results"
 
 
 def _pins_text(adapters: list[Adapter]) -> str:
-    return "; ".join(
-        f"{a.title} {a.upstream[0].repo}@{a.upstream[0].commit[:10]} {a.upstream[0].path} (SHA-256 {a.upstream[0].sha256[:12]}, {a.upstream[0].licence.rsplit(' (', 1)[0]})"
-        for a in adapters
-    )
+    def pin(a: Adapter) -> str:
+        files = [u for u in a.upstream if u.licence != "the licence itself"]
+        licence = files[0].licence.rsplit(" (", 1)[0]
+        if len(files) == 1:
+            shown = f"{files[0].path} (SHA-256 {files[0].sha256[:12]}, {licence})"
+        else:  # several files: each with its hash, then the licence
+            shown = (
+                " and ".join(f"{u.path} (SHA-256 {u.sha256[:12]})" for u in files)
+                + f", {licence}"
+            )
+        return f"{a.title} {files[0].repo}@{files[0].commit[:10]} {shown}"
+
+    return "; ".join(pin(a) for a in adapters)
 
 
 def results_rows(
     adapters: list[Adapter], reports: list[dict], rewrites: dict, pairs: dict
 ) -> dict[str, dict]:
+    """The two results rows of one group of databases (``Adapter.results_group``: the first two databases
+    share one pair of files, each later database has its own)."""
+
     from bench_common import today
+
+    group = adapters[0].results_group
+    legacy = group == "sample-databases"
+    titles = ", ".join(a.title for a in adapters)
+    titles_and = " and ".join(a.title for a in adapters)
+    schemas = (
+        "the two schemas"
+        if len(adapters) == 2
+        else f"the {titles_and} schema" + ("s" if len(adapters) > 1 else "")
+    )
+    docs_page = adapters[0].docs_page
+    command = (
+        COMMAND
+        if legacy
+        else "python tools/sample_db_bench.py "
+        + " ".join(f"--database {a.name}" for a in adapters)
+        + " --write-results"
+    )
+    notes = adapters[0].results_notes
 
     loaded = ", ".join(
         f"{r['database']} {r['tables']} tables / {r['rows']:,} rows" for r in reports
@@ -1700,9 +2030,9 @@ def results_rows(
     plain = rewrites["plain"]
     stages = rewrites["by_stage"]
     rows = {
-        "sample-databases-rewrites": {
-            "suite": "Sample databases (Chinook, Northwind): workload rewrites",
-            "order": 340,
+        f"{group}-rewrites": {
+            "suite": f"Sample databases ({titles}): workload rewrites",
+            "order": adapters[0].results_order,
             "size": a["cases"],
             "score": f"{a['wrong']} wrong in {a['executed']} executed; {a['verified']} rewrites verified on the real data",
             "metric": (
@@ -1714,7 +2044,7 @@ def results_rows(
             "evidence": "executed",
             "correctness": (
                 f"{a['wrong']} behaviour-changing rewrites ({a['wrong_but_proven']} of them labelled proven); every rewrite is compared with an "
-                "unrewritten control on the real Chinook and Northwind data, a difference confirmed with DuckDB's optimizer off"
+                f"unrewritten control on the real {titles_and} data, a difference confirmed with DuckDB's optimizer off"
             ),
             "coverage": {
                 "proven": a["verified"],
@@ -1729,25 +2059,30 @@ def results_rows(
                 f"upstream queries {up['wrong']} wrong / {up['transformed']} changed, authored {au['wrong']} wrong / {au['transformed']} changed"
             ),
             "held_out": f"dev {dev['wrong']} wrong / {dev['transformed']} changed; held out (a fifth of the queries by SHA-1 of their id) {ho['wrong']} wrong / {ho['transformed']} changed of {ho['executed']} executed",
-            "docs": "docs/evals/sample-databases.md",
-            "command": COMMAND,
+            "docs": docs_page,
+            "command": command,
             "date": today(),
             "caveats": (
                 f"Pinned: {_pins_text(adapters)}. Loaded and checked against upstream: {loaded}, {keys[0]} primary and {keys[1]} foreign keys. "
-                "Northwind's 16 views and 7 stored procedures (parameters bound) and Chinook's 2 test-fixture queries are adapted from T-SQL/SQLite "
-                "to BigQuery (each adaptation recorded in the workload file); the authored queries were written for this eval. In coverage, 'proven' "
+                + (
+                    "Northwind's 16 views and 7 stored procedures (parameters bound) and Chinook's 2 test-fixture queries are adapted from T-SQL/SQLite "
+                    "to BigQuery (each adaptation recorded in the workload file); the authored queries were written for this eval."
+                    if legacy
+                    else notes.get("rewrites", "")
+                )
+                + " In coverage, 'proven' "
                 "counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval."
             ),
         },
     }
     p, pdev, pho = pairs["all"], pairs["dev"], pairs["held_out"]
-    rows["sample-databases-pairs"] = {
-        "suite": "Sample databases (Chinook, Northwind): equivalent pairs and siblings",
-        "order": 341,
+    rows[f"{group}-pairs"] = {
+        "suite": f"Sample databases ({titles}): equivalent pairs and siblings",
+        "order": adapters[0].results_order + 1,
         "size": p["pairs"],
         "score": f"{p['proven']}/{p['equivalent']} equivalent proved, {p['refuted']}/{p['different']} different refuted (replayed), {p['wrong']} wrong",
         "metric": (
-            "Authored pairs on the two schemas under their declared keys, labelled equivalent or different (each 'different' label has a witness "
+            f"Authored pairs on {schemas} under their declared keys, labelled equivalent or different (each 'different' label has a witness "
             f"database); {p['constraint_siblings']} siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, "
             "algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample."
         ),
@@ -1755,6 +2090,11 @@ def results_rows(
         "correctness": (
             f"{p['wrong']} wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every "
             "refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB"
+            + (
+                f"; {p['prover_bugs']} counterexamples that violated a declared key were caught by the replay and are unknown, not wrong (see caveats)"
+                if p.get("prover_bugs")
+                else ""
+            )
         ),
         "coverage": {
             "proven": p["proven"],
@@ -1763,14 +2103,19 @@ def results_rows(
             "unsupported": p["unsupported"],
         },
         "held_out": f"{pho['proven']}/{pho['equivalent']} proved, {pho['refuted']}/{pho['different']} refuted, {pho['wrong']} wrong (a fifth of the pairs by SHA-1 of their id)",
-        "docs": "docs/evals/sample-databases.md",
-        "command": COMMAND,
+        "docs": docs_page,
+        "command": command,
         "date": today(),
         "caveats": (
             f"Authored pairs ({p['pairs']}; dev {pdev['pairs']}, held out {pho['pairs']}), not from upstream. "
             f"Constraint siblings refuted: {p['constraint_siblings_refuted']}/{p['constraint_siblings']}. The algebraic prover's executed counterexample search "
-            "is time-limited, so on a loaded machine a refutation can fall back to unknown (ch-filter-vs-conditional-count: refuted on an idle "
-            "machine, unknown in the recorded run). No prover was changed for this eval; the first run is the baseline."
+            "is time-limited, so on a loaded machine a refutation can fall back to unknown"
+            + (
+                " (ch-filter-vs-conditional-count: refuted on an idle "
+                "machine, unknown in the recorded run). No prover was changed for this eval; the first run is the baseline."
+                if legacy
+                else ". " + notes.get("pairs", "")
+            )
         ),
     }
     return rows
@@ -1802,19 +2147,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write-results",
         action="store_true",
-        help="write benchmarks/results/sample-databases-*.json (every database, both parts)",
+        help="write the results files of the selected databases' groups, both parts (all databases by default)",
     )
     args = parser.parse_args(argv)
     if args.write_results and (
-        args.database
-        or args.query
-        or args.pair
-        or args.part != "both"
-        or args.no_optimizer
+        args.query or args.pair or args.part != "both" or args.no_optimizer
     ):
         parser.error(
-            "--write-results needs the full run: every database, both parts, no --query/--pair/--no-optimizer"
+            "--write-results needs the full run: both parts, no --query/--pair/--no-optimizer"
         )
+    if args.write_results and args.database:
+        # one results pair per group of databases: a group is written whole or not at all
+        chosen = set(args.database)
+        for name in chosen:
+            partial = {
+                a.name
+                for a in ADAPTERS.values()
+                if a.results_group == ADAPTERS[name].results_group
+            } - chosen
+            if partial:
+                parser.error(
+                    f"--write-results with --database needs every database of the group of {name}: also {sorted(partial)}"
+                )
     from bench_common import quiet
 
     quiet()
@@ -1881,6 +2235,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"pairs {key:9} {summary[key]}")
         for row in rows:
             flag = f" WRONG: {row['wrong']}" if row["wrong"] else ""
+            if row.get("prover_bug"):
+                flag = " PROVER BUG (not counted wrong): counterexample does not replay"
             label = "" if row["witness_ok"] is not False else " (label unverified)"
             print(
                 f"  {row['id']:52} {row['label']:10} {row['outcome']:8} {row['how'][:60]}{flag}{label}"
@@ -1893,9 +2249,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_results:
         from bench_common import write_results
 
-        written = results_rows(
-            adapters, reports, dump["rewrites"]["summary"], dump["pairs"]["summary"]
-        )
+        groups: dict[str, list[Adapter]] = {}
+        for adapter in adapters:
+            groups.setdefault(adapter.results_group, []).append(adapter)
+        written: dict[str, dict] = {}
+        for members in groups.values():
+            names = {a.name for a in members}
+            written.update(
+                results_rows(
+                    members,
+                    [r for r in reports if r["database"] in names],
+                    summarize_rewrites(
+                        [r for r in dump["rewrites"]["cases"] if r["database"] in names]
+                    ),
+                    summarize_pairs(
+                        [r for r in dump["pairs"]["cases"] if r["database"] in names]
+                    ),
+                )
+            )
         for index, (name, row) in enumerate(written.items()):
             write_results(name, row, scoreboard=index == len(written) - 1)
     return 1 if failed else 0
