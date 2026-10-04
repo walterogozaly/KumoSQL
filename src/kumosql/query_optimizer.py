@@ -38,7 +38,7 @@ import sqlglot
 from sqlglot import exp
 
 from .ast_utils import distinct_on, extended_grouping, plain_distinct
-from .ast_utils import select_sources as _sources
+from .ast_utils import select_sources as _sources, star_modified
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
@@ -140,6 +140,8 @@ def _is_star_list(select: exp.Select, source_name: str | None) -> bool:
     if len(exprs) != 1:
         return False
     item = exprs[0]
+    if star_modified(item):
+        return False  # ``* EXCEPT / REPLACE ..`` lists other columns than its source
     if isinstance(item, exp.Star):
         return True
     return (

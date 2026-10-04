@@ -651,6 +651,33 @@ def distinct_on(select: exp.Expression) -> bool:
     return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
 
 
+def star_of(item: exp.Expression) -> exp.Star | None:
+    """The Star of a select item ``*`` or ``t.*`` (``t.*`` keeps its EXCEPT, REPLACE .. on that Star), else ``None``."""
+
+    if isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
+        return item.this
+    return item if isinstance(item, exp.Star) else None
+
+
+def star_modifier(item: exp.Expression, key: str):
+    """The ``"except"``, ``"replace"``, ``"rename"`` or ``"ilike"`` modifier of ``*`` or ``t.*`` (``None`` without one).
+
+    sqlglot 30 calls EXCEPT ``except_`` where 26 calls it ``except``: both spellings are read.
+    """
+
+    star = star_of(item)
+    if star is None:
+        return None
+    return star.args.get(key) or star.args.get(f"{key}_")
+
+
+def star_modified(item: exp.Expression) -> bool:
+    """Whether ``*`` or ``t.*`` carries any modifier: EXCEPT, REPLACE, RENAME, ILIKE or one a later sqlglot adds."""
+
+    star = star_of(item)
+    return star is not None and any(star.args.values())
+
+
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 

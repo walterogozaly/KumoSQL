@@ -12,11 +12,13 @@ Before it counts a difference, the tool rules out noise: rounding in decimal dig
 
 ## What it has found so far
 
-On the first runs, every counted proof of QED (177), Singh and Bedathur (862, tested on DuckDB and on a real MySQL 8) and VeriEQL (7,062) survived. A candidate in VeriEQL was a rounding artifact of the checking engine, which now counts as noise. The Singh runs did turn up one rule that is wrong for MySQL: it treats a string and a number as never equal, which MySQL does not. No counted proof depended on it.
+Every counted proof that has been re-checked so far survived: QED (366), the SQLSolver suites on Calcite, Spark, TPC-H and TPC-C, R-Bot, Cosette, SPES, the mined Calcite pairs (446), Singh and Bedathur (862, tested on DuckDB and on a real MySQL 8) and VeriEQL (7,062). A candidate in VeriEQL was a rounding artifact of the checking engine, which now counts as noise. A candidate in DLBench was two groups tied under `LIMIT 1`, where each engine picks a different one; the tool now tests for that and calls it a tie. The Singh runs did turn up one rule that is wrong for MySQL: it treats a string and a number as never equal, which MySQL does not. No counted proof depended on it.
+
+The tool also covers the fuzzing, rewrite, view-reuse, containment, dialect, pipeline, minimization and bounded-verification evals. Each of those was compared with how its eval proves pairs, and has been run on a small sample, with full runs done for three of them and the rest still to do. Where an eval's recorded count is out of date, the tool follows the eval's code, and the full reference lists the differences.
 
 ## Limits
 
 - Surviving the search is evidence, not a proof. A database the search never builds can still hide a bug.
 - A difference can also come from the checking engine rather than the proof, for example a different rounding, so each one is reviewed by hand before it is called a bug.
-- Only some evals have an adapter so far. The full reference lists them, the recorded results and what is still open.
+- Some proofs cannot be run on the checking engine (a function DuckDB lacks, a subquery shape it cannot execute); those are listed as not runnable, not as passed.
 - It is a tool for developers. It changes no scores and no rules; the full reference covers the commands and the output.
