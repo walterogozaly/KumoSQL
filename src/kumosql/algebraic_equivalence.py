@@ -97,6 +97,9 @@ from .lateral_boolean_groups import nullable_lateral_boolean_group
 from . import string_number_compare
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
+from .struct_fields import split_struct_fields
+from .in_null_candidates import drop_null_candidate_filters
+from .unnest_literals import split_unnest_literals
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
 
 MAX_BRANCHES = 16
@@ -4799,6 +4802,9 @@ def normalize(
     tree = _resolve_ordinals(tree, group_by=not group_by_constants)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
+    tree = split_unnest_literals(tree, schema, types, dialect)  # pre-pass: no later step may read the UNNEST first
+    tree = split_struct_fields(tree, schema, dialect)  # pre-pass: no later step may read s.f as a table's column
+    tree = drop_null_candidate_filters(tree, types)  # pre-pass: before _isolate_windows moves the window out of reach
     tree = inline_named_windows(tree)
     from .nonnull_any import rewrite_nonnull_any
 

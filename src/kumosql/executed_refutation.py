@@ -243,6 +243,24 @@ def _datasets(left: str, right: str, typed, rules):
     yield from _narrow_datasets(typed, rules, extras)
     for seed in _RANDOM_SEEDS:
         yield generate_synthetic_dataset(typed, seed=seed, rows_per_table=5, null_rate=0.2, rules=rules, extra_values=extras)
+    integers = _query_integers(left, right)
+    if set(integers) - set(extras.get("INT64", ())):
+        # ``extras`` leaves out the integers the default domain already holds, so the narrow pool above can be
+        # just 0 and 1; one more batch, after all the others, over every integer of the queries and its neighbours
+        yield from _narrow_datasets(typed, rules, {"INT64": integers})
+
+
+def _query_integers(*sqls: str) -> tuple[int, ...]:
+    found: list[int] = []
+    for sql in sqls:
+        try:
+            tree = sqlglot.parse_one(sql, read="bigquery")
+        except sqlglot.errors.SqlglotError:
+            continue
+        for node in tree.find_all(exp.Literal):
+            if not node.is_string and node.name.isascii() and node.name.isdigit():
+                found.append(-int(node.name) if isinstance(node.parent, exp.Neg) else int(node.name))
+    return tuple(dict.fromkeys(found))
 
 
 def _narrow_datasets(typed, rules, extras, count: int = 60):
