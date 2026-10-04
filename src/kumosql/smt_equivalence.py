@@ -28,7 +28,7 @@ nondeterministic functions and the like yield ``not_proven``.
 Values use three-valued logic with explicit NULL flags over an untyped domain
 (an exact rational, a string or a boolean), so no schema types are needed.
 Every proof assumes ``BASE_ASSUMPTIONS``: no NaN, runtime errors not modeled,
-SUM/AVG independent of row order, result column types not compared; with
+SUM/AVG independent of row order (dropped or narrowed by ``float_sum_order``), result column types not compared; with
 ``exact_arithmetic`` also that ``+``, ``-`` and ``*`` never round or overflow.
 Numeric conversions that the query text makes visible are kept: a CASE, IF,
 COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
@@ -82,6 +82,7 @@ from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 from . import smt_errors, smt_values, string_number_compare, string_number_literals
+from .float_sum_order import Ledger
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -1010,6 +1011,7 @@ class _Compiler:
         self.untyped_sources = False  # an UNNEST or opaque source, whose columns have no declared type
         self.big_literals: list[str] = []  # INT64 literals past 2**53, which need an all-INT64 context
         self.float_capable = False  # a literal, cast or function in the queries that may produce a FLOAT64
+        self.sums = Ledger()  # SUM and AVG calls, for the row-order assumption (float_sum_order.py)
         self.string_literals: set[str] = set()
         self.timestamp_literals: set[str] = set()
 
@@ -1027,6 +1029,7 @@ class _Compiler:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
         self.float_capable = self.float_capable or smt_values.float_capable(statement)
+        self.sums.statement(statement)
         if any(statement.find_all(exp.Pivot)):
             # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
             raise Unsupported("PIVOT and UNPIVOT are not modeled")
@@ -2542,6 +2545,11 @@ class _Compiler:
             arg = _box(self._pred(target, env, None, None))
         else:
             arg = self._val(target, env, None, None)
+        if func == "SUM" and self.dialect == "bigquery":
+            try:
+                self.sums.observe_sum(e, self._class_of(target, env, None, None))
+            except Unsupported:
+                self.sums.observe_sum(e, None)
         all_null = arg is not None and func in ("COUNT", "SUM", "MIN", "MAX", "AVG") and z3.is_true(z3.simplify(arg.null))
         if all_null:
             # An aggregate of values that are all NULL: COUNT is 0, the others are NULL. The call is still
@@ -4454,6 +4462,8 @@ def _prove_core(
             # Every column is declared INT64, NUMERIC, STRING, BOOL or another non-floating type and no expression can produce a
             # FLOAT64: there is no NaN, a SUM is exact in any order, and + - * are exact (an overflow is an error, reported below).
             assumed = tuple(a for a in assumed if a not in (BASE_ASSUMPTIONS[0], BASE_ASSUMPTIONS[2], EXACT_ARITHMETIC_ASSUMPTION))
+        elif dialect == "bigquery":
+            assumed = compiler.sums.settle(assumed, BASE_ASSUMPTIONS[2])  # an exact SUM, or the same plan on both sides
         order = compiler.order_facts()
         for union in (left, right):
             for block in union.branches:
