@@ -26,6 +26,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |
 | [Join rewrites](join-rewrites.md) | When does changing a join type preserve results? |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Does the prover avoid accepting known faulty rewrites? |
+| [Numeric traps](numeric-traps.md) | Does the prover handle BigQuery's number and error rules, and tell when a rewrite could start failing? |
 | [Sample databases](sample-databases.md) | Do rewrites and proofs hold on complete real databases with declared keys? |
 | [DB-GPT examples](dbgpt-rules.md) | Which demonstration rewrites preserve results under reviewed schemas? |
 | [Documented rewrites](documented-rewrites.md) | Do rewrites recommended by vendor docs keep the results? |
