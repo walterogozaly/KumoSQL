@@ -24,4 +24,4 @@ Small suites with answers worked out by hand cover duplicates, NULLs, composite 
 
 ## Limits
 
-The VeriEQL run is a sample, not the whole set, and no held-out split was reserved for it. Conditions are minimal for this prover only. The full guide has the counts, the held-out result and the commands to rerun them.
+The VeriEQL run is a sample, not the whole set, and no held-out split was reserved for it. Conditions are minimal for this prover only, and the search has a time limit: on a busy machine it can stop early and say so, which is why the scoring run gives it much longer. The full guide has the counts, the held-out result and the commands to rerun them.
