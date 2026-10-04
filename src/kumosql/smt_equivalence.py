@@ -74,7 +74,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, faithful_sql, merge_wrapper_tails
 from .set_operations import positional_sql_pair
-from .solver_lock import bounded_solver, serialized
+from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .sqlx_fragments import masked_template_problem
 from . import string_number_compare
@@ -2204,7 +2204,7 @@ class _Prover:
         self.unknown = False
         self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
-        self.candidates: list[tuple[object, list[_Occ]]] = []
+        self.candidates: list[tuple[object, object, list[_Occ], list[_Val]]] = []
 
     @staticmethod
     def _typing(occs: list[_Occ]):
@@ -2311,33 +2311,48 @@ class _Prover:
         if result == z3.unsat:
             return True
         if result == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
         else:
             self.unknown = True
             self.wall_clock = self.wall_clock or solver.reason_unknown() == "timeout"
         return False
 
-    def _counterexample(self, solver, occs):
-        """A model of the last satisfiable check, preferring an integral one.
+    def _candidate(self, solver, occs):
+        # Internal proof attempts often discard their candidates or prove the pair.
+        # Only extract a model if refutation search actually consumes this candidate.
+        # Keep the asserted terms and the plain model, not the solver: a solver holds its whole search state,
+        # and a prover that collects many candidates would hold all of it until the search ends.
+        # Snapshot the values now: occurrences can acquire more columns later.
+        values = [v for occ in occs for v in occ.cols.values()]
+        self.candidates.append((solver.assertions(), solver.model(), list(occs), values))
 
-        The plain model is read first: ``_nice_model`` runs further checks, and
-        after those the solver holds no model to fall back on.
+    def _counterexample(self, assertions, base, values):
+        """A model of a satisfiable check, preferring an integral one.
+
+        Extract candidates in a fresh context: the shared context's term ids can
+        change which unconstrained NULL flags Z3 picks across identical calls.
+        The proof check above is unchanged, and every candidate is still checked
+        against the constraints and both queries before it is returned.
         """
 
-        base = solver.model()
-        return self._nice_model(solver, occs) or base
+        context = z3.Context()
+        isolated = bound(z3.Solver(ctx=context), self.timeout_ms)  # a fresh solver has no limits of its own
+        isolated.add(*[assertion.translate(context) for assertion in assertions])
+        if isolated.check() != z3.sat:
+            return base  # A timeout in the extra search must not lose a satisfiable model.
+        model = self._nice_model(isolated, values) or isolated.model()
+        return model.translate(base.ctx)
 
-    def _nice_model(self, solver, occs):
+    def _nice_model(self, solver, values):
         """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
         column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
-        values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
         for extra in (integral + numeric, numeric, integral):
             solver.push()
-            solver.add(*extra)
+            solver.add(*[fact.translate(solver.ctx) for fact in extra])
             model = solver.model() if solver.check() == z3.sat else None
             solver.pop()
             if model is not None:
@@ -2351,7 +2366,7 @@ class _Prover:
         solver.add(*facts)
         solver.add(pred)
         if solver.check() == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
 
     def unify_subs(self, a_subs: list, b_subs: list, base_pairs: list, scope: list, facts):
         """Group equivalent existence tests so equal tests share one atom.
@@ -3636,7 +3651,8 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         prover.witness(block.cond.t, block.occs, block.facts)
     empty = z3.Solver()
     empty.check()
-    for model, occs in [(empty.model(), [])] + prover.candidates:
+    for assertions, base, occs, values in [(None, empty.model(), [], [])] + prover.candidates:
+        model = prover._counterexample(assertions, base, values) if occs else base
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})

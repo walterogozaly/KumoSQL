@@ -38,7 +38,7 @@ The minimizer proves things about *your* tables, so it is careful about what a n
 - Names it makes up internally can never be confused with a table you named yourself.
 - A `WITH stage AS (...)` inside one subquery does not hide a real table `stage` read somewhere else in the statement.
 
-Before it returns an answer it checks that nothing in it reads a table the answer removed. The evidence is the regression tests in `tests/test_table_minimizer.py` (each case also runs in DuckDB where that is possible); it does not cover datasets configured for case-insensitive names or incremental Dataform tables.
+Before it returns an answer it checks that nothing in it reads a table the answer removed. The evidence is the regression tests in `tests/test_table_minimizer.py` (each case also runs in DuckDB where that is possible); it does not cover datasets configured for case-insensitive names. A bare list of SELECTs cannot show that a table is incremental (builds on its own earlier rows), so you name those tables yourself with `incremental`; they then stay exactly as written, and so does everything they read. Nothing notices an incremental table you do not name. Project reduction does this for you from the Dataform config.
 
 ## What “simpler” means
 
