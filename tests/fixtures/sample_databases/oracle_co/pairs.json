@@ -1,0 +1,749 @@
+{
+ "about": "Authored query pairs on Oracle Customer Orders for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the CO data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates. Upstream's UNIQUE constraints cannot be declared in BigQuery DDL and are dropped, so pairs that would need them are labelled different.",
+ "pairs": [
+  {
+   "id": "co-fk-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "orders.customer_id is NOT NULL and references customers' key",
+   "left": "SELECT o.order_id, o.order_status FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id",
+   "right": "SELECT order_id, order_status FROM orders"
+  },
+  {
+   "id": "co-fk-join-elimination-nullable",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-fk-join-elimination",
+   "why": "order_items.shipment_id may be NULL: an item not yet shipped joins no shipment (1,238 of the 3,914 real items)",
+   "left": "SELECT oi.order_id, oi.line_item_id FROM order_items AS oi JOIN shipments AS s ON oi.shipment_id = s.shipment_id",
+   "right": "SELECT order_id, line_item_id FROM order_items",
+   "witness": "real"
+  },
+  {
+   "id": "co-fk-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-fk-join-elimination",
+   "drop": [
+    "fk:orders.customer_id"
+   ],
+   "why": "without the foreign key an order may name a customer that does not exist",
+   "left": "SELECT o.order_id, o.order_status FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id",
+   "right": "SELECT order_id, order_status FROM orders",
+   "witness": {
+    "orders": [
+     {
+      "order_id": 1,
+      "customer_id": 999
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-fk-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-fk-join-elimination",
+   "drop": [
+    "pk:customers"
+   ],
+   "why": "without customers' primary key two customers may share an id and the order joins both",
+   "left": "SELECT o.order_id, o.order_status FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id",
+   "right": "SELECT order_id, order_status FROM orders",
+   "witness": {
+    "customers": [
+     {
+      "customer_id": 7,
+      "email_address": "a",
+      "full_name": "a"
+     },
+     {
+      "customer_id": 7,
+      "email_address": "b",
+      "full_name": "b"
+     }
+    ],
+    "orders": [
+     {
+      "order_id": 1,
+      "customer_id": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-item-join-order",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "order_items.order_id is NOT NULL and references orders' key",
+   "left": "SELECT oi.order_id, oi.line_item_id FROM order_items AS oi JOIN orders AS o ON oi.order_id = o.order_id",
+   "right": "SELECT order_id, line_item_id FROM order_items"
+  },
+  {
+   "id": "co-item-join-order-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-item-join-order",
+   "drop": [
+    "fk:order_items.order_id"
+   ],
+   "why": "without the foreign key an item may belong to an order that does not exist",
+   "left": "SELECT oi.order_id, oi.line_item_id FROM order_items AS oi JOIN orders AS o ON oi.order_id = o.order_id",
+   "right": "SELECT order_id, line_item_id FROM order_items",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 999,
+      "line_item_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-left-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a LEFT JOIN on the key of stores adds no row and no filter",
+   "left": "SELECT o.order_id FROM orders AS o LEFT JOIN stores AS s ON o.store_id = s.store_id",
+   "right": "SELECT order_id FROM orders"
+  },
+  {
+   "id": "co-left-join-elimination-not-unique",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-left-join-elimination",
+   "why": "a customer appears once per order",
+   "left": "SELECT c.customer_id FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.customer_id",
+   "right": "SELECT customer_id FROM customers",
+   "witness": "real"
+  },
+  {
+   "id": "co-left-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-left-join-elimination",
+   "drop": [
+    "pk:stores"
+   ],
+   "why": "without stores' primary key a store id may repeat",
+   "left": "SELECT o.order_id FROM orders AS o LEFT JOIN stores AS s ON o.store_id = s.store_id",
+   "right": "SELECT order_id FROM orders",
+   "witness": {
+    "stores": [
+     {
+      "store_id": 1,
+      "store_name": "a"
+     },
+     {
+      "store_id": 1,
+      "store_name": "b"
+     }
+    ],
+    "orders": [
+     {
+      "order_id": 1,
+      "store_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-self-join-on-composite-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a self join on the whole composite key (order_id, line_item_id) matches each row with itself",
+   "left": "SELECT a.order_id, a.line_item_id, a.quantity FROM order_items AS a JOIN order_items AS b ON a.order_id = b.order_id AND a.line_item_id = b.line_item_id",
+   "right": "SELECT order_id, line_item_id, quantity FROM order_items"
+  },
+  {
+   "id": "co-self-join-on-part-of-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-self-join-on-composite-key",
+   "why": "order_id alone is not the key: an order with several items matches each item with all of them",
+   "left": "SELECT a.order_id, a.line_item_id, a.quantity FROM order_items AS a JOIN order_items AS b ON a.order_id = b.order_id",
+   "right": "SELECT order_id, line_item_id, quantity FROM order_items",
+   "witness": "real"
+  },
+  {
+   "id": "co-self-join-on-composite-key-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-self-join-on-composite-key",
+   "drop": [
+    "pk:order_items"
+   ],
+   "why": "without the primary key two items may be identical and match each other",
+   "left": "SELECT a.order_id, a.line_item_id, a.quantity FROM order_items AS a JOIN order_items AS b ON a.order_id = b.order_id AND a.line_item_id = b.line_item_id",
+   "right": "SELECT order_id, line_item_id, quantity FROM order_items",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1
+     },
+     {
+      "order_id": 1,
+      "line_item_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-nullable-fk-join-as-filter",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "the join keeps exactly the items whose shipment_id is not NULL (foreign key to the key of shipments)",
+   "left": "SELECT oi.order_id, oi.line_item_id FROM order_items AS oi JOIN shipments AS s ON s.shipment_id = oi.shipment_id",
+   "right": "SELECT order_id, line_item_id FROM order_items WHERE shipment_id IS NOT NULL"
+  },
+  {
+   "id": "co-nullable-fk-join-as-filter-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-nullable-fk-join-as-filter",
+   "drop": [
+    "fk:order_items.shipment_id"
+   ],
+   "why": "without the foreign key a shipment_id may name no shipment",
+   "left": "SELECT oi.order_id, oi.line_item_id FROM order_items AS oi JOIN shipments AS s ON s.shipment_id = oi.shipment_id",
+   "right": "SELECT order_id, line_item_id FROM order_items WHERE shipment_id IS NOT NULL",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1,
+      "shipment_id": 999
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-self-join-on-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a self join on the primary key",
+   "left": "SELECT a.product_id, a.product_name FROM products AS a JOIN products AS b ON a.product_id = b.product_id",
+   "right": "SELECT product_id, product_name FROM products"
+  },
+  {
+   "id": "co-self-join-on-key-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "co-self-join-on-key",
+   "drop": [
+    "pk:products"
+   ],
+   "why": "without the primary key a product row may repeat",
+   "left": "SELECT a.product_id, a.product_name FROM products AS a JOIN products AS b ON a.product_id = b.product_id",
+   "right": "SELECT product_id, product_name FROM products",
+   "witness": {
+    "products": [
+     {
+      "product_id": 1,
+      "product_name": "a"
+     },
+     {
+      "product_id": 1,
+      "product_name": "a"
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-distinct-on-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "customer_id is the primary key",
+   "left": "SELECT DISTINCT customer_id, full_name FROM customers",
+   "right": "SELECT customer_id, full_name FROM customers"
+  },
+  {
+   "id": "co-distinct-not-on-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "co-distinct-on-key",
+   "why": "a customer places many orders",
+   "left": "SELECT DISTINCT customer_id FROM orders",
+   "right": "SELECT customer_id FROM orders",
+   "witness": "real"
+  },
+  {
+   "id": "co-distinct-on-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "co-distinct-on-key",
+   "drop": [
+    "pk:customers"
+   ],
+   "why": "without the primary key two customer rows may be identical",
+   "left": "SELECT DISTINCT customer_id, full_name FROM customers",
+   "right": "SELECT customer_id, full_name FROM customers",
+   "witness": {
+    "customers": [
+     {
+      "customer_id": 1,
+      "email_address": "a",
+      "full_name": "a"
+     },
+     {
+      "customer_id": 1,
+      "email_address": "a",
+      "full_name": "a"
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-distinct-on-composite-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "(order_id, line_item_id) is the primary key",
+   "left": "SELECT DISTINCT order_id, line_item_id FROM order_items",
+   "right": "SELECT order_id, line_item_id FROM order_items"
+  },
+  {
+   "id": "co-distinct-on-part-of-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "co-distinct-on-composite-key",
+   "why": "upstream makes (product_id, order_id) UNIQUE, which BigQuery cannot declare and this eval drops: under the declared keys an order may list a product on two lines (the real data has none, so the pair agrees on it)",
+   "left": "SELECT DISTINCT order_id, product_id FROM order_items",
+   "right": "SELECT order_id, product_id FROM order_items",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1,
+      "product_id": 5
+     },
+     {
+      "order_id": 1,
+      "line_item_id": 2,
+      "product_id": 5
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-distinct-on-composite-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "co-distinct-on-composite-key",
+   "drop": [
+    "pk:order_items"
+   ],
+   "why": "without the primary key an item row may repeat",
+   "left": "SELECT DISTINCT order_id, line_item_id FROM order_items",
+   "right": "SELECT order_id, line_item_id FROM order_items",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1
+     },
+     {
+      "order_id": 1,
+      "line_item_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-distinct-on-unique-email-not-declared",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "why": "upstream declares UNIQUE (email_address), which BigQuery cannot declare and this eval drops: under the declared keys two customers may share an email (the real data has none)",
+   "left": "SELECT DISTINCT email_address FROM customers",
+   "right": "SELECT email_address FROM customers",
+   "witness": {
+    "customers": [
+     {
+      "customer_id": 1,
+      "email_address": "e",
+      "full_name": "a"
+     },
+     {
+      "customer_id": 2,
+      "email_address": "e",
+      "full_name": "b"
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-in-to-exists",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "IN over a subquery is EXISTS of the correlated subquery",
+   "left": "SELECT customer_id FROM customers WHERE customer_id IN (SELECT customer_id FROM orders WHERE order_status = 'REFUNDED')",
+   "right": "SELECT c.customer_id FROM customers AS c WHERE EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.customer_id AND o.order_status = 'REFUNDED')"
+  },
+  {
+   "id": "co-in-to-join-not-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "co-in-to-exists",
+   "why": "the subquery selects orders.customer_id, which repeats: the join gives one row per refunded order",
+   "left": "SELECT c.customer_id FROM customers AS c JOIN orders AS o ON o.customer_id = c.customer_id WHERE o.order_status = 'REFUNDED'",
+   "right": "SELECT customer_id FROM customers WHERE customer_id IN (SELECT customer_id FROM orders WHERE order_status = 'REFUNDED')",
+   "witness": "real"
+  },
+  {
+   "id": "co-in-to-join-on-key",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "the subquery selects customers' primary key, so the join cannot repeat an order",
+   "left": "SELECT order_id FROM orders WHERE customer_id IN (SELECT customer_id FROM customers WHERE full_name = 'Walter Rogers')",
+   "right": "SELECT o.order_id FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id WHERE c.full_name = 'Walter Rogers'"
+  },
+  {
+   "id": "co-in-to-join-without-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "co-in-to-join-on-key",
+   "drop": [
+    "pk:customers"
+   ],
+   "why": "without customers' primary key two customers may share an id and the join repeats the order",
+   "left": "SELECT order_id FROM orders WHERE customer_id IN (SELECT customer_id FROM customers WHERE full_name = 'Walter Rogers')",
+   "right": "SELECT o.order_id FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id WHERE c.full_name = 'Walter Rogers'",
+   "witness": {
+    "customers": [
+     {
+      "customer_id": 7,
+      "email_address": "a",
+      "full_name": "Walter Rogers"
+     },
+     {
+      "customer_id": 7,
+      "email_address": "b",
+      "full_name": "Walter Rogers"
+     }
+    ],
+    "orders": [
+     {
+      "order_id": 1,
+      "customer_id": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-not-in-to-not-exists",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "order_items.product_id is NOT NULL, so NOT IN cannot be poisoned by a NULL",
+   "left": "SELECT product_id FROM products WHERE product_id NOT IN (SELECT product_id FROM order_items)",
+   "right": "SELECT p.product_id FROM products AS p WHERE NOT EXISTS (SELECT 1 FROM order_items AS oi WHERE oi.product_id = p.product_id)"
+  },
+  {
+   "id": "co-not-in-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "co-not-in-to-not-exists",
+   "why": "order_items.shipment_id has NULLs: NOT IN then returns no row at all (the NOT EXISTS form returns the 7 shipments no item uses)",
+   "left": "SELECT shipment_id FROM shipments WHERE shipment_id NOT IN (SELECT shipment_id FROM order_items)",
+   "right": "SELECT s.shipment_id FROM shipments AS s WHERE NOT EXISTS (SELECT 1 FROM order_items AS oi WHERE oi.shipment_id = s.shipment_id)",
+   "witness": "real"
+  },
+  {
+   "id": "co-not-in-without-not-null",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "co-not-in-to-not-exists",
+   "drop": [
+    "not_null:order_items.product_id"
+   ],
+   "why": "without NOT NULL on order_items.product_id one NULL makes NOT IN return nothing",
+   "left": "SELECT product_id FROM products WHERE product_id NOT IN (SELECT product_id FROM order_items)",
+   "right": "SELECT p.product_id FROM products AS p WHERE NOT EXISTS (SELECT 1 FROM order_items AS oi WHERE oi.product_id = p.product_id)",
+   "witness": {
+    "products": [
+     {
+      "product_id": 1,
+      "product_name": "a"
+     }
+    ],
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1,
+      "product_id": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-coalesce-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "product_name is NOT NULL",
+   "left": "SELECT COALESCE(product_name, 'none') AS n FROM products",
+   "right": "SELECT product_name AS n FROM products"
+  },
+  {
+   "id": "co-coalesce-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "co-coalesce-not-null",
+   "why": "products.unit_price may be NULL",
+   "left": "SELECT COALESCE(unit_price, 0) AS p FROM products",
+   "right": "SELECT unit_price AS p FROM products",
+   "witness": {
+    "products": [
+     {
+      "product_id": 1,
+      "product_name": "a",
+      "unit_price": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-is-not-null-on-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "order_tms is NOT NULL",
+   "left": "SELECT order_id FROM orders WHERE order_tms IS NOT NULL",
+   "right": "SELECT order_id FROM orders"
+  },
+  {
+   "id": "co-is-not-null-on-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "co-is-not-null-on-not-null",
+   "why": "only the online store has a web address",
+   "left": "SELECT store_id FROM stores WHERE web_address IS NOT NULL",
+   "right": "SELECT store_id FROM stores",
+   "witness": "real"
+  },
+  {
+   "id": "co-count-not-null-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "email_address is NOT NULL",
+   "left": "SELECT COUNT(email_address) FROM customers",
+   "right": "SELECT COUNT(*) FROM customers"
+  },
+  {
+   "id": "co-count-nullable-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "co-count-not-null-column",
+   "why": "1,238 items have no shipment",
+   "left": "SELECT COUNT(shipment_id) FROM order_items",
+   "right": "SELECT COUNT(*) FROM order_items",
+   "witness": "real"
+  },
+  {
+   "id": "co-group-by-dependent-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "email_address depends on the grouped primary key customer_id",
+   "left": "SELECT c.customer_id, c.full_name, COUNT(*) AS n FROM customers AS c JOIN orders AS o ON o.customer_id = c.customer_id GROUP BY c.customer_id, c.full_name, c.email_address",
+   "right": "SELECT c.customer_id, c.full_name, COUNT(*) AS n FROM customers AS c JOIN orders AS o ON o.customer_id = c.customer_id GROUP BY c.customer_id, c.full_name"
+  },
+  {
+   "id": "co-group-by-dependent-column-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "co-group-by-dependent-column",
+   "drop": [
+    "pk:customers"
+   ],
+   "why": "without the primary key two customer rows may share id and name but differ in email",
+   "left": "SELECT c.customer_id, c.full_name, COUNT(*) AS n FROM customers AS c JOIN orders AS o ON o.customer_id = c.customer_id GROUP BY c.customer_id, c.full_name, c.email_address",
+   "right": "SELECT c.customer_id, c.full_name, COUNT(*) AS n FROM customers AS c JOIN orders AS o ON o.customer_id = c.customer_id GROUP BY c.customer_id, c.full_name",
+   "witness": {
+    "customers": [
+     {
+      "customer_id": 1,
+      "email_address": "a",
+      "full_name": "x"
+     },
+     {
+      "customer_id": 1,
+      "email_address": "b",
+      "full_name": "x"
+     }
+    ],
+    "orders": [
+     {
+      "order_id": 1,
+      "customer_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-group-by-independent-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "co-group-by-dependent-column",
+   "why": "store_id is not determined by customer_id",
+   "left": "SELECT customer_id, COUNT(*) AS n FROM orders GROUP BY customer_id, store_id",
+   "right": "SELECT customer_id, COUNT(*) AS n FROM orders GROUP BY customer_id",
+   "witness": "real"
+  },
+  {
+   "id": "co-group-by-through-composite-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "product_id depends on the composite primary key (order_id, line_item_id)",
+   "left": "SELECT order_id, line_item_id, SUM(quantity) AS units FROM order_items GROUP BY order_id, line_item_id, product_id",
+   "right": "SELECT order_id, line_item_id, SUM(quantity) AS units FROM order_items GROUP BY order_id, line_item_id"
+  },
+  {
+   "id": "co-group-by-through-composite-key-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "co-group-by-through-composite-key",
+   "drop": [
+    "pk:order_items"
+   ],
+   "why": "without the key the same (order, line) may appear with two products",
+   "left": "SELECT order_id, line_item_id, SUM(quantity) AS units FROM order_items GROUP BY order_id, line_item_id, product_id",
+   "right": "SELECT order_id, line_item_id, SUM(quantity) AS units FROM order_items GROUP BY order_id, line_item_id",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1,
+      "product_id": 1,
+      "quantity": 1
+     },
+     {
+      "order_id": 1,
+      "line_item_id": 1,
+      "product_id": 2,
+      "quantity": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-having-on-group-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "a HAVING on the group key is a WHERE",
+   "left": "SELECT order_status, COUNT(*) AS n FROM orders GROUP BY order_status HAVING order_status <> 'OPEN'",
+   "right": "SELECT order_status, COUNT(*) AS n FROM orders WHERE order_status <> 'OPEN' GROUP BY order_status"
+  },
+  {
+   "id": "co-filter-vs-conditional-count",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "co-having-on-group-key",
+   "why": "a store with no completed order has no group on the left and a zero on the right",
+   "left": "SELECT store_id, COUNT(*) AS n FROM orders WHERE order_status = 'COMPLETE' GROUP BY store_id",
+   "right": "SELECT store_id, COUNTIF(order_status = 'COMPLETE') AS n FROM orders GROUP BY store_id",
+   "witness": {
+    "orders": [
+     {
+      "order_id": 1,
+      "store_id": 1,
+      "order_status": "OPEN"
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-union-all-vs-distinct",
+   "category": "set operation",
+   "label": "different",
+   "why": "the same status appears many times",
+   "left": "SELECT order_status AS s FROM orders UNION ALL SELECT shipment_status AS s FROM shipments",
+   "right": "SELECT order_status AS s FROM orders UNION DISTINCT SELECT shipment_status AS s FROM shipments",
+   "witness": "real"
+  },
+  {
+   "id": "co-union-all-of-complementary-filters",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "the two filters split a NOT NULL column into two disjoint halves",
+   "left": "SELECT order_id, line_item_id FROM order_items WHERE quantity > 2 UNION ALL SELECT order_id, line_item_id FROM order_items WHERE quantity <= 2",
+   "right": "SELECT order_id, line_item_id FROM order_items"
+  },
+  {
+   "id": "co-union-all-of-complementary-filters-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "co-union-all-of-complementary-filters",
+   "why": "unit_price may be NULL and then matches neither half",
+   "left": "SELECT product_id FROM products WHERE unit_price > 20 UNION ALL SELECT product_id FROM products WHERE unit_price <= 20",
+   "right": "SELECT product_id FROM products",
+   "witness": {
+    "products": [
+     {
+      "product_id": 1,
+      "product_name": "a",
+      "unit_price": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-intersect-to-in-not-null",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "both customer_id columns are NOT NULL",
+   "left": "SELECT customer_id FROM orders INTERSECT DISTINCT SELECT customer_id FROM shipments",
+   "right": "SELECT DISTINCT customer_id FROM orders WHERE customer_id IN (SELECT customer_id FROM shipments)"
+  },
+  {
+   "id": "co-intersect-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "co-intersect-to-in-not-null",
+   "why": "INTERSECT matches NULLs, IN does not (1,238 real items have a NULL shipment)",
+   "left": "SELECT shipment_id FROM order_items INTERSECT DISTINCT SELECT shipment_id FROM order_items",
+   "right": "SELECT DISTINCT shipment_id FROM order_items WHERE shipment_id IN (SELECT shipment_id FROM order_items)",
+   "witness": "real"
+  },
+  {
+   "id": "co-outer-to-inner-join",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "the filter on the outer side rejects the NULL-padded rows",
+   "left": "SELECT oi.order_id, oi.line_item_id, s.shipment_status FROM order_items AS oi LEFT JOIN shipments AS s ON oi.shipment_id = s.shipment_id WHERE s.shipment_status = 'DELIVERED'",
+   "right": "SELECT oi.order_id, oi.line_item_id, s.shipment_status FROM order_items AS oi JOIN shipments AS s ON oi.shipment_id = s.shipment_id WHERE s.shipment_status = 'DELIVERED'"
+  },
+  {
+   "id": "co-outer-to-inner-join-null-accepting",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "co-outer-to-inner-join",
+   "why": "the filter accepts the NULL-padded row of an unshipped item",
+   "left": "SELECT oi.order_id, oi.line_item_id, s.shipment_status FROM order_items AS oi LEFT JOIN shipments AS s ON oi.shipment_id = s.shipment_id WHERE s.shipment_status IS NULL OR s.shipment_status = 'DELIVERED'",
+   "right": "SELECT oi.order_id, oi.line_item_id, s.shipment_status FROM order_items AS oi JOIN shipments AS s ON oi.shipment_id = s.shipment_id WHERE s.shipment_status IS NULL OR s.shipment_status = 'DELIVERED'",
+   "witness": {
+    "order_items": [
+     {
+      "order_id": 1,
+      "line_item_id": 1,
+      "shipment_id": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "co-window-filter-on-partition-key",
+   "category": "window",
+   "label": "equivalent",
+   "why": "a filter on the partition key keeps whole partitions",
+   "left": "SELECT order_id, customer_id, r FROM (SELECT order_id, customer_id, order_status, RANK() OVER (PARTITION BY customer_id ORDER BY order_tms) AS r FROM orders) AS t WHERE customer_id = 5",
+   "right": "SELECT order_id, customer_id, RANK() OVER (PARTITION BY customer_id ORDER BY order_tms) AS r FROM orders WHERE customer_id = 5"
+  },
+  {
+   "id": "co-window-filter-on-other-column",
+   "category": "window",
+   "label": "different",
+   "sibling": "co-window-filter-on-partition-key",
+   "why": "filtering before the window changes the ranks",
+   "left": "SELECT order_id, customer_id, r FROM (SELECT order_id, customer_id, order_status, RANK() OVER (PARTITION BY customer_id ORDER BY order_tms) AS r FROM orders) AS t WHERE order_status = 'COMPLETE'",
+   "right": "SELECT order_id, customer_id, RANK() OVER (PARTITION BY customer_id ORDER BY order_tms) AS r FROM orders WHERE order_status = 'COMPLETE'",
+   "witness": "real"
+  }
+ ]
+}
