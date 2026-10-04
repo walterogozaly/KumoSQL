@@ -191,22 +191,22 @@ Measured 2026-10-03 over all 212 cases.
 | | Declined | Proven | Refused | Unsupported | Caught | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Baseline (before the rule fixes) | 135 | 51 | 7 | 11 | 2 | **6** |
-| Now | 139 | 51 | 7 | 14 | 1 | **0** |
+| Now | 142 | 47 | 8 | 14 | 1 | **0** |
 
-**190/212 refusal cases are left alone or changed with a proof (190/198 that KumoSQL can read), 0 wrong.** The baseline scored 186/212 with 6 wrong. Held out (39 cases): 37/39, all 37 readable ones, 0 wrong; the baseline held-out score was 36/37 with 1 wrong, the PostgreSQL data-modifying CTE, which was read and fixed, so that one case is tuned on test. Every case was visible while the rules were fixed; the fixes are general, not case by case.
+**189/212 refusal cases are left alone or changed with a proof (189/198 that KumoSQL can read), 0 wrong.** The baseline scored 186/212 with 6 wrong. Held out (39 cases): 36/39, 36 of the 37 readable ones, 0 wrong (the earlier 37/39 was stale: master already measured 36/39, with CTE inlining refused on `ST03/test_pass_cte_defined_and_used_2`); the baseline held-out score was 36/37 with 1 wrong, the PostgreSQL data-modifying CTE, which was read and fixed, so that one case is tuned on test. Every case was visible while the rules were fixed; the fixes are general, not case by case.
 
 | Rule | Proven changes | Refused | Caught | Wrong (baseline) |
 | --- | ---: | ---: | ---: | ---: |
 | `lift_subqueries` | 9 | 0 | 0 | 0 (5) |
-| `inline_single_use_ctes` | 19 | 5 | 0 | 0 |
-| `remove_redundant_parentheses` | 16 | 1 | 0 | 0 |
+| `inline_single_use_ctes` | 15 | 6 | 0 | 0 |
+| `remove_redundant_parentheses` | 17 | 0 | 0 | 0 |
 | `remove_trivial_predicates` | 7 | 0 | 0 | 0 |
-| `remove_unused_ctes` | 7 | 1 | 1 | 0 (1) |
+| `remove_unused_ctes` | 6 | 2 | 1 | 0 (1) |
 | `deduplicate_ctes`, `remove_redundant_distinct` | 0 | 0 | 0 | 0 |
 
 The hazards sqlfluff names: the four correlated derived tables and the data-modifying CTEs are now declined, the seven queries with Jinja tags in the SQL text are unsupported and left exactly as written (an eighth has its tag inside a quoted table name and is simply left alone), and `with_recursive_fail_no_fix` is lifted and proved (a non-recursive CTE added to a `WITH RECURSIVE` list reads the same tables; DuckDB cannot run the fixture, whose CTE has no columns `x` and `z`, so only the proof and the syntactic checks apply). The proven changes elsewhere are KumoSQL doing what sqlfluff's rule does not try: inlining a CTE used once, dropping redundant parentheses or `AND TRUE`, removing a CTE nothing reads.
 
-Unsupported (14): Exasol and Spark `VALUES ... AS t (id)` CTEs, PostgreSQL `~` operators and a T-SQL bracketed name, which KumoSQL's BigQuery parser cannot read, and 7 Jinja-templated queries. Refused (7): CTE inlining around a CTE that reads a table of its own name (3) and around a nested derived table (1), inlining or removal around PostgreSQL `UPDATE ... FROM cte` (2; DML rewrites are not proved), and a parenthesis removal around a bracketed join (1).
+Unsupported (14): Exasol and Spark `VALUES ... AS t (id)` CTEs, PostgreSQL `~` operators and a T-SQL bracketed name, which KumoSQL's BigQuery parser cannot read, and 7 Jinja-templated queries. Refused (8): CTE inlining (6 cases, among them a CTE that reads a table of its own name, a nested derived table and PostgreSQL `UPDATE ... FROM cte`) and CTE removal (2, one of them `UPDATE ... FROM cte`; DML rewrites are not proved). A parenthesis removal around a bracketed join, refused before, is proved now: the prover turned the bracketed join into a CTE, which is not SQL, and no longer does ([proof safeguards](../proof-safeguards.md#subquery-lifting)).
 
 ### Findings
 
