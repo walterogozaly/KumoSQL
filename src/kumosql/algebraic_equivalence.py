@@ -79,6 +79,7 @@ from .grouped_sums import drop_grouped_sum_coalesce
 from .sum_of_counts import sum_of_grouped_counts
 from .lone_source import lift_derived_expressions
 from .partition_rules import recombine_partitions
+from .distinct_partition_rules import merge_distinct_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .keyed_set_join import lift_keyed_set_join
 from .aggregate_rules import rewrite_aggregates
@@ -4842,6 +4843,7 @@ def normalize(
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source
         tree = _qualify_correlated_columns(_qualify_outer_join_columns(tree, schema), schema)
+    tree = merge_distinct_partitions(tree)
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
 
