@@ -55,8 +55,8 @@ logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "numeric_traps"
 TIMEOUT_MS = 5000
 
-SCHEMA = {"t": ["x", "y", "f", "g", "n", "s", "c"]}
-TYPES = {"t": {"x": "INT64", "y": "INT64", "f": "FLOAT64", "g": "FLOAT64", "n": "NUMERIC", "s": "STRING", "c": "BOOL"}}
+SCHEMA = {"t": ["x", "y", "f", "g", "n", "m", "s", "c"]}
+TYPES = {"t": {"x": "INT64", "y": "INT64", "f": "FLOAT64", "g": "FLOAT64", "n": "NUMERIC", "m": "NUMERIC", "s": "STRING", "c": "BOOL"}}
 DUCKDB_TYPES = {"INT64": "BIGINT", "FLOAT64": "DOUBLE", "NUMERIC": "DECIMAL(38,9)", "STRING": "VARCHAR", "BOOL": "BOOLEAN"}
 
 LABELS = ("equivalent", "not_equivalent", "refines", "introduces_error")
@@ -198,7 +198,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "order": 39,
         "size": len(results),
         "score": score(results),
-        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions, the order a FLOAT64 SUM adds in): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
+        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions, the order a FLOAT64 SUM adds in, NUMERIC scale and rounding): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
         "evidence": "proof",
         "correctness": "Labels follow the GoogleSQL documentation (the case file names the page; the ones it could not confirm say so); the cases DuckDB can run faithfully are replayed on a witness database by the test suite. Wrong is a proof or refutation that contradicts the label, or an error verdict that claims safety where the label says the rewrite can fail.",
         "coverage": {k: counts[k] for k in ("proven", "refuted", "unknown") if counts[k]},
@@ -206,7 +206,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "docs": "docs/evals/numeric-traps.md",
         "command": "python tools/numeric_traps_bench.py --write-results",
         "date": today(),
-        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed. Twenty float-sum-order cases were added in a later pass (15 development, 5 held out, fixed before the rule was run); their labels rest on the repo's own note that a FLOAT64 sum has no fixed order, which is unverified against the GoogleSQL aggregate page, and the INT64 ones on the unverified rule that a partial INT64 sum cannot overflow when the total fits. A proof that still lists the row-order assumption on a case that says it does not apply, or on one that violates it, counts as unknown, not as a proof.",
+        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. Three pairs that differ only on NaN are proved under the listed no-NaN assumption (not modelled yet); they count as unknown here, not as proofs, and are not wrong because the assumption is disclosed. Twenty float-sum-order cases were added in a later pass (15 development, 5 held out, fixed before the rule was run); their labels rest on the repo's own note that a FLOAT64 sum has no fixed order, which is unverified against the GoogleSQL aggregate page, and the INT64 ones on the unverified rule that a partial INT64 sum cannot overflow when the total fits. A proof that still lists the row-order assumption on a case that says it does not apply, or on one that violates it, counts as unknown, not as a proof. The 16 numeric-* cases (NUMERIC scale and rounding) came with the rounding model: four are held out, but their answers were seen during development (tuned on test), and several rest on the unverified rule that NUMERIC * and / round to nine decimal digits, half away from zero. A refutation that needs a nonlinear NUMERIC product can hit the solver's time limit on a loaded machine, so the refuted count can move by one or two between runs; it never produces a wrong answer.",
     }
 
 
