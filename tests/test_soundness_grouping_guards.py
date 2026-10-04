@@ -269,3 +269,19 @@ def test_prefilter_still_proves_a_filtered_plain_grouping():
     q1, q2 = "SELECT x, COUNT(*) AS n FROM t WHERE x = 1 GROUP BY x", "SELECT x, COUNT(*) AS n FROM t GROUP BY x"
     result = check_containment(q1, q2, schema=SCHEMA, semantics="bag", dialect="postgres")
     assert (result.status, result.method) == ("contained", "pre-filter")
+
+
+@pytest.mark.parametrize("grouping", ["ROLLUP (a)", "CUBE (a)", "GROUPING SETS ((a), ())"])
+def test_domain_join_helpers_refuse_extended_grouping(grouping):
+    # a rolled-up key is NULL on the extra rows, so it is not "every value of t.a once" nor a real column
+    from sqlglot import exp
+
+    from kumosql.domain_join_rules import _domain, _real_column
+
+    select = sqlglot.parse_one(f"SELECT a FROM t GROUP BY {grouping}")
+    assert _domain(select) is None
+    outer = sqlglot.parse_one(f"SELECT d.a FROM (SELECT a FROM t GROUP BY {grouping}) AS d")
+    assert _real_column(outer, outer.expressions[0]) is None
+    plain = sqlglot.parse_one("SELECT d.a FROM (SELECT a FROM t GROUP BY a) AS d")
+    assert isinstance(plain, exp.Select) and _real_column(plain, plain.expressions[0]) is not None
+    assert _domain(sqlglot.parse_one("SELECT a FROM t GROUP BY a")) is not None
