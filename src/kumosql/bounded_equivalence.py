@@ -42,7 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop_case_conflicts, expand_group_by_all, expanded_reads, extended_grouping, star_modified
+from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop_case_conflicts, expand_group_by_all, expanded_reads, extended_grouping, is_call, spell_for_duckdb, star_modified
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
 
@@ -101,6 +101,30 @@ _REAL_DOMAINS = {
 
 def _base_type(sql_type: str) -> str:
     return re.split(r"[(\s<]", sql_type.strip().upper(), maxsplit=1)[0]
+
+
+_DECLARED_DECIMAL = re.compile(r"(NUMERIC|BIGNUMERIC|BIGDECIMAL)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)")
+
+
+def _declared_precision(sql_type: str) -> tuple[int, int] | None:
+    """``(precision, scale)`` of a BigQuery-style ``NUMERIC(p, s)`` (scale 0 when omitted), else ``None``.
+
+    ``DECIMAL(p, s)`` keeps its old, unrestricted treatment: constraining it moved bounded verdicts on the QED suite
+    (two pairs fell from 3 rows to 2 on a solver timeout), which this change does not set out to do."""
+
+    match = _DECLARED_DECIMAL.fullmatch(sql_type.strip().upper())
+    return (int(match.group(2)), int(match.group(3) or 0)) if match else None
+
+
+def _real_domain(sql_type: str) -> tuple[int | None, int] | None:
+    """The legal values of a real column: a declared ``NUMERIC(p, s)`` allows ``s`` decimal digits and
+    ``|value| < 10**(p - s)``; a bare type gets its BigQuery default."""
+
+    declared = _declared_precision(sql_type)
+    if declared is not None:
+        precision, scale = declared
+        return scale, 10 ** max(precision - scale, 0)
+    return _REAL_DOMAINS.get(_base_type(sql_type))
 
 
 def kind_of(sql_type: str) -> str | None:
@@ -588,7 +612,7 @@ class SymbolicDatabase:
                         self.constraints.append(z3.InRe(value, z3.Star(z3.Range(" ", "~"))))
                     if "decimal" in self.restrict and kind == "real":
                         self.constraints.append(z3.IsInt(value * 4))
-                    domain = _REAL_DOMAINS.get(_base_type(column.type)) if kind == "real" else None
+                    domain = _real_domain(column.type) if kind == "real" else None
                     if domain is not None:
                         digits, bound = domain
                         legal = [value < z3.RealVal(bound), value > -z3.RealVal(bound)]
@@ -1670,10 +1694,10 @@ class Compiler:
             for j, row in enumerate(context.rows)
         ]
         before = [self._precedes(Row(None, [], keyed[j][1]), Row(None, [], keyed[index][1])) if order is not None else _false() for j in range(len(context.rows))]
-        if isinstance(function, (exp.RowNumber, exp.Rank, exp.DenseRank)):
+        if isinstance(function, exp.RowNumber) or is_call(function, "Rank") or is_call(function, "DenseRank"):
             if order is None:
                 raise Unsupported("ranking function without ORDER BY")
-            if isinstance(function, exp.DenseRank):
+            if is_call(function, "DenseRank"):
                 total = []
                 for j in range(len(context.rows)):
                     first = z3.Not(z3.Or(*[
@@ -2008,7 +2032,7 @@ class DuckDBReplay:
             from .bigquery_on_duckdb import faithful
 
             tree = faithful(tree)
-        return tree.sql(dialect="duckdb")
+        return spell_for_duckdb(tree).sql(dialect="duckdb")
 
     def _run(self, data: dict[str, list[tuple]]):
         for name, table in self.schema.tables.items():
@@ -2107,7 +2131,9 @@ def _sqlite_type(column: BColumn) -> str:
 def _duck_type(column: BColumn, bigquery: bool = False) -> str:
     kind = kind_of(column.type)
     if bigquery and _base_type(column.type) == "NUMERIC":
-        return "DECIMAL(38, 9)"  # BigQuery's NUMERIC; a value it cannot hold fails to load
+        declared = _declared_precision(column.type)
+        # BigQuery's NUMERIC, or the declared NUMERIC(p, s); a value it cannot hold fails to load
+        return f"DECIMAL({declared[0]}, {declared[1]})" if declared else "DECIMAL(38, 9)"
     return {"int": "BIGINT", "real": "DOUBLE", "str": "VARCHAR", "bool": "BOOLEAN", "date": "DATE", "time": "TIME", "datetime": "TIMESTAMP", None: "BIGINT"}[kind]
 
 

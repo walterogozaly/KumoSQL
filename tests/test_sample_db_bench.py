@@ -1,0 +1,163 @@
+"""Sample databases eval (Chinook, Northwind): loads checked against upstream, rewrites and pairs with 0 wrong.
+
+The full run is ``python tools/sample_db_bench.py --write-results`` (every workload query through every
+rewrite stage, including the slow proof-gated optimizer). Here every pair runs, and a pinned subset of the
+workload runs through the rewrite pipeline and lift_subqueries.
+"""
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("z3")
+pytest.importorskip("duckdb")
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+_spec = importlib.util.spec_from_file_location(
+    "sample_db_bench", ROOT / "tools" / "sample_db_bench.py"
+)
+bench = importlib.util.module_from_spec(_spec)
+sys.modules["sample_db_bench"] = bench
+_spec.loader.exec_module(bench)
+
+# floors only ever go up (recorded run: 20 proved, 27 refuted; 28 on an idle machine, see the docs)
+FLOORS = {"proven": 20, "refuted": 27}
+# workload queries the pipeline and lift_subqueries change; upstream and authored, both databases
+SUBSET = {
+    "chinook": [
+        "ch-test-invoices-without-lines",
+        "ch-a18-cte-best-sellers",
+        "ch-a19-derived-table-trivial-predicate",
+        "ch-a24-not-in-null-trap",
+    ],
+    "northwind": [
+        "nw-view-invoices",
+        "nw-view-category-sales-for-1997",
+        "nw-a10-not-in-with-nulls",
+        "nw-a21-cte-chain",
+    ],
+}
+
+
+@pytest.mark.parametrize("name", sorted(bench.ADAPTERS))
+def test_database_loads_as_upstream_declares_it(name):
+    adapter = bench.ADAPTERS[name]
+    report = bench.check_database(adapter)
+    assert report["problems"] == []
+    assert report["counts"] == adapter.published_counts
+    assert report["declared"]["primary_keys"] == report["tables"]
+
+
+def test_the_upstream_workload_is_upstream():
+    northwind = bench.ADAPTERS["northwind"]
+    views = bench.read_views(northwind.upstream_text())
+    assert len(views) == 16
+    workload = northwind.workload()
+    assert sorted(
+        q["name"] for q in workload if q["origin"] == "upstream-view"
+    ) == sorted(views)
+    for adapter in bench.ADAPTERS.values():
+        for query in adapter.workload():
+            assert query["origin"] in (
+                "upstream-view",
+                "upstream-procedure",
+                "upstream-test",
+                "authored",
+            )
+            assert query["origin"] == "authored" or query["adaptation"], query["id"]
+
+
+def test_a_changed_declaration_is_caught():
+    class Drifted(bench.Northwind):
+        def schema(self):
+            schema = super().schema()
+            schema["Orders"].foreign_keys.pop()
+            schema["Products"].not_null.discard("ProductName")
+            return schema
+
+    problems = bench.check_database(Drifted())["problems"]
+    assert any("Orders: foreign keys" in p for p in problems)
+    assert any("Products: NOT NULL" in p for p in problems)
+
+
+def test_readers_handle_the_sample_dialects():
+    sql = """
+    CREATE TABLE [dbo].[T] ([a] [int] NOT NULL, "b" nvarchar (10) NULL, c NUMERIC(10,2),
+      CONSTRAINT "PK_T" PRIMARY KEY CLUSTERED ("a"));
+    CREATE TABLE U (x INTEGER NOT NULL PRIMARY KEY, y INT REFERENCES T (a));
+    ALTER TABLE U ADD CONSTRAINT fk FOREIGN KEY ([x]) REFERENCES [dbo].[T] ([a]) ON [PRIMARY]
+    GO
+    INSERT "T"("a","b","c") VALUES(1,N'it''s',-2.5)
+    INSERT INTO [T] ([a], [b], [c]) VALUES (2, NULL, 0x1F), (3, 'x', 4);
+    Insert Into U Values (7, 1)
+    """
+    tables = bench.read_ddl(sql)
+    assert (
+        list(tables["T"].columns) == ["a", "b", "c"]
+        and tables["T"].columns["c"] == "NUMERIC(10, 2)"
+    )
+    assert tables["T"].primary_key == ("a",) and tables["T"].not_null == {"a"}
+    assert tables["U"].primary_key == ("x",)
+    assert sorted(tables["U"].foreign_keys) == [
+        (("x",), "T", ("a",)),
+        (("y",), "T", ("a",)),
+    ]
+    rows = bench.read_inserts(sql)
+    assert [values[1].text for _, values in rows["T"]] == ["it's", None, "x"]
+    assert rows["T"][0][1][2].text == "-2.5" and rows["T"][1][1][2] == bench.Raw(
+        "hex", "1F"
+    )
+    assert rows["U"] == [(None, (bench.Raw("number", "7"), bench.Raw("number", "1")))]
+
+
+def test_every_pair_is_decided_without_a_wrong_answer():
+    rows = bench.run_pairs(list(bench.ADAPTERS.values()))
+    summary = bench.summarize_pairs(rows)["all"]
+    assert summary["wrong"] == 0, [r for r in rows if r["wrong"]]
+    assert summary["labels_unverified"] == 0, [
+        r["id"] for r in rows if r["witness_ok"] is False
+    ]
+    assert (
+        summary["proven"] >= FLOORS["proven"]
+        and summary["refuted"] >= FLOORS["refuted"]
+    )
+    # every sibling that drops a guarantee is refuted on a database that keeps the other guarantees
+    assert summary["constraint_siblings_refuted"] == summary["constraint_siblings"]
+
+
+def test_a_counterexample_must_respect_the_declarations():
+    chinook = bench.ADAPTERS["chinook"]
+    data, broken = bench.complete_database(
+        chinook, {"Track": [{"TrackId": 1, "MediaTypeId": 99}]}
+    )
+    assert not broken and data["MediaType"] == [
+        (99, None)
+    ]  # the completion adds the parent
+    data["MediaType"] = []
+    assert bench.violations(chinook, data) == [
+        "Track('MediaTypeId',) = (99,) has no MediaType row"
+    ]
+    assert bench.violations(chinook, data, ("fk:Track.MediaTypeId",)) == []
+
+
+@pytest.mark.parametrize("name", sorted(SUBSET))
+def test_rewrites_keep_the_results_on_the_real_data(name):
+    rows = bench.rewrite_cases((name, SUBSET[name], False))
+    summary = bench.summarize_rewrites(rows)["all"]
+    assert summary["wrong"] == 0, [r for r in rows if r["status"] == "wrong"]
+    assert summary["queries"] == len(SUBSET[name]) and summary["unsupported"] == 0
+    assert summary["verified"] > 0
+
+
+def test_results_files_report_zero_wrong():
+    for name in ("sample-databases-rewrites", "sample-databases-pairs"):
+        row = json.loads((ROOT / "benchmarks" / "results" / f"{name}.json").read_text())
+        assert (
+            row["command"] == bench.COMMAND
+            and row["docs"] == "docs/evals/sample-databases.md"
+        )
+        assert ", 0 wrong" in row["score"] or row["score"].startswith("0 wrong")

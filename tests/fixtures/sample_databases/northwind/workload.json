@@ -1,0 +1,326 @@
+{
+  "about": "Northwind workload for tools/sample_db_bench.py. origin 'upstream-view': the 16 CREATE VIEW bodies of upstream/instnwnd.sql (name = upstream view name), adapted to BigQuery SQL as 'adaptation' says; 'upstream-procedure': the SELECT of an upstream stored procedure with its parameters bound to the values in 'adaptation'; 'authored': written for this eval. Views are also created in DuckDB (create_view) because later views read them, as upstream does.",
+  "queries": [
+    {
+      "id": "nw-view-customer-and-suppliers-by-city",
+      "origin": "upstream-view",
+      "name": "Customer and Suppliers by City",
+      "create_view": true,
+      "adaptation": "UNION -> UNION DISTINCT (BigQuery needs the keyword); the commented-out ORDER BY stays out",
+      "sql": "SELECT City, CompanyName, ContactName, 'Customers' AS Relationship\nFROM Customers\nUNION DISTINCT SELECT City, CompanyName, ContactName, 'Suppliers'\nFROM Suppliers"
+    },
+    {
+      "id": "nw-view-alphabetical-list-of-products",
+      "origin": "upstream-view",
+      "name": "Alphabetical list of products",
+      "create_view": true,
+      "adaptation": "none (Discontinued is INT64 holding 0 or 1, see the adapted DDL)",
+      "sql": "SELECT Products.*, Categories.CategoryName\nFROM Categories INNER JOIN Products ON Categories.CategoryID = Products.CategoryID\nWHERE (((Products.Discontinued)=0))"
+    },
+    {
+      "id": "nw-view-current-product-list",
+      "origin": "upstream-view",
+      "name": "Current Product List",
+      "create_view": true,
+      "adaptation": "none; the commented-out ORDER BY stays out",
+      "sql": "SELECT Product_List.ProductID, Product_List.ProductName\nFROM Products AS Product_List\nWHERE (((Product_List.Discontinued)=0))"
+    },
+    {
+      "id": "nw-view-orders-qry",
+      "origin": "upstream-view",
+      "name": "Orders Qry",
+      "create_view": true,
+      "adaptation": "none",
+      "sql": "SELECT Orders.OrderID, Orders.CustomerID, Orders.EmployeeID, Orders.OrderDate, Orders.RequiredDate, \n\tOrders.ShippedDate, Orders.ShipVia, Orders.Freight, Orders.ShipName, Orders.ShipAddress, Orders.ShipCity, \n\tOrders.ShipRegion, Orders.ShipPostalCode, Orders.ShipCountry, \n\tCustomers.CompanyName, Customers.Address, Customers.City, Customers.Region, Customers.PostalCode, Customers.Country\nFROM Customers INNER JOIN Orders ON Customers.CustomerID = Orders.CustomerID"
+    },
+    {
+      "id": "nw-view-products-above-average-price",
+      "origin": "upstream-view",
+      "name": "Products Above Average Price",
+      "create_view": true,
+      "adaptation": "none; the commented-out ORDER BY stays out",
+      "sql": "SELECT Products.ProductName, Products.UnitPrice\nFROM Products\nWHERE Products.UnitPrice>(SELECT AVG(UnitPrice) From Products)"
+    },
+    {
+      "id": "nw-view-products-by-category",
+      "origin": "upstream-view",
+      "name": "Products by Category",
+      "create_view": true,
+      "adaptation": "none; the commented-out ORDER BY stays out",
+      "sql": "SELECT Categories.CategoryName, Products.ProductName, Products.QuantityPerUnit, Products.UnitsInStock, Products.Discontinued\nFROM Categories INNER JOIN Products ON Categories.CategoryID = Products.CategoryID\nWHERE Products.Discontinued <> 1"
+    },
+    {
+      "id": "nw-view-quarterly-orders",
+      "origin": "upstream-view",
+      "name": "Quarterly Orders",
+      "create_view": true,
+      "adaptation": "'19970101' and '19971231' (strings SQL Server converts to datetime) -> DATETIME literals",
+      "sql": "SELECT DISTINCT Customers.CustomerID, Customers.CompanyName, Customers.City, Customers.Country\nFROM Customers RIGHT JOIN Orders ON Customers.CustomerID = Orders.CustomerID\nWHERE Orders.OrderDate BETWEEN DATETIME '1997-01-01' AND DATETIME '1997-12-31'"
+    },
+    {
+      "id": "nw-view-invoices",
+      "origin": "upstream-view",
+      "name": "Invoices",
+      "create_view": true,
+      "adaptation": "(FirstName + ' ' + LastName) -> CONCAT(FirstName, ' ', LastName) (both NULL when an operand is NULL); CONVERT(money, x) -> ROUND(x, 4) (money keeps four decimal places); \"Order Details\" -> `Order Details`",
+      "sql": "SELECT Orders.ShipName, Orders.ShipAddress, Orders.ShipCity, Orders.ShipRegion, Orders.ShipPostalCode, \n\tOrders.ShipCountry, Orders.CustomerID, Customers.CompanyName AS CustomerName, Customers.Address, Customers.City, \n\tCustomers.Region, Customers.PostalCode, Customers.Country, \n\tCONCAT(FirstName, ' ', LastName) AS Salesperson, \n\tOrders.OrderID, Orders.OrderDate, Orders.RequiredDate, Orders.ShippedDate, Shippers.CompanyName As ShipperName, \n\t`Order Details`.ProductID, Products.ProductName, `Order Details`.UnitPrice, `Order Details`.Quantity, \n\t`Order Details`.Discount, \n\t(ROUND((`Order Details`.UnitPrice*Quantity*(1-Discount)/100), 4)*100) AS ExtendedPrice, Orders.Freight\nFROM \tShippers INNER JOIN \n\t\t(Products INNER JOIN \n\t\t\t(\n\t\t\t\t(Employees INNER JOIN \n\t\t\t\t\t(Customers INNER JOIN Orders ON Customers.CustomerID = Orders.CustomerID) \n\t\t\t\tON Employees.EmployeeID = Orders.EmployeeID) \n\t\t\tINNER JOIN `Order Details` ON Orders.OrderID = `Order Details`.OrderID) \n\t\tON Products.ProductID = `Order Details`.ProductID) \n\tON Shippers.ShipperID = Orders.ShipVia"
+    },
+    {
+      "id": "nw-view-order-details-extended",
+      "origin": "upstream-view",
+      "name": "Order Details Extended",
+      "create_view": true,
+      "adaptation": "CONVERT(money, x) -> ROUND(x, 4); \"Order Details\" -> `Order Details`; the commented-out ORDER BY stays out",
+      "sql": "SELECT `Order Details`.OrderID, `Order Details`.ProductID, Products.ProductName, \n\t`Order Details`.UnitPrice, `Order Details`.Quantity, `Order Details`.Discount, \n\t(ROUND((`Order Details`.UnitPrice*Quantity*(1-Discount)/100), 4)*100) AS ExtendedPrice\nFROM Products INNER JOIN `Order Details` ON Products.ProductID = `Order Details`.ProductID"
+    },
+    {
+      "id": "nw-view-order-subtotals",
+      "origin": "upstream-view",
+      "name": "Order Subtotals",
+      "create_view": true,
+      "adaptation": "CONVERT(money, x) -> ROUND(x, 4); \"Order Details\" -> `Order Details`",
+      "sql": "SELECT `Order Details`.OrderID, Sum(ROUND((`Order Details`.UnitPrice*Quantity*(1-Discount)/100), 4)*100) AS Subtotal\nFROM `Order Details`\nGROUP BY `Order Details`.OrderID"
+    },
+    {
+      "id": "nw-view-product-sales-for-1997",
+      "origin": "upstream-view",
+      "name": "Product Sales for 1997",
+      "create_view": true,
+      "adaptation": "CONVERT(money, x) -> ROUND(x, 4); '19970101'/'19971231' -> DATETIME literals; \"Order Details\" -> `Order Details`",
+      "sql": "SELECT Categories.CategoryName, Products.ProductName, \nSum(ROUND((`Order Details`.UnitPrice*Quantity*(1-Discount)/100), 4)*100) AS ProductSales\nFROM (Categories INNER JOIN Products ON Categories.CategoryID = Products.CategoryID) \n\tINNER JOIN (Orders \n\t\tINNER JOIN `Order Details` ON Orders.OrderID = `Order Details`.OrderID) \n\tON Products.ProductID = `Order Details`.ProductID\nWHERE (((Orders.ShippedDate) Between DATETIME '1997-01-01' And DATETIME '1997-12-31'))\nGROUP BY Categories.CategoryName, Products.ProductName"
+    },
+    {
+      "id": "nw-view-category-sales-for-1997",
+      "origin": "upstream-view",
+      "name": "Category Sales for 1997",
+      "create_view": true,
+      "adaptation": "\"Product Sales for 1997\" -> `Product Sales for 1997` (reads that view)",
+      "sql": "SELECT `Product Sales for 1997`.CategoryName, Sum(`Product Sales for 1997`.ProductSales) AS CategorySales\nFROM `Product Sales for 1997`\nGROUP BY `Product Sales for 1997`.CategoryName"
+    },
+    {
+      "id": "nw-view-sales-by-category",
+      "origin": "upstream-view",
+      "name": "Sales by Category",
+      "create_view": true,
+      "adaptation": "'19970101'/'19971231' -> DATETIME literals; \"Order Details Extended\" -> `Order Details Extended` (reads that view); the commented-out ORDER BY stays out",
+      "sql": "SELECT Categories.CategoryID, Categories.CategoryName, Products.ProductName, \n\tSum(`Order Details Extended`.ExtendedPrice) AS ProductSales\nFROM \tCategories INNER JOIN \n\t\t(Products INNER JOIN \n\t\t\t(Orders INNER JOIN `Order Details Extended` ON Orders.OrderID = `Order Details Extended`.OrderID) \n\t\tON Products.ProductID = `Order Details Extended`.ProductID) \n\tON Categories.CategoryID = Products.CategoryID\nWHERE Orders.OrderDate BETWEEN DATETIME '1997-01-01' And DATETIME '1997-12-31'\nGROUP BY Categories.CategoryID, Categories.CategoryName, Products.ProductName"
+    },
+    {
+      "id": "nw-view-sales-totals-by-amount",
+      "origin": "upstream-view",
+      "name": "Sales Totals by Amount",
+      "create_view": true,
+      "adaptation": "'19970101'/'19971231' -> DATETIME literals; \"Order Subtotals\" -> `Order Subtotals` (reads that view)",
+      "sql": "SELECT `Order Subtotals`.Subtotal AS SaleAmount, Orders.OrderID, Customers.CompanyName, Orders.ShippedDate\nFROM \tCustomers INNER JOIN \n\t\t(Orders INNER JOIN `Order Subtotals` ON Orders.OrderID = `Order Subtotals`.OrderID) \n\tON Customers.CustomerID = Orders.CustomerID\nWHERE (`Order Subtotals`.Subtotal >2500) AND (Orders.ShippedDate BETWEEN DATETIME '1997-01-01' And DATETIME '1997-12-31')"
+    },
+    {
+      "id": "nw-view-summary-of-sales-by-quarter",
+      "origin": "upstream-view",
+      "name": "Summary of Sales by Quarter",
+      "create_view": true,
+      "adaptation": "\"Order Subtotals\" -> `Order Subtotals`; the commented-out ORDER BY stays out",
+      "sql": "SELECT Orders.ShippedDate, Orders.OrderID, `Order Subtotals`.Subtotal\nFROM Orders INNER JOIN `Order Subtotals` ON Orders.OrderID = `Order Subtotals`.OrderID\nWHERE Orders.ShippedDate IS NOT NULL"
+    },
+    {
+      "id": "nw-view-summary-of-sales-by-year",
+      "origin": "upstream-view",
+      "name": "Summary of Sales by Year",
+      "create_view": true,
+      "adaptation": "\"Order Subtotals\" -> `Order Subtotals`; the commented-out ORDER BY stays out (upstream's body is the same as Summary of Sales by Quarter)",
+      "sql": "SELECT Orders.ShippedDate, Orders.OrderID, `Order Subtotals`.Subtotal\nFROM Orders INNER JOIN `Order Subtotals` ON Orders.OrderID = `Order Subtotals`.OrderID\nWHERE Orders.ShippedDate IS NOT NULL"
+    },
+    {
+      "id": "nw-proc-ten-most-expensive-products",
+      "origin": "upstream-procedure",
+      "name": "Ten Most Expensive Products",
+      "adaptation": "SET ROWCOUNT 10 -> LIMIT 10",
+      "sql": "SELECT Products.ProductName AS TenMostExpensiveProducts, Products.UnitPrice\nFROM Products\nORDER BY Products.UnitPrice DESC\nLIMIT 10"
+    },
+    {
+      "id": "nw-proc-employee-sales-by-country",
+      "origin": "upstream-procedure",
+      "name": "Employee Sales by Country",
+      "adaptation": "@Beginning_Date = 1997-01-01, @Ending_Date = 1997-12-31, as DATETIME literals; \"Order Subtotals\" -> `Order Subtotals`",
+      "sql": "SELECT Employees.Country, Employees.LastName, Employees.FirstName, Orders.ShippedDate, Orders.OrderID, `Order Subtotals`.Subtotal AS SaleAmount\nFROM Employees INNER JOIN \n\t(Orders INNER JOIN `Order Subtotals` ON Orders.OrderID = `Order Subtotals`.OrderID) \n\tON Employees.EmployeeID = Orders.EmployeeID\nWHERE Orders.ShippedDate Between DATETIME '1997-01-01' And DATETIME '1997-12-31'"
+    },
+    {
+      "id": "nw-proc-sales-by-year",
+      "origin": "upstream-procedure",
+      "name": "Sales by Year",
+      "adaptation": "@Beginning_Date = 1997-01-01, @Ending_Date = 1997-12-31; DATENAME(yy, ShippedDate) -> FORMAT_DATETIME('%Y', ShippedDate)",
+      "sql": "SELECT Orders.ShippedDate, Orders.OrderID, `Order Subtotals`.Subtotal, FORMAT_DATETIME('%Y', ShippedDate) AS Year\nFROM Orders INNER JOIN `Order Subtotals` ON Orders.OrderID = `Order Subtotals`.OrderID\nWHERE Orders.ShippedDate Between DATETIME '1997-01-01' And DATETIME '1997-12-31'"
+    },
+    {
+      "id": "nw-proc-cust-orders-detail",
+      "origin": "upstream-procedure",
+      "name": "CustOrdersDetail",
+      "adaptation": "@OrderID = 10248; alias = expr -> expr AS alias; [Order Details] -> `Order Details`; CONVERT(int, x) -> CAST(TRUNC(x) AS INT64) (CONVERT truncates); CONVERT(money, x) -> ROUND(x, 4)",
+      "sql": "SELECT ProductName,\n    ROUND(Od.UnitPrice, 2) AS UnitPrice,\n    Quantity,\n    CAST(TRUNC(Discount * 100) AS INT64) AS Discount, \n    ROUND(ROUND(Quantity * (1 - Discount) * Od.UnitPrice, 4), 2) AS ExtendedPrice\nFROM Products P, `Order Details` Od\nWHERE Od.ProductID = P.ProductID and Od.OrderID = 10248"
+    },
+    {
+      "id": "nw-proc-cust-orders-orders",
+      "origin": "upstream-procedure",
+      "name": "CustOrdersOrders",
+      "adaptation": "@CustomerID = 'ALFKI'",
+      "sql": "SELECT OrderID, \n\tOrderDate,\n\tRequiredDate,\n\tShippedDate\nFROM Orders\nWHERE CustomerID = 'ALFKI'\nORDER BY OrderID"
+    },
+    {
+      "id": "nw-proc-cust-order-hist",
+      "origin": "upstream-procedure",
+      "name": "CustOrderHist",
+      "adaptation": "@CustomerID = 'ALFKI'; Total=SUM(Quantity) -> SUM(Quantity) AS Total; [Order Details] -> `Order Details`",
+      "sql": "SELECT ProductName, SUM(Quantity) AS Total\nFROM Products P, `Order Details` OD, Orders O, Customers C\nWHERE C.CustomerID = 'ALFKI'\nAND C.CustomerID = O.CustomerID AND O.OrderID = OD.OrderID AND OD.ProductID = P.ProductID\nGROUP BY ProductName"
+    },
+    {
+      "id": "nw-proc-sales-by-category",
+      "origin": "upstream-procedure",
+      "name": "SalesByCategory",
+      "adaptation": "@CategoryName = 'Beverages', @OrdYear = '1998' (the IF that resets an unknown year is dropped); TotalPurchase=expr -> expr AS TotalPurchase; CONVERT(decimal(14,2), x) -> ROUND(x, 2); SUBSTRING(CONVERT(nvarchar(22), d, 111), 1, 4) -> SUBSTR(FORMAT_DATETIME('%Y/%m/%d', d), 1, 4) (style 111 is yyyy/mm/dd)",
+      "sql": "SELECT ProductName,\n\tROUND(SUM(ROUND(OD.Quantity * (1-OD.Discount) * OD.UnitPrice, 2)), 0) AS TotalPurchase\nFROM `Order Details` OD, Orders O, Products P, Categories C\nWHERE OD.OrderID = O.OrderID \n\tAND OD.ProductID = P.ProductID \n\tAND P.CategoryID = C.CategoryID\n\tAND C.CategoryName = 'Beverages'\n\tAND SUBSTR(FORMAT_DATETIME('%Y/%m/%d', O.OrderDate), 1, 4) = '1998'\nGROUP BY ProductName\nORDER BY ProductName"
+    },
+    {
+      "id": "nw-a01-orders-customer-employee",
+      "origin": "authored",
+      "features": ["join"],
+      "sql": "SELECT o.OrderID, c.CompanyName, CONCAT(e.FirstName, ' ', e.LastName) AS employee\nFROM Orders AS o\nJOIN Customers AS c ON c.CustomerID = o.CustomerID\nJOIN Employees AS e ON e.EmployeeID = o.EmployeeID\nWHERE o.ShipCountry = 'Germany'"
+    },
+    {
+      "id": "nw-a02-customers-without-orders",
+      "origin": "authored",
+      "features": ["outer-join", "null"],
+      "sql": "SELECT c.CustomerID, c.CompanyName\nFROM Customers AS c\nLEFT JOIN Orders AS o ON o.CustomerID = c.CustomerID\nWHERE o.OrderID IS NULL"
+    },
+    {
+      "id": "nw-a03-employee-managers",
+      "origin": "authored",
+      "features": ["outer-join", "self-join", "null"],
+      "sql": "SELECT e.EmployeeID, e.LastName, m.LastName AS manager, e.Region\nFROM Employees AS e\nLEFT JOIN Employees AS m ON m.EmployeeID = e.ReportsTo"
+    },
+    {
+      "id": "nw-a04-freight-by-shipper-year",
+      "origin": "authored",
+      "features": ["join", "aggregation"],
+      "sql": "SELECT s.CompanyName, EXTRACT(YEAR FROM o.OrderDate) AS order_year, COUNT(*) AS orders, SUM(o.Freight) AS freight\nFROM Orders AS o\nJOIN Shippers AS s ON s.ShipperID = o.ShipVia\nGROUP BY s.CompanyName, order_year"
+    },
+    {
+      "id": "nw-a05-best-selling-products",
+      "origin": "authored",
+      "features": ["aggregation", "having"],
+      "sql": "SELECT od.ProductID, SUM(od.Quantity) AS units\nFROM `Order Details` AS od\nGROUP BY od.ProductID\nHAVING SUM(od.Quantity) > 1000"
+    },
+    {
+      "id": "nw-a06-countries-with-discontinued",
+      "origin": "authored",
+      "features": ["distinct", "join"],
+      "sql": "SELECT DISTINCT s.Country\nFROM Suppliers AS s\nJOIN Products AS p ON p.SupplierID = s.SupplierID\nWHERE p.Discontinued = 1"
+    },
+    {
+      "id": "nw-a07-distinct-on-key",
+      "origin": "authored",
+      "features": ["distinct"],
+      "sql": "SELECT DISTINCT ProductID, ProductName, UnitPrice\nFROM Products\nWHERE CategoryID = 2"
+    },
+    {
+      "id": "nw-a08-in-subquery",
+      "origin": "authored",
+      "features": ["subquery"],
+      "sql": "SELECT ProductName\nFROM Products\nWHERE ProductID IN (SELECT ProductID FROM `Order Details` WHERE Discount >= 0.2)"
+    },
+    {
+      "id": "nw-a09-not-exists-seafood",
+      "origin": "authored",
+      "features": ["subquery", "join"],
+      "sql": "SELECT c.CustomerID\nFROM Customers AS c\nWHERE NOT EXISTS (\n  SELECT 1\n  FROM Orders AS o\n  JOIN `Order Details` AS od ON od.OrderID = o.OrderID\n  JOIN Products AS p ON p.ProductID = od.ProductID\n  WHERE o.CustomerID = c.CustomerID AND p.CategoryID = 8\n)"
+    },
+    {
+      "id": "nw-a10-not-in-with-nulls",
+      "origin": "authored",
+      "features": ["subquery", "null"],
+      "sql": "SELECT CustomerID\nFROM Customers\nWHERE Region NOT IN (SELECT Region FROM Suppliers)"
+    },
+    {
+      "id": "nw-a11-above-category-average",
+      "origin": "authored",
+      "features": ["subquery", "aggregation"],
+      "sql": "SELECT p.ProductName, p.UnitPrice\nFROM Products AS p\nWHERE p.UnitPrice > (SELECT AVG(p2.UnitPrice) FROM Products AS p2 WHERE p2.CategoryID = p.CategoryID)"
+    },
+    {
+      "id": "nw-a12-phone-book",
+      "origin": "authored",
+      "features": ["set-operation"],
+      "sql": "SELECT CompanyName, Phone, 'customer' AS kind FROM Customers\nUNION ALL\nSELECT CompanyName, Phone, 'supplier' FROM Suppliers\nUNION ALL\nSELECT CompanyName, Phone, 'shipper' FROM Shippers"
+    },
+    {
+      "id": "nw-a13-countries-without-suppliers",
+      "origin": "authored",
+      "features": ["set-operation"],
+      "sql": "SELECT Country FROM Customers\nEXCEPT DISTINCT\nSELECT Country FROM Suppliers"
+    },
+    {
+      "id": "nw-a14-shared-cities",
+      "origin": "authored",
+      "features": ["set-operation"],
+      "sql": "SELECT City FROM Customers\nINTERSECT DISTINCT\nSELECT City FROM Employees"
+    },
+    {
+      "id": "nw-a15-order-rank-per-customer",
+      "origin": "authored",
+      "features": ["window", "aggregation", "cte"],
+      "sql": "WITH totals AS (\n  SELECT od.OrderID, SUM(od.UnitPrice * od.Quantity) AS gross\n  FROM `Order Details` AS od\n  GROUP BY od.OrderID\n)\nSELECT o.CustomerID, o.OrderID, t.gross,\n  DENSE_RANK() OVER (PARTITION BY o.CustomerID ORDER BY t.gross DESC) AS rnk\nFROM Orders AS o\nJOIN totals AS t ON t.OrderID = o.OrderID"
+    },
+    {
+      "id": "nw-a16-nth-order-per-employee",
+      "origin": "authored",
+      "features": ["window"],
+      "sql": "SELECT EmployeeID, OrderID, OrderDate,\n  COUNT(*) OVER (PARTITION BY EmployeeID ORDER BY OrderDate, OrderID ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS nth\nFROM Orders"
+    },
+    {
+      "id": "nw-a17-next-shipment",
+      "origin": "authored",
+      "features": ["window", "null"],
+      "sql": "SELECT OrderID, ShippedDate, LEAD(ShippedDate) OVER (ORDER BY OrderID) AS next_shipped\nFROM Orders\nWHERE EmployeeID = 9"
+    },
+    {
+      "id": "nw-a18-territories-per-region",
+      "origin": "authored",
+      "features": ["outer-join", "aggregation"],
+      "sql": "SELECT COALESCE(r.RegionID, t.RegionID) AS RegionID, r.RegionDescription, t.territories\nFROM Region AS r\nFULL OUTER JOIN (SELECT RegionID, COUNT(*) AS territories FROM Territories GROUP BY RegionID) AS t\n  ON t.RegionID = r.RegionID"
+    },
+    {
+      "id": "nw-a19-left-join-empty-table",
+      "origin": "authored",
+      "features": ["outer-join", "null"],
+      "sql": "SELECT c.CustomerID, d.CustomerTypeID\nFROM Customers AS c\nLEFT JOIN CustomerCustomerDemo AS d ON d.CustomerID = c.CustomerID\nWHERE c.Country = 'Mexico'"
+    },
+    {
+      "id": "nw-a20-late-shipments",
+      "origin": "authored",
+      "features": ["dates"],
+      "sql": "SELECT o.OrderID, DATETIME_DIFF(o.ShippedDate, o.RequiredDate, DAY) AS days_late\nFROM Orders AS o\nWHERE o.ShippedDate > o.RequiredDate"
+    },
+    {
+      "id": "nw-a21-cte-chain",
+      "origin": "authored",
+      "features": ["cte", "aggregation"],
+      "sql": "WITH lines AS (\n  SELECT OrderID, UnitPrice * Quantity AS gross FROM `Order Details`\n),\nper_order AS (\n  SELECT OrderID, SUM(gross) AS gross FROM lines GROUP BY OrderID\n),\nunused AS (\n  SELECT CategoryID FROM Categories\n)\nSELECT o.ShipCountry, SUM(p.gross) AS gross\nFROM Orders AS o\nJOIN per_order AS p ON p.OrderID = o.OrderID\nWHERE TRUE\nGROUP BY o.ShipCountry"
+    },
+    {
+      "id": "nw-a22-regions-per-employee",
+      "origin": "authored",
+      "features": ["join", "aggregation", "distinct"],
+      "sql": "SELECT e.LastName, COUNT(DISTINCT r.RegionID) AS regions\nFROM Employees AS e\nJOIN EmployeeTerritories AS et ON et.EmployeeID = e.EmployeeID\nJOIN Territories AS t ON t.TerritoryID = et.TerritoryID\nJOIN Region AS r ON r.RegionID = t.RegionID\nGROUP BY e.LastName"
+    },
+    {
+      "id": "nw-a23-unshipped-per-country",
+      "origin": "authored",
+      "features": ["aggregation", "null"],
+      "sql": "SELECT ShipCountry, COUNTIF(ShippedDate IS NULL) AS unshipped, COUNT(*) AS orders\nFROM Orders\nGROUP BY ShipCountry"
+    },
+    {
+      "id": "nw-a24-right-join-big-lines",
+      "origin": "authored",
+      "features": ["outer-join", "null"],
+      "sql": "SELECT p.ProductName, od.OrderID\nFROM `Order Details` AS od\nRIGHT JOIN Products AS p ON p.ProductID = od.ProductID AND od.Quantity >= 100"
+    }
+  ]
+}
