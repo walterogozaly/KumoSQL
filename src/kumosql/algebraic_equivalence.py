@@ -4943,6 +4943,9 @@ def normalize(
         from .counted_membership import rewrite_counted_membership
 
         tree = rewrite_counted_membership(tree, schema, not_null, _assumptions)
+        from .nested_array_length import rewrite_array_length
+
+        tree = rewrite_array_length(tree, types_map, _assumptions)  # stored ARRAY columns: never NULL, length = COUNT over UNNEST
         if tree.sql(dialect="bigquery") == before:
             break
     for subquery in list(tree.find_all(exp.Subquery)):
