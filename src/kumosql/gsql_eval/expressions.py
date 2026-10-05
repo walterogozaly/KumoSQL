@@ -325,6 +325,8 @@ def mul(c: Compiler, node, cx):
     if {a.type.kind, b.type.kind} == {"INTERVAL", "FLOAT64"} and a.lit != "null" and b.lit != "null" and c.mode == "googlesql":
         interval, factor = (a, b) if a.type.kind == "INTERVAL" else (b, a)  # GoogleSQL only: BigQuery has INTERVAL * INT64
         return E(T.INTERVAL, strict2(lambda i, f: _interval_times_double(i, f), interval, factor))
+    if {a.type.kind, b.type.kind} == {"INTERVAL", "FLOAT64"}:
+        raise Unsupported("INTERVAL * FLOAT64")
     if a.lit == "null":
         a = c.coerce(a, b.type)
     if b.lit == "null":
@@ -1077,6 +1079,21 @@ def tuple_(c: Compiler, node, cx):
         raise Unsupported("tuple")
     values = c.exprs(node.expressions, cx)
     return struct_value([None] * len(values), values)
+
+
+@handles(getattr(exp, "Flatten", None))
+def flatten(c: Compiler, node, cx):
+    _only(node, "this")
+    inner = node.this
+    while isinstance(inner, exp.Paren):
+        inner = inner.this
+    parts = path_parts(inner)
+    if not (isinstance(inner, (exp.Dot, exp.Bracket)) or (parts is not None and len(parts) > 1)):
+        raise Unsupported("FLATTEN of something that is not a path")
+    result = c.path_expr(inner, cx)
+    if result.type.kind != "ARRAY":
+        raise AnalysisError("FLATTEN needs a path that yields an array")
+    return result
 
 
 @handles(exp.Bracket)

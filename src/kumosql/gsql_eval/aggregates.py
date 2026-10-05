@@ -825,56 +825,149 @@ def _bit(compiler, node, cx, nulls, op: str) -> AggSpec:
 def _stat_argument(compiler, cx, node, name: str) -> E:
     value, _ = _argument(compiler, cx, node, name)
     kind = value.type.kind
-    if kind in ("NUMERIC", "BIGNUMERIC"):
-        raise Unsupported(f"{name} of {kind}")
     if value.lit == "null":
         return compiler.coerce(value, T.FLOAT64)
-    if kind not in ("INT64", "FLOAT64"):
+    if kind not in ("INT64", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
         raise AnalysisError(f"No matching signature for aggregate function {name} for argument type {value.type}")
     return value
 
 
-def _finite(values: list, name: str) -> None:
+_SCALE = 1074  # a finite double is a whole multiple of 2**-1074
+
+
+def _exact(values: list, kind: str) -> tuple[list, int]:
+    """Whole numbers and the unit they count: the exact values are ``ints / unit``."""
+
+    if kind == "INT64":
+        return values, 1
+    if kind in ("NUMERIC", "BIGNUMERIC"):
+        scale = 9 if kind == "NUMERIC" else 38
+        return [int(v.scaleb(scale, context=V.DEC)) for v in values], 10**scale
+    out = []
     for v in values:
-        if isinstance(v, float) and (v != v or math.isinf(v)):
-            raise Unsupported(f"{name} over NaN or infinite values")
+        num, den = float(v).as_integer_ratio()
+        out.append(num << (_SCALE - den.bit_length() + 1))
+    return out, 1 << _SCALE
+
+
+def _to_double(value: Fraction) -> float:
+    """The double nearest an exact value; one too large for a double is infinite, as BigQuery's final conversion gives."""
+
+    try:
+        return float(value)
+    except OverflowError:
+        return math.inf if value > 0 else -math.inf
+
+
+def _sqrt_double(value: Fraction) -> float:
+    """The square root of a non-negative exact value as a double (infinite when it does not fit)."""
+
+    if value == 0:
+        return 0.0
+    num, den = value.numerator, value.denominator
+    shift = (120 - (num.bit_length() - den.bit_length())) // 2
+    root = math.isqrt((num << (2 * shift)) // den if shift >= 0 else num // (den << (-2 * shift)))
+    try:
+        return math.ldexp(float(root), -shift)
+    except OverflowError:
+        return math.inf
+
+
+def _all_finite(values: list) -> bool:
+    return all(not (isinstance(v, float) and (v != v or math.isinf(v))) for v in values)
+
+
+def _split_having(node):
+    """``x HAVING MAX y`` -> ``(x, HavingMax node)``; anything else -> ``(node, None)``."""
+
+    if isinstance(node, exp.HavingMax):
+        _only(node, "this", "expression", "max")
+        return node.this, node
+    return node, None
+
+
+def _having_rows(compiler, cx, having, name: str):
+    """A function keeping the rows whose ordering value is the largest (or smallest) non-NULL one."""
+
+    if having is None:
+        return None
+    ordering = compiler.expr(having.args["expression"], cx)
+    _check_type(ordering, name)
+    _orderable(ordering.type, name)
+    ofn, ot, want_max = ordering.fn, ordering.type, bool(having.args["max"])
+
+    def keep(rows, env):
+        ctx, ctes = env.ctx, env.ctes
+        pairs = []
+        for row in rows:
+            y = ofn(Env(row, env, ctx, ctes))
+            if y is not None:
+                pairs.append((row, y))
+        if not pairs:
+            return []
+        if ot.kind == "FLOAT64" and any(y != y for _, y in pairs):
+            raise Unsupported(f"{name} HAVING over a FLOAT64 with NaN")
+        best = pairs[0][1]
+        for _, y in pairs:
+            c = V.compare(ot, y, best)
+            if (c > 0) if want_max else (c < 0):
+                best = y
+        return [row for row, y in pairs if V.compare(ot, y, best) == 0]
+
+    return keep
+
+
+def _with_having(spec: AggSpec, keep) -> AggSpec:
+    if keep is None:
+        return spec
+    inner = spec.compute
+    return AggSpec(spec.type, lambda rows, env: inner(keep(rows, env), env), spec.name + " HAVING")
 
 
 def _variance(compiler, node, cx, nulls, name: str, sample: bool, root: bool) -> AggSpec:
+    """VAR_*/STDDEV_*: computed exactly, then rounded once (an overflowing variance is infinity, as BigQuery returns).
+
+    A NaN or infinite input makes the result NaN, a single value has variance 0 (NULL for the sample forms).
+    """
+
     _only(node, "this")
     _reject_nulls(nulls, name)
-    value = _stat_argument(compiler, cx, node.this, name)
-    fn, integer = value.fn, value.type.kind == "INT64"
+    argument, having = _split_having(node.this)
+    value = _stat_argument(compiler, cx, argument, name)
+    keep = _having_rows(compiler, cx, having, name)
+    fn, kind = value.fn, value.type.kind
 
     def compute(rows, env):
         values = _non_null(_values(fn, rows, env))
         n = len(values)
         if n == 0 or (sample and n < 2):
             return None
+        if not _all_finite(values):
+            return math.nan
         if n == 1:
             return 0.0
-        _finite(values, name)
-        if integer:
-            total = sum(values)
-            squares = sum(v * v for v in values)
-            spread = Fraction(n * squares - total * total, n * n)  # population variance, exact
-            variance = float(spread * Fraction(n, n - 1) if sample else spread)
-        else:
-            mean = math.fsum(values) / n
-            variance = math.fsum((v - mean) ** 2 for v in values) / ((n - 1) if sample else n)
+        xs, unit = _exact(values, kind)
+        total = sum(xs)
+        squares = sum(x * x for x in xs)
+        spread = n * squares - total * total  # n**2 times the population variance, in units of 1 / unit**2
+        variance = Fraction(spread, (n * (n - 1) if sample else n * n) * unit * unit)
         env.ctx.inexact = True
-        return math.sqrt(variance) if root else variance
+        return _sqrt_double(variance) if root else _to_double(variance)
 
-    return AggSpec(T.FLOAT64, compute, name)
+    return _with_having(AggSpec(T.FLOAT64, compute, name), keep)
 
 
 def _covariance(compiler, node, cx, nulls, name: str) -> AggSpec:
+    """COVAR_*/CORR: exact like :func:`_variance`; CORR of a column with no variance is NaN."""
+
     _only(node, "this", "expression")
     _reject_nulls(nulls, name)
+    right_node, having = _split_having(node.args["expression"])
     left = _stat_argument(compiler, cx, node.this, name)
-    right = _stat_argument(compiler, cx, node.args["expression"], name)
+    right = _stat_argument(compiler, cx, right_node, name)
+    keep = _having_rows(compiler, cx, having, name)
     lfn, rfn = left.fn, right.fn
-    integer = left.type.kind == "INT64" and right.type.kind == "INT64"
+    lkind, rkind = left.type.kind, right.type.kind
 
     def compute(rows, env):
         ctx, ctes = env.ctx, env.ctes
@@ -888,43 +981,26 @@ def _covariance(compiler, node, cx, nulls, name: str) -> AggSpec:
         n = len(xs)
         if n == 0 or (name != "COVAR_POP" and n < 2):
             return None
-        _finite(xs, name)
-        _finite(ys, name)
-        if integer:
-            sx, sy = sum(xs), sum(ys)
-            sxy = sum(x * y for x, y in zip(xs, ys))
-            cxy = n * sxy - sx * sy  # n**2 times the population covariance
-            if name == "COVAR_POP":
-                result = float(Fraction(cxy, n * n))
-            elif name == "COVAR_SAMP":
-                result = float(Fraction(cxy, n * (n - 1)))
-            else:
-                cxx = n * sum(x * x for x in xs) - sx * sx
-                cyy = n * sum(y * y for y in ys) - sy * sy
-                if cxx == 0 or cyy == 0:
-                    raise Unsupported("CORR of values with zero variance")
-                ratio = math.sqrt(float(Fraction(cxy * cxy, cxx * cyy)))
-                result = -ratio if cxy < 0 else ratio
-        else:
-            xs = [float(x) for x in xs]
-            ys = [float(y) for y in ys]
-            mx, my = math.fsum(xs) / n, math.fsum(ys) / n
-            sxy = math.fsum((x - mx) * (y - my) for x, y in zip(xs, ys))
-            if name == "COVAR_POP":
-                result = sxy / n
-            elif name == "COVAR_SAMP":
-                result = sxy / (n - 1)
-            else:
-                sxx = math.fsum((x - mx) ** 2 for x in xs)
-                syy = math.fsum((y - my) ** 2 for y in ys)
-                if sxx == 0 or syy == 0:
-                    raise Unsupported("CORR of values with zero variance")
-                result = sxy / math.sqrt(sxx * syy)
+        if not (_all_finite(xs) and _all_finite(ys)):
+            return math.nan
+        sx, ux = _exact(xs, lkind)
+        sy, uy = _exact(ys, rkind)
+        total_x, total_y = sum(sx), sum(sy)
+        cxy = n * sum(a * b for a, b in zip(sx, sy)) - total_x * total_y
         if n > 1:
             env.ctx.inexact = True
-        return result
+        if name == "COVAR_POP":
+            return _to_double(Fraction(cxy, n * n * ux * uy))
+        if name == "COVAR_SAMP":
+            return _to_double(Fraction(cxy, n * (n - 1) * ux * uy))
+        cxx = n * sum(a * a for a in sx) - total_x * total_x
+        cyy = n * sum(b * b for b in sy) - total_y * total_y
+        if cxx == 0 or cyy == 0:
+            return math.nan
+        ratio = _sqrt_double(Fraction(cxy * cxy, cxx * cyy))  # the units cancel
+        return -ratio if cxy < 0 else ratio
 
-    return AggSpec(T.FLOAT64, compute, name)
+    return _with_having(AggSpec(T.FLOAT64, compute, name), keep)
 
 
 # ---------------------------------------------------------------------------------------------

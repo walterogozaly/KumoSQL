@@ -95,17 +95,24 @@ def evaluate(sql_or_tree: Any, database: Database | None = None, time_zone: str 
     strict_certain = False
     if isinstance(sql_or_tree, str):
         from ..string_literals import invalid_literal
+        from . import text_guards
         from .literals import decode_literals
 
         text = sql_or_tree
         if invalid_literal(text):
             raise AnalysisError("Invalid string literal")
+        text_guards.check(text)
         strict_certain = _strict_set_operations(text)
         try:
             tree = sqlglot.parse_one(decode_literals(text), read="bigquery")
         except sqlglot.errors.ParseError as error:
             raise Unsupported(f"sqlglot cannot parse the query: {str(error)[:120]}") from None
         literals_decoded = True
+        if isinstance(tree, exp.Block):  # `SELECT 1;  -- comment`: the statement and a Semicolon carrying the comment
+            statements = [e for e in tree.expressions if not isinstance(e, exp.Semicolon)]
+            if len(statements) != 1:
+                raise Unsupported("several statements")
+            tree = statements[0]
     else:
         tree = sql_or_tree
         for lit in tree.find_all(exp.Literal):

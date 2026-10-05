@@ -967,3 +967,71 @@ def test_normalize_declines_unassigned_characters_and_order_dependent_folding():
         column("NORMALIZE(s)", ["\U0010fffe"])
     with pytest.raises(Unsupported):
         column("NORMALIZE_AND_CASEFOLD(s)", ["\u0345\u0301"])
+
+
+# --- the regular expression translator against RE2 itself (DuckDB links RE2) ------------------------------------
+
+def test_not_a_word_boundary_matches_the_empty_string_as_in_re2():
+    assert column("REGEXP_CONTAINS(s, '\\\\B')", [""]) == [True]
+    assert column("REGEXP_CONTAINS(s, 'a\\\\Bb')", ["ab", "a b"]) == [True, False]
+    with pytest.raises(Unsupported):  # RE2 scans bytes, so \B can match inside a multi-byte character
+        column("REGEXP_CONTAINS(s, '\\\\B')", ["aKy"])
+
+
+_TOKENS = [
+    "a", "b", "c", " ", "é", ".", "\\d", "\\w", "\\s", "\\S", "\\W", "\\D", "^", "$", "\\b", "\\B", "[abc]", "[^a]",
+    "[a-c]", "[\\s\\d]", "[^\\s]", "[\\w-]", "[]a]", "[^]a]", "(", ")", "(?:", "|", "*", "+", "?", "{2}", "{1,2}", "{2,}",
+    "*?", "+?", "??", "\\A", "\\z", "\\.", "\\-", "[a\\-c]", "(?i)", "(?s)", "(?m)", "x", "1", "_", "\\n", "\\t", "\\x41",
+    "\\x{41}", "{", "}", "]", "[", ",", "\\\\", "#", "\\v", "\\f", "A", "\\pL", "\\Z", "(?P<n>", "(?=", "\\1", "[é-ü]",
+    "(a|b)", "(ab)+", "(?:ab|c)*", "a{0}", "(x)?", "[a-z]+", "(a)(b)", "a|b|", "(|a)", "((a))", "(a(b)?)", "\\bx", "x\\b",
+]
+_ALPHABET = list("abcABC d1_xyz.\n\t\r") + ["é", "É", "\x0b", " ", "K", "-", "]", "}"]
+
+
+def _outcome(sql: str, db):
+    try:
+        return "ok", evaluate(sql, db).rows[0][0]
+    except Unsupported:
+        return "unsupported", None
+    except EvalError:
+        return "error", None
+
+
+def test_regexp_functions_agree_with_re2_wherever_they_answer():
+    import random
+
+    from kumosql.gsql_eval.fn_string import _compile_re2
+
+    duckdb = pytest.importorskip("duckdb")
+    rng = random.Random(20260101)
+    con = duckdb.connect()
+    answered = 0
+    for _ in range(700):
+        pattern = "".join(rng.choice(_TOKENS) for _ in range(rng.randint(1, 6)))
+        text = "".join(rng.choice(_ALPHABET) for _ in range(rng.randint(0, 7)))
+        db = Database({"t": Table([("s", T.STRING), ("p", T.STRING)], [(text, pattern)])})
+        try:
+            expected = con.execute("select regexp_matches(?, ?)", [text, pattern]).fetchone()[0]
+            re2_error = False
+        except Exception:  # noqa: BLE001  DuckDB reports RE2's parse errors as its own exception types
+            expected, re2_error = None, True
+        kind, got = _outcome("SELECT REGEXP_CONTAINS(s, p) FROM t", db)
+        if kind == "error":
+            assert re2_error, (pattern, text)  # a pattern we call invalid must be invalid in RE2
+        if kind != "ok":
+            continue
+        answered += 1
+        assert not re2_error and got == expected, (pattern, text, got, expected)
+        group = _compile_re2(pattern).groups  # 0 or 1 here: more is an error for the extraction functions
+        checks = (
+            ("REGEXP_EXTRACT(s, p)", "select regexp_extract(?, ?, ?)", (text, pattern, group)),
+            ("REGEXP_EXTRACT_ALL(s, p)", "select regexp_extract_all(?, ?, ?)", (text, pattern, group)),
+            ("REGEXP_REPLACE(s, p, '<\\\\0>')", "select regexp_replace(?, ?, '<\\0>', 'g')", (text, pattern)),
+        )
+        for sql, duck_sql, params in checks:
+            kind2, got2 = _outcome(f"SELECT {sql} FROM t", db)
+            if kind2 != "ok" or (got2 is None and sql.startswith("REGEXP_EXTRACT(")):
+                continue  # declined, or no match (RE2's wrappers answer "" where BigQuery answers NULL)
+            want = con.execute(duck_sql, list(params)).fetchone()[0]
+            assert (list(got2) if isinstance(got2, tuple) else got2) == want, (sql, pattern, text, got2, want)
+    assert answered > 150

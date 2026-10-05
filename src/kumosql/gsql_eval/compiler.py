@@ -93,7 +93,7 @@ class FromScope(Scope):
                         hits.append(Ref(source.value_slot, source.value_type, (index,)))
         aliases = [s for s in self.sources if s.name is not None and s.name.lower() == first]
         if hits and aliases:
-            if len(parts) == 1 and len(aliases) == 1 and aliases[0].value_slot is not None and not aliases[0].cols:
+            if len(parts) == 1 and len(aliases) == 1 and aliases[0].value_slot is not None:
                 hits = []  # a value table's own alias
             else:
                 raise Unsupported(f"{parts[0]} names both a column and a range variable")
@@ -270,18 +270,18 @@ class Compiler:
 
     # --- names -------------------------------------------------------------------------------
 
-    def resolve(self, parts: list[str], scope: Scope, flatten: bool = False) -> E | None:
+    def resolve(self, parts: list[str], scope: Scope) -> E | None:
         depth = 0
         current = scope
         while current is not None:
             ref = current.lookup(parts)
             if ref is not None:
-                return self._ref_expr(ref, depth, parts, flatten)
+                return self._ref_expr(ref, depth, parts)
             current = current.parent
             depth += 1
         return None
 
-    def _ref_expr(self, ref: Ref, depth: int, parts: list[str], flatten: bool = False) -> E:
+    def _ref_expr(self, ref: Ref, depth: int, parts: list[str]) -> E:
         if ref.row_slots is not None:
             slots = ref.row_slots
             getter = _row_getter(depth)
@@ -295,65 +295,143 @@ class Compiler:
         for index in ref.fields:
             result = _field(result, index)
         for name in parts[ref.consumed:]:
-            result = self.field_access(result, name, flatten)
+            result = self.field_access(result, name)
         return result
 
-    def field_access(self, value: E, name: str, flatten: bool = False) -> E:
-        """``value.name``. Through an array of structs (``flatten``: only where GoogleSQL allows it, in an UNNEST or
-        FLATTEN argument) the field is read from every element and the results form one array: an array-valued field
-        contributes its elements (nothing when NULL), a NULL element gives a NULL."""
-
-        if value.type.kind == "ARRAY":
-            if not flatten:
-                raise Unsupported("field access through an array")
-            elem = value.type.elem
-            if elem.kind != "STRUCT":
-                raise AnalysisError(f"Cannot access field {name} on a value with type {value.type}")
-            index = elem.field_index(name)
-            if index is None:
-                raise AnalysisError(f"Field name {name} does not exist in {elem}")
-            ftype = elem.fields[index][1]
-            spread = ftype.kind == "ARRAY"
-            result_type = ftype if spread else T.array(ftype)
-            fn = value.fn
-
-            def run(env):
-                items = fn(env)
-                if items is None:
-                    return None
-                out = []
-                for item in items:
-                    field = None if item is None else item[index]
-                    if spread:
-                        if field is not None:
-                            out.extend(field)
-                    else:
-                        out.append(field)
-                unordered = isinstance(items, V.UnorderedArray) or any(isinstance(f, V.UnorderedArray) for f in out if spread)
-                return V.UnorderedArray(out) if unordered else tuple(out)
-
-            return E(result_type, run)
+    def field_access(self, value: E, name: str) -> E:
         if value.type.kind != "STRUCT":
+            if value.type.kind == "ARRAY":
+                raise Unsupported("field access through an array")  # only UNNEST and FLATTEN take such a path (path_expr)
             raise AnalysisError(f"Cannot access field {name} on a value with type {value.type}")
         index = value.type.field_index(name)
         if index is None:
             raise AnalysisError(f"Field name {name} does not exist in {value.type}")
         return _field(value, index)
 
-    def path_expr(self, node: exp.Expression, cx: Cx) -> E:
-        """Compile the argument of UNNEST or FLATTEN: a path ``a.b.c`` may step through arrays of structs there."""
+    # --- paths through arrays (UNNEST and FLATTEN arguments) ---------------------------------------------
 
-        if isinstance(node, exp.Paren):
-            return self.path_expr(node.this, cx)
+    def path_expr(self, node: exp.Expression, cx: Cx) -> E:
+        """Compile the argument of UNNEST or FLATTEN. A path ``root.f.g[OFFSET(1)].h`` may step through arrays of structs
+        there: from the first array on, the remaining steps run on every element, and the results form one array
+        (an array-valued result contributes its elements, nothing if NULL; a NULL element gives a NULL)."""
+
+        steps: list = []
+        while True:
+            if isinstance(node, exp.Paren):
+                node = node.this
+            elif isinstance(node, exp.Dot) and isinstance(node.expression, exp.Identifier):
+                steps.append(("field", node.expression.name))
+                node = node.this
+            elif isinstance(node, exp.Bracket):
+                steps.append(("sub", node))
+                node = node.this
+            else:
+                break
+        steps.reverse()
         parts = path_parts(node)
-        if parts is not None and len(parts) > 1:
-            value = self.resolve(parts, cx.scope, True)
-            if value is None:
+        if parts is not None:
+            root = None
+            for k in range(1, len(parts) + 1):
+                root = self.resolve(parts[:k], cx.scope)
+                if root is not None:
+                    steps = [("field", name) for name in parts[k:]] + steps
+                    break
+            if root is None:
                 raise AnalysisError(f"Unrecognized name: {parts[0]}")
-            return self._checked(value)
-        if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Identifier):
-            return self._checked(self.field_access(self.path_expr(node.this, cx), node.expression.name, True))
-        return self.expr(node, cx)
+            root = self._checked(root)
+        else:
+            root = self.expr(node, cx)
+        return self.path_steps(root, steps, cx) if steps else root
+
+    def path_steps(self, root: E, steps: list, cx: Cx) -> E:
+        t = root.type
+        plan: list = []  # ("iter",) ("field", i) ("sub", index fn, base offset, safe)
+        through_array = False
+        for step in steps:
+            if step[0] == "field":
+                if t.kind == "ARRAY":
+                    if t.elem.kind != "STRUCT":
+                        raise AnalysisError(f"Cannot access field {step[1]} on a value with type {t}")
+                    plan.append(("iter",))
+                    through_array = True
+                    t = t.elem
+                if t.kind != "STRUCT":
+                    raise AnalysisError(f"Cannot access field {step[1]} on a value with type {t}")
+                index = t.field_index(step[1])
+                if index is None:
+                    raise AnalysisError(f"Field name {step[1]} does not exist in {t}")
+                plan.append(("field", index))
+                t = t.fields[index][1]
+            else:
+                node = step[1]
+                _only(node, "this", "expressions", "offset", "safe", "returns_list_for_maps")
+                if len(node.expressions) != 1:
+                    raise Unsupported("subscript with several indexes")
+                if t.kind != "ARRAY":
+                    raise AnalysisError(f"Element access using [] is not supported on values of type {t}")
+                position = self.expr(node.expressions[0], cx)
+                if position.lit == "null":
+                    position = self.coerce(position, T.INT64)
+                if position.type != T.INT64:
+                    raise AnalysisError(f"Array element access with array position of type {position.type} is not supported")
+                plan.append(("sub", position.fn, node.args.get("offset") or 0, bool(node.args.get("safe"))))
+                t = t.elem
+        spread = through_array and t.kind == "ARRAY"
+        if spread:
+            plan.append(("spread",))
+            result_type = t
+        elif through_array:
+            result_type = T.array(t)
+        else:
+            result_type = t
+        root_fn = root.fn
+        size = len(plan)
+
+        def run(env):
+            top = root_fn(env)
+            if top is None and plan and plan[0][0] == "iter":
+                return None
+            out: list = []
+            unordered = [False]
+
+            def go(value, i):
+                if i == size:
+                    out.append(value)
+                    return
+                op = plan[i]
+                kind = op[0]
+                if kind == "iter":
+                    if isinstance(value, V.UnorderedArray):
+                        unordered[0] = True
+                    for item in value or ():
+                        go(item, i + 1)
+                elif kind == "field":
+                    go(None if value is None else value[op[1]], i + 1)
+                elif kind == "sub":
+                    position = op[1](env)
+                    if value is None or position is None:
+                        go(None, i + 1)
+                        return
+                    k = position - op[2]
+                    if k < 0 or k >= len(value):
+                        if not op[3]:
+                            raise EvalError(f"Array index {position} is out of bounds")
+                        go(None, i + 1)
+                        return
+                    if not V.ordered_kind(value):
+                        env.ctx.nondet("element of an unordered array")
+                    go(value[k], i + 1)
+                else:  # spread
+                    if isinstance(value, V.UnorderedArray):
+                        unordered[0] = True
+                    out.extend(value or ())
+
+            go(top, 0)
+            if not through_array:
+                return out[0]
+            return V.UnorderedArray(out) if unordered[0] else tuple(out)
+
+        return E(result_type, run)
 
     # --- signatures for GROUP BY matching ---------------------------------------------------
 
@@ -1475,8 +1553,16 @@ class Compiler:
         return current, run
 
     def from_item(self, node: exp.Expression, scope: Scope, ctes: dict, left: FromScope):
-        if node.args.get("pivots"):
-            raise Unsupported("PIVOT / UNPIVOT")
+        pivots = node.args.get("pivots")
+        if pivots:
+            if len(pivots) != 1:
+                raise Unsupported("several PIVOT / UNPIVOT operators on one table")
+            bare = node.copy()
+            bare.set("pivots", None)
+            base = self.from_item(bare, scope, ctes, left)
+            if base[4]:
+                raise Unsupported("PIVOT / UNPIVOT of a correlated item")
+            return self._pivot_item(pivots[0], base, scope)
         if isinstance(node, exp.Table):
             _only(node, "this", "db", "catalog", "alias", "joins")
             alias = node.args.get("alias")
@@ -1536,6 +1622,234 @@ class Compiler:
             return self._unnest(node, scope, left)
         raise Unsupported(f"FROM item {type(node).__name__}")
 
+    # --- PIVOT and UNPIVOT ------------------------------------------------------------------------------
+
+    def _pivot_base(self, base, scope: Scope):
+        sources, width, run, star, _ = base
+        columns = star if star is not None else [c for src in sources for c in source_star(src)]
+        for name, slot, typ, fields in columns:
+            if name is None or fields:
+                raise Unsupported("PIVOT / UNPIVOT over unnamed or struct-field columns")
+        if any(src.value_slot is not None for src in sources):
+            raise Unsupported("PIVOT / UNPIVOT of a value table")
+        return FromScope(sources, width, scope, star=star), columns, run
+
+    def _pivot_item(self, pivot: exp.Expression, base, scope: Scope):
+        _only(pivot, "expressions", "fields", "unpivot", "include_nulls", "default_on_null", "value_columns_first", "alias",
+              "columns", "identify_pivot_strings", "prefixed_pivot_columns", "pivot_column_naming", "with_")
+        if pivot.args.get("default_on_null"):
+            raise Unsupported("PIVOT DEFAULT ON NULL")
+        from_scope, columns, base_item_run = self._pivot_base(base, scope)
+        base_run = lambda env: base_item_run(env, ())  # noqa: E731
+        alias = pivot.args.get("alias")
+        alias_name = None
+        if alias is not None:
+            _only(alias, "this")
+            alias_name = alias.name
+        if pivot.args.get("unpivot"):
+            out_cols, run = self._unpivot(pivot, from_scope, columns, base_run)
+        else:
+            out_cols, run = self._pivot(pivot, from_scope, columns, base_run)
+        cols = [(n, i, t) for i, (n, t) in enumerate(out_cols)]
+        wrapped = lambda env, row: run(env)  # noqa: E731
+        return [Source(alias_name, cols)], len(cols), wrapped, None, False
+
+    def _unpivot(self, pivot: exp.Expression, from_scope: FromScope, columns: list, base_run):
+        fields = pivot.args.get("fields") or []
+        if len(fields) != 1 or not isinstance(fields[0], exp.In) or len(pivot.expressions) != 1:
+            raise Unsupported("UNPIVOT form")
+        include_nulls = bool(pivot.args.get("include_nulls"))
+        values_node = pivot.expressions[0]
+        value_names = [v.name for v in (values_node.expressions if isinstance(values_node, exp.Tuple) else [values_node])]
+        if not all(isinstance(v, exp.Identifier) for v in (values_node.expressions if isinstance(values_node, exp.Tuple) else [values_node])):
+            raise Unsupported("UNPIVOT value column")
+        in_node = fields[0]
+        if not isinstance(in_node.this, exp.Identifier):
+            raise Unsupported("UNPIVOT name column")
+        name_column = in_node.this.name
+        items = []  # (label, [slots], [types])
+        used: set = set()
+        for item in in_node.expressions:
+            label = None
+            if isinstance(item, exp.PivotAlias):
+                if not (isinstance(item.args.get("alias"), exp.Literal) and item.args["alias"].is_string):
+                    raise Unsupported("UNPIVOT label that is not a string literal")
+                label = item.args["alias"].this
+                item = item.this
+            refs = item.expressions if isinstance(item, exp.Tuple) else [item]
+            slots, types, names = [], [], []
+            for ref_node in refs:
+                parts = path_parts(ref_node)
+                if parts is None:
+                    raise Unsupported("UNPIVOT column that is not a name")
+                ref = from_scope.lookup(parts)
+                if ref is None or ref.fields or ref.row_slots is not None:
+                    raise AnalysisError(f"Column {'.'.join(parts)} in UNPIVOT is not a column of the table")
+                if ref.type.foreign:
+                    raise Unsupported(f"column of GoogleSQL-only type {ref.type}")
+                slots.append(ref.slot)
+                types.append(ref.type)
+                names.append(next(n for n, s, _, _ in columns if s == ref.slot))
+            if len(slots) != len(value_names):
+                raise AnalysisError("UNPIVOT value column count differs from the IN list items")
+            used.update(slots)
+            items.append((label if label is not None else "_".join(names), slots, types))
+        if not items:
+            raise AnalysisError("UNPIVOT needs at least one column")
+        keep = [(n, s, t) for n, s, t, _ in columns if s not in used]
+        value_types = [T.supertype([(it[2][j], None) for it in items]) for j in range(len(value_names))]
+        for t in value_types:
+            if t.foreign:
+                raise Unsupported(f"column of GoogleSQL-only type {t}")
+        out = [(n, t) for n, _, t in keep] + list(zip(value_names, value_types)) + [(name_column, T.STRING)]
+        lowered = [n.lower() for n, _ in out]
+        if len(set(lowered)) != len(lowered):
+            raise Unsupported("UNPIVOT output with repeated column names")
+        convert = [[None if it[2][j] == value_types[j] else V.caster(it[2][j], value_types[j]) for j in range(len(value_names))]
+                   for it in items]
+        keep_slots = [s for _, s, _ in keep]
+
+        def run(env: Env) -> list:
+            tz = env.ctx.tz
+            rows = []
+            for row in base_run(env):
+                head = tuple(row[s] for s in keep_slots)
+                for (label, slots, _), conv in zip(items, convert):
+                    values = tuple(row[s] if c is None or row[s] is None else c(row[s], tz) for s, c in zip(slots, conv))
+                    if not include_nulls and all(v is None for v in values):
+                        continue
+                    rows.append(head + values + (label,))
+            return rows
+
+        return out, run
+
+    def _pivot(self, pivot: exp.Expression, from_scope: FromScope, columns: list, base_run):
+        from . import aggregates
+
+        fields = pivot.args.get("fields") or []
+        if len(fields) != 1 or not isinstance(fields[0], exp.In):
+            raise Unsupported("PIVOT form")
+        in_node = fields[0]
+        for_node = in_node.this
+        while isinstance(for_node, exp.Paren):
+            for_node = for_node.this
+        if isinstance(for_node, exp.Tuple):
+            raise Unsupported("PIVOT FOR several expressions")
+        aggregates_nodes = []  # (aggregate node, alias or None)
+        for item in pivot.expressions:
+            alias = None
+            if isinstance(item, exp.Alias):
+                alias = item.alias
+                item = item.this
+            if not (aggregates.is_aggregate(item) or isinstance(item, (exp.IgnoreNulls, exp.RespectNulls))):
+                raise AnalysisError("PIVOT expressions must be aggregate function calls")
+            aggregates_nodes.append((item, alias))
+        if not aggregates_nodes:
+            raise AnalysisError("PIVOT needs an aggregate function")
+        if len(aggregates_nodes) > 1 and any(a is None for _, a in aggregates_nodes):
+            raise Unsupported("several PIVOT aggregates without aliases")
+
+        def volatile(node) -> bool:
+            return any(isinstance(n, (exp.Rand, exp.Uuid)) or type(n).__name__ in ("Rand", "Uuid", "GenerateUuid")
+                       for n in node.find_all(exp.Expression))
+
+        if any(volatile(n) for n, _ in aggregates_nodes) or volatile(for_node):
+            raise Unsupported("PIVOT with a volatile expression")
+        # the columns the aggregates and the FOR expression read are not group columns
+        referenced: set = set()
+        for node in [n for n, _ in aggregates_nodes] + [for_node]:
+            for column in _columns_outside_queries(node):
+                parts = path_parts(column)
+                if parts is None:
+                    raise Unsupported("PIVOT expression with a computed name")
+                ref = from_scope.lookup(parts)
+                if ref is None:
+                    raise AnalysisError(f"Unrecognized name: {parts[0]}")
+                if ref.row_slots is not None:
+                    raise Unsupported("PIVOT over a whole row")
+                referenced.add(ref.slot)
+        keep = [(n, s, t) for n, s, t, _ in columns if s not in referenced]
+        for _, _, t in keep:
+            if t.foreign or not T.groupable(t):
+                raise Unsupported(f"PIVOT group column of type {t}")
+        cx = Cx(from_scope, no_agg=None, in_agg=True)
+        for_e = self.expr(for_node, Cx(from_scope, no_agg="PIVOT"))
+        values = []  # (name, E)
+        for item in in_node.expressions:
+            alias = None
+            if isinstance(item, exp.PivotAlias):
+                alias = item.args["alias"]
+                item = item.this
+                if isinstance(alias, exp.Literal) and alias.is_string:
+                    alias = alias.this
+                elif isinstance(alias, exp.Identifier):
+                    alias = alias.name
+                else:
+                    raise Unsupported("PIVOT value alias")
+            value = self._pivot_value(item)
+            if alias is None:
+                alias = _pivot_value_name(item, value)
+                if not (alias[0].isalpha() or alias[0] == "_"):
+                    alias = "\0" + alias  # a generated name that starts with a digit gets "_" when alone
+            values.append((alias, value))
+        values = [(a, v) for a, v in values]
+        if not values:
+            raise AnalysisError("PIVOT needs at least one value")
+        target, coerced = self.unify([for_e] + [v for _, v in values], "PIVOT value")
+        if not T.groupable(target):
+            raise AnalysisError(f"PIVOT FOR expression of type {target}")
+        for_fn = coerced[0].fn
+        keys = [coerced[i + 1].fn(None) for i in range(len(values))]
+        wanted = [V.group_key(target, k) for k in keys]
+        specs = [aggregates.compile_aggregate(self, n, cx) for n, _ in aggregates_nodes]
+        out = [(n, t) for n, _, t in keep]
+        for vname, _ in values:
+            for (_, agg_alias), spec in zip(aggregates_nodes, specs):
+                plain = vname.lstrip("\0")
+                out.append((f"{agg_alias}_{plain}" if agg_alias else ("_" + plain if vname.startswith("\0") else vname), spec.type))
+        lowered = [n.lower() for n, _ in out]
+        if len(set(lowered)) != len(lowered):
+            raise Unsupported("PIVOT output with repeated column names")
+        keep_slots = [s for _, s, _ in keep]
+        keep_types = [t for _, _, t in keep]
+
+        def run(env: Env) -> list:
+            ctx = env.ctx
+            groups: dict = {}
+            for row in base_run(env):
+                key = tuple(V.group_key(t, row[s]) for s, t in zip(keep_slots, keep_types))
+                bucket = groups.get(key)
+                if bucket is None:
+                    bucket = groups[key] = (tuple(row[s] for s in keep_slots), [[] for _ in values])
+                matched = V.group_key(target, for_fn(Env(row, env, ctx, env.ctes)))
+                for i, w in enumerate(wanted):
+                    if matched == w:
+                        bucket[1][i].append(row)
+            if not groups and not keep_slots:
+                groups[()] = ((), [[] for _ in values])
+            rows = []
+            for head, members in groups.values():
+                tail = []
+                for member in members:
+                    for spec in specs:
+                        tail.append(spec.compute(member, env))
+                rows.append(head + tuple(tail))
+            return rows
+
+        return out, run
+
+    def _pivot_value(self, node: exp.Expression) -> E:
+        """A PIVOT IN value: a literal (or a negated one); anything else, such as a named constant, is not evaluated."""
+
+        inner = node
+        while isinstance(inner, exp.Paren):
+            inner = inner.this
+        if isinstance(inner, (exp.Literal, exp.Null, exp.Boolean, exp.Neg, exp.Cast)) or (
+            isinstance(inner, exp.Expression) and not list(inner.find_all(exp.Column))
+        ):
+            return self.expr(inner, Cx(EmptyScope(), no_agg="PIVOT"))
+        raise Unsupported("PIVOT IN value that is not a constant expression")
+
     def _names_value(self, name: str, left: FromScope) -> bool:
         """Whether ``name`` is a range variable or column visible here (so ``name.x`` in FROM is an array path)."""
 
@@ -1586,10 +1900,10 @@ class Compiler:
 
     def _unnest_path(self, parts: list[str], alias_name: str | None, scope: Scope, left: FromScope):
         def compile_in(s):
-            value = self.resolve(parts, s, True)
+            value = self.resolve(parts[:1], s)
             if value is None:
                 raise AnalysisError(f"Unrecognized name: {parts[0]}")
-            return value
+            return self.path_steps(value, [("field", n) for n in parts[1:]], Cx(s, no_agg="UNNEST"))
 
         value, correlated = self._array_expr(compile_in, scope, left)
         return self._unnest_value(value, alias_name or parts[-1], None, correlated)
@@ -1641,12 +1955,12 @@ class Compiler:
         star = left_star + right_star_cols
         if correlated and side in ("RIGHT", "FULL"):
             raise AnalysisError(f"{side} JOIN with a correlated array")
+        array_item = isinstance(join.this, exp.Unnest) or correlated  # an array scan joins without a condition
         if kind == "CROSS" and (on is not None or using):
             raise AnalysisError("CROSS JOIN with a condition")
-        array_item = isinstance(join.this, exp.Unnest) or correlated  # an array scan joins without a condition
         if side in ("LEFT", "RIGHT", "FULL") and on is None and not using and not array_item:
             raise AnalysisError("An outer join needs a join condition")
-        if kind == "INNER" and on is None and not using:
+        if kind == "INNER" and on is None and not using and not array_item:
             raise AnalysisError("INNER JOIN needs a join condition")
         extra = []
         if using:
@@ -1863,6 +2177,40 @@ def _shift(source: Source, offset: int) -> Source:
         None if source.value_slot is None else source.value_slot + offset,
         source.value_type,
     )
+
+
+def _columns_outside_queries(node: exp.Expression) -> list:
+    """The Column nodes of an expression that are not inside a subquery."""
+
+    out: list = []
+
+    def walk(n):
+        if is_query(n):
+            return
+        if isinstance(n, exp.Column):
+            out.append(n)
+            return
+        for child in n.iter_expressions():
+            walk(child)
+
+    walk(node)
+    return out
+
+
+def _pivot_value_name(node: exp.Expression, value: E) -> str:
+    """The column name a PIVOT value gets without an alias: ``_100`` for 100, ``NULL``, ``true``, or a string that is a name."""
+
+    import re
+
+    if value.lit == "null":
+        return "NULL"
+    if value.type == T.INT64 and value.value is not None and value.value >= 0:
+        return str(value.value)
+    if value.type == T.BOOL and value.value is not None:
+        return "true" if value.value else "false"
+    if value.type == T.STRING and value.value is not None and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value.value):
+        return value.value
+    raise Unsupported("PIVOT value whose column name is generated from a value this evaluator does not name")
 
 
 def _same_set_mode(a: exp.Expression, b: exp.Expression) -> bool:

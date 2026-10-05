@@ -225,10 +225,19 @@ def cases(split: str = "dev", only_file: str | None = None) -> list[Case]:
     for entry in load(split):
         if only_file and entry["file"] != only_file:
             continue
+        # A ``default <key>`` option applies to the rest of its file, whichever block carries it; the
+        # file-wide ``default_time_zone`` lives on a prepare block.
+        carried = dict(entry["defaults"])
+        for block in entry["prepare"]:
+            if "default_time_zone" in block["options"]:
+                carried["default_time_zone"] = block["options"]["default_time_zone"]
         for case in entry["cases"]:
-            options = {**entry["defaults"], **case["options"]}
-            if "default required_features" in options and "required_features" not in options:
-                options["required_features"] = options["default required_features"]
+            for key, value in case["options"].items():
+                if key.startswith("default ") and key != "default global_labels":
+                    carried[key[len("default "):].strip()] = value
+            options = {**carried, **case["options"]}
+            if "required_features" in carried and "required_features" not in case["options"]:
+                options["required_features"] = carried["required_features"]
             expected = case["expected"][0] if case["expected"] else ""
             claimed, reason = claim(entry["file"], case["sql"], options)
             out.append(Case(entry["file"], case["name"], case["sql"], options, expected, entry["prepare"], claimed, reason))

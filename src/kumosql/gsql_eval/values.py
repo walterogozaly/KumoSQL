@@ -253,6 +253,14 @@ class FixedZone(tzinfo):
         return f"FixedZone({self.minutes})"
 
 
+# names of the tz database's "backward" links that a machine's database may lack, with the zone each one names
+_TZ_LINKS = {
+    "nz-chat": "Pacific/Chatham", "us/eastern": "America/New_York", "us/central": "America/Chicago",
+    "us/mountain": "America/Denver", "us/pacific": "America/Los_Angeles", "us/alaska": "America/Anchorage",
+    "us/hawaii": "Pacific/Honolulu", "us/arizona": "America/Phoenix",
+}
+
+
 @lru_cache(maxsize=None)
 def zone(name: str) -> tzinfo:
     """A time zone by GoogleSQL name: ``UTC``, an offset (``+05:30``, ``-8``) or an IANA name."""
@@ -271,6 +279,7 @@ def zone(name: str) -> tzinfo:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     except ImportError:  # pragma: no cover - Python without zoneinfo
         raise Unsupported("named time zones need zoneinfo") from None
+    text = _TZ_LINKS.get(text.lower(), text)
     try:
         return ZoneInfo(text)
     except (ZoneInfoNotFoundError, ValueError):

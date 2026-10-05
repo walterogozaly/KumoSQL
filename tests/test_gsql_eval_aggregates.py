@@ -479,11 +479,47 @@ def test_variance_edge_counts():
     assert rows("SELECT VAR_POP(x), VAR_SAMP(x) FROM UNNEST([1, NULL, 3]) x") == [(1.0, 2.0)]
 
 
-def test_variance_special_inputs():
-    with pytest.raises(Unsupported):
-        evaluate("SELECT VAR_POP(x) FROM UNNEST([1.0, CAST('nan' AS FLOAT64)]) x")
-    with pytest.raises(Unsupported):
-        evaluate("SELECT STDDEV(v) FROM nums", DB)
+def test_variance_of_non_finite_inputs_is_nan():
+    for sql in (
+        "SELECT VAR_POP(x), STDDEV_POP(x), VAR_SAMP(x), STDDEV_SAMP(x) FROM UNNEST([1.0, CAST('nan' AS FLOAT64)]) x",
+        "SELECT VAR_POP(x), STDDEV_POP(x), VAR_SAMP(x), STDDEV_SAMP(x) FROM UNNEST([1.0, CAST('inf' AS FLOAT64)]) x",
+    ):
+        assert all(math.isnan(v) for v in evaluate(sql).rows[0])
+    row = evaluate("SELECT VAR_POP(x), VAR_SAMP(x) FROM UNNEST([CAST('inf' AS FLOAT64)]) x").rows[0]
+    assert math.isnan(row[0]) and row[1] is None
+
+
+def test_variance_is_exact_and_overflows_only_in_the_final_conversion():
+    sql = "SELECT VAR_POP(x), STDDEV_POP(x), VAR_SAMP(x), STDDEV_SAMP(x) FROM UNNEST([1.0, 2.2e304, -2.2e304]) x"
+    var_pop, sd_pop, var_samp, sd_samp = evaluate(sql).rows[0]
+    assert var_pop == math.inf and var_samp == math.inf  # the variance does not fit a double
+    assert sd_pop == pytest.approx(2.2e304 * math.sqrt(2 / 3), rel=1e-14) and sd_samp == pytest.approx(2.2e304, rel=1e-14)
+    sql = "SELECT COVAR_POP(x, x), COVAR_SAMP(x, x) FROM UNNEST([1.7e308, 8.5e307]) x"
+    assert evaluate(sql).rows == [(math.inf, math.inf)]
+    assert evaluate("SELECT CORR(x, -x) FROM UNNEST([1.0, 2.2e154]) x").rows == [(-1.0,)]
+
+
+def test_variance_and_covariance_of_numeric():
+    db = Database({"v": table(("x", T.NUMERIC), ("y", T.NUMERIC),
+                              rows=[(N("1.1"), N("2.2")), (N("2.2"), N("4.4")), (N("3.3"), N("3.3")), (None, N("1"))])})
+    result = evaluate("SELECT VAR_POP(x), VAR_SAMP(x), STDDEV_POP(x), COVAR_POP(x, y), CORR(x, y) FROM v", db)
+    assert result.columns[0][1] == T.FLOAT64
+    var_pop, var_samp, sd_pop, cov, corr = result.rows[0]
+    assert var_pop == pytest.approx(0.8066666666666667, rel=1e-14) and var_samp == pytest.approx(1.21, rel=1e-14)
+    assert sd_pop == pytest.approx(math.sqrt(var_pop)) and cov == pytest.approx(0.4033333333333333, rel=1e-14)
+    assert 0 < corr < 1
+    big = Database({"v": table(("x", T.NUMERIC), rows=[(N("1000000000000000000000000.1"),), (N("1000000000000000000000000.2"),)])})
+    assert evaluate("SELECT VAR_POP(x), STDDEV_POP(x) FROM v", big).rows[0] == pytest.approx((0.0025, 0.05), rel=1e-12)
+
+
+def test_variance_having_max_min_keeps_only_the_extreme_rows():
+    data = "FROM UNNEST([STRUCT(1 AS x, 1 AS k), STRUCT(3, 2), STRUCT(5, 2), STRUCT(9, NULL)]) AS r"
+    assert evaluate("SELECT VAR_POP(r.x HAVING MAX r.k), VAR_SAMP(r.x HAVING MAX r.k) " + data).rows == [(1.0, 2.0)]
+    assert evaluate("SELECT VAR_POP(r.x HAVING MIN r.k), VAR_SAMP(r.x HAVING MIN r.k) " + data).rows == [(0.0, None)]
+    assert evaluate("SELECT COVAR_POP(r.x, r.x HAVING MAX r.k), CORR(r.x, r.x HAVING MAX r.k) " + data).rows == [(1.0, 1.0)]
+
+
+def test_variance_rejects_other_types():
     with pytest.raises(AnalysisError):
         evaluate("SELECT STDDEV(g) FROM t", DB)
 
@@ -506,9 +542,8 @@ def test_covariance_skips_pairs_with_a_null_and_handles_small_inputs():
     assert evaluate(sql).rows == [(None, None, None)]
 
 
-def test_correlation_of_a_constant_column_is_unsupported():
-    with pytest.raises(Unsupported):
-        evaluate("SELECT CORR(r.x, r.y) FROM UNNEST([STRUCT(1 AS x, 2 AS y), STRUCT(1, 3)]) AS r")
+def test_correlation_of_a_column_without_variance_is_nan():
+    assert math.isnan(one("SELECT CORR(x, y) FROM UNNEST([STRUCT(1 AS x, 2 AS y), STRUCT(1, 3)]) AS r".replace("(x, y)", "(r.x, r.y)")))
 
 
 # --- where aggregates appear ---------------------------------------------------------------------

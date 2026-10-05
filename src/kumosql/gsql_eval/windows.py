@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import sys
 from collections import Counter
 from decimal import Decimal
 from fractions import Fraction
@@ -279,16 +280,17 @@ class _Frame:
                 out.append((lo, hi) if hi > lo else (0, 0))
             return out
         keys = layout.keys
-        non_null = [p for p in range(n) if keys[p] is not None]
+        # NULL and NaN keys are not on the number line: through an offset boundary they only reach their own peers,
+        # and rows with a number as key never reach them (they sort before every number, so the numbers stay contiguous)
+        non_null = [p for p in range(n) if keys[p] is not None and keys[p] == keys[p]]
         a = non_null[0] if non_null else 0
         b = non_null[-1] + 1 if non_null else 0
-        if any(isinstance(keys[p], float) and keys[p] != keys[p] for p in non_null):
-            raise Unsupported("RANGE offset over a NaN key")
         s = [None] * n
         for p in non_null:
-            s[p] = -keys[p] if layout.desc else keys[p]
+            key = Fraction(keys[p]) if layout.key_type.kind in ("NUMERIC", "BIGNUMERIC") else keys[p]  # exact: Decimal rounds to 28 digits
+            s[p] = -key if layout.desc else key
         for i in range(n):
-            if keys[i] is None:  # NULL keys only reach their peers through an offset boundary
+            if keys[i] is None or keys[i] != keys[i]:
                 lo = self._null_bound(self.start, layout.peer_start[i], i, layout, True)
                 hi = self._null_bound(self.end, layout.peer_end[i], i, layout, False)
             else:
@@ -324,6 +326,11 @@ class _Frame:
         if kind == CUR:
             return layout.peer_start[i] if is_start else layout.peer_end[i]
         target = s[i] - boundary[1] if kind == PREC else s[i] + boundary[1]
+        if isinstance(target, float) and math.isinf(target) and math.isfinite(s[i]) and math.isfinite(boundary[1]):
+            # a finite key plus a finite offset overflowed: BigQuery's frame still stops at the largest finite double
+            target = math.copysign(sys.float_info.max, target)
+        elif target != target:
+            raise Unsupported("RANGE offset arithmetic on infinite values giving NaN")
         if is_start:
             return bisect.bisect_left(s, target, a, b)
         return bisect.bisect_right(s, target, a, b)
@@ -381,6 +388,8 @@ def _range_offset(compiler, node: exp.Expression, key_type, one_key: bool):
         raise Unsupported("NaN window frame offset")
     if payload < 0:
         raise AnalysisError("Window frame offset must not be negative")
+    if key_type.kind in ("NUMERIC", "BIGNUMERIC"):
+        return Fraction(payload)
     return payload
 
 
