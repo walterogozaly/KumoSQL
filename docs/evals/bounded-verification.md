@@ -65,7 +65,7 @@ Each run first takes the eval's own baseline verdict (unbounded prover and execu
 
 ## Results
 
-Measured 2026-10-02 at 3 rows per table.
+Measured at 3 rows per table. Most rows were last measured 2026-10-02. VeriEQL Calcite-397 and Cosette were re-measured on 2026-10-05 at `f4206ff354ed8a2388da42a9c76e35a581822917`; both reproduced their recorded scores with 0 wrong. The VeriEQL Literature re-measurement did not finish: its baseline counterexample search hit the process timeout, so that row retains its 2026-10-02 result. Other rows were not re-measured.
 
 | Suite | Pairs | Bounded, 3 rows | Different (replayed) | Timeout | Unsupported | Unknown |
 | --- | --- | --- | --- | --- | --- | --- |
